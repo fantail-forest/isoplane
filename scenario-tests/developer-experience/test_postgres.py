@@ -1,5 +1,4 @@
 """PostgreSQL behavior using a package prepared by Task."""
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -42,15 +41,11 @@ def execute(arguments, records):
             connection = f'Host=127.0.0.1;Port={port};Database=todo;Username=postgres;Password={password}'
             command([dotnet, 'user-secrets', 'set', '--project', str(project)], env=env,
                     data=json.dumps({'ConnectionStrings:Todo': connection}))
-            manifest = project / 'isoplane.toml'
-            base = manifest.read_text().replace('127.0.0.1:5432', f'127.0.0.1:{port}')
-            trust = f'\n[dev.trust]\nbundle = {json.dumps(str(directory / "ca.crt"))}\nsha256 = "{hashlib.sha256((directory / "ca.crt").read_bytes()).hexdigest()}"\n'
             configuration = arguments.configuration
-            manifest.write_text(base + trust)
-            with application(arguments.dotnet.resolve(), project, configuration, env, records) as address:
+            trusted = env | {'SSL_CERT_FILE': str(directory / 'ca.crt')}
+            with application(arguments.dotnet.resolve(), project, configuration, trusted, records) as address:
                 assert password.encode() not in (project / '.isoplane/package/application.tar').read_bytes(), 'runtime secrets must not be embedded in the application package'
                 verify_crud(address, container)
-            manifest.write_text(base)
             try:
                 with application(arguments.dotnet.resolve(), project, configuration, env, records, "-untrusted"):
                     raise AssertionError('database warmup must refuse startup without the trusted root')

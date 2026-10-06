@@ -4,26 +4,24 @@ using Isoplane;
 namespace MinimalGallery;
 
 /// <summary>A gallery using maintained image, PostgreSQL, and S3 libraries without ASP.NET or EF Core.</summary>
-public sealed class Application : IIsoplaneHandler
+public static class Application
 {
-    /// <summary>Constructs the handler and warms the read-only database endpoint before template capture.</summary>
-    public static IIsoplaneHandler Create()
+    /// <summary>Warms serialization and the read-only database endpoint before template capture.</summary>
+    [Initializer]
+    public static async Task InitializeAsync()
     {
-        Initialization.Initializing += async () =>
-        {
-            _ = GalleryJson.Default.GalleryImage;
-            _ = GalleryJson.Default.GalleryImageArray;
-            _ = GalleryJson.Default.ExifInfo;
-            _ = await HandleAsync("GET", "/images", ReadOnlyMemory<byte>.Empty, CancellationToken.None);
-        };
-        return new Application();
+        _ = GalleryJson.Default.GalleryImage;
+        _ = GalleryJson.Default.GalleryImageArray;
+        _ = GalleryJson.Default.ExifInfo;
+        _ = await RouteAsync("GET", "/images", ReadOnlyMemory<byte>.Empty, CancellationToken.None);
     }
 
     /// <summary>Ingests original images and thumbnails, lists metadata, and retrieves stored image bytes.</summary>
-    public Task<Response> HandleAsync(Request request, Ctx context) =>
-        HandleAsync(request.Method, request.Path, request.Body, request.Aborted);
+    [HttpHandler]
+    public static Task<Response> HandleAsync(Request request) =>
+        RouteAsync(request.Method, request.Path, request.Body, request.Aborted);
 
-    private static async Task<Response> HandleAsync(string method, string path, ReadOnlyMemory<byte> body, CancellationToken cancellation)
+    private static async Task<Response> RouteAsync(string method, string path, ReadOnlyMemory<byte> body, CancellationToken cancellation)
     {
         var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
         if (parts.Length == 0 || parts[0] != "images") return Response.Text("Not found", 404);

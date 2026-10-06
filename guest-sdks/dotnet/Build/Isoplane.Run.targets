@@ -1,5 +1,4 @@
 <Project>
-  <ItemGroup><Watch Include="$(MSBuildProjectDirectory)/isoplane.toml" /></ItemGroup>
   <Target Name="ComputeRunArguments">
     <PropertyGroup>
       <RunCommand>isoplane</RunCommand>

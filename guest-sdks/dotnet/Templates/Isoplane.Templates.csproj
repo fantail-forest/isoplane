@@ -14,17 +14,22 @@
   </PropertyGroup>
   <ItemGroup>
     <None Include="../AspNetCore/README.md" Pack="true" PackagePath="/" />
-    <Content Include="content/**" Exclude="content/**/bin/**;content/**/obj/**;content/aspnet/SampleApp.csproj" />
+    <TemplateProject Include="content/**/*.csproj" />
+    <Content Include="content/**" Exclude="content/**/bin/**;content/**/obj/**;content/**/.isoplane/**;@(TemplateProject)" />
   </ItemGroup>
-  <Target Name="StampTemplateSdkVersion" BeforeTargets="_GetPackageFiles">
+  <!-- A generated project names the SDK and test library of the release that generated it. -->
+  <Target Name="StampTemplateVersions" BeforeTargets="_GetPackageFiles">
     <PropertyGroup>
-      <_PackagedTemplateProject>$(IntermediateOutputPath)package/SampleApp.csproj</_PackagedTemplateProject>
+      <_IsoplanePackagePin>(Sdk="Isoplane\.[A-Za-z.]+/|PackageReference Include="Isoplane\.[A-Za-z.]+" Version=")[^"]+</_IsoplanePackagePin>
     </PropertyGroup>
-    <MakeDir Directories="$(IntermediateOutputPath)package" />
-    <Copy SourceFiles="content/aspnet/SampleApp.csproj" DestinationFiles="$(_PackagedTemplateProject)" />
-    <XmlPoke XmlInputPath="$(_PackagedTemplateProject)" Query="/Project/@Sdk" Value="Isoplane.AspNetCore/$(PackageVersion)" />
     <ItemGroup>
-      <Content Include="$(_PackagedTemplateProject)" Pack="true" PackagePath="content/content/aspnet/SampleApp.csproj" />
+      <_StampedTemplateProject Include="@(TemplateProject->'$(IntermediateOutputPath)package/%(RecursiveDir)%(Filename)%(Extension)')"
+                               Stamped="$([MSBuild]::Escape($([System.Text.RegularExpressions.Regex]::Replace($([System.IO.File]::ReadAllText('%(FullPath)')), '$(_IsoplanePackagePin)', '${1}$(PackageVersion)'))))"
+                               PackagePath="content/content/%(RecursiveDir)%(Filename)%(Extension)" />
+    </ItemGroup>
+    <WriteLinesToFile File="%(_StampedTemplateProject.Identity)" Lines="%(_StampedTemplateProject.Stamped)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <ItemGroup>
+      <Content Include="@(_StampedTemplateProject)" Pack="true" />
     </ItemGroup>
   </Target>
   <Import Project="../../../licenses/SdkPackage.props" />

@@ -113,7 +113,9 @@ pub fn network(tenant: &str, manifest: &AppManifest) -> isoplane_prepare::Initia
     isoplane_prepare::InitializationNetwork {
         tenant: tenant.to_owned(),
         allowlist: manifest.bindings.fetch_allowlist.clone(),
-        allowed_destinations: Vec::new(),
+        destinations: isoplane_prepare::InitializationDestinations::Public {
+            exceptions: Vec::new(),
+        },
         limits: Default::default(),
         native_handles: host.guest_resources.native_handles,
         pending_futures: manifest.effective_limits().pending_futures_per_dispatch,

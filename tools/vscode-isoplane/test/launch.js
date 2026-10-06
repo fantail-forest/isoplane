@@ -12,7 +12,7 @@ async function run() {
     await extension.activate();
     const project = fs.mkdtempSync(path.join(os.tmpdir(), 'isoplane-editor-application-'));
     fs.cpSync(process.env.ISOPLANE_TEST_PROJECT, project, { recursive: true, filter: source => !['bin', 'obj', '.isoplane'].includes(path.basename(source)) });
-    const source = path.join(project, 'Application.cs');
+    const source = path.join(project, 'Program.cs');
     const line = fs.readFileSync(source, 'utf8').split(/\r?\n/).findIndex(value => value.includes('return answer.ToString();'));
     assert.notEqual(line, -1, 'the prepared application must contain the debugger return statement');
     const breakpoint = new vscode.SourceBreakpoint(new vscode.Location(vscode.Uri.file(source), new vscode.Position(line, 0)));

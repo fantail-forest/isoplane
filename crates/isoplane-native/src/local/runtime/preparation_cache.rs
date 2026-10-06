@@ -191,7 +191,6 @@ mod tests {
                 runtime_library: directory.path().join("runtime"),
                 compilation_directory: directory.path().join("compilation"),
                 init_sandbox: InitSandbox::Sealed,
-                allow_endpoints: vec![],
                 platform_files: PlatformFiles::new(vec![PlatformFile {
                     path: "/trust.pem".into(),
                     bytes: (&b"roots"[..]).into(),
@@ -386,16 +385,6 @@ mod tests {
             &fixture.wasm,
             &fixture.executable,
             "changed local project identity",
-        );
-        project = fixture.project.clone();
-        project
-            .allow_endpoints
-            .push("127.0.0.1:5432".parse().unwrap());
-        assert_miss(
-            &project,
-            &fixture.wasm,
-            &fixture.executable,
-            "changed outbound authorization",
         );
         project = fixture.project.clone();
         project.init_sandbox = InitSandbox::RuntimeBringUp;

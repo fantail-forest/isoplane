@@ -5,7 +5,7 @@ mod initialize;
 mod network;
 mod ownership;
 pub mod package;
-pub use network::InitializationNetwork;
+pub use network::{InitializationDestinations, InitializationNetwork};
 pub use ownership::PreparationOwner;
 
 pub use initialize::{initialize, Initialization, Initialized, InitializedModule};
@@ -20,7 +20,7 @@ pub enum PrepareError {
     #[error("preparation limit: {0}")]
     Limit(&'static str),
     /// Preparation returned a structured refusal.
-    #[error("preparation rejected: {0:?}")]
+    #[error("preparation rejected: {0}")]
     Rejected(WorkerFailure),
     /// Local preparation files could not be accessed.
     #[error("preparation I/O: {0}")]

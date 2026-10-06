@@ -1,0 +1,41 @@
+@SampleApi_HostAddress = http://localhost:5080
+
+GET {{SampleApi_HostAddress}}/
+Accept: application/json
+
+###
+
+GET {{SampleApi_HostAddress}}/todos
+Accept: application/json
+
+###
+
+POST {{SampleApi_HostAddress}}/todos
+Content-Type: application/json
+
+{
+  "title": "Read the README"
+}
+
+###
+
+PUT {{SampleApi_HostAddress}}/todos/1
+Content-Type: application/json
+
+{
+  "title": "Read the README",
+  "isComplete": true
+}
+
+###
+
+GET {{SampleApi_HostAddress}}/todos/export
+Accept: application/json
+
+###
+
+DELETE {{SampleApi_HostAddress}}/todos/1
+
+###
+
+GET {{SampleApi_HostAddress}}/openapi/v1.json

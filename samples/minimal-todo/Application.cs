@@ -6,20 +6,19 @@ using Isoplane;
 namespace MinimalTodo;
 
 /// <summary>A PostgreSQL TODO handler without ASP.NET or EF Core.</summary>
-public sealed class Application : IIsoplaneHandler
+public static class Application
 {
     /// <summary>Warms the read endpoint before template capture.</summary>
-    public static IIsoplaneHandler Create()
-    {
-        Initialization.Initializing += Warmup;
-        return new Application();
-    }
+    [Initializer]
+    public static async Task InitializeAsync() =>
+        _ = await RouteAsync("GET", "/todos", ReadOnlyMemory<byte>.Empty, CancellationToken.None);
 
     /// <summary>Handles TODO CRUD with verified TLS and request-owned database connections.</summary>
-    public Task<Response> HandleAsync(Request request, Ctx context) =>
-        HandleAsync(request.Method, request.Path, request.Body, request.Aborted);
+    [HttpHandler]
+    public static Task<Response> HandleAsync(Request request) =>
+        RouteAsync(request.Method, request.Path, request.Body, request.Aborted);
 
-    private static async Task<Response> HandleAsync(string method, string path, ReadOnlyMemory<byte> body, CancellationToken cancellation)
+    private static async Task<Response> RouteAsync(string method, string path, ReadOnlyMemory<byte> body, CancellationToken cancellation)
     {
         var collection = path == "/todos";
         var id = 0;
@@ -48,9 +47,6 @@ public sealed class Application : IIsoplaneHandler
         var connectionString = new NpgsqlConnectionStringBuilder(configured) { SslMode = SslMode.VerifyFull, Pooling = false };
         return new NpgsqlConnection(connectionString.ConnectionString);
     }
-
-    private static async Task Warmup() =>
-        _ = await HandleAsync("GET", "/todos", ReadOnlyMemory<byte>.Empty, CancellationToken.None);
 
     private static TodoInput Input(ReadOnlyMemory<byte> body) => JsonSerializer.Deserialize(body.Span, TodoJson.Default.TodoInput)
         ?? throw new JsonException("A TODO body is required.");

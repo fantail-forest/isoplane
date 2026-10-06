@@ -1,7 +1,6 @@
 //! Local execution using the same preparation, host and proxy as the daemon.
 
 pub mod debug;
-mod destinations;
 mod runtime;
 
 pub use runtime::{Baselines, LocalApp, Prepared};
@@ -19,8 +18,6 @@ pub struct Inputs {
     pub compilation_directory: std::path::PathBuf,
     /// Initialization capability policy supplied by the SDK.
     pub init_sandbox: isoplane_abi::config::InitSandbox,
-    /// Explicitly authorized local service destinations.
-    pub allow_endpoints: Vec<std::net::SocketAddr>,
     /// Host-provided files visible to the sandbox.
     pub platform_files: isoplane_engine::PlatformFiles,
     /// The application package's files, for a module that runs a package
@@ -50,10 +47,10 @@ impl Inputs {
 pub enum Error {
     /// Native compilation, admission or initialization failed.
     #[error("local preparation failed: {0:#}")]
-    Preparation(#[source] anyhow::Error),
+    Preparation(anyhow::Error),
     /// Local host services could not be started.
     #[error("local host startup failed: {0:#}")]
-    Startup(#[source] anyhow::Error),
+    Startup(anyhow::Error),
     /// A debugger peer did not identify a bound loopback endpoint.
     #[error("the debugger endpoint must be the session-owned 127.0.0.1 address with a bound port")]
     DebugEndpoint,

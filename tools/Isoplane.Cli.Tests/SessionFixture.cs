@@ -15,7 +15,6 @@ internal sealed class SessionFixture : IDisposable
 
     internal SessionFixture()
     {
-        File.WriteAllText(Path.Combine(ProjectDirectory, "isoplane.toml"), "name='session'\n");
         var project = new LocalProject(ProjectDirectory);
         Directory.CreateDirectory(Path.GetDirectoryName(project.Package)!);
         using (var file = File.Create(project.Package))
@@ -28,7 +27,7 @@ internal sealed class SessionFixture : IDisposable
                 }
             }));
         }
-        Options = project.SessionOptions(0, []);
+        Options = project.SessionOptions(new DevelopmentSettings("session", 0, [], LimitOverrides.None, null));
     }
 
     private static void Write(TarWriter archive, string name, string content)

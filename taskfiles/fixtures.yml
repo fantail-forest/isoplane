@@ -351,7 +351,7 @@ tasks:
       - tools/vscode-isoplane/test/prepare.py
       - '{{.PACKAGES}}/*.nupkg'
     generates:
-      - '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/editor-fixture/app/Application.cs'
+      - '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/editor-fixture/app/Program.cs'
       - '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/editor-fixture/app/nuget.config'
     cmds:
       - '"{{.PYTHON}}" tools/vscode-isoplane/test/prepare.py "{{.ROOT_DIR}}/.build/{{.PLATFORM}}/editor-fixture"'

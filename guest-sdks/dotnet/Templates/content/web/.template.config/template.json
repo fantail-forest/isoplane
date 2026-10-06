@@ -1,0 +1,34 @@
+{
+  "$schema": "http://json.schemastore.org/template",
+  "author": "Isoplane",
+  "classifications": ["Web", "Isoplane", "Empty"],
+  "identity": "Isoplane.Templates.Web",
+  "name": "Isoplane ASP.NET Core Empty",
+  "description": "An empty ASP.NET Core application that runs in the Isoplane sandbox.",
+  "shortName": "isoplane-web",
+  "sourceName": "SampleApp",
+  "preferNameDirectory": true,
+  "tags": {
+    "language": "C#",
+    "type": "project"
+  },
+  "symbols": {
+    "HttpPort": {
+      "type": "parameter",
+      "datatype": "integer",
+      "description": "Port number to use for the HTTP endpoint in launchSettings.json."
+    },
+    "HttpPortGenerated": {
+      "type": "generated",
+      "generator": "port",
+      "parameters": { "low": 5000, "high": 5300 }
+    },
+    "HttpPortReplacer": {
+      "type": "generated",
+      "generator": "coalesce",
+      "parameters": { "sourceVariableName": "HttpPort", "fallbackVariableName": "HttpPortGenerated" },
+      "replaces": "5080"
+    }
+  },
+  "primaryOutputs": [{ "path": "SampleApp.csproj" }]
+}

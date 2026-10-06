@@ -384,7 +384,7 @@ pub(crate) fn initialize_with_cache(
                     .unwrap_or_else(|| "initializer did not return successfully".into());
                 // Worker reports are bounded, so keep the latest diagnosis before older context.
                 for line in state.lock().logs.iter().rev() {
-                    detail.push_str("; guest log: ");
+                    detail.push_str("\n  guest log: ");
                     detail.push_str(line.trim_end());
                 }
                 return Err(PrepareError::Initialization {

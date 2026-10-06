@@ -4,25 +4,6 @@ namespace Isoplane.Cli;
 
 internal static class LocalSecrets
 {
-    internal static async Task<Dictionary<string, string>> ReadAsync(DevelopmentOptions options, CancellationToken cancellation)
-    {
-        var project = Directory.GetFiles(options.Directory, "*.csproj").Single();
-        using var process = Processes.Start("dotnet", ["msbuild", project, "-p:Configuration=" + options.Configuration,
-            "-getProperty:UserSecretsId"], options.Directory, captureOutput: true);
-        try
-        {
-            var id = (await process.StandardOutput.ReadToEndAsync(cancellation)).Trim();
-            await process.WaitForExitAsync(cancellation);
-            if (process.ExitCode != 0)
-                throw new InvalidOperationException("Could not evaluate UserSecretsId; fix the project diagnostics above.");
-            return Read(id);
-        }
-        finally
-        {
-            await Processes.StopAsync(process);
-        }
-    }
-
     internal static Dictionary<string, string> Read(string id)
     {
         if (string.IsNullOrWhiteSpace(id))

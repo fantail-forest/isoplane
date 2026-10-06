@@ -37,6 +37,8 @@ internal static class Development
 
     private static async Task<int> RunOwnedAsync(DevelopmentOptions options, CancellationToken cancellation)
     {
+        if (File.Exists(Path.Combine(options.Directory, "isoplane.toml")))
+            Console.Error.WriteLine("isoplane: isoplane.toml is no longer read; delete it. Development settings come from Properties/launchSettings.json and .NET User Secrets.");
         if (options.Debug)
             return await DebugDevelopment.RunAsync(options, cancellation);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
@@ -45,9 +47,9 @@ internal static class Development
         var result = await build.BuildAsync(lifetime.Token);
         if (result != 0)
             return result;
-        var configuration = await LocalSecrets.ReadAsync(options, cancellation);
+        var settings = await DevelopmentSettings.ResolveAsync(options, cancellation);
         await using var host = new LocalSession(await build.ModuleAsync(lifetime.Token),
-            build.SessionOptions(configuration), message => LocalEvents.Write(message, options.Json));
+            build.SessionOptions(settings), message => LocalEvents.Write(message, options.Json));
         using var stopping = lifetime.Token.Register(host.Stop);
         var exited = host.Completion;
         try
@@ -62,7 +64,7 @@ internal static class Development
                 if (await build.BuildAsync(token) != 0)
                     Console.Error.WriteLine("isoplane: rebuild failed; keeping the last working application. Edit the source to retry.");
                 else
-                    host.Reload(await build.ModuleAsync(token), build.SessionOptions(configuration));
+                    host.Reload(await build.ModuleAsync(token), build.SessionOptions(settings));
             }, lifetime.Token);
             return 0;
         }
@@ -97,11 +99,7 @@ internal static class Development
         internal Task<byte[]> ModuleAsync(CancellationToken cancellation) =>
             File.ReadAllBytesAsync(runtime ?? throw new InvalidOperationException("The package has not been built."), cancellation);
 
-        internal byte[] SessionOptions(Dictionary<string, string> configuration)
-        {
-            var project = new LocalProject(options.Directory);
-            return project.SessionOptions(options.Port, configuration, package: project.Package);
-        }
+        internal byte[] SessionOptions(DevelopmentSettings settings) => new LocalProject(options.Directory).SessionOptions(settings);
     }
 
 }

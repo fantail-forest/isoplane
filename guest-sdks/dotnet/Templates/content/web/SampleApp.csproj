@@ -1,0 +1,8 @@
+<Project Sdk="Isoplane.AspNetCore/0.1.0-preview.4">
+
+  <PropertyGroup>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+</Project>

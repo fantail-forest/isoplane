@@ -78,7 +78,9 @@ fn network() -> InitializationNetwork {
     InitializationNetwork {
         tenant: "returned-guest-test".into(),
         allowlist: None,
-        allowed_destinations: Vec::new(),
+        destinations: isoplane_prepare::InitializationDestinations::Public {
+            exceptions: Vec::new(),
+        },
         limits: Default::default(),
         native_handles: host.guest_resources.native_handles,
         pending_futures: isoplane_harness::GUEST_LIMITS

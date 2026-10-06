@@ -13,7 +13,9 @@ fn request() -> Initialization {
     request.network = Some(InitializationNetwork {
         tenant: "async-initialization-test".into(),
         allowlist: None,
-        allowed_destinations: Vec::new(),
+        destinations: isoplane_prepare::InitializationDestinations::Public {
+            exceptions: Vec::new(),
+        },
         limits: Default::default(),
         native_handles: 16,
         pending_futures: 4,
@@ -195,12 +197,10 @@ fn an_allowed_initialization_connection_finishes_and_closes_before_capture() {
     let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
     let destination = listener.local_addr().unwrap();
     let mut request = request();
-    request
-        .network
-        .as_mut()
-        .unwrap()
-        .allowed_destinations
-        .push(destination);
+    request.network.as_mut().unwrap().destinations =
+        isoplane_prepare::InitializationDestinations::Public {
+            exceptions: vec![destination],
+        };
     let wasm = asynchronous_guest(
         &socket_imports(),
         &format!(

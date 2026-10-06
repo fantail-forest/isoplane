@@ -1,5 +1,4 @@
 import json
-import hashlib
 import subprocess
 import tempfile
 import time
@@ -21,13 +20,6 @@ from types import SimpleNamespace
 import common as pg
 
 repo = Path(__file__).resolve().parents[2]
-
-
-def limits_toml(limits):
-    """Encode the numeric record as a TOML inline table without interpreting keys."""
-    return "{ " + ", ".join(
-        f"{json.dumps(key)} = {number}" for key, number in limits.items()
-    ) + " }"
 
 
 def make_fixture(root):
@@ -214,7 +206,7 @@ class Gallery(unittest.TestCase):
             dotnet=Path(os.environ['ISOPLANE_TEST_DOTNET']),
             prepared=Path(os.environ['ISOPLANE_TEST_SCENARIO_DIRECTORY']),
             schema=Path(os.environ['ISOPLANE_TEST_SCHEMA']),
-            name='gallery', limits_json={'module_bytes_compressed': 52428800, 'package_bytes': 52428800, 'instance_memory_max': 536870912, 'occupancy_ms_per_http_dispatch': 300000, 'subrequests_per_dispatch': 10000, 'pending_futures_per_dispatch': 4096}, configuration='Release')
+            name='gallery', configuration='Release')
         isoplane = Path(os.environ['ISOPLANE_TEST_CLI_ASSEMBLY'])
         scratch = repo / '.test-runs/gallery'
         scratch.mkdir(parents=True, exist_ok=True)
@@ -266,9 +258,7 @@ class Gallery(unittest.TestCase):
                 }
                 pg.command([dotnet, "user-secrets", "set", "--project", str(project)],
                            env=env, data=json.dumps(config_values))
-                (project / "isoplane.toml").write_text(
-                    f'name="{args.name}"\nlimits={limits_toml(args.limits_json)}\n[dev]\ninit_sandbox="runtime-bringup"\nallow_endpoints=["127.0.0.1:{port}","127.0.0.1:{s3port}","[::ffff:127.0.0.1]:{s3port}"]\n[dev.trust]\nbundle="{d}/ca.crt"\nsha256="{hashlib.sha256((d/'ca.crt').read_bytes()).hexdigest()}"\n'
-                )
+                env["SSL_CERT_FILE"] = str(d / "ca.crt")
                 logpath = root / f"{mode}-ingest.log"
                 with logpath.open("w") as log:
                     process = subprocess.Popen(
@@ -331,7 +321,7 @@ class Gallery(unittest.TestCase):
                         raise AssertionError("Gallery preparation must run its read query before reporting readiness")
                 except pg.StartupRejected:
                     diagnostic = (root / f"{mode}-missing-table.log").read_text()
-                    assert "Initialization" in diagnostic and "Npgsql.PostgresException" in diagnostic, \
+                    assert "initialization failed" in diagnostic and "Npgsql.PostgresException" in diagnostic, \
                         "Preparation must report the database failure from its read warmup"
                     database_log = subprocess.run(["docker", "logs", container], capture_output=True, text=True,
                                                   check=True, timeout=30)

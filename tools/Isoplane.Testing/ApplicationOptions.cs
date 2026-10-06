@@ -14,4 +14,11 @@ public sealed record ApplicationOptions
 
     /// <summary>Maximum retained diagnostic characters from the child process. Defaults to 16,384.</summary>
     public int DiagnosticLimitCharacters { get; init; } = 16 * 1024;
+
+    /// <summary>
+    /// Configuration settings for this session, such as a connection string to a database the test
+    /// started. Keys use ASP.NET's colon-separated form. They override the project's launch profile
+    /// and User Secrets.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> Settings { get; init; } = new Dictionary<string, string>();
 }

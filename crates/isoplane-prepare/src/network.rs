@@ -2,7 +2,8 @@
 
 use isoplane_host::bindings::{PreparationIo, PreparationIoConfig};
 use isoplane_host::egress::{
-    AdditionalDestinations, ConnectionOwner, HostEgressPolicy, PublicDestinations,
+    AdditionalDestinations, ConnectionOwner, DestinationPolicy, HostEgressPolicy,
+    LocalDevelopmentDestinations, PublicDestinations,
 };
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
@@ -15,14 +16,35 @@ pub struct InitializationNetwork {
     pub tenant: String,
     /// Application restrictions intersected with platform destination policy.
     pub allowlist: Option<Vec<String>>,
-    /// Operator-approved local development endpoints; empty in production.
-    pub allowed_destinations: Vec<SocketAddr>,
+    /// The destinations initialization may reach, as execution will.
+    pub destinations: InitializationDestinations,
     /// Connection and byte limits shared with application execution.
     pub limits: isoplane_runtime::network::NetworkLimits,
     /// Maximum retained native handles.
     pub native_handles: usize,
     /// Maximum pending native futures.
     pub pending_futures: u32,
+}
+
+/// The destination policy initialization shares with the application's execution.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum InitializationDestinations {
+    /// The node's public egress, with exact operator-approved exceptions.
+    Public { exceptions: Vec<SocketAddr> },
+    /// A local development session, which restricts no destination.
+    LocalDevelopment,
+}
+
+impl InitializationDestinations {
+    fn policy(&self) -> Arc<dyn DestinationPolicy> {
+        match self {
+            Self::Public { exceptions } => Arc::new(AdditionalDestinations {
+                endpoints: exceptions.clone(),
+                baseline: Arc::new(PublicDestinations),
+            }),
+            Self::LocalDevelopment => Arc::new(LocalDevelopmentDestinations),
+        }
+    }
 }
 
 impl InitializationNetwork {
@@ -34,10 +56,7 @@ impl InitializationNetwork {
             .map_err(|error| crate::PrepareError::State(error.into()))?;
         let egress = HostEgressPolicy::system(self.limits.connections)
             .map_err(|error| crate::PrepareError::State(error.into()))?
-            .with_destinations(Arc::new(AdditionalDestinations {
-                endpoints: self.allowed_destinations.clone(),
-                baseline: Arc::new(PublicDestinations),
-            }));
+            .with_destinations(self.destinations.policy());
         Ok(PreparationIo::new(
             PreparationIoConfig {
                 owner,

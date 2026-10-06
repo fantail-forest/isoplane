@@ -51,6 +51,20 @@ impl DestinationPolicy for PublicDestinations {
     }
 }
 
+/// A local development session's policy: every destination, because the
+/// machine and its network are the developer's own. The node never selects it.
+pub struct LocalDevelopmentDestinations;
+
+impl DestinationPolicy for LocalDevelopmentDestinations {
+    fn authorize(&self, _address: SocketAddr) -> Result<(), DenyReason> {
+        Ok(())
+    }
+
+    fn authorize_resolution(&self, _address: IpAddr) -> Result<(), DenyReason> {
+        Ok(())
+    }
+}
+
 /// A destination refusal or a resolver failure before a connection is acquired.
 #[derive(Debug, thiserror::Error)]
 pub enum EgressError {

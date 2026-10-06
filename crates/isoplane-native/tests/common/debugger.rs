@@ -117,7 +117,6 @@ pub fn prepared_acceptance(mode: &str) {
         "run task fixtures:package:debugger fixtures:package:debugger-optimized test:debugger:host before debugger feature tests"
     );
     let directory = tempfile::tempdir().unwrap();
-    crate::common::manifest(directory.path(), "[dev]\ninit_sandbox='runtime-bringup'\n");
     let mut command = std::process::Command::new("dotnet");
     command
         .arg(host)

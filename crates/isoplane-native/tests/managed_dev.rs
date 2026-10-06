@@ -32,28 +32,16 @@ fn project(destination: &Path) -> (PathBuf, PathBuf) {
 }
 
 fn source(app: &Path, response: &str, log: &str) {
-    let existing =
-        std::fs::read_to_string(app.join("Application.cs")).expect("generated application");
-    let namespace = existing
-        .lines()
-        .find_map(|line| line.strip_prefix("namespace "))
-        .and_then(|line| line.strip_suffix(';'))
-        .expect("generated application namespace");
     let source = format!(
         r#"
-using Microsoft.AspNetCore.Builder;
 using Isoplane.AspNetCore;
-namespace {namespace};
-public static class Application {{
-    public static WebApplication Create() {{
-        var app = IsoplaneHosting.CreateBuilder(typeof(Application).Assembly.GetName().Name!).Build();
-        app.MapGet("/", () => {{ System.Console.WriteLine("{log}"); return "{response}"; }});
-        return app;
-    }}
-}}
+
+var app = IsoplaneHosting.CreateBuilder(args).Build();
+app.MapGet("/", () => {{ System.Console.WriteLine("{log}"); return "{response}"; }});
+await app.RunAsync();
 "#
     );
-    std::fs::write(app.join("Application.cs"), source).expect("customer application source");
+    std::fs::write(app.join("Program.cs"), source).expect("customer application source");
 }
 
 async fn body(dev: &Dev) -> String {

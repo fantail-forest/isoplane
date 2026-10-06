@@ -28,6 +28,19 @@ pub struct WorkerFailure {
     pub detail: String,
 }
 
+impl std::fmt::Display for WorkerFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let stage = match self.stage {
+            BuildStage::Input => "reading inputs",
+            BuildStage::Engine => "constructing the engine",
+            BuildStage::Initialization => "initialization",
+            BuildStage::Baseline => "checking the runtime baseline",
+            BuildStage::Artifact => "encoding the prepared artifact",
+        };
+        write!(f, "{stage} failed: {}", self.detail)
+    }
+}
+
 impl WorkerFailure {
     /// Classify an operation failure without parsing its diagnostic text.
     pub fn new(stage: BuildStage, error: anyhow::Error) -> Self {

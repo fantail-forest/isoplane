@@ -84,7 +84,6 @@ impl Baselines {
             manifest: project.manifest.clone(),
             tenant: project.tenant(),
             version: version.to_string(),
-            allow_endpoints: project.allow_endpoints.clone(),
         })
     }
 }

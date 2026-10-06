@@ -57,6 +57,7 @@ internal static class DebugDevelopment
             return 1;
         }
         var module = runtime.DebugModule;
+        var settings = await DevelopmentSettings.ResolveAsync(options, cancellation);
         using var publications = new SemaphoreSlim(1, 1);
         bool debugging = true;
         if (options.Json)
@@ -65,7 +66,7 @@ internal static class DebugDevelopment
             Console.WriteLine($"Debugger target: {relay.AdapterEndpoint}. Connect your editor through isoplane debug-adapter; the connection remains available across HTTP requests.");
         var ready = new TaskCompletionSource<JsonObject>(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var host = new LocalSession(await File.ReadAllBytesAsync(module, cancellation),
-            new LocalProject(options.Directory).SessionOptions(options.Port, [], endpoint, Path.Combine(session, "runtime"), package: package),
+            new LocalProject(options.Directory).SessionOptions(settings, endpoint, Path.Combine(session, "runtime"), package: package),
             message =>
             {
                 LocalEvents.Write(message, options.Json);
@@ -77,7 +78,7 @@ internal static class DebugDevelopment
             try
             {
                 await host.PrepareDetachAsync(await File.ReadAllBytesAsync(runtime.Module, token),
-                    new LocalProject(options.Directory).SessionOptions(options.Port, [], null, Path.Combine(session, "runtime"), package: package));
+                    new LocalProject(options.Directory).SessionOptions(settings, null, Path.Combine(session, "runtime"), package: package));
                 debugging = false;
             }
             finally { publications.Release(); }
@@ -102,7 +103,7 @@ internal static class DebugDevelopment
                     {
                         var replacement = await ManagedBundle.CreateAsync(new(options.Directory, options.Configuration, package, options.NoBuild), token);
                         host.Reload(await File.ReadAllBytesAsync(debugging ? replacement.DebugModule : replacement.Module, token),
-                            new LocalProject(options.Directory).SessionOptions(options.Port, [], debugging ? endpoint : null, Path.Combine(session, "runtime"), package: package));
+                            new LocalProject(options.Directory).SessionOptions(settings, debugging ? endpoint : null, Path.Combine(session, "runtime"), package: package));
                         runtime = replacement;
                         LocalEvents.Write(new System.Text.Json.Nodes.JsonObject { ["event"] = "reload_pending" }, options.Json);
                     }

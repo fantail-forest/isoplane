@@ -65,7 +65,7 @@ async fn dotnet_run_executes_an_application_package_with_an_existing_library() {
         ),
     )
     .expect("onboard existing code through a standard project reference");
-    let source = app.join("Application.cs");
+    let source = app.join("Program.cs");
     let code = std::fs::read_to_string(&source).expect("read the generated application");
     let route = code.replace(
         "() => \"Hello from Isoplane!\"",
@@ -133,7 +133,7 @@ async fn an_unchanged_interpreted_run_reuses_its_prepared_template() {
     let mut first = start_dotnet(&app, &cli, "Debug", false, false);
     first.stop();
     std::fs::write(
-        app.join("Application.cs"),
+        app.join("Program.cs"),
         "invalid C# that must not be compiled",
     )
     .expect("change source after building the application");
@@ -223,7 +223,7 @@ async fn dotnet_watch_rebuilds_the_guest_after_a_compilation_error_is_repaired()
     let app = isoplane_fixtures::aspnet_project(directory.path());
     let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
     let mut running = start_dotnet(&app, &cli, "Debug", true, false);
-    let source = app.join("Application.cs");
+    let source = app.join("Program.cs");
     let original = std::fs::read_to_string(&source).expect("read the generated application");
     std::fs::write(&source, "this is not valid C#").expect("introduce a compile failure");
     running.wait_for("error CS");

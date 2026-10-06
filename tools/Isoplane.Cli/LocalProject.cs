@@ -1,56 +1,51 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using Tomlyn;
-using Tomlyn.Model;
 using Isoplane.Native;
 
 namespace Isoplane.Cli;
 
-internal sealed class LocalProject
+/// <summary>A project directory's local development state.</summary>
+internal sealed class LocalProject(string directory)
 {
-    private readonly string directory;
-    private readonly TomlTable manifest;
-
-    internal LocalProject(string directory)
-    {
-        this.directory = Path.GetFullPath(directory);
-        var path = Path.Combine(this.directory, "isoplane.toml");
-        try { manifest = TomlSerializer.Deserialize<TomlTable>(File.ReadAllText(path)) ?? throw new ArgumentException($"Empty project manifest: {path}"); }
-        catch (TomlException error) { throw new ArgumentException($"Cannot read {path}: {error.Message}", error); }
-        if (manifest.ContainsKey("module") ||
-            (manifest.TryGetValue("dev", out var development) && development is TomlTable settings && settings.ContainsKey("build")))
-            throw new ArgumentException($"{path}: remove module and dev.build; the SDK builds an application package for its shared runtime.");
-        if (!manifest.TryGetValue("name", out var name) || name is not string text || string.IsNullOrWhiteSpace(text))
-            throw new ArgumentException($"{path} must establish a nonempty app name.");
-    }
+    private readonly string directory = Path.GetFullPath(directory);
 
     /// <summary>Where <c>isoplane dev</c> builds an interpreted project's package.</summary>
     internal string Package => Path.Combine(directory, ".isoplane", "package", "application.tar");
 
-    internal byte[] SessionOptions(ushort? port, Dictionary<string, string> configuration, string? debugEndpoint = null, string? debugDirectory = null, string? package = null)
+    /// <summary>Where the session keeps the trusted roots it exports for the guest.</summary>
+    internal string Trust => Path.Combine(directory, ".isoplane", "local", "trust");
+
+    internal byte[] SessionOptions(DevelopmentSettings settings, string? debugEndpoint = null, string? debugDirectory = null, string? package = null)
     {
-        var development = manifest.TryGetValue("dev", out var dev) && dev is TomlTable table ? table : new TomlTable();
-        var trust = development.TryGetValue("trust", out var configuredTrust) && configuredTrust is TomlTable trustTable ? trustTable : new TomlTable();
-        if (trust.TryGetValue("bundle", out var bundle) && bundle is string path)
-            trust["bundle"] = Path.GetFullPath(path, directory);
-        var identity = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes((string)manifest["name"]!)));
-        Dictionary<string, object?> settings = new()
+        var identity = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(settings.Name)));
+        // A development session is not held to a plan: it runs with the largest
+        // limits the platform offers unless the launch profile narrows them.
+        Dictionary<string, object?> manifest = new() { ["name"] = settings.Name, ["limits"] = new Dictionary<string, object>
+            {
+                ["module_bytes_compressed"] = 52428800UL,
+                ["package_bytes"] = 52428800UL,
+                ["instance_memory_max"] = 536870912UL,
+                ["occupancy_ms_per_http_dispatch"] = 300000UL,
+                ["subrequests_per_dispatch"] = 10000UL,
+                ["pending_futures_per_dispatch"] = 4096UL,
+            } };
+        if (settings.Limits.MemoryBytes is { } memory) manifest["guest_memory_bytes"] = memory;
+        if (settings.Limits.ResourceLimits is { Count: > 0 } limits) manifest["resource_limits"] = limits;
+        Dictionary<string, object?> options = new()
         {
-            ["manifest"] = manifest.Where(entry => entry.Key != "dev")
-                .ToDictionary(entry => entry.Key, entry => entry.Value),
+            ["manifest"] = manifest,
             ["state_directory"] = debugDirectory ?? Path.Combine(directory, ".isoplane", "local", identity),
             ["runtime_library"] = NativeRuntime.LibraryPath,
             ["compilation_directory"] = Path.Combine(directory, ".isoplane", "compiled"),
-            ["configuration"] = configuration,
-            ["port"] = port,
+            ["configuration"] = settings.Configuration,
+            ["port"] = settings.Port,
             ["log_filter"] = Environment.GetEnvironmentVariable("RUST_LOG") ?? "info",
             ["debug_endpoint"] = debugEndpoint,
-            ["trust"] = trust,
             ["package"] = package ?? Package,
         };
-        if (development.TryGetValue("init_sandbox", out var sandbox)) settings["init_sandbox"] = sandbox;
-        if (development.TryGetValue("allow_endpoints", out var endpoints)) settings["allow_endpoints"] = endpoints;
-        return JsonSerializer.SerializeToUtf8Bytes(settings);
+        if (settings.Trust is { } trust)
+            options["trust"] = new Dictionary<string, object?> { ["bundle"] = trust.Bundle, ["sha256"] = trust.Sha256 };
+        return JsonSerializer.SerializeToUtf8Bytes(options);
     }
 }

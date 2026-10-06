@@ -31,13 +31,20 @@ for name, pattern in [('local', 'Isoplane.*'), ('nuget', '*')]:
     ET.SubElement(ET.SubElement(mapping, 'packageSource', key=name), 'package', pattern=pattern)
 ET.indent(config)
 ET.ElementTree(config).write(app / 'nuget.config', encoding='utf-8', xml_declaration=True)
-source = app / 'Application.cs'
+source = app / 'Program.cs'
 code = source.read_text().replace('app.MapGet("/", () => "Hello from Isoplane!");',
-    'app.MapGet("/", Handle);\n        app.MapGet("/warmup", () => "warm");').replace('WarmupAsync("/")', 'WarmupAsync("/warmup")')
-end = code.rfind('}')
-source.write_text(code[:end] + '''    private static string Handle()
+    'app.MapGet("/", EditorDebug.Application.Handle);\napp.MapGet("/warmup", () => "warm");').replace('WarmupAsync("/")', 'WarmupAsync("/warmup")')
+# Type declarations follow a program's top-level statements.
+source.write_text(code + '''
+namespace EditorDebug
+{
+    internal static class Application
     {
-        int answer = 42;
-        return answer.ToString();
+        internal static string Handle()
+        {
+            int answer = 42;
+            return answer.ToString();
+        }
     }
-''' + code[end:])
+}
+''')

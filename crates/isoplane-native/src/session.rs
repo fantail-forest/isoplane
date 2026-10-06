@@ -12,7 +12,7 @@ use tokio::sync::Notify;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
-use crate::local::{debug::DebugPeer, Baselines, Inputs, LocalApp, Prepared};
+use crate::local::{Baselines, Inputs, LocalApp, Prepared};
 
 thread_local! {
     static SESSION_SUBSCRIBER: std::cell::RefCell<Option<tracing::dispatcher::DefaultGuard>> = const { std::cell::RefCell::new(None) };
@@ -48,10 +48,6 @@ pub(crate) struct Options {
     runtime_library: PathBuf,
     compilation_directory: PathBuf,
     #[serde(default)]
-    init_sandbox: isoplane_abi::config::InitSandbox,
-    #[serde(default)]
-    allow_endpoints: Vec<SocketAddr>,
-    #[serde(default)]
     trust: isoplane_trust::TrustConfig,
     #[serde(default)]
     pub(crate) configuration: std::collections::BTreeMap<String, String>,
@@ -75,14 +71,6 @@ impl Options {
         anyhow::ensure!(
             self.compilation_directory.is_absolute(),
             "local compiler storage must be absolute"
-        );
-        anyhow::ensure!(
-            self.allow_endpoints
-                .iter()
-                .all(|address| address.port() != 0
-                    && !address.ip().is_unspecified()
-                    && !address.ip().is_multicast()),
-            "development services must name individual IP addresses and nonzero ports"
         );
         anyhow::ensure!(
             self.package.is_absolute(),
@@ -115,8 +103,9 @@ impl Options {
             state_directory: self.state_directory.clone(),
             runtime_library: self.runtime_library.clone(),
             compilation_directory: self.compilation_directory.clone(),
-            init_sandbox: self.init_sandbox,
-            allow_endpoints: self.allow_endpoints.clone(),
+            // An application package runs on the shared managed runtime, which
+            // reads the clock and draws entropy while it comes up.
+            init_sandbox: isoplane_abi::config::InitSandbox::RuntimeBringUp,
             platform_files,
             application_files: package.files,
             runtime_profile: isoplane_prepare::RuntimeProfile::SharedRuntime {
@@ -331,15 +320,11 @@ struct PendingApp {
     prepared: Prepared,
     directory: PathBuf,
     configuration: isoplane_host::bindings::RuntimeConfiguration,
-    debug: Option<DebugPeer>,
 }
 
 impl PendingApp {
     async fn start(self) -> anyhow::Result<Arc<LocalApp>> {
-        match self.debug {
-            Some(peer) => Ok(LocalApp::start_debug(self.prepared, &self.directory, peer).await?),
-            None => Ok(LocalApp::start(self.prepared, &self.directory, self.configuration).await?),
-        }
+        Ok(LocalApp::start(self.prepared, &self.directory, self.configuration).await?)
     }
 }
 
@@ -354,12 +339,15 @@ async fn prepare(
         &serde_json::to_vec(&options.configuration)?,
     )?;
     let preparation_configuration = configuration.clone();
-    let debug = options.debug_endpoint.map(DebugPeer::new).transpose()?;
+    let debug = options.debug_endpoint.is_some();
+    if let Some(endpoint) = options.debug_endpoint {
+        crate::local::debug::require_loopback_endpoint(endpoint)?;
+    }
     let directory = inputs.state_directory.clone();
     let subscriber = tracing::dispatcher::get_default(Clone::clone);
     let prepared = tokio::task::spawn_blocking(move || {
         tracing::dispatcher::with_default(&subscriber, || {
-            if debug.is_some() {
+            if debug {
                 Prepared::build_debug(&inputs, &wasm)
             } else {
                 Prepared::build(&inputs, &wasm, &preparation_configuration, &baselines)
@@ -371,7 +359,6 @@ async fn prepare(
         prepared,
         directory,
         configuration,
-        debug,
     })
 }
 

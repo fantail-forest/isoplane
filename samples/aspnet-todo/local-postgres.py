@@ -2,7 +2,6 @@
 """Start or stop a disposable TLS PostgreSQL server for this sample."""
 
 import argparse
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -106,10 +105,8 @@ def start():
             data=json.dumps({'ConnectionStrings:Todo': connection}))
         ca = directory / 'ca.crt'
         print('Created disposable PostgreSQL and set ConnectionStrings:Todo in User Secrets.')
-        print('Replace allow_endpoints inside [dev] in isoplane.toml with:')
-        print(f'allow_endpoints = ["127.0.0.1:{port}"]')
-        print('Add this separate table at the end of isoplane.toml:')
-        print(f'\n[dev.trust]\nbundle = {json.dumps(str(ca))}\nsha256 = "{hashlib.sha256(ca.read_bytes()).hexdigest()}"')
+        print('Its certificate is signed by a private authority. Trust it for this application with:')
+        print(f'\n  SSL_CERT_FILE={json.dumps(str(ca))} dotnet run')
         print('\nStop the application before running: python3 local-postgres.py stop')
     except BaseException as error:
         try:
@@ -129,7 +126,6 @@ def main():
         remove(json.loads(STATE.read_text()))
         print('Removed the sample database and temporary certificates.')
         print('Remove its setting with: dotnet user-secrets remove ConnectionStrings:Todo')
-        print('Remove [dev.trust] and the local endpoint from isoplane.toml before using another database.')
     else:
         print('No local sample database is recorded.')
 

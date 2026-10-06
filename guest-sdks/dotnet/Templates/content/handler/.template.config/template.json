@@ -1,0 +1,37 @@
+{
+  "$schema": "http://json.schemastore.org/template",
+  "author": "Isoplane",
+  "classifications": ["Isoplane", "Service", "Handler"],
+  "identity": "Isoplane.Templates.Handler",
+  "name": "Isoplane Handler",
+  "description": "A service for the Isoplane sandbox that handles HTTP requests in one static method, without ASP.NET, with tests.",
+  "shortName": "isoplane-handler",
+  "sourceName": "SampleHandler",
+  "preferNameDirectory": true,
+  "tags": {
+    "language": "C#",
+    "type": "solution"
+  },
+  "symbols": {
+    "HttpPort": {
+      "type": "parameter",
+      "datatype": "integer",
+      "description": "Port number to use for the HTTP endpoint in launchSettings.json."
+    },
+    "HttpPortGenerated": {
+      "type": "generated",
+      "generator": "port",
+      "parameters": { "low": 5000, "high": 5300 }
+    },
+    "HttpPortReplacer": {
+      "type": "generated",
+      "generator": "coalesce",
+      "parameters": { "sourceVariableName": "HttpPort", "fallbackVariableName": "HttpPortGenerated" },
+      "replaces": "5080"
+    }
+  },
+  "primaryOutputs": [
+    { "path": "src/SampleHandler/SampleHandler.csproj" },
+    { "path": "tests/SampleHandler.Tests/SampleHandler.Tests.csproj" }
+  ]
+}

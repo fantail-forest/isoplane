@@ -27,7 +27,7 @@ async fn an_installed_dotnet_tool_runs_and_reloads_the_aspnet_template() {
         "Hello from Isoplane!",
         "the generated ASP.NET route must execute without copied interop boilerplate"
     );
-    let source = app.join("Application.cs");
+    let source = app.join("Program.cs");
     let original = std::fs::read_to_string(&source).unwrap();
     std::fs::write(
         &source,
@@ -85,9 +85,9 @@ async fn an_installed_application_resumes_ordinary_timers() {
         "Hello from Isoplane!",
         "Mono must invoke the generated ASP.NET exports through the actual sandbox"
     );
-    let source = app.join("Application.cs");
+    let source = app.join("Program.cs");
     let original = std::fs::read_to_string(&source).unwrap();
-    std::fs::write(&source, original.replace("return app;", "app.MapGet(\"/async\", async () => { await System.Threading.Tasks.Task.Delay(1); return \"async-ready\"; }); return app;")).unwrap();
+    std::fs::write(&source, original.replace("await app.RunAsync();", "app.MapGet(\"/async\", async () => { await System.Threading.Tasks.Task.Delay(1); return \"async-ready\"; });\nawait app.RunAsync();")).unwrap();
     dev.wait_event("reloaded");
     let response = client
         .get(format!("{}/async", dev.url))
@@ -114,7 +114,7 @@ async fn a_package_reload_prepares_only_its_layer_over_the_held_runtime_baseline
     let app = isoplane_fixtures::aspnet_project(directory.path());
     let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
     let mut dev = Dev::start_managed(&app, &cli);
-    let source = app.join("Application.cs");
+    let source = app.join("Program.cs");
     let original = std::fs::read_to_string(&source).unwrap();
     std::fs::write(
         &source,
@@ -149,13 +149,13 @@ async fn a_package_reload_prepares_only_its_layer_over_the_held_runtime_baseline
 async fn an_installed_template_streams_an_upload_through_the_shared_runtime() {
     let directory = tempfile::tempdir().unwrap();
     let app = isoplane_fixtures::aspnet_project(directory.path());
-    let source = app.join("Application.cs");
+    let source = app.join("Program.cs");
     let original = std::fs::read_to_string(&source).unwrap();
     std::fs::write(
         &source,
         original.replace(
-            "return app;",
-            "app.MapPost(\"/upload\", async (Microsoft.AspNetCore.Http.HttpRequest request) => { long total = 0; var buffer = new byte[4096]; int read; while ((read = await request.Body.ReadAsync(buffer)) != 0) total += read; return $\"received:{total}\"; }); return app;",
+            "await app.RunAsync();",
+            "app.MapPost(\"/upload\", async (Microsoft.AspNetCore.Http.HttpRequest request) => { long total = 0; var buffer = new byte[4096]; int read; while ((read = await request.Body.ReadAsync(buffer)) != 0) total += read; return $\"received:{total}\"; });\nawait app.RunAsync();",
         ),
     )
     .unwrap();
@@ -182,23 +182,22 @@ async fn an_installed_template_streams_an_upload_through_the_shared_runtime() {
 }
 
 fn write_debug_application(app: &std::path::Path, mode: &str) -> std::path::PathBuf {
-    let source = app.join("Application.cs");
+    let source = app.join("Program.cs");
     let original = std::fs::read_to_string(&source).unwrap();
     let modified = original.replace(
         "app.MapGet(\"/\", () => \"Hello from Isoplane!\");",
-        "app.MapGet(\"/\", Handle);\n        app.MapGet(\"/warmup\", async () => { await Task.Delay(1); return \"warm\"; });",
+        "app.MapGet(\"/\", DebugFixture.Application.Handle);\napp.MapGet(\"/warmup\", async () => { await Task.Delay(1); return \"warm\"; });",
     ).replace("WarmupAsync(\"/\")", "WarmupAsync(\"/warmup\")");
     let modified = if mode == "detach-failure" {
-        modified.replace("app.MapGet(\"/\", Handle);", "if (!System.Diagnostics.Debugger.IsAttached) throw new InvalidOperationException(\"ordinary runtime preparation rejected\");\n        app.MapGet(\"/\", Handle);")
+        modified.replace("app.MapGet(\"/\", DebugFixture.Application.Handle);", "if (!System.Diagnostics.Debugger.IsAttached) throw new InvalidOperationException(\"ordinary runtime preparation rejected\");\napp.MapGet(\"/\", DebugFixture.Application.Handle);")
     } else {
         modified
     };
-    let position = modified.rfind('}').unwrap();
     let handler = if mode == "library" {
-        "    private static string Handle() => DebugLibrary.Calculator.Work(41).ToString();\n"
+        "    internal static string Handle() => DebugLibrary.Calculator.Work(41).ToString();\n"
     } else {
         r#"
-    private static async Task<string> Handle()
+    internal static async Task<string> Handle()
     {
         int answer = 42;
         Task delay = Task.Delay(100);
@@ -219,14 +218,10 @@ fn write_debug_application(app: &std::path::Path, mode: &str) -> std::path::Path
     } else {
         handler
     };
+    // Type declarations follow a program's top-level statements.
     std::fs::write(
         &source,
-        format!(
-            "{}{}{}",
-            &modified[..position],
-            handler,
-            &modified[position..]
-        ),
+        format!("{modified}\nnamespace DebugFixture\n{{\n    internal static class Application\n    {{\n{handler}    }}\n}}\n"),
     )
     .unwrap();
     source

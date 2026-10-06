@@ -1,6 +1,5 @@
 <Project Sdk="Isoplane.AspNetCore/0.1.0-preview.4">
   <PropertyGroup>
-    <IsoplaneApplicationFactory>AspNetGallery.Application.Create</IsoplaneApplicationFactory>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <InterceptorsNamespaces>$(InterceptorsNamespaces);Microsoft.EntityFrameworkCore.GeneratedInterceptors</InterceptorsNamespaces>

@@ -33,7 +33,7 @@ public sealed class IsoplaneApplication : IAsyncDisposable
     public string DiagnosticOutput => diagnostics.ToString();
 
     /// <summary>Publishes and starts a project using the installed CLI, on an automatically assigned local port.</summary>
-    /// <remarks>The project must contain one csproj and isoplane.toml. Cancellation bounds startup and disposes owned children; it does not cancel an already returned session.</remarks>
+    /// <remarks>The project directory must contain one csproj. Cancellation bounds startup and disposes owned children; it does not cancel an already returned session.</remarks>
     /// <exception cref="ArgumentException">The directory or options are invalid.</exception>
     /// <exception cref="InvalidOperationException">The CLI cannot start, exits before readiness, or emits an invalid readiness record.</exception>
     /// <exception cref="OperationCanceledException">Startup was cancelled.</exception>
@@ -63,6 +63,9 @@ public sealed class IsoplaneApplication : IAsyncDisposable
         };
         foreach (var argument in new[] { "dev", "--project", directory, "--configuration", options.Configuration, "--port", "0", "--no-watch", "--json", "--shutdown-on-stdin-close" })
             start.ArgumentList.Add(argument);
+        // The CLI reads application settings from its environment, which keeps secrets off its command line.
+        foreach (var setting in options.Settings)
+            start.Environment["ISOPLANE_APP_" + setting.Key.Replace(":", "__", StringComparison.Ordinal)] = setting.Value;
         OwnedProcess process;
         try
         {

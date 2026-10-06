@@ -43,6 +43,11 @@ internal static class OwnedChild
             Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(LocalSecrets.Read(secretsId)));
             return 0;
         }
+        if (arguments is ["--export-machine-trust", var trustDirectory])
+        {
+            Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(MachineTrust.Export(trustDirectory)));
+            return 0;
+        }
         if (arguments is not ["--owned-child", var pipeName])
             return 1;
         using var pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.Out, PipeOptions.Asynchronous);

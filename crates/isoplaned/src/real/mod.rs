@@ -197,7 +197,9 @@ fn initialization_network(
     isoplane_prepare::InitializationNetwork {
         tenant: tenant.to_owned(),
         allowlist: manifest.bindings.fetch_allowlist.clone(),
-        allowed_destinations,
+        destinations: isoplane_prepare::InitializationDestinations::Public {
+            exceptions: allowed_destinations,
+        },
         limits,
         native_handles: host.guest_resources.native_handles,
         pending_futures: manifest.effective_limits().pending_futures_per_dispatch,
@@ -231,8 +233,10 @@ mod engine_policy_tests {
             "application egress restrictions must also apply before capture"
         );
         assert_eq!(
-            policy.allowed_destinations,
-            vec![endpoint],
+            policy.destinations,
+            isoplane_prepare::InitializationDestinations::Public {
+                exceptions: vec![endpoint]
+            },
             "the explicit local database allowance must reach preparation"
         );
         assert_eq!(

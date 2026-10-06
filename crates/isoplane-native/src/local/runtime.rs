@@ -28,7 +28,6 @@ pub struct Prepared {
     manifest: AppManifest,
     tenant: String,
     version: String,
-    allow_endpoints: Vec<std::net::SocketAddr>,
 }
 
 impl Prepared {
@@ -84,7 +83,6 @@ impl Prepared {
             manifest,
             tenant: project.tenant(),
             version,
-            allow_endpoints: project.allow_endpoints.clone(),
         })
     }
     /// Validates and compiles a marked debug module without pre-initialization.
@@ -116,7 +114,6 @@ impl Prepared {
             manifest,
             tenant: project.tenant(),
             version,
-            allow_endpoints: project.allow_endpoints.clone(),
         })
     }
 }
@@ -169,17 +166,31 @@ fn preinitialize(project: &Project, wasm: &[u8], configuration: &[u8]) -> anyhow
     let files = project.served_files()?;
     Ok(isoplane_prepare::PreInitializer::new()
         .with_runtime_profile(project.runtime_profile.clone())
-        .with_memory_limit(isoplane_abi::config::GuestMemoryBytes::new(project.manifest.memory_max_bytes())?)
-        .with_engine_config(isoplane_engine::EngineConfig { platform_files: files.clone(), ..engine_configuration(project) })
+        .with_memory_limit(isoplane_abi::config::GuestMemoryBytes::new(
+            project.manifest.memory_max_bytes(),
+        )?)
+        .with_engine_config(isoplane_engine::EngineConfig {
+            platform_files: files.clone(),
+            ..engine_configuration(project)
+        })
         .with_network(initialization_network(project))
         .with_pal(project.init_sandbox)
         .with_runtime_configuration(configuration.to_vec())
         .with_platform_files(files)
-        .run(wasm, &isoplane_prepare::PreInitRequest {
-            module_hash: isoplane_engine::ModuleHash::of(wasm),
-            init_blob: serde_json::to_vec(&project.manifest.init_visible_vars)?,
-        })
-        .map_err(|e| anyhow::anyhow!("pre-initializing {} with {}: {e}; managed guests may require dev.init_sandbox = 'runtime-bringup' in isoplane.toml", project.manifest.name, project.init_sandbox.as_str()))?
+        .run(
+            wasm,
+            &isoplane_prepare::PreInitRequest {
+                module_hash: isoplane_engine::ModuleHash::of(wasm),
+                init_blob: serde_json::to_vec(&project.manifest.init_visible_vars)?,
+            },
+        )
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "pre-initializing {} with {}: {e}; ",
+                project.manifest.name,
+                project.init_sandbox.as_str()
+            )
+        })?
         .template_wasm)
 }
 
@@ -188,7 +199,7 @@ fn initialization_network(project: &Project) -> isoplane_prepare::Initialization
     isoplane_prepare::InitializationNetwork {
         tenant: project.tenant(),
         allowlist: project.manifest.bindings.fetch_allowlist.clone(),
-        allowed_destinations: project.allow_endpoints.clone(),
+        destinations: isoplane_prepare::InitializationDestinations::LocalDevelopment,
         limits: isoplane_runtime::network::NetworkLimits::default(),
         native_handles: host.guest_resources.native_handles,
         pending_futures: project
@@ -284,40 +295,21 @@ impl LocalApp {
         data: &Path,
         configuration: isoplane_host::bindings::RuntimeConfiguration,
     ) -> Result<Arc<Self>, super::Error> {
-        Self::start_with_peer(prepared, data, None, configuration)
+        Self::start_with(prepared, data, configuration)
             .await
             .map_err(super::Error::Startup)
     }
 
-    /// Registers raw debug code with the exact session peer allowed through egress.
-    pub async fn start_debug(
+    async fn start_with(
         prepared: Prepared,
         data: &Path,
-        peer: super::debug::DebugPeer,
-    ) -> Result<Arc<Self>, super::Error> {
-        Self::start_with_peer(
-            prepared,
-            data,
-            Some(peer),
-            isoplane_host::bindings::RuntimeConfiguration::default(),
-        )
-        .await
-        .map_err(super::Error::Startup)
-    }
-
-    async fn start_with_peer(
-        prepared: Prepared,
-        data: &Path,
-        peer: Option<super::debug::DebugPeer>,
         configuration: isoplane_host::bindings::RuntimeConfiguration,
     ) -> anyhow::Result<Arc<Self>> {
         let network = isoplane_runtime::network::NetworkLimits::default();
         let egress = isoplane_host::HostEgressPolicy::system(network.connections)?;
-        let egress =
-            egress.with_destinations(Arc::new(super::destinations::DevelopmentDestinations::new(
-                prepared.allow_endpoints.clone(),
-                peer,
-            )));
+        let egress = egress.with_destinations(Arc::new(
+            isoplane_host::egress::LocalDevelopmentDestinations,
+        ));
         let egress = Arc::new(egress);
         std::fs::create_dir_all(data)?;
         let scratch = tempfile::tempdir_in(data)?;
@@ -401,7 +393,6 @@ mod storage_tests {
             runtime_library: library,
             compilation_directory: directory.path().join("compiled"),
             init_sandbox: isoplane_abi::config::InitSandbox::Sealed,
-            allow_endpoints: vec![],
             platform_files: Default::default(),
             application_files: Default::default(),
             runtime_profile: isoplane_prepare::RuntimeProfile::raw_wasm(),

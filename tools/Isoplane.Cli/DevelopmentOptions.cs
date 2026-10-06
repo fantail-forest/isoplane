@@ -2,7 +2,7 @@ using System.Net;
 
 namespace Isoplane.Cli;
 
-internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool Watch, bool Json, bool ShutdownOnInputClose, bool Debug, string Configuration = "Debug", bool NoBuild = false, IPEndPoint? DebugLaunchEndpoint = null)
+internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool Watch, bool Json, bool ShutdownOnInputClose, bool Debug, string Configuration = "Debug", bool NoBuild = false, IPEndPoint? DebugLaunchEndpoint = null, string? LaunchProfile = null, bool UseLaunchProfile = true)
 {
     internal static DevelopmentOptions Parse(string[] arguments)
     {
@@ -15,6 +15,8 @@ internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool W
         var json = false;
         var debug = false;
         var shutdownOnInputClose = false;
+        string? launchProfile = null;
+        var useLaunchProfile = true;
         for (var index = 0; index < arguments.Length; index++)
         {
             switch (arguments[index])
@@ -35,6 +37,12 @@ internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool W
                     if (!IPEndPoint.TryParse(arguments[++index], out debugLaunchEndpoint)
                         || !debugLaunchEndpoint.Address.Equals(IPAddress.Loopback) || debugLaunchEndpoint.Port == 0)
                         throw new ArgumentException("--debug-launch-endpoint requires an IPv4 loopback endpoint with a nonzero port.");
+                    break;
+                case "--launch-profile" when index + 1 < arguments.Length:
+                    launchProfile = arguments[++index];
+                    break;
+                case "--no-launch-profile":
+                    useLaunchProfile = false;
                     break;
                 case "--debug":
                     debug = true;
@@ -61,10 +69,10 @@ internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool W
             throw new ArgumentException("--no-build requires --no-watch; compile changes explicitly before running again.");
         if (!System.IO.Directory.Exists(directory))
             throw new ArgumentException($"Project directory does not exist: {directory}");
-        if (!File.Exists(Path.Combine(directory, "isoplane.toml")))
-            throw new ArgumentException($"No isoplane.toml in {directory}; create a project with dotnet new isoplane-web.");
+        if (launchProfile is not null && !useLaunchProfile)
+            throw new ArgumentException("Use either --launch-profile NAME or --no-launch-profile, not both.");
         if (System.IO.Directory.GetFiles(directory, "*.csproj").Length != 1)
-            throw new ArgumentException($"Expected exactly one .NET project in {directory}.");
-        return new(directory, port, watch, json, shutdownOnInputClose, debug, configuration, noBuild, debugLaunchEndpoint);
+            throw new ArgumentException($"Expected exactly one .NET project in {directory}; create one with dotnet new, or select its directory with --project.");
+        return new(directory, port, watch, json, shutdownOnInputClose, debug, configuration, noBuild, debugLaunchEndpoint, launchProfile, useLaunchProfile);
     }
 }
