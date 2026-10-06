@@ -15,8 +15,9 @@ public static class IsoplaneHosting
 
 | name | description |
 | --- | --- |
-| static [CreateBuilder](IsoplaneHosting/CreateBuilder.md)(…) | Creates an ASP.NET builder with host-provided runtime configuration and sandbox logging. |
+| static [CreateBuilder](IsoplaneHosting/CreateBuilder.md)(…) | Creates the builder for an application's `Program.cs`. (2 methods) |
 | static [UseIsoplane](IsoplaneHosting/UseIsoplane.md)(…) | Replaces the server with Isoplane's host-delivered request transport. |
+| static [WarmupAsync](IsoplaneHosting/WarmupAsync.md)(…) | Runs a GET through the started application's pipeline and discards its response body. |
 
 ## See Also
 

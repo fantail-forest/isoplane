@@ -33,9 +33,10 @@ is possible even when the previous request completed successfully.
 ## Preparation and activation are different
 
 Application initialization can happen before an instance starts serving requests.
-Subscribe to [`Isoplane.Initialization.Initializing`](reference/sdk/Isoplane.Sdk/Isoplane/Initialization/Initializing.md)
-during application construction to warm reusable state before the template is
-captured, such as serialization metadata or a compiled EF model. Callbacks return
+In `Program.cs`, subscribe to [`Isoplane.Initialization.Initializing`](reference/sdk/Isoplane.Sdk/Isoplane/Initialization/Initializing.md)
+before awaiting `RunAsync` to warm reusable state before the template is
+captured, such as serialization metadata or a compiled EF model. An application
+[without ASP.NET](handle-requests-without-aspnet.md) marks one method `[Initializer]` instead. Callbacks return
 a `Task` and are awaited in registration order before capture. Asynchronous
 network I/O follows the application's normal outbound policy. Await all I/O and
 dispose its connections, streams, and timers before the callback finishes; live
@@ -46,6 +47,8 @@ Static state created during initialization can be copied into multiple instances
 A request identifier, token or application-managed random seed stored in that
 initial state is consequently not guaranteed to be unique to each instance.
 
+Set state that must differ between instances when an instance activates:
+subscribe to `Isoplane.Activation.Activated`, or mark one method `[Activated]`.
 Generate request-specific values while handling the request. If a dependency
 maintains its own random state, check its activation and reseeding requirements;
 copying application state does not make that state unique.

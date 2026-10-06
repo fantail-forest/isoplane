@@ -9,15 +9,18 @@ mdx:
 
 | public type | description |
 | --- | --- |
+| class [ActivatedAttribute](./Isoplane/ActivatedAttribute.md) | Marks the static method that runs once in each instance, before its first request. |
 | static class [Activation](./Isoplane/Activation.md) | The moment an instance first runs after activation from its template. Every activation is a copy of the memory pre-initialisation left, so a generator that seeded itself before the snapshot would replay the same output in each copy; subscribe here to reseed or recreate it. The event is raised once per activation, before the first dispatch, and not again after a wake from hibernation, whose state is the instance's own. |
 | class [BindingException](./Isoplane/BindingException.md) | A capability call the host refused or could not complete; [`IsoplaneError`](./Isoplane/BindingException/IsoplaneError.md) says which. |
 | class [Ctx](./Isoplane/Ctx.md) | The per-dispatch context. |
 | static class [DeploymentConfiguration](./Isoplane/DeploymentConfiguration.md) | Non-secret settings fixed for an application version at deployment. |
 | class [HandlerFactoryRouter](./Isoplane/HandlerFactoryRouter.md) | Routes every dispatch, as a request, to the handler a factory builds once per wasm instance. This is the router the SDK generates for an application factory returning [`IIsoplaneHandler`](./Isoplane/IIsoplaneHandler.md). |
 | class [HandlerRouter&lt;TApp&gt;](./Isoplane/HandlerRouter-1.md) | Routes HTTP dispatches to a Handler; any other trigger is a `PostcardException`. |
+| class [HttpHandlerAttribute](./Isoplane/HttpHandlerAttribute.md) | Marks the static method that handles every HTTP request to an application that has no entry point. |
 | interface [IIsoplaneHandler](./Isoplane/IIsoplaneHandler.md) | A Handler: an HTTP request in, a response out. |
 | interface [IIsoplaneRouter](./Isoplane/IIsoplaneRouter.md) | What routes a decoded dispatch to guest code. `Exports` is generic over one of these, so the SDK names no tenant type. |
 | static class [Initialization](./Isoplane/Initialization.md) | Initializes reusable application state before its deployment template is captured. |
+| class [InitializerAttribute](./Isoplane/InitializerAttribute.md) | Marks the static method that prepares reusable state before the application's template is captured. |
 | class [IsoplaneLoggerProvider](./Isoplane/IsoplaneLoggerProvider.md) | Writes .NET application logs through the sandbox's bounded host logging capability. |
 | interface [IStreamingHttpRouter](./Isoplane/IStreamingHttpRouter.md) | Explicitly selects HTTP routes that consume uploads without SDK buffering. |
 | class [Request](./Isoplane/Request.md) | An HTTP request delivered by the host, for any HTTP method. |

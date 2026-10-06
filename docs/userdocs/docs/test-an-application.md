@@ -64,6 +64,20 @@ configuration, starts the application on an available local port, and stops it
 when disposed. Startup cancellation bounds a hung startup. The diagnostic output
 helps distinguish build or runtime failures from an incorrect HTTP response.
 
+To give the application a setting for the test, such as the connection string of
+a database the test started, pass it in the options:
+
+```csharp
+new ApplicationOptions
+{
+    Settings = new Dictionary<string, string> { ["ConnectionStrings:Todos"] = connectionString }
+}
+```
+
+Settings override the project's launch profile and User Secrets for that session.
+The `isoplane-webapi` and `isoplane-handler` templates include a test project
+that shares one session between its tests.
+
 Use a separate application directory for each concurrent session. The fixture
 owns a session, not a shared global application. These tests exercise an
 application as a client; they do not inject mocks into a running guest or run

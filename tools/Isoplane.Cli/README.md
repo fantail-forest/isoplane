@@ -35,9 +35,9 @@ WASI compiler or host Mono is required to build managed application packages.
 Run a generated app with `dotnet run` or `isoplane dev --project /path/to/app`.
 Project-generated caches, preparation state, and staging files live under the
 project's `.isoplane/` directory. Standard NuGet and SourceLink caches remain shared.
-Publication follows the module path in `isoplane.toml`. Source edits rebuild into a
-staging directory and replace the module after successful publication; failed
-builds leave the last working app serving. Ctrl+C stops the session and its
+The session's port, settings and limit overrides come from the project's launch
+profile and User Secrets. Source edits rebuild the application package and replace
+it after a successful build; failed builds leave the last working app serving. Ctrl+C stops the session and its
 active child processes. `isoplane doctor path/to/module.wasm` runs the native
 validator.
 

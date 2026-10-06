@@ -5,8 +5,8 @@ its guest APIs, shared runtime modules and MSBuild integration.
 
 For ASP.NET applications, use the
 [Isoplane.AspNetCore](https://www.nuget.org/packages/Isoplane.AspNetCore) project
-SDK and the `isoplane-web` template from
-[Isoplane.Templates](https://www.nuget.org/packages/Isoplane.Templates).
+SDK. [Isoplane.Templates](https://www.nuget.org/packages/Isoplane.Templates)
+provides the `isoplane-web`, `isoplane-webapi` and `isoplane-handler` templates.
 The [Isoplane.Cli](https://www.nuget.org/packages/Isoplane.Cli) tool's
 `isoplane setup` command installs the matching native build toolchain.
 

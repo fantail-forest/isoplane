@@ -14,15 +14,9 @@ second schema definition in this sample.
 
 Set `ConnectionStrings:Todo` through runtime configuration or .NET User Secrets.
 The application requires verified PostgreSQL TLS, disables connection pooling,
-and reads credentials only when a request runs. Configure the database endpoint
-and trusted CA in `isoplane.toml` for local development. Do not put credentials in
-that manifest or the source.
+and reads credentials only when a request runs. A local session trusts the
+certificate authorities your machine trusts; name a private authority's PEM file
+in `SSL_CERT_FILE` for one run. Do not put credentials in the source.
 
-Use `dotnet build -c Debug` or
-`dotnet build -c Release`, followed by `dotnet run` with the same
-configuration. The Isoplane SDK publishes `out/Todo.wasm`. The sample's default
-local endpoint is `127.0.0.1:5432`; replace it with the actual database endpoint.
-Both TODO implementations use the same sample resource limits for comparisons.
-
-The sample declares a 512 MiB maximum guest memory. This ceiling keeps the
-workload comparison consistent; it is not a claim about memory actually used.
+Use `dotnet build -c Debug` or `dotnet build -c Release`, followed by
+`dotnet run` with the same configuration.

@@ -5,7 +5,7 @@ export default {
     'index',
     {type: 'category', label: 'Tutorials', items: ['create-an-application']},
     {type: 'category', label: 'How-to guides', items: [
-      'install', 'onboard-an-application', 'run-and-rebuild', 'local-settings',
+      'install', 'onboard-an-application', 'handle-requests-without-aspnet', 'run-and-rebuild', 'local-settings',
       'connect-postgresql', 'test-an-application', 'troubleshooting',
     ]},
     {type: 'category', label: 'Reference', items: [

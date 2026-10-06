@@ -18,6 +18,7 @@ Use these when you have a particular task to complete:
 
 - [Install, update or repair the tools](install.md).
 - [Bring an existing ASP.NET application](onboard-an-application.md).
+- [Handle requests without ASP.NET](handle-requests-without-aspnet.md).
 - [Build, run and watch for changes](run-and-rebuild.md).
 - [Supply local development settings](local-settings.md).
 - [Connect to PostgreSQL](connect-postgresql.md).

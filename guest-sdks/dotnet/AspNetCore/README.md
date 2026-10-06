@@ -10,51 +10,45 @@ available to the first restore:
 ```xml
 <Project Sdk="Isoplane.AspNetCore/VERSION">
   <PropertyGroup>
-    <IsoplaneApplicationFactory>MyApp.Application.Create</IsoplaneApplicationFactory>
+    <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 </Project>
 ```
 
-The named static method returns a built `WebApplication`:
+The application is its `Program.cs`:
 
 ```csharp
-using Microsoft.AspNetCore.Builder;
 using Isoplane.AspNetCore;
 
-namespace MyApp;
+var builder = IsoplaneHosting.CreateBuilder(args);
+var app = builder.Build();
 
-public static class Application
-{
-    public static WebApplication Create()
-    {
-        var builder = IsoplaneHosting.CreateBuilder(typeof(Application).Assembly.GetName().Name!);
-        var app = builder.Build();
-        app.MapGet("/", () => "Hello from ASP.NET on Isoplane");
-        return app;
-    }
-}
+app.MapGet("/", () => "Hello from ASP.NET on Isoplane");
+
+await app.RunAsync();
 ```
 
-Register services and middleware as usual. `CreateBuilder` uses ASP.NET's empty
-builder, with no environment or file configuration sources. Existing builders
-can register the transport with `builder.WebHost.UseIsoplane()`.
+Register services and middleware as usual. `CreateBuilder` reads `appsettings.json`,
+`appsettings.{Environment}.json` and the settings the platform supplies; it does
+not read the machine's environment variables. End the entry point with
+`await app.RunAsync()`: the synchronous `app.Run()` blocks, which a sandboxed
+application cannot do, and the build rejects it. Existing builders can register
+the transport with `builder.WebHost.UseIsoplane()`.
 
-The factory builds the service provider and route conventions during pre-init.
-Keep request-specific state out of that factory. Use an initialization hook for
-asynchronous warmup. After those hooks complete, the adapter starts the .NET host
-and awaits its hosted services before template capture. A hook that warms an
-endpoint starts the same host earlier; automatic startup and real requests reuse
-that completed startup. Request scopes are created and disposed by ASP.NET's normal
-request lifecycle. Ongoing `BackgroundService` work is rejected before startup:
-its lifetime cannot extend beyond a completed dispatch. Asynchronous bounded
-`IHostedService.StartAsync` work is supported.
+Isoplane runs the entry point during pre-init, up to the await on `RunAsync`,
+which starts the .NET host and its hosted services. Initialization hooks run
+next, and the result is captured as the template every instance starts from.
+Keep request-specific state out of the top level of `Program.cs`. Request scopes
+are created and disposed by ASP.NET's normal request lifecycle. Ongoing
+`BackgroundService` work is rejected before startup: its lifetime cannot extend
+beyond a completed dispatch. Asynchronous bounded `IHostedService.StartAsync`
+work is supported.
 
 To warm a read endpoint through middleware, binding and serialization before capture:
 
 ```csharp
-Isoplane.Initialization.Initializing += () =>
-    new IsoplaneApplication(application).WarmupAsync("/todos");
+Isoplane.Initialization.Initializing += () => app.WarmupAsync("/todos");
 ```
 
 The warmup consumes the response locally and fails for unsuccessful HTTP statuses.
@@ -110,8 +104,9 @@ dotnet nuget add source /path/to/feed --name isoplane-local --configfile nuget.c
 isoplane dev
 ```
 
-The generated project includes an ASP.NET route and the local build/run
-configuration. Install the [.NET CLI](../../../tools/Isoplane.Cli/README.md)
+The generated project includes an ASP.NET route, `appsettings.json` and a launch
+profile. `isoplane-webapi` and `isoplane-handler` generate larger starting points
+with tests. Install the [.NET CLI](../../../tools/Isoplane.Cli/README.md)
 and put its tool directory on your PATH. `isoplane dev` builds an application
 package and serves it on the SDK's shared Mono runtime; source edits trigger a
 rebuild. Local state is private to the project directory.

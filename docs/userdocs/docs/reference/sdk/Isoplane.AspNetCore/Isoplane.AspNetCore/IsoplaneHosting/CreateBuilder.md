@@ -3,7 +3,7 @@ mdx:
   format: md
 ---
 
-# IsoplaneHosting.CreateBuilder method
+# IsoplaneHosting.CreateBuilder method (1 of 2)
 
 Creates an ASP.NET builder with host-provided runtime configuration and sandbox logging.
 
@@ -22,6 +22,35 @@ A builder configured to receive requests from Isoplane without opening a listene
 ## Remarks
 
 The environment name is Production. Configuration files and environment variables are not loaded. Configuration, including local User Secrets, is available during template initialization and activation. Captured settings belong to the deployment that prepared the template.
+
+## See Also
+
+* class [IsoplaneHosting](../IsoplaneHosting.md)
+* namespace [Isoplane.AspNetCore](../../Isoplane.AspNetCore.md)
+
+---
+
+# IsoplaneHosting.CreateBuilder method (2 of 2)
+
+Creates the builder for an application's `Program.cs`.
+
+```csharp
+public static WebApplicationBuilder CreateBuilder(string[] args)
+```
+
+| parameter | description |
+| --- | --- |
+| args | The entry point's arguments. Isoplane starts an application with none. |
+
+## Return Value
+
+A builder configured to receive requests from Isoplane without opening a listener.
+
+## Remarks
+
+Configuration is layered as in ASP.NET: `appsettings.json`, then `appsettings.{Environment}.json`, then the settings the platform supplies. In local development those are the project's User Secrets and its launch profile's environment variables. The environment name is the supplied `ASPNETCORE_ENVIRONMENT` or `DOTNET_ENVIRONMENT` setting, and Production without one. The `Logging` configuration section sets log levels. Settings read while the application starts are captured in its template; platform settings are read again when an instance activates. End the entry point with `await app.RunAsync()`.
+
+.NET tools that run the entry point on the developer's machine, such as `dotnet ef` or an in-process test host, get a builder that reads `appsettings` files, User Secrets in Development and environment variables as ASP.NET does, and logs to the console.
 
 ## See Also
 

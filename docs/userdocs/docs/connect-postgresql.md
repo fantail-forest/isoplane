@@ -6,6 +6,10 @@ The release's `samples/aspnet-todo` application uses ASP.NET, Entity Framework
 Core, and Npgsql against a real PostgreSQL database. It requires verified TLS and
 turns connection pooling off. Debug and Release builds use the shared Mono runtime.
 
+To start a new application with a database, `dotnet new isoplane-webapi` creates
+one with EF Core migrations, a local database in `compose.yaml`, and tests. This
+guide walks through the sample, which adds verified TLS and a compiled EF model.
+
 ## Use an existing development database
 
 Use an empty development database at your PostgreSQL provider. Obtain its TLS
@@ -16,8 +20,8 @@ Run the sample's `schema.sql` using your provider's SQL console or an ordinary
 PostgreSQL client. This creates the `Todos` table. Schema administration runs
 outside the guest; the application does not run migrations on startup.
 
-A public CA certificate uses the platform's supplied trust roots. For a database
-using a private CA, see [local private trust](#local-private-trust) below.
+A local session trusts the certificate authorities your machine trusts. For a
+database using a private CA, see [local private trust](#local-private-trust) below.
 
 ## Configure the sample
 
@@ -33,15 +37,12 @@ Host=YOUR_TLS_HOSTNAME;Port=5432;Database=todo;Username=YOUR_USER;Password=YOUR_
 The sample enforces `SslMode=VerifyFull` and `Pooling=false` when constructing
 its connection string. It reads configuration when creating each request's
 DbContext. Its initialization hook warms the read-only `/todos` endpoint, so the
-database must be reachable during application preparation. The factory also sets
+database must be reachable during application preparation. `Program.cs` also sets
 EF's `Microsoft.EntityFrameworkCore.Issue31751` switch through `AppContext` so the
 compiled model initializes without starting an operating-system thread.
 
-For a normal public database endpoint, remove the sample's
-`allow_endpoints = ["127.0.0.1:5432"]` line from `[dev]` in `isoplane.toml`.
-For a database on your local machine, change that line to its exact local IP
-address and port. This explicitly permits that local development destination;
-it does not open unrestricted access to private networks.
+A local session can reach a database on your own machine as well as a public
+endpoint; no extra setting permits either.
 
 ## Optional: start a disposable local database
 
@@ -63,11 +64,16 @@ uses a random password and a private development CA; the password is not printed
 Plaintext database connections are refused. The certificates expire after seven
 days; stop and recreate the database to renew them.
 
-Apply the two configuration snippets printed by the helper to `isoplane.toml`:
-replace `allow_endpoints` inside `[dev]`, then add the separate `[dev.trust]`
-table. These permit precisely the local endpoint and trust its generated CA.
+The helper prints the path of its generated CA certificate. Start the application
+with that path in `SSL_CERT_FILE`, as the helper shows, so the session trusts the
+database's certificate:
+
+```bash
+SSL_CERT_FILE=/path/printed/by/the/helper/ca.crt dotnet run -c Debug
+```
+
 Do not also follow the external-provider connection-string instructions for
-this option. You can now run the app as described below.
+this option.
 
 The database is disposable: stopping it deletes all its rows. After stopping
 the application, clean up from the same sample directory:
@@ -77,8 +83,7 @@ python3 local-postgres.py stop
 dotnet user-secrets remove ConnectionStrings:Todo
 ```
 
-Remove the local endpoint and `[dev.trust]` from `isoplane.toml` before switching to
-another database. The helper removes only its recorded container and temporary
+The helper removes only its recorded container and temporary
 certificate directory. Its ignored `.local-postgres.json` file records that
 ownership; keep it until cleanup. Other User Secrets are left untouched.
 
@@ -116,32 +121,19 @@ same operations. The sample generates its EF model and queries at build time in 
 
 ## Local private trust
 
-For a local database with a private CA, obtain the CA certificate from whoever
-created that database. Put its PEM certificate in your application's directory,
-for example `local-ca.pem`, and calculate its SHA-256:
+A local session trusts the certificate authorities your machine trusts, as any
+.NET program does. For a local database with a private CA, obtain the CA
+certificate from whoever created that database, then either install it in your
+operating system's trust store or name its PEM file for one run:
 
 ```bash
-sha256sum local-ca.pem
+SSL_CERT_FILE=/path/to/local-ca.pem dotnet run
 ```
-
-Add the result to `isoplane.toml`:
-
-```toml
-[dev.trust]
-bundle = "local-ca.pem"
-sha256 = "SHA256_FROM_COMMAND"
-```
-
-This selects the local development trust bundle. A CA-only bundle replaces the
-normal public roots for that session; other HTTPS destinations may then fail
-validation. Use a development bundle containing the roots your application
-needs. The hash pins the exact file; update it intentionally when changing the
-bundle.
 
 The database certificate still needs a matching hostname or IP address and a
 valid chain. Trusting its CA does not disable those checks. Keep its private key
 on the database server, not in the application. Restart the development session
-after changing local trust settings.
+after changing which authorities are trusted.
 
 See [connection-pool and eviction behavior](application-lifecycle.md) before
 enabling pooling in your own application.

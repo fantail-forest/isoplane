@@ -17,9 +17,10 @@ dotnet new isoplane-web --name MyApi
 cd MyApi
 ```
 
-You now have `Application.cs`, a project file, and `isoplane.toml`. Open
-`Application.cs` in your editor. Find the route that returns
-`Hello from Isoplane!`. Leave it unchanged for the first run.
+You now have `Program.cs`, a project file, `appsettings.json` and
+`Properties/launchSettings.json`, as in any ASP.NET project. Open `Program.cs` in
+your editor. Find the route that returns `Hello from Isoplane!`. Leave it
+unchanged for the first run.
 
 Local state is private to the project directory.
 
@@ -43,7 +44,7 @@ open while using the application.
 
 ## Change the response
 
-Press Ctrl+C in the terminal to stop the application. In `Application.cs`,
+Press Ctrl+C in the terminal to stop the application. In `Program.cs`,
 replace `Hello from Isoplane!` with `Hello from my API!` and save the file.
 Run the same command again:
 
@@ -66,3 +67,11 @@ Use [run and watch](run-and-rebuild.md) to restart automatically after edits, or
 [add an integration test](test-an-application.md) for the response you just
 created. [Application packages](execution-modes.md) explains how the SDK selects the
 shared runtime.
+
+`isoplane-web` is the smallest starting point. Two larger templates show more of
+what an application can do, each with tests and a README:
+
+| Template | What it creates |
+| --- | --- |
+| `dotnet new isoplane-webapi` | A Web API with Entity Framework Core, PostgreSQL, OpenAPI and an outbound webhook |
+| `dotnet new isoplane-handler` | A service that [handles requests in one static method](handle-requests-without-aspnet.md), without ASP.NET |

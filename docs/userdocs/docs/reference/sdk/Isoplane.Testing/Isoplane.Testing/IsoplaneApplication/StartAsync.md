@@ -24,7 +24,7 @@ public static Task<IsoplaneApplication> StartAsync(string projectDirectory,
 
 ## Remarks
 
-The project must contain one csproj and isoplane.toml. Cancellation bounds startup and disposes owned children; it does not cancel an already returned session.
+The project directory must contain one csproj. Cancellation bounds startup and disposes owned children; it does not cancel an already returned session.
 
 ## See Also
 

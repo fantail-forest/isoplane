@@ -2,61 +2,61 @@
 title: Bring an existing ASP.NET application
 ---
 
-Move your routes, middleware, and service registrations into an application
-factory that returns a built `WebApplication`. Isoplane supplies the server
+An Isoplane application keeps its `Program.cs`. Isoplane supplies the server
 transport; your application does not open a listener.
 
 Keep an ordinary .NET project for code that also runs elsewhere, and reference it
 from the Isoplane application project. Libraries still need to support the
-sandbox's capabilities and the selected compilation mode.
+sandbox's capabilities.
 
-## Create the application wrapper
+## Create the application project
 
 Follow [the template creation steps](create-an-application.md#create-the-application) to make a `MyApi`
-project next to your existing code. This supplies the matching SDK, configurations
-and local manifest. Move your startup registrations into its `Application.cs`.
-If your application logic is already in a separate library, add an ordinary
-project reference to that library instead of copying its code.
+project next to your existing code. This supplies the matching SDK and launch
+settings. Move your startup code into its `Program.cs`. If your application logic
+is already in a separate library, add an ordinary project reference to that
+library instead of copying its code.
 
 Keep the existing project available while porting. Build and run a small route
 first, then add the remaining services and routes and their integration tests.
 
-## Adapt application startup
+## Adapt `Program.cs`
 
-This is the shape of the factory for an application named `MyApi`:
+Two lines differ from an ordinary ASP.NET application:
 
 ```csharp
-using Microsoft.AspNetCore.Builder;
 using Isoplane.AspNetCore;
 
-namespace MyApi;
+var builder = IsoplaneHosting.CreateBuilder(args);
+// Register application services here.
 
-public static class Application
-{
-    public static WebApplication Create()
-    {
-        var builder = IsoplaneHosting.CreateBuilder(typeof(Application).Assembly.GetName().Name!);
-        // Register application services here.
-        var app = builder.Build();
-        app.MapGet("/", () => "Hello from MyApi");
-        return app;
-    }
-}
+var app = builder.Build();
+app.MapGet("/", () => "Hello from MyApi");
+
+await app.RunAsync();
 ```
 
-The generated project already selects `Isoplane.AspNetCore` and sets
-`IsoplaneApplicationFactory` to `MyApi.Application.Create`. If you change the namespace
-or factory name, update that property to match. Keep package versions aligned
-with your installed release.
+- `IsoplaneHosting.CreateBuilder(args)` replaces `WebApplication.CreateBuilder(args)`.
+- The file ends with `await app.RunAsync()`. The synchronous `app.Run()` blocks
+  until shutdown, which a sandboxed application cannot do, so the build rejects it
+  with `ISOPLANE1005`.
 
-Move service registrations before `builder.Build()` and middleware and endpoint
-registrations after it. Return the application instead of calling `Run()` or
-`RunAsync()`. The factory is called during preparation, before requests arrive.
-Do not open database connections or create request-specific secrets there.
+Everything between stays as it was: service registrations before
+`builder.Build()`, middleware and endpoints after it.
 
-`IsoplaneHosting.CreateBuilder` starts without environment-variable or file-based
-configuration providers. Do not assume that your development machine's
-`appsettings.json`, environment, or filesystem is available inside the sandbox.
+Isoplane runs `Program.cs` up to `RunAsync` during template preparation,
+and every instance starts from the captured result. Preparation may retry;
+reusing a prepared template runs no initialization. Do not open database
+connections or create request-specific secrets at the top level of `Program.cs`;
+see [the application lifecycle](application-lifecycle.md).
+
+## Configuration
+
+`IsoplaneHosting.CreateBuilder` reads `appsettings.json`, then
+`appsettings.{Environment}.json`, then the settings the platform supplies. It does
+not read your machine's environment variables. See
+[local development settings](local-settings.md) for how to supply settings and
+choose the environment while developing.
 
 ## Check application assumptions
 
