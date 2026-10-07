@@ -25,7 +25,7 @@ tasks:
 
   runtime:
     desc: Run shared runtime acceptance tests
-    deps: [':initialize', ':fixtures:acceptance']
+    deps: [':initialize', ':fixtures:acceptance', ':fixtures:feed', ':fixtures:package']
     env: *test_env
     cmds:
       - '{{.DEVELOPMENT_COMMAND}}cargo test -p isoplane-runtime-acceptance {{.CLI_ARGS}}'
