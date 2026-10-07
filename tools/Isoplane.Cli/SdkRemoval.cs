@@ -2,13 +2,12 @@ namespace Isoplane.Cli;
 
 /// <summary>
 /// <c>isoplane uninstall-sdk</c>: removes what the installation manifest records setup owning, registrations before
-/// the SDK that made them, and keeps the manifest with whatever could not be removed so the command can be repeated.
+/// their package files, and keeps the manifest with whatever could not be removed so the command can be repeated.
 /// </summary>
 internal static class SdkRemoval
 {
-    internal static async Task<int> RunAsync(string home, Func<string, ISdkRegistrations> registrations, CancellationToken cancellation, ISdkInstallation? installer = null)
+    internal static async Task<int> RunAsync(string home, Func<string, ISdkRegistrations> registrations, CancellationToken cancellation)
     {
-        installer ??= SdkInstallation.Create(false);
         home = Path.GetFullPath(home);
         var installation = Installation.Load(home);
         if (installation is null)
@@ -32,11 +31,7 @@ internal static class SdkRemoval
             }
             try
             {
-                if (resource.Kind == InstalledResourceKind.WorkloadManifest && failed.Any(item => item.Kind == InstalledResourceKind.Workload))
-                    throw new InvalidOperationException("The workload could not be removed; its discovery manifest is retained so removal can be retried.");
-                if (resource.Kind == InstalledResourceKind.WindowsInstaller && failed.Any(item => item.Kind == InstalledResourceKind.Template))
-                    throw new InvalidOperationException("The template could not be unregistered; the Windows SDK is retained so removal can be retried.");
-                await RemoveAsync(resource, dotnet, installer, cancellation);
+                await RemoveAsync(resource, dotnet, cancellation);
                 installation.Forget(resource);
                 removed++;
             }
@@ -59,19 +54,15 @@ internal static class SdkRemoval
     }
 
     /// <summary>
-    /// Remove registrations before their backing files so failures remain retryable.
+    /// Remove registrations before their backing files.
     /// </summary>
     private static InstalledResource[] RemovalOrder(IReadOnlyList<InstalledResource> resources) =>
         resources.Select((resource, index) => (resource, index))
             .OrderBy(entry => entry.resource.Kind switch
             {
-                InstalledResourceKind.Workload or InstalledResourceKind.WindowsInstaller => -2,
-                InstalledResourceKind.WorkloadManifest => -1,
                 InstalledResourceKind.Template => -3,
                 InstalledResourceKind.PackageSource => 1,
-                InstalledResourceKind.ProfileLine => 2,
                 InstalledResourceKind.File => 3,
-                InstalledResourceKind.SymbolicLink => 4,
                 InstalledResourceKind.Directory => 5,
                 _ => throw new InvalidOperationException($"unknown resource kind {entry.resource.Kind}"),
             })
@@ -79,27 +70,16 @@ internal static class SdkRemoval
             .Select(entry => entry.resource)
             .ToArray();
 
-    private static async Task RemoveAsync(InstalledResource resource, Lazy<ISdkRegistrations> dotnet, ISdkInstallation installer, CancellationToken cancellation)
+    private static async Task RemoveAsync(InstalledResource resource, Lazy<ISdkRegistrations> dotnet, CancellationToken cancellation)
     {
         switch (resource.Kind)
         {
-            case InstalledResourceKind.WindowsInstaller:
-            case InstalledResourceKind.Workload:
-            case InstalledResourceKind.WorkloadManifest:
-                await installer.RemoveAsync(resource, cancellation);
-                break;
             case InstalledResourceKind.Directory:
                 if (Directory.Exists(resource.Target))
                     Directory.Delete(resource.Target, recursive: true);
                 break;
             case InstalledResourceKind.File:
                 File.Delete(resource.Target);
-                break;
-            case InstalledResourceKind.SymbolicLink:
-                if (new FileInfo(resource.Target).LinkTarget is not null)
-                    File.Delete(resource.Target);
-                else if (Directory.Exists(resource.Target))
-                    throw new InvalidOperationException($"{resource.Target} is a directory rather than the link setup created; move it aside.");
                 break;
             case InstalledResourceKind.PackageSource:
                 if (await dotnet.Value.PackageSourceAsync(resource.Target, cancellation) is not null)
@@ -109,9 +89,6 @@ internal static class SdkRemoval
                 if (await dotnet.Value.TemplateVersionAsync(resource.Target, cancellation) is not null)
                     await dotnet.Value.UninstallTemplateAsync(resource.Target, cancellation);
                 break;
-            case InstalledResourceKind.ProfileLine:
-                ShellEnvironment.RemoveLine(resource.Target, resource.Detail ?? throw new InvalidOperationException($"the manifest records no line for {resource.Target}"));
-                break;
         }
     }
 
@@ -119,7 +96,7 @@ internal static class SdkRemoval
     {
         InstalledResourceKind.PackageSource => $"NuGet package source '{resource.Target}'",
         InstalledResourceKind.Template => $"template package {resource.Target}",
-        InstalledResourceKind.ProfileLine => $"the isoplane line in {resource.Target}",
-        _ => resource.Target,
+        InstalledResourceKind.File or InstalledResourceKind.Directory => resource.Target,
+        _ => throw new InvalidOperationException($"unknown resource kind {resource.Kind}"),
     };
 }

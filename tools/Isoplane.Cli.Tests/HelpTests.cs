@@ -17,7 +17,7 @@ public sealed class HelpTests
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         };
-        start.ArgumentList.Add(typeof(Toolchain).Assembly.Location);
+        start.ArgumentList.Add(typeof(CliPaths).Assembly.Location);
         start.ArgumentList.Add(command);
         start.ArgumentList.Add(option);
         using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start the CLI help command.");

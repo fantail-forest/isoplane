@@ -3,47 +3,36 @@
 The package includes the managed CLI and `isoplane-native` support library.
 Native code validates modules and runs local dev/debug sessions through the host;
 project discovery, builds, watching and output are managed.
-Builds still launch .NET, the supplied LLVM/compiler tools and wasm-tools.
+Application builds use the .NET SDK and restore the shared WASM runtime from NuGet.
 Node operators use the daemon's HTTP administration API.
 
 The .NET tool owns publication and source watching; its bundled native runtime
 validates, prepares and executes WASM. Release builds share Linux-built managed assemblies and attach native support
 for Linux x64, Windows x64 and macOS ARM64.
 
-From the repository root, build and pack into a local feed:
-
-```sh
-git submodule update --init tools/debugger-libs
-scripts/dev dotnet pack tools/Isoplane.Cli -o .isoplane-dev/preview-feed
-scripts/dev dotnet tool install Isoplane.Cli --version "$(scripts/release-version.py show)" --tool-path .isoplane-dev/cli --add-source .isoplane-dev/preview-feed
-.isoplane-dev/cli/isoplane --version
-```
+From the repository root, use `task cli` to stage a development CLI and
+`task release` to assemble platform packages.
 
 Every first-party package packs as the release version `Directory.Build.props`
 declares. `isoplane --version` reports the installed CLI version and its source
 revision.
 
-The tool requires .NET 10 to bootstrap. `isoplane setup` downloads the release
-the CLI was built from (`isoplane-linux-x64-VERSION/` under the origin named by
-`ISOPLANE_RELEASE_ORIGIN`, default `https://releases.isoplane.dev/`) or reads it
-from `--source RELEASE_DIRECTORY`, verifies each component against
-`release.json`, and caches release packages under `ISOPLANE_HOME` (default
-`~/.isoplane`). It registers the NuGet feed, installs the Isoplane workload in
-the existing .NET SDK and records owned resources in `installation.json`.
-Workload installation supplies the templates and build tools. Setup requests
-`sudo` access when the SDK directory requires it. Missing Ubuntu native
-prerequisites are installed through the `apt-get` command setup shows, after
-confirmation or with `--yes`.
+The tool requires .NET 10. `isoplane setup` checks native prerequisites and
+installs the matching `Isoplane.Templates` package through NuGet. Project restores
+supply the SDK targets and shared runtime. No Isoplane workload or MSI is required.
+Windows requires the Microsoft Visual C++ x64 Redistributable. On Ubuntu, setup
+can install missing native prerequisites after confirmation or with `--yes`.
 
-`isoplane doctor` verifies the installed SDK and native runtime.
-`isoplane uninstall-sdk` removes owned resources and keeps the CLI.
+For an explicit `--source DIRECTORY|URL`, setup verifies `release.json` and its
+package checksums, copies the packages into `ISOPLANE_HOME/packages` (default
+`~/.isoplane/packages`), and registers that local NuGet feed. Setup records ownership
+in `installation.json`. `isoplane uninstall-sdk` removes owned templates and
+optional feed resources, keeping the CLI. `isoplane doctor` checks the SDK,
+bundled native library and templates.
 
-`task release` packages prepared managed tools and the platform's native library
-with dependency notices. Linux and macOS use workload packs; Windows uses an MSI.
-Customer installation uses the customer's existing .NET SDK. No Rust compiler,
+`task release` assembles NuGet packages with dependency notices. No Rust compiler,
 WASI compiler or host Mono is required to build managed application packages.
-
-Run a generated app with `.isoplane-dev/cli/isoplane dev --project /path/to/app`.
+Run a generated app with `dotnet run` or `isoplane dev --project /path/to/app`.
 Project-generated caches, preparation state, and staging files live under the
 project's `.isoplane/` directory. Standard NuGet and SourceLink caches remain shared.
 Publication follows the module path in `isoplane.toml`. Source edits rebuild into a

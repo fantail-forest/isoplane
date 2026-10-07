@@ -46,11 +46,6 @@ class Downloads:
                 require(size <= limit, f'{key}: exceeds download limit')
                 output.write(data)
 
-    def exists(self, key):
-        request = urllib.request.Request(f'{ORIGIN}/{key}', method='HEAD')
-        with self.opener.open(request, timeout=120) as response:
-            require(response.status == 200, f'{key}: unavailable')
-
 
 def fetch_json(downloads, key, expected, directory):
     path = directory / ('metadata-' + hashlib.sha256(key.encode()).hexdigest() + '.json')
@@ -99,9 +94,6 @@ def verify(version, manifest_sha256, directory, downloads):
         release = fetch_json(downloads, f'{prefix}/release.json', manifest['releases'][rid], directory)
         require(release['sourceRevision'] == revision and release['packageVersion'] == version
                 and release['runtimeIdentifier'] == rid, f'{rid}: release identity mismatch')
-        require(release['toolchain']['archive'] == 'toolchain.tgz', f'{rid}: unexpected toolchain path')
-        digest(release['toolchain']['archiveSha256'])
-        downloads.exists(f'{prefix}/toolchain.tgz')
     packages = manifest['packages']
     ids = package_ids()
     require(isinstance(packages, dict) and set(packages) == set(ids), 'canonical package set mismatch')

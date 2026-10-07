@@ -11,6 +11,7 @@
   <Import Project="../NativeAssets.props" />
   <Import Project="../../licenses/SdkPackage.props" />
   <ItemGroup>
+    <None Condition="'$(NoticesDirectory)' != ''" Include="$(NoticesDirectory)/**/*" Pack="true" PackagePath="notices/" />
     <None Include="../../tools/$(PackageId)/README.md" Pack="true" PackagePath="/" />
   </ItemGroup>
   <ItemGroup Condition="'$(PackageId)' == 'Isoplane.Cli'">
@@ -23,6 +24,7 @@
     <None Include="@(IsoplaneNativeAsset)" Pack="true" PackagePath="runtimes/%(RuntimeIdentifier)/native/" />
   </ItemGroup>
   <Target Name="ValidatePreparedPackage" BeforeTargets="_GetPackageFiles">
+    <Error Condition="!Exists('$(NoticesDirectory)/rust-dependencies.json') OR !Exists('$(NoticesDirectory)/managed-dependencies.json')" Text="Run task notices and supply NoticesDirectory before packing." />
     <Error Condition="'$(PackageId)' != 'Isoplane.Native' AND '$(PackageId)' != 'Isoplane.Cli'" Text="Select Isoplane.Native or Isoplane.Cli with PackageId." />
     <Error Condition="!Exists('$(ManagedDirectory)/bin/$(PackageId)/release/$(PackageId).dll')" Text="Run task managed:build on Linux before packing." />
     <Error Condition="'@(IsoplaneNativeAsset)' == ''" Text="Supply IsoplaneNativePath or IsoplaneNativeRoot with prepared native libraries." />

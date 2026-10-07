@@ -81,7 +81,6 @@ def main():
     operations, metadata = [], []
     publication = dict(version=args.version, sourceRevision=descriptions[0]['sourceRevision'], packages={}, releases={})
     for path, description in zip(releases, descriptions):
-        operations.append(record(path / 'toolchain.tgz', f'{path.name}/toolchain.tgz', description['toolchain']['archiveSha256']))
         operations.extend(record(path / p['file'], f"{path.name}/{p['file']}", p['sha256']) for p in description['packages'])
         metadata.append(record(path / 'release.json', f'{path.name}/release.json'))
         publication['releases'][description['runtimeIdentifier']] = metadata[-1]['sha256']

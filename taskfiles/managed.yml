@@ -113,13 +113,14 @@ tasks:
   native-packages:
     run: once
     label: 'native-packages:{{.PLATFORM}}'
-    deps: [build, ':native:release']
+    deps: [build, ':native:release', ':notices']
     vars:
       OUTPUT: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/packages'
     sources:
       - '{{.MANAGED}}/publish/Isoplane.Cli/release/**/*'
       - '{{.MANAGED}}/bin/Isoplane.Native/release/*'
       - '{{.RELEASE_NATIVE_LIBRARY}}'
+      - '{{.ROOT_DIR}}/.build/clr-anycpu/notices/**/*'
       - '{{.ROOT_DIR}}/taskfiles/NativePackages/**/*'
       - '{{.ROOT_DIR}}/tools/{Isoplane.Cli,Isoplane.Native}/README.md'
       - '{{.ROOT_DIR}}/licenses/SdkPackage.props'
@@ -132,4 +133,4 @@ tasks:
       - '{{.OUTPUT}}/Isoplane.Native.*.nupkg'
     cmds:
       - for: [Isoplane.Native, Isoplane.Cli]
-        cmd: '"{{.DOTNET}}" msbuild taskfiles/NativePackages/NativePackages.csproj -restore -t:Pack -p:NoBuild=true -p:Configuration=Release -p:ArtifactsPath="{{.OUTPUT}}/intermediates/{{.ITEM}}" -p:PackageOutputPath="{{.OUTPUT}}" -p:PackageId={{.ITEM}} -p:ManagedDirectory="{{.MANAGED}}" -p:IsoplaneNativePath="{{.RELEASE_NATIVE_LIBRARY}}" -p:IsoplaneNativeRid={{.PLATFORM}}'
+        cmd: '"{{.DOTNET}}" msbuild taskfiles/NativePackages/NativePackages.csproj -restore -t:Pack -p:NoBuild=true -p:Configuration=Release -p:ArtifactsPath="{{.OUTPUT}}/intermediates/{{.ITEM}}" -p:PackageOutputPath="{{.OUTPUT}}" -p:PackageId={{.ITEM}} -p:ManagedDirectory="{{.MANAGED}}" -p:IsoplaneNativePath="{{.RELEASE_NATIVE_LIBRARY}}" -p:IsoplaneNativeRid={{.PLATFORM}} -p:NoticesDirectory="{{.ROOT_DIR}}/.build/clr-anycpu/notices"'

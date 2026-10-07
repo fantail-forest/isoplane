@@ -2,13 +2,11 @@
 title: Install the SDK
 ---
 
-The Isoplane tools install in two steps: the `isoplane` command as a global
-.NET tool, then `isoplane setup`, which installs the SDK, compiler tools,
-runtime, package feed and project templates that match that command. You do
-not need an Isoplane checkout, Rust, Mono, or a separately installed WASI SDK.
-
-The validated platforms are Ubuntu 24.04 x64 and Windows 11 x64. Package
-restore needs internet access.
+Install the `isoplane` CLI as a global .NET tool, then run `isoplane setup`
+to check prerequisites and install project templates. Projects restore their SDK
+and shared WASM runtime through NuGet. No Isoplane workload, MSI, Rust, Mono or
+WASI compiler is needed. Releases support Linux x64, Windows x64 and macOS ARM64.
+Package restore needs internet access.
 
 ## Prerequisite: a .NET SDK
 
@@ -19,8 +17,9 @@ one, which also brings every native library the Isoplane toolchain needs:
 sudo apt-get install -y dotnet-sdk-10.0
 ```
 
-On Windows, install the .NET 10 SDK before installing the CLI. Setup installs
-the required Visual C++ runtime if it is missing.
+On Windows, install the .NET 10 SDK before installing the CLI. Also install the
+[Visual C++ x64 Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe).
+On macOS, install the ARM64 .NET 10 SDK.
 
 Setup reuses whatever `dotnet` you have and never changes your `DOTNET_ROOT`.
 On another Linux distribution, install the .NET 10 SDK its packages provide,
@@ -40,24 +39,18 @@ The tool installs into `~/.dotnet/tools` on Linux and `%USERPROFILE%\.dotnet\too
 on Windows. Add that directory to your PATH if your .NET installation has not
 already done so; reopen your terminal after changing it.
 
-Setup downloads and verifies the release matching the CLI. On Linux it installs
-an Isoplane workload into your existing .NET SDK. On Windows it uses Windows
-Installer to install the compiler and runtime tools, and registers the project
-template. Windows installations are maintained by Isoplane setup and Windows
-Installer; `dotnet workload update` does not manage them. Setup requests
-administrator access when needed.
-
-Release packages and the installation record are kept under `~/.isoplane`
-on Linux and `%USERPROFILE%\.isoplane` on Windows (`ISOPLANE_HOME` overrides this).
-Setup registers the release's NuGet feed and runs the installed tools before reporting success. Your shell configuration and
-.NET SDK selection stay unchanged.
+Setup installs the matching `Isoplane.Templates` package through NuGet. The CLI
+package already contains its native host library. Setup records template ownership
+under `~/.isoplane` (`%USERPROFILE%\.isoplane` on Windows); `ISOPLANE_HOME`
+overrides that location. Your shell configuration and .NET SDK installation stay
+unchanged.
 
 ```bash
 isoplane doctor
 dotnet new list
 ```
 
-Doctor checks the installation's integrity and runs the tools; it reports
+Doctor checks the selected .NET SDK, native host library and templates; it reports
 problems and does not repair them. The template list includes
 `isoplane-web`. Continue with [creating an application](create-an-application.md).
 
@@ -68,10 +61,16 @@ while anything is missing.
 
 For a release supplied as a directory instead of downloaded, run
 `isoplane setup --source RELEASE_DIRECTORY`, and install the CLI with
-`--add-source RELEASE_DIRECTORY/packages`. `ISOPLANE_RELEASE_ORIGIN` points
-setup at another release origin.
+`--add-source RELEASE_DIRECTORY/packages`. An HTTP release directory URL is also
+accepted. This explicit mode verifies the matching release identity and package
+checksums, copies packages into `ISOPLANE_HOME/packages`, and registers a local
+NuGet feed. It does not make dependency restore fully offline.
 
 ## Update
+
+If upgrading from a preview that installed an Isoplane workload or MSI, run
+`isoplane uninstall-sdk` with that old CLI first. The new CLI does not manage
+those older installation records.
 
 Stop running development sessions, then update the CLI and run setup again:
 
@@ -81,11 +80,8 @@ isoplane setup
 isoplane doctor
 ```
 
-Setup installs the release matching the updated CLI, updates the
-template registration, and keeps earlier SDK packages so existing
-applications still restore. Windows SDK versions install side by side. Setup
-refuses a release the installed CLI was not built from, naming the `dotnet tool update` command that installs the matching
-CLI.
+Setup updates the template registration. Existing applications retain their
+pinned SDK packages in NuGet's standard cache.
 
 The new template selects the matching SDK automatically. To move an existing
 application to the new release, change the version in
@@ -95,9 +91,10 @@ test each configuration you use.
 
 ## Repair
 
-Run `isoplane setup` again. It reuses verified components, downloads what is
-missing or damaged, and re-registers the feed and templates. It does not rewrite
-your project's package references.
+Run `isoplane setup` again to restore missing template registration. For a damaged
+CLI or bundled native library, uninstall and reinstall the `Isoplane.Cli` tool.
+Explicit `--source` setup also restores missing or damaged local feed packages.
+Setup does not rewrite project package references.
 
 ## Remove the SDK
 
@@ -106,8 +103,8 @@ isoplane uninstall-sdk
 ```
 
 This removes the resources setup owns, as recorded in `installation.json`
-under the installation home: the SDK tools, the package feed and its NuGet
-registration, and the template registration. Resources that
+under the installation home: the template registration and, when installed with `--source`, the local
+package feed and its NuGet registration. Resources that
 existed before setup, your projects, and the CLI's own configuration and
 sign-in state stay. Anything that could not be removed remains listed in the
 manifest with the reason, and the command can be run again. Without a

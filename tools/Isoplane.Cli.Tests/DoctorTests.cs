@@ -22,7 +22,7 @@ public sealed class DoctorTests
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
             };
-            start.ArgumentList.Add(typeof(Toolchain).Assembly.Location);
+            start.ArgumentList.Add(typeof(CliPaths).Assembly.Location);
             start.ArgumentList.Add("doctor");
             start.Environment["ISOPLANE_HOME"] = home;
             using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start doctor.");

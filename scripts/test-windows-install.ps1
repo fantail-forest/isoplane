@@ -7,10 +7,9 @@ $ErrorActionPreference = 'Stop'
 $Release = (Resolve-Path $Release).Path
 $manifest = Get-Content "$Release\release.json" -Raw | ConvertFrom-Json
 if ($manifest.runtimeIdentifier -ne 'win-x64') { throw 'The journey requires a Windows x64 release.' }
-$sdk = Join-Path $env:ProgramW6432 "Isoplane\SDK\$($manifest.packageVersion)"
-if (Test-Path $sdk) { throw "The journey requires this release to be absent: $sdk" }
 $runs = Join-Path (Split-Path $PSScriptRoot -Parent) '.test-runs\win-x64\installation'
 $workspace = Join-Path $runs ([Guid]::NewGuid().ToString('N'))
+$previousCliHome = $env:DOTNET_CLI_HOME
 $previousHome = $env:ISOPLANE_HOME
 $previousPackages = $env:NUGET_PACKAGES
 $previousTemp = $env:TEMP
@@ -21,6 +20,7 @@ $scratch = Join-Path $workspace 'tmp'
 New-Item -ItemType Directory $scratch | Out-Null
 $env:TEMP = $scratch
 $env:TMP = $scratch
+$env:DOTNET_CLI_HOME = $workspace
 $env:ISOPLANE_HOME = Join-Path $workspace 'installation'
 $env:NUGET_PACKAGES = Join-Path $workspace 'packages'
 $toolDirectory = Join-Path $workspace 'tools'
@@ -41,8 +41,18 @@ function Test-HttpGuest([string]$Profile, [string]$Configuration) {
 
 try {
     Set-Location $workspace
-    Invoke-Dotnet new nugetconfig
-    Invoke-Dotnet tool install Isoplane.Cli --tool-path $toolDirectory --add-source "$Release\packages" --version $manifest.packageVersion
+    foreach ($file in @('Directory.Build.props', 'Directory.Build.targets', 'Directory.Packages.props')) {
+        Set-Content -Encoding UTF8 (Join-Path $workspace $file) '<Project />'
+    }
+    Set-Content -Encoding UTF8 (Join-Path $workspace 'global.json') '{"sdk":{"version":"10.0.100","rollForward":"latestFeature","allowPrerelease":false}}'
+    $feed = [Security.SecurityElement]::Escape((Join-Path $Release 'packages'))
+    Set-Content -Encoding UTF8 (Join-Path $workspace 'nuget.config') @"
+<configuration>
+  <packageSources><clear/><add key="release" value="$feed"/><add key="nuget" value="https://api.nuget.org/v3/index.json"/></packageSources>
+  <packageSourceMapping><packageSource key="release"><package pattern="Isoplane.*"/></packageSource><packageSource key="nuget"><package pattern="*"/></packageSource></packageSourceMapping>
+</configuration>
+"@
+    Invoke-Dotnet tool install Isoplane.Cli --tool-path $toolDirectory --configfile (Join-Path $workspace 'nuget.config') --version $manifest.packageVersion
     Invoke-Cli setup --source $Release --yes
     Invoke-Cli setup --source $Release --yes
     Invoke-Dotnet new isoplane-web --name Sample
@@ -79,17 +89,16 @@ throw new Exception("Disposal left the application listener running.");
     Test-HttpGuest Mono Debug
     Invoke-Dotnet build -c Release --disable-build-servers
     Test-HttpGuest Release Release
-    Remove-Item "$sdk\cli\Isoplane.Cli.dll"
+    $templatePackage = Join-Path $env:ISOPLANE_HOME "packages/Isoplane.Templates.$($manifest.packageVersion).nupkg"
+    Remove-Item $templatePackage
     Invoke-Cli setup --source $Release --yes
-    if (!(Test-Path "$sdk\cli\Isoplane.Cli.dll")) { throw 'Repair did not restore the missing tool.' }
-    $customerFile = "$sdk\customer-owned.txt"
+    if (!(Test-Path $templatePackage)) { throw 'Repair did not restore the missing package.' }
+    $customerFile = Join-Path $env:ISOPLANE_HOME 'customer-owned.txt'
     Set-Content $customerFile 'Customer content'
     Invoke-Cli uninstall-sdk
-    if (Test-Path "$sdk\Sdk\Sdk.props") { throw 'Removal left the SDK installed.' }
-    if (!(Test-Path "$sdk\customer-owned.txt")) { throw 'Removal deleted customer-owned content.' }
-    Remove-Item "$sdk\customer-owned.txt"
-    # An empty customer directory is deliberately not an installation owned by setup.
-    Remove-Item $sdk
+    if (Test-Path $templatePackage) { throw 'Removal left the owned package installed.' }
+    if (!(Test-Path $customerFile)) { throw 'Removal deleted customer-owned content.' }
+    Remove-Item $customerFile
     Invoke-Cli setup --source $Release --yes
     Invoke-Cli doctor
     Invoke-Cli uninstall-sdk
@@ -104,13 +113,11 @@ finally {
         if ($customerFile -and (Test-Path -LiteralPath $customerFile)) {
             Remove-Item -LiteralPath $customerFile
         }
-        if ((Test-Path -LiteralPath $sdk) -and !(Get-ChildItem -LiteralPath $sdk -Force)) {
-            Remove-Item -LiteralPath $sdk
-        }
         $installationRemoved = $true
     }
     finally {
         Set-Location $previousLocation
+        $env:DOTNET_CLI_HOME = $previousCliHome
         $env:ISOPLANE_HOME = $previousHome
         $env:NUGET_PACKAGES = $previousPackages
         $env:TEMP = $previousTemp

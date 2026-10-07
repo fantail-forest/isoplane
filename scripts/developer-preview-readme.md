@@ -1,41 +1,38 @@
 # Isoplane developer preview
 
-This release targets @RUNTIME_IDENTIFIER@. It contains `release.json`,
-the package feed (`packages/`), the toolchain archive (`toolchain.tgz`) and a
-sample. Every Isoplane package carries the version in `package-version.txt`;
-`release.json` records the source revision and the checksum of each component.
+This release targets @RUNTIME_IDENTIFIER@. It contains `release.json`, a NuGet
+package feed (`packages/`) and a sample. `release.json` records the source
+revision and package checksums; `package-version.txt` records the version.
 
 @SDK_PREREQUISITES@
 
-Then install the CLI as a global .NET tool and let it install the rest:
+For a published release:
 
 ```sh
-dotnet tool install --global Isoplane.Cli --version @PACKAGE_VERSION@ --add-source "$PWD/packages"
-export PATH="$HOME/.dotnet/tools:$PATH"
-isoplane setup --source "$PWD"
+dotnet tool install --global Isoplane.Cli --version @PACKAGE_VERSION@
+isoplane setup
 dotnet new isoplane-web --name MyApp
 ```
 
-Setup installs the Isoplane workload into your existing .NET SDK and registers
-the release's NuGet feed. It requests administrator access if the SDK directory
-requires it. Release packages and ownership records live in `~/.isoplane`;
-setup preserves your shell configuration and SDK selection. Add
-`~/.dotnet/tools` to your shell startup configuration for future terminals.
-Without `--source`, setup downloads the release matching the installed CLI.
-`isoplane doctor` diagnoses installation problems. `isoplane uninstall-sdk`
-removes owned SDK resources and keeps the CLI.
+Add `~/.dotnet/tools` (Windows: `%USERPROFILE%\.dotnet\tools`) to PATH if needed.
+The CLI includes its native host library. Setup checks prerequisites and installs
+the matching project templates through NuGet. Projects restore their SDK and
+shared WASM runtime through NuGet; no Isoplane workload or MSI is installed.
+Windows also requires Microsoft's Visual C++ x64 Redistributable.
 
-For a new release, run `dotnet tool update --global Isoplane.Cli --version VERSION
---add-source RELEASE/packages` and then `isoplane setup --source RELEASE`. Setup
-refuses a release the installed CLI was not built from and names the update
-command. Existing projects keep their pinned SDK version; update the version in
-`<Project Sdk="Isoplane.AspNetCore/VERSION">` and any Isoplane package references
-to `package-version.txt` when upgrading an application.
+For this local release directory, add `--add-source "$PWD/packages"` to the
+CLI installation command and use `isoplane setup --source "$PWD"`. That verifies
+the release identity and package checksums, copies packages into `~/.isoplane/packages`,
+and registers that local feed. Dependencies may still require network access.
 
-Package restore can also contact nuget.org and the .NET experimental compiler
-feed; fully offline builds are not promised. Follow the customer documentation
-for `dotnet run`, `dotnet watch`, testing and database configuration. Debugger
-support is not established by successful installation.
+`isoplane doctor` checks prerequisites, the native library and template registration.
+`isoplane uninstall-sdk` removes setup-owned templates and optional local feed
+resources; remove the CLI separately with `dotnet tool uninstall --global Isoplane.Cli`.
 
-Third-party attribution and license texts are in `notices/` inside the Isoplane
-toolchain workload pack, with upstream notices retained in the runtime and build packs.
+Update the CLI and rerun setup for a new release. Existing projects keep their
+pinned SDK version; update `<Project Sdk="Isoplane.AspNetCore/VERSION">` and any
+Isoplane package references when upgrading an application. `dotnet run` invokes
+`isoplane dev` through the project's SDK targets.
+
+Third-party attribution and license texts are in `notices/` in the CLI and native
+NuGet packages.

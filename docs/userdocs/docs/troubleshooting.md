@@ -23,29 +23,23 @@ that root. `dotnet --info` shows which SDK and runtime identifier are active.
 ## Command or SDK not found
 
 Check that `~/.dotnet/tools` is on `PATH` so your shell can find `isoplane`.
-`dotnet --info` shows your selected SDK. On Linux and macOS, Isoplane uses that
-SDK's workload installation; after switching SDK feature bands, run
-`isoplane setup` again. On Windows, setup maintains an MSI installation;
-Isoplane does not appear in `dotnet workload list`.
-Projects do not need a machine-specific SDK path.
+`dotnet --info` shows your selected SDK. Projects restore their Isoplane SDK
+from NuGet and do not need a machine-specific SDK path or custom workload.
 
-## Missing or damaged toolchain
+## Missing or damaged CLI
 
-Run `isoplane setup`, then `isoplane doctor` again. Setup reuses verified
-components and downloads the rest; it refuses a release the installed CLI was
-not built from and prints the `dotnet tool update` command that installs the
-matching CLI. Do not combine files from different releases or repair hashes by
-hand. If setup or doctor reports a missing system library, install the package
-setup names; the toolchain does not replace glibc or the operating system's
-native dependencies.
+Run `isoplane doctor` to check prerequisites and the bundled native library.
+Reinstall the `Isoplane.Cli` .NET tool if its files are missing or damaged.
+Run `isoplane setup` to restore template registration. If a system library is
+missing, install the package named by setup or doctor.
 
 ## Package restore cannot find the SDK
 
-Setup registers the release feed as the NuGet package source `isoplane`, at
-`~/.isoplane/packages`; `dotnet nuget list source` shows it. A `nuget.config`
-with `<clear />` between the project and your home directory hides it. Confirm
-the project references a package version that feed holds; `isoplane setup`
-keeps the packages of every release it installed.
+Check `dotnet nuget list source`: nuget.org must be enabled for published releases.
+A `nuget.config` with `<clear />` may hide user-level feeds. For local releases,
+`isoplane setup --source RELEASE_DIRECTORY` registers the verified packages as
+`isoplane` at `~/.isoplane/packages`. Check that the requested version is available
+in the selected feed.
 
 ## An application build fails
 

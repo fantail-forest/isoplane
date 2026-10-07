@@ -123,7 +123,6 @@ $packages = @{
     'usr\bin\patch.exe' = 'patch'; 'usr\bin\tar.exe' = 'tar'; 'usr\bin\unzip.exe' = 'unzip'
     'usr\bin\curl.exe' = 'curl'
     'mingw64\bin\gcc.exe' = 'mingw-w64-x86_64-gcc'; 'mingw64\bin\python.exe' = 'mingw-w64-x86_64-python'
-    'mingw64\bin\wixl.exe' = 'mingw-w64-x86_64-msitools'
 }
 $missing = @($packages.Keys | Where-Object { !(Test-Path -LiteralPath (Join-Path $MsysRoot $_)) } | ForEach-Object { $packages[$_] })
 if ($missing.Count) {

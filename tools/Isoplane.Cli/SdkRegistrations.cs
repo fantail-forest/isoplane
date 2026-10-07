@@ -6,7 +6,7 @@ namespace Isoplane.Cli;
 
 /// <summary>
 /// The registrations a .NET SDK keeps for its user: NuGet package sources and template packages.
-/// Setup registers the feed; Windows setup also registers the template package.
+/// Setup registers templates and, for an explicit offline source, a package feed.
 /// </summary>
 internal interface ISdkRegistrations
 {
@@ -16,6 +16,8 @@ internal interface ISdkRegistrations
     Task RemovePackageSourceAsync(string name, CancellationToken cancellation);
     /// <summary>The version of the registered template package, or null when it is not registered.</summary>
     Task<string?> TemplateVersionAsync(string packageId, CancellationToken cancellation);
+    /// <summary>Installs a template package from an ID::version or a local package file.</summary>
+    Task InstallTemplateAsync(string source, CancellationToken cancellation);
     Task UninstallTemplateAsync(string packageId, CancellationToken cancellation);
 }
 
@@ -68,8 +70,13 @@ internal sealed partial class DotnetRegistrations(string dotnet, string workingD
         return null;
     }
 
+    public Task InstallTemplateAsync(string source, CancellationToken cancellation) =>
+        RunAsync(["new", "install", source, "--force"], cancellation);
+
     public Task UninstallTemplateAsync(string packageId, CancellationToken cancellation) =>
         RunAsync(["new", "uninstall", packageId], cancellation);
+
+    internal Task<string> SdkVersionAsync(CancellationToken cancellation) => RunAsync(["--version"], cancellation);
 
     private async Task<string> RunAsync(string[] arguments, CancellationToken cancellation)
     {

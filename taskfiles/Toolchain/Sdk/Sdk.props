@@ -1,6 +1,0 @@
-<Project>
-  <PropertyGroup>
-    <IsoplaneWorkloadInstalled>true</IsoplaneWorkloadInstalled>
-    <IsoplaneCliAssembly Condition="'$(IsoplaneCliAssembly)' == ''">$([MSBuild]::NormalizePath('$(MSBuildThisFileDirectory)', '../cli/Isoplane.Cli.dll'))</IsoplaneCliAssembly>
-  </PropertyGroup>
-</Project>

@@ -1,15 +1,4 @@
 <Project>
-  <Target Name="StageToolchain">
-    <ItemGroup>
-      <Cli Include="$(ManagedDirectory)/publish/Isoplane.Cli/release/**/*" />
-      <Notice Include="$(NoticeDirectory)/**/*" />
-    </ItemGroup>
-    <Copy SourceFiles="@(Cli)" DestinationFiles="@(Cli->'$(StageDirectory)/cli/%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
-    <Copy SourceFiles="$(NativeLibrary)" DestinationFolder="$(StageDirectory)/cli/runtime" SkipUnchangedFiles="true" />
-    <Copy SourceFiles="@(Notice)" DestinationFiles="@(Notice->'$(StageDirectory)/notices/%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
-    <Copy SourceFiles="../licenses/Isoplane-SDK-LICENSE.txt" DestinationFolder="$(StageDirectory)" SkipUnchangedFiles="true" />
-    <Copy SourceFiles="Toolchain/Sdk/Sdk.props;Toolchain/Sdk/Sdk.targets" DestinationFolder="$(StageDirectory)/Sdk" SkipUnchangedFiles="true" />
-  </Target>
   <Target Name="StageRelease">
     <ItemGroup>
       <Package Include="$(SharedPackages)/Isoplane.*.$(Version).nupkg;$(NativePackages)/Isoplane.*.$(Version).nupkg" />

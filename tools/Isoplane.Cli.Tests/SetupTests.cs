@@ -5,27 +5,24 @@ namespace Isoplane.Cli.Tests;
 
 public sealed class SetupTests
 {
-    private static HttpClient Client(ToolchainBundle fixture) => new(new StaticOriginHandler(fixture.Root));
+    private static HttpClient Client(ReleaseFixture fixture) => new(new StaticOriginHandler(fixture.Root));
 
-    private static Task<int> RunAsync(ToolchainBundle fixture, SetupMachine machine, string? source = null, bool yes = false, ReleaseIdentity? cli = null, HttpClient? client = null) =>
+    private static Task<int> RunAsync(ReleaseFixture fixture, SetupMachine machine, string? source = null, bool yes = false, ReleaseIdentity? cli = null, HttpClient? client = null) =>
         Setup.RunAsync(new SetupOptions(source ?? fixture.Release, yes), cli ?? fixture.Cli, fixture.Home, machine, client ?? Client(fixture), CancellationToken.None);
 
-    private static JsonDocument Manifest(ToolchainBundle fixture) => JsonDocument.Parse(File.ReadAllText(Installation.PathIn(fixture.Home)));
+    private static JsonDocument Manifest(ReleaseFixture fixture) => JsonDocument.Parse(File.ReadAllText(Installation.PathIn(fixture.Home)));
 
     [Fact]
     public async Task A_clean_setup_installs_every_component_and_records_each_in_the_installation_manifest()
     {
-        using var fixture = new ToolchainBundle();
+        using var fixture = new ReleaseFixture();
         var registrations = new FakeRegistrations();
         Assert.Equal(0, await RunAsync(fixture, Machines.Ready(fixture, registrations)));
 
-        var toolchain = await Toolchain.DiagnoseAsync(fixture.Home, CancellationToken.None);
-        Assert.Equal(Path.Combine(Toolchain.Installations(fixture.Home), fixture.Identity), toolchain);
-        foreach (var id in ToolchainBundle.PackageIds)
-            Assert.True(File.Exists(Path.Combine(fixture.Home, "packages", $"{id}.{ToolchainBundle.Version}.nupkg")), $"the {id} package must be installed into the feed");
+        foreach (var id in ReleaseFixture.PackageIds)
+            Assert.True(File.Exists(Path.Combine(fixture.Home, "packages", $"{id}.{ReleaseFixture.Version}.nupkg")), $"the {id} package must be installed into the feed");
         Assert.Equal(Path.Combine(fixture.Home, "packages"), registrations.Sources["isoplane"]);
-        Assert.Equal(ToolchainBundle.Version, registrations.Templates["Isoplane.Templates"]);
-        Assert.False(Directory.Exists(Path.Combine(fixture.Home, "downloads")), "the toolchain archive is not kept after installation");
+        Assert.Equal(ReleaseFixture.Version, registrations.Templates["Isoplane.Templates"]);
         var profile = await File.ReadAllTextAsync(Path.Combine(fixture.UserHome, ".profile"));
         Assert.Equal("# user profile\n", profile);
         Assert.StartsWith("# user profile", profile);
@@ -35,17 +32,15 @@ public sealed class SetupTests
         var recorded = manifest.RootElement.GetProperty("resources").EnumerateArray()
             .Select(resource => (Kind: resource.GetProperty("kind").GetString(), Target: resource.GetProperty("target").GetString(), Owned: resource.GetProperty("owned").GetBoolean()))
             .ToList();
-        Assert.Contains(("Directory", toolchain, true), recorded);
         Assert.Contains(("PackageSource", "isoplane", true), recorded);
-        Assert.Contains(("Workload", "isoplane", true), recorded);
-        Assert.DoesNotContain(recorded, resource => resource.Target!.Contains("downloads", StringComparison.Ordinal));
-        Assert.Equal(ToolchainBundle.Version, manifest.RootElement.GetProperty("cliVersion").GetString());
+        Assert.Contains(("Template", "Isoplane.Templates", true), recorded);
+        Assert.Equal(ReleaseFixture.Version, manifest.RootElement.GetProperty("cliVersion").GetString());
     }
 
     [Fact]
     public async Task Running_setup_again_changes_nothing()
     {
-        using var fixture = new ToolchainBundle();
+        using var fixture = new ReleaseFixture();
         var registrations = new FakeRegistrations();
         Assert.Equal(0, await RunAsync(fixture, Machines.Ready(fixture, registrations)));
         var manifest = await File.ReadAllTextAsync(Installation.PathIn(fixture.Home));
@@ -60,50 +55,47 @@ public sealed class SetupTests
     [Fact]
     public async Task Setup_downloads_the_release_over_http_and_installs_it()
     {
-        using var fixture = new ToolchainBundle();
+        using var fixture = new ReleaseFixture();
         var handler = new StaticOriginHandler(fixture.Root);
         var registrations = new FakeRegistrations();
         Assert.Equal(0, await RunAsync(fixture, Machines.Ready(fixture, registrations), "http://origin.test/release/", client: new HttpClient(handler)));
-        Assert.Contains("release/toolchain.tgz", handler.Requests);
         Assert.Contains("release/packages/Isoplane.Templates.0.1.0-preview.1.nupkg", handler.Requests);
-        Assert.NotNull(await Toolchain.DiagnoseAsync(fixture.Home, CancellationToken.None));
+        Assert.Equal(ReleaseFixture.Version, registrations.Templates["Isoplane.Templates"]);
     }
 
     [Fact]
-    public async Task An_interrupted_toolchain_download_leaves_no_toolchain_selected_and_a_manifest_describing_the_partial_install()
+    public async Task An_interrupted_package_download_can_be_retried_without_registering_partial_templates()
     {
-        using var fixture = new ToolchainBundle();
+        using var fixture = new ReleaseFixture();
         var handler = new StaticOriginHandler(fixture.Root);
-        handler.Truncated.Add("release/toolchain.tgz");
+        handler.Truncated.Add("release/packages/Isoplane.Templates.0.1.0-preview.1.nupkg");
         var registrations = new FakeRegistrations();
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() => RunAsync(fixture, Machines.Ready(fixture, registrations), "http://origin.test/release/", client: new HttpClient(handler)));
         Assert.Contains("interrupted", error.Message);
-        Assert.False(File.Exists(Path.Combine(fixture.Home, "current.json")), "an incomplete download must not select a toolchain");
         var recorded = Manifest(fixture).RootElement.GetProperty("resources").EnumerateArray().Select(resource => resource.GetProperty("target").GetString()!).ToList();
-        Assert.Contains(Path.Combine(fixture.Home, "downloads"), recorded);
         Assert.Contains(Path.Combine(fixture.Home, "packages"), recorded);
         Assert.Empty(registrations.Templates);
 
         handler.Truncated.Clear();
         Assert.Equal(0, await RunAsync(fixture, Machines.Ready(fixture, registrations), "http://origin.test/release/", client: new HttpClient(handler)));
-        Assert.NotNull(await Toolchain.DiagnoseAsync(fixture.Home, CancellationToken.None));
+        Assert.Equal(ReleaseFixture.Version, registrations.Templates["Isoplane.Templates"]);
     }
 
     [Fact]
     public async Task A_release_missing_from_the_origin_is_reported_with_its_url()
     {
-        using var fixture = new ToolchainBundle();
+        using var fixture = new ReleaseFixture();
         var handler = new StaticOriginHandler(fixture.Root);
         handler.Missing.Add("release/release.json");
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() => RunAsync(fixture, Machines.Ready(fixture, new FakeRegistrations()), "http://origin.test/release/", client: new HttpClient(handler)));
         Assert.Contains("http://origin.test/release/release.json", error.Message);
-        Assert.False(Directory.Exists(fixture.Home), "nothing is installed when the release cannot be read");
+        Assert.Empty(Installation.Load(fixture.Home)!.Resources);
     }
 
     [Fact]
     public async Task Non_linux_setup_does_not_require_linux_system_libraries()
     {
-        using var fixture = new ToolchainBundle();
+        using var fixture = new ReleaseFixture();
         var machine = Machines.Ready(fixture, new FakeRegistrations()) with
         {
             LinuxDistribution = null,
@@ -116,7 +108,7 @@ public sealed class SetupTests
     [Fact]
     public async Task Missing_prerequisites_stop_setup_before_any_download_and_name_the_exact_command()
     {
-        using var fixture = new ToolchainBundle();
+        using var fixture = new ReleaseFixture();
         var asked = new List<string>();
         var machine = Machines.Ready(fixture, new FakeRegistrations()) with
         {
@@ -133,7 +125,7 @@ public sealed class SetupTests
     [Fact]
     public async Task Missing_prerequisites_are_installed_with_the_privileged_command_once_confirmed()
     {
-        using var fixture = new ToolchainBundle();
+        using var fixture = new ReleaseFixture();
         var installed = false;
         var commands = new List<string>();
         var machine = Machines.Ready(fixture, new FakeRegistrations()) with
@@ -149,7 +141,7 @@ public sealed class SetupTests
     [Fact]
     public async Task Yes_installs_missing_prerequisites_without_a_prompt()
     {
-        using var fixture = new ToolchainBundle();
+        using var fixture = new ReleaseFixture();
         var installed = false;
         var machine = Machines.Ready(fixture, new FakeRegistrations()) with
         {
@@ -162,7 +154,7 @@ public sealed class SetupTests
     [Fact]
     public async Task A_privileged_install_that_leaves_prerequisites_missing_is_an_incomplete_setup()
     {
-        using var fixture = new ToolchainBundle();
+        using var fixture = new ReleaseFixture();
         var machine = Machines.Ready(fixture, new FakeRegistrations()) with
         {
             FileExists = path => path != Prerequisites.CertificateBundle,
@@ -177,7 +169,7 @@ public sealed class SetupTests
     [Fact]
     public async Task An_unsupported_distribution_is_told_which_libraries_it_lacks()
     {
-        using var fixture = new ToolchainBundle();
+        using var fixture = new ReleaseFixture();
         var machine = Machines.Ready(fixture, new FakeRegistrations()) with
         {
             CanLoad = soname => soname != "libstdc++.so.6",
@@ -191,42 +183,42 @@ public sealed class SetupTests
     [Fact]
     public async Task A_release_of_another_version_is_refused_before_installing_anything()
     {
-        using var fixture = new ToolchainBundle();
-        fixture.DescribeRelease("0.1.0-preview.2", ToolchainBundle.Revision);
+        using var fixture = new ReleaseFixture();
+        fixture.DescribeRelease("0.1.0-preview.2", ReleaseFixture.Revision);
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() => RunAsync(fixture, Machines.Ready(fixture, new FakeRegistrations())));
         Assert.Contains("dotnet tool update --global Isoplane.Cli --version 0.1.0-preview.2", error.Message);
-        Assert.False(Directory.Exists(fixture.Home), "a toolchain from another release must not be installed beside this CLI");
+        Assert.Empty(Installation.Load(fixture.Home)!.Resources);
     }
 
     [Fact]
-    public async Task An_altered_toolchain_archive_is_refused_and_leaves_no_toolchain()
+    public async Task Default_setup_uses_nuget_templates_without_a_release_download_or_custom_feed()
     {
-        using var fixture = new ToolchainBundle();
-        await File.WriteAllTextAsync(Path.Combine(fixture.Source, "toolchain.json"), await File.ReadAllTextAsync(Path.Combine(fixture.Source, "toolchain.json")) + "\n");
-        fixture.Archive();
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => RunAsync(fixture, Machines.Ready(fixture, new FakeRegistrations())));
-        Assert.Contains("does not match the release manifest", error.Message);
-        Assert.False(File.Exists(Path.Combine(fixture.Home, "current.json")), "an altered toolchain must not be selected");
-        Assert.False(Directory.Exists(Toolchain.Installations(fixture.Home)), "an altered archive is refused before extraction");
+        using var fixture = new ReleaseFixture();
+        var handler = new StaticOriginHandler(fixture.Root);
+        var registrations = new FakeRegistrations();
+        Assert.Equal(0, await Setup.RunAsync(new SetupOptions(null, false), fixture.Cli, fixture.Home,
+            Machines.Ready(fixture, registrations), new HttpClient(handler), CancellationToken.None));
+        Assert.Empty(handler.Requests);
+        Assert.Empty(registrations.Sources);
+        Assert.Equal([$"install template Isoplane.Templates::{fixture.Cli.Version}"], registrations.Calls);
+        Assert.False(Directory.Exists(Path.Combine(fixture.Home, "packages")));
+        Assert.Equal(InstalledResourceKind.Template, Assert.Single(Installation.Load(fixture.Home)!.Resources).Kind);
     }
 
     [Fact]
-    public async Task A_toolchain_archive_other_than_the_one_the_manifest_identifies_is_refused_after_extraction()
+    public async Task An_altered_offline_package_is_refused_before_template_registration()
     {
-        using var fixture = new ToolchainBundle();
-        var manifest = fixture.DescribeRelease(ToolchainBundle.Version, ToolchainBundle.Revision);
-        await File.WriteAllTextAsync(Path.Combine(fixture.Release, Release.ManifestName),
-            JsonSerializer.Serialize(manifest with { Toolchain = manifest.Toolchain with { ManifestSha256 = new string('b', 64) } }));
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => RunAsync(fixture, Machines.Ready(fixture, new FakeRegistrations())));
-        Assert.Contains("not the one the release manifest describes", error.Message);
-        Assert.False(File.Exists(Path.Combine(fixture.Home, "current.json")), "a toolchain the release does not describe must not be selected");
-        Assert.Empty(Directory.GetDirectories(Toolchain.Installations(fixture.Home)));
+        using var fixture = new ReleaseFixture();
+        await File.WriteAllTextAsync(Path.Combine(fixture.Release, "packages", $"Isoplane.Templates.{fixture.Cli.Version}.nupkg"), "altered");
+        var registrations = new FakeRegistrations();
+        await Assert.ThrowsAsync<InvalidOperationException>(() => RunAsync(fixture, Machines.Ready(fixture, registrations)));
+        Assert.Empty(registrations.Templates);
     }
 
     [Fact]
     public async Task A_package_source_of_the_same_name_pointing_elsewhere_is_refused()
     {
-        using var fixture = new ToolchainBundle();
+        using var fixture = new ReleaseFixture();
         var registrations = new FakeRegistrations();
         registrations.Sources["isoplane"] = "/srv/other-feed";
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() => RunAsync(fixture, Machines.Ready(fixture, registrations)));
@@ -237,7 +229,7 @@ public sealed class SetupTests
     [Fact]
     public async Task A_package_source_already_pointing_at_the_feed_is_reused_and_recorded_as_not_owned()
     {
-        using var fixture = new ToolchainBundle();
+        using var fixture = new ReleaseFixture();
         var registrations = new FakeRegistrations();
         registrations.Sources["isoplane"] = Path.Combine(fixture.Home, "packages");
         Assert.Equal(0, await RunAsync(fixture, Machines.Ready(fixture, registrations)));

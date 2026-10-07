@@ -8,15 +8,6 @@
     <_IsoplaneCheckoutFeed>$([MSBuild]::NormalizeDirectory('$(_IsoplaneSdkDirectory)', '..', '..', '.build', 'wasm32', 'runtime', 'feed'))</_IsoplaneCheckoutFeed>
     <IsoplaneGuestRuntimeFeed Condition="'$(IsoplaneGuestRuntimeFeed)' == '' AND Exists('$(_IsoplaneCheckoutFeed)Isoplane.GuestRuntime.props')">$(_IsoplaneCheckoutFeed)</IsoplaneGuestRuntimeFeed>
   </PropertyGroup>
-  <PropertyGroup Condition="'$(IsoplaneGuestRuntimeFeed)' == '' AND $([MSBuild]::IsOSPlatform('Windows'))">
-    <_IsoplaneWindowsSdk>$(ProgramW6432)/Isoplane/SDK/$(IsoplaneSdkVersion)/Sdk/Sdk.props</_IsoplaneWindowsSdk>
-  </PropertyGroup>
-  <Import Project="$(_IsoplaneWindowsSdk)" Condition="'$(_IsoplaneWindowsSdk)' != '' AND Exists('$(_IsoplaneWindowsSdk)')" />
-  <Import Project="Sdk.props" Sdk="Isoplane.Toolchain" Condition="'$(IsoplaneGuestRuntimeFeed)' == '' AND !$([MSBuild]::IsOSPlatform('Windows'))" />
-  <Target Name="IsoplaneRequireWindowsSdk" BeforeTargets="CollectPackageReferences;PrepareForBuild"
-          Condition="'$(_IsoplaneWindowsSdk)' != '' AND !Exists('$(_IsoplaneWindowsSdk)')">
-    <Error Text="Isoplane SDK $(IsoplaneSdkVersion) is not installed. Run isoplane setup using the matching CLI release, then build again." />
-  </Target>
   <PropertyGroup>
     <IsoplaneMemoryMaxBytes Condition="'$(IsoplaneMemoryMaxBytes)' == ''">134217728</IsoplaneMemoryMaxBytes>
     <_IsoplaneGuestRuntimeFeedDirectory>$([MSBuild]::EnsureTrailingSlash('$(IsoplaneGuestRuntimeFeed)'))</_IsoplaneGuestRuntimeFeedDirectory>
@@ -48,6 +39,6 @@
   </Target>
   <Target Name="IsoplaneRequireGuestRuntimeFeed" BeforeTargets="CollectPackageReferences;PrepareForBuild">
     <Error Condition="'$(IsoplaneGuestRuntimePackVersion)' == ''"
-           Text="isoplane: the guest runtime feed at $(IsoplaneGuestRuntimeFeed) has no Isoplane.GuestRuntime.props naming the Mono pack; run isoplane setup with the supplied toolchain bundle, then isoplane doctor." />
+           Text="isoplane: the guest runtime feed at $(IsoplaneGuestRuntimeFeed) has no Isoplane.GuestRuntime.props naming the Mono pack; run task runtime:feed in the repository." />
   </Target>
 </Project>

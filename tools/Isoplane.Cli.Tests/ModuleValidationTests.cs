@@ -82,7 +82,7 @@ public sealed class ModuleValidationTests
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
             };
-            foreach (var argument in new[] { typeof(Toolchain).Assembly.Location, "doctor", module, "--json" })
+            foreach (var argument in new[] { typeof(CliPaths).Assembly.Location, "doctor", module, "--json" })
                 start.ArgumentList.Add(argument);
             start.Environment["ISOPLANE_CLI"] = Path.Combine(directory.FullName, "nonexistent-isoplane");
             using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start module diagnostics.");

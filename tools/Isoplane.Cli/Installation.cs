@@ -8,20 +8,10 @@ internal enum InstalledResourceKind
     /// <summary>A directory setup created, removed recursively.</summary>
     Directory,
     File,
-    /// <summary>A link recorded by a pre-workload installation; retained for removal.</summary>
-    SymbolicLink,
     /// <summary>A NuGet package source in the user's NuGet configuration; the target is its name, the detail its path.</summary>
     PackageSource,
     /// <summary>A per-user template registration maintained by dotnet new.</summary>
     Template,
-    /// <summary>A shell entry from a pre-workload installation; the detail is the exact line to remove.</summary>
-    ProfileLine,
-    /// <summary>A workload installation marker; the detail identifies its owning .NET SDK.</summary>
-    Workload,
-    /// <summary>A manifest version directory; the detail identifies its owning .NET SDK.</summary>
-    WorkloadManifest,
-    /// <summary>A Windows Installer product owned by setup.</summary>
-    WindowsInstaller,
 }
 
 /// <summary>
@@ -31,7 +21,7 @@ internal sealed record InstalledResource(InstalledResourceKind Kind, string Targ
 
 internal sealed record InstallationRecord(int Schema, string CliVersion, string SourceRevision, string Home, List<InstalledResource> Resources)
 {
-    internal const int CurrentSchema = 1;
+    internal const int CurrentSchema = 2;
 }
 
 /// <summary>Thrown when the installation manifest exists but cannot be trusted; removal must not guess in its place.</summary>
@@ -78,11 +68,11 @@ internal sealed class Installation
         }
         catch (JsonException error)
         {
-            throw new InstallationManifestException($"The installation manifest at {path} is damaged ({error.Message}). Nothing was removed. Restore it, or if the SDK is already gone, delete the file and run isoplane setup again.", error);
+            throw new InstallationManifestException($"The installation manifest at {path} is damaged ({error.Message}). Nothing was removed. For an older SDK installation, run uninstall-sdk with its original CLI before upgrading. Otherwise restore the manifest, or delete it only if its resources are already removed.", error);
         }
         if (record is null || record.Schema != InstallationRecord.CurrentSchema || record.Resources is null
             || string.IsNullOrWhiteSpace(record.Home) || record.Resources.Any(resource => resource is null || string.IsNullOrWhiteSpace(resource.Target)))
-            throw new InstallationManifestException($"The installation manifest at {path} is not one this CLI can read. Nothing was removed. Restore it, or if the SDK is already gone, delete the file and run isoplane setup again.");
+            throw new InstallationManifestException($"The installation manifest at {path} is not one this CLI can read. Nothing was removed. For an older SDK installation, run uninstall-sdk with its original CLI before upgrading. Otherwise restore the manifest, or delete it only if its resources are already removed.");
         return new(home, record);
     }
 

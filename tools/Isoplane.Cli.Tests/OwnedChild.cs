@@ -32,12 +32,6 @@ internal static class OwnedChild
                 AppContext.BaseDirectory, CancellationToken.None);
             return 0;
         }
-        if (arguments is ["--selected-sdk"])
-        {
-            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-            try { Console.WriteLine((await Readiness.SelectedSdkAsync(deadline.Token)).Version); return 0; }
-            catch (InvalidOperationException error) { Console.Error.WriteLine(error.Message); return 1; }
-        }
         if (arguments is ["--doctor-tool", var toolExit])
         {
             Console.WriteLine("version-detail");

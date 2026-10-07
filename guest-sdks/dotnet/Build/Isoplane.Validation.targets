@@ -73,7 +73,7 @@
     <Error Condition="'$(_IsoplaneDoctorExit)' == '127' OR '$(_IsoplaneDoctorExit)' == '9009'"
            Code="ISOPLANE0002"
            File="$(MSBuildProjectFullPath)"
-           Text="the module was not validated: no `isoplane` CLI at '$(IsoplaneCli)'. $(_IsoplaneModule) was linked but nothing judged it against validator rules V1-V4, and an unjudged module is not a publication. Install the Isoplane CLI, run `isoplane setup` with the supplied toolchain bundle, then `isoplane doctor`." />
+           Text="the module was not validated: no `isoplane` CLI at '$(IsoplaneCli)'. $(_IsoplaneModule) was linked but nothing judged it against validator rules V1-V4, and an unjudged module is not a publication. Install the Isoplane CLI, run `isoplane setup`, then `isoplane doctor`." />
 
     <Error Condition="'$(_IsoplaneDoctorExit)' != '0' AND '$(_IsoplaneDoctorExit)' != '2' AND '$(_IsoplaneDoctorExit)' != '127' AND '$(_IsoplaneDoctorExit)' != '9009'"
            Code="ISOPLANE0003"
