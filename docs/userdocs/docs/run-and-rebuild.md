@@ -75,6 +75,12 @@ a breakpoint, and again after a source edit rebuilds the application; it does no
 wait for a request to reach the code. A breakpoint on a line with no statement
 stays unverified and says so.
 
+A line can hold more than one statement, such as a lambda inside a call. To stop
+inside the lambda, put the caret in it and choose **Add Inline Breakpoint**
+(Shift+F9 in VS Code). The breakpoint moves to the start of the statement the
+caret is in. Once a line has a breakpoint, the editor also marks the other
+statements on it that can take one.
+
 The application runs inside the sandbox, so the ordinary C# debugger cannot reach
 it: attached to the `isoplane` tool, it leaves breakpoints in the application
 unverified. Running without debugging, from C# Dev Kit's **Run project** button or

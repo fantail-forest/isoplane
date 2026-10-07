@@ -33,7 +33,7 @@ ET.indent(config)
 ET.ElementTree(config).write(app / 'nuget.config', encoding='utf-8', xml_declaration=True)
 source = app / 'Program.cs'
 code = source.read_text().replace('app.MapGet("/", () => "Hello from Isoplane!");',
-    'app.MapGet("/", EditorDebug.Application.Handle);\napp.MapGet("/warmup", () => "warm");').replace('WarmupAsync("/")', 'WarmupAsync("/warmup")')
+    'app.MapGet("/", EditorDebug.Application.Handle);\napp.MapGet("/count", EditorDebug.Application.Count);\napp.MapGet("/warmup", () => "warm");').replace('WarmupAsync("/")', 'WarmupAsync("/warmup")')
 # Type declarations follow a program's top-level statements.
 source.write_text(code + '''
 namespace EditorDebug
@@ -44,6 +44,12 @@ namespace EditorDebug
         {
             int answer = 42;
             return answer.ToString();
+        }
+
+        internal static string Count()
+        {
+            int[] values = [1, 2, 3];
+            return values.Count(value => value > 2).ToString();
         }
     }
 }

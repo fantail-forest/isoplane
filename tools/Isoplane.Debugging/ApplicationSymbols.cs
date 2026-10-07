@@ -10,7 +10,14 @@ namespace Isoplane.Debugging;
 /// </summary>
 internal sealed class ApplicationSymbols
 {
-    private sealed record Document(string Path, byte[] Hash, HashSet<(int Line, int Column)> Statements);
+    private sealed record Document(string Path, byte[] Hash, HashSet<Statement> Statements);
+
+    /// <summary>Where a statement starts and ends in its source file, one-based, the end exclusive.</summary>
+    internal readonly record struct Statement(int Line, int Column, int EndLine, int EndColumn)
+    {
+        internal bool Contains(int line, int column) =>
+            (line > Line || line == Line && column >= Column) && (line < EndLine || line == EndLine && column < EndColumn);
+    }
 
     private readonly ILookup<string, Document> documents;
 
@@ -49,14 +56,14 @@ internal sealed class ApplicationSymbols
     {
         using var provider = MetadataReaderProvider.FromPortablePdbStream(symbols);
         var reader = provider.GetMetadataReader();
-        var statements = new Dictionary<DocumentHandle, HashSet<(int, int)>>();
+        var statements = new Dictionary<DocumentHandle, HashSet<Statement>>();
         foreach (var handle in reader.MethodDebugInformation)
         {
             foreach (var point in reader.GetMethodDebugInformation(handle).GetSequencePoints())
             {
                 if (point.IsHidden || point.Document.IsNil) continue;
                 if (!statements.TryGetValue(point.Document, out var starts)) statements.Add(point.Document, starts = []);
-                starts.Add((point.StartLine, point.StartColumn));
+                starts.Add(new(point.StartLine, point.StartColumn, point.EndLine, point.EndColumn));
             }
         }
         foreach (var (handle, starts) in statements)
@@ -76,14 +83,43 @@ internal sealed class ApplicationSymbols
     /// </remarks>
     internal bool? HasStatement(string path, int line, int column)
     {
-        bool described = false;
+        if (StatementsOf(path) is not { } statements) return null;
+        return statements.Any(start => start.Line == line && (column <= 1 || start.Column == column));
+    }
+
+    /// <summary>
+    /// The statements that start on <paramref name="line"/> through <paramref name="endLine"/> of the source
+    /// file at <paramref name="path"/>, in source order: the places a breakpoint can be set there. Empty when
+    /// the symbols do not describe that file.
+    /// </summary>
+    internal IReadOnlyList<Statement> StatementsStarting(string path, int line, int endLine) =>
+        [.. (StatementsOf(path) ?? []).Where(start => start.Line >= line && start.Line <= endLine).Distinct()
+            .OrderBy(start => start.Line).ThenBy(start => start.Column)];
+
+    /// <summary>
+    /// The statement a breakpoint at <paramref name="column"/> of <paramref name="line"/> means: the innermost
+    /// one starting on that line that contains the position, or else the next to start on the line. Null when
+    /// there is none, or when the symbols do not describe the file.
+    /// </summary>
+    /// <remarks>An editor sends the caret's column, which is rarely where a statement starts.</remarks>
+    internal Statement? StatementAt(string path, int line, int column)
+    {
+        var starting = StatementsStarting(path, line, line);
+        var containing = starting.Where(statement => statement.Contains(line, column)).ToArray();
+        if (containing.Length > 0) return containing.MaxBy(statement => statement.Column);
+        return starting.Where(statement => statement.Column > column).Cast<Statement?>().FirstOrDefault();
+    }
+
+    /// <summary>Every statement of the documents that are the file at <paramref name="path"/>; null when there is no such document.</summary>
+    private HashSet<Statement>? StatementsOf(string path)
+    {
+        HashSet<Statement>? statements = null;
         foreach (var document in documents[FileName(path)])
         {
             if (!FileNames.Equals(document.Path, path) && !SourceLocation.CheckFileHash(path, document.Hash)) continue;
-            if (document.Statements.Any(start => start.Line == line && (column <= 1 || start.Column == column))) return true;
-            described = true;
+            (statements ??= []).UnionWith(document.Statements);
         }
-        return described ? false : null;
+        return statements;
     }
 
     /// <summary>The name after the last separator of either platform, since symbols may record another platform's paths.</summary>

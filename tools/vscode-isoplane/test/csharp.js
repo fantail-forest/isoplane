@@ -83,6 +83,7 @@ async function run() {
         assert.equal(stack.stackFrames[0].line, line + 1, 'the breakpoint must bind in the application');
         await session.customRequest('continue', { threadId: stopped.threadId });
         assert.equal(await (await request).text(), '42');
+        await insideALambda(source, session, events, signal, url);
         console.log('A C# launch of an Isoplane project reached its breakpoint through the Isoplane debugger.');
     } finally {
         ending = true;
@@ -94,6 +95,44 @@ async function run() {
         settings.dispose();
         tracker.dispose();
         fs.rmSync(project, { recursive: true, force: true });
+    }
+}
+/**
+ * A breakpoint set with the caret inside a lambda, as "Add Inline Breakpoint" sets one, must become
+ * a breakpoint on the lambda's own statement and stop there, not on the statement that contains it.
+ */
+async function insideALambda(source, session, events, signal, url) {
+    const lines = fs.readFileSync(source, 'utf8').split(/\r?\n/);
+    const line = lines.findIndex(value => value.includes('value => value > 2'));
+    assert.notEqual(line, -1, 'the prepared application must contain the lambda');
+    const body = lines[line].indexOf('value > 2');
+    const caret = new vscode.Position(line, lines[line].indexOf('> 2'));
+    const inline = new vscode.SourceBreakpoint(new vscode.Location(vscode.Uri.file(source), caret));
+    const moved = new Promise((resolve, reject) => {
+        const aborted = () => reject(signal.reason);
+        signal.addEventListener('abort', aborted, { once: true });
+        events.on('breakpoint', function reported(value) {
+            if (!value.verified || value.line !== line + 1 || value.column !== body + 1) return;
+            events.off('breakpoint', reported);
+            signal.removeEventListener('abort', aborted);
+            resolve();
+        });
+    });
+    vscode.debug.addBreakpoints([inline]);
+    try {
+        await moved;
+        const stopping = once(events, 'stopped', { signal });
+        const request = fetch(new URL('/count', url), { signal });
+        const [stopped] = await stopping;
+        const frame = (await session.customRequest('stackTrace', { threadId: stopped.threadId })).stackFrames[0];
+        assert.equal(frame.line, line + 1);
+        const value = await session.customRequest('evaluate', { frameId: frame.id, expression: 'value', context: 'watch' });
+        assert.equal(value.result, '1', 'the stop must be inside the lambda, at its first element');
+        vscode.debug.removeBreakpoints([inline]);
+        await session.customRequest('continue', { threadId: stopped.threadId });
+        assert.equal(await (await request).text(), '1');
+    } finally {
+        vscode.debug.removeBreakpoints([inline]);
     }
 }
 module.exports = { run };

@@ -98,7 +98,7 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
             SupportsConditionalBreakpoints = true, SupportsHitConditionalBreakpoints = true, SupportsLogPoints = true,
             SupportsFunctionBreakpoints = true, SupportsEvaluateForHovers = true, SupportsSetVariable = true,
             SupportsSetExpression = true, SupportsExceptionInfoRequest = true, SupportsDataBreakpoints = true,
-            SupportsDataBreakpointBytes = false, SupportsGotoTargetsRequest = true,
+            SupportsDataBreakpointBytes = false, SupportsGotoTargetsRequest = true, SupportsBreakpointLocationsRequest = true,
             ExceptionBreakpointFilters =
             [
                 new ExceptionBreakpointsFilter { Filter = "all", Label = "All thrown exceptions" },
@@ -270,6 +270,11 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
     {
         lock (lifecycle) return breakpoints.SetSource(arguments);
     }
+    protected override BreakpointLocationsResponse HandleBreakpointLocationsRequest(BreakpointLocationsArguments arguments)
+    {
+        lock (lifecycle) return breakpoints.Locations(arguments);
+    }
+
     protected override SetFunctionBreakpointsResponse HandleSetFunctionBreakpointsRequest(SetFunctionBreakpointsArguments arguments)
     {
         lock (lifecycle) return breakpoints.SetFunctions(arguments);

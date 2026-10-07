@@ -314,6 +314,41 @@ public sealed class DebugAdapterTests
     }
 
     [Fact]
+    public async Task a_breakpoint_inside_a_lambda_is_set_on_the_lambdas_statement()
+    {
+        var directory = Directory.CreateTempSubdirectory("isoplane-adapter-inline-");
+        try
+        {
+            const string line = "        return System.Linq.Enumerable.Count(values, value => value > 1);";
+            string source = Path.Combine(directory.FullName, "Example.cs"), package = Path.Combine(directory.FullName, "application.tar");
+            BuiltApplication.Write(package, source, "public static class Example\n{\n    public static int Count(int[] values)\n    {\n" + line + "\n    }\n}\n");
+            int outer = line.IndexOf("return", StringComparison.Ordinal) + 1, lambda = line.IndexOf("value > 1", StringComparison.Ordinal) + 1;
+            await using var client = await Client.StartAsync();
+            Assert.True((await client.Initialize()).SupportsBreakpointLocationsRequest, "the editor offers the statements within a line only when asked to");
+            using var listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            var attached = client.Send(Attach("127.0.0.1", ((IPEndPoint)listener.LocalEndpoint).Port));
+            using var control = await AcceptControlAsync(listener, client.Cancellation, package);
+            await client.Initialized.Task.WaitAsync(client.Cancellation);
+
+            var locations = await client.Send(new BreakpointLocationsRequest { Args = { Source = new Source { Path = source }, Line = 5 } });
+            Assert.Equal([outer, lambda], locations.Breakpoints.Select(location => location.Column!.Value));
+
+            // An editor sends the caret's column; here it is on the comparison inside the lambda.
+            var set = await client.Send(new SetBreakpointsRequest
+            {
+                Args = { Source = new Source { Path = source }, Breakpoints = [new SourceBreakpoint { Line = 5, Column = lambda + 6 }] }
+            });
+            Assert.True(set.Breakpoints[0].Verified && set.Breakpoints[0].Column == lambda,
+                $"the breakpoint must move to the lambda's statement at column {lambda}: column {set.Breakpoints[0].Column}, verified {set.Breakpoints[0].Verified}");
+
+            client.Adapter.Stop();
+            await Assert.ThrowsAsync<ProtocolException>(() => attached);
+        }
+        finally { directory.Delete(recursive: true); }
+    }
+
+    [Fact]
     public async Task disconnect_cancels_a_launch_before_the_application_is_ready()
     {
         var launcher = new PendingLaunch();

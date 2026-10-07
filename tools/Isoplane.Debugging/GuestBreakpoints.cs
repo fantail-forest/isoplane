@@ -59,12 +59,28 @@ internal sealed class GuestBreakpoints
         var requested = (arguments.Breakpoints ?? []).Select(item =>
         {
             if (item.Line <= 0 || item.Column is <= 0) throw new ProtocolException("Source breakpoints require positive line and column numbers.");
-            var breakpoint = new Mono.Debugging.Client.Breakpoint(path, item.Line, item.Column ?? 1);
+            // A column asks for one statement of the line. The debugger binds only where a statement starts,
+            // so the caret's column becomes the start of the statement it is in.
+            int column = item.Column is > 1 and var caret ? symbols.StatementAt(path, item.Line, caret)?.Column ?? caret : 1;
+            var breakpoint = new Mono.Debugging.Client.Breakpoint(path, item.Line, column);
             Configure(breakpoint, item.Condition, item.HitCondition, item.LogMessage);
             return breakpoint;
         }).ToArray();
         Remove(session.Breakpoints.GetBreakpointsAtFile(path).Where(item => item is not Mono.Debugging.Client.FunctionBreakpoint).ToArray());
         return new SetBreakpointsResponse { Breakpoints = requested.Select(Add).ToList() };
+    }
+
+    /// <summary>Where breakpoints can be set on the requested lines, for the editor to offer the statements within a line.</summary>
+    internal BreakpointLocationsResponse Locations(BreakpointLocationsArguments arguments)
+    {
+        string path = arguments.Source?.Path ?? throw new ProtocolException("A source path is required.");
+        if (!Path.IsPathFullyQualified(path) || arguments.Line <= 0)
+            throw new ProtocolException("Breakpoint locations require an absolute source path and a positive line.");
+        return new BreakpointLocationsResponse
+        {
+            Breakpoints = [.. symbols.StatementsStarting(path, arguments.Line, arguments.EndLine ?? arguments.Line).Select(statement =>
+                new BreakpointLocation { Line = statement.Line, Column = statement.Column, EndLine = statement.EndLine, EndColumn = statement.EndColumn })]
+        };
     }
 
     internal SetFunctionBreakpointsResponse SetFunctions(SetFunctionBreakpointsArguments arguments)
