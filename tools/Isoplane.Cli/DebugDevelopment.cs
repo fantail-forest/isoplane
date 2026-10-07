@@ -17,13 +17,14 @@ internal static class DebugDevelopment
                 Directory.CreateDirectory(session);
             else
                 Directory.CreateDirectory(session, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-            await using var relay = new DebugRelay(lifetime.Token);
+            var package = Path.Combine(session, "application.tar");
+            await using var relay = new DebugRelay(package, lifetime.Token);
             if (options.DebugLaunchEndpoint is not { } launchEndpoint)
-                return await RunPackageAsync(options, session, relay.Endpoint.ToString(), relay, null, lifetime.Token);
+                return await RunPackageAsync(options, session, package, relay.Endpoint.ToString(), relay, null, lifetime.Token);
             using var client = new TcpClient();
             await client.ConnectAsync(launchEndpoint, lifetime.Token);
             await using var launch = new TerminalDebugLaunch(client, relay.EditorConnected, lifetime);
-            try { return await RunPackageAsync(options, session, relay.Endpoint.ToString(), relay, launch, lifetime.Token); }
+            try { return await RunPackageAsync(options, session, package, relay.Endpoint.ToString(), relay, launch, lifetime.Token); }
             finally { lifetime.Cancel(); }
         }
         finally
@@ -44,11 +45,10 @@ internal static class DebugDevelopment
     /// Debugs an interpreted project's package on the SDK's local-debug runtime,
     /// which connects its agent to <paramref name="endpoint"/> through the relay.
     /// </summary>
-    private static async Task<int> RunPackageAsync(DevelopmentOptions options, string session, string endpoint, DebugRelay relay, TerminalDebugLaunch? launch, CancellationToken cancellation)
+    private static async Task<int> RunPackageAsync(DevelopmentOptions options, string session, string package, string endpoint, DebugRelay relay, TerminalDebugLaunch? launch, CancellationToken cancellation)
     {
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         using var changes = new SourceChanges(options.Directory);
-        var package = Path.Combine(session, "application.tar");
         SharedRuntime runtime;
         try { runtime = await ManagedBundle.CreateAsync(new(options.Directory, options.Configuration, package, options.NoBuild), cancellation); }
         catch (InvalidOperationException error)
@@ -105,6 +105,7 @@ internal static class DebugDevelopment
                         host.Reload(await File.ReadAllBytesAsync(debugging ? replacement.DebugModule : replacement.Module, token),
                             new LocalProject(options.Directory).SessionOptions(settings, debugging ? endpoint : null, Path.Combine(session, "runtime"), package: package));
                         runtime = replacement;
+                        if (debugging) await relay.PackageChangedAsync(token);
                         LocalEvents.Write(new System.Text.Json.Nodes.JsonObject { ["event"] = "reload_pending" }, options.Json);
                     }
                     catch (Exception error) when (error is InvalidOperationException or IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)

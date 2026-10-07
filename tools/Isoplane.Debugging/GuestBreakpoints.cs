@@ -10,6 +10,8 @@ internal sealed class GuestBreakpoints
 {
     private SoftDebuggerSession session;
     private readonly Func<int> allocate;
+    private readonly Action<BreakpointEvent> changed;
+    private volatile ApplicationSymbols symbols = ApplicationSymbols.None;
     private readonly Dictionary<Mono.Debugging.Client.Breakpoint, int> identifiers = [];
     private readonly object gate = new();
     private volatile bool breakOnUnhandled = true;
@@ -18,11 +20,12 @@ internal sealed class GuestBreakpoints
     {
         this.session = session;
         this.allocate = allocate;
+        this.changed = changed;
         session.Breakpoints.BreakpointStatusChanged += (_, args) =>
         {
             int id;
             lock (gate) if (!identifiers.TryGetValue(args.Breakpoint, out id)) return;
-            changed(new BreakpointEvent { Reason = BreakpointEvent.ReasonValue.Changed, Breakpoint = Describe(args.Breakpoint, id) });
+            Report(args.Breakpoint, id);
         };
         Bind(session, output);
     }
@@ -36,6 +39,18 @@ internal sealed class GuestBreakpoints
             Source = breakpoint is Mono.Debugging.Client.Breakpoint source && source.FileName is not null ? new Source { Path = source.FileName } : null
         });
     }
+
+    /// <summary>Takes the symbols of the application as last built, and tells the editor what they change about its breakpoints.</summary>
+    internal void Rebuilt(ApplicationSymbols application)
+    {
+        symbols = application;
+        KeyValuePair<Mono.Debugging.Client.Breakpoint, int>[] current;
+        lock (gate) current = [.. identifiers];
+        foreach (var (breakpoint, id) in current) Report(breakpoint, id);
+    }
+
+    private void Report(Mono.Debugging.Client.Breakpoint breakpoint, int id) =>
+        changed(new BreakpointEvent { Reason = BreakpointEvent.ReasonValue.Changed, Breakpoint = Describe(breakpoint, id) });
 
     internal SetBreakpointsResponse SetSource(SetBreakpointsArguments arguments)
     {
@@ -112,11 +127,21 @@ internal sealed class GuestBreakpoints
         }
     }
 
-    private Dap.Breakpoint Describe(Mono.Debugging.Client.Breakpoint breakpoint, int id) => new()
+    private Dap.Breakpoint Describe(Mono.Debugging.Client.Breakpoint breakpoint, int id)
     {
-        Id = id, Verified = breakpoint.GetStatus(session) == BreakEventStatus.Bound,
-        Line = breakpoint.Line, Column = breakpoint.Column,
-        Source = breakpoint.FileName is null ? null : new Source { Path = breakpoint.FileName },
-        Message = breakpoint.GetStatusMessage(session)
-    };
+        // A guest binds a breakpoint when it loads the code, which is while a request runs. Between
+        // requests the built application's symbols answer instead, so the editor shows at once
+        // whether the breakpoint will be reached.
+        bool? statement = breakpoint is Mono.Debugging.Client.FunctionBreakpoint || breakpoint.FileName is null
+            ? null : symbols.HasStatement(breakpoint.FileName, breakpoint.Line, breakpoint.Column);
+        bool verified = statement == true || breakpoint.GetStatus(session) == BreakEventStatus.Bound;
+        return new()
+        {
+            Id = id, Verified = verified,
+            Line = breakpoint.Line, Column = breakpoint.Column,
+            Source = breakpoint.FileName is null ? null : new Source { Path = breakpoint.FileName },
+            Message = verified ? null : statement == false ? "No statement of the built application starts on this line."
+                : breakpoint.GetStatusMessage(session)
+        };
+    }
 }

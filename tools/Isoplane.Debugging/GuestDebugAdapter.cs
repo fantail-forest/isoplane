@@ -20,6 +20,7 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
     private readonly object lifecycle = new();
     private GuestConnection? connection;
     private GuestSession? owner;
+    private string? package;
     private Task opening = Task.CompletedTask;
     private ConnectionRequest? attach;
     private readonly DebugLauncher? launcher;
@@ -128,7 +129,7 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
         }
         try { sources.Configure(options.GetValueOrDefault("sourceFileMap")); }
         catch (ProtocolException error) { request.SetError(error); return; }
-        owner = new GuestSession(SessionEnded);
+        owner = new GuestSession(SessionEnded, PackageChanged);
         attach = new ConnectionRequest(() => request.SetResponse(new AttachResponse()), request.SetError);
         opening = OpenAsync(new IPEndPoint(IPAddress.Loopback, (int)port.Value));
     }
@@ -179,7 +180,7 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
         try { sources.Configure(properties.GetValueOrDefault("sourceFileMap")); }
         catch (ProtocolException error) { request.SetError(error); return; }
         launchInTerminal = console == "integratedTerminal";
-        owner = new GuestSession(SessionEnded);
+        owner = new GuestSession(SessionEnded, PackageChanged);
         attach = new ConnectionRequest(() => request.SetResponse(new LaunchResponse()), request.SetError);
         launched = true;
         launching = LaunchAsync(new DebugLaunchOptions(project, configuration, port is { } number ? (ushort)number : null, watch.Value));
@@ -216,16 +217,41 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
         try
         {
             var target = await owner!.ConnectAsync(address);
+            var application = ReadSymbols(target.Package);
             lock (lifecycle)
             {
                 if (Volatile.Read(ref stopping) != 0) return;
-                endpoint = target;
-                connection = new GuestConnection(target, Fail);
+                endpoint = target.Guests;
+                package = target.Package;
+                if (application is not null) breakpoints.Rebuilt(application);
+                connection = new GuestConnection(target.Guests, Fail);
                 Protocol.SendEvent(new InitializedEvent());
                 if (completeOnOpen) Interlocked.Exchange(ref attach, null)?.Complete();
             }
         }
         catch (Exception error) { Fail(error); }
+    }
+
+    /// <summary>The session rebuilt its package after a source edit; the next guest runs the code these symbols describe.</summary>
+    private void PackageChanged()
+    {
+        if (package is not { } rebuilt || ReadSymbols(rebuilt) is not { } application) return;
+        lock (lifecycle)
+        {
+            if (Volatile.Read(ref stopping) == 0) breakpoints.Rebuilt(application);
+        }
+    }
+
+    /// <summary>Reads the application's symbols, or returns null and keeps the previous ones when the package cannot be read.</summary>
+    private ApplicationSymbols? ReadSymbols(string path)
+    {
+        try { return ApplicationSymbols.Read(path); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            // Breakpoints then show what the last readable build, or a running guest, says about them.
+            diagnostics.WriteLine($"isoplane: could not read application symbols from {path}: {error.Message}");
+            return null;
+        }
     }
 
     protected override void HandleConfigurationDoneRequestAsync(IRequestResponder<ConfigurationDoneArguments> request)

@@ -26,7 +26,10 @@ async function run() {
         createDebugAdapterTracker() {
             return {
                 onDidSendMessage(message) {
+                    if (message.type === 'response' && message.command === 'setBreakpoints' && message.success)
+                        for (const reported of message.body.breakpoints) events.emit('breakpoint', reported);
                     if (message.type !== 'event') return;
+                    if (message.event === 'breakpoint') events.emit('breakpoint', message.body.breakpoint);
                     const match = message.event === 'output' && /ready .+ at (http:\/\/\S+)/.exec(message.body.output);
                     if (match) events.emit('ready', match[1]);
                     events.emit(message.event, message.body);
@@ -43,10 +46,22 @@ async function run() {
     const ended = new Promise(resolve => {
         const subscription = vscode.debug.onDidTerminateDebugSession(() => { subscription.dispose(); resolve(); });
     });
+    // Resolves once the adapter reports a verified breakpoint on the one-based source line.
+    const verified = number => new Promise((resolve, reject) => {
+        const aborted = () => reject(signal.reason);
+        signal.addEventListener('abort', aborted, { once: true });
+        events.on('breakpoint', function reported(value) {
+            if (!value.verified || value.line !== number) return;
+            events.off('breakpoint', reported);
+            signal.removeEventListener('abort', aborted);
+            resolve();
+        });
+    });
     vscode.debug.addBreakpoints([breakpoint]);
     let session;
     try {
         const ready = once(events, 'ready', { signal });
+        const registered = verified(line + 1);
         assert.equal(await vscode.debug.startDebugging(undefined, {
             type: 'dotnet', request: 'launch', name: 'C# launch of an Isoplane project', projectPath: projectFile
         }), true);
@@ -54,6 +69,13 @@ async function run() {
         assert.equal(session?.type, 'isoplane', 'a C# launch of an Isoplane project must start the Isoplane debugger');
         assert.equal(session.configuration.project, project);
         const [url] = await ready;
+        // No request has been sent, so no guest has loaded the code: the built application's symbols verify these.
+        await registered;
+        const added = new vscode.SourceBreakpoint(new vscode.Location(vscode.Uri.file(source), new vscode.Position(line - 1, 0)));
+        const addition = verified(line);
+        vscode.debug.addBreakpoints([added]);
+        await addition;
+        vscode.debug.removeBreakpoints([added]);
         const stopping = once(events, 'stopped', { signal });
         const request = fetch(url, { signal });
         const [stopped] = await stopping;

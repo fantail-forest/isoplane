@@ -4,7 +4,7 @@ using Isoplane.Build;
 
 namespace Isoplane.Debugging;
 
-internal sealed class GuestSession(Action? ended = null) : IAsyncDisposable
+internal sealed class GuestSession(Action? ended = null, Action? packageChanged = null) : IAsyncDisposable
 {
     private readonly TcpClient client = new();
     private readonly CancellationTokenSource lifetime = new();
@@ -19,7 +19,8 @@ internal sealed class GuestSession(Action? ended = null) : IAsyncDisposable
     private readonly object gate = new();
     private Task closing = Task.CompletedTask;
 
-    internal async Task<IPEndPoint> ConnectAsync(IPEndPoint endpoint)
+    /// <summary>Connects to the local session at <paramref name="endpoint"/>. Returns where its guests' debugger agents are reached and the application package they run.</summary>
+    internal async Task<(IPEndPoint Guests, string Package)> ConnectAsync(IPEndPoint endpoint)
     {
         await client.ConnectAsync(endpoint, lifetime.Token);
         var target = await DebugSessionProtocol.ReadEndpointAsync(client.GetStream(), lifetime.Token);
@@ -33,6 +34,11 @@ internal sealed class GuestSession(Action? ended = null) : IAsyncDisposable
         {
             while (await DebugSessionProtocol.ReadReplyAsync(client.GetStream(), lifetime.Token) is { } reply)
             {
+                if (reply.Action == DebugSessionProtocol.PackageChanged)
+                {
+                    packageChanged?.Invoke();
+                    continue;
+                }
                 var pending = reply.Action switch
                 {
                     "detachReady" => prepared,

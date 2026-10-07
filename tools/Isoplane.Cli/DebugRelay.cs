@@ -11,6 +11,9 @@ internal sealed class DebugRelay : IAsyncDisposable
     private readonly TcpListener editorListener = new(IPAddress.Loopback, 0);
     private readonly CancellationTokenSource lifetime;
     private readonly Task forwarding;
+    private readonly string package;
+    private readonly SemaphoreSlim writes = new(1, 1);
+    private volatile Stream? editorControl;
 
     internal IPEndPoint Endpoint { get; }
     internal IPEndPoint AdapterEndpoint { get; }
@@ -20,8 +23,10 @@ internal sealed class DebugRelay : IAsyncDisposable
     internal bool Detached { get; private set; }
     internal Func<CancellationToken, Task>? PrepareDetach { get; set; }
 
-    internal DebugRelay(CancellationToken cancellation)
+    /// <param name="package">The application package the session's guests run, which the debugger reads symbols from.</param>
+    internal DebugRelay(string package, CancellationToken cancellation)
     {
+        this.package = package;
         lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         listener.Start();
         Endpoint = (IPEndPoint)listener.LocalEndpoint;
@@ -37,10 +42,17 @@ internal sealed class DebugRelay : IAsyncDisposable
         {
             using var editor = await editorListener.AcceptTcpClientAsync(cancellation);
             editorConnected.TrySetResult();
-            await DebugSessionProtocol.WriteEndpointAsync(editor.GetStream(), (IPEndPoint)adapterListener.LocalEndpoint, cancellation);
+            // Held across the opening message, so a rebuild notice can only follow it.
+            await writes.WaitAsync(cancellation);
+            try
+            {
+                editorControl = editor.GetStream();
+                await DebugSessionProtocol.WriteEndpointAsync(editor.GetStream(), (IPEndPoint)adapterListener.LocalEndpoint, package, cancellation);
+            }
+            finally { writes.Release(); }
             using var connected = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
             var pairs = ForwardGuestsAsync(connected.Token);
-            var control = DebugSessionProtocol.ReadTerminationAsync(editor.GetStream(), token => PrepareDetach is { } prepare ? prepare(token) : throw new InvalidOperationException("The local host is not ready to detach."), connected.Token);
+            var control = DebugSessionProtocol.ReadTerminationAsync(editor.GetStream(), writes, token => PrepareDetach is { } prepare ? prepare(token) : throw new InvalidOperationException("The local host is not ready to detach."), connected.Token);
             if (await Task.WhenAny(pairs, control) == control) Detached = await control;
             connected.Cancel();
             try { await Task.WhenAll(pairs, control); }
@@ -59,9 +71,21 @@ internal sealed class DebugRelay : IAsyncDisposable
         }
         finally
         {
+            editorControl = null;
             listener.Stop();
             adapterListener.Stop();
             editorListener.Stop();
+        }
+    }
+
+    /// <summary>Tells a connected debugger that the application package was rebuilt, so it reads the new symbols.</summary>
+    internal async Task PackageChangedAsync(CancellationToken cancellation)
+    {
+        if (editorControl is not { } control) return;
+        try { await DebugSessionProtocol.ReplyAsync(control, writes, DebugSessionProtocol.PackageChanged, null, cancellation); }
+        catch (Exception error) when (error is IOException or ObjectDisposedException)
+        {
+            // The debugger went away while this was written; the control reader ends the session for that.
         }
     }
 
@@ -100,6 +124,10 @@ internal sealed class DebugRelay : IAsyncDisposable
     {
         lifetime.Cancel();
         try { await forwarding; }
-        finally { lifetime.Dispose(); }
+        finally
+        {
+            lifetime.Dispose();
+            writes.Dispose();
+        }
     }
 }

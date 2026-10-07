@@ -69,6 +69,12 @@ adapter builds and starts the application in an **Isoplane** terminal. Send an H
 request to the URL printed in the terminal or Debug Console. Stopping the debugger stops the application and its owned
 processes.
 
+A breakpoint is shown as verified when a statement of the built application
+starts on its line. That is checked when the session starts, when you add or move
+a breakpoint, and again after a source edit rebuilds the application; it does not
+wait for a request to reach the code. A breakpoint on a line with no statement
+stays unverified and says so.
+
 The application runs inside the sandbox, so the ordinary C# debugger cannot reach
 it: attached to the `isoplane` tool, it leaves breakpoints in the application
 unverified. Running without debugging, from C# Dev Kit's **Run project** button or

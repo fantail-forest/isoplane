@@ -8,6 +8,25 @@ namespace Isoplane.Cli.Tests;
 
 public sealed class DebugRelayTests
 {
+    /// <summary>The relay only names the package to the debugger; it never opens it.</summary>
+    private static readonly string Package = Path.Combine(Path.GetTempPath(), "isoplane-test-application.tar");
+
+    [Fact]
+    public async Task The_debugger_is_told_the_package_and_each_rebuild_of_it()
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        await using var relay = new DebugRelay(Package, deadline.Token);
+        await relay.PackageChangedAsync(deadline.Token);
+        using var control = new TcpClient();
+        await control.ConnectAsync(relay.AdapterEndpoint, deadline.Token);
+        using var reader = new StreamReader(control.GetStream(), leaveOpen: true);
+        using (var opened = JsonDocument.Parse((await reader.ReadLineAsync(deadline.Token))!))
+            Assert.Equal(Package, opened.RootElement.GetProperty("package").GetString());
+        await relay.PackageChangedAsync(deadline.Token);
+        using var rebuilt = JsonDocument.Parse((await reader.ReadLineAsync(deadline.Token))!);
+        Assert.Equal("packageChanged", rebuilt.RootElement.GetProperty("action").GetString());
+    }
+
     [Fact]
     public async Task A_transport_reset_terminates_the_owned_runtime()
     {
@@ -32,7 +51,7 @@ public sealed class DebugRelayTests
     public async Task Successive_guests_use_the_same_relay_endpoints()
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-        await using var relay = new DebugRelay(deadline.Token);
+        await using var relay = new DebugRelay(Package, deadline.Token);
         using var control = new TcpClient();
         var endpoint = await ConnectControlAsync(control, relay, deadline.Token);
         for (int request = 0; request < 2; request++)
@@ -60,7 +79,7 @@ public sealed class DebugRelayTests
     public async Task Adapter_reset_while_waiting_for_a_guest_ends_the_relay()
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-        var relay = new DebugRelay(deadline.Token);
+        var relay = new DebugRelay(Package, deadline.Token);
         using var adapter = new TcpClient();
         await ConnectControlAsync(adapter, relay, deadline.Token);
         adapter.Client.LingerState = new LingerOption(true, 0);
@@ -71,8 +90,8 @@ public sealed class DebugRelayTests
     }
 
     [Theory]
-    [InlineData("{\"version\":2,\"action\":\"terminate\"}")]
-    [InlineData("{\"version\":1,\"action\":\"unknown\"}")]
+    [InlineData("{\"version\":3,\"action\":\"terminate\"}")]
+    [InlineData("{\"version\":2,\"action\":\"unknown\"}")]
     [InlineData("not-json")]
     public async Task Invalid_control_commands_fail_the_session(string message)
     {
@@ -108,7 +127,7 @@ public sealed class DebugRelayTests
 
         private RelaySession()
         {
-            Relay = new DebugRelay(Cancellation);
+            Relay = new DebugRelay(Package, Cancellation);
             Host = new LocalSession(SessionFixture.Module, fixture.Options, message =>
             {
                 if (message["event"]?.GetValue<string>() == "ready") ready.TrySetResult();

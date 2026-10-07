@@ -249,9 +249,11 @@ public sealed class DebugAdapterTests
     }
 
     [Theory]
+    [InlineData("{\"version\":3,\"port\":1234,\"package\":\"/application.tar\"}")]
+    [InlineData("{\"version\":2,\"port\":0,\"package\":\"/application.tar\"}")]
+    [InlineData("{\"version\":2,\"port\":65536,\"package\":\"/application.tar\"}")]
     [InlineData("{\"version\":2,\"port\":1234}")]
-    [InlineData("{\"version\":1,\"port\":0}")]
-    [InlineData("{\"version\":1,\"port\":65536}")]
+    [InlineData("{\"version\":2,\"port\":1234,\"package\":\"application.tar\"}")]
     [InlineData("not-json")]
     [InlineData("null")]
     public async Task invalid_session_control_endpoints_fail_attachment(string message)
@@ -266,6 +268,49 @@ public sealed class DebugAdapterTests
         await writer.WriteLineAsync(message);
         await Assert.ThrowsAsync<ProtocolException>(() => attached);
         Assert.True(client.Adapter.Failed, "an invalid local-session handshake must not start a guest connection");
+    }
+
+    [Fact]
+    public async Task a_breakpoint_is_verified_from_the_built_application_before_any_guest_runs()
+    {
+        var directory = Directory.CreateTempSubdirectory("isoplane-adapter-symbols-");
+        try
+        {
+            string source = Path.Combine(directory.FullName, "Example.cs"), package = Path.Combine(directory.FullName, "application.tar");
+            BuiltApplication.Write(package, source, "public static class Example\n{\n    public static int Run()\n    {\n\n        return 42;\n    }\n}\n");
+            await using var client = await Client.StartAsync();
+            await client.Initialize();
+            using var listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            var attached = client.Send(Attach("127.0.0.1", ((IPEndPoint)listener.LocalEndpoint).Port));
+            using var control = await AcceptControlAsync(listener, client.Cancellation, package);
+            await client.Initialized.Task.WaitAsync(client.Cancellation);
+
+            var set = await client.Send(new SetBreakpointsRequest
+            {
+                Args = { Source = new Source { Path = source }, Breakpoints = [new SourceBreakpoint { Line = 6 }, new SourceBreakpoint { Line = 5 }] }
+            });
+            Assert.True(set.Breakpoints[0].Verified, "a breakpoint on a statement must be verified while no guest is running");
+            Assert.False(set.Breakpoints[1].Verified, "a breakpoint on a line without a statement must stay unverified");
+            Assert.Contains("No statement", set.Breakpoints[1].Message, StringComparison.Ordinal);
+            var elsewhere = await client.Send(new SetBreakpointsRequest
+            {
+                Args = { Source = new Source { Path = Path.Combine(directory.FullName, "Other.cs") }, Breakpoints = [new SourceBreakpoint { Line = 6 }] }
+            });
+            Assert.False(elsewhere.Breakpoints[0].Verified, "a file the application was not built from is left to the guest to bind");
+
+            // A source edit: the session rebuilds its package in place and says so.
+            BuiltApplication.Write(package, source, "public static class Example\n{\n    public static int Run()\n    {\n        int answer = 42;\n        return answer;\n    }\n}\n");
+            using var writer = new StreamWriter(control.GetStream(), leaveOpen: true) { AutoFlush = true };
+            await writer.WriteLineAsync("{\"version\":2,\"action\":\"packageChanged\"}");
+            Breakpoint changed;
+            do { changed = await client.Breakpoints.Reader.ReadAsync(client.Cancellation); } while (changed.Id != set.Breakpoints[1].Id);
+            Assert.True(changed.Verified, "a rebuild that gives the line a statement must verify its breakpoint");
+
+            client.Adapter.Stop();
+            await Assert.ThrowsAsync<ProtocolException>(() => attached);
+        }
+        finally { directory.Delete(recursive: true); }
     }
 
     [Fact]
@@ -324,12 +369,12 @@ public sealed class DebugAdapterTests
         using var writer = new StreamWriter(control.GetStream(), leaveOpen: true) { AutoFlush = true };
         var preparing = client.Send(new PrepareDetach());
         Assert.Equal("prepareDetach", JObject.Parse((await reader.ReadLineAsync(client.Cancellation))!)["action"]!.Value<string>());
-        await writer.WriteLineAsync("{\"version\":1,\"action\":\"detachReady\"}");
+        await writer.WriteLineAsync("{\"version\":2,\"action\":\"detachReady\"}");
         await preparing;
         var disconnecting = client.Send(new DisconnectRequest { Args = { TerminateDebuggee = false } });
         Assert.Equal("detach", JObject.Parse((await reader.ReadLineAsync(client.Cancellation))!)["action"]!.Value<string>());
         await Assert.ThrowsAsync<ProtocolException>(() => client.Send(new DisconnectRequest { Args = { TerminateDebuggee = false } }));
-        await writer.WriteLineAsync("{\"version\":1,\"action\":\"detached\"}");
+        await writer.WriteLineAsync("{\"version\":2,\"action\":\"detached\"}");
         await disconnecting;
         await Assert.ThrowsAsync<ProtocolException>(() => attached);
         Assert.False(client.Adapter.Failed);
@@ -350,11 +395,16 @@ public sealed class DebugAdapterTests
         }
     }
 
-    private static async Task<TcpClient> AcceptControlAsync(TcpListener listener, CancellationToken cancellation)
+    /// <summary>Accepts the adapter's control connection as a local session whose application package is at <paramref name="package"/>.</summary>
+    private static async Task<TcpClient> AcceptControlAsync(TcpListener listener, CancellationToken cancellation, string? package = null)
     {
         var control = await listener.AcceptTcpClientAsync(cancellation);
         using var writer = new StreamWriter(control.GetStream(), leaveOpen: true) { AutoFlush = true };
-        await writer.WriteLineAsync(System.Text.Json.JsonSerializer.Serialize(new { version = 1, port = ((IPEndPoint)listener.LocalEndpoint).Port }));
+        await writer.WriteLineAsync(System.Text.Json.JsonSerializer.Serialize(new
+        {
+            version = 2, port = ((IPEndPoint)listener.LocalEndpoint).Port,
+            package = package ?? Path.Combine(Path.GetTempPath(), "isoplane-test-no-application.tar")
+        }));
         return control;
     }
 
@@ -373,6 +423,8 @@ public sealed class DebugAdapterTests
         internal GuestDebugAdapter Adapter { get; }
         internal StringWriter Diagnostics { get; } = new();
         internal TaskCompletionSource Initialized { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        /// <summary>The breakpoints the adapter reported as changed, in order.</summary>
+        internal System.Threading.Channels.Channel<Breakpoint> Breakpoints { get; } = System.Threading.Channels.Channel.CreateUnbounded<Breakpoint>();
         internal CancellationToken Cancellation => lifetime.Token;
 
         private Client(TcpClient editor, TcpClient adapter, DebugLauncher? launcher)
@@ -380,7 +432,7 @@ public sealed class DebugAdapterTests
             this.editor = editor;
             this.adapter = adapter;
             Adapter = new GuestDebugAdapter(adapter.GetStream(), adapter.GetStream(), Diagnostics, launcher);
-            host = new Editor(editor.GetStream(), Initialized, Diagnostics);
+            host = new Editor(editor.GetStream(), Initialized, Breakpoints.Writer, Diagnostics);
             Adapter.Protocol.Run();
             Protocol.LogMessage += (_, message) => Diagnostics.WriteLine(message.Category + ": " + message.Message);
             Adapter.Protocol.LogMessage += (_, message) => Diagnostics.WriteLine(message.Category + ": " + message.Message);
@@ -450,8 +502,11 @@ public sealed class DebugAdapterTests
         private readonly TaskCompletionSource initialized;
         private readonly TextWriter diagnostics;
 
-        internal Editor(Stream stream, TaskCompletionSource initialized, TextWriter diagnostics)
+        private readonly System.Threading.Channels.ChannelWriter<Breakpoint> breakpoints;
+
+        internal Editor(Stream stream, TaskCompletionSource initialized, System.Threading.Channels.ChannelWriter<Breakpoint> breakpoints, TextWriter diagnostics)
         {
+            this.breakpoints = breakpoints;
             this.initialized = initialized;
             this.diagnostics = diagnostics;
             InitializeProtocolHost(stream, stream);
@@ -460,6 +515,7 @@ public sealed class DebugAdapterTests
         protected override void HandleProtocolError(Exception error) => diagnostics.WriteLine(error);
 
         protected override void HandleInitializedEvent(InitializedEvent message) => initialized.TrySetResult();
+        protected override void HandleBreakpointEvent(BreakpointEvent message) => breakpoints.TryWrite(message.Breakpoint);
         protected override void HandleTerminatedEvent(TerminatedEvent message) => diagnostics.WriteLine("The debugger session terminated.");
     }
 }

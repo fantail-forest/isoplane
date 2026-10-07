@@ -18,7 +18,7 @@ internal static class ProtocolAcceptance
         using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp) { LingerState = new LingerOption(true, 0) };
         using var http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
         await using var owner = new Isoplane.Debugging.GuestSession();
-        var transportEndpoint = await owner.ConnectAsync(IPEndPoint.Parse(endpoint)).WaitAsync(deadline.Token);
+        var (transportEndpoint, _) = await owner.ConnectAsync(IPEndPoint.Parse(endpoint)).WaitAsync(deadline.Token);
         var connecting = VirtualMachineManager.ConnectInternalAsync(socket, null, transportEndpoint, null);
         var response = http.GetStringAsync(url, deadline.Token);
         var machine = await connecting.WaitAsync(deadline.Token);

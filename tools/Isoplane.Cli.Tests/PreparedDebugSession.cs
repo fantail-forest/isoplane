@@ -12,7 +12,7 @@ internal static class PreparedDebugSession
         Directory.CreateDirectory(session);
         try
         {
-            await using var relay = new DebugRelay(cancellation.Token);
+            await using var relay = new DebugRelay(Path.GetFullPath(package), cancellation.Token);
             Console.WriteLine(JsonSerializer.Serialize(new { @event = "debugger_ready", endpoint = relay.AdapterEndpoint.ToString(), package }));
             await using var host = new LocalSession(await File.ReadAllBytesAsync(module),
                 new LocalProject(project).SessionOptions(new DevelopmentSettings(Path.GetFileName(project), 0, [], LimitOverrides.None, null),
