@@ -12,12 +12,23 @@ Edit `Program.cs` and run it again, or use `isoplane dev` to rebuild on every sa
 The files here are commented as a guide to setting up a project of this kind,
 whether you build on this one or copy from it.
 
+## Debug it
+
+In VS Code with the Isoplane Debugger extension, press F5, or use C# Dev Kit's
+"Debug project associated with this file" button. `.vscode/launch.json` holds the
+session and explains it. Set a breakpoint and send a request to the URL the
+Debug Console prints.
+
+From a terminal, `isoplane dev --debug` starts a session a debugger can
+attach to.
+
 | File | What it shows |
 | --- | --- |
 | `Sample-App.csproj` | The Isoplane SDK reference, the User Secrets identifier and the build's optional checks |
 | `Program.cs` | Where configuration comes from, where services and endpoints go, and the lifecycle hooks |
 | `appsettings.json`, `appsettings.Development.json` | Settings for every environment, and for development |
 | `Properties/launchSettings.json` | The local port, settings, and the limits a local session can run under |
+| `.vscode/launch.json` | Debugging the application in VS Code |
 
 ## How it differs from an ordinary ASP.NET application
 

@@ -24,6 +24,16 @@ The database listens on `localhost:5432`. If that port is taken, change it in
 `compose.yaml` and in `src/Sample-Api/appsettings.Development.json`.
 `docker compose down` stops it and keeps its data; add `-v` to delete the data.
 
+## Debug it
+
+In VS Code with the Isoplane Debugger extension, press F5, or use C# Dev Kit's
+"Debug project associated with this file" button. `.vscode/launch.json` holds the
+session and explains it. Set a breakpoint and send a request to the URL the
+Debug Console prints.
+
+From a terminal, `isoplane dev --debug --project src/Sample-Api` starts a session a debugger can
+attach to.
+
 ## Test it
 
 ```bash
@@ -49,6 +59,7 @@ dotnet test
 | `src/Sample-Api/Notifications/` | A typed `HttpClient` that posts completed todos to a webhook |
 | `src/Sample-Api/Migrations/` | Entity Framework Core migrations |
 | `src/Sample-Api/Sample-Api.http` | A request for each endpoint |
+| `.vscode/launch.json` | Debugging the application in VS Code |
 | `tests/Sample-Api.Tests/` | Unit tests and sandbox tests |
 
 ## How it differs from an ordinary ASP.NET application

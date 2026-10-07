@@ -15,6 +15,16 @@ dotnet run --project src/Sample-Handler
 Then try `/hello?name=Ada`, `/countdown`, or post a JSON greeting to `/echo`.
 `isoplane dev --project src/Sample-Handler` rebuilds on every save.
 
+## Debug it
+
+In VS Code with the Isoplane Debugger extension, press F5, or use C# Dev Kit's
+"Debug project associated with this file" button. `.vscode/launch.json` holds the
+session and explains it. Set a breakpoint and send a request to the URL the
+Debug Console prints.
+
+From a terminal, `isoplane dev --debug --project src/Sample-Handler` starts a session a debugger can
+attach to.
+
 ## Test it
 
 ```bash
@@ -34,6 +44,7 @@ dotnet test
 | `src/Sample-Handler/Handler.cs` | The handler, the lifecycle hooks, and where settings come from |
 | `src/Sample-Handler/Greeter.cs` | Application logic kept apart from Isoplane, and JSON serialization |
 | `src/Sample-Handler/Properties/launchSettings.json` | The local port, settings, and the limits a local session can run under |
+| `.vscode/launch.json` | Debugging the application in VS Code |
 | `tests/Sample-Handler.Tests/SandboxFixture.cs` | Starting the application in the sandbox for a test run |
 
 ## How it works
