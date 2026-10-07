@@ -10,6 +10,7 @@ async function run() {
     const extension = vscode.extensions.getExtension('fantail-forest.isoplane-debugger');
     assert.ok(extension);
     await extension.activate();
+    await require('./csharp').run();
     const project = fs.mkdtempSync(path.join(os.tmpdir(), 'isoplane-editor-application-'));
     fs.cpSync(process.env.ISOPLANE_TEST_PROJECT, project, { recursive: true, filter: source => !['bin', 'obj', '.isoplane'].includes(path.basename(source)) });
     const source = path.join(project, 'Program.cs');

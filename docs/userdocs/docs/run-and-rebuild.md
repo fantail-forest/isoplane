@@ -61,10 +61,18 @@ configuration you would pass to `dotnet run`.
 ## Debugging
 
 With the Isoplane debugger extension installed in VS Code, open your application
-folder, choose **Debug local Isoplane**, set a breakpoint, and press **F5**. The
+folder, choose **Debug local Isoplane**, set a breakpoint, and press **F5**. A
+project created from a template has that configuration in `.vscode/launch.json`.
+C# Dev Kit's **Debug project associated with this file** button starts the same
+session for an Isoplane project. The
 adapter builds and starts the application in an **Isoplane** terminal. Send an HTTP
 request to the URL printed in the terminal or Debug Console. Stopping the debugger stops the application and its owned
 processes.
+
+The application runs inside the sandbox, so the ordinary C# debugger cannot reach
+it: attached to the `isoplane` tool, it leaves breakpoints in the application
+unverified. Running without debugging, from C# Dev Kit's **Run project** button or
+`dotnet run`, starts the application without a debugger.
 
 To start a session in a terminal instead:
 

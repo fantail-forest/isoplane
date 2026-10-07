@@ -18,6 +18,12 @@ prints its local HTTP URL. Send a request to that URL to reach the breakpoint.
 
 `port` selects the HTTP listener port; zero chooses an available port.
 
+C# Dev Kit's **Debug project associated with this file** button, and a `dotnet`
+or `coreclr` launch configuration that starts an Isoplane project, start this
+same launch. The C# debugger would attach to the `isoplane` tool, which only
+hosts the application, and leave the application's breakpoints unverified.
+Running without debugging is left to the project's run command.
+
 Keep the debugger attached for subsequent requests. Breakpoint configuration
 is retained as each fresh guest starts. Source edits rebuild automatically; a
 paused request keeps its existing code and locals until it finishes. The next

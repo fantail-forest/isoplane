@@ -1,12 +1,16 @@
 'use strict';
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const net = require('node:net');
+const os = require('node:os');
+const path = require('node:path');
 const vscode = require('vscode');
 
 async function run() {
     const extension = vscode.extensions.getExtension('fantail-forest.isoplane-debugger');
     assert.ok(extension, 'VS Code must discover the Isoplane debugger extension');
     await extension.activate();
+    csharpLaunches();
     const sockets = new Set();
     const listener = net.createServer(socket => {
         sockets.add(socket);
@@ -46,6 +50,35 @@ async function run() {
         tracker?.dispose();
         for (const socket of sockets) socket.destroy();
         await new Promise(resolve => listener.close(resolve));
+    }
+}
+/** Which C# launches the extension takes over, and which it leaves to the C# debugger. */
+function csharpLaunches() {
+    const { isoplaneLaunch } = require('../extension.js');
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'isoplane-editor-projects-'));
+    try {
+        const application = path.join(directory, 'app', 'App.csproj');
+        const library = path.join(directory, 'library', 'Library.csproj');
+        for (const file of [application, library]) fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(application, '<!-- A leading comment. -->\n<Project Sdk="Isoplane.AspNetCore/1.2.3">\n</Project>\n');
+        fs.writeFileSync(library, '<Project Sdk="Microsoft.NET.Sdk">\n</Project>\n');
+        const folder = { uri: vscode.Uri.file(directory) };
+        const named = { type: 'dotnet', request: 'launch', name: 'Debug', projectPath: '${workspaceFolder}/app/App.csproj' };
+        assert.deepEqual(isoplaneLaunch(folder, named),
+            { type: 'isoplane', request: 'launch', name: 'Debug', project: path.dirname(application), configuration: 'Debug' },
+            'a launch naming an Isoplane project file must become an Isoplane launch of its directory');
+        assert.equal(isoplaneLaunch(folder, { ...named, projectPath: library }), undefined, 'any other project keeps the C# debugger');
+        assert.equal(isoplaneLaunch(folder, { ...named, noDebug: true }), undefined, 'running without debugging keeps the project run command');
+        assert.equal(isoplaneLaunch(folder, { ...named, request: 'attach' }), undefined);
+        const command = { type: 'coreclr', request: 'launch', name: 'Debug', program: 'isoplane' };
+        assert.deepEqual(isoplaneLaunch(folder, { ...command, args: 'dev --project "/my projects/app" --configuration "Release" --no-watch --no-build' }),
+            { type: 'isoplane', request: 'launch', name: 'Debug', project: '/my projects/app', configuration: 'Release' },
+            'a launch of the project run command must become an Isoplane launch of the project it names');
+        assert.equal(isoplaneLaunch(folder, { ...command, program: '/usr/bin/dotnet', args: ['/tools/Isoplane.Cli.dll', 'dev', '--project', '/app'] })?.project, '/app');
+        assert.equal(isoplaneLaunch(folder, { ...command, program: '/app/bin/App.dll', args: [] }), undefined, 'any other program keeps the C# debugger');
+        assert.equal(isoplaneLaunch(folder, { ...command, args: ['deploy', '--project', '/app'] }), undefined);
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
     }
 }
 module.exports = { run };

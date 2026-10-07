@@ -2,7 +2,7 @@
   "name": "isoplane-debugger",
   "displayName": "Isoplane Debugger",
   "description": "Debug local interpreted Isoplane .NET applications.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "fantail-forest",
   "license": "UNLICENSED",
   "repository": {
@@ -17,7 +17,9 @@
   ],
   "main": "./extension.js",
   "activationEvents": [
-    "onDebug:isoplane"
+    "onDebug:isoplane",
+    "onDebugResolve:dotnet",
+    "onDebugResolve:coreclr"
   ],
   "capabilities": {
     "untrustedWorkspaces": {
