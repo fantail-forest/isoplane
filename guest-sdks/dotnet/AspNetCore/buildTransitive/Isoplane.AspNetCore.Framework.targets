@@ -24,6 +24,28 @@
   <Target Name="IsoplaneAspNetCoreFrameworkReferences" BeforeTargets="ProcessFrameworkReferences" DependsOnTargets="IsoplaneSelectAspNetCore">
     <ItemGroup><FrameworkReference Remove="Microsoft.AspNetCore.App" /></ItemGroup>
   </Target>
+  <!-- The SDK names the packages a framework already provides, for restore to leave out, from the
+       project's framework references. ASP.NET is no longer among them by then, so its packages are
+       named here. Without them a dependency's older copy of a framework assembly is restored and
+       chosen over the framework's own. -->
+  <Target Name="IsoplaneAspNetCorePrunePackages" DependsOnTargets="AddPrunePackageReferences" BeforeTargets="CollectPrunePackageReferences"
+          Condition="'$(IsoplaneAspNetCoreProvidedAssemblies)' != 'true' AND ('$(RestoreEnablePackagePruning)' == 'true' OR '$(RestoreEnablePackagePruning)' == '')">
+    <ItemGroup>
+      <_IsoplanePrunedFramework Include="Microsoft.AspNetCore.App" />
+    </ItemGroup>
+    <GetPackagesToPrune TargetFrameworkIdentifier="$(TargetFrameworkIdentifier)"
+                        TargetFrameworkVersion="$(_TargetFrameworkVersionWithoutV)"
+                        FrameworkReferences="@(_IsoplanePrunedFramework)"
+                        TargetingPacks="@(TargetingPack)"
+                        TargetingPackRoots="$(PrunePackageTargetingPackRoots)"
+                        PrunePackageDataRoot="$(PrunePackageDataRoot)"
+                        AllowMissingPrunePackageData="$(AllowMissingPrunePackageData)">
+      <Output TaskParameter="PackagesToPrune" ItemName="_IsoplanePrunePackageReference" />
+    </GetPackagesToPrune>
+    <ItemGroup>
+      <PrunePackageReference Include="@(_IsoplanePrunePackageReference)" Exclude="@(PrunePackageReference)" />
+    </ItemGroup>
+  </Target>
   <Target Name="IsoplaneAspNetCoreFrameworkAssemblies" BeforeTargets="ResolveAssemblyReferences" DependsOnTargets="IsoplaneSelectAspNetCore;ResolvePackageAssets" Condition="'$(IsoplaneAspNetCoreProvidedAssemblies)' != 'true'">
     <ItemGroup>
       <_IsoplaneAspNetAssembly Include="$(NuGetPackageRoot)/microsoft.aspnetcore.app.runtime.linux-x64/$(IsoplaneAspNetCoreRuntimeVersion)/runtimes/linux-x64/lib/net10.0/*.dll" />

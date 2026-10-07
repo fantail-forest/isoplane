@@ -72,6 +72,9 @@ finishes during startup is accepted.
 Files in `wwwroot` are part of the application package. Serve them with
 `app.MapStaticAssets()` or `app.UseStaticFiles()`.
 
+A package that depends on an older version of an assembly ASP.NET Core provides
+gets the framework's copy, as in an ordinary ASP.NET Core project.
+
 Keep durable state outside the instance. Review
 [the application lifecycle](application-lifecycle.md) for startup state,
 connection pools, cancellation, and work after the response.

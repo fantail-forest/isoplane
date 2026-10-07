@@ -69,8 +69,9 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
             Assert.Contains($"/microsoft.aspnetcore.app.ref/{version}/", generator);
             var implementation = Assert.Single(Paths("IsoplaneBundleAssembly"), path => path.EndsWith("/Microsoft.AspNetCore.dll", StringComparison.Ordinal));
             Assert.Contains($"/microsoft.aspnetcore.app.runtime.linux-x64/{version}/", implementation);
+            // As in an ordinary ASP.NET project, a package the framework already provides yields to the framework's copy.
             var logging = Assert.Single(Paths("IsoplaneBundleAssembly"), path => path.EndsWith("/Microsoft.Extensions.Logging.Abstractions.dll", StringComparison.Ordinal));
-            Assert.Contains("/microsoft.extensions.logging.abstractions/10.0.11/", logging);
+            Assert.Contains($"/microsoft.aspnetcore.app.runtime.linux-x64/{version}/", logging);
             Assert.DoesNotContain(Paths("IsoplaneBundlePlatformReference"), path => path.EndsWith("/Microsoft.AspNetCore.dll", StringComparison.Ordinal));
         }
     }
