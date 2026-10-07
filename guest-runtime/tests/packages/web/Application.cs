@@ -10,7 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Web;
 
-/// <summary>Minimal API routes over a singleton, a content file and a streamed upload.</summary>
+/// <summary>Minimal API routes over a singleton, a content file, a static web asset and a streamed upload.</summary>
 public static class Application
 {
     /// <summary>Builds the application, subscribes its warm-up and runs it.</summary>
@@ -25,6 +25,14 @@ public static class Application
             return greeter.Greet(name);
         });
         app.MapGet("/warm", (Greeter greeter) => greeter.Warmups++);
+        // A stylesheet is answered after one host timer, like every route the package tests finish across a hibernation.
+        app.Use(async (context, next) =>
+        {
+            if (context.Request.Path.Value!.EndsWith(".css", StringComparison.Ordinal))
+                await Task.Delay(TimeSpan.FromMilliseconds(50)).ConfigureAwait(false);
+            await next(context);
+        });
+        app.MapStaticAssets();
         app.MapPost("/upload", async (HttpRequest request) =>
         {
             long total = 0;

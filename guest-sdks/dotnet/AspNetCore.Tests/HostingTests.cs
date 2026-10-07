@@ -283,26 +283,34 @@ public sealed class HostingTests
             "server completion flushes pending response pipe bytes");
     }
 
-    [Theory]
-    [InlineData("file")]
-    [InlineData("synchronous write")]
-    public async Task unsupported_response_operations_fail_explicitly(string operation)
+    [Fact]
+    public async Task a_synchronous_response_write_fails_explicitly()
     {
         var builder = Builder();
         await using var app = builder.Build();
-        app.Run(async context =>
+        app.Run(context =>
         {
-            var body = context.Features.Get<IHttpResponseBodyFeature>()!;
-            switch (operation)
-            {
-                case "file": await body.SendFileAsync("/file", 0, null); break;
-                case "synchronous write": body.Stream.Write([1], 0, 1); break;
-                default: throw new ArgumentOutOfRangeException(nameof(operation));
-            }
+            context.Features.Get<IHttpResponseBodyFeature>()!.Stream.Write([1], 0, 1);
+            return Task.CompletedTask;
         });
         var error = await Record.ExceptionAsync(() => app.HandleAsync(Request()));
-        Assert.True(error is NotSupportedException,
-            $"unsupported {operation} must fail explicitly at the response boundary");
+        Assert.True(error is NotSupportedException, "a synchronous write must fail explicitly at the response boundary");
+    }
+
+    [Fact]
+    public async Task a_file_is_sent_as_the_requested_part_of_the_response_body()
+    {
+        var file = Path.Combine(Directory.CreateTempSubdirectory("isoplane-send-file-").FullName, "asset.txt");
+        await File.WriteAllTextAsync(file, "0123456789");
+        try
+        {
+            var builder = Builder();
+            await using var app = builder.Build();
+            app.Run(context => context.Features.Get<IHttpResponseBodyFeature>()!.SendFileAsync(file, 2, 5));
+            var response = await app.HandleAsync(Request());
+            Assert.Equal("23456", System.Text.Encoding.UTF8.GetString(response.Body));
+        }
+        finally { Directory.Delete(Path.GetDirectoryName(file)!, recursive: true); }
     }
 
     [Fact]

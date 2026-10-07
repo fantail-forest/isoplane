@@ -8,6 +8,9 @@
     <RuntimeIdentifier>wasi-wasm</RuntimeIdentifier>
     <SelfContained>false</SelfContained>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <!-- An application package carries each static web asset once, as built. The build would
+         otherwise also describe compressed copies that only a publish lays out beside them. -->
+    <CompressionEnabled Condition="'$(CompressionEnabled)' == ''">false</CompressionEnabled>
     <IntermediateOutputPath>$(BaseIntermediateOutputPath)$(Configuration)/managed-bundle/</IntermediateOutputPath>
     <BaseOutputPath Condition="'$(BaseOutputPath)' == ''">bin/</BaseOutputPath>
     <OutputPath>$(BaseOutputPath)$(Configuration)/managed-bundle/</OutputPath>

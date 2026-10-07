@@ -38,7 +38,15 @@
       <IsoplaneBundleAsset Remove="@(RuntimePackAsset);@(_IsoplaneUnpublishedReference)" />
       <IsoplaneBundleAsset Include="@(_NoneWithTargetPath)" Condition="'%(_NoneWithTargetPath.CopyToPublishDirectory)' != 'Never' AND (('%(_NoneWithTargetPath.CopyToOutputDirectory)' != '' AND '%(_NoneWithTargetPath.CopyToOutputDirectory)' != 'Never') OR '%(_NoneWithTargetPath.CopyToPublishDirectory)' != '')" />
       <IsoplaneBundleAsset Include="@(ContentWithTargetPath)" Condition="'%(ContentWithTargetPath.CopyToPublishDirectory)' != 'Never' AND (('%(ContentWithTargetPath.CopyToOutputDirectory)' != '' AND '%(ContentWithTargetPath.CopyToOutputDirectory)' != 'Never') OR ('%(ContentWithTargetPath.CopyToPublishDirectory)' != '' AND '%(ContentWithTargetPath.CopyToPublishDirectory)' != 'Never'))" />
+      <!-- MapStaticAssets reads this description of wwwroot from the content root. -->
+      <IsoplaneBundleAsset Include="@(ContentWithTargetPath)" Condition="'%(ContentWithTargetPath.TargetPath)' == '$(AssemblyName).staticwebassets.endpoints.json'" />
       <IsoplaneBundleAsset Remove="NuGet.Config;nuget.config;$(MSBuildProjectDirectory)/NuGet.Config;$(MSBuildProjectDirectory)/nuget.config" />
+      <_IsoplaneListedBundleAsset Include="@(IsoplaneBundleAsset)" />
+      <IsoplaneBundleAsset Remove="@(IsoplaneBundleAsset)" />
     </ItemGroup>
+    <!-- The web SDK lists each wwwroot file as content twice. -->
+    <RemoveDuplicates Inputs="@(_IsoplaneListedBundleAsset)">
+      <Output TaskParameter="Filtered" ItemName="IsoplaneBundleAsset" />
+    </RemoveDuplicates>
   </Target>
 </Project>

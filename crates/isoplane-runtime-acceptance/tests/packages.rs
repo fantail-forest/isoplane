@@ -299,6 +299,15 @@ async fn an_aspnet_package_runs_on_the_shared_runtime_across_restored_stores() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn an_aspnet_package_serves_its_static_web_assets() {
+    let body = answer_across_restored_stores(package("web"), "/site.css").await;
+    assert_eq!(
+        body, "body { color: teal; }\n",
+        "a file under the package's wwwroot must be served from the package"
+    );
+}
+
+#[tokio::test(start_paused = true)]
 async fn an_aspnet_packages_warmup_runs_once_before_its_template_is_captured() {
     let body = answer_across_restored_stores(package("web"), "/hello/isoplane").await;
     assert!(

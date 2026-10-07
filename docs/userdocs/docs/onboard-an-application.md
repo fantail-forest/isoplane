@@ -69,6 +69,9 @@ this includes services a library registers. An `IHostedService` may perform
 bounded asynchronous startup work in `StartAsync`, and a `BackgroundService` that
 finishes during startup is accepted.
 
+Files in `wwwroot` are part of the application package. Serve them with
+`app.MapStaticAssets()` or `app.UseStaticFiles()`.
+
 Keep durable state outside the instance. Review
 [the application lifecycle](application-lifecycle.md) for startup state,
 connection pools, cancellation, and work after the response.

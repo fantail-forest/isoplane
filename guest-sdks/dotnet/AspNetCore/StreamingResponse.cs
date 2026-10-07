@@ -77,8 +77,10 @@ internal sealed class StreamingResponse : IHttpResponseFeature, IHttpResponseBod
     {
         // Every write already awaits the host transport without a response buffer.
     }
+    // The host has no file to hand to a socket: an application's files are part of its package,
+    // so a file is read here and written like any other body. Static file middleware sends this way.
     public Task SendFileAsync(string path, long offset, long? count, CancellationToken cancellationToken = default) =>
-        throw new NotSupportedException("Isoplane does not support sending a response directly from a guest file.");
+        SendFileFallback.SendFileAsync(stream, path, offset, count, cancellationToken);
     internal Response ToResponse()
     {
         if (!complete) throw new InvalidOperationException("The HTTP response has not completed.");
