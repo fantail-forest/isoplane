@@ -9,7 +9,7 @@ dotnet run
 The application listens on the address in `Properties/launchSettings.json`.
 Edit `Program.cs` and run it again, or use `isoplane dev` to rebuild on every save.
 
-Every file here is commented as a guide to setting up a project of this kind,
+The files here are commented as a guide to setting up a project of this kind,
 whether you build on this one or copy from it.
 
 | File | What it shows |

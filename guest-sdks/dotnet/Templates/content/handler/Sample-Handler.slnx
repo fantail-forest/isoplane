@@ -1,3 +1,7 @@
+<!--
+  The solution. `dotnet build` and `dotnet test` in this directory act on every
+  project listed here. Add one with `dotnet sln add <path to project>`.
+-->
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/Sample-Handler/Sample-Handler.csproj" />

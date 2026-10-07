@@ -4,7 +4,7 @@ An ASP.NET Core Web API that runs in the Isoplane sandbox: minimal API
 endpoints, Entity Framework Core with PostgreSQL, OpenAPI, an outbound webhook,
 and tests.
 
-Every file here is commented as a guide to setting up a project of this kind,
+The files here are commented as a guide to setting up a project of this kind,
 whether you build on this one or copy from it.
 
 ## Run it
@@ -40,6 +40,7 @@ dotnet test
 | Path | What it holds |
 | --- | --- |
 | `compose.yaml` | The development database |
+| `.config/dotnet-tools.json` | The version of `dotnet ef` this project uses; `dotnet tool restore` installs it. The file cannot hold comments |
 | `src/Sample-Api/Sample-Api.csproj` | The Isoplane SDK reference, the User Secrets identifier and the build's optional checks |
 | `src/Sample-Api/Program.cs` | Where configuration comes from, services, endpoints, and the initialization and activation hooks |
 | `src/Sample-Api/appsettings.json`, `appsettings.Development.json` | Settings for every environment, and for development |

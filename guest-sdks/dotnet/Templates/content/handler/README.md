@@ -3,7 +3,7 @@
 A service that runs in the Isoplane sandbox without ASP.NET. One static method
 handles every HTTP request.
 
-Every file here is commented as a guide to setting up a project of this kind,
+The files here are commented as a guide to setting up a project of this kind,
 whether you build on this one or copy from it.
 
 ## Run it

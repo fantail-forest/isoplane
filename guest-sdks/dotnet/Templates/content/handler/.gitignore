@@ -1,4 +1,11 @@
+# Build output.
 bin/
 obj/
+
+# What Isoplane builds and keeps for local sessions of this project: the
+# application package, compiled modules and session state. All of it is
+# produced again by the next `dotnet run`.
 .isoplane/
+
+# Per-user editor settings.
 *.user
