@@ -6,7 +6,7 @@
   "name": "Isoplane ASP.NET Core Empty",
   "description": "An empty ASP.NET Core application that runs in the Isoplane sandbox.",
   "shortName": "isoplane-web",
-  "sourceName": "SampleApp",
+  "sourceName": "Sample-App",
   "preferNameDirectory": true,
   "tags": {
     "language": "C#",
@@ -30,5 +30,5 @@
       "replaces": "5080"
     }
   },
-  "primaryOutputs": [{ "path": "SampleApp.csproj" }]
+  "primaryOutputs": [{ "path": "Sample-App.csproj" }]
 }

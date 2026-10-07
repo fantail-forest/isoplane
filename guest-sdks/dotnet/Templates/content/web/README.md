@@ -1,4 +1,4 @@
-# SampleApp
+# Sample-App
 
 An ASP.NET Core application that runs in the Isoplane sandbox.
 

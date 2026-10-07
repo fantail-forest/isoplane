@@ -4,7 +4,9 @@
 
 mod dotnet_template;
 
-pub use dotnet_template::{aspnet_project, debugger_python, managed_cli, release_version};
+pub use dotnet_template::{
+    aspnet_project, debugger_python, managed_cli, release_version, template_project,
+};
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;

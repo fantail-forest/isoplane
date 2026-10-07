@@ -6,6 +6,25 @@ pub mod common;
 use std::process::Command;
 
 #[test]
+fn solution_templates_build_under_a_name_that_is_not_an_identifier() {
+    for template in ["isoplane-handler", "isoplane-webapi"] {
+        let directory = tempfile::tempdir().expect("isolate the solution template journey");
+        let solution = isoplane_fixtures::template_project(directory.path(), template);
+        let output = Command::new("dotnet")
+            .arg("build")
+            .current_dir(&solution)
+            .output()
+            .expect("build the generated solution with the .NET SDK");
+        assert!(
+            output.status.success(),
+            "{template} must build when its files carry the project's name and its code a namespace derived from it:\n{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
 fn installed_sandbox_projects_do_not_advertise_clr_hot_reload() {
     let directory = tempfile::tempdir().expect("isolate installed SDK capability evaluation");
     let app = isoplane_fixtures::aspnet_project(directory.path());

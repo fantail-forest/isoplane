@@ -6,7 +6,7 @@
   "name": "Isoplane ASP.NET Core Web API",
   "description": "A Web API for the Isoplane sandbox with Entity Framework Core, PostgreSQL, OpenAPI and tests.",
   "shortName": "isoplane-webapi",
-  "sourceName": "SampleApi",
+  "sourceName": "Sample-Api",
   "preferNameDirectory": true,
   "tags": {
     "language": "C#",
@@ -32,7 +32,7 @@
     }
   },
   "primaryOutputs": [
-    { "path": "src/SampleApi/SampleApi.csproj" },
-    { "path": "tests/SampleApi.Tests/SampleApi.Tests.csproj" }
+    { "path": "src/Sample-Api/Sample-Api.csproj" },
+    { "path": "tests/Sample-Api.Tests/Sample-Api.Tests.csproj" }
   ]
 }

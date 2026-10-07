@@ -6,7 +6,7 @@
   "name": "Isoplane Handler",
   "description": "A service for the Isoplane sandbox that handles HTTP requests in one static method, without ASP.NET, with tests.",
   "shortName": "isoplane-handler",
-  "sourceName": "SampleHandler",
+  "sourceName": "Sample-Handler",
   "preferNameDirectory": true,
   "tags": {
     "language": "C#",
@@ -31,7 +31,7 @@
     }
   },
   "primaryOutputs": [
-    { "path": "src/SampleHandler/SampleHandler.csproj" },
-    { "path": "tests/SampleHandler.Tests/SampleHandler.Tests.csproj" }
+    { "path": "src/Sample-Handler/Sample-Handler.csproj" },
+    { "path": "tests/Sample-Handler.Tests/Sample-Handler.Tests.csproj" }
   ]
 }

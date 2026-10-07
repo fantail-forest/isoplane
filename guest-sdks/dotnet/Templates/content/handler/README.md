@@ -1,4 +1,4 @@
-# SampleHandler
+# Sample-Handler
 
 A service that runs in the Isoplane sandbox without ASP.NET. One static method
 handles every HTTP request.
@@ -6,11 +6,11 @@ handles every HTTP request.
 ## Run it
 
 ```bash
-dotnet run --project src/SampleHandler
+dotnet run --project src/Sample-Handler
 ```
 
 Then try `/hello?name=Ada`, `/countdown`, or post a JSON greeting to `/echo`.
-`isoplane dev --project src/SampleHandler` rebuilds on every save.
+`isoplane dev --project src/Sample-Handler` rebuilds on every save.
 
 ## Test it
 
@@ -25,7 +25,7 @@ dotnet test
 
 ## How it works
 
-`src/SampleHandler/Handler.cs` marks three static methods:
+`src/Sample-Handler/Handler.cs` marks three static methods:
 
 - **`[HttpHandler]`** receives every HTTP request and returns its response. An
   application has exactly one; the build fails otherwise. Take a
@@ -46,5 +46,5 @@ state that must last in a database or another service.
 `RuntimeConfiguration.ReadValues()` returns the settings the platform supplies. In
 local development those are the project's [User Secrets](https://learn.microsoft.com/aspnet/core/security/app-secrets)
 and the environment variables of the launch profile in
-`src/SampleHandler/Properties/launchSettings.json`, where `__` in a name stands
+`src/Sample-Handler/Properties/launchSettings.json`, where `__` in a name stands
 for `:`.

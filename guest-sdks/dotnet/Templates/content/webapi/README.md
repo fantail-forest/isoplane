@@ -1,4 +1,4 @@
-# SampleApi
+# Sample-Api
 
 An ASP.NET Core Web API that runs in the Isoplane sandbox: minimal API
 endpoints, Entity Framework Core with PostgreSQL, OpenAPI, an outbound webhook,
@@ -10,15 +10,15 @@ Start the development database, then the application:
 
 ```bash
 docker compose up -d --wait
-dotnet run --project src/SampleApi
+dotnet run --project src/Sample-Api
 ```
 
-`src/SampleApi/SampleApi.http` has a request for each endpoint, and
-`/openapi/v1.json` describes them. `isoplane dev --project src/SampleApi`
+`src/Sample-Api/Sample-Api.http` has a request for each endpoint, and
+`/openapi/v1.json` describes them. `isoplane dev --project src/Sample-Api`
 rebuilds on every save.
 
 The database listens on `localhost:5432`. If that port is taken, change it in
-`compose.yaml` and in `src/SampleApi/appsettings.Development.json`.
+`compose.yaml` and in `src/Sample-Api/appsettings.Development.json`.
 
 ## Test it
 
@@ -35,11 +35,11 @@ dotnet test
 
 | Path | What it holds |
 | --- | --- |
-| `src/SampleApi/Program.cs` | Services, endpoints, and the initialization and activation hooks |
-| `src/SampleApi/Todos/` | The todo entity, its `DbContext`, and its endpoints |
-| `src/SampleApi/Notifications/` | A typed `HttpClient` that posts completed todos to a webhook |
-| `src/SampleApi/Migrations/` | Entity Framework Core migrations |
-| `tests/SampleApi.Tests/` | Unit tests and sandbox tests |
+| `src/Sample-Api/Program.cs` | Services, endpoints, and the initialization and activation hooks |
+| `src/Sample-Api/Todos/` | The todo entity, its `DbContext`, and its endpoints |
+| `src/Sample-Api/Notifications/` | A typed `HttpClient` that posts completed todos to a webhook |
+| `src/Sample-Api/Migrations/` | Entity Framework Core migrations |
+| `tests/Sample-Api.Tests/` | Unit tests and sandbox tests |
 
 ## How it differs from an ordinary ASP.NET application
 
@@ -68,12 +68,12 @@ Configuration is layered as in ASP.NET: `appsettings.json`, then
 `appsettings.{Environment}.json`, then the settings the platform supplies. In
 local development those are [User Secrets](https://learn.microsoft.com/aspnet/core/security/app-secrets)
 and the environment variables of the launch profile in
-`src/SampleApi/Properties/launchSettings.json`.
+`src/Sample-Api/Properties/launchSettings.json`.
 
 Keep real credentials out of `appsettings` files:
 
 ```bash
-dotnet user-secrets set "ConnectionStrings:Todos" "Host=...;Database=...;Username=...;Password=..." --project src/SampleApi
+dotnet user-secrets set "ConnectionStrings:Todos" "Host=...;Database=...;Username=...;Password=..." --project src/Sample-Api
 ```
 
 Set `Notifications:WebhookUrl` to have completed todos posted to a URL.
@@ -89,12 +89,12 @@ behaves under them:
 
 ```bash
 dotnet tool restore
-dotnet ef migrations add AddDueDate --project src/SampleApi
+dotnet ef migrations add AddDueDate --project src/Sample-Api
 ```
 
 In the Development environment the application applies pending migrations when it
 initializes. Elsewhere, apply them as part of your release:
 
 ```bash
-dotnet ef database update --project src/SampleApi
+dotnet ef database update --project src/Sample-Api
 ```
