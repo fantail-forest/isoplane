@@ -61,9 +61,13 @@ choose the environment while developing.
 ## Check application assumptions
 
 Use asynchronous I/O and await request work before returning the response.
-Long-running `BackgroundService` implementations are unsupported. An
-`IHostedService` may perform bounded asynchronous startup work; that is different
-from starting work that must continue after the response.
+
+Isoplane suspends an application between requests, so background work cannot
+continue after startup. An application whose `BackgroundService` is still running
+once the host has started fails to start, with an error that names the service;
+this includes services a library registers. An `IHostedService` may perform
+bounded asynchronous startup work in `StartAsync`, and a `BackgroundService` that
+finishes during startup is accepted.
 
 Keep durable state outside the instance. Review
 [the application lifecycle](application-lifecycle.md) for startup state,
