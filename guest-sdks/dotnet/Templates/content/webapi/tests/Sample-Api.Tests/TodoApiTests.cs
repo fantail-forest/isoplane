@@ -10,6 +10,13 @@ namespace Sample_Api.Tests;
 /// sandbox, which is where platform behavior such as initialization, activation
 /// and outbound connections can be observed.
 /// </summary>
+/// <remarks>
+/// The trait lets a quick run leave them out:
+/// <c>dotnet test --filter "Category!=Sandbox"</c>. The tests share one database,
+/// so each creates the rows it asserts on instead of assuming an empty table.
+/// When an assertion needs the application's log to explain a failure, pass
+/// <c>sandbox.Diagnostics</c> as its message.
+/// </remarks>
 [Collection(SandboxCollection.Name)]
 [Trait("Category", "Sandbox")]
 public sealed class TodoApiTests(SandboxFixture sandbox)

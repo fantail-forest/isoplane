@@ -12,6 +12,7 @@
     "language": "C#",
     "type": "project"
   },
+  "guids": ["75e845a2-0587-46f2-856a-d06cc6dd4495"],
   "symbols": {
     "HttpPort": {
       "type": "parameter",

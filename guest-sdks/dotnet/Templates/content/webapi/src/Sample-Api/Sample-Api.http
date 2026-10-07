@@ -1,15 +1,17 @@
+# Requests for each endpoint. Send them from Visual Studio, JetBrains Rider, or
+# VS Code with the REST Client extension, while `dotnet run` is running.
+# The port is the one in Properties/launchSettings.json.
 @Sample_Api_HostAddress = http://localhost:5080
 
+### What is running, and which instance answered
 GET {{Sample_Api_HostAddress}}/
 Accept: application/json
 
-###
-
+### List todos. Add ?complete=true or ?complete=false to filter.
 GET {{Sample_Api_HostAddress}}/todos
 Accept: application/json
 
-###
-
+### Create a todo
 POST {{Sample_Api_HostAddress}}/todos
 Content-Type: application/json
 
@@ -17,8 +19,7 @@ Content-Type: application/json
   "title": "Read the README"
 }
 
-###
-
+### Complete it. With Notifications:WebhookUrl set, this also posts to the webhook.
 PUT {{Sample_Api_HostAddress}}/todos/1
 Content-Type: application/json
 
@@ -27,15 +28,12 @@ Content-Type: application/json
   "isComplete": true
 }
 
-###
-
+### Export every todo as a streamed response
 GET {{Sample_Api_HostAddress}}/todos/export
 Accept: application/json
 
-###
-
+### Delete it
 DELETE {{Sample_Api_HostAddress}}/todos/1
 
-###
-
+### The OpenAPI description, served in the Development environment only
 GET {{Sample_Api_HostAddress}}/openapi/v1.json

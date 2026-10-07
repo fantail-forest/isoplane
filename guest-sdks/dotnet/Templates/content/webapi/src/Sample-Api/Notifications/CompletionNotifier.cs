@@ -3,6 +3,10 @@ using Sample_Api.Todos;
 
 namespace Sample_Api.Notifications;
 
+/// <summary>
+/// The "Notifications" section of configuration. Give a feature its own options
+/// class and section, and its settings stay discoverable in appsettings.json.
+/// </summary>
 public sealed class NotificationOptions
 {
     /// <summary>Where completed todos are posted. Notifications are off without it.</summary>
@@ -12,7 +16,11 @@ public sealed class NotificationOptions
 /// <summary>What the webhook receives for a completed todo.</summary>
 public sealed record CompletionNotification(int Id, string Title, DateTimeOffset CompletedAt);
 
-/// <summary>Posts completed todos to the configured webhook.</summary>
+/// <summary>
+/// Posts completed todos to the configured webhook. Outbound HTTP works as in
+/// any ASP.NET Core application: a typed client from <c>AddHttpClient</c>, awaited
+/// by the request that needs it.
+/// </summary>
 public sealed partial class CompletionNotifier(HttpClient client, IOptions<NotificationOptions> options, ILogger<CompletionNotifier> logger)
 {
     public async Task NotifyAsync(Todo todo, CancellationToken cancellation)

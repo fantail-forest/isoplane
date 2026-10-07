@@ -4,6 +4,11 @@ using Sample_Api.Notifications;
 
 namespace Sample_Api.Todos;
 
+/// <summary>
+/// The todo endpoints. A new feature follows the same shape: a folder with its
+/// entity, an endpoints class like this one mapped from Program.cs, and a
+/// services extension that registers what the endpoints need.
+/// </summary>
 public static class TodoEndpoints
 {
     public static RouteGroupBuilder MapTodos(this IEndpointRouteBuilder routes)
@@ -18,6 +23,9 @@ public static class TodoEndpoints
         return todos;
     }
 
+    // Handler parameters are bound as in any minimal API: route values and query
+    // strings by name, registered services such as TodoDbContext by type, and the
+    // request's CancellationToken, which is cancelled when the client goes away.
     private static async Task<Ok<List<TodoResponse>>> List(TodoDbContext db, bool? complete, CancellationToken cancellation) =>
         TypedResults.Ok(await db.Todos.AsNoTracking()
             .Where(todo => complete == null || todo.IsComplete == complete)
@@ -28,6 +36,8 @@ public static class TodoEndpoints
     private static async Task<Results<Ok<TodoResponse>, NotFound>> Get(int id, TodoDbContext db, CancellationToken cancellation) =>
         await db.Todos.FindAsync([id], cancellation) is { } todo ? TypedResults.Ok(TodoResponse.From(todo)) : TypedResults.NotFound();
 
+    // AddValidation in Program.cs checks the attributes on CreateTodo before this
+    // runs, and answers 400 with a problem description when they fail.
     private static async Task<CreatedAtRoute<TodoResponse>> Create(CreateTodo request, TodoDbContext db, TimeProvider clock, CancellationToken cancellation)
     {
         var todo = new Todo { Title = request.Title, CreatedAt = clock.GetUtcNow() };

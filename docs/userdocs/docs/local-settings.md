@@ -19,7 +19,9 @@ application again for the changed settings.
 
 ## Keep credentials in User Secrets
 
-Run these commands in the application directory:
+Run these commands in the application directory. A project created from an
+Isoplane template already has a `UserSecretsId`; `init` adds one to a project
+that has none.
 
 ```bash
 dotnet user-secrets init

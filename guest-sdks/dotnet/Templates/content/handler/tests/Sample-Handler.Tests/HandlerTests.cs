@@ -7,6 +7,11 @@ namespace Sample_Handler.Tests;
 /// Sandbox tests: HTTP requests to the application running in the real Isoplane
 /// sandbox, which is where the handler and its lifecycle hooks actually run.
 /// </summary>
+/// <remarks>
+/// The trait lets a quick run leave them out:
+/// <c>dotnet test --filter "Category!=Sandbox"</c>. When an assertion needs the
+/// application's log to explain a failure, pass <c>sandbox.Diagnostics</c> as its message.
+/// </remarks>
 [Collection(SandboxCollection.Name)]
 [Trait("Category", "Sandbox")]
 public sealed class HandlerTests(SandboxFixture sandbox)

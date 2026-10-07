@@ -2,6 +2,10 @@ using System.ComponentModel.DataAnnotations;
 
 namespace Sample_Api.Todos;
 
+/// <summary>
+/// The entity. Its rules live in its methods, where unit tests reach them
+/// without a database or the sandbox (tests/Sample-Api.Tests/TodoTests.cs).
+/// </summary>
 public sealed class Todo
 {
     public int Id { get; set; }
@@ -30,6 +34,7 @@ public sealed class Todo
     }
 }
 
+// Request bodies. The attributes are enforced by AddValidation in Program.cs.
 public sealed record CreateTodo([Required, StringLength(200, MinimumLength = 1)] string Title);
 
 public sealed record UpdateTodo([Required, StringLength(200, MinimumLength = 1)] string Title, bool IsComplete);

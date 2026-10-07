@@ -4,6 +4,9 @@ An ASP.NET Core Web API that runs in the Isoplane sandbox: minimal API
 endpoints, Entity Framework Core with PostgreSQL, OpenAPI, an outbound webhook,
 and tests.
 
+Every file here is commented as a guide to setting up a project of this kind,
+whether you build on this one or copy from it.
+
 ## Run it
 
 Start the development database, then the application:
@@ -19,6 +22,7 @@ rebuilds on every save.
 
 The database listens on `localhost:5432`. If that port is taken, change it in
 `compose.yaml` and in `src/Sample-Api/appsettings.Development.json`.
+`docker compose down` stops it and keeps its data; add `-v` to delete the data.
 
 ## Test it
 
@@ -35,10 +39,15 @@ dotnet test
 
 | Path | What it holds |
 | --- | --- |
-| `src/Sample-Api/Program.cs` | Services, endpoints, and the initialization and activation hooks |
+| `compose.yaml` | The development database |
+| `src/Sample-Api/Sample-Api.csproj` | The Isoplane SDK reference, the User Secrets identifier and the build's optional checks |
+| `src/Sample-Api/Program.cs` | Where configuration comes from, services, endpoints, and the initialization and activation hooks |
+| `src/Sample-Api/appsettings.json`, `appsettings.Development.json` | Settings for every environment, and for development |
+| `src/Sample-Api/Properties/launchSettings.json` | The local port, settings, and the limits a local session can run under |
 | `src/Sample-Api/Todos/` | The todo entity, its `DbContext`, and its endpoints |
 | `src/Sample-Api/Notifications/` | A typed `HttpClient` that posts completed todos to a webhook |
 | `src/Sample-Api/Migrations/` | Entity Framework Core migrations |
+| `src/Sample-Api/Sample-Api.http` | A request for each endpoint |
 | `tests/Sample-Api.Tests/` | Unit tests and sandbox tests |
 
 ## How it differs from an ordinary ASP.NET application
@@ -55,8 +64,9 @@ dotnet test
 - **`Activation.Activated` runs in each instance.** State that must differ between
   instances, such as `InstanceInfo.Id`, is set there and not during initialization.
 - **A request owns its work.** Nothing runs in an instance after its response, so
-  `TodoEndpoints.Update` awaits the webhook before returning. `BackgroundService`
-  is not supported.
+  `TodoEndpoints.Update` awaits the webhook before returning. An application
+  with a `BackgroundService` that keeps running after startup refuses to start,
+  and names the service.
 - **Connections are not pooled inside an instance.** `TodoServices` sets
   `Pooling=false`, because Isoplane decides how many instances run and may capture
   or discard any of them between requests. Use your database provider's pooler to
@@ -64,26 +74,56 @@ dotnet test
 
 ## Configuration
 
-Configuration is layered as in ASP.NET: `appsettings.json`, then
-`appsettings.{Environment}.json`, then the settings the platform supplies. In
-local development those are [User Secrets](https://learn.microsoft.com/aspnet/core/security/app-secrets)
-and the environment variables of the launch profile in
-`src/Sample-Api/Properties/launchSettings.json`.
+Configuration is layered as in ASP.NET. In local development a later source
+overrides an earlier one.
 
-Keep real credentials out of `appsettings` files:
+1. **`appsettings.json`**, then **`appsettings.{Environment}.json`**, for settings
+   that are safe to commit.
 
-```bash
-dotnet user-secrets set "ConnectionStrings:Todos" "Host=...;Database=...;Username=...;Password=..." --project src/Sample-Api
-```
+2. **[User Secrets](https://learn.microsoft.com/aspnet/core/security/app-secrets)**,
+   for credentials. They live outside the project, in
+   `~/.microsoft/usersecrets/<UserSecretsId>/secrets.json`
+   (`%APPDATA%\Microsoft\UserSecrets\` on Windows), so they are never committed:
+
+   ```bash
+   dotnet user-secrets set "ConnectionStrings:Todos" "Host=...;Database=...;Username=...;Password=..." --project src/Sample-Api
+   dotnet user-secrets list --project src/Sample-Api
+   dotnet user-secrets remove "ConnectionStrings:Todos" --project src/Sample-Api
+   ```
+
+3. **The launch profile**: the `environmentVariables` in
+   `src/Sample-Api/Properties/launchSettings.json`, where `__` in a name stands
+   for `:`.
+
+4. **The shell**, for one run. Prefix the setting with `ISOPLANE_APP_`:
+
+   ```bash
+   ISOPLANE_APP_Notifications__WebhookUrl=https://example.com/hook dotnet run --project src/Sample-Api
+   ```
+
+Restart the session after changing a setting. Sandbox tests supply their own
+settings in `tests/Sample-Api.Tests/SandboxFixture.cs`.
 
 Set `Notifications:WebhookUrl` to have completed todos posted to a URL.
 
-A launch profile can also narrow the sandbox's limits, to see how the application
-behaves under them:
+## Common changes
 
-```json
-"isoplaneLimitsOverride": { "memoryBytes": 134217728, "occupancyMsPerHttpDispatch": 1000 }
-```
+- **Add an endpoint.** Add a handler to `TodoEndpoints` and map it in `MapTodos`,
+  with a request to `Sample-Api.http` and a test to `TodoApiTests`.
+- **Add a feature.** Give it a folder like `Todos/`: its entity, an endpoints
+  class, and a services extension, each called from `Program.cs`.
+- **Add a setting.** Bind it to an options class as `NotificationOptions` does,
+  give it a default in `appsettings.json`, and a test value in `SandboxFixture`.
+- **Warm another route.** Add an `app.WarmupAsync` call to the initialization
+  callback in `Program.cs`. The route must answer with a success status.
+- **Call another service.** Register a typed client with `AddHttpClient`, as
+  `Notifications/CompletionNotifier.cs` does, and await it in the request.
+- **Depend on another local service.** Declare it in `compose.yaml` and give
+  the application its address in `appsettings.Development.json`.
+- **Try tighter limits.** `launchSettings.json` lists the limits a local session
+  runs under, switched off. Switch them on to see how the application behaves
+  with less memory or time.
+- **Add a NuGet package.** `dotnet add src/Sample-Api package <name>`.
 
 ## Change the database schema
 

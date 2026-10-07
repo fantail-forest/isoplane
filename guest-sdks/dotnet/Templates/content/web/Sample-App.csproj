@@ -1,8 +1,37 @@
+<!--
+  Isoplane.AspNetCore builds this project into an application package for the
+  Isoplane sandbox, and makes `dotnet run` start it there. It takes the place of
+  Microsoft.NET.Sdk.Web. The number after the slash is the SDK version, which
+  also selects the runtime the application runs on.
+-->
 <Project Sdk="Isoplane.AspNetCore/0.1.0-preview.4">
 
   <PropertyGroup>
+    <!-- The SDK sets TargetFramework to net10.0, the framework it supports. -->
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- Names this project's User Secrets store. Program.cs shows where configuration comes from. -->
+    <UserSecretsId>75e845a2-0587-46f2-856a-d06cc6dd4495</UserSecretsId>
+
+    <!--
+      The build warns about code that does not suit the sandbox: starting a thread
+      (ISOPLANE1002) and waiting synchronously (ISOPLANE1003). It inspects this
+      project and the projects it references. Remove the comment markers from a
+      line below to change that.
+    -->
+    <!-- Inspect NuGet packages too: -->
+    <!-- <IsoplaneAnalyzeDependencies>true</IsoplaneAnalyzeDependencies> -->
+    <!-- Report declarations of native imports (ISOPLANE1001): -->
+    <!-- <IsoplaneWarnOnNativeImports>true</IsoplaneWarnOnNativeImports> -->
+    <!-- Fail the build on these warnings: -->
+    <!-- <WarningsAsErrors>$(WarningsAsErrors);ISOPLANE1002;ISOPLANE1003</WarningsAsErrors> -->
   </PropertyGroup>
+
+  <!--
+    ASP.NET Core itself comes with the SDK. Add other NuGet packages as in any
+    .NET project:
+      dotnet add package <name>
+  -->
 
 </Project>

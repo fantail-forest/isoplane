@@ -10,6 +10,8 @@ public static class TodoServices
         services.AddSingleton(TimeProvider.System);
         services.AddDbContext<TodoDbContext>(options =>
         {
+            // The connection string comes from configuration: appsettings.Development.json
+            // while developing, User Secrets for a real database (see Program.cs).
             var connection = new NpgsqlConnectionStringBuilder(configuration.GetConnectionString("Todos")
                 ?? throw new InvalidOperationException("Set ConnectionStrings:Todos. See README.md for the local database."))
             {

@@ -1,8 +1,38 @@
+<!--
+  Isoplane.Sdk builds this project into an application package for the Isoplane
+  sandbox, and makes `dotnet run` start it there. The number after the slash is
+  the SDK version, which also selects the runtime the application runs on.
+
+  An ASP.NET Core application uses Isoplane.AspNetCore in place of Isoplane.Sdk;
+  `dotnet new isoplane-web` creates one.
+-->
 <Project Sdk="Isoplane.Sdk/0.1.0-preview.4">
 
   <PropertyGroup>
+    <!-- The SDK sets TargetFramework to net10.0, the framework it supports. -->
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- Names this project's User Secrets store. Handler.InitializeAsync shows where settings come from. -->
+    <UserSecretsId>aae6837a-c53b-4877-84c1-f726d9d4cf65</UserSecretsId>
+
+    <!--
+      The build warns about code that does not suit the sandbox: starting a thread
+      (ISOPLANE1002) and waiting synchronously (ISOPLANE1003). It inspects this
+      project and the projects it references. Remove the comment markers from a
+      line below to change that.
+    -->
+    <!-- Inspect NuGet packages too: -->
+    <!-- <IsoplaneAnalyzeDependencies>true</IsoplaneAnalyzeDependencies> -->
+    <!-- Report declarations of native imports (ISOPLANE1001): -->
+    <!-- <IsoplaneWarnOnNativeImports>true</IsoplaneWarnOnNativeImports> -->
+    <!-- Fail the build on these warnings: -->
+    <!-- <WarningsAsErrors>$(WarningsAsErrors);ISOPLANE1002;ISOPLANE1003</WarningsAsErrors> -->
   </PropertyGroup>
+
+  <!--
+    Add NuGet packages as in any .NET project:
+      dotnet add src/Sample-Handler package <name>
+  -->
 
 </Project>

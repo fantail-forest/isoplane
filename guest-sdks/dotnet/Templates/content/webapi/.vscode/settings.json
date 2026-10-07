@@ -1,0 +1,7 @@
+{
+  // ASP.NET reads appsettings files with comments allowed, and the ones here have
+  // them. This has the editor accept the comments too.
+  "files.associations": {
+    "appsettings*.json": "jsonc"
+  }
+}
