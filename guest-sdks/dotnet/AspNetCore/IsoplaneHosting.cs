@@ -99,7 +99,7 @@ public static class IsoplaneHosting
     /// <remarks>
     /// Call it from an <see cref="Initialization.Initializing"/> callback, so the work a first
     /// request does is captured in the template every instance starts from. Middleware, handlers,
-    /// serialization and completion callbacks run normally.
+    /// serialization and completion callbacks run normally. The request's host is <c>localhost</c>.
     /// </remarks>
     /// <exception cref="ArgumentException">The path is not application-relative.</exception>
     /// <exception cref="InvalidOperationException">The application has not started.</exception>
@@ -118,7 +118,10 @@ public static class IsoplaneHosting
             Kind = Isoplane.Abi.DispatchKind.Http,
             Method = "GET",
             Path = query < 0 ? path : path[..query],
-            Url = path
+            Url = path,
+            // Every real request names a host, and code that builds absolute URLs,
+            // such as Blazor's navigation, fails without one.
+            Headers = [new("Host", "localhost")]
         });
         await server.SendAsync(request, new WarmupResponseTransport());
     }

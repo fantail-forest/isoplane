@@ -26,7 +26,7 @@ public static Task WarmupAsync(this WebApplication application, string path)
 
 ## Remarks
 
-Call it from an Initializing callback, so the work a first request does is captured in the template every instance starts from. Middleware, handlers, serialization and completion callbacks run normally.
+Call it from an Initializing callback, so the work a first request does is captured in the template every instance starts from. Middleware, handlers, serialization and completion callbacks run normally. The request's host is `localhost`.
 
 ## See Also
 

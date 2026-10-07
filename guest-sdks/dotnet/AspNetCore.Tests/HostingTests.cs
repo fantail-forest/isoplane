@@ -398,6 +398,21 @@ public sealed class HostingTests
             "a request after warmup must reuse the started host and send its response to the host");
     }
 
+    [Fact]
+    public async Task a_warmup_request_names_a_host()
+    {
+        string? host = null;
+        await using var app = Builder().Build();
+        app.MapGet("/", (HttpContext context) =>
+        {
+            host = context.Request.Host.Value;
+            return new Uri($"{context.Request.Scheme}://{context.Request.Host}{context.Request.Path}").AbsoluteUri;
+        });
+        await app.StartedAsync();
+        await app.WarmupAsync("/");
+        Assert.Equal("localhost", host);
+    }
+
     [Theory]
     [InlineData(404)]
     [InlineData(500)]
