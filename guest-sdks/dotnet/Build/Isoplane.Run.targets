@@ -1,12 +1,12 @@
 <Project>
-  <Target Name="ComputeRunArguments">
-    <PropertyGroup>
-      <RunCommand>isoplane</RunCommand>
-      <RunArguments>dev --project &quot;$(MSBuildProjectDirectory)&quot; --configuration &quot;$(Configuration)&quot; --no-watch --no-build</RunArguments>
-      <RunArguments Condition="'$(IsoplaneDebug)' == 'true'">dev --project &quot;$(MSBuildProjectDirectory)&quot; --configuration &quot;$(Configuration)&quot; --debug --no-watch --no-build</RunArguments>
-      <RunCommand Condition="'$(ISOPLANE_CLI_ASSEMBLY)' != ''">dotnet</RunCommand>
-      <RunArguments Condition="'$(ISOPLANE_CLI_ASSEMBLY)' != ''">&quot;$(ISOPLANE_CLI_ASSEMBLY)&quot; $(RunArguments)</RunArguments>
-      <RunWorkingDirectory>$(MSBuildProjectDirectory)</RunWorkingDirectory>
-    </PropertyGroup>
-  </Target>
+  <!-- Properties, not a ComputeRunArguments target: editors start a project from its evaluated
+       run command without running targets, and would otherwise launch the CLI with no arguments. -->
+  <PropertyGroup>
+    <RunCommand>isoplane</RunCommand>
+    <RunArguments>dev --project &quot;$(MSBuildProjectDirectory)&quot; --configuration &quot;$(Configuration)&quot; --no-watch --no-build</RunArguments>
+    <RunArguments Condition="'$(IsoplaneDebug)' == 'true'">dev --project &quot;$(MSBuildProjectDirectory)&quot; --configuration &quot;$(Configuration)&quot; --debug --no-watch --no-build</RunArguments>
+    <RunCommand Condition="'$(ISOPLANE_CLI_ASSEMBLY)' != ''">dotnet</RunCommand>
+    <RunArguments Condition="'$(ISOPLANE_CLI_ASSEMBLY)' != ''">&quot;$(ISOPLANE_CLI_ASSEMBLY)&quot; $(RunArguments)</RunArguments>
+    <RunWorkingDirectory>$(MSBuildProjectDirectory)</RunWorkingDirectory>
+  </PropertyGroup>
 </Project>

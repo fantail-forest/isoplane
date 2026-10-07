@@ -4,16 +4,15 @@ using Xunit;
 public sealed class DebugRunTests : MsbuildTests
 {
     [Fact]
-    public async Task dotnet_run_debugs_the_prepared_application_configuration()
+    public async Task the_evaluated_run_command_debugs_the_prepared_application_configuration()
     {
         var project = Project();
-        var command = Msbuild(project, "-t:ComputeRunArguments");
-        command.ArgumentList.Add("-getProperty:RunArguments");
+        var command = Msbuild(project, "-getProperty:RunArguments");
         var result = await Run(command);
-        Assert.True(result.Exit == 0, "The standard run target must accept interpreted debugging: " + result.Output);
+        Assert.True(result.Exit == 0, "The run command must evaluate for interpreted debugging: " + result.Output);
         Assert.True(result.Output.Contains("--configuration \"Debug\"", StringComparison.Ordinal),
             "The debugger must preserve the selected project configuration.");
-        Assert.True(result.Output.Contains("--debug --no-watch", StringComparison.Ordinal), "The run target must start an owned debug session.");
+        Assert.True(result.Output.Contains("--debug --no-watch", StringComparison.Ordinal), "The run command must start an owned debug session.");
         Assert.Contains("--no-build", result.Output, StringComparison.Ordinal);
     }
 

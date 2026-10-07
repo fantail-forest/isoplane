@@ -2,7 +2,6 @@
   <Import Project="../tools/Build/Isoplane.ManagedBundle.props" />
   <PropertyGroup>
     <SupportsHotReload>false</SupportsHotReload>
-    <RunCommand Condition="'$(RunCommand)' == ''">isoplane</RunCommand>
   </PropertyGroup>
   <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
   <Import Project="../tools/Build/Isoplane.Run.targets" />
