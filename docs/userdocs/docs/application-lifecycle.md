@@ -53,5 +53,14 @@ Generate request-specific values while handling the request. If a dependency
 maintains its own random state, check its activation and reseeding requirements;
 copying application state does not make that state unique.
 
+## Data protection keys
+
+ASP.NET Core Data Protection, which antiforgery tokens and authentication cookies
+rely on, creates its key when the host starts. That is during initialization, so
+the key is part of the template: instances from the same template protect and
+unprotect with the same key. Fresh initialization may create a different key;
+reusing a template retains its captured key. Data protected with an earlier key
+needs that key to remain readable.
+
 For application changes, use [the onboarding guide](onboard-an-application.md)
 and [runtime development settings](local-settings.md).

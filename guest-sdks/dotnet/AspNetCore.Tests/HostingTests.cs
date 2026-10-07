@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.DependencyInjection;
@@ -428,6 +429,23 @@ public sealed class HostingTests
         await app.HandleAsync(Request("/todos?page=2"));
         Assert.True(transports == 1 && events.Count(e => e == "start") == 1,
             "a request after warmup must reuse the started host and send its response to the host");
+    }
+
+    [Fact]
+    public async Task the_data_protection_key_exists_once_the_host_has_started()
+    {
+        var keys = Directory.CreateTempSubdirectory("isoplane-data-protection-");
+        try
+        {
+            var builder = Builder();
+            builder.Services.AddDataProtection().PersistKeysToFileSystem(keys);
+            await using var app = builder.Build();
+            await app.StartedAsync();
+            // Starting the host is part of initialization, so the key is in the template
+            // and every instance of a deployment protects and unprotects with it.
+            Assert.True(keys.EnumerateFiles("key-*.xml").Any(), "the key must be created when the host starts, not by an instance's first use");
+        }
+        finally { keys.Delete(recursive: true); }
     }
 
     [Fact]
