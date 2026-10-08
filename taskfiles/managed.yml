@@ -32,6 +32,12 @@ tasks:
       - '{{.MANAGED}}/bin/Isoplane.Testing/release/Isoplane.Testing.dll'
       - '{{.MANAGED}}/publish/Isoplane.Cli/release/Isoplane.Cli.dll'
       - '{{.MANAGED}}/obj/Isoplane.Cli/release/DotnetToolSettings.xml'
+      - '{{.MANAGED}}/bin/Isoplane.Cli/release/hotreload/Isoplane.HotReload.dll'
+      - '{{.MANAGED}}/bin/Isoplane.Cli/release/hotreload/Isoplane.HotReload.deps.json'
+      - '{{.MANAGED}}/bin/Isoplane.Cli/release/hotreload/Isoplane.HotReload.runtimeconfig.json'
+      - '{{.MANAGED}}/publish/Isoplane.Cli/release/hotreload/Isoplane.HotReload.dll'
+      - '{{.MANAGED}}/publish/Isoplane.Cli/release/hotreload/Isoplane.HotReload.deps.json'
+      - '{{.MANAGED}}/publish/Isoplane.Cli/release/hotreload/Isoplane.HotReload.runtimeconfig.json'
     cmds:
       - 'test "{{OS}}" = linux || { echo "Run task managed:build on Linux first." >&2; exit 1; }'
       - '"{{.DOTNET}}" build Isoplane.Build.slnf -c Release -p:ShouldUnsetParentConfigurationAndPlatform=false -p:SourceRevisionId={{.REVISION}} --artifacts-path "{{.MANAGED}}" -p:IsoplaneManagedOnly=true -p:UseAppHost=false'
@@ -46,6 +52,9 @@ tasks:
     generates:
       - '{{.MANAGED}}/bin/Isoplane.Cli.Tests/release/Isoplane.Cli.Tests.dll'
       - '{{.MANAGED}}/bin/Isoplane.Debugging.Tests/release/Isoplane.Debugging.Tests.dll'
+      - '{{.MANAGED}}/bin/Isoplane.Debugging.Tests/release/hotreload/Isoplane.HotReload.dll'
+      - '{{.MANAGED}}/bin/Isoplane.Debugging.Tests/release/hotreload/Isoplane.HotReload.deps.json'
+      - '{{.MANAGED}}/bin/Isoplane.Debugging.Tests/release/hotreload/Isoplane.HotReload.runtimeconfig.json'
       - '{{.MANAGED}}/bin/Isoplane.Testing.Tests/release/Isoplane.Testing.Tests.dll'
       - '{{.MANAGED}}/bin/Build.Tests/release/Build.Tests.dll'
       - '{{.MANAGED}}/bin/Isoplane.AspNetCore.Tests/release/Isoplane.AspNetCore.Tests.dll'

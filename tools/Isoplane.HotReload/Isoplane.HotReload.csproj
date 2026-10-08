@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <Description>Isolated Edit and Continue compiler for local guest debugging.</Description>
+    <RoslynTools>$(MSBuildBinPath)/DotnetTools/dotnet-format</RoslynTools>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../BuildProtocol/HotReloadProtocol.cs" Link="HotReloadProtocol.cs" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <Reference Include="Microsoft.CodeAnalysis" HintPath="$(RoslynTools)/Microsoft.CodeAnalysis.dll" Private="false" />
+    <Reference Include="Microsoft.CodeAnalysis.CSharp" HintPath="$(RoslynTools)/Microsoft.CodeAnalysis.CSharp.dll" Private="false" />
+    <Reference Include="Microsoft.CodeAnalysis.Workspaces" HintPath="$(RoslynTools)/Microsoft.CodeAnalysis.Workspaces.dll" Private="false" />
+    <Reference Include="Microsoft.CodeAnalysis.Workspaces.MSBuild" HintPath="$(RoslynTools)/Microsoft.CodeAnalysis.Workspaces.MSBuild.dll" Private="false" />
+    <Reference Include="Microsoft.CodeAnalysis.Features" HintPath="$(RoslynTools)/Microsoft.CodeAnalysis.Features.dll" Private="false" />
+    <Reference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" HintPath="$(RoslynTools)/Microsoft.CodeAnalysis.CSharp.Workspaces.dll" Private="false" />
+    <Reference Include="Microsoft.CodeAnalysis.CSharp.Features" HintPath="$(RoslynTools)/Microsoft.CodeAnalysis.CSharp.Features.dll" Private="false" />
+    <Reference Include="System.Composition.Runtime" HintPath="$(RoslynTools)/System.Composition.Runtime.dll" Private="false" />
+    <Reference Include="System.Composition.TypedParts" HintPath="$(RoslynTools)/System.Composition.TypedParts.dll" Private="false" />
+    <Reference Include="System.Composition.Hosting" HintPath="$(RoslynTools)/System.Composition.Hosting.dll" Private="false" />
+    <Reference Include="System.Composition.AttributedModel" HintPath="$(RoslynTools)/System.Composition.AttributedModel.dll" Private="false" />
+  </ItemGroup>
+  <Target Name="GetCompilerFiles" Returns="@(CompilerFile)">
+    <ItemGroup>
+      <CompilerFile Include="$(TargetPath);$(TargetDir)$(AssemblyName).deps.json;$(TargetDir)$(AssemblyName).runtimeconfig.json" />
+      <CompilerFile Update="@(CompilerFile)">
+        <TargetPath>hotreload/%(CompilerFile.Filename)%(CompilerFile.Extension)</TargetPath>
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </CompilerFile>
+    </ItemGroup>
+  </Target>
+</Project>

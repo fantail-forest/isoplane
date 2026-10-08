@@ -9,6 +9,8 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../BuildProtocol/DebugSessionProtocol.cs" Link="DebugSessionProtocol.cs" />
+    <Compile Include="../BuildProtocol/HotReloadProtocol.cs" Link="HotReloadProtocol.cs" />
+    <ProjectReference Include="../Isoplane.HotReload/Isoplane.HotReload.csproj" ReferenceOutputAssembly="false" />
     <Compile Remove="Backend/**/*.cs" />
     <Compile Include="../BuildProtocol/AsyncDebugSymbols.cs" Link="AsyncDebugSymbols.cs" />
     <ProjectReference Include="../debugger-libs/Mono.Debugging.Soft/Mono.Debugging.Soft.csproj" />
@@ -21,4 +23,9 @@
     <None Update="licenses/VSCodeDebugProtocol.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <InternalsVisibleTo Include="Isoplane.Debugging.Tests" />
   </ItemGroup>
+  <Target Name="CollectHotReloadCompiler" BeforeTargets="GetCopyToOutputDirectoryItems;GetCopyToPublishDirectoryItems" DependsOnTargets="ResolveProjectReferences">
+    <MSBuild Projects="../Isoplane.HotReload/Isoplane.HotReload.csproj" Targets="GetCompilerFiles" Properties="Configuration=$(Configuration)">
+      <Output TaskParameter="TargetOutputs" ItemName="ContentWithTargetPath" />
+    </MSBuild>
+  </Target>
 </Project>

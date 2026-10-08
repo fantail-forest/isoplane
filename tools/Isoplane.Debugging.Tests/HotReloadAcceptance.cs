@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using Mono.Debugger.Soft;
 using Xunit;
+using Isoplane.Build;
 
 namespace Isoplane.Debugging.Tests;
 
@@ -47,6 +48,11 @@ internal static class HotReloadAcceptance
         var activeFlow = StatementFlow.Capture(frame.Method.GetMethodBody());
         int activeOffset = frame.ILOffset;
         var assembly = frame.Method.DeclaringType.Assembly;
+        await using var compiler = scenario.Method == "Handle" ? await HotReloadCompiler.StartAsync(
+            Path.Combine(Path.GetDirectoryName(source)!, "hotreload", "HotReloadFixture.csproj"),
+            new() { ["Configuration"] = "Release", ["ArtifactsPath"] = Path.GetFullPath("../../..", deltas) },
+            new() { ["Debugger.HotReload.Fixture"] = Path.Combine(deltas, "Debugger.HotReload.Fixture.dll") },
+            machine.GetEnCCapabilities().Split(' ', StringSplitOptions.RemoveEmptyEntries), deadline.Token) : null;
         var application = assembly.GetType("Debugger.HotReload.Application");
         var storage = assembly.GetType("Debugger.HotReload.Storage");
         Assert.Empty(storage.GetFields());
@@ -55,12 +61,20 @@ internal static class HotReloadAcceptance
         byte[] metadata = await File.ReadAllBytesAsync(baseline + ".dmeta", deadline.Token);
         byte[] il = await File.ReadAllBytesAsync(baseline + ".dil", deadline.Token);
         byte[] symbols = await File.ReadAllBytesAsync(baseline + ".dpdb", deadline.Token);
+        if (compiler is not null)
+        {
+            var update = await CompileAsync(compiler, frame, source, "updated.cs.in", 1, deadline.Token);
+            metadata = update.Metadata;
+            il = update.Il;
+            symbols = update.Symbols;
+        }
         Assert.Throws<ArgumentException>(() => frame.Method.ReturnType.Assembly.ManifestModule.ApplyChanges(metadata, il, symbols));
         Assert.Equal(11, Value(frame));
         byte[] futureMetadata = await File.ReadAllBytesAsync(Path.Combine(deltas, "Debugger.HotReload.Fixture.dll.2.dmeta"), deadline.Token);
         Assert.Throws<ArgumentException>(() => assembly.ManifestModule.ApplyChanges(futureMetadata, il, symbols));
         Console.WriteLine("Applying compiler deltas.");
         assembly.ManifestModule.ApplyChanges(metadata, il, symbols);
+        if (compiler is not null) await compiler.SendAsync(new("commit"), deadline.Token);
         Assert.Throws<ArgumentException>(() => assembly.ManifestModule.ApplyChanges(metadata, il, symbols));
         Console.WriteLine("The runtime applied the deltas and refreshed debugger metadata.");
         Assert.Contains(storage.GetFields(), field => field.Name == "Added");
@@ -93,10 +107,13 @@ internal static class HotReloadAcceptance
         activeFlow = StatementFlow.Capture(frame.Method.GetMethodBody());
         activeOffset = frame.ILOffset;
         baseline = Path.Combine(deltas, "Debugger.HotReload.Fixture.dll.2");
-        assembly.ManifestModule.ApplyChanges(
+        var second = compiler is null ? new ModuleUpdate(assembly.ManifestModule.ModuleVersionId,
             await File.ReadAllBytesAsync(baseline + ".dmeta", deadline.Token),
             await File.ReadAllBytesAsync(baseline + ".dil", deadline.Token),
-            await File.ReadAllBytesAsync(baseline + ".dpdb", deadline.Token));
+            await File.ReadAllBytesAsync(baseline + ".dpdb", deadline.Token))
+            : await CompileAsync(compiler, frame, source, "updated-again.cs.in", 2, deadline.Token);
+        assembly.ManifestModule.ApplyChanges(second.Metadata, second.Il, second.Symbols);
+        if (compiler is not null) await compiler.SendAsync(new("commit"), deadline.Token);
         updatedLine = SourceLine(Path.ChangeExtension(source, "updated-again.cs.in"), scenario.Marker);
         destination = frame.Method.Locations.Single(location => location.LineNumber == updatedLine);
         updatedFlow = StatementFlow.Capture(frame.Method.GetMethodBody());
@@ -111,6 +128,43 @@ internal static class HotReloadAcceptance
             .ToString(System.Globalization.CultureInfo.InvariantCulture), await response);
         Console.WriteLine("The active interpreter frame executed updated IL and preserved its local value.");
         return 0;
+    }
+
+    private static async Task<ModuleUpdate> CompileAsync(HotReloadCompiler compiler, Mono.Debugger.Soft.StackFrame frame,
+        string source, string update, int version, CancellationToken cancellation)
+    {
+        var location = frame.Location;
+        Guid module = frame.Method.DeclaringType.Assembly.ManifestModule.ModuleVersionId;
+        var statement = new ActiveStatement(module, frame.Method.MetadataToken, version, frame.ILOffset, location.SourceFile,
+            location.LineNumber - 1, location.ColumnNumber - 1, location.EndLineNumber - 1, location.EndColumnNumber - 1, true, true);
+        var edit = new CompilerEdit([statement], [module], frame.VirtualMachine.GetEnCCapabilities().Split(' ', StringSplitOptions.RemoveEmptyEntries),
+            [new(source, await File.ReadAllTextAsync(Path.ChangeExtension(source, update), cancellation))]);
+        if (version == 1)
+        {
+            string original = await File.ReadAllTextAsync(source, cancellation);
+            var unchanged = await compiler.SendAsync(new("update", edit with { Sources = [new(source, original)] }), cancellation);
+            Assert.Empty(unchanged.Updates);
+            Assert.Empty(unchanged.Diagnostics);
+            Assert.False(unchanged.Pending);
+            var invalid = await compiler.SendAsync(new("update", edit with { Sources = [new(source, original + "\n#error deliberate-edit-error\n")] }), cancellation);
+            Assert.Empty(invalid.Updates);
+            Assert.NotEmpty(invalid.Diagnostics);
+            Assert.False(invalid.Pending);
+        }
+        if (version == 1)
+        {
+            var discarded = await compiler.SendAsync(new("update", edit), cancellation);
+            Assert.True(discarded.Pending);
+            Assert.Single(discarded.Updates);
+            await compiler.SendAsync(new("discard"), cancellation);
+        }
+        var reply = await compiler.SendAsync(new("update", edit), cancellation);
+        Assert.Empty(reply.Diagnostics);
+        Assert.False(reply.RestartRequired);
+        Assert.True(reply.Pending);
+        var result = Assert.Single(reply.Updates);
+        Assert.Equal(module, result.Module);
+        return result;
     }
 
     private sealed record Scenario(string Method, string Marker, int UpdatedValue, string Response);
