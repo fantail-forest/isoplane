@@ -114,10 +114,11 @@ tasks:
       DIRECTORY: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/dap-python'
       EXECUTABLE: '{{.DIRECTORY}}/{{if eq OS "windows"}}Scripts/python.exe{{else}}bin/python{{end}}'
     status:
+      # Reject invalid executables instead of allowing the shell's script fallback.
       - |
-        "{{.EXECUTABLE}}" -c "import debugpy; assert debugpy.__version__ == '1.8.20'"
+        "{{.PYTHON}}" -c "import subprocess, sys; subprocess.run([sys.argv[1], '-c', sys.argv[2]], check=True, timeout=30)" "{{.EXECUTABLE}}" "import debugpy; assert debugpy.__version__ == '1.8.20'"
     cmds:
-      - '"{{.PYTHON}}" -m venv "{{.DIRECTORY}}"'
+      - '"{{.PYTHON}}" -m venv --clear "{{.DIRECTORY}}"'
       - '"{{.EXECUTABLE}}" -m pip install --disable-pip-version-check debugpy==1.8.20'
 
   editor:
