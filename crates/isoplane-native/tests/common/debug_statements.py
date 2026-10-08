@@ -7,7 +7,7 @@ EXPECTED_RESPONSE = b'11'
 def locations(source):
     lines = Path(source).read_text().splitlines()
     return {text: next(index + 1 for index, line in enumerate(lines) if text in line)
-            for text in ('answer += 10;', 'answer *= 2;', 'return answer;', 'private static string Handle()', 'int saved = answer;')}
+            for text in ('answer += 10;', 'answer *= 2;', 'return answer;', 'private static string Handle()', 'int saved = answer;', 'saved += 100;', 'return saved;', 'finally { finished = true; }')}
 
 
 def configure(source, send, response):
@@ -60,5 +60,14 @@ def exercise(source, send, response, until):
     response(send('continue', {'threadId': thread}))
     thread, frame = stop()
     assert frame['line'] == lines['int saved = answer;']
-    assert not target('int saved = answer;'), 'methods with finally regions must not permit moving execution'
+    response(send('next', {'threadId': thread}))
+    thread, frame = stop()
+    assert frame['line'] == lines['saved += 100;']
+    assert not target('finally { finished = true; }'), 'a jump must not enter a finally handler'
+    destination = target('return saved;')
+    assert destination, 'statements inside the same try region must be selectable'
+    response(send('goto', {'threadId': thread, 'targetId': destination[0]['id']}))
+    thread, frame = stop()
+    assert frame['line'] == lines['return saved;']
+    assert response(send('evaluate', {'expression': 'saved', 'frameId': frame['id']}))['body']['result'] == '11'
     response(send('continue', {'threadId': thread}))

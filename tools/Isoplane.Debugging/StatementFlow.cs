@@ -7,7 +7,7 @@ internal static class StatementFlow
 {
     internal static HashSet<int> EmptyStackOffsets(MethodDefinition method)
     {
-        if (!method.HasBody || method.IsConstructor || method.IsSynchronized || method.Body.HasExceptionHandlers
+        if (!method.HasBody || method.IsConstructor || method.IsSynchronized
             || method.Name == "MoveNext" || method.CustomAttributes.Any(attribute => attribute.AttributeType.FullName is
                 "System.Runtime.CompilerServices.AsyncStateMachineAttribute" or "System.Runtime.CompilerServices.IteratorStateMachineAttribute"))
             return [];
@@ -16,6 +16,11 @@ internal static class StatementFlow
         var depths = new Dictionary<Instruction, int>();
         var pending = new Queue<(Instruction Instruction, int Depth)>();
         pending.Enqueue((instructions[0], 0));
+        foreach (var handler in method.Body.ExceptionHandlers)
+        {
+            pending.Enqueue((handler.HandlerStart, handler.HandlerType is ExceptionHandlerType.Catch or ExceptionHandlerType.Filter ? 1 : 0));
+            if (handler.FilterStart is { } filter) pending.Enqueue((filter, 1));
+        }
         while (pending.TryDequeue(out var item))
         {
             var (instruction, depth) = item;
@@ -25,6 +30,12 @@ internal static class StatementFlow
                 continue;
             }
             depths.Add(instruction, depth);
+            if (instruction.OpCode.Code is Code.Leave or Code.Leave_S)
+            {
+                if (instruction.Operand is not Instruction destination) return [];
+                pending.Enqueue((destination, 0));
+                continue;
+            }
             var (pop, push) = StackEffect(method, instruction);
             if (pop < 0 || push < 0 || depth < pop) return [];
             int nextDepth = depth - pop + push;
@@ -58,6 +69,26 @@ internal static class StatementFlow
         return depths.Where(item => item.Value == 0 && item.Key.Previous?.OpCode.OpCodeType != OpCodeType.Prefix)
             .Select(item => item.Key.Offset).ToHashSet();
     }
+
+    internal static HashSet<int> ReachableTargets(MethodDefinition method, int currentOffset)
+    {
+        var offsets = EmptyStackOffsets(method);
+        if (!offsets.Contains(currentOffset)) return [];
+        foreach (var handler in method.Body.ExceptionHandlers)
+        {
+            if (InRegion(currentOffset, handler.HandlerStart, handler.HandlerEnd)
+                || handler.FilterStart is { } filter && InRegion(currentOffset, filter, handler.HandlerStart))
+                return [];
+            bool insideTry = InRegion(currentOffset, handler.TryStart, handler.TryEnd);
+            offsets.RemoveWhere(offset => InRegion(offset, handler.TryStart, handler.TryEnd) != insideTry
+                || InRegion(offset, handler.HandlerStart, handler.HandlerEnd)
+                || handler.FilterStart is { } start && InRegion(offset, start, handler.HandlerStart));
+        }
+        return offsets;
+    }
+
+    private static bool InRegion(int offset, Instruction start, Instruction? end) =>
+        offset >= start.Offset && (end is null || offset < end.Offset);
 
     private static (int Pop, int Push) StackEffect(MethodDefinition method, Instruction instruction)
     {

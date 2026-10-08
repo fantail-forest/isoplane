@@ -21,7 +21,7 @@ internal sealed class StatementTargets(SoftDebuggerSession session, int threadId
         using var bytes = new MemoryStream(method.DeclaringType.Assembly.GetMetadataBlob());
         using var metadata = AssemblyDefinition.ReadAssembly(bytes);
         if (metadata.MainModule.LookupToken(method.MetadataToken) is not MethodDefinition definition) return result;
-        var empty = StatementFlow.EmptyStackOffsets(definition);
+        var empty = StatementFlow.ReachableTargets(definition, frame.ILOffset);
         if (!empty.Contains(frame.ILOffset)) return result;
         var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         foreach (var location in method.Locations.Where(location => location.LineNumber == arguments.Line

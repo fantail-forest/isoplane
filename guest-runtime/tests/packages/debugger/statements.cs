@@ -21,6 +21,7 @@ internal static class Application
         try
         {
             int saved = answer;
+            saved += 100;
             return saved;
         }
         finally { finished = true; }

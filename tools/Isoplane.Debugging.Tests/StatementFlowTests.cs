@@ -58,7 +58,7 @@ public sealed class StatementFlowTests
     }
 
     [Fact]
-    public void exception_regions_cannot_be_bypassed()
+    public void jumps_stay_inside_the_current_try_and_cannot_enter_its_finally()
     {
         using var module = ModuleDefinition.CreateModule("Statements", ModuleKind.Dll);
         var method = Method(module);
@@ -67,12 +67,66 @@ public sealed class StatementFlowTests
         var handler = Instruction.Create(OpCodes.Endfinally);
         var end = Instruction.Create(OpCodes.Ret);
         il.Append(start);
+        il.Emit(OpCodes.Nop);
         il.Emit(OpCodes.Leave_S, end);
         il.Append(handler);
         il.Append(end);
         method.Body.ExceptionHandlers.Add(new ExceptionHandler(ExceptionHandlerType.Finally)
             { TryStart = start, TryEnd = handler, HandlerStart = handler, HandlerEnd = end });
-        Assert.Empty(Offsets(module));
+        using var bytes = new MemoryStream();
+        module.Write(bytes);
+        bytes.Position = 0;
+        using var loaded = ModuleDefinition.ReadModule(bytes);
+        var definition = loaded.Types.Single(type => type.Name == "Application").Methods.Single();
+        Assert.Equal([0, 1, 2], StatementFlow.ReachableTargets(definition, 0).Order().ToArray());
+        Assert.Equal([5], StatementFlow.ReachableTargets(definition, 5).Order().ToArray());
+        Assert.Empty(StatementFlow.ReachableTargets(definition, 4));
+    }
+
+    [Fact]
+    public void nested_exception_regions_are_checked_independently()
+    {
+        using var module = ModuleDefinition.CreateModule("Statements", ModuleKind.Dll);
+        var method = Method(module);
+        var il = method.Body.GetILProcessor();
+        var outer = Instruction.Create(OpCodes.Nop);
+        var inner = Instruction.Create(OpCodes.Nop);
+        var caught = Instruction.Create(OpCodes.Pop);
+        var afterInner = Instruction.Create(OpCodes.Nop);
+        var cleanup = Instruction.Create(OpCodes.Endfinally);
+        var end = Instruction.Create(OpCodes.Ret);
+        il.Append(outer);
+        il.Append(inner);
+        il.Emit(OpCodes.Leave_S, afterInner);
+        il.Append(caught);
+        il.Emit(OpCodes.Rethrow);
+        il.Append(afterInner);
+        il.Emit(OpCodes.Leave_S, end);
+        il.Append(cleanup);
+        il.Append(end);
+        method.Body.ExceptionHandlers.Add(new ExceptionHandler(ExceptionHandlerType.Catch)
+        {
+            CatchType = module.ImportReference(typeof(Exception)),
+            TryStart = inner, TryEnd = caught, HandlerStart = caught, HandlerEnd = afterInner
+        });
+        method.Body.ExceptionHandlers.Add(new ExceptionHandler(ExceptionHandlerType.Finally)
+        {
+            TryStart = outer, TryEnd = cleanup, HandlerStart = cleanup, HandlerEnd = end
+        });
+        using var bytes = new MemoryStream();
+        module.Write(bytes);
+        bytes.Position = 0;
+        using var loaded = ModuleDefinition.ReadModule(bytes);
+        var definition = loaded.Types.Single(type => type.Name == "Application").Methods.Single();
+        var outerTargets = StatementFlow.ReachableTargets(definition, outer.Offset);
+        Assert.Contains(afterInner.Offset, outerTargets);
+        Assert.DoesNotContain(inner.Offset, outerTargets);
+        Assert.DoesNotContain(caught.Offset, outerTargets);
+        Assert.DoesNotContain(cleanup.Offset, outerTargets);
+        Assert.DoesNotContain(end.Offset, outerTargets);
+        var innerTargets = StatementFlow.ReachableTargets(definition, inner.Offset);
+        Assert.Contains(inner.Next.Offset, innerTargets);
+        Assert.DoesNotContain(afterInner.Offset, innerTargets);
     }
 
     private static MethodDefinition Method(ModuleDefinition module)

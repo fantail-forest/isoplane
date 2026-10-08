@@ -168,8 +168,10 @@ Disabling the filter lets the failed request finish without this stop.
 In the current physical frame, **Jump to Cursor** can move execution to another
 statement in the same method without executing the intervening statements or
 resetting locals. The debugger offers only locations with an empty evaluation
-stack. Constructors, async and iterator methods, synchronized methods, and
-methods containing exception handlers do not offer jump targets.
+stack. Jumps can stay within a `try` region, or outside exception regions in a
+method that contains them. They cannot cross exception-region boundaries or
+move execution inside exception handlers. Constructors, async and iterator
+methods, and synchronized methods do not offer jump targets.
 
 Use ordinary .NET unit tests for isolated application logic and
 [sandbox integration tests](test-an-application.md) to exercise platform behavior.
