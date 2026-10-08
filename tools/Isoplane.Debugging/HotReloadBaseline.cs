@@ -7,19 +7,15 @@ namespace Isoplane.Debugging;
 /// <summary>Owns stable compiler inputs while development builds replace the application package.</summary>
 internal sealed class HotReloadBaseline : IDisposable
 {
-    private readonly string directory;
+    // The application owner can remove its session before the compiler releases its file handles.
+    private readonly DirectoryInfo directory = Directory.CreateTempSubdirectory("isoplane-hotreload-");
     internal Dictionary<string, string> Assemblies { get; } = new(StringComparer.Ordinal);
 
-    private HotReloadBaseline(string package)
-    {
-        directory = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(package))!, "hotreload-" + Guid.NewGuid().ToString("N"));
-        if (OperatingSystem.IsWindows()) Directory.CreateDirectory(directory);
-        else Directory.CreateDirectory(directory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-    }
+    private HotReloadBaseline() { }
 
     internal static HotReloadBaseline Read(string package)
     {
-        var baseline = new HotReloadBaseline(package);
+        var baseline = new HotReloadBaseline();
         try
         {
             baseline.Extract(package);
@@ -45,7 +41,7 @@ internal sealed class HotReloadBaseline : IDisposable
             string name = entry.Name[..^extension.Length];
             if (!modules.TryGetValue(name, out string? destination))
             {
-                destination = Path.Combine(directory, modules.Count.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                destination = Path.Combine(directory.FullName, modules.Count.ToString(System.Globalization.CultureInfo.InvariantCulture));
                 Directory.CreateDirectory(destination);
                 modules.Add(name, destination);
             }
@@ -66,12 +62,5 @@ internal sealed class HotReloadBaseline : IDisposable
         }
     }
 
-    public void Dispose()
-    {
-        try { Directory.Delete(directory, recursive: true); }
-        catch (DirectoryNotFoundException)
-        {
-            Console.Error.WriteLine("isoplane: the local session already removed its Hot Reload baseline during shutdown.");
-        }
-    }
+    public void Dispose() => directory.Delete(recursive: true);
 }

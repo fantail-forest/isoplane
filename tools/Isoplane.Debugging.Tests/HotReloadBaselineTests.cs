@@ -8,7 +8,7 @@ namespace Isoplane.Debugging.Tests;
 public sealed class HotReloadBaselineTests
 {
     [Fact]
-    public void compiler_inputs_survive_package_replacement_and_are_removed_on_disposal()
+    public void compiler_inputs_survive_package_replacement_and_session_shutdown_until_disposed()
     {
         var directory = Directory.CreateTempSubdirectory("isoplane-hotreload-baseline-");
         try
@@ -30,16 +30,19 @@ public sealed class HotReloadBaselineTests
                 File.WriteAllText(package, "a subsequent build replaces this package");
                 Assert.Equal(ModuleId(assembly), ModuleId(snapshot));
                 Assert.Equal(File.ReadAllBytes(symbols), File.ReadAllBytes(Path.ChangeExtension(snapshot, ".pdb")));
+                using var reader = File.OpenRead(snapshot);
+                directory.Delete(recursive: true);
+                Assert.Equal(ModuleId(assembly), ModuleId(snapshot));
             }
             Assert.False(File.Exists(snapshot));
-            Assert.Equal([package], Directory.GetFileSystemEntries(directory.FullName));
+            directory.Create();
             using (var file = File.Create(package))
             using (var archive = new TarWriter(file))
                 archive.WriteEntry(symbols, "assemblies/missing.pdb");
             Assert.Throws<InvalidDataException>(() => HotReloadBaseline.Read(package));
             Assert.Equal([package], Directory.GetFileSystemEntries(directory.FullName));
         }
-        finally { directory.Delete(recursive: true); }
+        finally { if (Directory.Exists(directory.FullName)) directory.Delete(recursive: true); }
     }
 
     private static Guid ModuleId(string path)
