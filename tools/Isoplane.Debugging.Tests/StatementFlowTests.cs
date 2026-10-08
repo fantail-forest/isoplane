@@ -80,7 +80,7 @@ public sealed class StatementFlowTests
         var definition = loaded.Types.Single(type => type.Name == "Application").Methods.Single();
         Assert.Equal([0, 1, 2], StatementFlow.ReachableTargets(definition, 0).Order().ToArray());
         Assert.Equal([5], StatementFlow.ReachableTargets(definition, 5).Order().ToArray());
-        Assert.Empty(StatementFlow.ReachableTargets(definition, 4));
+        Assert.Equal([4], StatementFlow.ReachableTargets(definition, 4).Order().ToArray());
     }
 
     [Fact]

@@ -52,11 +52,11 @@
     <IsoplanePrepareDebuggerSource Source="SoftDebuggerSession.cs" Destination="$(IntermediateOutputPath)Isoplane/SoftDebuggerSession.partial.cs" Match="class SoftDebuggerSession : DebuggerSession" Replacement="partial class SoftDebuggerSession : DebuggerSession" />
     <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/SoftDebuggerSession.partial.cs" Destination="$(IntermediateOutputPath)Isoplane/SoftDebuggerSession.cs"
       Match="TargetEventType etype = TargetEventType.TargetStopped;"
-      Replacement="if (ResumeInternalUserBreak(es)) return;&#10;            TargetEventType etype = TargetEventType.TargetStopped;" />
+      Replacement="if (ResumeInternalUserBreak(es) || ResumeRedirectedBreakpoint(es)) return;&#10;            TargetEventType etype = TargetEventType.TargetStopped;" />
     <ItemGroup>
       <_IsoplaneSessionOriginal Include="SoftDebuggerSession.cs" />
       <Compile Remove="@(_IsoplaneSessionOriginal)" MatchOnMetadata="FullPath" MatchOnMetadataOptions="PathLike" />
-      <Compile Include="$(IntermediateOutputPath)Isoplane/SoftDebuggerSession.cs;$(MSBuildThisFileDirectory)InternalDebuggerStops.cs" />
+      <Compile Include="$(IntermediateOutputPath)Isoplane/SoftDebuggerSession.cs;$(MSBuildThisFileDirectory)InternalDebuggerStops.cs;$(MSBuildThisFileDirectory)ExecutionStepping.cs" />
     </ItemGroup>
   </Target>
   <Target Name="IsoplanePrepareDebuggerFieldSource" BeforeTargets="CoreCompile" Condition="'$(MSBuildProjectName)' == 'Mono.Debugging.Soft'">

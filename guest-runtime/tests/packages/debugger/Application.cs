@@ -20,6 +20,7 @@ public static class Application
         Features.Application.Map(app);
         Statements.Application.Map(app);
         StatementAwaits.Application.Map(app);
+        StatementHandlers.Application.Map(app);
         Watchpoints.Application.Map(app);
         Uncaught.Application.Map(app);
         Protocol.Application.Map(app);

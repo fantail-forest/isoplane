@@ -497,3 +497,8 @@ fn moving_execution_across_awaits_preserves_state_and_allows_repeated_suspension
 fn moving_execution_across_awaits_preserves_optimized_state_machines() {
     debugger::prepared_acceptance("statement-awaits-optimized");
 }
+
+#[test]
+fn moving_execution_within_handlers_preserves_rethrow_and_finally_continuations() {
+    debugger::prepared_acceptance("statement-handlers");
+}

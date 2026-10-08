@@ -56,6 +56,6 @@ internal sealed class StatementTargets(SoftDebuggerSession session, int threadId
     {
         if (!offsets.TryGetValue(targetId, out int offset))
             throw new ProtocolException("The statement target is not part of the current pause.");
-        return Mono.Debugging.Client.ExecutionPosition.Move(session, offset);
+        return session.MoveExecution(offset);
     }
 }

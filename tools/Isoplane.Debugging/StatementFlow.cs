@@ -84,12 +84,12 @@ internal static class StatementFlow
         if (!offsets.Contains(currentOffset)) return [];
         foreach (var handler in method.Body.ExceptionHandlers)
         {
-            if (InRegion(currentOffset, handler.HandlerStart, handler.HandlerEnd)
-                || handler.FilterStart is { } filter && InRegion(currentOffset, filter, handler.HandlerStart))
+            if (handler.FilterStart is { } filter && InRegion(currentOffset, filter, handler.HandlerStart))
                 return [];
             bool insideTry = InRegion(currentOffset, handler.TryStart, handler.TryEnd);
+            bool insideHandler = InRegion(currentOffset, handler.HandlerStart, handler.HandlerEnd);
             offsets.RemoveWhere(offset => InRegion(offset, handler.TryStart, handler.TryEnd) != insideTry
-                || InRegion(offset, handler.HandlerStart, handler.HandlerEnd)
+                || InRegion(offset, handler.HandlerStart, handler.HandlerEnd) != insideHandler
                 || handler.FilterStart is { } start && InRegion(offset, start, handler.HandlerStart));
         }
         return offsets;
