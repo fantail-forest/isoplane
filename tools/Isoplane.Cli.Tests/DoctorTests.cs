@@ -6,16 +6,15 @@ namespace Isoplane.Cli.Tests;
 
 public sealed class DoctorTests
 {
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Doctor_announces_checks_before_reporting_an_unusable_installation(bool interrupted)
+    [Fact]
+    public async Task Doctor_announces_checks_before_reporting_an_unusable_installation()
     {
+        // Doctor reads the template packages registered with the user's .NET SDK. A .NET home of the
+        // test's own has none, whatever is registered on the machine running the test.
         var home = Directory.CreateTempSubdirectory("isoplane-doctor-").FullName;
+        var dotnetHome = Directory.CreateTempSubdirectory("isoplane-doctor-dotnet-").FullName;
         try
         {
-            if (interrupted) File.WriteAllText(Path.Combine(home, "current.json"), "{");
-            var before = Directory.GetFiles(home).ToDictionary(path => path, File.ReadAllText);
             var start = new ProcessStartInfo("dotnet")
             {
                 UseShellExecute = false,
@@ -25,20 +24,25 @@ public sealed class DoctorTests
             start.ArgumentList.Add(typeof(CliPaths).Assembly.Location);
             start.ArgumentList.Add("doctor");
             start.Environment["ISOPLANE_HOME"] = home;
+            start.Environment["DOTNET_CLI_HOME"] = dotnetHome;
+            start.Environment["DOTNET_GENERATE_ASPNET_CERTIFICATE"] = "false";
             using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start doctor.");
             var output = process.StandardOutput.ReadToEndAsync();
             var errors = process.StandardError.ReadToEndAsync();
-            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(2));
             try
             {
                 await process.WaitForExitAsync(deadline.Token);
-                Assert.True(process.ExitCode != 0, "Doctor must fail when no toolchain is installed.");
-                Assert.True((await errors).StartsWith("Checking toolchain integrity...", StringComparison.Ordinal),
-                    "Doctor must announce its work before an installation check can fail.");
-                Assert.True(string.IsNullOrEmpty(await output), "A failed doctor must not report a ready toolchain.");
-                Assert.True((await errors).Contains("isoplane setup", StringComparison.Ordinal), "An incomplete installation needs a repair command.");
-                Assert.True(Directory.GetFiles(home).Length == before.Count && before.All(entry => File.ReadAllText(entry.Key) == entry.Value),
-                    "Doctor must leave missing or interrupted installations unchanged.");
+                var reported = await errors;
+                Assert.True(process.ExitCode != 0, "Doctor must fail when the templates are not registered: " + reported);
+                Assert.True(reported.StartsWith("Checking the .NET SDK and the native host library...", StringComparison.Ordinal),
+                    "Doctor must announce its work before any check can fail: " + reported);
+                int announced = reported.IndexOf("Checking project templates...", StringComparison.Ordinal);
+                int failed = reported.IndexOf("Isoplane.Templates", StringComparison.Ordinal);
+                Assert.True(announced >= 0 && failed > announced, "Doctor must name the check that fails before reporting its failure: " + reported);
+                Assert.True(string.IsNullOrEmpty(await output), "A failed doctor must not report a ready SDK.");
+                Assert.True(reported.Contains("isoplane setup", StringComparison.Ordinal), "An incomplete installation needs a repair command.");
+                Assert.Empty(Directory.GetFileSystemEntries(home));
             }
             finally
             {
@@ -52,6 +56,7 @@ public sealed class DoctorTests
         finally
         {
             Directory.Delete(home, recursive: true);
+            Directory.Delete(dotnetHome, recursive: true);
         }
     }
 

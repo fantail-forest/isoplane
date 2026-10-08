@@ -3,9 +3,9 @@ title: Troubleshoot local development
 ---
 
 Start with `isoplane doctor` from the application directory in the terminal where
-it fails. Doctor checks the selected .NET SDK, SDK registration, installed files,
-native tools and saved-session permissions without repairing them or requiring
-login. Keep its output, the selected configuration, and the first build or runtime
+it fails. Doctor checks the selected .NET SDK, the native host library and its
+prerequisites, the template registration and saved-session permissions, naming
+each check as it starts. It repairs nothing and does not require login. Keep its output, the selected configuration, and the first build or runtime
 error when reporting a problem.
 
 ## `dotnet tool install` cannot find `DotnetToolSettings.xml`
