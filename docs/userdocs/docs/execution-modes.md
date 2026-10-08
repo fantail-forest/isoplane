@@ -18,6 +18,10 @@ initializes each application package into a distinct layer over that baseline.
 Compatible applications share the baseline while retaining their own application
 state. Wasmtime still compiles the platform runtime for execution on the host.
 
+Debug and Release are the ordinary .NET build configurations. Both produce an
+IL package for the same runtime, with no trimming or ahead-of-time compilation
+of your code, so they differ only in how the C# compiler optimizes it.
+
 Application packages retain managed metadata for reflection and runtime type
 loading. Sandbox capability and resource limits still apply to managed code and
 its dependencies.

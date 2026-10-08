@@ -2,8 +2,10 @@
 title: Connect to PostgreSQL
 ---
 
-The release's `samples/aspnet-todo` application uses ASP.NET, Entity Framework
-Core, and Npgsql against a real PostgreSQL database. It requires verified TLS and
+The `samples/aspnet-todo` application uses ASP.NET, Entity Framework Core, and
+Npgsql against a real PostgreSQL database. It comes with a release supplied as a
+directory (see [installation](install.md)); an installation from NuGet does not
+include it. It requires verified TLS and
 turns connection pooling off. Debug and Release builds use the shared Mono runtime.
 
 To start a new application with a database, `dotnet new isoplane-webapi` creates
@@ -49,8 +51,7 @@ endpoint; no extra setting permits either.
 If you do not have a development database, the copied sample includes a local
 setup helper. It requires Python 3, OpenSSL, Docker with a running daemon you can
 access, and the installed .NET tooling from the [installation guide](install.md).
-Docker downloads the `postgres:16` image if needed. Add the sample's package feed
-as shown above before running it.
+Docker downloads the `postgres:16` image if needed.
 
 From the copied sample directory:
 

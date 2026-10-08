@@ -35,8 +35,8 @@ dotnet tool install --global Isoplane.Cli --prerelease
 isoplane setup
 ```
 
-The tool installs into `~/.dotnet/tools` on Linux and `%USERPROFILE%\.dotnet\tools`
-on Windows. Add that directory to your PATH if your .NET installation has not
+The tool installs into `~/.dotnet/tools` on Linux and macOS and
+`%USERPROFILE%\.dotnet\tools` on Windows. Add that directory to your PATH if your .NET installation has not
 already done so; reopen your terminal after changing it.
 
 Setup installs the matching `Isoplane.Templates` package through NuGet. The CLI
@@ -52,7 +52,7 @@ dotnet new list
 
 Doctor checks the selected .NET SDK, native host library and templates; it reports
 problems and does not repair them. The template list includes
-`isoplane-web`. Continue with [creating an application](create-an-application.md).
+`isoplane-web`, `isoplane-webapi` and `isoplane-handler`. Continue with [creating an application](create-an-application.md).
 
 When setup finds a native library missing on Ubuntu 24.04, it shows the one
 `sudo apt-get install` command that provides it and asks before running it;
@@ -85,8 +85,8 @@ pinned SDK packages in NuGet's standard cache.
 
 The new template selects the matching SDK automatically. To move an existing
 application to the new release, change the version in
-`<Project Sdk="Isoplane.AspNetCore/VERSION">` and in any explicit Isoplane package
-references, including `Isoplane.Testing` in test projects, then rebuild and
+`<Project Sdk="Isoplane.AspNetCore/VERSION">`, or `Isoplane.Sdk/VERSION` for an
+application without ASP.NET, and in any explicit Isoplane package references, including `Isoplane.Testing` in test projects, then rebuild and
 test each configuration you use.
 
 ## Repair

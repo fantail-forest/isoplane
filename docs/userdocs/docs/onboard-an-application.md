@@ -72,6 +72,11 @@ this includes services a library registers. An `IHostedService` may perform
 bounded asynchronous startup work in `StartAsync`, and a `BackgroundService` that
 finishes during startup is accepted.
 
+Requests reach the application as HTTP/1.1, without connection upgrades or
+response trailers. WebSockets are therefore unavailable, and so is what depends on
+them or on HTTP/2: SignalR's WebSocket transport, Blazor Server interactivity and
+gRPC over HTTP/2. gRPC-Web and statically rendered Blazor pages work.
+
 Files in `wwwroot` are part of the application package. Serve them with
 `app.MapStaticAssets()` or `app.UseStaticFiles()`.
 

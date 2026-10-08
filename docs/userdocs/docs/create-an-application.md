@@ -18,8 +18,9 @@ cd MyApi
 ```
 
 You now have `Program.cs`, a project file, `appsettings.json` and
-`Properties/launchSettings.json`, as in any ASP.NET project. Open `Program.cs` in
-your editor. Find the route that returns `Hello from Isoplane!`. Leave it
+`Properties/launchSettings.json`, as in any ASP.NET project, and a `README.md`
+that says what each file is for. The files are commented as a guide to setting
+up a project of this kind. Open `Program.cs` in your editor. Find the route that returns `Hello from Isoplane!`. Leave it
 unchanged for the first run.
 
 Local state is private to the project directory.
@@ -63,7 +64,8 @@ Press Ctrl+C to finish the session.
 
 ## Continue
 
-Use [run and watch](run-and-rebuild.md) to restart automatically after edits, or
+Use [run and watch](run-and-rebuild.md) to rebuild automatically after edits,
+[debug it](run-and-rebuild.md#debugging) from your editor, or
 [add an integration test](test-an-application.md) for the response you just
 created. [Application packages](execution-modes.md) explains how the SDK selects the
 shared runtime.

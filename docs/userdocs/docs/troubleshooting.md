@@ -47,9 +47,14 @@ Read the first compiler or platform-validation error. The sandbox does not
 provide arbitrary operating-system capabilities. Changing a timeout or disabling
 certificate validation is not a fix for an unsupported API.
 
-Try the same application in both configurations when diagnosing a compilation
-problem. A difference can reveal trimming or dynamic-code assumptions; it does
-not make the failing configuration safe to deploy.
+An error whose code starts with `ISOPLANE` names an Isoplane requirement, at the
+line that breaks it where there is one. Your editor shows the same errors as you
+type and offers a quick fix for many of them; see
+[handling requests](handle-requests-without-aspnet.md) and
+[compatibility warnings](run-and-rebuild.md#control-compatibility-warnings).
+
+Debug and Release run on the same runtime and differ only in compiler
+optimization, so a failure in one is rarely absent from the other.
 
 ## Requests fail or the app exits
 
@@ -58,6 +63,24 @@ written there. In a test, include `app.DiagnosticOutput` in failure diagnostics.
 Check that request work is awaited and that network calls use asynchronous APIs.
 See [the application lifecycle](application-lifecycle.md) before relying on
 background work or retained state.
+
+## The application refuses to start
+
+Read the message printed with the failure; it names what stopped preparation.
+Three causes are particular to Isoplane. A `BackgroundService` that is still
+running once the host has started is refused by name, because work cannot
+continue between requests. An entry point that returns without awaiting
+`RunAsync` cannot serve requests. An initialization callback that throws, such as
+a warm-up request to a database that is not running, fails preparation.
+
+## Breakpoints stay grey
+
+A grey breakpoint in a running debug session has not been matched to code. If
+every breakpoint is grey, the ordinary C# debugger is attached to the `isoplane`
+tool instead of the Isoplane debugger to your application: start the session
+with **Debug local Isoplane**, as in [debugging](run-and-rebuild.md#debugging).
+If one is grey, no statement starts on its line, which its hover text says, or
+its file is not part of the built application.
 
 ## Application log messages
 

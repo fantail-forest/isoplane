@@ -13,6 +13,9 @@ uses. Later sources override earlier ones:
 ASP.NET applications read all of them through `IConfiguration`. Other
 applications read the last three with `RuntimeConfiguration.ReadValues()`.
 
+These sources apply to local sessions and sandbox tests. Only the `appsettings`
+files travel with the application.
+
 The application does not see your machine's other environment variables.
 Restart the development session after changing a setting; the tools prepare the
 application again for the changed settings.
@@ -45,7 +48,8 @@ dotnet user-secrets remove "ConnectionStrings:Todo"
 
 `dotnet run` and `isoplane dev` read the first profile in
 `Properties/launchSettings.json` whose `commandName` is `Project`. Select another
-with `dotnet run --launch-profile NAME` or `isoplane dev --launch-profile NAME`.
+with `dotnet run --launch-profile NAME` or `isoplane dev --launch-profile NAME`,
+or run without one with `--no-launch-profile`.
 
 ```json
 {

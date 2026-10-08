@@ -48,25 +48,44 @@ exceptions. For example, `<NoWarn>$(NoWarn);ISOPLANE1003</NoWarn>` suppresses
 synchronous-wait warnings. These settings affect advisory diagnostics only;
 assembly validation and sandbox restrictions still apply.
 
-## Watch for source changes
+## Rebuild on every save
+
+`isoplane dev` runs the application and watches its source:
+
+```bash
+isoplane dev
+```
+
+After an edit it rebuilds the application while the running one keeps serving. A
+request in progress finishes on the code it started with, and the next request
+runs the rebuilt code. If the build fails, the terminal says why and the last
+working application stays available. Press Ctrl+C to end the session.
+
+`isoplane dev` takes the project's directory with `--project` and its
+configuration with `--configuration`, which is Debug when omitted. `--port`,
+`--launch-profile` and `--no-launch-profile` choose what `dotnet run` takes from
+the [launch profile](local-settings.md#use-the-launch-profile), and `--no-watch`
+runs without watching.
+
+The ordinary .NET watcher works too:
 
 ```bash
 dotnet watch --no-hot-reload run
 ```
 
-This uses the ordinary .NET watch workflow: on an edit it stops the application,
-rebuilds, and starts it again. If compilation fails, fix the source; the watcher
-retries after the next edit. The application is unavailable between stopping and
-the successful restart. Press Ctrl+C to end the session.
-
-`--no-hot-reload` requests a restart instead of applying code changes to the
-running instance. Isoplane guests do not support hot reload; without the flag, the
-.NET watcher reports that limitation and falls back to restarting. Use the same
-configuration you would pass to `dotnet run`.
+On an edit it stops the application, rebuilds, and starts it again, so the
+application is unavailable in between. If compilation fails, fix the source; the
+watcher retries after the next edit. `--no-hot-reload` requests that restart
+directly. Isoplane applications do not support hot reload; without the flag the
+.NET watcher reports that and falls back to restarting.
 
 ## Debugging
 
-With the Isoplane debugger extension installed in VS Code, open your application
+Debugging in VS Code needs the Isoplane debugger extension. It is not on the
+Visual Studio Marketplace: it is a `.vsix` file, installed with VS Code's
+**Extensions: Install from VSIX** command.
+
+With the extension installed, open your application
 folder, choose **Debug local Isoplane**, set a breakpoint, and press **F5**. A
 project created from a template has that configuration in `.vscode/launch.json`.
 C# Dev Kit's **Debug project associated with this file** button starts the same

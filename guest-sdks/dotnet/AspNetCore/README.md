@@ -1,8 +1,8 @@
 # Isoplane ASP.NET adapter
 
 `Isoplane.AspNetCore` runs ASP.NET routing, middleware and request-scoped dependency
-injection over Isoplane requests. It replaces the server transport and
-generates the platform exports. The guest does not bind a listener.
+injection over Isoplane requests. It replaces the server transport, so the
+application does not bind a listener.
 
 Use the package's .NET SDK entry point so its compiler and target settings are
 available to the first restore:
@@ -39,10 +39,10 @@ Isoplane runs the entry point during pre-init, up to the await on `RunAsync`,
 which starts the .NET host and its hosted services. Initialization hooks run
 next, and the result is captured as the template every instance starts from.
 Keep request-specific state out of the top level of `Program.cs`. Request scopes
-are created and disposed by ASP.NET's normal request lifecycle. Ongoing
-`BackgroundService` work is rejected before startup: its lifetime cannot extend
-beyond a completed dispatch. Asynchronous bounded `IHostedService.StartAsync`
-work is supported.
+are created and disposed by ASP.NET's normal request lifecycle. A
+`BackgroundService` still running once the host has started is refused by name:
+its work cannot continue beyond a completed dispatch. One that finishes during
+startup is accepted, as is bounded asynchronous `IHostedService.StartAsync` work.
 
 To warm a read endpoint through middleware, binding and serialization before capture:
 
@@ -63,8 +63,9 @@ Response writes and flushes can reach the client while the handler awaits I/O.
 `CompleteAsync` closes application writes; the host sends EOF after the handler
 and completion callbacks finish. A failure after headers terminates the body
 with a transport error. Request bodies are asynchronous, non-seekable streams:
-handlers can read and respond before the client finishes its upload. Upgrades
-and direct file responses are unsupported.
+handlers can read and respond before the client finishes its upload. A file
+response is read from the application package and written as the body, so static
+files are served. Connection upgrades are unsupported.
 
 Cancellation is checked before each upload read; it cannot interrupt a pending
 host read or an individual response write awaiting acknowledgement. Disposing
