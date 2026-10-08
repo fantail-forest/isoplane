@@ -14,6 +14,7 @@ internal sealed class StatementTargets(SoftDebuggerSession session, int threadId
         string path = arguments.Source?.Path ?? throw new ProtocolException("A source path is required.");
         if (!Path.IsPathFullyQualified(path) || arguments.Line <= 0)
             throw new ProtocolException("Statement targets require an absolute source path and a positive line.");
+        path = Path.GetFullPath(path);
         var result = new GotoTargetsResponse { Targets = [] };
         if (!session.CanSetNextStatement) return result;
         var frame = session.VirtualMachine.GetThreads().Single(thread => thread.Id == threadId).GetFrames().FirstOrDefault();

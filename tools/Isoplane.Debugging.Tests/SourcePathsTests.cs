@@ -8,6 +8,14 @@ namespace Isoplane.Debugging.Tests;
 public sealed class SourcePathsTests
 {
     [Fact]
+    public void native_source_paths_are_normalized_without_a_mapping()
+    {
+        var root = Path.GetFullPath("local-sources");
+        var paths = new SourcePaths();
+        Assert.Equal(Path.Combine(root, "App.cs"), paths.ToClient(Path.Combine(root, "nested", "..", "App.cs")));
+    }
+
+    [Fact]
     public void source_mapping_prefers_the_longest_directory_prefix()
     {
         var root = Path.GetFullPath("local-sources");

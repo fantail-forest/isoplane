@@ -74,7 +74,7 @@ internal static class CompilerServer
     {
         foreach (var update in updates)
         {
-            var documents = solution.GetDocumentIdsWithFilePath(update.Path);
+            var documents = solution.GetDocumentIdsWithFilePath(Path.GetFullPath(update.Path));
             if (documents.IsEmpty) throw new IOException($"Source '{update.Path}' is not part of the paused project's compilation.");
             foreach (var id in documents)
             {

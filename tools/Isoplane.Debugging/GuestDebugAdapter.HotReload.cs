@@ -59,6 +59,7 @@ internal sealed partial class GuestDebugAdapter
             request.SetError(new ProtocolException("Hot Reload requires source text and an absolute path for each edited document."));
             return;
         }
+        edits = edits.Select(edit => edit with { Path = Path.GetFullPath(edit.Path) }).ToArray();
         if (Interlocked.CompareExchange(ref applyingHotReload, 1, 0) != 0)
         {
             request.SetError(new ProtocolException("A Hot Reload operation is already in progress."));

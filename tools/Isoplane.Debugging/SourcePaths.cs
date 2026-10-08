@@ -37,6 +37,6 @@ internal sealed class SourcePaths
             if (normalized.StartsWith(prefix, comparison))
                 return Path.GetFullPath(Path.Combine(local, normalized[prefix.Length..].Replace('/', Path.DirectorySeparatorChar)));
         }
-        return path;
+        return Path.IsPathFullyQualified(path) ? Path.GetFullPath(path) : path;
     }
 }
