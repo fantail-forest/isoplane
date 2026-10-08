@@ -3,7 +3,7 @@ version: '3'
 tasks:
   default:
     desc: Prepare shared fixtures before running tests
-    deps: [':node:runtimes', ':fixtures:rust', ':fixtures:dotnet', ':fixtures:acceptance', ':fixtures:package', ':cli', ':managed:tests', ':test:debugger:environment', ':fixtures:feed', ':test:debugger:host']
+    deps: [':node:runtimes', ':fixtures:rust', ':fixtures:dotnet', ':fixtures:acceptance', ':fixtures:package', ':cli', ':managed:tests', ':test:debugger:environment', ':fixtures:feed', ':test:managed:host']
 
   rust:
     desc: Build portable Rust WASM fixtures

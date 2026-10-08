@@ -115,7 +115,7 @@ pub fn prepared_acceptance(mode: &str) {
         .join(".build/clr-anycpu/managed/bin/Isoplane.Cli.Tests/release/Isoplane.Cli.Tests.dll");
     assert!(
         package.is_file() && host.is_file() && source.is_file(),
-        "run task fixtures:package:debugger fixtures:package:debugger-optimized test:debugger:host before debugger feature tests"
+        "run task test:debugger to prepare and run debugger feature tests"
     );
     let directory = tempfile::tempdir().unwrap();
     let mut command = std::process::Command::new("dotnet");

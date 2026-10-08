@@ -32,14 +32,14 @@ tasks:
 
   native:
     desc: Run SDK and CLI integration tests using prepared packages
-    deps: [':initialize', ':cli', ':fixtures:feed', ':fixtures:package', ':managed:tests', ':test:debugger:environment', ':test:debugger:host']
+    deps: [':initialize', ':cli', ':fixtures:feed', ':fixtures:package', ':managed:tests', ':test:debugger:environment', ':test:managed:host']
     env: *test_env
     cmds:
       - '{{.DEVELOPMENT_COMMAND}}cargo test -p isoplane-native {{.CLI_ARGS}}'
 
   debugger:
     desc: Run selected native debugger integration tests
-    deps: [':initialize', ':cli', ':managed:tests', ':test:debugger:environment', ':fixtures:feed', ':fixtures:package:debugger', ':fixtures:package:debugger-optimized', ':test:debugger:host']
+    deps: [':initialize', ':cli', ':managed:tests', ':test:debugger:environment', ':fixtures:feed', ':fixtures:package:debugger', ':fixtures:package:debugger-optimized', ':test:managed:host']
     env: *test_env
     cmds:
       - '{{.DEVELOPMENT_COMMAND}}cargo test -p isoplane-native --test installed_dev {{.CLI_ARGS}}'
@@ -51,10 +51,7 @@ tasks:
   managed:prepare:
     internal: true
     run: once
-    deps: [':managed:tests', ':native', ':runtime:toolchain', process-fixture, managed-bundle-fixture]
-    cmds:
-      - for: [Isoplane.Cli.Tests, Isoplane.Testing.Tests]
-        cmd: '"{{.DOTNET}}" msbuild taskfiles/StageCli.proj -nologo -p:NativeLibrary="{{.NATIVE_TARGET}}/debug/{{.NATIVE_LIBRARY}}" -p:CliDirectory="{{.MANAGED}}/bin/{{.ITEM}}/release" -p:Platform={{.PLATFORM}}'
+    deps: [managed:host, ':runtime:toolchain', process-fixture, managed-bundle-fixture]
 
   managed:standard:
     desc: Run managed tests; pass -- --filter <expression> to select tests
@@ -104,10 +101,13 @@ tasks:
     cmds:
       - '"{{.DOTNET}}" build tools/Isoplane.Testing.Tests/fixtures/ProcessFixture -c Release --artifacts-path "{{.ROOT_DIR}}/.build/{{.PLATFORM}}/managed-fixtures"'
 
-  debugger:host:
+  managed:host:
+    internal: true
+    run: once
     deps: [':managed:tests', ':native:release']
     cmds:
-      - '"{{.DOTNET}}" msbuild taskfiles/StageCli.proj -nologo -p:NativeLibrary="{{.NATIVE_TARGET}}/release/{{.NATIVE_LIBRARY}}" -p:CliDirectory="{{.MANAGED}}/bin/Isoplane.Cli.Tests/release" -p:Platform={{.PLATFORM}}'
+      - for: [Isoplane.Cli.Tests, Isoplane.Testing.Tests]
+        cmd: '"{{.DOTNET}}" msbuild taskfiles/StageCli.proj -nologo -p:NativeLibrary="{{.NATIVE_TARGET}}/release/{{.NATIVE_LIBRARY}}" -p:CliDirectory="{{.MANAGED}}/bin/{{.ITEM}}/release" -p:Platform={{.PLATFORM}}'
 
   debugger:environment:
     vars:
