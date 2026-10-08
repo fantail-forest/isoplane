@@ -11,6 +11,9 @@ internal static class OwnedChild
             await CertificateTrustTests.VerifyBundleAsync(certificateScenario);
             return 0;
         }
+        if (arguments is ["--debug-fixture", var state, var fixturePackage, var fixtureModule, var sourceProject, var artifacts])
+            return await PreparedDebugSession.RunAsync(state, fixturePackage, fixtureModule,
+                new Isoplane.Build.DebugProject(sourceProject, new() { ["Configuration"] = "Release", ["ArtifactsPath"] = artifacts }));
         if (arguments is ["--debug-fixture", var project, var package, var module])
             return await PreparedDebugSession.RunAsync(project, package, module);
         if (arguments is ["--run-process", .. var command])

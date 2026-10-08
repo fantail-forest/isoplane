@@ -1,4 +1,5 @@
 using Isoplane.Native;
+using Isoplane.Build;
 using System.Net.Sockets;
 using System.Net;
 using System.Text.Json;
@@ -15,13 +16,19 @@ public sealed class DebugRelayTests
     public async Task The_debugger_is_told_the_package_and_each_rebuild_of_it()
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-        await using var relay = new DebugRelay(Package, deadline.Token);
+        var project = new DebugProject(Path.ChangeExtension(Package, ".csproj"), new() { ["Configuration"] = "Debug" });
+        await using var relay = new DebugRelay(Package, deadline.Token, project);
         await relay.PackageChangedAsync(deadline.Token);
         using var control = new TcpClient();
         await control.ConnectAsync(relay.AdapterEndpoint, deadline.Token);
         using var reader = new StreamReader(control.GetStream(), leaveOpen: true);
         using (var opened = JsonDocument.Parse((await reader.ReadLineAsync(deadline.Token))!))
+        {
             Assert.Equal(Package, opened.RootElement.GetProperty("package").GetString());
+            var source = opened.RootElement.GetProperty("project");
+            Assert.Equal(project.Path, source.GetProperty("path").GetString());
+            Assert.Equal("Debug", source.GetProperty("properties").GetProperty("Configuration").GetString());
+        }
         await relay.PackageChangedAsync(deadline.Token);
         using var rebuilt = JsonDocument.Parse((await reader.ReadLineAsync(deadline.Token))!);
         Assert.Equal("packageChanged", rebuilt.RootElement.GetProperty("action").GetString());
@@ -90,8 +97,8 @@ public sealed class DebugRelayTests
     }
 
     [Theory]
-    [InlineData("{\"version\":3,\"action\":\"terminate\"}")]
-    [InlineData("{\"version\":2,\"action\":\"unknown\"}")]
+    [InlineData("{\"version\":4,\"action\":\"terminate\"}")]
+    [InlineData("{\"version\":3,\"action\":\"unknown\"}")]
     [InlineData("not-json")]
     public async Task Invalid_control_commands_fail_the_session(string message)
     {

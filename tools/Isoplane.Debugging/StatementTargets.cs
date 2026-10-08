@@ -54,6 +54,10 @@ internal sealed class StatementTargets(SoftDebuggerSession session, int threadId
     {
         if (!offsets.TryGetValue(targetId, out int offset))
             throw new ProtocolException("The statement target is not part of the current pause.");
-        return session.MoveExecution(offset);
+        try { return session.MoveExecution(offset); }
+        catch (Exception error) when (error is ArgumentException or NotSupportedException)
+        {
+            throw new ProtocolException("Cannot move execution: " + error.Message, error);
+        }
     }
 }

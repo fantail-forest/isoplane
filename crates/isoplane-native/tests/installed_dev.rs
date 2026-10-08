@@ -527,3 +527,8 @@ fn moving_execution_in_an_unchanged_handler_survives_other_method_updates() {
 fn moving_execution_rejects_hot_reload_with_changed_local_storage() {
     debugger::prepared_acceptance("hotreload-layout");
 }
+
+#[test]
+fn editor_source_edits_can_be_applied_and_reexecuted_in_the_paused_request() {
+    debugger::prepared_acceptance("edit-and-continue");
+}

@@ -11,6 +11,12 @@ public abstract partial class Connection
         SendReceive(CommandSet.STACK_FRAME, 12, new PacketWriter(this).WriteId(thread).WriteId(frame)).ReadInt();
 }
 
+public partial class ThreadMirror
+{
+    /// <summary>Discards paused frame caches after metadata or execution state changes.</summary>
+    public void InvalidateDebugFrames() => InvalidateFrames();
+}
+
 public partial class StackFrame
 {
     private int? methodVersion;

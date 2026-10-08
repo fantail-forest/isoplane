@@ -3,26 +3,31 @@ using System.Text.Json;
 
 namespace Isoplane.Build;
 
+internal sealed record DebugProject(string Path, Dictionary<string, string> Properties);
+
 internal static class DebugSessionProtocol
 {
-    private const int Version = 2;
+    private const int Version = 3;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
-    private sealed record Endpoint(int Version, int Port, string Package);
+    private sealed record Endpoint(int Version, int Port, string Package, DebugProject? Project);
+    internal sealed record SessionEndpoint(IPEndPoint Guests, string Package, DebugProject? Project);
     private sealed record Command(int Version, string Action);
     internal sealed record Reply(int Version, string Action, string? Error = null);
 
     /// <summary>Opens a session: where its guests' debugger agents connect, and the application package they run.</summary>
-    internal static Task WriteEndpointAsync(Stream stream, IPEndPoint endpoint, string package, CancellationToken cancellation) =>
-        WriteAsync(stream, new Endpoint(Version, endpoint.Port, package), cancellation);
+    internal static Task WriteEndpointAsync(Stream stream, IPEndPoint endpoint, string package, DebugProject? project, CancellationToken cancellation) =>
+        WriteAsync(stream, new Endpoint(Version, endpoint.Port, package, project), cancellation);
 
-    internal static async Task<(IPEndPoint Guests, string Package)> ReadEndpointAsync(Stream stream, CancellationToken cancellation)
+    internal static async Task<SessionEndpoint> ReadEndpointAsync(Stream stream, CancellationToken cancellation)
     {
         var endpoint = await ReadAsync<Endpoint>(stream, cancellation)
             ?? throw new IOException("The local session closed before providing a debugger endpoint.");
         RequireVersion(endpoint.Version);
         if (endpoint.Port is < 1 or > 65535) throw new IOException("The local session returned an invalid debugger port.");
         if (!Path.IsPathFullyQualified(endpoint.Package ?? "")) throw new IOException("The local session did not name its application package.");
-        return (new IPEndPoint(IPAddress.Loopback, endpoint.Port), endpoint.Package!);
+        if (endpoint.Project is { } project && (!Path.IsPathFullyQualified(project.Path ?? "") || project.Properties is null))
+            throw new IOException("The local session returned an invalid Hot Reload project.");
+        return new(new IPEndPoint(IPAddress.Loopback, endpoint.Port), endpoint.Package!, endpoint.Project);
     }
 
     internal static Task TerminateAsync(Stream stream) => WriteAsync(stream, new Command(Version, "terminate"), CancellationToken.None);

@@ -2,7 +2,6 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const os = require('node:os');
 const { EventEmitter, once } = require('node:events');
 const vscode = require('vscode');
 
@@ -11,7 +10,7 @@ async function run() {
     assert.ok(extension);
     await extension.activate();
     await require('./csharp').run();
-    const project = fs.mkdtempSync(path.join(os.tmpdir(), 'isoplane-editor-application-'));
+    const project = fs.mkdtempSync(path.join(path.dirname(process.env.ISOPLANE_TEST_PROJECT), 'isoplane-editor-application-'));
     fs.cpSync(process.env.ISOPLANE_TEST_PROJECT, project, { recursive: true, filter: source => !['bin', 'obj', '.isoplane'].includes(path.basename(source)) });
     const source = path.join(project, 'Program.cs');
     const line = fs.readFileSync(source, 'utf8').split(/\r?\n/).findIndex(value => value.includes('return answer.ToString();'));
@@ -20,6 +19,8 @@ async function run() {
     const events = new EventEmitter();
     const signal = AbortSignal.timeout(180000);
     const ready = once(events, 'ready', { signal });
+    let reportExit;
+    const adapterExit = new Promise(resolve => { reportExit = resolve; });
     const tracker = vscode.debug.registerDebugAdapterTrackerFactory('isoplane', {
         createDebugAdapterTracker() {
             let disconnected = false;
@@ -47,7 +48,7 @@ async function run() {
                     if (!disconnected) events.emit('error', error);
                     else console.log('Adapter transport closed after disconnect: ' + error.message);
                 },
-                onExit(code, signal) { events.emit('adapter-exit', { code, signal }); }
+                onExit(code, signal) { reportExit(); events.emit('adapter-exit', { code, signal }); }
             };
         }
     });
@@ -143,7 +144,10 @@ async function run() {
         console.error(error);
         throw new Error('Editor debugger scenario failed at ' + stage, { cause: error });
     } finally {
-        if (session) await vscode.debug.stopDebugging(session);
+        if (session) {
+            await vscode.debug.stopDebugging(session);
+            await adapterExit;
+        }
         if (terminal) terminal.dispose();
         terminals.dispose();
         terminated.dispose();

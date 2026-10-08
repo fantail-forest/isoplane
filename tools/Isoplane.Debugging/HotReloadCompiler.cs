@@ -12,6 +12,8 @@ internal sealed class HotReloadCompiler : IAsyncDisposable
     private readonly SemaphoreSlim commands = new(1, 1);
     private bool disposed;
 
+    internal string[] Documents { get; private set; } = [];
+
     private HotReloadCompiler(Process process)
     {
         this.process = process;
@@ -64,7 +66,7 @@ internal sealed class HotReloadCompiler : IAsyncDisposable
         {
             using var cancelled = cancellation.Register(compiler.Kill);
             await HotReloadProtocol.WriteAsync(process.StandardInput, start);
-            await compiler.ReadAsync(cancellation);
+            compiler.Documents = (await compiler.ReadAsync(cancellation)).Documents;
             return compiler;
         }
         catch
@@ -95,7 +97,11 @@ internal sealed class HotReloadCompiler : IAsyncDisposable
             await process.WaitForExitAsync(cancellation);
             throw new IOException($"The Hot Reload compiler exited with code {process.ExitCode}: {await diagnostics}");
         }
-        if (reply.Error is { } error) throw new IOException("The Hot Reload compiler failed: " + error);
+        if (reply.Error is { } error)
+        {
+            await process.WaitForExitAsync(cancellation);
+            throw new IOException($"The Hot Reload compiler failed: {error}{Environment.NewLine}{await diagnostics}");
+        }
         return reply;
     }
 

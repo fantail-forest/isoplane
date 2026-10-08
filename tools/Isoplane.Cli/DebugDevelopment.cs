@@ -2,6 +2,7 @@ using System.Net.Sockets;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Isoplane.Native;
+using Isoplane.Build;
 
 namespace Isoplane.Cli;
 
@@ -18,7 +19,8 @@ internal static class DebugDevelopment
             else
                 Directory.CreateDirectory(session, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             var package = Path.Combine(session, "application.tar");
-            await using var relay = new DebugRelay(package, lifetime.Token);
+            await using var relay = new DebugRelay(package, lifetime.Token,
+                new DebugProject(ManagedBundle.ProjectFile(options.Directory), new() { ["Configuration"] = options.Configuration }));
             if (options.DebugLaunchEndpoint is not { } launchEndpoint)
                 return await RunPackageAsync(options, session, package, relay.Endpoint.ToString(), relay, null, lifetime.Token);
             using var client = new TcpClient();

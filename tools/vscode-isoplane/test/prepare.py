@@ -11,10 +11,10 @@ destination = Path(sys.argv[1]).resolve()
 packages = Path(os.environ['ISOPLANE_TEST_PACKAGE_FEED'])
 version = ET.parse(root / 'Directory.Build.props').findtext('.//Version')
 hive = destination / 'hive'
-for cache in (hive, destination / 'nuget'):
+app = destination / 'app'
+for cache in (hive, app, destination / 'nuget'):
     if cache.exists():
         shutil.rmtree(cache)
-app = destination / 'app'
 subprocess.run(['dotnet', 'new', 'install', str(packages / f'Isoplane.Templates.{version}.nupkg'),
                 '--force', '--debug:custom-hive', str(hive)], check=True)
 subprocess.run(['dotnet', 'new', 'isoplane-web', '--name', 'EditorDebug', '--force',

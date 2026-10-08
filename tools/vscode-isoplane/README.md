@@ -25,11 +25,15 @@ hosts the application, and leave the application's breakpoints unverified.
 Running without debugging is left to the project's run command.
 
 Keep the debugger attached for subsequent requests. Breakpoint configuration
-is retained as each fresh guest starts. Source edits rebuild automatically; a
-paused request keeps its existing code and locals until it finishes. The next
-request uses the rebuilt application. A failed rebuild preserves the last working
-application. Set `"watch": false` to disable rebuilds. This is request-boundary
-replacement, not in-place Hot Reload.
+is retained as each fresh guest starts. Saving source while paused applies Hot
+Reload edits; **Isoplane: Apply Code Changes** saves and applies pending edits.
+Compiler diagnostics appear in **Isoplane Hot Reload**. Use **Jump to Cursor** to
+adopt updated instructions in the current invocation while preserving its locals.
+Remapping currently requires matching frame storage, including compiler temporaries.
+
+Source edits also rebuild the application package for subsequent requests. A
+failed rebuild preserves the last working application. Set `"watch": false` to
+disable rebuilds; Hot Reload edits then affect only the active guest.
 
 Stopping the debugger ends the local development session.
 

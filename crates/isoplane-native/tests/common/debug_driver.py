@@ -20,6 +20,7 @@ import debug_async_stack
 import debug_library
 import debug_uncaught
 import debug_features
+import debug_hot_reload
 import debug_statements
 import debug_statement_awaits
 import debug_statement_handlers
@@ -42,7 +43,7 @@ if mode == "protocol" or mode.startswith("hotreload"):
     if mode.startswith("hotreload"):
         arguments.extend([root / ".build/clr-anycpu/managed/bin/HotReloadFixture/release", source])
     sys.exit(subprocess.run(arguments, timeout=240).returncode)
-scenario = {"uncaught": debug_uncaught, "statements": debug_statements, "statement-handlers": debug_statement_handlers, "statement-awaits": debug_statement_awaits, "statement-awaits-optimized": debug_statement_awaits, "features": debug_features, "watchpoints": debug_watchpoints, "watchpoint-steps": debug_watchpoint_steps, "library": debug_library, "async-stack": debug_async_stack, "async-optimized": debug_async_stack}.get(mode)
+scenario = {"edit-and-continue": debug_hot_reload, "uncaught": debug_uncaught, "statements": debug_statements, "statement-handlers": debug_statement_handlers, "statement-awaits": debug_statement_awaits, "statement-awaits-optimized": debug_statement_awaits, "features": debug_features, "watchpoints": debug_watchpoints, "watchpoint-steps": debug_watchpoint_steps, "library": debug_library, "async-stack": debug_async_stack, "async-optimized": debug_async_stack}.get(mode)
 if mode.startswith("async-"):
     scenario = debug_async_stack
 adapter_command = ["dotnet", launcher] if Path(launcher).suffix == ".dll" else [launcher]

@@ -28,11 +28,20 @@ internal static class CompilerServer
         {
             if (!start.AssemblyPaths.TryGetValue(input.AssemblyName ?? "", out string? assembly))
                 throw new IOException($"The paused application has no baseline assembly for project '{input.Name}'.");
-            solution = solution.WithProjectCompilationOutputInfo(input.Id, new CompilationOutputInfo().WithAssemblyPath(assembly));
+            var output = input.CompilationOutputInfo;
+            string generated = output.GeneratedFilesOutputDirectory ?? Path.GetDirectoryName(output.AssemblyPath)
+                ?? throw new IOException($"Project '{input.Name}' did not identify its generated-source directory.");
+            // File-local generated type identities depend on their original path, even when the baseline assembly is snapshotted.
+            solution = solution.WithProjectCompilationOutputInfo(input.Id,
+                output.WithGeneratedFilesOutputDirectory(generated).WithAssemblyPath(assembly));
         }
         await Task.WhenAll(solution.Projects.SelectMany(project => project.Documents).Select(document => document.GetTextAsync()));
         using var compiler = new EditCompiler(workspace, solution, project.Id, start.Capabilities);
-        await HotReloadProtocol.WriteAsync(Console.Out, new CompilerReply([], [], false));
+        await HotReloadProtocol.WriteAsync(Console.Out, new CompilerReply([], [], false)
+        {
+            Documents = solution.Projects.SelectMany(project => project.Documents).Select(document => document.FilePath)
+                .OfType<string>().Distinct().ToArray()
+        });
         while (await HotReloadProtocol.ReadAsync<CompilerCommand>(Console.In) is { } command)
         {
             CompilerReply reply;

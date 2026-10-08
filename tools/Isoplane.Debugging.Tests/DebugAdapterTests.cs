@@ -249,11 +249,11 @@ public sealed class DebugAdapterTests
     }
 
     [Theory]
-    [InlineData("{\"version\":3,\"port\":1234,\"package\":\"/application.tar\"}")]
-    [InlineData("{\"version\":2,\"port\":0,\"package\":\"/application.tar\"}")]
-    [InlineData("{\"version\":2,\"port\":65536,\"package\":\"/application.tar\"}")]
-    [InlineData("{\"version\":2,\"port\":1234}")]
-    [InlineData("{\"version\":2,\"port\":1234,\"package\":\"application.tar\"}")]
+    [InlineData("{\"version\":4,\"port\":1234,\"package\":\"/application.tar\"}")]
+    [InlineData("{\"version\":3,\"port\":0,\"package\":\"/application.tar\"}")]
+    [InlineData("{\"version\":3,\"port\":65536,\"package\":\"/application.tar\"}")]
+    [InlineData("{\"version\":3,\"port\":1234}")]
+    [InlineData("{\"version\":3,\"port\":1234,\"package\":\"application.tar\"}")]
     [InlineData("not-json")]
     [InlineData("null")]
     public async Task invalid_session_control_endpoints_fail_attachment(string message)
@@ -302,7 +302,7 @@ public sealed class DebugAdapterTests
             // A source edit: the session rebuilds its package in place and says so.
             BuiltApplication.Write(package, source, "public static class Example\n{\n    public static int Run()\n    {\n        int answer = 42;\n        return answer;\n    }\n}\n");
             using var writer = new StreamWriter(control.GetStream(), leaveOpen: true) { AutoFlush = true };
-            await writer.WriteLineAsync("{\"version\":2,\"action\":\"packageChanged\"}");
+            await writer.WriteLineAsync("{\"version\":3,\"action\":\"packageChanged\"}");
             Breakpoint changed;
             do { changed = await client.Breakpoints.Reader.ReadAsync(client.Cancellation); } while (changed.Id != set.Breakpoints[1].Id);
             Assert.True(changed.Verified, "a rebuild that gives the line a statement must verify its breakpoint");
@@ -404,12 +404,12 @@ public sealed class DebugAdapterTests
         using var writer = new StreamWriter(control.GetStream(), leaveOpen: true) { AutoFlush = true };
         var preparing = client.Send(new PrepareDetach());
         Assert.Equal("prepareDetach", JObject.Parse((await reader.ReadLineAsync(client.Cancellation))!)["action"]!.Value<string>());
-        await writer.WriteLineAsync("{\"version\":2,\"action\":\"detachReady\"}");
+        await writer.WriteLineAsync("{\"version\":3,\"action\":\"detachReady\"}");
         await preparing;
         var disconnecting = client.Send(new DisconnectRequest { Args = { TerminateDebuggee = false } });
         Assert.Equal("detach", JObject.Parse((await reader.ReadLineAsync(client.Cancellation))!)["action"]!.Value<string>());
         await Assert.ThrowsAsync<ProtocolException>(() => client.Send(new DisconnectRequest { Args = { TerminateDebuggee = false } }));
-        await writer.WriteLineAsync("{\"version\":2,\"action\":\"detached\"}");
+        await writer.WriteLineAsync("{\"version\":3,\"action\":\"detached\"}");
         await disconnecting;
         await Assert.ThrowsAsync<ProtocolException>(() => attached);
         Assert.False(client.Adapter.Failed);
@@ -437,7 +437,7 @@ public sealed class DebugAdapterTests
         using var writer = new StreamWriter(control.GetStream(), leaveOpen: true) { AutoFlush = true };
         await writer.WriteLineAsync(System.Text.Json.JsonSerializer.Serialize(new
         {
-            version = 2, port = ((IPEndPoint)listener.LocalEndpoint).Port,
+            version = 3, port = ((IPEndPoint)listener.LocalEndpoint).Port,
             package = package ?? Path.Combine(Path.GetTempPath(), "isoplane-test-no-application.tar")
         }));
         return control;

@@ -66,5 +66,12 @@ internal sealed class HotReloadBaseline : IDisposable
         }
     }
 
-    public void Dispose() => Directory.Delete(directory, recursive: true);
+    public void Dispose()
+    {
+        try { Directory.Delete(directory, recursive: true); }
+        catch (DirectoryNotFoundException)
+        {
+            Console.Error.WriteLine("isoplane: the local session already removed its Hot Reload baseline during shutdown.");
+        }
+    }
 }

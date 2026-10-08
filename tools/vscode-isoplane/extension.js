@@ -47,6 +47,7 @@ const csharpLaunch = {
 };
 
 function activate(context) {
+    require('./hotReload').register(context);
     context.subscriptions.push(
         vscode.debug.registerDebugConfigurationProvider('dotnet', csharpLaunch),
         vscode.debug.registerDebugConfigurationProvider('coreclr', csharpLaunch),

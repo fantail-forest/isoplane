@@ -140,13 +140,22 @@ termination on disconnect.
 
 The session uses the SDK's shared debug runtime. The debugger supports stepping,
 watches, editing live locals, exception stops, and data breakpoints on ordinary
-locals, managed fields and array elements. Source edits rebuild the package while keeping the
-debugger attached. A paused request keeps its current code and locals; continue
-it to completion before the replacement takes effect. The next request runs the
-rebuilt code with source breakpoints rebound. A failed build leaves the last
-working application available. Use `--no-watch` (or `"watch": false` in an IDE
-launch configuration) to disable automatic rebuilds. This rebuilds the application;
-it does not apply in-place Hot Reload to the active request.
+locals, managed fields and array elements. In VS Code, saving source while paused
+applies compiler-supported Hot Reload edits to the current guest. **Isoplane:
+Apply Code Changes** saves and applies pending edits as well. Edits saved while
+running are queued for the next stop. Compilation errors leave the paused code
+and locals usable and appear in the **Isoplane Hot Reload** output channel.
+
+An active invocation keeps its original instructions until a supported **Jump to
+Cursor** adopts the edited method. Its existing locals are preserved. Remapping
+currently requires matching interpreter frame storage, including compiler-generated
+temporaries; edits that require more storage cannot yet be adopted by that invocation.
+
+Source watching also rebuilds the application package for subsequent requests,
+with source breakpoints rebound. A failed build leaves the last working package
+available. Use `--no-watch` (or `"watch": false` in an IDE launch configuration)
+to disable those rebuilds. Hot Reload updates the active guest; without a rebuild,
+the next request still starts from the original application package.
 
 Data breakpoints stop when a value changes. A local watch expires when its lexical
 scope or method invocation ends, including exception unwinding; the editor marks

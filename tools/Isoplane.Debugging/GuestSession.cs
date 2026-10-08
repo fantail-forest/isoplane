@@ -6,6 +6,7 @@ namespace Isoplane.Debugging;
 
 internal sealed class GuestSession(Action? ended = null, Action? packageChanged = null) : IAsyncDisposable
 {
+    internal DebugProject? Project { get; private set; }
     private readonly TcpClient client = new();
     private readonly CancellationTokenSource lifetime = new();
 
@@ -24,8 +25,9 @@ internal sealed class GuestSession(Action? ended = null, Action? packageChanged 
     {
         await client.ConnectAsync(endpoint, lifetime.Token);
         var target = await DebugSessionProtocol.ReadEndpointAsync(client.GetStream(), lifetime.Token);
+        Project = target.Project;
         monitoring = MonitorAsync();
-        return target;
+        return (target.Guests, target.Package);
     }
 
     private async Task MonitorAsync()

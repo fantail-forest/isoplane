@@ -18,6 +18,7 @@ internal sealed record ModuleUpdate(Guid Module, byte[] Metadata, byte[] Il, byt
 internal sealed record CompilerReply(ModuleUpdate[] Updates, string[] Diagnostics, bool RestartRequired, string? Error = null)
 {
     public bool Pending { get; init; }
+    public string[] Documents { get; init; } = [];
 }
 
 internal static class HotReloadProtocol

@@ -88,6 +88,7 @@ impl Drop for Driver {
 pub fn prepared_acceptance(mode: &str) {
     let fixture = match mode {
         "watchpoint-steps" => "watchpoints",
+        "edit-and-continue" => "hotreload",
         "hotreload-try"
         | "hotreload-async"
         | "hotreload-unchanged-handler"
@@ -134,6 +135,11 @@ pub fn prepared_acceptance(mode: &str) {
         .arg(directory.path())
         .arg(&package)
         .arg(isoplane_fixtures::mono_debug_runtime_module());
+    if mode == "edit-and-continue" {
+        command
+            .arg(sources.join("hotreload/HotReloadFixture.csproj"))
+            .arg(root.join(".build/clr-anycpu/managed"));
+    }
     let mut dev = Dev::spawn(&mut command, std::time::Duration::from_secs(120), true);
     let metadata = dev
         .debugger

@@ -12,6 +12,7 @@ internal sealed class DebugRelay : IAsyncDisposable
     private readonly CancellationTokenSource lifetime;
     private readonly Task forwarding;
     private readonly string package;
+    private readonly DebugProject? project;
     private readonly SemaphoreSlim writes = new(1, 1);
     private volatile Stream? editorControl;
 
@@ -24,9 +25,10 @@ internal sealed class DebugRelay : IAsyncDisposable
     internal Func<CancellationToken, Task>? PrepareDetach { get; set; }
 
     /// <param name="package">The application package the session's guests run, which the debugger reads symbols from.</param>
-    internal DebugRelay(string package, CancellationToken cancellation)
+    internal DebugRelay(string package, CancellationToken cancellation, DebugProject? project = null)
     {
         this.package = package;
+        this.project = project;
         lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         listener.Start();
         Endpoint = (IPEndPoint)listener.LocalEndpoint;
@@ -47,7 +49,7 @@ internal sealed class DebugRelay : IAsyncDisposable
             try
             {
                 editorControl = editor.GetStream();
-                await DebugSessionProtocol.WriteEndpointAsync(editor.GetStream(), (IPEndPoint)adapterListener.LocalEndpoint, package, cancellation);
+                await DebugSessionProtocol.WriteEndpointAsync(editor.GetStream(), (IPEndPoint)adapterListener.LocalEndpoint, package, project, cancellation);
             }
             finally { writes.Release(); }
             using var connected = CancellationTokenSource.CreateLinkedTokenSource(cancellation);

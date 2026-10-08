@@ -56,13 +56,12 @@ internal static class ManagedBundle
     /// </summary>
     internal static async Task<SharedRuntime> CreateAsync(BundleOptions options, CancellationToken cancellation)
     {
-        var projects = Directory.GetFiles(options.Directory, "*.csproj");
-        if (projects.Length != 1) throw new ArgumentException("Select a directory containing exactly one application project with --project.");
+        string project = ProjectFile(options.Directory);
         var temporary = Directory.CreateDirectory(Path.Combine(options.Directory, ".isoplane", "bundle", Guid.NewGuid().ToString("N")));
         try
         {
             var metadata = Path.Combine(temporary.FullName, "inputs.json");
-            List<string> arguments = ["msbuild", projects[0], "-target:IsoplaneManagedBundle",
+            List<string> arguments = ["msbuild", project, "-target:IsoplaneManagedBundle",
                 "-nodeReuse:false", "-property:UseSharedCompilation=false",
                 "-property:IsoplaneManagedBundleBuild=true", "-property:Configuration=" + options.Configuration,
                 "-getProperty:AssemblyName,IsoplaneRuntimeDirectory",
@@ -79,6 +78,13 @@ internal static class ManagedBundle
             return new(document.RootElement.GetProperty("Properties").GetProperty("IsoplaneRuntimeDirectory").GetString() ?? "");
         }
         finally { temporary.Delete(recursive: true); }
+    }
+
+    internal static string ProjectFile(string directory)
+    {
+        var projects = Directory.GetFiles(directory, "*.csproj");
+        if (projects.Length != 1) throw new ArgumentException("Select a directory containing exactly one application project with --project.");
+        return Path.GetFullPath(projects[0]);
     }
 
     internal static async Task WriteAsync(JsonElement metadata, string output, CancellationToken cancellation)

@@ -8,7 +8,7 @@ using Dap = Microsoft.VisualStudio.Shared.VSCodeDebugProtocol.Messages;
 
 namespace Isoplane.Debugging;
 
-internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
+internal sealed partial class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
 {
     private SoftDebuggerSession session = new() { Breakpoints = new BreakpointStore() };
     private readonly TextWriter diagnostics;
@@ -51,6 +51,7 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
         this.launcher = launcher;
         InitializeProtocolClient(input, output);
         Protocol.RegisterRequestType<PrepareDetachRequest, PrepareDetachArguments>(HandlePrepareDetach);
+        Protocol.RegisterRequestType<HotReloadRequest, HotReloadArguments, HotReloadResponse>(HandleHotReload);
         ConfigureSession(session);
         dataBreakpoints = new GuestDataBreakpoints(session, Allocate);
         breakpoints = new GuestBreakpoints(session, Allocate, message => Protocol.SendEvent(message), message => Protocol.SendEvent(message));
@@ -218,6 +219,7 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
         {
             var target = await owner!.ConnectAsync(address);
             var application = ReadSymbols(target.Package);
+            await OpenHotReloadAsync(target.Package);
             lock (lifecycle)
             {
                 if (Volatile.Read(ref stopping) != 0) return;
@@ -268,24 +270,32 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
 
     protected override SetBreakpointsResponse HandleSetBreakpointsRequest(SetBreakpointsArguments arguments)
     {
+        RequireNoHotReload();
         lock (lifecycle) return breakpoints.SetSource(arguments);
     }
     protected override BreakpointLocationsResponse HandleBreakpointLocationsRequest(BreakpointLocationsArguments arguments)
     {
+        RequireNoHotReload();
         lock (lifecycle) return breakpoints.Locations(arguments);
     }
 
     protected override SetFunctionBreakpointsResponse HandleSetFunctionBreakpointsRequest(SetFunctionBreakpointsArguments arguments)
     {
+        RequireNoHotReload();
         lock (lifecycle) return breakpoints.SetFunctions(arguments);
     }
     protected override SetExceptionBreakpointsResponse HandleSetExceptionBreakpointsRequest(SetExceptionBreakpointsArguments arguments)
     {
+        RequireNoHotReload();
         lock (lifecycle) return breakpoints.SetExceptions(arguments);
     }
 
     protected override DataBreakpointInfoResponse HandleDataBreakpointInfoRequest(DataBreakpointInfoArguments arguments) => dataBreakpoints.Describe(Pause, arguments);
-    protected override SetDataBreakpointsResponse HandleSetDataBreakpointsRequest(SetDataBreakpointsArguments arguments) => dataBreakpoints.Set(arguments);
+    protected override SetDataBreakpointsResponse HandleSetDataBreakpointsRequest(SetDataBreakpointsArguments arguments)
+    {
+        RequireNoHotReload();
+        return dataBreakpoints.Set(arguments);
+    }
 
     protected override ThreadsResponse HandleThreadsRequest(ThreadsArguments arguments) => new()
     {
@@ -293,7 +303,14 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
             .Select(thread => new Dap.Thread { Id = checked((int)thread.Id), Name = thread.Name }).ToList()
     };
 
-    private PausedValues Pause => Volatile.Read(ref paused) ?? throw new ProtocolException("The guest is not paused.");
+    private PausedValues Pause
+    {
+        get
+        {
+            RequireNoHotReload();
+            return Volatile.Read(ref paused) ?? throw new ProtocolException("The guest is not paused.");
+        }
+    }
     private int Allocate() => Interlocked.Increment(ref nextHandle);
     protected override StackTraceResponse HandleStackTraceRequest(StackTraceArguments arguments) => Pause.StackTrace(arguments);
     protected override ScopesResponse HandleScopesRequest(ScopesArguments arguments) => Pause.Scopes(arguments.FrameId);
@@ -512,6 +529,7 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
         if (Volatile.Read(ref stopping) != 0 || Volatile.Read(ref ended) != 0) return;
         Interlocked.Exchange(ref failed, 1);
         diagnostics.WriteLine($"isoplane debugger: {error}");
+        Protocol.SendEvent(new OutputEvent { Category = OutputEvent.CategoryValue.Stderr, Output = $"Isoplane debugger stopped: {error.Message}{Environment.NewLine}" });
         Interlocked.Exchange(ref attach, null)?.Reject(new ProtocolException(error.Message));
         Stop();
     }
@@ -550,6 +568,7 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
         {
             await Task.Yield();
             await previousConnection.DisposeAsync();
+            if (package is { } currentPackage) await OpenHotReloadAsync(currentPackage);
             lock (lifecycle)
             {
                 if (Volatile.Read(ref stopping) != 0 || Volatile.Read(ref ended) != 0 || Volatile.Read(ref detaching) != 0) return;
@@ -592,6 +611,8 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
         await launching;
         await opening;
         await reconnecting;
+        await applyingChanges;
+        if (hotReload is not null) await hotReload.DisposeAsync();
         if (owner is not null) await owner.DisposeAsync();
         if (connection is not null) await connection.DisposeAsync();
         session.Dispose();

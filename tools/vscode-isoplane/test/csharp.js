@@ -2,7 +2,6 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const os = require('node:os');
 const { EventEmitter, once } = require('node:events');
 const vscode = require('vscode');
 
@@ -12,7 +11,7 @@ const vscode = require('vscode');
  * its own launch, so the breakpoint binds in the application and not in the tool hosting it.
  */
 async function run() {
-    const project = fs.mkdtempSync(path.join(os.tmpdir(), 'isoplane-editor-csharp-launch-'));
+    const project = fs.mkdtempSync(path.join(path.dirname(process.env.ISOPLANE_TEST_PROJECT), 'isoplane-editor-csharp-launch-'));
     fs.cpSync(process.env.ISOPLANE_TEST_PROJECT, project, { recursive: true, filter: source => !['bin', 'obj', '.isoplane'].includes(path.basename(source)) });
     const projectFile = path.join(project, fs.readdirSync(project).find(name => name.endsWith('.csproj')));
     const source = path.join(project, 'Program.cs');
@@ -22,12 +21,19 @@ async function run() {
     const events = new EventEmitter();
     const signal = AbortSignal.timeout(180000);
     let ending = false;
+    let reportExit;
+    const adapterExit = new Promise(resolve => { reportExit = resolve; });
+    const transcript = [];
     const tracker = vscode.debug.registerDebugAdapterTrackerFactory('isoplane', {
         createDebugAdapterTracker() {
             return {
+                onWillReceiveMessage(message) { transcript.push("DAP request: " + message.command); },
                 onDidSendMessage(message) {
+                    if (message.type !== 'event' || message.event !== 'output') transcript.push("DAP: " + JSON.stringify(message));
+                    if (message.type === 'event' && message.event === 'output') console.log(message.body.output);
                     if (message.type === 'response' && message.command === 'setBreakpoints' && message.success)
                         for (const reported of message.body.breakpoints) events.emit('breakpoint', reported);
+                    if (message.type === 'response' && message.command === 'isoplane/hotReload') events.emit('applied', message);
                     if (message.type !== 'event') return;
                     if (message.event === 'breakpoint') events.emit('breakpoint', message.body.breakpoint);
                     const match = message.event === 'output' && /ready .+ at (http:\/\/\S+)/.exec(message.body.output);
@@ -35,13 +41,14 @@ async function run() {
                     events.emit(message.event, message.body);
                 },
                 // VS Code also reports the adapter's closed output here once the session is stopped.
-                onError(error) { if (!ending) events.emit('error', error); }
+                onError(error) { console.error(error); if (!ending) events.emit('error', error); },
+                onExit(code, signal) { transcript.push('Adapter exit: ' + JSON.stringify({ code, signal })); reportExit(); }
             };
         }
     });
     // A customer's launch finds `isoplane` on PATH and uses the launch profile's port; the test names its own.
     const settings = vscode.debug.registerDebugConfigurationProvider('isoplane', {
-        resolveDebugConfiguration(_, configuration) { return { ...configuration, cliPath: process.env.ISOPLANE_TEST_CLI, port: 0, watch: false }; }
+        resolveDebugConfiguration(_, configuration) { return { ...configuration, cliPath: process.env.ISOPLANE_TEST_CLI, port: 0, watch: false, console: 'internalConsole' }; }
     });
     const ended = new Promise(resolve => {
         const subscription = vscode.debug.onDidTerminateDebugSession(() => { subscription.dispose(); resolve(); });
@@ -78,18 +85,47 @@ async function run() {
         vscode.debug.removeBreakpoints([added]);
         const stopping = once(events, 'stopped', { signal });
         const request = fetch(url, { signal });
+        request.catch(error => console.error('Paused request: ', error));
         const [stopped] = await stopping;
         const stack = await session.customRequest('stackTrace', { threadId: stopped.threadId });
         assert.equal(stack.stackFrames[0].line, line + 1, 'the breakpoint must bind in the application');
-        await session.customRequest('continue', { threadId: stopped.threadId });
-        assert.equal(await (await request).text(), '42');
+        const refreshed = once(events, 'stopped', { signal });
+        const applying = once(events, 'applied', { signal });
+        const document = await vscode.workspace.openTextDocument(source);
+        const edit = new vscode.WorkspaceEdit();
+        edit.replace(document.uri, document.lineAt(line - 1).range, '            int answer = 43;');
+        assert.equal(await vscode.workspace.applyEdit(edit), true);
+        assert.equal(await document.save(), true);
+        const [applied] = await applying;
+        assert.equal(applied.success, true, JSON.stringify(applied));
+        assert.equal(applied.body.appliedModules, 1);
+        assert.deepEqual(applied.body.diagnostics, []);
+        assert.equal(applied.body.restartRequired, false);
+        const [updated] = await refreshed;
+        const frame = (await session.customRequest('stackTrace', { threadId: updated.threadId })).stackFrames[0];
+        assert.equal((await session.customRequest('evaluate', { frameId: frame.id, expression: 'answer', context: 'watch' })).result, '42');
+        const targets = await session.customRequest('gotoTargets', { source: { path: source }, line });
+        assert.equal(targets.targets.length, 1);
+        const jumped = once(events, 'stopped', { signal });
+        await session.customRequest('goto', { threadId: updated.threadId, targetId: targets.targets[0].id });
+        await jumped;
+        const reexecuted = once(events, 'stopped', { signal });
+        await session.customRequest('continue', { threadId: updated.threadId });
+        await reexecuted;
+        await session.customRequest('continue', { threadId: updated.threadId });
+        assert.equal(await (await request).text(), '43', 'saving and jumping back must execute the edited line in the same invocation');
         await insideALambda(source, session, events, signal, url);
         console.log('A C# launch of an Isoplane project reached its breakpoint through the Isoplane debugger.');
+    } catch (error) {
+        console.error(transcript.join('\n'));
+        console.error('C# launch scenario: ', error);
+        throw error;
     } finally {
         ending = true;
         if (session) {
             await vscode.debug.stopDebugging(session);
             await ended;
+            await adapterExit;
         }
         vscode.debug.removeBreakpoints([breakpoint]);
         settings.dispose();
