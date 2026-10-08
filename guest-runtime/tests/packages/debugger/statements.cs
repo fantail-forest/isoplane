@@ -13,7 +13,7 @@ internal static class Application
     private static string Handle()
     {
         int result = Protected(Compute());
-        return finished ? result.ToString() : "missing cleanup";
+        return finished ? $"{result}:{Crossed()}" : "missing cleanup";
     }
 
     private static int Protected(int answer)
@@ -33,5 +33,21 @@ internal static class Application
         answer += 10;
         answer *= 2;
         return answer;
+    }
+
+    private static int Crossed()
+    {
+        int crossings = 0;
+        try
+        {
+            crossings += 1;
+            crossings += 100;
+        }
+        finally
+        {
+            crossings += 10;
+        }
+        crossings += 1000;
+        return crossings;
     }
 }

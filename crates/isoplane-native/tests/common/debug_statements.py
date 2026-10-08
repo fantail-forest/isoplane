@@ -1,19 +1,20 @@
 """Move the next statement through DAP and observe the resulting guest response."""
 from pathlib import Path
 
-EXPECTED_RESPONSE = b'11'
+EXPECTED_RESPONSE = b'11:112'
 
 
 def locations(source):
     lines = Path(source).read_text().splitlines()
     return {text: next(index + 1 for index, line in enumerate(lines) if text in line)
-            for text in ('answer += 10;', 'answer *= 2;', 'return answer;', 'private static string Handle()', 'int saved = answer;', 'saved += 100;', 'return saved;', 'finally { finished = true; }')}
+            for text in ('answer += 10;', 'answer *= 2;', 'return answer;', 'private static string Handle()', 'int saved = answer;', 'saved += 100;', 'return saved;', 'finally { finished = true; }', 'crossings += 1;', 'crossings += 100;', 'crossings += 1000;', 'return crossings;')}
 
 
 def configure(source, send, response):
     response(send('setBreakpoints', {'source': {'path': source}, 'breakpoints': [
         {'line': locations(source)['answer += 10;']},
-        {'line': locations(source)['int saved = answer;']}]}))
+        {'line': locations(source)['int saved = answer;']},
+        {'line': locations(source)['crossings += 1;']}]}))
 
 
 def exercise(source, send, response, until):
@@ -47,7 +48,7 @@ def exercise(source, send, response, until):
     backward = target('answer += 10;')
     assert backward, 'a previous statement in the same method must be selectable'
     response(send('setBreakpoints', {'source': {'path': source}, 'breakpoints': [
-        {'line': lines['int saved = answer;']}]}))
+        {'line': lines['int saved = answer;']}, {'line': lines['crossings += 1;']}]}))
     response(send('goto', {'threadId': thread, 'targetId': backward[0]['id']}))
     thread, frame = stop()
     assert frame['line'] == lines['answer += 10;']
@@ -70,4 +71,31 @@ def exercise(source, send, response, until):
     thread, frame = stop()
     assert frame['line'] == lines['return saved;']
     assert response(send('evaluate', {'expression': 'saved', 'frameId': frame['id']}))['body']['result'] == '11'
+    response(send('continue', {'threadId': thread}))
+    thread, frame = stop()
+    assert frame['line'] == lines['crossings += 1;']
+    response(send('setBreakpoints', {'source': {'path': source}, 'breakpoints': [
+        {'line': lines['crossings += 1000;']}]}))
+    response(send('next', {'threadId': thread}))
+    thread, frame = stop()
+    assert frame['line'] == lines['crossings += 100;']
+    outside = target('crossings += 1000;')
+    assert outside, 'a jump can leave a try region'
+    response(send('goto', {'threadId': thread, 'targetId': outside[0]['id']}))
+    thread, frame = stop()
+    assert frame['line'] == lines['crossings += 1000;']
+    assert response(send('evaluate', {'expression': 'crossings', 'frameId': frame['id']}))['body']['result'] == '1', 'jumping out of try must not execute its finally'
+    inside = target('crossings += 1;')
+    assert inside, 'a jump can enter a try region'
+    response(send('goto', {'threadId': thread, 'targetId': inside[0]['id']}))
+    thread, frame = stop()
+    assert frame['line'] == lines['crossings += 1;']
+    response(send('continue', {'threadId': thread}))
+    thread, frame = stop()
+    assert frame['line'] == lines['crossings += 1000;']
+    assert response(send('evaluate', {'expression': 'crossings', 'frameId': frame['id']}))['body']['result'] == '112', 'a normal exit after jumping into try must execute its finally'
+    destination = target('return crossings;')
+    response(send('goto', {'threadId': thread, 'targetId': destination[0]['id']}))
+    thread, frame = stop()
+    assert frame['line'] == lines['return crossings;']
     response(send('continue', {'threadId': thread}))

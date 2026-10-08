@@ -86,10 +86,8 @@ internal static class StatementFlow
         {
             if (handler.FilterStart is { } filter && InRegion(currentOffset, filter, handler.HandlerStart))
                 return [];
-            bool insideTry = InRegion(currentOffset, handler.TryStart, handler.TryEnd);
             bool insideHandler = InRegion(currentOffset, handler.HandlerStart, handler.HandlerEnd);
-            offsets.RemoveWhere(offset => InRegion(offset, handler.TryStart, handler.TryEnd) != insideTry
-                || InRegion(offset, handler.HandlerStart, handler.HandlerEnd) != insideHandler
+            offsets.RemoveWhere(offset => InRegion(offset, handler.HandlerStart, handler.HandlerEnd) != insideHandler
                 || handler.FilterStart is { } start && InRegion(offset, start, handler.HandlerStart));
         }
         return offsets;

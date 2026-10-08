@@ -58,7 +58,7 @@ public sealed class StatementFlowTests
     }
 
     [Fact]
-    public void jumps_stay_inside_the_current_try_and_cannot_enter_its_finally()
+    public void jumps_can_cross_try_boundaries_but_cannot_enter_or_leave_its_finally()
     {
         using var module = ModuleDefinition.CreateModule("Statements", ModuleKind.Dll);
         var method = Method(module);
@@ -78,8 +78,8 @@ public sealed class StatementFlowTests
         bytes.Position = 0;
         using var loaded = ModuleDefinition.ReadModule(bytes);
         var definition = loaded.Types.Single(type => type.Name == "Application").Methods.Single();
-        Assert.Equal([0, 1, 2], StatementFlow.ReachableTargets(definition, 0).Order().ToArray());
-        Assert.Equal([5], StatementFlow.ReachableTargets(definition, 5).Order().ToArray());
+        Assert.Equal([0, 1, 2, 5], StatementFlow.ReachableTargets(definition, 0).Order().ToArray());
+        Assert.Equal([0, 1, 2, 5], StatementFlow.ReachableTargets(definition, 5).Order().ToArray());
         Assert.Equal([4], StatementFlow.ReachableTargets(definition, 4).Order().ToArray());
     }
 
@@ -120,13 +120,13 @@ public sealed class StatementFlowTests
         var definition = loaded.Types.Single(type => type.Name == "Application").Methods.Single();
         var outerTargets = StatementFlow.ReachableTargets(definition, outer.Offset);
         Assert.Contains(afterInner.Offset, outerTargets);
-        Assert.DoesNotContain(inner.Offset, outerTargets);
+        Assert.Contains(inner.Offset, outerTargets);
         Assert.DoesNotContain(caught.Offset, outerTargets);
         Assert.DoesNotContain(cleanup.Offset, outerTargets);
-        Assert.DoesNotContain(end.Offset, outerTargets);
+        Assert.Contains(end.Offset, outerTargets);
         var innerTargets = StatementFlow.ReachableTargets(definition, inner.Offset);
         Assert.Contains(inner.Next.Offset, innerTargets);
-        Assert.DoesNotContain(afterInner.Offset, innerTargets);
+        Assert.Contains(afterInner.Offset, innerTargets);
     }
 
     private static MethodDefinition Method(ModuleDefinition module)
