@@ -21,6 +21,9 @@ import debug_library
 import debug_uncaught
 import debug_features
 import debug_hot_reload
+import debug_hot_reload_regions
+import debug_hot_reload_handler
+import debug_hot_reload_lines
 import debug_statements
 import debug_statement_awaits
 import debug_statement_handlers
@@ -42,8 +45,16 @@ if mode == "protocol" or mode.startswith("hotreload"):
     arguments = ["dotnet", driver, endpoint, url]
     if mode.startswith("hotreload"):
         arguments.extend([root / ".build/clr-anycpu/managed/bin/HotReloadFixture/release", source])
+    if mode == "hotreload-without-symbols":
+        arguments.append("--without-symbols")
     sys.exit(subprocess.run(arguments, timeout=240).returncode)
 scenario = {"edit-and-continue": debug_hot_reload, "uncaught": debug_uncaught, "statements": debug_statements, "statement-handlers": debug_statement_handlers, "statement-awaits": debug_statement_awaits, "statement-awaits-optimized": debug_statement_awaits, "features": debug_features, "watchpoints": debug_watchpoints, "watchpoint-steps": debug_watchpoint_steps, "library": debug_library, "async-stack": debug_async_stack, "async-optimized": debug_async_stack}.get(mode)
+if mode in ("edit-and-continue-async", "edit-and-continue-try"):
+    scenario = debug_hot_reload_regions
+if mode == "edit-and-continue-handler":
+    scenario = debug_hot_reload_handler
+if mode == "edit-and-continue-lines":
+    scenario = debug_hot_reload_lines
 if mode.startswith("async-"):
     scenario = debug_async_stack
 adapter_command = ["dotnet", launcher] if Path(launcher).suffix == ".dll" else [launcher]

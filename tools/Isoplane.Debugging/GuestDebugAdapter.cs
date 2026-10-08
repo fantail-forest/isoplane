@@ -268,10 +268,19 @@ internal sealed partial class GuestDebugAdapter : DebugAdapterBase, IAsyncDispos
         session.Run(new SoftDebuggerStartInfo(connection), new DebuggerSessionOptions { EvaluationOptions = EvaluationOptions.DefaultOptions });
     }
 
-    protected override SetBreakpointsResponse HandleSetBreakpointsRequest(SetBreakpointsArguments arguments)
+    protected override void HandleSetBreakpointsRequestAsync(IRequestResponder<SetBreakpointsArguments, SetBreakpointsResponse> request)
     {
-        RequireNoHotReload();
-        lock (lifecycle) return breakpoints.SetSource(arguments);
+        lock (lifecycle)
+        {
+            if (Volatile.Read(ref applyingHotReload) != 0) pendingSourceBreakpoints.Enqueue(request);
+            else SetSourceBreakpoints(request);
+        }
+    }
+
+    private void SetSourceBreakpoints(IRequestResponder<SetBreakpointsArguments, SetBreakpointsResponse> request)
+    {
+        try { request.SetResponse(breakpoints.SetSource(request.Arguments)); }
+        catch (Exception error) { request.SetError(new ProtocolException(error.Message, error)); }
     }
     protected override BreakpointLocationsResponse HandleBreakpointLocationsRequest(BreakpointLocationsArguments arguments)
     {

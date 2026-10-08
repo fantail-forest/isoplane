@@ -75,7 +75,13 @@ internal sealed class HotReloadSession : IAsyncDisposable
         try
         {
             foreach (var update in reply.Updates)
-                modules[update.Module].ApplyChanges(update.Metadata, update.Il, update.Symbols);
+                modules[update.Module].ApplyChanges(update.Metadata, update.Il, update.Symbols,
+                    update.SequencePoints.Select(sequence =>
+                    {
+                        var changes = new Mono.Debugger.Soft.SourceUpdate(sequence.FileName);
+                        changes.LineUpdates.AddRange(sequence.Lines.Select(line => Tuple.Create(line.OldLine, line.NewLine)));
+                        return changes;
+                    }));
             await compiler.SendAsync(new("commit"), cancellation);
         }
         catch (Exception error)

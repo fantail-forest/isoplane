@@ -12,6 +12,8 @@ internal sealed class GuestBreakpoints
     private readonly Func<int> allocate;
     private readonly Action<BreakpointEvent> changed;
     private volatile ApplicationSymbols symbols = ApplicationSymbols.None;
+    private volatile ApplicationSymbols? liveSymbols;
+    private ApplicationSymbols Symbols => liveSymbols ?? symbols;
     private readonly Dictionary<Mono.Debugging.Client.Breakpoint, int> identifiers = [];
     private readonly object gate = new();
     private volatile bool breakOnUnhandled = true;
@@ -33,6 +35,7 @@ internal sealed class GuestBreakpoints
     internal void Bind(SoftDebuggerSession next, Action<OutputEvent> output)
     {
         session = next;
+        liveSymbols = null;
         session.BreakpointTraceHandler = (breakpoint, text) => output(new OutputEvent
         {
             Category = OutputEvent.CategoryValue.Console, Output = text + Environment.NewLine,
@@ -49,6 +52,26 @@ internal sealed class GuestBreakpoints
         foreach (var (breakpoint, id) in current) Report(breakpoint, id);
     }
 
+    internal void RefreshAfterHotReload(IEnumerable<string> edited, SourcePaths paths)
+    {
+        var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        var updated = new Dictionary<string, HashSet<ApplicationSymbols.Statement>>(comparer);
+        foreach (string path in edited.Distinct(comparer))
+        {
+            var statements = new HashSet<ApplicationSymbols.Statement>();
+            foreach (var type in session.VirtualMachine.GetTypesForSourceFile(Path.GetFileName(path), OperatingSystem.IsWindows()))
+                foreach (var method in type.GetMethods())
+                {
+                    foreach (var point in method.Locations)
+                        if (point.LineNumber is > 0 and not 0xfeefee && point.SourceFile is { } file
+                            && comparer.Equals(paths.ToClient(file), path))
+                            statements.Add(new(point.LineNumber, point.ColumnNumber, point.EndLineNumber, point.EndColumnNumber));
+                }
+            updated.Add(path, statements);
+        }
+        liveSymbols = Symbols.WithLiveSources(updated, paths);
+    }
+
     private void Report(Mono.Debugging.Client.Breakpoint breakpoint, int id) =>
         changed(new BreakpointEvent { Reason = BreakpointEvent.ReasonValue.Changed, Breakpoint = Describe(breakpoint, id) });
 
@@ -61,7 +84,7 @@ internal sealed class GuestBreakpoints
             if (item.Line <= 0 || item.Column is <= 0) throw new ProtocolException("Source breakpoints require positive line and column numbers.");
             // A column asks for one statement of the line. The debugger binds only where a statement starts,
             // so the caret's column becomes the start of the statement it is in.
-            int column = item.Column is > 1 and var caret ? symbols.StatementAt(path, item.Line, caret)?.Column ?? caret : 1;
+            int column = item.Column is > 1 and var caret ? Symbols.StatementAt(path, item.Line, caret)?.Column ?? caret : 1;
             var breakpoint = new Mono.Debugging.Client.Breakpoint(path, item.Line, column);
             Configure(breakpoint, item.Condition, item.HitCondition, item.LogMessage);
             return breakpoint;
@@ -78,7 +101,7 @@ internal sealed class GuestBreakpoints
             throw new ProtocolException("Breakpoint locations require an absolute source path and a positive line.");
         return new BreakpointLocationsResponse
         {
-            Breakpoints = [.. symbols.StatementsStarting(path, arguments.Line, arguments.EndLine ?? arguments.Line).Select(statement =>
+            Breakpoints = [.. Symbols.StatementsStarting(path, arguments.Line, arguments.EndLine ?? arguments.Line).Select(statement =>
                 new BreakpointLocation { Line = statement.Line, Column = statement.Column, EndLine = statement.EndLine, EndColumn = statement.EndColumn })]
         };
     }
@@ -149,7 +172,7 @@ internal sealed class GuestBreakpoints
         // requests the built application's symbols answer instead, so the editor shows at once
         // whether the breakpoint will be reached.
         bool? statement = breakpoint is Mono.Debugging.Client.FunctionBreakpoint || breakpoint.FileName is null
-            ? null : symbols.HasStatement(breakpoint.FileName, breakpoint.Line, breakpoint.Column);
+            ? null : Symbols.HasStatement(breakpoint.FileName, breakpoint.Line, breakpoint.Column);
         bool verified = statement == true || breakpoint.GetStatus(session) == BreakEventStatus.Bound;
         return new()
         {

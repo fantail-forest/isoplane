@@ -11,6 +11,7 @@ internal sealed partial class GuestDebugAdapter
     private string? hotReloadError;
     private Task applyingChanges = Task.CompletedTask;
     private int applyingHotReload;
+    private readonly Queue<IRequestResponder<SetBreakpointsArguments, SetBreakpointsResponse>> pendingSourceBreakpoints = new();
 
     private async Task OpenHotReloadAsync(string applicationPackage)
     {
@@ -77,17 +78,18 @@ internal sealed partial class GuestDebugAdapter
             {
                 if (!ReferenceEquals(original, Volatile.Read(ref paused)))
                     throw new ProtocolException("The guest ended its pause while Hot Reload was being applied.");
+                breakpoints.RefreshAfterHotReload(edits.Select(edit => edit.Path), sources);
                 var refreshed = session.RefreshAfterHotReload();
                 var state = new PausedValues(refreshed, Allocate, session, sources);
                 Interlocked.Exchange(ref paused, state)?.Dispose();
                 ownsOperation = false;
-                Interlocked.Exchange(ref applyingHotReload, 0);
+                CompleteHotReload();
                 Protocol.SendEvent(new StoppedEvent { Reason = StoppedEvent.ReasonValue.Pause, ThreadId = state.ThreadId, AllThreadsStopped = true });
             }
             if (ownsOperation)
             {
                 ownsOperation = false;
-                Interlocked.Exchange(ref applyingHotReload, 0);
+                CompleteHotReload();
             }
             request.SetResponse(new HotReloadResponse
             {
@@ -108,7 +110,21 @@ internal sealed partial class GuestDebugAdapter
         }
         finally
         {
-            if (ownsOperation) Interlocked.Exchange(ref applyingHotReload, 0);
+            if (ownsOperation) CompleteHotReload();
+        }
+    }
+
+    private void CompleteHotReload()
+    {
+        lock (lifecycle)
+        {
+            while (pendingSourceBreakpoints.TryDequeue(out var request))
+            {
+                if (Volatile.Read(ref stopping) != 0 || Volatile.Read(ref failed) != 0)
+                    request.SetError(new ProtocolException("The debug session ended before the source breakpoints could be applied."));
+                else SetSourceBreakpoints(request);
+            }
+            Interlocked.Exchange(ref applyingHotReload, 0);
         }
     }
 

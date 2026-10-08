@@ -62,7 +62,10 @@ internal sealed class EditCompiler : IDisposable
         var updates = Items(Member(modules, "Updates")).Select(module => new ModuleUpdate(
             (Guid)Member(module, "Module"), Bytes(module, "MetadataDelta"), Bytes(module, "ILDelta"), Bytes(module, "PdbDelta"))
         {
-            ActiveStatements = Items(Member(module, "ActiveStatements")).Select(ReadActiveStatementUpdate).ToArray()
+            ActiveStatements = Items(Member(module, "ActiveStatements")).Select(ReadActiveStatementUpdate).ToArray(),
+            SequencePoints = Items(Member(module, "SequencePoints")).Select(update => new SequencePointUpdate(
+                (string)Member(update, "FileName"), Items(Member(update, "LineUpdates"))
+                    .Select(line => new SourceLineUpdate((int)Member(line, "OldLine"), (int)Member(line, "NewLine"))).ToArray())).ToArray()
         }).ToArray();
         var diagnostics = Items(Member(result, "Diagnostics")).SelectMany(project => Items(Member(project, "Diagnostics")))
             .Cast<Diagnostic>().ToList();

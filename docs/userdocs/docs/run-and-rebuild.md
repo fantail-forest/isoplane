@@ -145,6 +145,7 @@ applies compiler-supported Hot Reload edits to the current guest. **Isoplane:
 Apply Code Changes** saves and applies pending edits as well. Edits saved while
 running are queued for the next stop. Compilation errors leave the paused code
 and locals usable and appear in the **Isoplane Hot Reload** output channel.
+Source-only line changes also update paused locations and inline-breakpoint suggestions.
 
 An active invocation keeps its original instructions until a supported **Jump to
 Cursor** adopts the edited method. Its existing locals are preserved. Remapping

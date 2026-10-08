@@ -88,11 +88,16 @@ impl Drop for Driver {
 pub fn prepared_acceptance(mode: &str) {
     let fixture = match mode {
         "watchpoint-steps" => "watchpoints",
-        "edit-and-continue" => "hotreload",
+        "edit-and-continue"
+        | "edit-and-continue-async"
+        | "edit-and-continue-try"
+        | "edit-and-continue-handler"
+        | "edit-and-continue-lines" => "hotreload",
         "hotreload-try"
         | "hotreload-async"
         | "hotreload-unchanged-handler"
-        | "hotreload-layout" => "hotreload",
+        | "hotreload-layout"
+        | "hotreload-without-symbols" => "hotreload",
         "statement-awaits-optimized" => "statement-awaits",
         "async-optimized" => "async-stack",
         "async-composed-optimized" => "async-composed",
@@ -116,7 +121,15 @@ pub fn prepared_acceptance(mode: &str) {
         root.join("guest-runtime/tests/packages/debugger")
     };
     let source = sources.join(format!("{fixture}.cs"));
-    let route = if mode.starts_with("hotreload-") {
+    let route = if mode == "edit-and-continue-async" {
+        "hotreload-async"
+    } else if mode == "edit-and-continue-try" {
+        "hotreload-try"
+    } else if mode == "edit-and-continue-handler" {
+        "hotreload-unchanged-handler"
+    } else if mode == "hotreload-without-symbols" {
+        "hotreload"
+    } else if mode.starts_with("hotreload-") {
         mode
     } else {
         fixture
@@ -135,7 +148,7 @@ pub fn prepared_acceptance(mode: &str) {
         .arg(directory.path())
         .arg(&package)
         .arg(isoplane_fixtures::mono_debug_runtime_module());
-    if mode == "edit-and-continue" {
+    if mode.starts_with("edit-and-continue") {
         command
             .arg(sources.join("hotreload/HotReloadFixture.csproj"))
             .arg(root.join(".build/clr-anycpu/managed"));

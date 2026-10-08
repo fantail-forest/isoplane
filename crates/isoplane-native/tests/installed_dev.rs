@@ -509,6 +509,11 @@ fn moving_execution_after_hot_reload_preserves_live_locals_and_executes_updated_
 }
 
 #[test]
+fn hot_reload_without_symbols_keeps_added_methods_inspectable() {
+    debugger::prepared_acceptance("hotreload-without-symbols");
+}
+
+#[test]
 fn moving_execution_after_hot_reload_preserves_finally_cleanup() {
     debugger::prepared_acceptance("hotreload-try");
 }
@@ -531,4 +536,24 @@ fn moving_execution_rejects_hot_reload_with_changed_local_storage() {
 #[test]
 fn editor_source_edits_can_be_applied_and_reexecuted_in_the_paused_request() {
     debugger::prepared_acceptance("edit-and-continue");
+}
+
+#[test]
+fn editor_source_edits_can_add_locals_and_repeat_an_await() {
+    debugger::prepared_acceptance("edit-and-continue-async");
+}
+
+#[test]
+fn editor_source_edits_can_add_locals_and_preserve_finally_cleanup() {
+    debugger::prepared_acceptance("edit-and-continue-try");
+}
+
+#[test]
+fn editor_source_edits_leave_a_rejected_handler_edit_usable() {
+    debugger::prepared_acceptance("edit-and-continue-handler");
+}
+
+#[test]
+fn editor_source_edits_keep_frames_and_jump_targets_aligned_after_line_changes() {
+    debugger::prepared_acceptance("edit-and-continue-lines");
 }

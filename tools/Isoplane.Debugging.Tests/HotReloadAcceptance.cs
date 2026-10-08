@@ -8,7 +8,7 @@ namespace Isoplane.Debugging.Tests;
 
 internal static class HotReloadAcceptance
 {
-    internal static async Task<int> RunAsync(string endpoint, string url, string deltas, string source)
+    internal static async Task<int> RunAsync(string endpoint, string url, string deltas, string source, bool withoutSymbols = false)
     {
         var scenario = new Uri(url).AbsolutePath switch
         {
@@ -51,7 +51,7 @@ internal static class HotReloadAcceptance
         var activeFlow = StatementFlow.Capture(frame.Method.GetMethodBody());
         int activeOffset = frame.ILOffset;
         var assembly = frame.Method.DeclaringType.Assembly;
-        using var compilerBaseline = scenario.Method != "HandleLayout" ? HotReloadBaseline.Read(package) : null;
+        using var compilerBaseline = scenario.Method != "HandleLayout" && !withoutSymbols ? HotReloadBaseline.Read(package) : null;
         await using var compiler = compilerBaseline is not null ? await HotReloadCompiler.StartAsync(
             Path.Combine(Path.GetDirectoryName(source)!, "hotreload", "HotReloadFixture.csproj"),
             new() { ["Configuration"] = "Release", ["ArtifactsPath"] = Path.GetFullPath("../../..", deltas) },
@@ -64,7 +64,7 @@ internal static class HotReloadAcceptance
         string baseline = Path.Combine(deltas, "Debugger.HotReload.Fixture.dll.1");
         byte[] metadata = await File.ReadAllBytesAsync(baseline + ".dmeta", deadline.Token);
         byte[] il = await File.ReadAllBytesAsync(baseline + ".dil", deadline.Token);
-        byte[] symbols = await File.ReadAllBytesAsync(baseline + ".dpdb", deadline.Token);
+        byte[] symbols = withoutSymbols ? [] : await File.ReadAllBytesAsync(baseline + ".dpdb", deadline.Token);
         ActiveStatementUpdate[] remappedStatements = [];
         if (compiler is not null)
         {
@@ -89,6 +89,14 @@ internal static class HotReloadAcceptance
         Assert.Equal(originalBody, frame.GetMethodBody().GetILAsByteArray());
         Assert.Contains(storage.GetFields(), field => field.Name == "Added");
         var added = Assert.Single(application.GetMethods(), method => method.Name == "Added");
+        if (withoutSymbols)
+        {
+            Assert.Empty(added.Locations);
+            Assert.Equal(11, Value(frame));
+            machine.Resume();
+            Assert.Equal("11", await response);
+            return 0;
+        }
         Assert.True(StatementFlow.CanMove(added));
         var addedFlow = StatementFlow.Capture(added.GetMethodBody());
         Assert.Contains(added.Locations[0].ILOffset, StatementFlow.ReachableTargets(addedFlow, addedFlow, added.Locations[0].ILOffset));

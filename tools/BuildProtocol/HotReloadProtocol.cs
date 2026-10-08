@@ -11,9 +11,12 @@ internal sealed record CompilerEdit(ActiveStatement[] ActiveStatements, Guid[] L
 internal sealed record CompilerCommand(string Action, CompilerEdit? Edit = null);
 internal sealed record SourceSpan(int StartLine, int StartColumn, int EndLine, int EndColumn);
 internal sealed record ActiveStatementUpdate(int MethodToken, int MethodVersion, int IlOffset, SourceSpan NewSpan);
+internal sealed record SourceLineUpdate(int OldLine, int NewLine);
+internal sealed record SequencePointUpdate(string FileName, SourceLineUpdate[] Lines);
 internal sealed record ModuleUpdate(Guid Module, byte[] Metadata, byte[] Il, byte[] Symbols)
 {
     public ActiveStatementUpdate[] ActiveStatements { get; init; } = [];
+    public SequencePointUpdate[] SequencePoints { get; init; } = [];
 }
 internal sealed record CompilerReply(ModuleUpdate[] Updates, string[] Diagnostics, bool RestartRequired, string? Error = null)
 {

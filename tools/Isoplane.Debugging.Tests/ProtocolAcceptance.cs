@@ -13,6 +13,8 @@ internal static class ProtocolAcceptance
 
     internal static async Task<int> Main(string[] arguments)
     {
+        if (arguments is [var noSymbolsEndpoint, var noSymbolsUrl, var noSymbolsDeltas, var noSymbolsSource, "--without-symbols"])
+            return await HotReloadAcceptance.RunAsync(noSymbolsEndpoint, noSymbolsUrl, noSymbolsDeltas, noSymbolsSource, withoutSymbols: true);
         if (arguments is [var hotReloadEndpoint, var hotReloadUrl, var deltas, var source])
             return await HotReloadAcceptance.RunAsync(hotReloadEndpoint, hotReloadUrl, deltas, source);
         if (arguments is not [var endpoint, var url]) return 1;

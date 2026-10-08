@@ -110,6 +110,10 @@ internal sealed class ApplicationSymbols
         return starting.Where(statement => statement.Column > column).Cast<Statement?>().FirstOrDefault();
     }
 
+    internal ApplicationSymbols WithLiveSources(Dictionary<string, HashSet<Statement>> updated, SourcePaths paths) => new(
+        documents.SelectMany(group => group).Where(document => !updated.ContainsKey(paths.ToClient(document.Path)))
+            .Concat(updated.Select(document => new Document(document.Key, [], document.Value))));
+
     /// <summary>Every statement of the documents that are the file at <paramref name="path"/>; null when there is no such document.</summary>
     private HashSet<Statement>? StatementsOf(string path)
     {

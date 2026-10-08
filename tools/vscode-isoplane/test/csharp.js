@@ -78,6 +78,7 @@ async function run() {
         const [url] = await ready;
         // No request has been sent, so no guest has loaded the code: the built application's symbols verify these.
         await registered;
+        await insideALambda(source, session, events, signal, url);
         const added = new vscode.SourceBreakpoint(new vscode.Location(vscode.Uri.file(source), new vscode.Position(line - 1, 0)));
         const addition = verified(line);
         vscode.debug.addBreakpoints([added]);
@@ -112,9 +113,33 @@ async function run() {
         const reexecuted = once(events, 'stopped', { signal });
         await session.customRequest('continue', { threadId: updated.threadId });
         await reexecuted;
-        await session.customRequest('continue', { threadId: updated.threadId });
+        const shiftedStop = once(events, 'stopped', { signal });
+        const shiftedApply = once(events, 'applied', { signal });
+        const shiftedBreakpoint = verified(line + 3);
+        const shift = new vscode.WorkspaceEdit();
+        shift.insert(document.uri, new vscode.Position(0, 0), '\n\n');
+        assert.equal(await vscode.workspace.applyEdit(shift), true);
+        assert.equal(await document.save(), true);
+        const [shiftedReply] = await shiftedApply;
+        assert.equal(shiftedReply.success, true, JSON.stringify(shiftedReply));
+        assert.deepEqual(shiftedReply.body.diagnostics, []);
+        const [shifted] = await shiftedStop;
+        await shiftedBreakpoint;
+        const shiftedFrame = (await session.customRequest('stackTrace', { threadId: shifted.threadId })).stackFrames[0];
+        assert.equal(shiftedFrame.line, line + 3, 'a line-only edit must move the active source location');
+        const shiftedLocations = await session.customRequest('breakpointLocations', { source: { path: source }, line: line + 3 });
+        assert(shiftedLocations.breakpoints.some(point => point.line === line + 3 && point.column === 13),
+            'inline breakpoint suggestions must use the edited source locations');
+        const shiftedTargets = await session.customRequest('gotoTargets', { source: { path: source }, line: line + 2 });
+        assert.equal(shiftedTargets.targets.length, 1);
+        const shiftedJump = once(events, 'stopped', { signal });
+        await session.customRequest('goto', { threadId: shifted.threadId, targetId: shiftedTargets.targets[0].id });
+        await shiftedJump;
+        const shiftedReturn = once(events, 'stopped', { signal });
+        await session.customRequest('continue', { threadId: shifted.threadId });
+        await shiftedReturn;
+        await session.customRequest('continue', { threadId: shifted.threadId });
         assert.equal(await (await request).text(), '142', 'saving and jumping back must execute the edited line in the same invocation');
-        await insideALambda(source, session, events, signal, url);
         console.log('A C# launch of an Isoplane project reached its breakpoint through the Isoplane debugger.');
     } catch (error) {
         console.error(transcript.join('\n'));
