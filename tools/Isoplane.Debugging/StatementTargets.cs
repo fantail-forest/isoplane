@@ -20,9 +20,9 @@ internal sealed class StatementTargets(SoftDebuggerSession session, int threadId
         if (frame?.Method is not { } method || !new GuestCode(session.VirtualMachine).Contains(method)) return result;
         if (!StatementFlow.CanMove(method)) return result;
         if (StatementFlow.IsAsyncBody(method) && !IsExecutingAsyncBody(frame)) return result;
-        var body = StatementFlow.Capture(method.GetMethodBody());
-        var empty = StatementFlow.ReachableTargets(body, body, frame.ILOffset);
-        if (!empty.Contains(frame.ILOffset)) return result;
+        var active = StatementFlow.Capture(frame.GetMethodBody());
+        var updated = StatementFlow.Capture(method.GetMethodBody());
+        var empty = StatementFlow.ReachableTargets(active, updated, frame.ILOffset);
         var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         foreach (var location in method.Locations.Where(location => location.LineNumber == arguments.Line
             && string.Equals(sources.ToClient(location.SourceFile), path, comparison) && empty.Contains(location.ILOffset)))

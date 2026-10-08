@@ -10,6 +10,7 @@ public partial class ModuleMirror
 {
     private int appliedGeneration;
     private Guid appliedGenerationId;
+    internal bool HasAppliedChanges => appliedGeneration != 0;
 
     /// <summary>Applies compiler deltas to a paused guest and refreshes affected method and type metadata.</summary>
     /// <remarks>Active frames retain their invocation state; adopting edited instructions requires a supported statement jump.</remarks>
@@ -27,6 +28,10 @@ public partial class ModuleMirror
         if (module.Generation != appliedGeneration + 1
             || appliedGeneration != 0 && reader.GetGuid(module.BaseGenerationId) != appliedGenerationId)
             throw new ArgumentException("The compiler delta does not follow the last applied update.", nameof(metadata));
+        foreach (var thread in vm.GetThreads())
+            foreach (var frame in thread.GetFrames())
+                if (frame.Method.DeclaringType.Assembly.ManifestModule == this)
+                    frame.Method.PreserveVersion(frame.MethodVersion);
         var domain = vm.RootDomain;
         ApplyChanges(domain.CreateByteArray(metadata), domain.CreateByteArray(il), domain.CreateByteArray(symbols));
         appliedGeneration = module.Generation;
@@ -38,7 +43,7 @@ public partial class ModuleMirror
             {
                 case HandleKind.MethodDefinition:
                     var method = Assembly.GetMethod((uint)MetadataTokens.GetToken(handle));
-                    method.RefreshAfterMetadataUpdate();
+                    method.RefreshAfterMetadataUpdate(module.Generation + 1);
                     changedTypes.Add(method.DeclaringType);
                     break;
                 case HandleKind.TypeDefinition:
@@ -61,8 +66,9 @@ public partial class MethodMirror
     public bool HasVariableArguments => hasVariableArguments ??= new SignatureHeader(checked((byte)vm.conn.Method_GetParamInfo(id).call_conv))
         .CallingConvention == SignatureCallingConvention.VarArgs;
 
-    internal void RefreshAfterMetadataUpdate()
+    internal void RefreshAfterMetadataUpdate(int version)
     {
+        CurrentVersion = version;
         SetUpdatedByEnC();
         ClearCachedLocalsDebugInfo();
         body = null;

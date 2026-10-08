@@ -42,10 +42,19 @@
     <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/ThreadMirror.fetch.cs" Destination="$(IntermediateOutputPath)Isoplane/ThreadMirror.reset.cs" Match="fetchingEvent.Reset ();" Replacement="fetchingEvent.Reset (); frameFetchFailure = null;" />
     <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/ThreadMirror.reset.cs" Destination="$(IntermediateOutputPath)Isoplane/ThreadMirror.result.cs" Match="return frames;" Replacement="frameFetchFailure?.Throw (); return frames;" />
     <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/ThreadMirror.result.cs" Destination="$(IntermediateOutputPath)Isoplane/ThreadMirror.cs" Match="InvalidateFrames();&#10;&#9;&#9;&#9;&#9;&#9;FetchFrames(true);" Replacement="InvalidateFrames();" />
+    <IsoplanePrepareDebuggerSource Source="Mono.Debugger.Soft/StackFrame.cs" Destination="$(IntermediateOutputPath)Isoplane/StackFrame.partial.cs" Match="class StackFrame : Mirror" Replacement="partial class StackFrame : Mirror" />
+    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/StackFrame.partial.cs" Destination="$(IntermediateOutputPath)Isoplane/StackFrame.offset.cs" Match="method.il_offset_to_line_number (il_offset," Replacement="MapFrameOffset (il_offset," />
+    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/StackFrame.offset.cs" Destination="$(IntermediateOutputPath)Isoplane/StackFrame.location.cs" Match="src_file != null ? src_file : method.SourceFile" Replacement="src_file ?? FrameSource" />
+    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/StackFrame.location.cs" Destination="$(IntermediateOutputPath)Isoplane/StackFrame.locals.cs"
+      Match="Method.GetLocals ().Where (l =&gt; l.LiveRangeStart &lt;= location.ILOffset &amp;&amp; l.LiveRangeEnd &gt;= location.ILOffset).ToList ();"
+      Replacement="GetLocals ().Where (l =&gt; l.LiveRangeStart &lt;= location.ILOffset &amp;&amp; l.LiveRangeEnd &gt;= location.ILOffset).ToList ();" />
+    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/StackFrame.locals.cs" Destination="$(IntermediateOutputPath)Isoplane/StackFrame.cs"
+      Match="Method.GetLocals ().Where (l =&gt; l.LiveRangeStart &lt;= location.ILOffset &amp;&amp; l.LiveRangeEnd &gt;= location.ILOffset &amp;&amp; l.Name == name).FirstOrDefault ();"
+      Replacement="GetLocals ().Where (l =&gt; l.LiveRangeStart &lt;= location.ILOffset &amp;&amp; l.LiveRangeEnd &gt;= location.ILOffset &amp;&amp; l.Name == name).FirstOrDefault ();" />
     <ItemGroup>
-      <_IsoplaneDebuggerOriginal Include="Mono.Debugger.Soft/Connection.cs;Mono.Debugger.Soft/VirtualMachine.cs;Mono.Debugger.Soft/ThreadMirror.cs;Mono.Debugger.Soft/ModuleMirror.cs" />
+      <_IsoplaneDebuggerOriginal Include="Mono.Debugger.Soft/Connection.cs;Mono.Debugger.Soft/VirtualMachine.cs;Mono.Debugger.Soft/ThreadMirror.cs;Mono.Debugger.Soft/ModuleMirror.cs;Mono.Debugger.Soft/StackFrame.cs" />
       <Compile Remove="@(_IsoplaneDebuggerOriginal)" MatchOnMetadata="FullPath" MatchOnMetadataOptions="PathLike" />
-      <Compile Include="$(IntermediateOutputPath)Isoplane/Connection.cs;$(IntermediateOutputPath)Isoplane/VirtualMachine.cs;$(IntermediateOutputPath)Isoplane/ThreadMirror.cs;$(IntermediateOutputPath)Isoplane/ModuleMirror.cs;$(MSBuildThisFileDirectory)ManagedDataBreakpoint.cs;$(MSBuildThisFileDirectory)MetadataUpdates.cs;$(MSBuildThisFileDirectory)FrameRequests.cs" />
+      <Compile Include="$(IntermediateOutputPath)Isoplane/Connection.cs;$(IntermediateOutputPath)Isoplane/VirtualMachine.cs;$(IntermediateOutputPath)Isoplane/ThreadMirror.cs;$(IntermediateOutputPath)Isoplane/ModuleMirror.cs;$(MSBuildThisFileDirectory)ManagedDataBreakpoint.cs;$(MSBuildThisFileDirectory)MetadataUpdates.cs;$(MSBuildThisFileDirectory)FrameRequests.cs;$(MSBuildThisFileDirectory)FrameVersions.cs;$(IntermediateOutputPath)Isoplane/StackFrame.cs" />
     </ItemGroup>
   </Target>
   <Target Name="IsoplaneRefreshDebuggerAttributeSources" BeforeTargets="CoreCompile" Condition="'$(MSBuildProjectName)' == 'Mono.Debugger.Soft'">
@@ -80,9 +89,15 @@
   <Target Name="IsoplanePrepareDebuggerFieldSource" BeforeTargets="CoreCompile" Condition="'$(MSBuildProjectName)' == 'Mono.Debugging.Soft'">
     <IsoplanePrepareDebuggerSource Source="VariableValueReference.cs" Destination="$(IntermediateOutputPath)Isoplane/VariableValueReference.cs" Match="class VariableValueReference" Replacement="partial class VariableValueReference" />
     <IsoplanePrepareDebuggerSource Source="FieldValueReference.cs" Destination="$(IntermediateOutputPath)Isoplane/FieldValueReference.cs" Match="class FieldValueReference" Replacement="partial class FieldValueReference" />
-    <IsoplanePrepareDebuggerSource Source="SoftDebuggerAdaptor.cs" Destination="$(IntermediateOutputPath)Isoplane/SoftDebuggerAdaptor.cs"
+    <IsoplanePrepareDebuggerSource Source="SoftDebuggerAdaptor.cs" Destination="$(IntermediateOutputPath)Isoplane/SoftDebuggerAdaptor.fields.cs"
       Match="var field = FindByName (type.GetFields (), f =&gt; MapTupleName(f.Name, tupleNames), name, ctx.CaseSensitive);"
       Replacement="var field = FindByName (type.GetFields (), f =&gt; MapTupleName(f.Name, tupleNames), name, ctx.CaseSensitive) ?? FindByName (type.GetFields (), f =&gt; f.Name, name, ctx.CaseSensitive);" />
+    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/SoftDebuggerAdaptor.fields.cs" Destination="$(IntermediateOutputPath)Isoplane/SoftDebuggerAdaptor.closures.cs"
+      Match="cx.Frame.Method.GetLocals ().FirstOrDefault (loc =&gt; loc.Index == idx)" Replacement="cx.Frame.GetLocals ().FirstOrDefault (loc =&gt; loc.Index == idx)" />
+    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/SoftDebuggerAdaptor.closures.cs" Destination="$(IntermediateOutputPath)Isoplane/SoftDebuggerAdaptor.locals.cs"
+      Match="foreach (var local in cx.Frame.Method.GetLocals ())" Replacement="foreach (var local in cx.Frame.GetLocals ())" />
+    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/SoftDebuggerAdaptor.locals.cs" Destination="$(IntermediateOutputPath)Isoplane/SoftDebuggerAdaptor.cs"
+      Match="soft.Frame.Method.GetLocals ().Where (x =&gt; x.IsArg &amp;&amp; !IsClosureReferenceLocal (x)).ToArray ();" Replacement="soft.Frame.GetLocals ().Where (x =&gt; x.IsArg &amp;&amp; !IsClosureReferenceLocal (x)).ToArray ();" />
     <ItemGroup>
       <_IsoplaneFieldOriginal Include="FieldValueReference.cs;VariableValueReference.cs;SoftDebuggerAdaptor.cs" />
       <Compile Remove="@(_IsoplaneFieldOriginal)" MatchOnMetadata="FullPath" MatchOnMetadataOptions="PathLike" />

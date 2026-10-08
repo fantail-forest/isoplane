@@ -60,7 +60,10 @@ internal sealed class EditCompiler : IDisposable
         };
         if (ready) pending = updated;
         var updates = Items(Member(modules, "Updates")).Select(module => new ModuleUpdate(
-            (Guid)Member(module, "Module"), Bytes(module, "MetadataDelta"), Bytes(module, "ILDelta"), Bytes(module, "PdbDelta"))).ToArray();
+            (Guid)Member(module, "Module"), Bytes(module, "MetadataDelta"), Bytes(module, "ILDelta"), Bytes(module, "PdbDelta"))
+        {
+            ActiveStatements = Items(Member(module, "ActiveStatements")).Select(ReadActiveStatementUpdate).ToArray()
+        }).ToArray();
         var diagnostics = Items(Member(result, "Diagnostics")).SelectMany(project => Items(Member(project, "Diagnostics")))
             .Cast<Diagnostic>().ToList();
         if (MemberOrNull(result, "SyntaxError") is Diagnostic syntax && !diagnostics.Contains(syntax)) diagnostics.Add(syntax);
@@ -87,6 +90,15 @@ internal sealed class EditCompiler : IDisposable
     {
         if (pending is not null) Discard();
         Call("EndDebuggingSession", session);
+    }
+
+    private static ActiveStatementUpdate ReadActiveStatementUpdate(object value)
+    {
+        var method = Member(value, "Method");
+        var span = Member(value, "NewSpan");
+        return new((int)Member(method, "Token"), (int)Member(method, "Version"), (int)Member(value, "ILOffset"),
+            new((int)Member(span, "StartLine"), (int)Member(span, "StartColumn"),
+                (int)Member(span, "EndLine"), (int)Member(span, "EndColumn")));
     }
 
     private object? Call(string method, params object?[] arguments) =>

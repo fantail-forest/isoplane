@@ -1,7 +1,5 @@
 using System.Net;
 using System.Net.Sockets;
-using System.Reflection.Metadata;
-using System.Reflection.Metadata.Ecma335;
 using Mono.Debugger.Soft;
 using Xunit;
 using Isoplane.Build;
@@ -46,8 +44,9 @@ internal static class HotReloadAcceptance
         Assert.Equal(11, Value(frame));
         int statement = SourceLine(source, scenario.Marker);
         Assert.Contains(frame.Method.Locations, location => location.LineNumber == statement);
-        var retainedLocal = scenario.Method == "HandleLayout"
-            ? frame.GetVisibleVariables().Single(local => local.Name == "value") : null;
+        Assert.Equal(1, frame.MethodVersion);
+        int originalLine = frame.Location.LineNumber;
+        var originalLocations = frame.Method.Locations.ToDictionary(point => point.ILOffset, point => point.LineNumber);
         var originalBody = frame.Method.GetMethodBody().GetILAsByteArray();
         var activeFlow = StatementFlow.Capture(frame.Method.GetMethodBody());
         int activeOffset = frame.ILOffset;
@@ -66,23 +65,28 @@ internal static class HotReloadAcceptance
         byte[] metadata = await File.ReadAllBytesAsync(baseline + ".dmeta", deadline.Token);
         byte[] il = await File.ReadAllBytesAsync(baseline + ".dil", deadline.Token);
         byte[] symbols = await File.ReadAllBytesAsync(baseline + ".dpdb", deadline.Token);
+        ActiveStatementUpdate[] remappedStatements = [];
         if (compiler is not null)
         {
-            var update = await CompileAsync(compiler, frame, source, "updated.cs.in", 1, deadline.Token);
+            var update = await CompileAsync(compiler, frame, source, "updated.cs.in", deadline.Token);
             metadata = update.Metadata;
             il = update.Il;
             symbols = update.Symbols;
+            remappedStatements = update.ActiveStatements;
         }
         Assert.Throws<ArgumentException>(() => frame.Method.ReturnType.Assembly.ManifestModule.ApplyChanges(metadata, il, symbols));
         Assert.Equal(11, Value(frame));
         byte[] futureMetadata = await File.ReadAllBytesAsync(Path.Combine(deltas, "Debugger.HotReload.Fixture.dll.2.dmeta"), deadline.Token);
         Assert.Throws<ArgumentException>(() => assembly.ManifestModule.ApplyChanges(futureMetadata, il, symbols));
         Console.WriteLine("Applying compiler deltas.");
-        int nextVersion = UpdatesMethod(metadata, frame.Method.MetadataToken) ? 2 : 1;
         assembly.ManifestModule.ApplyChanges(metadata, il, symbols);
         if (compiler is not null) await compiler.SendAsync(new("commit"), deadline.Token);
         Assert.Throws<ArgumentException>(() => assembly.ManifestModule.ApplyChanges(metadata, il, symbols));
         Console.WriteLine("The runtime applied the deltas and refreshed debugger metadata.");
+        frame.ClearDebugInfoToTryToGetFromLoadedPdb();
+        Assert.Equal(1, frame.MethodVersion);
+        Assert.Equal(originalLine, frame.Location.LineNumber);
+        Assert.Equal(originalBody, frame.GetMethodBody().GetILAsByteArray());
         Assert.Contains(storage.GetFields(), field => field.Name == "Added");
         var added = Assert.Single(application.GetMethods(), method => method.Name == "Added");
         Assert.True(StatementFlow.CanMove(added));
@@ -97,15 +101,43 @@ internal static class HotReloadAcceptance
         Assert.Contains(destination.ILOffset, StatementFlow.ReachableTargets(activeFlow, updatedFlow, activeOffset));
         if (scenario.Method == "HandleLayout")
         {
-            Assert.Equal(11, ((PrimitiveValue)frame.GetValue(retainedLocal!)).Value);
-            frame.SetValue(retainedLocal!, machine.CreateValue(17));
-            Assert.Equal(17, ((PrimitiveValue)frame.GetValue(retainedLocal!)).Value);
+            var retainedLocal = frame.GetVisibleVariableByName("value");
+            Assert.Equal("System.Int32", retainedLocal.Type.FullName);
+            Assert.Equal(11, ((PrimitiveValue)frame.GetValue(retainedLocal)).Value);
+            frame.SetValue(retainedLocal, machine.CreateValue(17));
+            Assert.Equal(17, ((PrimitiveValue)frame.GetValue(retainedLocal)).Value);
             Assert.Throws<ArgumentException>(() => stopped.Thread.SetIP(destination));
+            var step = machine.CreateStepRequest(stopped.Thread);
+            step.Depth = StepDepth.Over;
+            step.Size = StepSize.Line;
+            step.Enable();
+            machine.Resume();
+            var stepped = Assert.Single(machine.GetNextEventSet(180_000).Events, item => item.EventType == EventType.Step);
+            step.Disable();
+            var originalFrame = Frame(stepped, scenario);
+            Assert.Equal(1, originalFrame.MethodVersion);
+            Assert.True(originalFrame.ILOffset > activeOffset, "Step Over must advance within the retained invocation.");
+            Assert.Equal(originalLocations[originalFrame.ILOffset], originalFrame.LineNumber);
+            Assert.Equal(17, Value(originalFrame));
             machine.Resume();
             Assert.Equal("17", await response);
             return 0;
         }
+        if (scenario.Method == "Handle")
+        {
+            var remap = Assert.Single(remappedStatements);
+            Assert.Equal(frame.Method.MetadataToken, remap.MethodToken);
+            Assert.Equal(frame.MethodVersion, remap.MethodVersion);
+            Assert.Equal(frame.ILOffset, remap.IlOffset);
+            Assert.Equal(originalLine, remap.NewSpan.StartLine);
+            var editedStatement = Assert.Single(frame.Method.Locations, point => point.LineNumber == remap.NewSpan.StartLine + 1
+                && point.ColumnNumber == remap.NewSpan.StartColumn + 1);
+            stopped.Thread.SetIP(editedStatement);
+            Assert.Equal(2, Frame(stopped, scenario).MethodVersion);
+            Assert.Equal(11, Value(Frame(stopped, scenario)));
+        }
         stopped.Thread.SetIP(destination);
+        Assert.Equal(scenario.Method == "HandleUnchanged" ? 1 : 2, Frame(stopped, scenario).MethodVersion);
         machine.Resume();
         var nextStop = machine.GetNextEventSet(180_000);
         Assert.Equal(SuspendPolicy.All, nextStop.SuspendPolicy);
@@ -120,7 +152,7 @@ internal static class HotReloadAcceptance
             await File.ReadAllBytesAsync(baseline + ".dmeta", deadline.Token),
             await File.ReadAllBytesAsync(baseline + ".dil", deadline.Token),
             await File.ReadAllBytesAsync(baseline + ".dpdb", deadline.Token))
-            : await CompileAsync(compiler, frame, source, "updated-again.cs.in", nextVersion, deadline.Token);
+            : await CompileAsync(compiler, frame, source, "updated-again.cs.in", deadline.Token);
         assembly.ManifestModule.ApplyChanges(second.Metadata, second.Il, second.Symbols);
         if (compiler is not null) await compiler.SendAsync(new("commit"), deadline.Token);
         updatedLine = SourceLine(Path.ChangeExtension(source, "updated-again.cs.in"), scenario.Marker);
@@ -128,6 +160,8 @@ internal static class HotReloadAcceptance
         updatedFlow = StatementFlow.Capture(frame.Method.GetMethodBody());
         Assert.Contains(destination.ILOffset, StatementFlow.ReachableTargets(activeFlow, updatedFlow, activeOffset));
         stopped.Thread.SetIP(destination);
+        Assert.Equal(scenario.Method switch { "HandleUnchanged" => 1, "Handle" => 2, _ => 3 },
+            Frame(stopped, scenario).MethodVersion);
         machine.Resume();
         stopped = ProtocolAcceptance.UserBreak(machine);
         int increment = scenario.Method == "HandleUnchanged" ? 10 : 200;
@@ -140,12 +174,12 @@ internal static class HotReloadAcceptance
     }
 
     private static async Task<ModuleUpdate> CompileAsync(HotReloadCompiler compiler, Mono.Debugger.Soft.StackFrame frame,
-        string source, string update, int version, CancellationToken cancellation)
+        string source, string update, CancellationToken cancellation)
     {
         var location = frame.Location;
         Guid module = frame.Method.DeclaringType.Assembly.ManifestModule.ModuleVersionId;
-        var statement = new ActiveStatement(module, frame.Method.MetadataToken, version, frame.ILOffset, location.SourceFile,
-            location.LineNumber - 1, location.ColumnNumber - 1, location.EndLineNumber - 1, location.EndColumnNumber - 1, true, true);
+        var statement = new ActiveStatement(module, frame.Method.MetadataToken, frame.MethodVersion, frame.ILOffset, location.SourceFile,
+            location.LineNumber - 1, location.ColumnNumber - 1, location.EndLineNumber - 1, location.EndColumnNumber - 1, true, frame.IsCurrentMethodVersion);
         var edit = new CompilerEdit([statement], [module], frame.VirtualMachine.GetEnCCapabilities().Split(' ', StringSplitOptions.RemoveEmptyEntries),
             [new(source, await File.ReadAllTextAsync(Path.ChangeExtension(source, update), cancellation))]);
         if (update == "updated.cs.in")
@@ -174,14 +208,6 @@ internal static class HotReloadAcceptance
         var result = Assert.Single(reply.Updates);
         Assert.Equal(module, result.Module);
         return result;
-    }
-
-    private static bool UpdatesMethod(byte[] metadata, int token)
-    {
-        using var stream = new MemoryStream(metadata, writable: false);
-        using var provider = MetadataReaderProvider.FromMetadataStream(stream);
-        return provider.GetMetadataReader().GetEditAndContinueMapEntries()
-            .Any(handle => handle.Kind == HandleKind.MethodDefinition && MetadataTokens.GetToken(handle) == token);
     }
 
     private sealed record Scenario(string Method, string Marker, int UpdatedValue, string Response);
