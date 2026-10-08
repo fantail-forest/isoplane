@@ -6,8 +6,18 @@ public static class Application
     public static string Handle()
     {
         int value = 1;
-        value += 100;
+
+        value += Added();
         System.Diagnostics.Debugger.Break();
         return value.ToString();
     }
+    /// <summary>A method introduced by the update.</summary>
+    public static int Added() => 100;
+}
+
+/// <summary>Receives a field through a metadata update.</summary>
+public static class Storage
+{
+    /// <summary>The field introduced by the update.</summary>
+    public static int Added;
 }

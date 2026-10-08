@@ -31,13 +31,14 @@
   <Target Name="IsoplanePrepareDebuggerSources" BeforeTargets="CoreCompile" Condition="'$(MSBuildProjectName)' == 'Mono.Debugger.Soft'">
     <IsoplanePrepareDebuggerSource Source="Mono.Debugger.Soft/Connection.cs" Destination="$(IntermediateOutputPath)Isoplane/Connection.cs" Match="class Connection" Replacement="partial class Connection" />
     <IsoplanePrepareDebuggerSource Source="Mono.Debugger.Soft/VirtualMachine.cs" Destination="$(IntermediateOutputPath)Isoplane/VirtualMachine.cs" Match="class VirtualMachine : Mirror" Replacement="partial class VirtualMachine : Mirror" />
+    <IsoplanePrepareDebuggerSource Source="Mono.Debugger.Soft/ModuleMirror.cs" Destination="$(IntermediateOutputPath)Isoplane/ModuleMirror.cs" Match="class ModuleMirror : Mirror" Replacement="partial class ModuleMirror : Mirror" />
     <IsoplanePrepareDebuggerSource Source="Mono.Debugger.Soft/ThreadMirror.cs" Destination="$(IntermediateOutputPath)Isoplane/ThreadMirror.cs"
       Match="throw new ArgumentException (&quot;loc doesn't refer to a location in the current method of this thread.&quot;, &quot;loc&quot;);"
       Replacement="throw new ArgumentException (string.IsNullOrEmpty (ex.ErrorMessage) ? &quot;loc doesn't refer to a location in the current method of this thread.&quot; : ex.ErrorMessage, &quot;loc&quot;, ex);" />
     <ItemGroup>
-      <_IsoplaneDebuggerOriginal Include="Mono.Debugger.Soft/Connection.cs;Mono.Debugger.Soft/VirtualMachine.cs;Mono.Debugger.Soft/ThreadMirror.cs" />
+      <_IsoplaneDebuggerOriginal Include="Mono.Debugger.Soft/Connection.cs;Mono.Debugger.Soft/VirtualMachine.cs;Mono.Debugger.Soft/ThreadMirror.cs;Mono.Debugger.Soft/ModuleMirror.cs" />
       <Compile Remove="@(_IsoplaneDebuggerOriginal)" MatchOnMetadata="FullPath" MatchOnMetadataOptions="PathLike" />
-      <Compile Include="$(IntermediateOutputPath)Isoplane/Connection.cs;$(IntermediateOutputPath)Isoplane/VirtualMachine.cs;$(IntermediateOutputPath)Isoplane/ThreadMirror.cs;$(MSBuildThisFileDirectory)ManagedDataBreakpoint.cs" />
+      <Compile Include="$(IntermediateOutputPath)Isoplane/Connection.cs;$(IntermediateOutputPath)Isoplane/VirtualMachine.cs;$(IntermediateOutputPath)Isoplane/ThreadMirror.cs;$(IntermediateOutputPath)Isoplane/ModuleMirror.cs;$(MSBuildThisFileDirectory)ManagedDataBreakpoint.cs;$(MSBuildThisFileDirectory)MetadataUpdates.cs" />
     </ItemGroup>
   </Target>
   <Target Name="IsoplaneRefreshDebuggerAttributeSources" BeforeTargets="CoreCompile" Condition="'$(MSBuildProjectName)' == 'Mono.Debugger.Soft'">
@@ -49,6 +50,13 @@
     <ItemGroup>
       <Compile Remove="@(_IsoplaneAttributeSource)" MatchOnMetadata="FullPath" MatchOnMetadataOptions="PathLike" />
       <Compile Include="@(_IsoplaneAttributeSource->'$(IntermediateOutputPath)Isoplane/%(Filename).cs')" />
+    </ItemGroup>
+    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/MethodMirror.cs" Destination="$(IntermediateOutputPath)Isoplane/MethodMirror.partial.cs" Match="class MethodMirror : Mirror" Replacement="partial class MethodMirror : Mirror" />
+    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/TypeMirror.cs" Destination="$(IntermediateOutputPath)Isoplane/TypeMirror.partial.cs" Match="class TypeMirror : Mirror" Replacement="partial class TypeMirror : Mirror" />
+    <ItemGroup>
+      <_IsoplaneMetadataOriginal Include="$(IntermediateOutputPath)Isoplane/MethodMirror.cs;$(IntermediateOutputPath)Isoplane/TypeMirror.cs" />
+      <Compile Remove="@(_IsoplaneMetadataOriginal)" MatchOnMetadata="FullPath" MatchOnMetadataOptions="PathLike" />
+      <Compile Include="$(IntermediateOutputPath)Isoplane/MethodMirror.partial.cs;$(IntermediateOutputPath)Isoplane/TypeMirror.partial.cs" />
     </ItemGroup>
   </Target>
   <Target Name="IsoplanePrepareDebuggerSessionSource" BeforeTargets="CoreCompile" Condition="'$(MSBuildProjectName)' == 'Mono.Debugging.Soft'">

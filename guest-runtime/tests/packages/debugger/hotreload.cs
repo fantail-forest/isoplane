@@ -11,3 +11,6 @@ public static class Application
         return value.ToString();
     }
 }
+
+/// <summary>Receives a field through a metadata update.</summary>
+public static class Storage { }
