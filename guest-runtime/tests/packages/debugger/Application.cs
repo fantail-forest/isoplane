@@ -22,6 +22,10 @@ public static class Application
         StatementAwaits.Application.Map(app);
         StatementHandlers.Application.Map(app);
         app.MapGet("/hotreload", HotReload.Application.Handle);
+        app.MapGet("/hotreload-layout", Debugger.HotReload.Application.HandleLayout);
+        app.MapGet("/hotreload-try", HotReload.Application.HandleTry);
+        app.MapGet("/hotreload-async", HotReload.Application.HandleAsync);
+        app.MapGet("/hotreload-unchanged-handler", HotReload.Application.HandleUnchanged);
         Watchpoints.Application.Map(app);
         Uncaught.Application.Map(app);
         Protocol.Application.Map(app);

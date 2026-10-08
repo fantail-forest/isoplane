@@ -507,3 +507,23 @@ fn moving_execution_within_handlers_preserves_rethrow_and_finally_continuations(
 fn moving_execution_after_hot_reload_preserves_live_locals_and_executes_updated_code() {
     debugger::prepared_acceptance("hotreload");
 }
+
+#[test]
+fn moving_execution_after_hot_reload_preserves_finally_cleanup() {
+    debugger::prepared_acceptance("hotreload-try");
+}
+
+#[test]
+fn moving_execution_after_hot_reload_can_repeat_an_await() {
+    debugger::prepared_acceptance("hotreload-async");
+}
+
+#[test]
+fn moving_execution_in_an_unchanged_handler_survives_other_method_updates() {
+    debugger::prepared_acceptance("hotreload-unchanged-handler");
+}
+
+#[test]
+fn moving_execution_rejects_hot_reload_with_changed_local_storage() {
+    debugger::prepared_acceptance("hotreload-layout");
+}

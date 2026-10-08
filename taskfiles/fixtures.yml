@@ -296,7 +296,10 @@ tasks:
 
   debugger:sources:
     sources:
-      - guest-runtime/tests/packages/debugger/*.cs.in
+      - guest-runtime/tests/packages/debugger/async.cs.in
+      - guest-runtime/tests/packages/debugger/awaiter.cs.in
+      - guest-runtime/tests/packages/debugger/tracking.cs.in
+      - guest-runtime/tests/packages/debugger/pool_reuse.cs.in
       - guest-runtime/tests/packages/debugger/prepare.py
     generates:
       - .build/clr-anycpu/debugger-sources/async-stack.cs

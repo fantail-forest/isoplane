@@ -88,6 +88,10 @@ impl Drop for Driver {
 pub fn prepared_acceptance(mode: &str) {
     let fixture = match mode {
         "watchpoint-steps" => "watchpoints",
+        "hotreload-try"
+        | "hotreload-async"
+        | "hotreload-unchanged-handler"
+        | "hotreload-layout" => "hotreload",
         "statement-awaits-optimized" => "statement-awaits",
         "async-optimized" => "async-stack",
         "async-composed-optimized" => "async-composed",
@@ -111,6 +115,11 @@ pub fn prepared_acceptance(mode: &str) {
         root.join("guest-runtime/tests/packages/debugger")
     };
     let source = sources.join(format!("{fixture}.cs"));
+    let route = if mode.starts_with("hotreload-") {
+        mode
+    } else {
+        fixture
+    };
     let host = root
         .join(".build/clr-anycpu/managed/bin/Isoplane.Cli.Tests/release/Isoplane.Cli.Tests.dll");
     assert!(
@@ -135,7 +144,7 @@ pub fn prepared_acceptance(mode: &str) {
         .arg(root.join("crates/isoplane-native/tests/common/debug_driver.py"))
         .arg(std::env::var_os("ISOPLANE_TEST_CLI_ASSEMBLY").expect("Task selects the prepared CLI"))
         .arg(metadata["endpoint"].as_str().unwrap())
-        .arg(format!("{}/{fixture}", dev.url.trim_end_matches('/')))
+        .arg(format!("{}/{route}", dev.url.trim_end_matches('/')))
         .arg(source)
         .arg(dev.pid().to_string())
         .arg(mode)

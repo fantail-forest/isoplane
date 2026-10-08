@@ -9,6 +9,15 @@ internal static class HotReloadAcceptance
 {
     internal static async Task<int> RunAsync(string endpoint, string url, string deltas, string source)
     {
+        var scenario = new Uri(url).AbsolutePath switch
+        {
+            "/hotreload" => new Scenario("Handle", "HOT_RELOAD_BODY", 111, "111"),
+            "/hotreload-layout" => new Scenario("HandleLayout", "HOT_RELOAD_LAYOUT", 11, "11"),
+            "/hotreload-try" => new Scenario("HandleTry", "HOT_RELOAD_TRY", 111, "1111"),
+            "/hotreload-async" => new Scenario("HandleAsync", "HOT_RELOAD_AWAIT", 111, "111"),
+            "/hotreload-unchanged-handler" => new Scenario("HandleUnchanged", "HOT_RELOAD_UNCHANGED", 21, "21"),
+            _ => throw new ArgumentException("Unknown Hot Reload fixture route.", nameof(url))
+        };
         using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(3));
         using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp)
             { LingerState = new LingerOption(true, 0) };
@@ -28,16 +37,18 @@ internal static class HotReloadAcceptance
         machine.Resume();
         var stopped = ProtocolAcceptance.UserBreak(machine);
         Console.WriteLine("The guest stopped in the baseline method.");
-        var frame = Frame(stopped);
+        var frame = Frame(stopped, scenario);
         Assert.True(stopped.Thread.GetFrames()[0].Method == frame.Method,
             "The editable method must be the active frame: " + string.Join(" -> ", stopped.Thread.GetFrames().Select(item => item.Method.FullName)));
         Assert.Equal(11, Value(frame));
-        int statement = Array.FindIndex(File.ReadAllLines(source), line => line.Contains("value += 10;", StringComparison.Ordinal)) + 1;
+        int statement = SourceLine(source, scenario.Marker);
         Assert.Contains(frame.Method.Locations, location => location.LineNumber == statement);
         var originalBody = frame.Method.GetMethodBody().GetILAsByteArray();
-        var storage = frame.Method.DeclaringType.Assembly.GetType("Debugger.HotReload.Storage");
+        var assembly = frame.Method.DeclaringType.Assembly;
+        var application = assembly.GetType("Debugger.HotReload.Application");
+        var storage = assembly.GetType("Debugger.HotReload.Storage");
         Assert.Empty(storage.GetFields());
-        Assert.DoesNotContain(frame.Method.DeclaringType.GetMethods(), method => method.Name == "Added");
+        Assert.DoesNotContain(application.GetMethods(), method => method.Name == "Added");
         string baseline = Path.Combine(deltas, "Debugger.HotReload.Fixture.dll.1");
         byte[] metadata = await File.ReadAllBytesAsync(baseline + ".dmeta", deadline.Token);
         byte[] il = await File.ReadAllBytesAsync(baseline + ".dil", deadline.Token);
@@ -45,25 +56,60 @@ internal static class HotReloadAcceptance
         Assert.Throws<ArgumentException>(() => frame.Method.ReturnType.Assembly.ManifestModule.ApplyChanges(metadata, il, symbols));
         Assert.Equal(11, Value(frame));
         Console.WriteLine("Applying compiler deltas.");
-        frame.Method.DeclaringType.Assembly.ManifestModule.ApplyChanges(metadata, il, symbols);
+        assembly.ManifestModule.ApplyChanges(metadata, il, symbols);
         Console.WriteLine("The runtime applied the deltas and refreshed debugger metadata.");
         Assert.Contains(storage.GetFields(), field => field.Name == "Added");
-        Assert.Contains(frame.Method.DeclaringType.GetMethods(), method => method.Name == "Added");
-        Assert.NotEqual(Convert.ToHexString(originalBody), Convert.ToHexString(frame.Method.GetMethodBody().GetILAsByteArray()));
-        var destination = frame.Method.Locations.Single(location => location.LineNumber == statement + 1);
+        Assert.Contains(application.GetMethods(), method => method.Name == "Added");
+        string currentBody = Convert.ToHexString(frame.Method.GetMethodBody().GetILAsByteArray());
+        if (scenario.Method == "HandleUnchanged") Assert.Equal(Convert.ToHexString(originalBody), currentBody);
+        else Assert.NotEqual(Convert.ToHexString(originalBody), currentBody);
+        int updatedLine = SourceLine(Path.ChangeExtension(source, "updated.cs.in"), scenario.Marker);
+        var destination = frame.Method.Locations.Single(location => location.LineNumber == updatedLine);
+        if (scenario.Method == "HandleLayout")
+        {
+            Assert.Throws<ArgumentException>(() => stopped.Thread.SetIP(destination));
+            machine.Resume();
+            Assert.Equal(scenario.Response, await response);
+            return 0;
+        }
         stopped.Thread.SetIP(destination);
         machine.Resume();
-        stopped = ProtocolAcceptance.UserBreak(machine);
-        Assert.Equal(111, Value(Frame(stopped)));
+        var nextStop = machine.GetNextEventSet(180_000);
+        Assert.Equal(SuspendPolicy.All, nextStop.SuspendPolicy);
+        Console.WriteLine("The edited method stopped with suspension policy " + nextStop.SuspendPolicy);
+        stopped = Assert.Single(nextStop.Events, item => item.EventType == EventType.UserBreak);
+        Assert.Equal(scenario.UpdatedValue, Value(Frame(stopped, scenario)));
         machine.Resume();
-        Assert.Equal("111", await response);
+        Assert.Equal(scenario.Response, await response);
         Console.WriteLine("The active interpreter frame executed updated IL and preserved its local value.");
         return 0;
     }
 
-    private static Mono.Debugger.Soft.StackFrame Frame(Event stopped) => stopped.Thread.GetFrames()
-        .Single(frame => frame.Method.DeclaringType.FullName == "Debugger.HotReload.Application" && frame.Method.Name == "Handle");
+    private sealed record Scenario(string Method, string Marker, int UpdatedValue, string Response);
 
-    private static int Value(Mono.Debugger.Soft.StackFrame frame) => (int)((PrimitiveValue)frame.GetValue(
-        frame.GetVisibleVariables().Single(local => local.Name == "value"))).Value;
+    private static int SourceLine(string path, string marker)
+    {
+        int line = Array.FindIndex(File.ReadAllLines(path), text => text.Contains(marker, StringComparison.Ordinal));
+        Assert.True(line >= 0, $"The fixture {path} must contain {marker}.");
+        return line + 1;
+    }
+
+    private static Mono.Debugger.Soft.StackFrame Frame(Event stopped, Scenario scenario) => stopped.Thread.GetFrames()
+        .Single(frame => scenario.Method == "HandleAsync"
+            ? frame.Method.Name == "MoveNext" && frame.Method.DeclaringType.Name.StartsWith("<HandleAsync>", StringComparison.Ordinal)
+            : frame.Method.DeclaringType.FullName == "Debugger.HotReload.Application" && frame.Method.Name == scenario.Method);
+
+    private static int Value(Mono.Debugger.Soft.StackFrame frame)
+    {
+        if (frame.Method.Name != "MoveNext")
+            return (int)((PrimitiveValue)frame.GetValue(frame.GetVisibleVariables().Single(local => local.Name == "value"))).Value;
+        var field = frame.Method.DeclaringType.GetFields().Single(candidate => candidate.Name.StartsWith("<value>", StringComparison.Ordinal));
+        var value = frame.GetThis() switch
+        {
+            ObjectMirror receiver => receiver.GetValue(field),
+            StructMirror receiver => receiver[field.Name],
+            _ => throw new InvalidOperationException("The async frame must expose its state machine.")
+        };
+        return (int)((PrimitiveValue)value).Value;
+    }
 }
