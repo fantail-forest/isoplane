@@ -221,6 +221,7 @@ tasks:
       - task: package:debugger
       - task: package:debugger-optimized
       - task: package:diagnostics
+      - task: debugger:hotreload:package
 
   package:build:
     deps: [":managed:build"]
@@ -280,14 +281,14 @@ tasks:
           NAME: web
 
   package:debugger:
-    deps: [':runtime', 'debugger:sources', 'debugger:hotreload']
+    deps: [':runtime', 'debugger:sources']
     cmds:
       - task: package:build
         vars:
           NAME: debugger
 
   package:debugger-optimized:
-    deps: [':runtime', 'debugger:sources', 'debugger:hotreload']
+    deps: [':runtime', 'debugger:sources']
     cmds:
       - task: package:build
         vars:
@@ -311,9 +312,12 @@ tasks:
       - '"{{.PYTHON}}" guest-runtime/tests/packages/debugger/prepare.py'
 
   debugger:hotreload:
-    desc: Prepare the shared Hot Reload baseline and compiler deltas
+    desc: Prepare the host-specific Hot Reload baseline and compiler deltas
+    label: 'debugger:hotreload:{{.PLATFORM}}'
     run: once
     deps: [':initialize']
+    env:
+      ArtifactsPath: '{{.HOT_RELOAD_ARTIFACTS}}'
     sources:
       - guest-runtime/tests/packages/debugger/hotreload/*
       - guest-runtime/tests/packages/debugger/hotreload.cs
@@ -324,17 +328,48 @@ tasks:
       - nuget.config
       - taskfiles/fixtures.yml
     generates:
-      - '{{.MANAGED}}/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.dll'
-      - '{{.MANAGED}}/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.pdb'
-      - '{{.MANAGED}}/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.dll.1.dmeta'
-      - '{{.MANAGED}}/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.dll.1.dil'
-      - '{{.MANAGED}}/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.dll.1.dpdb'
-      - '{{.MANAGED}}/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.dll.2.dmeta'
-      - '{{.MANAGED}}/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.dll.2.dil'
-      - '{{.MANAGED}}/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.dll.2.dpdb'
+      - '{{.HOT_RELOAD_ARTIFACTS}}/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.dll'
+      - '{{.HOT_RELOAD_ARTIFACTS}}/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.pdb'
+      - '{{.HOT_RELOAD_ARTIFACTS}}/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.dll.1.dmeta'
+      - '{{.HOT_RELOAD_ARTIFACTS}}/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.dll.1.dil'
+      - '{{.HOT_RELOAD_ARTIFACTS}}/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.dll.1.dpdb'
+      - '{{.HOT_RELOAD_ARTIFACTS}}/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.dll.2.dmeta'
+      - '{{.HOT_RELOAD_ARTIFACTS}}/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.dll.2.dil'
+      - '{{.HOT_RELOAD_ARTIFACTS}}/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.dll.2.dpdb'
     cmds:
-      - 'test "{{OS}}" = linux || { echo "Run task fixtures:debugger:hotreload on Linux first." >&2; exit 1; }'
-      - '"{{.DOTNET}}" build guest-runtime/tests/packages/debugger/hotreload/HotReloadFixture.csproj -c Release -p:DeltaScript=deltas.json --artifacts-path "{{.MANAGED}}"'
+      - '"{{.DOTNET}}" build guest-runtime/tests/packages/debugger/hotreload/HotReloadFixture.csproj -c Release -p:DeltaScript=deltas.json --artifacts-path "{{.HOT_RELOAD_ARTIFACTS}}"'
+
+  debugger:hotreload:package:
+    desc: Prepare the reusable guest whose symbols match this host's compiler paths
+    label: 'debugger:hotreload:package:{{.PLATFORM}}'
+    deps: [':managed:build', ':runtime', 'debugger:sources', 'debugger:hotreload']
+    env:
+      ArtifactsPath: '{{.HOT_RELOAD_ARTIFACTS}}'
+      ISOPLANE_MANAGED_ARTIFACTS: '{{.HOT_RELOAD_ARTIFACTS}}'
+      ISOPLANE_FIXTURE_ARTIFACTS: '{{.HOT_RELOAD_ARTIFACTS}}'
+      ISOPLANE_RUNTIME_DIRECTORY: '{{.MODULES}}'
+    sources:
+      - guest-runtime/tests/packages/debugger/**/*
+      - guest-runtime/tests/packages/*.props
+      - guest-runtime/tests/packages/*.targets
+      - guest-sdks/dotnet/**/*
+      - tools/Isoplane.Cli/**/*.cs
+      - tools/Isoplane.Cli/*.csproj
+      - tools/BuildProtocol/**/*.cs
+      - Directory.Build.props
+      - global.json
+      - nuget.config
+      - taskfiles/fixtures.yml
+      - '{{.MODULES}}/runtime.json'
+      - '{{.HOT_RELOAD_ARTIFACTS}}/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.dll'
+      - '{{.HOT_RELOAD_ARTIFACTS}}/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.pdb'
+      - exclude: 'guest-sdks/**/{obj,bin,out,__pycache__,*.Tests,Tests}/**/*'
+      - exclude: 'guest-runtime/tests/packages/**/{obj,bin,.isoplane,__pycache__}/**/*'
+      - exclude: 'tools/**/{obj,bin,out,__pycache__,*.Tests}/**/*'
+    generates:
+      - '{{.HOT_RELOAD_ARTIFACTS}}/debugger.tar'
+    cmds:
+      - '"{{.DOTNET}}" "{{.CLI}}" bundle --project "{{.ROOT_DIR}}/guest-runtime/tests/packages/debugger" --output "{{.HOT_RELOAD_ARTIFACTS}}/debugger.tar"'
 
   package:diagnostics:
     deps: [':runtime']

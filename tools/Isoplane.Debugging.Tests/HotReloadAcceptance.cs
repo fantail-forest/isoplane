@@ -1,5 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Reflection.Metadata;
+using System.Reflection.PortableExecutable;
 using Mono.Debugger.Soft;
 using Xunit;
 using Isoplane.Build;
@@ -15,7 +17,27 @@ internal static class HotReloadAcceptance
         await using var compiler = await HotReloadCompiler.StartAsync(project,
             new() { ["Configuration"] = "Release", ["ArtifactsPath"] = artifacts }, baseline.Assemblies, [], deadline.Token);
         Assert.Contains(compiler.Documents, document => Path.GetFileName(document) == "hotreload.cs");
-        Console.WriteLine("The compiler loaded the prepared application's baseline and source documents.");
+        string source = Path.Combine(Path.GetDirectoryName(project)!, "..", "hotreload.cs");
+        var unchanged = await compiler.SendAsync(new("update", new([], [], [],
+            [new(source, await File.ReadAllTextAsync(source, deadline.Token))])), deadline.Token);
+        Assert.Empty(unchanged.Diagnostics);
+        Assert.Empty(unchanged.Updates);
+        Assert.False(unchanged.Pending);
+        using var image = File.OpenRead(baseline.Assemblies["Debugger.HotReload.Fixture"]);
+        using var pe = new PEReader(image);
+        var metadata = pe.GetMetadataReader();
+        Guid module = metadata.GetGuid(metadata.GetModuleDefinition().Mvid);
+        string original = await File.ReadAllTextAsync(source, deadline.Token);
+        string edited = original.Replace("value += 10; // HOT_RELOAD_BODY", "value += 20; // HOT_RELOAD_BODY", StringComparison.Ordinal);
+        Assert.NotEqual(original, edited);
+        var update = await compiler.SendAsync(new("update", new([], [module], ["Baseline"], [new(source, edited)])), deadline.Token);
+        foreach (string diagnostic in update.Diagnostics) Console.Error.WriteLine(diagnostic);
+        Assert.Empty(update.Diagnostics);
+        Assert.False(update.RestartRequired);
+        Assert.Equal(module, Assert.Single(update.Updates).Module);
+        Assert.True(update.Pending);
+        await compiler.SendAsync(new("discard"), deadline.Token);
+        Console.WriteLine("The compiler loaded the prepared baseline and emitted an update for its source document.");
         return 0;
     }
 
@@ -38,10 +60,10 @@ internal static class HotReloadAcceptance
         await using var owner = new GuestSession();
         var (transport, package) = await owner.ConnectAsync(IPEndPoint.Parse(endpoint)).WaitAsync(deadline.Token);
         Console.WriteLine("The debug session allocated its guest transport.");
-        var connecting = VirtualMachineManager.ConnectInternalAsync(socket, null, transport, null);
+        var connecting = Task.Run(() => VirtualMachineManager.ConnectInternalAsync(socket, null, transport, null), deadline.Token);
         var response = http.GetStringAsync(url, deadline.Token);
         Console.WriteLine("The Hot Reload HTTP request has started.");
-        var machine = await connecting.WaitAsync(deadline.Token);
+        var machine = await ProtocolAcceptance.WaitForConnectionAsync(connecting, response, deadline.Token);
         Console.WriteLine("The guest debugger handshake completed.");
         var start = machine.GetNextEventSet(180_000);
         Assert.Contains(start.Events, item => item.EventType == EventType.VMStart);

@@ -43,6 +43,7 @@ pub fn drive(mut dev: Option<&mut Dev>, command: &mut Command) -> Output {
             Ok(line) => line.expect("read DAP driver output"),
             Err(RecvTimeoutError::Disconnected) => break,
             Err(RecvTimeoutError::Timeout) => {
+                drop(driver);
                 errors.rewind().expect("rewind debugger diagnostics");
                 let mut diagnostics = String::new();
                 errors
@@ -138,8 +139,8 @@ pub fn compiler_acceptance() {
                     "guest-runtime/tests/packages/debugger/hotreload/HotReloadFixture.csproj",
                 ),
             )
-            .arg(isoplane_fixtures::mono_package("debugger"))
-            .arg(managed),
+            .arg(isoplane_fixtures::hot_reload_artifacts().join("debugger.tar"))
+            .arg(isoplane_fixtures::hot_reload_artifacts()),
     );
     assert!(
         result.status.success(),
@@ -172,11 +173,16 @@ pub fn prepared_acceptance(mode: &str) {
         other => other,
     };
     let root = repository();
-    let package = isoplane_fixtures::mono_package(if mode.ends_with("-optimized") {
-        "debugger-optimized"
+    let hot_reload = mode.starts_with("hotreload") || mode.starts_with("edit-and-continue");
+    let package = if hot_reload {
+        isoplane_fixtures::hot_reload_artifacts().join("debugger.tar")
     } else {
-        "debugger"
-    });
+        isoplane_fixtures::mono_package(if mode.ends_with("-optimized") {
+            "debugger-optimized"
+        } else {
+            "debugger"
+        })
+    };
     let sources = if mode.starts_with("async-") {
         root.join(".build/clr-anycpu/debugger-sources")
     } else {
@@ -213,7 +219,7 @@ pub fn prepared_acceptance(mode: &str) {
     if mode.starts_with("edit-and-continue") {
         command
             .arg(sources.join("hotreload/HotReloadFixture.csproj"))
-            .arg(root.join(".build/clr-anycpu/managed"));
+            .arg(isoplane_fixtures::hot_reload_artifacts());
     }
     let mut dev = Dev::spawn(&mut command, std::time::Duration::from_secs(120), true);
     let metadata = dev

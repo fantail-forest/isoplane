@@ -44,7 +44,7 @@ if mode == "protocol" or mode.startswith("hotreload"):
         sys.exit("Missing debugger protocol driver; run task managed:tests before testing.")
     arguments = ["dotnet", driver, endpoint, url]
     if mode.startswith("hotreload"):
-        arguments.extend([root / ".build/clr-anycpu/managed/bin/HotReloadFixture/release", source])
+        arguments.extend([Path(os.environ["ISOPLANE_TEST_HOT_RELOAD_ARTIFACTS"]) / "bin/HotReloadFixture/release", source])
     if mode == "hotreload-without-symbols":
         arguments.append("--without-symbols")
     sys.exit(subprocess.run(arguments, timeout=240).returncode)

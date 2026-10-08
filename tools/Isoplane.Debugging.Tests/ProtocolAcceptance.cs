@@ -11,6 +11,17 @@ internal static class ProtocolAcceptance
 {
     private const int DeadlineMs = 180_000;
 
+    internal static async Task<VirtualMachine> WaitForConnectionAsync(Task<VirtualMachine> connecting,
+        Task<string> response, CancellationToken cancellation)
+    {
+        if (await Task.WhenAny(connecting, response).WaitAsync(cancellation) == response)
+        {
+            string body = await response;
+            throw new InvalidOperationException($"The guest request completed before its debugger handshake: {body}");
+        }
+        return await connecting;
+    }
+
     internal static async Task<int> Main(string[] arguments)
     {
         if (arguments is ["--compiler", var compilerProject, var compilerPackage, var compilerArtifacts])
@@ -26,9 +37,9 @@ internal static class ProtocolAcceptance
         using var http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
         await using var owner = new Isoplane.Debugging.GuestSession();
         var (transportEndpoint, _) = await owner.ConnectAsync(IPEndPoint.Parse(endpoint)).WaitAsync(deadline.Token);
-        var connecting = VirtualMachineManager.ConnectInternalAsync(socket, null, transportEndpoint, null);
+        var connecting = Task.Run(() => VirtualMachineManager.ConnectInternalAsync(socket, null, transportEndpoint, null), deadline.Token);
         var response = http.GetStringAsync(url, deadline.Token);
-        var machine = await connecting.WaitAsync(deadline.Token);
+        var machine = await WaitForConnectionAsync(connecting, response, deadline.Token);
         machine.EnableEvents([EventType.UserBreak], SuspendPolicy.All);
         var start = machine.GetNextEventSet(DeadlineMs);
         Assert.True(start?.Events.Any(value => value.EventType == EventType.VMStart) == true, "The real runtime must announce its initial suspension.");

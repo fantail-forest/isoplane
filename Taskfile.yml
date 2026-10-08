@@ -15,6 +15,7 @@ vars:
 
   NATIVE_LIBRARY: '{{if eq OS "windows"}}isoplane_native.dll{{else if eq OS "darwin"}}libisoplane_native.dylib{{else}}libisoplane_native.so{{end}}'
   MANAGED: '{{.ROOT_DIR}}/.build/clr-anycpu/managed'
+  HOT_RELOAD_ARTIFACTS: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/hotreload-fixture'
   PACKAGES: '{{.ROOT_DIR}}/.build/clr-anycpu/packages'
   CLI: '{{.MANAGED}}/bin/Isoplane.Cli/release/Isoplane.Cli.dll'
   NATIVE_TARGET: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/native'
@@ -43,6 +44,7 @@ env:
   ISOPLANE_TEST_NATIVE_PACKAGE_FEED: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/packages'
   ISOPLANE_TEST_PYTHON: '{{.PYTHON}}'
   ISOPLANE_TEST_DEBUGGER_PYTHON: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/dap-python/{{if eq OS "windows"}}Scripts/python.exe{{else}}bin/python{{end}}'
+  ISOPLANE_TEST_HOT_RELOAD_ARTIFACTS: '{{.HOT_RELOAD_ARTIFACTS}}'
   ISOPLANE_TEST_MANAGED_BUNDLE: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/managed-bundle-fixture'
   ISOPLANE_TEST_PROCESS_FIXTURE: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/managed-fixtures/bin/ProcessFixture/release/ProcessFixture{{if eq OS "windows"}}.exe{{end}}'
 

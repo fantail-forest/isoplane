@@ -147,6 +147,13 @@ pub fn mono_package(name: &str) -> PathBuf {
         .join(format!("{name}.tar"))
 }
 
+/// Host-specific compiler baseline and deltas shared by Hot Reload scenarios.
+pub fn hot_reload_artifacts() -> PathBuf {
+    std::env::var_os("ISOPLANE_TEST_HOT_RELOAD_ARTIFACTS")
+        .map(PathBuf::from)
+        .expect("run task test:debugger to select the prepared Hot Reload fixture")
+}
+
 /// The runtime package feed prepared or explicitly selected by Task.
 pub fn guest_runtime_feed() -> PathBuf {
     std::env::var_os("ISOPLANE_TEST_RUNTIME_FEED")
