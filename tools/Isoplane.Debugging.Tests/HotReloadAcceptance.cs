@@ -8,6 +8,17 @@ namespace Isoplane.Debugging.Tests;
 
 internal static class HotReloadAcceptance
 {
+    internal static async Task<int> OpenCompilerAsync(string project, string package, string artifacts)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+        using var baseline = HotReloadBaseline.Read(package);
+        await using var compiler = await HotReloadCompiler.StartAsync(project,
+            new() { ["Configuration"] = "Release", ["ArtifactsPath"] = artifacts }, baseline.Assemblies, [], deadline.Token);
+        Assert.Contains(compiler.Documents, document => Path.GetFileName(document) == "hotreload.cs");
+        Console.WriteLine("The compiler loaded the prepared application's baseline and source documents.");
+        return 0;
+    }
+
     internal static async Task<int> RunAsync(string endpoint, string url, string deltas, string source, bool withoutSymbols = false)
     {
         var scenario = new Uri(url).AbsolutePath switch

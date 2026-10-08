@@ -509,6 +509,11 @@ fn moving_execution_after_hot_reload_preserves_live_locals_and_executes_updated_
 }
 
 #[test]
+fn the_hot_reload_compiler_loads_the_prepared_application_baseline() {
+    debugger::compiler_acceptance();
+}
+
+#[test]
 fn hot_reload_without_symbols_keeps_added_methods_inspectable() {
     debugger::prepared_acceptance("hotreload-without-symbols");
 }

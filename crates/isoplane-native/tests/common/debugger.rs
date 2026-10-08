@@ -1,13 +1,19 @@
 //! Coordinate the DAP driver with the development process's shutdown control.
 
 use std::io::{BufRead, BufReader, Read, Seek, Write};
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Output, Stdio};
+use std::sync::mpsc::{channel, RecvTimeoutError};
+use std::time::{Duration, Instant};
 
 use crate::common::Dev;
 
 /// Runs the DAP driver, relaying shutdown requests to the development owner.
 pub fn drive(mut dev: Option<&mut Dev>, command: &mut Command) -> Output {
     let mut errors = tempfile::tempfile().expect("create the debugger diagnostic capture");
+    #[cfg(unix)]
+    command.process_group(0);
     let mut driver = Driver(
         command
             .stdin(Stdio::piped())
@@ -20,9 +26,34 @@ pub fn drive(mut dev: Option<&mut Dev>, command: &mut Command) -> Output {
             .spawn()
             .expect("start the installed DAP driver"),
     );
+    let stdout = driver.0.stdout.take().expect("capture DAP driver output");
+    let (sender, lines) = channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            if sender.send(line).is_err() {
+                // The owner stopped waiting after the driver exceeded its deadline.
+                break;
+            }
+        }
+    });
+    let deadline = Instant::now() + Duration::from_secs(300);
     let mut output = Vec::new();
-    for line in BufReader::new(driver.0.stdout.take().expect("capture DAP driver output")).lines() {
-        let line = line.expect("read DAP driver output");
+    loop {
+        let line = match lines.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+            Ok(line) => line.expect("read DAP driver output"),
+            Err(RecvTimeoutError::Disconnected) => break,
+            Err(RecvTimeoutError::Timeout) => {
+                errors.rewind().expect("rewind debugger diagnostics");
+                let mut diagnostics = String::new();
+                errors
+                    .read_to_string(&mut diagnostics)
+                    .expect("read debugger diagnostics");
+                panic!(
+                    "debugger driver exceeded its deadline\n{}\n{diagnostics}",
+                    String::from_utf8_lossy(&output)
+                );
+            }
+        };
         if let Some(event) = line.strip_prefix("request-owner-event:") {
             assert!(matches!(
                 event,
@@ -69,6 +100,7 @@ struct Driver(Child);
 
 impl Drop for Driver {
     fn drop(&mut self) {
+        crate::common::terminate_test_tree(self.0.id(), matches!(self.0.try_wait(), Ok(Some(_))));
         match self.0.try_wait() {
             Ok(Some(_)) => {}
             Ok(None) => {
@@ -82,6 +114,39 @@ impl Drop for Driver {
             Err(error) => eprintln!("could not inspect the DAP driver: {error}"),
         }
     }
+}
+
+fn repository() -> &'static std::path::Path {
+    // Roslyn misparses compiler output paths in Windows' extended UNC syntax.
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("crates/isoplane-native has a grandparent")
+}
+
+/// Loads a prepared compiler baseline without paying for a guest invocation.
+pub fn compiler_acceptance() {
+    let root = repository();
+    let managed = root.join(".build/clr-anycpu/managed");
+    let result = drive(
+        None,
+        Command::new("dotnet")
+            .arg(managed.join("bin/Isoplane.Debugging.Tests/release/Isoplane.Debugging.Tests.dll"))
+            .arg("--compiler")
+            .arg(
+                root.join(
+                    "guest-runtime/tests/packages/debugger/hotreload/HotReloadFixture.csproj",
+                ),
+            )
+            .arg(isoplane_fixtures::mono_package("debugger"))
+            .arg(managed),
+    );
+    assert!(
+        result.status.success(),
+        "compiler baseline startup failed: {}{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
 }
 
 /// Runs feature scenarios against shared prepared packages with private host/session state.
@@ -106,10 +171,7 @@ pub fn prepared_acceptance(mode: &str) {
         "async-pooled-composed-optimized" => "async-pooled-composed",
         other => other,
     };
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
-        .unwrap();
+    let root = repository();
     let package = isoplane_fixtures::mono_package(if mode.ends_with("-optimized") {
         "debugger-optimized"
     } else {
@@ -185,4 +247,41 @@ pub fn prepared_acceptance(mode: &str) {
         package.is_file(),
         "host shutdown preserves the shared package"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn dropping_the_debug_driver_closes_descendant_output_pipes() {
+    let mut command = Command::new("sh");
+    command
+        .args(["-c", "sleep 60 & printf 'ready\\n'; wait"])
+        .process_group(0)
+        .stdout(Stdio::piped());
+    let mut driver = Driver(
+        command
+            .spawn()
+            .expect("start a driver with an inherited pipe"),
+    );
+    let stdout = driver.0.stdout.take().expect("capture driver output");
+    let (sender, lines) = channel();
+    let reader = std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            sender
+                .send(line.expect("read driver line"))
+                .expect("owner is observing output");
+        }
+    });
+    assert_eq!(
+        lines.recv_timeout(Duration::from_secs(10)).unwrap(),
+        "ready"
+    );
+    drop(driver);
+    assert!(
+        matches!(
+            lines.recv_timeout(Duration::from_secs(10)),
+            Err(RecvTimeoutError::Disconnected)
+        ),
+        "driver cleanup must close output inherited by descendants"
+    );
+    reader.join().expect("driver output reader exited");
 }

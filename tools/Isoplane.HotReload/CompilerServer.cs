@@ -27,7 +27,7 @@ internal static class CompilerServer
         foreach (var input in solution.Projects)
         {
             if (!start.AssemblyPaths.TryGetValue(input.AssemblyName ?? "", out string? assembly))
-                throw new IOException($"The paused application has no baseline assembly for project '{input.Name}'.");
+                throw new IOException($"The paused application has no baseline assembly '{input.AssemblyName}' for project '{input.FilePath}' (output '{input.OutputFilePath}').");
             var output = input.CompilationOutputInfo;
             string generated = output.GeneratedFilesOutputDirectory ?? Path.GetDirectoryName(output.AssemblyPath)
                 ?? throw new IOException($"Project '{input.Name}' did not identify its generated-source directory.");

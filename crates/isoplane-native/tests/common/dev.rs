@@ -284,30 +284,12 @@ impl Dev {
 
 impl Drop for Dev {
     fn drop(&mut self) {
-        #[cfg(unix)]
-        {
-            let group = format!(
-                "-{}",
-                self.child
-                    .process_id()
-                    .expect("development child has a process identifier")
-            );
-            match Command::new("kill").args(["-KILL", "--", &group]).output() {
-                Ok(output) if output.status.success() => {}
-                Ok(output) => {
-                    // A gracefully stopped CLI may already have removed its whole group.
-                    if !matches!(self.child.try_wait(), Ok(Some(_))) {
-                        eprintln!(
-                            "could not stop development process group {group}: {}",
-                            String::from_utf8_lossy(&output.stderr)
-                        );
-                    }
-                }
-                Err(error) => {
-                    eprintln!("could not signal development process group {group}: {error}")
-                }
-            }
-        }
+        terminate_test_tree(
+            self.child
+                .process_id()
+                .expect("development child has a process identifier"),
+            matches!(self.child.try_wait(), Ok(Some(_))),
+        );
         match self.child.try_wait() {
             Ok(Some(_)) => {}
             Ok(None) => {
@@ -320,6 +302,30 @@ impl Drop for Dev {
             }
             Err(e) => eprintln!("could not inspect development process: {e}"),
         }
+    }
+}
+
+/// Stops the test owner's process group, including children that retain output pipes.
+pub fn terminate_test_tree(pid: u32, exited: bool) {
+    #[cfg(windows)]
+    if exited {
+        return;
+    }
+    #[cfg(windows)]
+    let result = Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .output();
+    #[cfg(unix)]
+    let result = Command::new("kill")
+        .args(["-KILL", "--", &format!("-{pid}")])
+        .output();
+    match result {
+        Ok(output) if output.status.success() || exited => {}
+        Ok(output) => eprintln!(
+            "could not stop test process tree {pid}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ),
+        Err(error) => eprintln!("could not signal test process tree {pid}: {error}"),
     }
 }
 
