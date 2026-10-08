@@ -1,7 +1,7 @@
 """Apply source edits through DAP and jump back within the same HTTP invocation."""
 from pathlib import Path
 
-EXPECTED_RESPONSE = b"311"
+EXPECTED_RESPONSE = b"715"
 
 
 def configure(source, send, response):
@@ -52,9 +52,36 @@ def exercise(source, send, response, until):
     assert changed["appliedModules"] == 1 and not changed["diagnostics"], changed
     thread, frame = stop()
     targets = response(send("gotoTargets", {"source": {"path": source}, "line": line}))["body"]["targets"]
-    assert targets, "the statement exists, but its new frame layout cannot yet replace the live one"
-    attempted = send("goto", {"threadId": thread, "targetId": targets[0]["id"]})
-    rejected = until(lambda item: item.get("type") == "response" and item.get("request_seq") == attempted)
-    assert not rejected.get("success") and "storage" in rejected.get("message", ""), rejected
-    assert value(frame) == "311", "a rejected remap must leave the session and original locals usable"
+    assert len(targets) == 1, targets
+    response(send("goto", {"threadId": thread, "targetId": targets[0]["id"]}))
+    thread, frame = stop()
+    assert value(frame) == "311", "expanding frame storage must preserve existing locals"
+    response(send("continue", {"threadId": thread}))
+    thread, frame = stop()
+    assert value(frame) == "511", "the expanded invocation must execute its updated body"
+    start, end = expanded.index("public static string Handle()"), expanded.index("public static string HandleTry()")
+    captured = expanded[:start] + expanded[start:end].replace("int value = 1;", "int value = 1;\n        string held = new string('x', 3);\n        ref int alias = ref value;") + expanded[end:]
+    changed = response(send("isoplane/hotReload", {"sources": [{"path": source, "text": captured}]}))["body"]
+    assert changed["appliedModules"] == 1 and not changed["diagnostics"], changed
+    thread, frame = stop()
+    line = next(index + 1 for index, text in enumerate(captured.splitlines()) if "string held =" in text)
+    targets = response(send("gotoTargets", {"source": {"path": source}, "line": line}))["body"]["targets"]
+    assert len(targets) == 1, targets
+    response(send("goto", {"threadId": thread, "targetId": targets[0]["id"]}))
+    thread, frame = stop()
+    assert value(frame) == "511"
+    response(send("continue", {"threadId": thread}))
+    thread, frame = stop()
+    assert value(frame) == "711"
+    retained = captured.replace("return (value + 1).ToString();", 'GC.Collect(); // HOT_RELOAD_GROWTH_GC\n        string more = held + "!";\n        GC.Collect();\n        return (alias + more.Length).ToString();')
+    changed = response(send("isoplane/hotReload", {"sources": [{"path": source, "text": retained}]}))["body"]
+    assert changed["appliedModules"] == 1 and not changed["diagnostics"], changed
+    thread, frame = stop()
+    line = next(index + 1 for index, text in enumerate(retained.splitlines()) if "HOT_RELOAD_GROWTH_GC" in text)
+    targets = response(send("gotoTargets", {"source": {"path": source}, "line": line}))["body"]["targets"]
+    assert len(targets) == 1, targets
+    response(send("goto", {"threadId": thread, "targetId": targets[0]["id"]}))
+    thread, frame = stop()
+    assert value(frame) == "711", "expansion must retain the local addressed by the existing byref"
+    # Do not evaluate held: a debugger object handle could mask a missing GC root.
     response(send("continue", {"threadId": thread}))

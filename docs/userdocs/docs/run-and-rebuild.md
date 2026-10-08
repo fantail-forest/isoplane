@@ -148,8 +148,9 @@ and locals usable and appear in the **Isoplane Hot Reload** output channel.
 
 An active invocation keeps its original instructions until a supported **Jump to
 Cursor** adopts the edited method. Its existing locals are preserved. Remapping
-currently requires matching interpreter frame storage, including compiler-generated
-temporaries; edits that require more storage cannot yet be adopted by that invocation.
+can add locals and compiler-generated temporaries while preserving existing local
+types and storage addresses. Edits that change existing local storage or active
+exception-handler state cannot be adopted by that invocation.
 
 Source watching also rebuilds the application package for subsequent requests,
 with source breakpoints rebound. A failed build leaves the last working package

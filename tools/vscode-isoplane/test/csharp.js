@@ -93,7 +93,7 @@ async function run() {
         const applying = once(events, 'applied', { signal });
         const document = await vscode.workspace.openTextDocument(source);
         const edit = new vscode.WorkspaceEdit();
-        edit.replace(document.uri, document.lineAt(line - 1).range, '            int answer = 43;');
+        edit.replace(document.uri, document.lineAt(line - 1).range, '            int answer = 142;');
         assert.equal(await vscode.workspace.applyEdit(edit), true);
         assert.equal(await document.save(), true);
         const [applied] = await applying;
@@ -113,7 +113,7 @@ async function run() {
         await session.customRequest('continue', { threadId: updated.threadId });
         await reexecuted;
         await session.customRequest('continue', { threadId: updated.threadId });
-        assert.equal(await (await request).text(), '43', 'saving and jumping back must execute the edited line in the same invocation');
+        assert.equal(await (await request).text(), '142', 'saving and jumping back must execute the edited line in the same invocation');
         await insideALambda(source, session, events, signal, url);
         console.log('A C# launch of an Isoplane project reached its breakpoint through the Isoplane debugger.');
     } catch (error) {

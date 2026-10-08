@@ -33,18 +33,10 @@ public partial class SoftDebuggerSession
     {
         var thread = ActiveThread ?? throw new System.InvalidOperationException("No guest thread is selected.");
         GetThread(thread.Id).InvalidateDebugFrames();
-        foreach (var info in breakpoints.Values.Distinct().ToArray())
+        var sourceBreakpoints = breakpoints.Values.Distinct()
+            .Where(info => info.BreakEvent is Breakpoint and not FunctionBreakpoint && info.Location is not null).ToArray();
+        foreach (var info in sourceBreakpoints)
         {
-            if (info.BreakEvent is not Breakpoint breakpoint || breakpoint is FunctionBreakpoint || info.Location is null) continue;
-            bool insideRange = false;
-            var location = FindLocationByMethod(info.Location.Method, breakpoint.FileName, breakpoint.Line, breakpoint.Column, ref insideRange);
-            if (location is null)
-            {
-                foreach (var request in info.Requests.Keys) request.Disable();
-                info.SetStatus(BreakEventStatus.NotBound, "The edited source has no executable statement at this location.");
-                continue;
-            }
-            info.Location = location;
             foreach (var request in info.Requests.Keys)
             {
                 request.Disable();
@@ -52,6 +44,19 @@ public partial class SoftDebuggerSession
             }
             RemoveQueuedBreakEvents(info.Requests);
             info.Requests.Clear();
+        }
+        foreach (var info in sourceBreakpoints)
+        {
+            var breakpoint = (Breakpoint)info.BreakEvent;
+            bool insideRange = false;
+            var location = FindLocationByMethod(info.Location.Method, breakpoint.FileName, breakpoint.Line, breakpoint.Column, ref insideRange);
+            if (location is null)
+            {
+                info.SetStatus(BreakEventStatus.NotBound, "The edited source has no executable statement at this location.");
+                lock (pending_bes) if (!pending_bes.Contains(info)) pending_bes.Add(info);
+                continue;
+            }
+            info.Location = location;
             InsertBreakpoint(breakpoint, info);
             breakpoint.UpdatedByEnC = false;
         }
