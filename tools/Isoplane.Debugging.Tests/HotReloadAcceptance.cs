@@ -46,6 +46,8 @@ internal static class HotReloadAcceptance
         Assert.Equal(11, Value(frame));
         int statement = SourceLine(source, scenario.Marker);
         Assert.Contains(frame.Method.Locations, location => location.LineNumber == statement);
+        var retainedLocal = scenario.Method == "HandleLayout"
+            ? frame.GetVisibleVariables().Single(local => local.Name == "value") : null;
         var originalBody = frame.Method.GetMethodBody().GetILAsByteArray();
         var activeFlow = StatementFlow.Capture(frame.Method.GetMethodBody());
         int activeOffset = frame.ILOffset;
@@ -94,9 +96,12 @@ internal static class HotReloadAcceptance
         Assert.Contains(destination.ILOffset, StatementFlow.ReachableTargets(activeFlow, updatedFlow, activeOffset));
         if (scenario.Method == "HandleLayout")
         {
+            Assert.Equal(11, ((PrimitiveValue)frame.GetValue(retainedLocal!)).Value);
+            frame.SetValue(retainedLocal!, machine.CreateValue(17));
+            Assert.Equal(17, ((PrimitiveValue)frame.GetValue(retainedLocal!)).Value);
             Assert.Throws<ArgumentException>(() => stopped.Thread.SetIP(destination));
             machine.Resume();
-            Assert.Equal(scenario.Response, await response);
+            Assert.Equal("17", await response);
             return 0;
         }
         stopped.Thread.SetIP(destination);
