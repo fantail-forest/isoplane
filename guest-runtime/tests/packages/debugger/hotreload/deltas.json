@@ -1,5 +1,12 @@
 {
   "changes": [
-    { "document": "../hotreload.cs", "update": "../hotreload.updated.cs.in" }
+    {
+      "document": "../hotreload.cs",
+      "update": "../hotreload.updated.cs.in"
+    },
+    {
+      "document": "../hotreload.cs",
+      "update": "../hotreload.updated-again.cs.in"
+    }
   ]
 }

@@ -57,8 +57,11 @@ internal static class HotReloadAcceptance
         byte[] symbols = await File.ReadAllBytesAsync(baseline + ".dpdb", deadline.Token);
         Assert.Throws<ArgumentException>(() => frame.Method.ReturnType.Assembly.ManifestModule.ApplyChanges(metadata, il, symbols));
         Assert.Equal(11, Value(frame));
+        byte[] futureMetadata = await File.ReadAllBytesAsync(Path.Combine(deltas, "Debugger.HotReload.Fixture.dll.2.dmeta"), deadline.Token);
+        Assert.Throws<ArgumentException>(() => assembly.ManifestModule.ApplyChanges(futureMetadata, il, symbols));
         Console.WriteLine("Applying compiler deltas.");
         assembly.ManifestModule.ApplyChanges(metadata, il, symbols);
+        Assert.Throws<ArgumentException>(() => assembly.ManifestModule.ApplyChanges(metadata, il, symbols));
         Console.WriteLine("The runtime applied the deltas and refreshed debugger metadata.");
         Assert.Contains(storage.GetFields(), field => field.Name == "Added");
         var added = Assert.Single(application.GetMethods(), method => method.Name == "Added");
@@ -85,9 +88,27 @@ internal static class HotReloadAcceptance
         Assert.Equal(SuspendPolicy.All, nextStop.SuspendPolicy);
         Console.WriteLine("The edited method stopped with suspension policy " + nextStop.SuspendPolicy);
         stopped = Assert.Single(nextStop.Events, item => item.EventType == EventType.UserBreak);
-        Assert.Equal(scenario.UpdatedValue, Value(Frame(stopped, scenario)));
+        frame = Frame(stopped, scenario);
+        Assert.Equal(scenario.UpdatedValue, Value(frame));
+        activeFlow = StatementFlow.Capture(frame.Method.GetMethodBody());
+        activeOffset = frame.ILOffset;
+        baseline = Path.Combine(deltas, "Debugger.HotReload.Fixture.dll.2");
+        assembly.ManifestModule.ApplyChanges(
+            await File.ReadAllBytesAsync(baseline + ".dmeta", deadline.Token),
+            await File.ReadAllBytesAsync(baseline + ".dil", deadline.Token),
+            await File.ReadAllBytesAsync(baseline + ".dpdb", deadline.Token));
+        updatedLine = SourceLine(Path.ChangeExtension(source, "updated-again.cs.in"), scenario.Marker);
+        destination = frame.Method.Locations.Single(location => location.LineNumber == updatedLine);
+        updatedFlow = StatementFlow.Capture(frame.Method.GetMethodBody());
+        Assert.Contains(destination.ILOffset, StatementFlow.ReachableTargets(activeFlow, updatedFlow, activeOffset));
+        stopped.Thread.SetIP(destination);
         machine.Resume();
-        Assert.Equal(scenario.Response, await response);
+        stopped = ProtocolAcceptance.UserBreak(machine);
+        int increment = scenario.Method == "HandleUnchanged" ? 10 : 200;
+        Assert.Equal(scenario.UpdatedValue + increment, Value(Frame(stopped, scenario)));
+        machine.Resume();
+        Assert.Equal((int.Parse(scenario.Response, System.Globalization.CultureInfo.InvariantCulture) + increment)
+            .ToString(System.Globalization.CultureInfo.InvariantCulture), await response);
         Console.WriteLine("The active interpreter frame executed updated IL and preserved its local value.");
         return 0;
     }

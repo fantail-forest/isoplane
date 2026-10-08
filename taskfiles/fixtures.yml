@@ -318,6 +318,7 @@ tasks:
       - guest-runtime/tests/packages/debugger/hotreload/*
       - guest-runtime/tests/packages/debugger/hotreload.cs
       - guest-runtime/tests/packages/debugger/hotreload.updated.cs.in
+      - guest-runtime/tests/packages/debugger/hotreload.updated-again.cs.in
       - Directory.Build.props
       - global.json
       - nuget.config
@@ -328,6 +329,9 @@ tasks:
       - '{{.MANAGED}}/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.dll.1.dmeta'
       - '{{.MANAGED}}/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.dll.1.dil'
       - '{{.MANAGED}}/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.dll.1.dpdb'
+      - '{{.MANAGED}}/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.dll.2.dmeta'
+      - '{{.MANAGED}}/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.dll.2.dil'
+      - '{{.MANAGED}}/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.dll.2.dpdb'
     cmds:
       - 'test "{{OS}}" = linux || { echo "Run task fixtures:debugger:hotreload on Linux first." >&2; exit 1; }'
       - '"{{.DOTNET}}" build guest-runtime/tests/packages/debugger/hotreload/HotReloadFixture.csproj -c Release --artifacts-path "{{.MANAGED}}"'

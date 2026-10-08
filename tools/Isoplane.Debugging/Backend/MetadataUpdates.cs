@@ -8,6 +8,9 @@ namespace Mono.Debugger.Soft;
 
 public partial class ModuleMirror
 {
+    private int appliedGeneration;
+    private Guid appliedGenerationId;
+
     /// <summary>Applies compiler deltas to a paused guest and refreshes affected method and type metadata.</summary>
     /// <remarks>Active frames retain their invocation state; adopting edited instructions requires a supported statement jump.</remarks>
     public void ApplyChanges(byte[] metadata, byte[] il, byte[] symbols)
@@ -18,10 +21,16 @@ public partial class ModuleMirror
         using var stream = new MemoryStream(metadata, writable: false);
         using var provider = MetadataReaderProvider.FromMetadataStream(stream);
         var reader = provider.GetMetadataReader();
-        if (reader.GetGuid(reader.GetModuleDefinition().Mvid) != ModuleVersionId)
+        var module = reader.GetModuleDefinition();
+        if (reader.GetGuid(module.Mvid) != ModuleVersionId)
             throw new ArgumentException("The compiler delta does not match the loaded module baseline.", nameof(metadata));
+        if (module.Generation != appliedGeneration + 1
+            || appliedGeneration != 0 && reader.GetGuid(module.BaseGenerationId) != appliedGenerationId)
+            throw new ArgumentException("The compiler delta does not follow the last applied update.", nameof(metadata));
         var domain = vm.RootDomain;
         ApplyChanges(domain.CreateByteArray(metadata), domain.CreateByteArray(il), domain.CreateByteArray(symbols));
+        appliedGeneration = module.Generation;
+        appliedGenerationId = reader.GetGuid(module.GenerationId);
         var changedTypes = new HashSet<TypeMirror>();
         foreach (var handle in reader.GetEditAndContinueMapEntries())
         {
