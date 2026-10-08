@@ -16,7 +16,6 @@ public static class IsoplaneHosting
 | name | description |
 | --- | --- |
 | static [CreateBuilder](IsoplaneHosting/CreateBuilder.md)(…) | Creates the builder for an application's `Program.cs`. |
-| static [UseIsoplane](IsoplaneHosting/UseIsoplane.md)(…) | Replaces the server with Isoplane's host-delivered request transport. |
 | static [WarmupAsync](IsoplaneHosting/WarmupAsync.md)(…) | Runs a GET through the started application's pipeline and discards its response body. |
 
 ## See Also

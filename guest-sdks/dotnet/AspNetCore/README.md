@@ -33,8 +33,7 @@ Register services and middleware as usual. `CreateBuilder` reads `appsettings.js
 `appsettings.{Environment}.json` and the settings the platform supplies; it does
 not read the machine's environment variables. End the entry point with
 `await app.RunAsync()`: the synchronous `app.Run()` blocks, which a sandboxed
-application cannot do, and the build rejects it. Existing builders can register
-the transport with `builder.WebHost.UseIsoplane()`.
+application cannot do, and the build rejects it.
 
 Isoplane runs the entry point during pre-init, up to the await on `RunAsync`,
 which starts the .NET host and its hosted services. Initialization hooks run

@@ -127,7 +127,7 @@ public static class IsoplaneHosting
     }
 
     /// <summary>Replaces the server with Isoplane's host-delivered request transport.</summary>
-    public static IWebHostBuilder UseIsoplane(this IWebHostBuilder builder)
+    internal static IWebHostBuilder UseIsoplane(this IWebHostBuilder builder)
     {
         var startup = ApplicationStartup.Current;
         return builder.ConfigureServices(services =>
