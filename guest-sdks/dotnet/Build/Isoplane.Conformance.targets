@@ -16,10 +16,16 @@
                                 Condition="'%(ReferenceCopyLocalPaths.Extension)' == '.dll' AND '%(ReferenceCopyLocalPaths.NuGetPackageId)' != 'Isoplane.Sdk' AND '%(ReferenceCopyLocalPaths.NuGetPackageId)' != 'Isoplane.AspNetCore'" />
       <_IsoplaneConformanceAssembly Remove="@(IsoplaneBundlePlatformReference)" MatchOnMetadata="Filename;Extension" MatchOnMetadataOptions="CaseInsensitive" />
       <_IsoplaneConformanceAssembly Remove="@(RuntimePackAsset)" />
+      <!-- When the SDK's analyzers ran over this project's C# source, they reported its thread and wait
+           diagnostics at the calls; the inspection of its assembly then leaves those two to them. -->
+      <_IsoplaneSourceAnalyzer Include="@(Analyzer)" Condition="'%(Filename)' == 'Isoplane.Analyzers'" />
+      <_IsoplaneSourceAnalyzed Include="@(IntermediateAssembly)"
+          Condition="'@(_IsoplaneSourceAnalyzer)' != '' AND '$(Language)' == 'C#' AND '$(RunAnalyzers)' != 'false' AND '$(RunAnalyzersDuringBuild)' != 'false'" />
     </ItemGroup>
     <Isoplane.Conformance.InspectManagedAssemblies Assemblies="@(_IsoplaneConformanceAssembly)"
         ApplicationAssemblies="@(_IsoplaneConformanceApplication)"
         EntryAssembly="@(IntermediateAssembly)"
+        SourceAnalyzedAssemblies="@(_IsoplaneSourceAnalyzed)"
         AnalyzeDependencies="$(IsoplaneAnalyzeDependencies)" WarnOnNativeImports="$(IsoplaneWarnOnNativeImports)"
         NoWarn="$(NoWarn)" WarningsAsErrors="$(WarningsAsErrors)"
         WarningsNotAsErrors="$(WarningsNotAsErrors)" TreatWarningsAsErrors="$([MSBuild]::ValueOrDefault('$(TreatWarningsAsErrors)', 'false'))" />

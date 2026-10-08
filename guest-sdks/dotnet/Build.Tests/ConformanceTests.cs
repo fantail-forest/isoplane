@@ -73,6 +73,27 @@ public sealed class ConformanceTests : MsbuildTests
             "Disabling advisory diagnostics must not disable metadata validation: " + result.Output);
     }
 
+    [Theory]
+    [InlineData(true, null, false)]
+    [InlineData(true, "RunAnalyzers", true)]
+    [InlineData(true, "RunAnalyzersDuringBuild", true)]
+    [InlineData(false, null, true)]
+    public async Task warnings_the_analyzers_reported_at_the_source_are_not_repeated_for_the_assembly(bool analyzers, string? disabled, bool warns)
+    {
+        var item = new XElement("ItemGroup");
+        if (analyzers) item.Add(new XElement("Analyzer", new XAttribute("Include", Path.Combine(directory, "Isoplane.Analyzers.dll"))));
+        var properties = new List<XElement> { new("Language", "C#") };
+        if (disabled is not null) properties.Add(new XElement(disabled, "false"));
+        var project = DiagnosticProject("application", [.. properties]);
+        var document = XDocument.Load(project);
+        document.Root!.AddFirst(item);
+        document.Save(project);
+        var result = await Run(Msbuild(project, "-t:CoreCompile"));
+        Assert.True(result.Output.Contains("ISOPLANE1002", StringComparison.Ordinal) == warns
+            && result.Output.Contains("ISOPLANE1003", StringComparison.Ordinal) == warns,
+            "The assembly's thread and wait warnings must appear exactly when the analyzers did not report them: " + result.Output);
+    }
+
     [Fact]
     public async Task ordinary_project_references_receive_compatibility_warnings()
     {

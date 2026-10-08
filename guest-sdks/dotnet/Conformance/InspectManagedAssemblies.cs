@@ -16,6 +16,12 @@ public sealed class InspectManagedAssemblies : Microsoft.Build.Utilities.Task
     /// <summary>The application's own assembly, checked for one usable entry.</summary>
     public ITaskItem[] EntryAssembly { get; set; } = [];
 
+    /// <summary>
+    /// Assemblies the Isoplane analyzers checked as source while they compiled. Their thread and
+    /// synchronous-wait diagnostics were reported there, at the calls, and are not repeated.
+    /// </summary>
+    public ITaskItem[] SourceAnalyzedAssemblies { get; set; } = [];
+
     /// <summary>Includes packaged dependencies in advisory diagnostics.</summary>
     public bool AnalyzeDependencies { get; set; }
 
@@ -43,6 +49,7 @@ public sealed class InspectManagedAssemblies : Microsoft.Build.Utilities.Task
     {
         var applicationPaths = ApplicationAssemblies.Select(item => item.GetMetadata("FullPath"))
             .ToHashSet(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+        var sourceAnalyzed = SourceAnalyzedAssemblies.Select(item => item.GetMetadata("FullPath")).ToHashSet(applicationPaths.Comparer);
         foreach (var path in Assemblies.Select(item => item.GetMetadata("FullPath")).Distinct(StringComparer.Ordinal))
         {
             try
@@ -52,6 +59,7 @@ public sealed class InspectManagedAssemblies : Microsoft.Build.Utilities.Task
                 foreach (var diagnostic in AssemblyClosure.Diagnostics([assembly], WarnOnNativeImports))
                 {
                     if (ContainsCode(NoWarn, diagnostic.Code)) continue;
+                    if (diagnostic.Code is "ISOPLANE1002" or "ISOPLANE1003" && sourceAnalyzed.Contains(path)) continue;
                     if (ContainsCode(WarningsAsErrors, diagnostic.Code)
                         || (TreatWarningsAsErrors && !ContainsCode(WarningsNotAsErrors, diagnostic.Code)))
                         Log.LogError(null, diagnostic.Code, null, path, 0, 0, 0, 0, "{0}", diagnostic.Message);
