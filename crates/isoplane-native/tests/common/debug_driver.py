@@ -33,12 +33,15 @@ terminal_mode = mode.startswith("terminal-")
 launched = mode in ("launch", "reload") or terminal_mode
 terminal = None
 terminal_output = queue.Queue()
-if mode == "protocol":
+if mode in ("protocol", "hotreload"):
     root = Path(__file__).resolve().parents[4]
     driver = root / ".build/clr-anycpu/managed/bin/Isoplane.Debugging.Tests/release/Isoplane.Debugging.Tests.dll"
     if not driver.is_file():
         sys.exit("Missing debugger protocol driver; run task managed:tests before testing.")
-    sys.exit(subprocess.run(["dotnet", driver, endpoint, url], timeout=240).returncode)
+    arguments = ["dotnet", driver, endpoint, url]
+    if mode == "hotreload":
+        arguments.extend([root / ".build/clr-anycpu/managed/bin/HotReloadFixture/release", source])
+    sys.exit(subprocess.run(arguments, timeout=240).returncode)
 scenario = {"uncaught": debug_uncaught, "statements": debug_statements, "statement-handlers": debug_statement_handlers, "statement-awaits": debug_statement_awaits, "statement-awaits-optimized": debug_statement_awaits, "features": debug_features, "watchpoints": debug_watchpoints, "watchpoint-steps": debug_watchpoint_steps, "library": debug_library, "async-stack": debug_async_stack, "async-optimized": debug_async_stack}.get(mode)
 if mode.startswith("async-"):
     scenario = debug_async_stack

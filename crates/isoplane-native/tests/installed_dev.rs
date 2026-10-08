@@ -502,3 +502,8 @@ fn moving_execution_across_awaits_preserves_optimized_state_machines() {
 fn moving_execution_within_handlers_preserves_rethrow_and_finally_continuations() {
     debugger::prepared_acceptance("statement-handlers");
 }
+
+#[test]
+fn moving_execution_after_hot_reload_preserves_live_locals_and_executes_updated_code() {
+    debugger::prepared_acceptance("hotreload");
+}

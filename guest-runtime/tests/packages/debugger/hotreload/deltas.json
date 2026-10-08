@@ -1,0 +1,5 @@
+{
+  "changes": [
+    { "document": "../hotreload.cs", "update": "../hotreload.updated.cs.in" }
+  ]
+}

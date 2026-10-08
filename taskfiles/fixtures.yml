@@ -280,14 +280,14 @@ tasks:
           NAME: web
 
   package:debugger:
-    deps: [':runtime', 'debugger:sources']
+    deps: [':runtime', 'debugger:sources', 'debugger:hotreload']
     cmds:
       - task: package:build
         vars:
           NAME: debugger
 
   package:debugger-optimized:
-    deps: [':runtime', 'debugger:sources']
+    deps: [':runtime', 'debugger:sources', 'debugger:hotreload']
     cmds:
       - task: package:build
         vars:
@@ -306,6 +306,28 @@ tasks:
       - .build/clr-anycpu/debugger-sources/async-pooled-composed.cs
     cmds:
       - '"{{.PYTHON}}" guest-runtime/tests/packages/debugger/prepare.py'
+
+  debugger:hotreload:
+    desc: Prepare the shared Hot Reload baseline and compiler deltas
+    run: once
+    deps: [':initialize']
+    sources:
+      - guest-runtime/tests/packages/debugger/hotreload/*
+      - guest-runtime/tests/packages/debugger/hotreload.cs
+      - guest-runtime/tests/packages/debugger/hotreload.updated.cs.in
+      - Directory.Build.props
+      - global.json
+      - nuget.config
+      - taskfiles/fixtures.yml
+    generates:
+      - '{{.MANAGED}}/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.dll'
+      - '{{.MANAGED}}/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.pdb'
+      - '{{.MANAGED}}/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.dll.1.dmeta'
+      - '{{.MANAGED}}/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.dll.1.dil'
+      - '{{.MANAGED}}/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.dll.1.dpdb'
+    cmds:
+      - 'test "{{OS}}" = linux || { echo "Run task fixtures:debugger:hotreload on Linux first." >&2; exit 1; }'
+      - '"{{.DOTNET}}" build guest-runtime/tests/packages/debugger/hotreload/HotReloadFixture.csproj -c Release --artifacts-path "{{.MANAGED}}"'
 
   package:diagnostics:
     deps: [':runtime']

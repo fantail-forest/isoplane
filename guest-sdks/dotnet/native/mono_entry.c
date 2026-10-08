@@ -114,6 +114,7 @@ static void boot(void)
     mono_trace_set_print_handler(on_print);
     mono_trace_set_printerr_handler(on_print);
 #ifdef ISOPLANE_LOCAL_DEBUG
+    if (setenv("DOTNET_MODIFIABLE_ASSEMBLIES", "debug", 1) != 0) fail("cannot enable local Hot Reload");
     mono_wasm_enable_debugging(1);
     char agent[96];
     debug_agent_options(agent, sizeof(agent));

@@ -21,6 +21,7 @@ public static class Application
         Statements.Application.Map(app);
         StatementAwaits.Application.Map(app);
         StatementHandlers.Application.Map(app);
+        app.MapGet("/hotreload", HotReload.Application.Handle);
         Watchpoints.Application.Map(app);
         Uncaught.Application.Map(app);
         Protocol.Application.Map(app);

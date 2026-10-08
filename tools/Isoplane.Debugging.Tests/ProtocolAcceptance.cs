@@ -13,6 +13,8 @@ internal static class ProtocolAcceptance
 
     internal static async Task<int> Main(string[] arguments)
     {
+        if (arguments is [var hotReloadEndpoint, var hotReloadUrl, var deltas, var source])
+            return await HotReloadAcceptance.RunAsync(hotReloadEndpoint, hotReloadUrl, deltas, source);
         if (arguments is not [var endpoint, var url]) return 1;
         using var deadline = new CancellationTokenSource(DeadlineMs);
         using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp) { LingerState = new LingerOption(true, 0) };
@@ -119,7 +121,7 @@ internal static class ProtocolAcceptance
         return 0;
     }
 
-    private static Event UserBreak(VirtualMachine machine)
+    internal static Event UserBreak(VirtualMachine machine)
     {
         var events = machine.GetNextEventSet(DeadlineMs);
         Assert.True(events?.Events.Any(value => value.EventType == EventType.UserBreak) == true, "The real guest must stop at the requested managed location.");

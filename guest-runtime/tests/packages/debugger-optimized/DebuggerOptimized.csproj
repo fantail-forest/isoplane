@@ -4,6 +4,6 @@
   </PropertyGroup>
   <Import Project="../debugger/Debugger.csproj" />
   <ItemGroup>
-    <Compile Include="../debugger/*.cs" />
+    <Compile Include="../debugger/*.cs" Exclude="../debugger/hotreload.cs" />
   </ItemGroup>
 </Project>
