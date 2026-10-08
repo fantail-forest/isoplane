@@ -6,6 +6,16 @@ namespace Isoplane.Debugging;
 
 internal static class StatementFlow
 {
+    internal static bool CanMove(MethodMirror method) => !method.IsConstructor
+        && !method.GetMethodImplementationFlags().HasFlag(System.Reflection.MethodImplAttributes.Synchronized)
+        && (method.Name != "MoveNext" || IsAsyncBody(method))
+        && !method.GetCustomAttributes(false).Any(attribute => attribute.Constructor.DeclaringType.FullName is
+            "System.Runtime.CompilerServices.AsyncStateMachineAttribute" or "System.Runtime.CompilerServices.IteratorStateMachineAttribute");
+
+    internal static bool IsAsyncBody(MethodMirror method) => method.Name == "MoveNext" && !method.IsStatic
+        && method.GetParameters().Length == 0 && method.ReturnType.FullName == "System.Void"
+        && method.DeclaringType.GetInterfaces().Any(type => type.FullName == "System.Runtime.CompilerServices.IAsyncStateMachine");
+
     internal static bool CanMove(MethodDefinition method) => method.HasBody && !method.IsConstructor && !method.IsSynchronized
         && (method.Name != "MoveNext" || IsAsyncBody(method))
         && !method.CustomAttributes.Any(attribute => attribute.AttributeType.FullName is

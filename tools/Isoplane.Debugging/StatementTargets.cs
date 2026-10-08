@@ -1,6 +1,5 @@
 using Microsoft.VisualStudio.Shared.VSCodeDebugProtocol;
 using Microsoft.VisualStudio.Shared.VSCodeDebugProtocol.Messages;
-using Mono.Cecil;
 using Mono.Debugger.Soft;
 using Mono.Debugging.Soft;
 
@@ -19,11 +18,8 @@ internal sealed class StatementTargets(SoftDebuggerSession session, int threadId
         if (!session.CanSetNextStatement) return result;
         var frame = session.VirtualMachine.GetThreads().Single(thread => thread.Id == threadId).GetFrames().FirstOrDefault();
         if (frame?.Method is not { } method || !new GuestCode(session.VirtualMachine).Contains(method)) return result;
-        using var bytes = new MemoryStream(method.DeclaringType.Assembly.GetMetadataBlob());
-        using var metadata = AssemblyDefinition.ReadAssembly(bytes);
-        if (metadata.MainModule.LookupToken(method.MetadataToken) is not MethodDefinition definition) return result;
-        if (StatementFlow.IsAsyncBody(definition) && !IsExecutingAsyncBody(frame)) return result;
-        if (!StatementFlow.CanMove(definition)) return result;
+        if (!StatementFlow.CanMove(method)) return result;
+        if (StatementFlow.IsAsyncBody(method) && !IsExecutingAsyncBody(frame)) return result;
         var body = StatementFlow.Capture(method.GetMethodBody());
         var empty = StatementFlow.ReachableTargets(body, body, frame.ILOffset);
         if (!empty.Contains(frame.ILOffset)) return result;

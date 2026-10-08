@@ -61,7 +61,10 @@ internal static class HotReloadAcceptance
         assembly.ManifestModule.ApplyChanges(metadata, il, symbols);
         Console.WriteLine("The runtime applied the deltas and refreshed debugger metadata.");
         Assert.Contains(storage.GetFields(), field => field.Name == "Added");
-        Assert.Contains(application.GetMethods(), method => method.Name == "Added");
+        var added = Assert.Single(application.GetMethods(), method => method.Name == "Added");
+        Assert.True(StatementFlow.CanMove(added));
+        var addedFlow = StatementFlow.Capture(added.GetMethodBody());
+        Assert.Contains(added.Locations[0].ILOffset, StatementFlow.ReachableTargets(addedFlow, addedFlow, added.Locations[0].ILOffset));
         string currentBody = Convert.ToHexString(frame.Method.GetMethodBody().GetILAsByteArray());
         if (scenario.Method == "HandleUnchanged") Assert.Equal(Convert.ToHexString(originalBody), currentBody);
         else Assert.NotEqual(Convert.ToHexString(originalBody), currentBody);
