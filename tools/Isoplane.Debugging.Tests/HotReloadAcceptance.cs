@@ -1,5 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Reflection.Metadata;
+using System.Reflection.Metadata.Ecma335;
 using Mono.Debugger.Soft;
 using Xunit;
 using Isoplane.Build;
@@ -48,7 +50,7 @@ internal static class HotReloadAcceptance
         var activeFlow = StatementFlow.Capture(frame.Method.GetMethodBody());
         int activeOffset = frame.ILOffset;
         var assembly = frame.Method.DeclaringType.Assembly;
-        await using var compiler = scenario.Method == "Handle" ? await HotReloadCompiler.StartAsync(
+        await using var compiler = scenario.Method != "HandleLayout" ? await HotReloadCompiler.StartAsync(
             Path.Combine(Path.GetDirectoryName(source)!, "hotreload", "HotReloadFixture.csproj"),
             new() { ["Configuration"] = "Release", ["ArtifactsPath"] = Path.GetFullPath("../../..", deltas) },
             new() { ["Debugger.HotReload.Fixture"] = Path.Combine(deltas, "Debugger.HotReload.Fixture.dll") },
@@ -73,6 +75,7 @@ internal static class HotReloadAcceptance
         byte[] futureMetadata = await File.ReadAllBytesAsync(Path.Combine(deltas, "Debugger.HotReload.Fixture.dll.2.dmeta"), deadline.Token);
         Assert.Throws<ArgumentException>(() => assembly.ManifestModule.ApplyChanges(futureMetadata, il, symbols));
         Console.WriteLine("Applying compiler deltas.");
+        int nextVersion = UpdatesMethod(metadata, frame.Method.MetadataToken) ? 2 : 1;
         assembly.ManifestModule.ApplyChanges(metadata, il, symbols);
         if (compiler is not null) await compiler.SendAsync(new("commit"), deadline.Token);
         Assert.Throws<ArgumentException>(() => assembly.ManifestModule.ApplyChanges(metadata, il, symbols));
@@ -111,7 +114,7 @@ internal static class HotReloadAcceptance
             await File.ReadAllBytesAsync(baseline + ".dmeta", deadline.Token),
             await File.ReadAllBytesAsync(baseline + ".dil", deadline.Token),
             await File.ReadAllBytesAsync(baseline + ".dpdb", deadline.Token))
-            : await CompileAsync(compiler, frame, source, "updated-again.cs.in", 2, deadline.Token);
+            : await CompileAsync(compiler, frame, source, "updated-again.cs.in", nextVersion, deadline.Token);
         assembly.ManifestModule.ApplyChanges(second.Metadata, second.Il, second.Symbols);
         if (compiler is not null) await compiler.SendAsync(new("commit"), deadline.Token);
         updatedLine = SourceLine(Path.ChangeExtension(source, "updated-again.cs.in"), scenario.Marker);
@@ -139,7 +142,7 @@ internal static class HotReloadAcceptance
             location.LineNumber - 1, location.ColumnNumber - 1, location.EndLineNumber - 1, location.EndColumnNumber - 1, true, true);
         var edit = new CompilerEdit([statement], [module], frame.VirtualMachine.GetEnCCapabilities().Split(' ', StringSplitOptions.RemoveEmptyEntries),
             [new(source, await File.ReadAllTextAsync(Path.ChangeExtension(source, update), cancellation))]);
-        if (version == 1)
+        if (update == "updated.cs.in")
         {
             string original = await File.ReadAllTextAsync(source, cancellation);
             var unchanged = await compiler.SendAsync(new("update", edit with { Sources = [new(source, original)] }), cancellation);
@@ -151,7 +154,7 @@ internal static class HotReloadAcceptance
             Assert.NotEmpty(invalid.Diagnostics);
             Assert.False(invalid.Pending);
         }
-        if (version == 1)
+        if (update == "updated.cs.in")
         {
             var discarded = await compiler.SendAsync(new("update", edit), cancellation);
             Assert.True(discarded.Pending);
@@ -165,6 +168,14 @@ internal static class HotReloadAcceptance
         var result = Assert.Single(reply.Updates);
         Assert.Equal(module, result.Module);
         return result;
+    }
+
+    private static bool UpdatesMethod(byte[] metadata, int token)
+    {
+        using var stream = new MemoryStream(metadata, writable: false);
+        using var provider = MetadataReaderProvider.FromMetadataStream(stream);
+        return provider.GetMetadataReader().GetEditAndContinueMapEntries()
+            .Any(handle => handle.Kind == HandleKind.MethodDefinition && MetadataTokens.GetToken(handle) == token);
     }
 
     private sealed record Scenario(string Method, string Marker, int UpdatedValue, string Response);
