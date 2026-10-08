@@ -20,7 +20,8 @@ async fn an_installed_dotnet_tool_runs_and_reloads_the_aspnet_template() {
     assert_eq!(
         response.status(),
         200,
-        "the installed ASP.NET template must serve successfully through the local sandbox"
+        "the installed ASP.NET template must serve successfully through the local sandbox:\n{}",
+        dev.diagnostics()
     );
     assert_eq!(
         response.text().await.unwrap(),
@@ -78,7 +79,8 @@ async fn an_installed_application_resumes_ordinary_timers() {
     assert_eq!(
         response.status(),
         200,
-        "the shared runtime must serve the unchanged installed template"
+        "the shared runtime must serve the unchanged installed template:\n{}",
+        dev.diagnostics()
     );
     assert_eq!(
         response.text().await.unwrap(),
@@ -171,7 +173,8 @@ async fn an_installed_template_streams_an_upload_through_the_shared_runtime() {
     assert_eq!(
         response.status(),
         200,
-        "the shared runtime must route an upload to the package's ASP.NET endpoint"
+        "the shared runtime must route an upload to the package's ASP.NET endpoint:\n{}",
+        dev.diagnostics()
     );
     assert_eq!(
         response.text().await.unwrap(),

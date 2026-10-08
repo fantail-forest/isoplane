@@ -185,9 +185,10 @@ fn allocate_snapshot(file: &File, bytes: u64) -> io::Result<()> {
     }
 }
 
+#[tracing::instrument(skip(file))]
 fn materialize_snapshot(file: &File, bytes: u64) -> io::Result<()> {
     // Filesystems without preallocation still need real blocks, not sparse length.
-    let mut writer = io::BufWriter::new(file);
+    let mut writer = io::BufWriter::with_capacity(1024 * 1024, file);
     io::copy(&mut io::repeat(0).take(bytes), &mut writer)?;
     writer.flush()?;
     flush_snapshot(file)
@@ -206,11 +207,13 @@ fn flush_snapshot(file: &File) -> io::Result<()> {
 }
 
 #[cfg(not(target_os = "macos"))]
+#[tracing::instrument(skip(file))]
 fn preallocate_snapshot(file: &File, bytes: u64) -> io::Result<()> {
     file.allocate(bytes)
 }
 
 #[cfg(target_os = "macos")]
+#[tracing::instrument(skip(file))]
 fn preallocate_snapshot(file: &File, bytes: u64) -> io::Result<()> {
     use nix::{fcntl, libc};
 
@@ -308,7 +311,7 @@ mod tests {
     fn materialized_reservations_own_blocks_and_release_them_on_drop() {
         let root = tempfile::tempdir().expect("create snapshot directory");
         let storage = LocalSnapshotStorage::new(root.path()).expect("open snapshot storage");
-        let capacity = SnapshotBytes(32_769);
+        let capacity = SnapshotBytes(2 * 1024 * 1024 + 1);
         let mut reservation = storage
             .reserve_with(capacity, materialize_snapshot)
             .expect("materialized capacity must pass physical block verification");
