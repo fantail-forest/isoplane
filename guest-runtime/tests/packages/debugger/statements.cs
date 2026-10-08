@@ -1,5 +1,6 @@
 using System;
-using System.Threading.Tasks;
+using System.Runtime.CompilerServices;
+using System.Threading;
 using Microsoft.AspNetCore.Builder;
 
 namespace Debugger.Statements;
@@ -13,7 +14,31 @@ internal static class Application
     private static string Handle()
     {
         int result = Protected(Compute());
-        return finished ? $"{result}:{Crossed()}" : "missing cleanup";
+        int crossed = Crossed();
+        var sample = new Sample();
+        int synchronized = sample.Run();
+        return finished && !Monitor.IsEntered(sample) ? $"{result}:{crossed}:{synchronized}" : "missing cleanup";
+    }
+
+    private sealed class Sample
+    {
+        private readonly int value;
+
+        internal Sample()
+        {
+            int constructed = 3;
+            constructed += 100;
+            value = constructed;
+        }
+
+        [MethodImpl(MethodImplOptions.Synchronized)]
+        internal int Run()
+        {
+            int synchronized = value;
+            synchronized += 100;
+            synchronized += 10;
+            return Monitor.IsEntered(this) ? synchronized : -1;
+        }
     }
 
     private static int Protected(int answer)

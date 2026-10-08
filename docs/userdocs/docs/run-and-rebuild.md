@@ -186,8 +186,9 @@ active exception and pending `finally` continuation. They cannot enter or leave
 handlers, or move execution inside exception filters. Active C# async frames support jumps
 across `await` statements within those handler boundaries, including jumping
 backward to await again. Suspended async callers do not have a live instruction
-pointer to move. Constructors, iterator methods, and synchronized methods do
-not offer jump targets.
+pointer to move. Constructor bodies and synchronized methods support statement
+jumps; a synchronized method retains its monitor until ordinary method exit.
+Iterator methods do not offer jump targets.
 
 Use ordinary .NET unit tests for isolated application logic and
 [sandbox integration tests](test-an-application.md) to exercise platform behavior.

@@ -1,13 +1,13 @@
 """Move the next statement through DAP and observe the resulting guest response."""
 from pathlib import Path
 
-EXPECTED_RESPONSE = b'11:112'
+EXPECTED_RESPONSE = b'11:112:13'
 
 
 def locations(source):
     lines = Path(source).read_text().splitlines()
     return {text: next(index + 1 for index, line in enumerate(lines) if text in line)
-            for text in ('answer += 10;', 'answer *= 2;', 'return answer;', 'private static string Handle()', 'int saved = answer;', 'saved += 100;', 'return saved;', 'finally { finished = true; }', 'crossings += 1;', 'crossings += 100;', 'crossings += 1000;', 'return crossings;')}
+            for text in ('answer += 10;', 'answer *= 2;', 'return answer;', 'private static string Handle()', 'int saved = answer;', 'saved += 100;', 'return saved;', 'finally { finished = true; }', 'crossings += 1;', 'crossings += 100;', 'crossings += 1000;', 'return crossings;', 'constructed += 100;', 'value = constructed;', 'synchronized += 100;', 'synchronized += 10;')}
 
 
 def configure(source, send, response):
@@ -75,7 +75,8 @@ def exercise(source, send, response, until):
     thread, frame = stop()
     assert frame['line'] == lines['crossings += 1;']
     response(send('setBreakpoints', {'source': {'path': source}, 'breakpoints': [
-        {'line': lines['crossings += 1000;']}]}))
+        {'line': lines['crossings += 1000;']},
+        {'line': lines['constructed += 100;']}, {'line': lines['synchronized += 100;']}]}))
     response(send('next', {'threadId': thread}))
     thread, frame = stop()
     assert frame['line'] == lines['crossings += 100;']
@@ -98,4 +99,22 @@ def exercise(source, send, response, until):
     response(send('goto', {'threadId': thread, 'targetId': destination[0]['id']}))
     thread, frame = stop()
     assert frame['line'] == lines['return crossings;']
+    response(send('continue', {'threadId': thread}))
+
+    thread, frame = stop()
+    assert frame['line'] == lines['constructed += 100;']
+    destination = target('value = constructed;')
+    assert destination, 'constructor bodies must offer statement targets'
+    response(send('goto', {'threadId': thread, 'targetId': destination[0]['id']}))
+    thread, frame = stop()
+    assert frame['line'] == lines['value = constructed;']
+    assert response(send('evaluate', {'expression': 'constructed', 'frameId': frame['id']}))['body']['result'] == '3'
+    response(send('continue', {'threadId': thread}))
+    thread, frame = stop()
+    assert frame['line'] == lines['synchronized += 100;']
+    destination = target('synchronized += 10;')
+    assert destination, 'synchronized methods must offer statement targets without releasing their monitor'
+    response(send('goto', {'threadId': thread, 'targetId': destination[0]['id']}))
+    thread, frame = stop()
+    assert frame['line'] == lines['synchronized += 10;']
     response(send('continue', {'threadId': thread}))
