@@ -46,6 +46,12 @@ public partial class ModuleMirror
 
 public partial class MethodMirror
 {
+    private bool? hasVariableArguments;
+
+    /// <summary>Whether this method accepts a variable number of arguments.</summary>
+    public bool HasVariableArguments => hasVariableArguments ??= new SignatureHeader(checked((byte)vm.conn.Method_GetParamInfo(id).call_conv))
+        .CallingConvention == SignatureCallingConvention.VarArgs;
+
     internal void RefreshAfterMetadataUpdate()
     {
         SetUpdatedByEnC();
@@ -53,6 +59,7 @@ public partial class MethodMirror
         body = null;
         info = null;
         param_info = null;
+        hasVariableArguments = null;
         ret_param = null;
         cattrs = null;
 #if ENABLE_CECIL

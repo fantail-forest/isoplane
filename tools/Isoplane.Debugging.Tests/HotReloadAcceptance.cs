@@ -44,6 +44,8 @@ internal static class HotReloadAcceptance
         int statement = SourceLine(source, scenario.Marker);
         Assert.Contains(frame.Method.Locations, location => location.LineNumber == statement);
         var originalBody = frame.Method.GetMethodBody().GetILAsByteArray();
+        var activeFlow = StatementFlow.Capture(frame.Method.GetMethodBody());
+        int activeOffset = frame.ILOffset;
         var assembly = frame.Method.DeclaringType.Assembly;
         var application = assembly.GetType("Debugger.HotReload.Application");
         var storage = assembly.GetType("Debugger.HotReload.Storage");
@@ -65,6 +67,8 @@ internal static class HotReloadAcceptance
         else Assert.NotEqual(Convert.ToHexString(originalBody), currentBody);
         int updatedLine = SourceLine(Path.ChangeExtension(source, "updated.cs.in"), scenario.Marker);
         var destination = frame.Method.Locations.Single(location => location.LineNumber == updatedLine);
+        var updatedFlow = StatementFlow.Capture(frame.Method.GetMethodBody());
+        Assert.Contains(destination.ILOffset, StatementFlow.ReachableTargets(activeFlow, updatedFlow, activeOffset));
         if (scenario.Method == "HandleLayout")
         {
             Assert.Throws<ArgumentException>(() => stopped.Thread.SetIP(destination));
