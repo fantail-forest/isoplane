@@ -27,7 +27,7 @@ internal static class HotReloadAcceptance
         using var cancelTransport = deadline.Token.Register(socket.Dispose);
         using var http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
         await using var owner = new GuestSession();
-        var (transport, _) = await owner.ConnectAsync(IPEndPoint.Parse(endpoint)).WaitAsync(deadline.Token);
+        var (transport, package) = await owner.ConnectAsync(IPEndPoint.Parse(endpoint)).WaitAsync(deadline.Token);
         Console.WriteLine("The debug session allocated its guest transport.");
         var connecting = VirtualMachineManager.ConnectInternalAsync(socket, null, transport, null);
         var response = http.GetStringAsync(url, deadline.Token);
@@ -52,10 +52,11 @@ internal static class HotReloadAcceptance
         var activeFlow = StatementFlow.Capture(frame.Method.GetMethodBody());
         int activeOffset = frame.ILOffset;
         var assembly = frame.Method.DeclaringType.Assembly;
-        await using var compiler = scenario.Method != "HandleLayout" ? await HotReloadCompiler.StartAsync(
+        using var compilerBaseline = scenario.Method != "HandleLayout" ? HotReloadBaseline.Read(package) : null;
+        await using var compiler = compilerBaseline is not null ? await HotReloadCompiler.StartAsync(
             Path.Combine(Path.GetDirectoryName(source)!, "hotreload", "HotReloadFixture.csproj"),
             new() { ["Configuration"] = "Release", ["ArtifactsPath"] = Path.GetFullPath("../../..", deltas) },
-            new() { ["Debugger.HotReload.Fixture"] = Path.Combine(deltas, "Debugger.HotReload.Fixture.dll") },
+            compilerBaseline.Assemblies,
             machine.GetEnCCapabilities().Split(' ', StringSplitOptions.RemoveEmptyEntries), deadline.Token) : null;
         var application = assembly.GetType("Debugger.HotReload.Application");
         var storage = assembly.GetType("Debugger.HotReload.Storage");
