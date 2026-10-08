@@ -13,7 +13,7 @@
     <Task>
       <Using Namespace="System.IO" />
       <Code Type="Fragment" Language="cs"><![CDATA[
-        var source = File.ReadAllText(Source);
+        var source = File.ReadAllText(Source).Replace("\r\n", "\n");
         var declaration = Match;
         if (source.IndexOf(declaration, StringComparison.Ordinal) < 0
             || source.IndexOf(declaration, StringComparison.Ordinal) != source.LastIndexOf(declaration, StringComparison.Ordinal))
@@ -29,16 +29,23 @@
     </Task>
   </UsingTask>
   <Target Name="IsoplanePrepareDebuggerSources" BeforeTargets="CoreCompile" Condition="'$(MSBuildProjectName)' == 'Mono.Debugger.Soft'">
-    <IsoplanePrepareDebuggerSource Source="Mono.Debugger.Soft/Connection.cs" Destination="$(IntermediateOutputPath)Isoplane/Connection.cs" Match="class Connection" Replacement="partial class Connection" />
+    <IsoplanePrepareDebuggerSource Source="Mono.Debugger.Soft/Connection.cs" Destination="$(IntermediateOutputPath)Isoplane/Connection.partial.cs" Match="class Connection" Replacement="partial class Connection" />
+    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/Connection.partial.cs" Destination="$(IntermediateOutputPath)Isoplane/Connection.callback.cs" Match="Action&lt;FrameInfo[]&gt; resultCallaback)" Replacement="Action&lt;FrameInfo[]&gt; resultCallaback, Action&lt;Exception&gt; errorCallback)" />
+    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/Connection.callback.cs" Destination="$(IntermediateOutputPath)Isoplane/Connection.cs" Match="resultCallaback (frames);&#10;&#9;&#9;&#9;}, 1);" Replacement="resultCallaback (frames);&#10;&#9;&#9;&#9;}, 1, errorCallback);" />
     <IsoplanePrepareDebuggerSource Source="Mono.Debugger.Soft/VirtualMachine.cs" Destination="$(IntermediateOutputPath)Isoplane/VirtualMachine.cs" Match="class VirtualMachine : Mirror" Replacement="partial class VirtualMachine : Mirror" />
     <IsoplanePrepareDebuggerSource Source="Mono.Debugger.Soft/ModuleMirror.cs" Destination="$(IntermediateOutputPath)Isoplane/ModuleMirror.cs" Match="class ModuleMirror : Mirror" Replacement="partial class ModuleMirror : Mirror" />
-    <IsoplanePrepareDebuggerSource Source="Mono.Debugger.Soft/ThreadMirror.cs" Destination="$(IntermediateOutputPath)Isoplane/ThreadMirror.cs"
+    <IsoplanePrepareDebuggerSource Source="Mono.Debugger.Soft/ThreadMirror.cs" Destination="$(IntermediateOutputPath)Isoplane/ThreadMirror.errors.cs"
       Match="throw new ArgumentException (&quot;loc doesn't refer to a location in the current method of this thread.&quot;, &quot;loc&quot;);"
       Replacement="throw new ArgumentException (string.IsNullOrEmpty (ex.ErrorMessage) ? &quot;loc doesn't refer to a location in the current method of this thread.&quot; : ex.ErrorMessage, &quot;loc&quot;, ex);" />
+    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/ThreadMirror.errors.cs" Destination="$(IntermediateOutputPath)Isoplane/ThreadMirror.partial.cs" Match="class ThreadMirror : ObjectMirror" Replacement="partial class ThreadMirror : ObjectMirror" />
+    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/ThreadMirror.partial.cs" Destination="$(IntermediateOutputPath)Isoplane/ThreadMirror.fetch.cs" Match="vm.conn.Thread_GetFrameInfo (id, 0, -1, (frame_info) =&gt;" Replacement="FetchFrameInfo ((frame_info) =&gt;" />
+    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/ThreadMirror.fetch.cs" Destination="$(IntermediateOutputPath)Isoplane/ThreadMirror.reset.cs" Match="fetchingEvent.Reset ();" Replacement="fetchingEvent.Reset (); frameFetchFailure = null;" />
+    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/ThreadMirror.reset.cs" Destination="$(IntermediateOutputPath)Isoplane/ThreadMirror.result.cs" Match="return frames;" Replacement="frameFetchFailure?.Throw (); return frames;" />
+    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/ThreadMirror.result.cs" Destination="$(IntermediateOutputPath)Isoplane/ThreadMirror.cs" Match="InvalidateFrames();&#10;&#9;&#9;&#9;&#9;&#9;FetchFrames(true);" Replacement="InvalidateFrames();" />
     <ItemGroup>
       <_IsoplaneDebuggerOriginal Include="Mono.Debugger.Soft/Connection.cs;Mono.Debugger.Soft/VirtualMachine.cs;Mono.Debugger.Soft/ThreadMirror.cs;Mono.Debugger.Soft/ModuleMirror.cs" />
       <Compile Remove="@(_IsoplaneDebuggerOriginal)" MatchOnMetadata="FullPath" MatchOnMetadataOptions="PathLike" />
-      <Compile Include="$(IntermediateOutputPath)Isoplane/Connection.cs;$(IntermediateOutputPath)Isoplane/VirtualMachine.cs;$(IntermediateOutputPath)Isoplane/ThreadMirror.cs;$(IntermediateOutputPath)Isoplane/ModuleMirror.cs;$(MSBuildThisFileDirectory)ManagedDataBreakpoint.cs;$(MSBuildThisFileDirectory)MetadataUpdates.cs" />
+      <Compile Include="$(IntermediateOutputPath)Isoplane/Connection.cs;$(IntermediateOutputPath)Isoplane/VirtualMachine.cs;$(IntermediateOutputPath)Isoplane/ThreadMirror.cs;$(IntermediateOutputPath)Isoplane/ModuleMirror.cs;$(MSBuildThisFileDirectory)ManagedDataBreakpoint.cs;$(MSBuildThisFileDirectory)MetadataUpdates.cs;$(MSBuildThisFileDirectory)FrameRequests.cs" />
     </ItemGroup>
   </Target>
   <Target Name="IsoplaneRefreshDebuggerAttributeSources" BeforeTargets="CoreCompile" Condition="'$(MSBuildProjectName)' == 'Mono.Debugger.Soft'">

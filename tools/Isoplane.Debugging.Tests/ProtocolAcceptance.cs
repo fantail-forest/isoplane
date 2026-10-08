@@ -18,6 +18,7 @@ internal static class ProtocolAcceptance
         if (arguments is not [var endpoint, var url]) return 1;
         using var deadline = new CancellationTokenSource(DeadlineMs);
         using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp) { LingerState = new LingerOption(true, 0) };
+        using var cancelTransport = deadline.Token.Register(socket.Dispose);
         using var http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
         await using var owner = new Isoplane.Debugging.GuestSession();
         var (transportEndpoint, _) = await owner.ConnectAsync(IPEndPoint.Parse(endpoint)).WaitAsync(deadline.Token);
@@ -107,6 +108,7 @@ internal static class ProtocolAcceptance
         machine.Resume();
         Reject(() => wire.Send(("WriteByte", wire.Set), ("WriteInt", 0)));
         Reject(() => wire.Frames(changed.Thread.Id));
+        Reject(() => changed.Thread.GetFrames());
         machine.Suspend();
         var application = changed.Thread.GetFrames().First(value => value.Method.Name == "Handle").Method.DeclaringType;
         application.SetValue(application.GetField("ReleaseProtocolProbe"), machine.CreateValue(true));
