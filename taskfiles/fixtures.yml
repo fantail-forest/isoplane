@@ -334,7 +334,7 @@ tasks:
       - '{{.MANAGED}}/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.dll.2.dpdb'
     cmds:
       - 'test "{{OS}}" = linux || { echo "Run task fixtures:debugger:hotreload on Linux first." >&2; exit 1; }'
-      - '"{{.DOTNET}}" build guest-runtime/tests/packages/debugger/hotreload/HotReloadFixture.csproj -c Release --artifacts-path "{{.MANAGED}}"'
+      - '"{{.DOTNET}}" build guest-runtime/tests/packages/debugger/hotreload/HotReloadFixture.csproj -c Release -p:DeltaScript=deltas.json --artifacts-path "{{.MANAGED}}"'
 
   package:diagnostics:
     deps: [':runtime']
