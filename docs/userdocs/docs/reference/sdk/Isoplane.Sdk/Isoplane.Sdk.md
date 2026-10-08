@@ -15,11 +15,9 @@ mdx:
 | class [Ctx](./Isoplane/Ctx.md) | The per-dispatch context. |
 | static class [DeploymentConfiguration](./Isoplane/DeploymentConfiguration.md) | Non-secret settings fixed for an application version at deployment. |
 | class [HttpHandlerAttribute](./Isoplane/HttpHandlerAttribute.md) | Marks the static method that handles every HTTP request to an application that has no entry point. |
-| interface [IIsoplaneRouter](./Isoplane/IIsoplaneRouter.md) | What routes a decoded dispatch to guest code. `Exports` is generic over one of these, so the SDK names no tenant type. |
 | static class [Initialization](./Isoplane/Initialization.md) | Initializes reusable application state before its deployment template is captured. |
 | class [InitializerAttribute](./Isoplane/InitializerAttribute.md) | Marks the static method that prepares reusable state before the application's template is captured. |
 | class [IsoplaneLoggerProvider](./Isoplane/IsoplaneLoggerProvider.md) | Writes .NET application logs through the sandbox's bounded host logging capability. |
-| interface [IStreamingHttpRouter](./Isoplane/IStreamingHttpRouter.md) | Explicitly selects HTTP routes that consume uploads without SDK buffering. |
 | class [Request](./Isoplane/Request.md) | An HTTP request delivered by the host, for any HTTP method. |
 | class [RequestHead](./Isoplane/RequestHead.md) | HTTP request metadata, independent of whether the body is buffered or streamed. |
 | class [Response](./Isoplane/Response.md) | A buffered or completed streaming response. |
