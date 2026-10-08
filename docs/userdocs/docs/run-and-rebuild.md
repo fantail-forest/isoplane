@@ -21,7 +21,13 @@ state. See [application packages](execution-modes.md) for the execution model.
 ## Control compatibility warnings
 
 Thread-start (`ISOPLANE1002`) and synchronous-wait (`ISOPLANE1003`) warnings
-cover your application and project references by default. Packaged dependencies
+cover your application and project references by default. In your application's
+own C# code they appear in the editor on the call itself. Where a wait has an
+asynchronous counterpart, a quick fix replaces it: `Thread.Sleep` with
+`await Task.Delay`, `task.Wait()` with `await task`, `Task.WaitAll` with
+`await Task.WhenAll`, and `SemaphoreSlim.Wait` with `await WaitAsync`. Project
+references are reported from their compiled assemblies when the application
+builds. Packaged dependencies
 are inspected for valid metadata but do not produce these advisory warnings.
 Native-import declarations (`ISOPLANE1001`) are silent by default because a
 declaration alone does not establish that an unsupported call will execute.

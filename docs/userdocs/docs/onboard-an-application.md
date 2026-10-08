@@ -38,8 +38,11 @@ await app.RunAsync();
 
 - `IsoplaneHosting.CreateBuilder(args)` replaces `WebApplication.CreateBuilder(args)`.
 - The file ends with `await app.RunAsync()`. The synchronous `app.Run()` blocks
-  until shutdown, which a sandboxed application cannot do, so the build rejects it
-  with `ISOPLANE1005`.
+  until shutdown, which a sandboxed application cannot do. The editor marks the
+  call as the error `ISOPLANE1020` and offers a quick fix that replaces it with
+  `await app.RunAsync()`, making an explicit `void Main` asynchronous when there
+  is one. A `RunAsync` whose task is discarded or blocked on is `ISOPLANE1021`,
+  with the same fix.
 
 Everything between stays as it was: service registrations before
 `builder.Build()`, middleware and endpoints after it.

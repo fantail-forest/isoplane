@@ -36,6 +36,10 @@
   <ItemGroup>
     <ProjectReference Include="Conformance/Conformance.csproj" ReferenceOutputAssembly="false" PrivateAssets="all"
                       GlobalPropertiesToRemove="RuntimeIdentifier;RuntimeIdentifiers;PublishAot;SelfContained" />
+    <!-- Built here and packed under analyzers/, where NuGet hands them to the compiler and to editors. -->
+    <ProjectReference Include="Analyzers/Isoplane.Analyzers.csproj;Analyzers.CodeFixes/Isoplane.Analyzers.CodeFixes.csproj"
+                      ReferenceOutputAssembly="false" PrivateAssets="all"
+                      GlobalPropertiesToRemove="RuntimeIdentifier;RuntimeIdentifiers;PublishAot;SelfContained" />
     <None Update="PackageReadme.md" Pack="true" PackagePath="/" />
     <None Include="MSBuild/Sdk.targets" Pack="true" PackagePath="Sdk/" />
     <None Include="Build/Isoplane.ManagedBundle.*;Build/Isoplane.Conformance.targets;Build/Isoplane.Run.targets" Pack="true" PackagePath="tools/Build/" />
@@ -93,4 +97,5 @@
   </Target>
   <Import Project="../../licenses/SdkPackage.props" />
   <Import Project="Conformance/Pack.targets" />
+  <Import Project="Analyzers/Pack.targets" />
 </Project>

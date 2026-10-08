@@ -13,7 +13,8 @@
     <InternalsVisibleTo Include="Isoplane.AspNetCore.Tests" />
     <InternalsVisibleTo Include="Isoplane.MonoRuntime" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
-    <ProjectReference Include="../Isoplane.Sdk.csproj" />
+    <!-- A dependency's analyzers are private by default; these check ASP.NET applications too. -->
+    <ProjectReference Include="../Isoplane.Sdk.csproj" PrivateAssets="contentfiles;build" />
     <ProjectReference Include="../Conformance/Conformance.csproj" ReferenceOutputAssembly="false" PrivateAssets="all"
                       GlobalPropertiesToRemove="RuntimeIdentifier;RuntimeIdentifiers;PublishAot;SelfContained" />
     <None Update="README.md" Pack="true" PackagePath="/" />

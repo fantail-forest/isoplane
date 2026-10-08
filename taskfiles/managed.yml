@@ -49,6 +49,7 @@ tasks:
       - '{{.MANAGED}}/bin/Isoplane.Testing.Tests/release/Isoplane.Testing.Tests.dll'
       - '{{.MANAGED}}/bin/Build.Tests/release/Build.Tests.dll'
       - '{{.MANAGED}}/bin/Isoplane.AspNetCore.Tests/release/Isoplane.AspNetCore.Tests.dll'
+      - '{{.MANAGED}}/bin/Isoplane.Analyzers.Tests/release/Isoplane.Analyzers.Tests.dll'
     cmds:
       - 'test "{{OS}}" = linux || { echo "Run task managed:tests on Linux first." >&2; exit 1; }'
       - '"{{.DOTNET}}" build Isoplane.slnx -c Release -p:ShouldUnsetParentConfigurationAndPlatform=false -p:SourceRevisionId={{.REVISION}} --artifacts-path "{{.MANAGED}}" -p:IsoplaneManagedOnly=true -p:UseAppHost=false'

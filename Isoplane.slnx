@@ -10,4 +10,7 @@
   <Project Path="tools/Isoplane.Testing.Tests/Isoplane.Testing.Tests.csproj" />
   <Project Path="guest-sdks/dotnet/Build.Tests/Build.Tests.csproj" />
   <Project Path="guest-sdks/dotnet/AspNetCore.Tests/Isoplane.AspNetCore.Tests.csproj" />
+  <Project Path="guest-sdks/dotnet/Analyzers/Isoplane.Analyzers.csproj" />
+  <Project Path="guest-sdks/dotnet/Analyzers.CodeFixes/Isoplane.Analyzers.CodeFixes.csproj" />
+  <Project Path="guest-sdks/dotnet/Analyzers.Tests/Isoplane.Analyzers.Tests.csproj" />
 </Solution>

@@ -1,0 +1,14 @@
+<Project>
+  <PropertyGroup>
+    <TargetsForTfmSpecificContentInPackage>$(TargetsForTfmSpecificContentInPackage);PackAnalyzerAssemblies</TargetsForTfmSpecificContentInPackage>
+  </PropertyGroup>
+  <Target Name="PackAnalyzerAssemblies">
+    <MSBuild Projects="$(MSBuildThisFileDirectory)Isoplane.Analyzers.csproj;$(MSBuildThisFileDirectory)../Analyzers.CodeFixes/Isoplane.Analyzers.CodeFixes.csproj"
+             Targets="GetTargetPath" RemoveProperties="RuntimeIdentifier;RuntimeIdentifiers;PublishAot;SelfContained;TargetFramework">
+      <Output TaskParameter="TargetOutputs" ItemName="_AnalyzerAssembly" />
+    </MSBuild>
+    <ItemGroup>
+      <TfmSpecificPackageFile Include="@(_AnalyzerAssembly)" PackagePath="analyzers/dotnet/cs/" />
+    </ItemGroup>
+  </Target>
+</Project>

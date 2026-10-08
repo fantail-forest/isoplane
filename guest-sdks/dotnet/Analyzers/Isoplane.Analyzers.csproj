@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- The compiler and editors load analyzers into their own processes, which is why this targets netstandard2.0. -->
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Isoplane.Analyzers</RootNamespace>
+    <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+    <IsRoslynComponent>true</IsRoslynComponent>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsPackable>false</IsPackable>
+    <Description>Compile-time checks of the methods an Isoplane application marks as its entries.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- An analyzer runs on whichever compiler builds the application, so it is built against an older one. -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" PrivateAssets="all" />
+    <!-- The rules each release added, which the analyzer SDK checks against the descriptors in code. -->
+    <AdditionalFiles Include="AnalyzerReleases.Shipped.md;AnalyzerReleases.Unshipped.md" />
+    <InternalsVisibleTo Include="Isoplane.Analyzers.CodeFixes" />
+    <InternalsVisibleTo Include="Isoplane.Analyzers.Tests" />
+  </ItemGroup>
+</Project>
