@@ -48,7 +48,7 @@ public sealed class StatementFlowTests
     }
 
     [Fact]
-    public void async_state_machines_cannot_move_execution()
+    public void unrecognized_move_next_methods_cannot_move_execution()
     {
         using var module = ModuleDefinition.CreateModule("Statements", ModuleKind.Dll);
         var method = Method(module);

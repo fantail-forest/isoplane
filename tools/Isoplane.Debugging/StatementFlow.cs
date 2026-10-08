@@ -8,7 +8,7 @@ internal static class StatementFlow
     internal static HashSet<int> EmptyStackOffsets(MethodDefinition method)
     {
         if (!method.HasBody || method.IsConstructor || method.IsSynchronized
-            || method.Name == "MoveNext" || method.CustomAttributes.Any(attribute => attribute.AttributeType.FullName is
+            || method.Name == "MoveNext" && !IsAsyncBody(method) || method.CustomAttributes.Any(attribute => attribute.AttributeType.FullName is
                 "System.Runtime.CompilerServices.AsyncStateMachineAttribute" or "System.Runtime.CompilerServices.IteratorStateMachineAttribute"))
             return [];
         var instructions = method.Body.Instructions;
@@ -69,6 +69,14 @@ internal static class StatementFlow
         return depths.Where(item => item.Value == 0 && item.Key.Previous?.OpCode.OpCodeType != OpCodeType.Prefix)
             .Select(item => item.Key.Offset).ToHashSet();
     }
+
+    internal static bool IsAsyncBody(MethodDefinition method) => method.Name == "MoveNext"
+        && method.DeclaringType.DeclaringType is { } owner
+        && owner.Methods.Any(candidate => candidate.CustomAttributes.Any(attribute =>
+            attribute.AttributeType.FullName == "System.Runtime.CompilerServices.AsyncStateMachineAttribute"
+            && attribute.ConstructorArguments.Count == 1
+            && attribute.ConstructorArguments[0].Value is TypeReference state
+            && state.FullName == method.DeclaringType.FullName));
 
     internal static HashSet<int> ReachableTargets(MethodDefinition method, int currentOffset)
     {

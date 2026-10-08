@@ -170,8 +170,11 @@ statement in the same method without executing the intervening statements or
 resetting locals. The debugger offers only locations with an empty evaluation
 stack. Jumps can stay within a `try` region, or outside exception regions in a
 method that contains them. They cannot cross exception-region boundaries or
-move execution inside exception handlers. Constructors, async and iterator
-methods, and synchronized methods do not offer jump targets.
+move execution inside exception handlers. Active C# async frames support jumps
+across `await` statements within those region boundaries, including jumping
+backward to await again. Suspended async callers do not have a live instruction
+pointer to move. Constructors, iterator methods, and synchronized methods do
+not offer jump targets.
 
 Use ordinary .NET unit tests for isolated application logic and
 [sandbox integration tests](test-an-application.md) to exercise platform behavior.

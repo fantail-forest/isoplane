@@ -1,6 +1,7 @@
 using Microsoft.VisualStudio.Shared.VSCodeDebugProtocol;
 using Microsoft.VisualStudio.Shared.VSCodeDebugProtocol.Messages;
 using Mono.Cecil;
+using Mono.Debugger.Soft;
 using Mono.Debugging.Soft;
 
 namespace Isoplane.Debugging;
@@ -21,6 +22,7 @@ internal sealed class StatementTargets(SoftDebuggerSession session, int threadId
         using var bytes = new MemoryStream(method.DeclaringType.Assembly.GetMetadataBlob());
         using var metadata = AssemblyDefinition.ReadAssembly(bytes);
         if (metadata.MainModule.LookupToken(method.MetadataToken) is not MethodDefinition definition) return result;
+        if (StatementFlow.IsAsyncBody(definition) && !IsExecutingAsyncBody(frame)) return result;
         var empty = StatementFlow.ReachableTargets(definition, frame.ILOffset);
         if (!empty.Contains(frame.ILOffset)) return result;
         var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
@@ -33,6 +35,21 @@ internal sealed class StatementTargets(SoftDebuggerSession session, int threadId
                 Line = location.LineNumber, Column = Math.Max(1, location.ColumnNumber) });
         }
         return result;
+    }
+
+    private static bool IsExecutingAsyncBody(Mono.Debugger.Soft.StackFrame frame)
+    {
+        var field = frame.Method.DeclaringType.GetField("<>1__state");
+        if (field is null) return false;
+        var state = frame.GetThis() switch
+        {
+            ObjectMirror instance => instance.GetValue(field),
+            StructMirror instance => instance[field.Name],
+            _ => null
+        };
+        // Roslyn uses -1 while executing user code, nonnegative states while awaiting,
+        // and -2 after completion; only the executing state has an IP we can redirect.
+        return state is PrimitiveValue { Value: -1 };
     }
 
     internal Mono.Debugging.Client.TargetEventArgs Move(int targetId)

@@ -19,6 +19,7 @@ public static class Application
         Composed.Application.Map(app);
         Features.Application.Map(app);
         Statements.Application.Map(app);
+        StatementAwaits.Application.Map(app);
         Watchpoints.Application.Map(app);
         Uncaught.Application.Map(app);
         Protocol.Application.Map(app);

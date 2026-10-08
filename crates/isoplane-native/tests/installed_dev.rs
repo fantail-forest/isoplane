@@ -487,3 +487,13 @@ fn an_editor_terminal_launch_serves_requests_and_stops_with_the_debugger() {
 fn an_editor_terminal_survives_detach_and_owns_subsequent_requests_and_reload() {
     installed_debug_acceptance("terminal-detach");
 }
+
+#[test]
+fn moving_execution_across_awaits_preserves_state_and_allows_repeated_suspension() {
+    debugger::prepared_acceptance("statement-awaits");
+}
+
+#[test]
+fn moving_execution_across_awaits_preserves_optimized_state_machines() {
+    debugger::prepared_acceptance("statement-awaits-optimized");
+}

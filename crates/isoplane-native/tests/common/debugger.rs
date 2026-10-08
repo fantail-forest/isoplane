@@ -88,6 +88,7 @@ impl Drop for Driver {
 pub fn prepared_acceptance(mode: &str) {
     let fixture = match mode {
         "watchpoint-steps" => "watchpoints",
+        "statement-awaits-optimized" => "statement-awaits",
         "async-optimized" => "async-stack",
         "async-composed-optimized" => "async-composed",
         "async-valuetask-optimized" => "async-valuetask",
