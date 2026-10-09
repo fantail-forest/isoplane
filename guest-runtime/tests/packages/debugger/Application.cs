@@ -23,6 +23,7 @@ public static class Application
         StatementHandlers.Application.Map(app);
         StatementIterators.Application.Map(app);
         app.MapGet("/hotreload-callers", HotReload.Callers.Handle);
+        app.MapGet("/hotreload-constructor-callers", HotReload.Callers.Construct);
         app.MapGet("/hotreload-iterators", HotReload.Iterators.Handle);
         app.MapGet("/hotreload", HotReload.Application.Handle);
         app.MapGet("/hotreload-layout", Debugger.HotReload.Application.HandleLayout);

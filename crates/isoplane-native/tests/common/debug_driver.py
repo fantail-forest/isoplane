@@ -23,6 +23,7 @@ import debug_features
 import debug_hot_reload
 import debug_hot_reload_regions
 import debug_hot_reload_handler
+import debug_hot_reload_constructor_callers
 import debug_hot_reload_callers
 import debug_hot_reload_iterators
 import debug_hot_reload_resume
@@ -59,6 +60,8 @@ if mode == "edit-and-continue-handler":
     scenario = debug_hot_reload_handler
 if mode == "statement-iterators":
     scenario = debug_statement_iterators
+if mode == "edit-and-continue-constructor-callers":
+    scenario = debug_hot_reload_constructor_callers
 if mode == "edit-and-continue-callers":
     scenario = debug_hot_reload_callers
 if mode == "edit-and-continue-iterators":

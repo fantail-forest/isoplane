@@ -149,7 +149,7 @@ Source-only line changes also update paused locations and inline-breakpoint sugg
 
 At source-breakpoint, line-step, and `Debugger.Break()` stops, the active frame adopts
 compatible edits, so **Continue** and **Step** execute the updated method. Callers
-paused in ordinary method calls adopt compatible edits when those calls return,
+paused in method or constructor calls adopt compatible edits when those calls return,
 without repeating the calls or losing values already computed in the statement.
 Other active invocations retain their original instructions until a supported
 **Jump to Cursor** adopts the edited method. Existing locals are preserved. Remapping

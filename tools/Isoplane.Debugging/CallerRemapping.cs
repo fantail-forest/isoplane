@@ -33,5 +33,5 @@ internal sealed record CallerRemapping(StackFrame Frame, int Version, int Offset
         Frame.DeferRemap(call.Next.Offset);
     }
 
-    private static bool IsCall(ILInstruction instruction) => instruction.OpCode.Code is Code.Call or Code.Callvirt;
+    private static bool IsCall(ILInstruction instruction) => instruction.OpCode.Code is Code.Call or Code.Callvirt or Code.Newobj;
 }

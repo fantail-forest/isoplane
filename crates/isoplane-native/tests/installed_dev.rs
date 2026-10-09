@@ -585,3 +585,8 @@ fn editor_source_edits_preserve_iterator_values_across_yields_and_awaits() {
 fn editor_source_edits_are_adopted_by_callers_without_repeating_calls() {
     debugger::prepared_acceptance("edit-and-continue-callers");
 }
+
+#[test]
+fn editor_source_edits_are_adopted_after_class_and_value_type_construction() {
+    debugger::prepared_acceptance("edit-and-continue-constructor-callers");
+}
