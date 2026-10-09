@@ -51,8 +51,14 @@ fn rig(park: bool) -> Rig {
     );
     let module = ModuleId::new("debug-cell", "v1");
     let activator = Arc::new(
-        DebugActivator::load(engine, module.clone(), &wasm)
-            .expect("the raw debug fixture must load"),
+        DebugActivator::new(
+            engine.clone(),
+            module.clone(),
+            engine
+                .load_template(&wasm)
+                .expect("the raw debug fixture must compile"),
+        )
+        .expect("the raw debug fixture must load"),
     );
     let (cell, _) = common::rig_resolving(
         CellConfig {
@@ -205,7 +211,14 @@ fn debug_registration_refuses_a_production_wall_backstop() {
     );
     let module = ModuleId::new("debug-registration", "v1");
     let activator = Arc::new(
-        DebugActivator::load(engine, module.clone(), &raw).expect("the debug fixture must load"),
+        DebugActivator::new(
+            engine.clone(),
+            module.clone(),
+            engine
+                .load_template(&raw)
+                .expect("the debug fixture must compile"),
+        )
+        .expect("the debug fixture must load"),
     );
     let (cell, _) = common::rig_resolving(
         CellConfig::for_test("ordinary"),

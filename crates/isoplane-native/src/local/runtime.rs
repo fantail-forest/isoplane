@@ -85,7 +85,8 @@ impl Prepared {
             version,
         })
     }
-    /// Validates and compiles a marked debug module without pre-initialization.
+    /// Validates a marked debug module and compiles it, or reuses its
+    /// compilation from the runtime cache, without pre-initialization.
     pub fn build_debug(project: &Project, wasm: &[u8]) -> Result<Self, super::Error> {
         Self::prepare_debug(project, wasm).map_err(super::Error::Preparation)
     }
@@ -105,9 +106,12 @@ impl Prepared {
                 ..Default::default()
             },
         )?);
+        let (template, compiled) =
+            runtime_cache(project, blake3::hash(wasm).as_bytes())?.load(&engine, wasm)?;
+        tracing::info!(compiled, "local debug runtime compilation ready");
         let module = ModuleId::new(&manifest.name, &version);
-        let activator = Arc::new(isoplane_host::debug::DebugActivator::load(
-            engine, module, wasm,
+        let activator = Arc::new(isoplane_host::debug::DebugActivator::new(
+            engine, module, template,
         )?);
         Ok(Self {
             activator: PreparedActivator::Debug(activator),
@@ -143,19 +147,38 @@ impl LocalCompilation {
     }
 }
 
+/// Storage for what is compiled or prepared from this project alone.
 fn compilation_cache(
     project: &Project,
+    artifact_identity: &[u8],
+) -> anyhow::Result<LocalCompilation> {
+    let storage = isoplane_cache::Cache::new(
+        project.compilation_directory.clone(),
+        isoplane_cache::PROJECT_CACHE_BYTES,
+    )?;
+    local_compilation(project, storage, artifact_identity)
+}
+
+/// Storage for a compiled shared runtime, which holds nothing of the
+/// project's and is reused by every project of the user on that runtime.
+fn runtime_cache(project: &Project, runtime_identity: &[u8]) -> anyhow::Result<LocalCompilation> {
+    let storage = isoplane_cache::Cache::new(
+        project.runtime_cache_directory.clone(),
+        isoplane_cache::RUNTIME_CACHE_BYTES,
+    )?;
+    local_compilation(project, storage, runtime_identity)
+}
+
+fn local_compilation(
+    project: &Project,
+    storage: isoplane_cache::Cache,
     artifact_identity: &[u8],
 ) -> anyhow::Result<LocalCompilation> {
     let mut identity = blake3::Hasher::new();
     identity.update_reader(std::fs::File::open(&project.runtime_library)?)?;
     identity.update(artifact_identity);
-    let storage = isoplane_cache::Cache::new(
-        project.compilation_directory.clone(),
-        isoplane_cache::PROJECT_CACHE_BYTES,
-    )?;
     let lease = Arc::new(storage.lease(isoplane_cache::CacheKey(*identity.finalize().as_bytes()))?);
-    // SAFETY: only the compiler writes into this private, leased project directory.
+    // SAFETY: only the compiler writes into this private, leased directory.
     let cache = unsafe {
         isoplane_engine::CompilationCache::from_trusted_directory(lease.directory().into())
     }?;
@@ -392,6 +415,7 @@ mod storage_tests {
             state_directory: directory.path().join("state"),
             runtime_library: library,
             compilation_directory: directory.path().join("compiled"),
+            runtime_cache_directory: directory.path().join("runtimes"),
             init_sandbox: isoplane_abi::config::InitSandbox::Sealed,
             platform_files: Default::default(),
             application_files: Default::default(),

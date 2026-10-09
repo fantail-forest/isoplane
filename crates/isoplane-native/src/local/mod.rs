@@ -14,8 +14,12 @@ pub struct Inputs {
     pub state_directory: std::path::PathBuf,
     /// The loaded native implementation, included in the preparation identity.
     pub runtime_library: std::path::PathBuf,
-    /// Compiler-owned storage selected by the CLI outside application source control.
+    /// Compiler-owned storage for what is prepared from this project alone,
+    /// selected by the CLI outside application source control.
     pub compilation_directory: std::path::PathBuf,
+    /// Compiler-owned storage for compiled shared runtimes, which every
+    /// project of the user on the same runtime reuses.
+    pub runtime_cache_directory: std::path::PathBuf,
     /// Initialization capability policy supplied by the SDK.
     pub init_sandbox: isoplane_abi::config::InitSandbox,
     /// Host-provided files visible to the sandbox.

@@ -21,9 +21,6 @@ const READINESS_INTERVAL: Duration = Duration::from_millis(1);
 /// Failure to construct a raw local debugger guest.
 #[derive(Debug, thiserror::Error)]
 pub enum DebugError {
-    /// The raw module could not be compiled or instantiated.
-    #[error("loading local debugger module: {0}")]
-    Engine(#[source] anyhow::Error),
     /// Debugging requires the raw runtime initialization export.
     #[error("local debugger module has no initialization export")]
     MissingInitialize,
@@ -37,13 +34,15 @@ pub struct DebugActivator {
 }
 
 impl DebugActivator {
-    /// Loads validated raw WASM without pre-initializing or cloning debugger session state.
-    pub fn load(
+    /// Activates `template`, the compiled raw module, without pre-initializing
+    /// or cloning debugger session state. Fails unless the module still has
+    /// its initializer to run.
+    pub fn new(
         engine: Arc<IsoplaneEngine>,
         module: ModuleId,
-        raw_wasm: &[u8],
+        template: isoplane_engine::Template,
     ) -> Result<Self, DebugError> {
-        let inner = EngineActivator::load(engine, module, raw_wasm).map_err(DebugError::Engine)?;
+        let inner = EngineActivator::new(engine, template, module);
         if !inner.template().has_initialize() {
             return Err(DebugError::MissingInitialize);
         }
@@ -311,7 +310,10 @@ mod tests {
             })
             .expect("the fixture engine must start"),
         );
-        DebugActivator::load(engine, ModuleId::new("debug", "v1"), &wasm)
+        let template = engine
+            .load_template(&wasm)
+            .expect("the debug fixture must compile");
+        DebugActivator::new(engine, ModuleId::new("debug", "v1"), template)
     }
 
     fn instance(initialize: &str) -> Box<dyn InstanceOps + Send> {

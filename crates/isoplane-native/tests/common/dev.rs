@@ -23,6 +23,17 @@ struct Terminal {
     _master: Box<dyn portable_pty::MasterPty + Send>,
 }
 
+/// The project a development command runs: its `--project` argument, else
+/// its working directory.
+fn project_of(command: &Command) -> Option<std::path::PathBuf> {
+    let mut arguments = command.get_args();
+    arguments
+        .find(|argument| *argument == "--project")
+        .and_then(|_| arguments.next())
+        .map(Into::into)
+        .or_else(|| command.get_current_dir().map(Into::into))
+}
+
 impl Dev {
     pub fn start_managed(project: &std::path::Path, executable: &std::path::Path) -> Self {
         Self::start_managed_with_args(project, executable, &[])
@@ -57,6 +68,10 @@ impl Dev {
         managed_toolchain: bool,
     ) -> Self {
         command.env("ISOPLANE_ENDPOINT", "http://127.0.0.1:1");
+        if let Some(project) = project_of(command) {
+            // The runtimes a session compiles for its user stay in the test's own directory.
+            command.env("ISOPLANE_HOME", project.join(".isoplane/home"));
+        }
         if managed_toolchain {
             command.env(
                 "ISOPLANE_GUEST_RUNTIME_FEED",

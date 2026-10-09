@@ -14,9 +14,28 @@ runtime with local settings, and starts the local listener. Stop the application
 with Ctrl+C before starting another session for that project. Use `-c Release`
 when you want the Release configuration.
 
-The local host caches preparation and native runtime compilation. Changes to the
-application package, settings or runtime invalidate the corresponding cached
-state.
+The first session on a machine compiles the SDK's shared runtime to native code,
+which takes several seconds. Every later session reuses it, in every project
+that uses the same SDK version, and a change to your application or its settings
+compiles nothing: only your application is prepared again.
+
+The compiled runtime is kept in your user cache directory, outside your
+projects:
+
+| Platform | Location |
+| -------- | -------- |
+| Linux    | `$XDG_CACHE_HOME/isoplane/runtimes`, or `~/.cache/isoplane/runtimes` when `XDG_CACHE_HOME` is not set |
+| macOS    | `~/Library/Caches/isoplane/runtimes` |
+| Windows  | `%LOCALAPPDATA%\Isoplane\Cache\runtimes` |
+
+When `ISOPLANE_HOME` is set, it is `ISOPLANE_HOME/cache/runtimes` instead. One
+runtime takes about 230 MB. The cache keeps at most 1 GB, removing the runtimes
+used least recently, and you can delete the directory at any time while no
+session is running: the next session compiles the runtime again.
+
+What a session prepares from your project alone goes under the project's
+MSBuild intermediate output directory (`obj/` by default), and its application
+package and session state under the project's `.isoplane/` directory.
 
 ## Control compatibility warnings
 

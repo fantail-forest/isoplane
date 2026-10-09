@@ -164,13 +164,11 @@ async fn partial_debugger_headers_and_delayed_payloads_preserve_packet_boundarie
         ))
         .unwrap(),
     );
+    let template = engine
+        .load_template(&isoplane_fixtures::mono_debug_runtime())
+        .unwrap();
     let activator = Arc::new(
-        DebugActivator::load(
-            engine,
-            ModuleId::new("debug-transport", "v1"),
-            &isoplane_fixtures::mono_debug_runtime(),
-        )
-        .unwrap(),
+        DebugActivator::new(engine, ModuleId::new("debug-transport", "v1"), template).unwrap(),
     );
     let _stop = StopOnDrop(activator.clone());
     for fragment in [Fragment::Header, Fragment::Payload] {

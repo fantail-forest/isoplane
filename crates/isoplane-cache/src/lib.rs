@@ -15,6 +15,11 @@ pub struct CacheBytes(pub u64);
 /// Default disk budget for one project's compiled artifacts.
 pub const PROJECT_CACHE_BYTES: CacheBytes = CacheBytes(5 * 1024 * 1024 * 1024);
 
+/// Disk budget for the compiled shared runtimes one user's projects reuse.
+/// A runtime's entry is about 230 MB, so this holds the ordinary and debug
+/// runtimes of the SDK in use and of the one before it.
+pub const RUNTIME_CACHE_BYTES: CacheBytes = CacheBytes(1024 * 1024 * 1024);
+
 /// Content identity of one independently evictable artifact directory.
 #[derive(Clone, Copy)]
 pub struct CacheKey(pub [u8; 32]);

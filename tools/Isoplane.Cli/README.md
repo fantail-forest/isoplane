@@ -33,8 +33,13 @@ bundled native library and templates.
 `task release` assembles NuGet packages with dependency notices. No Rust compiler,
 WASI compiler or host Mono is required to build managed application packages.
 Run a generated app with `dotnet run` or `isoplane dev --project /path/to/app`.
-Project-generated caches, preparation state, and staging files live under the
-project's `.isoplane/` directory. Standard NuGet and SourceLink caches remain shared.
+The application package, session state and staging files live under the
+project's `.isoplane/` directory, and what a session prepares from the project
+under its MSBuild intermediate output directory. The compiled shared runtime is
+kept once per user, in `ISOPLANE_HOME/cache/runtimes` when `ISOPLANE_HOME` is set
+and otherwise in the platform's cache directory (`~/.cache/isoplane`,
+`~/Library/Caches/isoplane` or `%LOCALAPPDATA%\Isoplane\Cache`). Standard NuGet
+and SourceLink caches remain shared.
 The session's port, settings and limit overrides come from the project's launch
 profile and User Secrets. Source edits rebuild the application package and replace
 it after a successful build; failed builds leave the last working app serving. Ctrl+C stops the session and its

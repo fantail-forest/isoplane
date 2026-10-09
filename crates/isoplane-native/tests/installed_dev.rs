@@ -146,6 +146,31 @@ async fn a_package_reload_prepares_only_its_layer_over_the_held_runtime_baseline
     dev.stop();
 }
 
+#[test]
+fn a_second_debug_session_reuses_the_compiled_debug_runtime() {
+    let directory = tempfile::tempdir().unwrap();
+    let app = isoplane_fixtures::aspnet_project(directory.path());
+    let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
+    for compiled in [true, false] {
+        let mut dev = Dev::start_managed_with_args(&app, &cli, &["--debug", "--no-watch"]);
+        let diagnostics = dev.diagnostics();
+        dev.stop();
+        let compilations: Vec<&str> = diagnostics
+            .lines()
+            .filter(|line| line.contains("local debug runtime compilation ready"))
+            .collect();
+        assert_eq!(
+            compilations.len(),
+            1,
+            "a debug session must load its runtime once:\n{diagnostics}"
+        );
+        assert!(
+            compilations[0].contains(&format!("\"compiled\":{compiled}")),
+            "only the first debug session may compile the debug runtime:\n{diagnostics}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn an_installed_template_streams_an_upload_through_the_shared_runtime() {
     let directory = tempfile::tempdir().unwrap();
@@ -304,7 +329,11 @@ fn installed_debug_acceptance(mode: &str) {
     let driver =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/common/debug_driver.py");
     let mut command = std::process::Command::new(python);
-    command.arg(driver).arg(&cli);
+    // Sessions the driver launches keep their compiled runtimes in the test's own directory.
+    command
+        .arg(driver)
+        .arg(&cli)
+        .env("ISOPLANE_HOME", directory.path().join("home"));
     if let Some(dev) = &dev {
         let metadata = dev
             .debugger

@@ -76,6 +76,7 @@ public sealed class ApplicationTests
         ])
         .env("TEST_APP", &app)
         .env("TEST_CLI", &cli)
+        .env("ISOPLANE_HOME", directory.path().join("home"))
         .env(
             "ISOPLANE_GUEST_RUNTIME_FEED",
             isoplane_fixtures::guest_runtime_feed(),

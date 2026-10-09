@@ -84,6 +84,7 @@ public sealed class NativeSessionTests
 
     [Theory]
     [InlineData("compilation_directory", "compiler storage must be absolute")]
+    [InlineData("runtime_cache_directory", "runtime cache must be absolute")]
     [InlineData("package", "the application package path must be absolute")]
     public async Task relative_session_storage_is_rejected(string property, string diagnostic)
     {
@@ -117,6 +118,15 @@ public sealed class NativeSessionTests
     }
 
     [Fact]
+    public async Task a_second_project_reuses_the_runtime_another_project_compiled()
+    {
+        using var first = new SessionFixture();
+        using var second = new SessionFixture(first.RuntimeCache);
+        Assert.True(await Compilation(first, first.Options), "The first project must compile the platform runtime.");
+        Assert.False(await Compilation(second, second.Options), "A project sharing the runtime cache must reuse another project's compilation.");
+    }
+
+    [Fact]
     public async Task changed_runtime_identity_requires_new_native_compilation()
     {
         using var directory = new SessionFixture();
@@ -141,8 +151,9 @@ public sealed class NativeSessionTests
                 compiled.TrySetResult(value.GetValue<bool>());
         });
         await ready.Task.WaitAsync(deadline.Token);
-        Assert.True(Directory.GetFiles(Path.Combine(directory.ProjectDirectory, ".isoplane"), "*.cwasm", SearchOption.AllDirectories).Length > 0,
-            "Session preparation must keep its compiled platform runtime under the project.");
+        Assert.True(Directory.GetFiles(directory.RuntimeCache, "*.cwasm", SearchOption.AllDirectories).Length > 0,
+            "Session preparation must keep its compiled platform runtime in the runtime cache every project shares.");
+        Assert.Empty(Directory.GetFiles(directory.ProjectDirectory, "*.cwasm", SearchOption.AllDirectories));
         return await compiled.Task.WaitAsync(deadline.Token);
     }
 

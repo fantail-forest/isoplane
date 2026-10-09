@@ -96,7 +96,8 @@ public sealed class LaunchProfileTests : IDisposable
     public void session_options_apply_numeric_budgets_and_profile_overrides()
     {
         Settings(TwoProfiles);
-        var settings = new DevelopmentSettings("App", 0, [], LaunchProfile.Read(directory.FullName, "tight")!.Limits, null);
+        var settings = new DevelopmentSettings("App", 0, [], LaunchProfile.Read(directory.FullName, "tight")!.Limits, null,
+            Path.Combine(directory.FullName, "obj"), Path.Combine(directory.FullName, "runtimes"));
         using var options = System.Text.Json.JsonDocument.Parse(new LocalProject(directory.FullName).SessionOptions(settings));
         var manifest = options.RootElement.GetProperty("manifest");
         Assert.Equal("App", manifest.GetProperty("name").GetString());

@@ -190,6 +190,7 @@ mod tests {
                 state_directory: directory.path().join("state"),
                 runtime_library: directory.path().join("runtime"),
                 compilation_directory: directory.path().join("compilation"),
+                runtime_cache_directory: directory.path().join("runtimes"),
                 init_sandbox: InitSandbox::Sealed,
                 platform_files: PlatformFiles::new(vec![PlatformFile {
                     path: "/trust.pem".into(),

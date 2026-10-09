@@ -47,6 +47,7 @@ pub(crate) struct Options {
     state_directory: PathBuf,
     runtime_library: PathBuf,
     compilation_directory: PathBuf,
+    runtime_cache_directory: PathBuf,
     /// The developer machine's trusted roots, exported by the CLI as PEM.
     machine_roots: Option<PathBuf>,
     #[serde(default)]
@@ -71,6 +72,10 @@ impl Options {
         anyhow::ensure!(
             self.compilation_directory.is_absolute(),
             "local compiler storage must be absolute"
+        );
+        anyhow::ensure!(
+            self.runtime_cache_directory.is_absolute(),
+            "local runtime cache must be absolute"
         );
         anyhow::ensure!(
             self.package.is_absolute(),
@@ -111,6 +116,7 @@ impl Options {
             state_directory: self.state_directory.clone(),
             runtime_library: self.runtime_library.clone(),
             compilation_directory: self.compilation_directory.clone(),
+            runtime_cache_directory: self.runtime_cache_directory.clone(),
             // An application package runs on the shared managed runtime, which
             // reads the clock and draws entropy while it comes up.
             init_sandbox: isoplane_abi::config::InitSandbox::RuntimeBringUp,

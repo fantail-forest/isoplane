@@ -1,6 +1,6 @@
 //! A runtime baseline, prepared once per runtime, engine and limits into the
-//! project's compiler-owned storage, and reused by every preparation of an
-//! application package on it.
+//! user's runtime cache, and reused by every preparation of an application
+//! package on it, whichever project the package comes from.
 
 use super::Project;
 
@@ -13,8 +13,8 @@ pub struct Baselines {
 impl Baselines {
     /// Prepares `project`'s application package as a layer over the runtime
     /// `wasm`. The baseline is the one the session holds for the same
-    /// runtime, engine and limits, else the one published in compiler-owned
-    /// storage, else prepared and published now. `admit` runs only in that
+    /// runtime, engine and limits, else the one published in the runtime
+    /// cache, else prepared and published now. `admit` runs only in that
     /// last case, since any other baseline came from the same admitted
     /// module. `None` for a module that carries its application.
     pub(super) fn prepare(
@@ -52,7 +52,10 @@ impl Baselines {
             }
         };
         drop(current);
-        let cache = super::compilation_cache(project, version.as_bytes())?;
+        // One entry for every package of the project: Linux maps a layer from files it
+        // unlinks at once, and no other platform writes one, so nothing here outlives a
+        // preparation.
+        let cache = super::compilation_cache(project, b"application layers")?;
         let mut application = baseline
             .prepare_application_in(&request, cache.lease.directory())
             .map_err(isoplane_prepare::PrepareError::Rejected)?;
@@ -107,9 +110,9 @@ fn request(
     })
 }
 
-/// The published baseline for `wanted`, loaded from the project's
-/// compiler-owned storage, or prepared from `wasm` after `admit` and
-/// published there first. Returns whether preparing it compiled the runtime.
+/// The published baseline for `wanted`, loaded from the runtime cache, or
+/// prepared from `wasm` after `admit` and published there first. Returns
+/// whether preparing it compiled the runtime.
 fn published(
     project: &Project,
     wasm: &[u8],
@@ -126,7 +129,7 @@ fn published(
     ] {
         name.update(part);
     }
-    let cache = super::compilation_cache(project, name.finalize().as_bytes())?;
+    let cache = super::runtime_cache(project, name.finalize().as_bytes())?;
     let directory = cache.lease.directory().join("baseline");
     let engine = std::sync::Arc::new(isoplane_engine::IsoplaneEngine::new(
         super::engine_configuration(project),
@@ -169,9 +172,9 @@ fn load(
     directory: &std::path::Path,
     identity: isoplane_engine::prepared::PreparedIdentity,
 ) -> Result<isoplane_engine::Template, isoplane_engine::prepared::PreparedError> {
-    // SAFETY: the directory lies in the project's compiler-owned storage, which
-    // `compilation_cache` checked is private. Only `published` writes locally compiled baselines
-    // there, publishing each atomically as read-only files that nothing
-    // rewrites while a template maps them.
+    // SAFETY: the directory lies in the user's runtime cache, which
+    // `runtime_cache` checked is private. Only `published` writes baselines
+    // there, publishing each atomically as files that nothing rewrites while
+    // a template maps them.
     unsafe { engine.load_prepared(directory, identity, &[]) }
 }
