@@ -181,6 +181,16 @@ internal static class HotReloadAcceptance
         }
         stopped.Thread.SetIP(destination);
         Assert.Equal(scenario.Method == "HandleUnchanged" ? 1 : 2, Frame(stopped, scenario).MethodVersion);
+        if (scenario.Method == "Handle")
+        {
+            var math = Assert.IsType<TypeMirror>(machine.RootDomain.Corlib.GetType("System.Math"));
+            var absolute = math.GetMethods().Single(method => method.Name == "Abs"
+                && method.GetParameters() is [var argument] && argument.ParameterType.FullName == "System.Int32");
+            var evaluated = await math.InvokeMethodAsync(stopped.Thread, absolute, [machine.CreateValue(-7)],
+                InvokeOptions.SingleThreaded | InvokeOptions.DisableBreakpoints).WaitAsync(deadline.Token);
+            Assert.Equal(7, Assert.IsType<PrimitiveValue>(evaluated).Value);
+            Assert.Equal(destination.ILOffset, Frame(stopped, scenario).ILOffset);
+        }
         machine.Resume();
         var nextStop = machine.GetNextEventSet(180_000);
         Assert.Equal(SuspendPolicy.All, nextStop.SuspendPolicy);

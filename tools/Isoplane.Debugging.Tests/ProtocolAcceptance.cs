@@ -103,6 +103,17 @@ internal static class ProtocolAcceptance
         Assert.Throws<InvalidStackFrameException>(() => wire.LocalLocation(Id(stopped.Thread), int.MaxValue, 0));
         Reject(() => wire.LocalLocation(Id(stopped.Thread), Id(frame), -1));
         Reject(() => wire.LocalLocation(Id(stopped.Thread), Id(frame), int.MaxValue));
+        var debuggerOwned = machine.RootDomain.CreateByteArray([3, 1, 4]);
+        machine.Suspend();
+        machine.Resume();
+        var gc = Assert.IsType<TypeMirror>(machine.RootDomain.Corlib.GetType("System.GC"));
+        var collect = gc.GetMethods().Single(method => method.Name == "Collect" && method.GetParameters().Length == 0);
+        foreach (var options in new[] { InvokeOptions.DisableBreakpoints, InvokeOptions.SingleThreaded | InvokeOptions.DisableBreakpoints })
+        {
+            await gc.InvokeMethodAsync(stopped.Thread, collect, [], options).WaitAsync(deadline.Token);
+            Assert.False(debuggerOwned.IsCollected, "Debugger-created values must survive function evaluation and nested suspension until the guest resumes.");
+        }
+        Assert.Equal(new byte[] { 3, 1, 4 }, debuggerOwned.GetValues(0, 3).Cast<PrimitiveValue>().Select(value => (byte)value.Value));
         machine.Resume();
         var changed = UserBreak(machine);
         var events = machine.TakeManagedDataBreakpointHits();
