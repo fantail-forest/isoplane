@@ -134,12 +134,20 @@ public sealed class DatabaseGenerationTests : IDisposable
             start.ArgumentList.Add(argument);
         using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start the database design build.");
         using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(2));
-        var output = process.StandardOutput.ReadToEndAsync(deadline.Token);
-        var errors = process.StandardError.ReadToEndAsync(deadline.Token);
+        var output = process.StandardOutput.ReadToEndAsync();
+        var errors = process.StandardError.ReadToEndAsync();
         try
         {
             await process.WaitForExitAsync(deadline.Token);
             Assert.True(process.ExitCode == 0, "The real EF design build must succeed: " + await output + await errors);
+        }
+        catch (OperationCanceledException failure) when (deadline.IsCancellationRequested)
+        {
+            if (!process.HasExited)
+                process.Kill(entireProcessTree: true);
+            await process.WaitForExitAsync();
+            throw new TimeoutException($"The {configuration} EF design build exceeded its two-minute deadline in {directory}:\n"
+                + await output + await errors, failure);
         }
         finally
         {
