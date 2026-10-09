@@ -8,7 +8,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>isoplane</ToolCommandName>
     <PackageId>Isoplane.Cli</PackageId>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageReadmeFile>PackageReadme.md</PackageReadmeFile>
     <Description>Isoplane local application development using the shared WASM runtime.</Description>
   </PropertyGroup>
   <ItemGroup>
@@ -22,7 +22,7 @@
     <Compile Include="../BuildProtocol/AssetPaths.cs" Link="AssetPaths.cs" />
     <InternalsVisibleTo Include="Isoplane.Cli.Tests" />
     <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" Version="10.0.11" />
-    <None Include="README.md" Pack="true" PackagePath="/" />
+    <None Include="PackageReadme.md" Pack="true" PackagePath="/" />
   </ItemGroup>
   <Import Project="../../taskfiles/NativeAssets.props" />
   <ItemGroup>

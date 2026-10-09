@@ -6,14 +6,14 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Description>Generated managed bindings and native local development support for Isoplane.</Description>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageReadmeFile>PackageReadme.md</PackageReadmeFile>
     <NativeLibraryName Condition="$([MSBuild]::IsOSPlatform('Linux'))">libisoplane_native.so</NativeLibraryName>
     <NativeLibraryName Condition="$([MSBuild]::IsOSPlatform('OSX'))">libisoplane_native.dylib</NativeLibraryName>
     <NativeLibraryName Condition="$([MSBuild]::IsOSPlatform('Windows'))">isoplane_native.dll</NativeLibraryName>
   </PropertyGroup>
   <Import Project="../../taskfiles/NativeAssets.props" />
   <ItemGroup>
-    <None Include="README.md" Pack="true" PackagePath="/" />
+    <None Include="PackageReadme.md" Pack="true" PackagePath="/" />
     <None Include="@(IsoplaneNativeAsset)" Pack="true" PackagePath="runtimes/%(RuntimeIdentifier)/native/" />
     <InternalsVisibleTo Include="Isoplane.Cli" />
     <InternalsVisibleTo Include="Isoplane.Cli.Tests" />

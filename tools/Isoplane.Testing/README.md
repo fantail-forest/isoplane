@@ -1,6 +1,6 @@
 # Test the real sandbox
 
-`Isoplane.Testing` starts an installed `Isoplane.Cli` tool, publishes the application through `isoplane dev`, and exposes its actual HTTP listener. The native process owner supports Linux and Windows; no separate shell or process-cleanup utilities are needed. macOS support is unfinished. It requires the same .NET SDK and guest build toolchain as local development; it does not emulate the runtime.
+`Isoplane.Testing` starts an installed `Isoplane.Cli` tool, publishes the application through `isoplane dev`, and exposes its actual HTTP listener. No separate shell or process-cleanup utilities are needed. It requires the same .NET SDK and guest build toolchain as local development; it does not emulate the runtime.
 
 Keep ordinary native .NET unit tests for application logic. Use this fixture for platform compatibility tests that need the actual WebAssembly sandbox and host behavior. The installed-package consumer is validated with xUnit; the package itself has no test-framework dependency. This does not establish compatibility for arbitrary application frameworks.
 

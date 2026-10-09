@@ -4,7 +4,7 @@
     <EnableDefaultItems>false</EnableDefaultItems>
     <IncludeBuildOutput>false</IncludeBuildOutput>
     <SuppressDependenciesWhenPacking Condition="'$(PackageId)' == 'Isoplane.Cli'">true</SuppressDependenciesWhenPacking>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageReadmeFile>PackageReadme.md</PackageReadmeFile>
     <Description>Isoplane local application development using the shared WASM runtime.</Description>
     <PackageType Condition="'$(PackageId)' == 'Isoplane.Cli'">DotnetTool</PackageType>
   </PropertyGroup>
@@ -12,7 +12,7 @@
   <Import Project="../../licenses/SdkPackage.props" />
   <ItemGroup>
     <None Condition="'$(NoticesDirectory)' != ''" Include="$(NoticesDirectory)/**/*" Pack="true" PackagePath="notices/" />
-    <None Include="../../tools/$(PackageId)/README.md" Pack="true" PackagePath="/" />
+    <None Include="../../tools/$(PackageId)/PackageReadme.md" Pack="true" PackagePath="/" />
   </ItemGroup>
   <ItemGroup Condition="'$(PackageId)' == 'Isoplane.Cli'">
     <None Include="$(ManagedDirectory)/publish/Isoplane.Cli/release/**/*" Pack="true" PackagePath="tools/net10.0/any/" />

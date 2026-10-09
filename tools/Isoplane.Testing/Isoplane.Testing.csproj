@@ -6,12 +6,12 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <PackageId>Isoplane.Testing</PackageId>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageReadmeFile>PackageReadme.md</PackageReadmeFile>
     <Description>Integration-test ownership of real Isoplane CLI development sessions.</Description>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../Isoplane.Native/Isoplane.Native.csproj" />
-    <None Include="README.md" Pack="true" PackagePath="/" />
+    <None Include="PackageReadme.md" Pack="true" PackagePath="/" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Isoplane.Testing.Tests" />

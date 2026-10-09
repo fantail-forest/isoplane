@@ -5,7 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <WarningsAsErrors>$(WarningsAsErrors);CS1591</WarningsAsErrors>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageReadmeFile>PackageReadme.md</PackageReadmeFile>
     <PackageId>Isoplane.AspNetCore</PackageId>
     <Description>ASP.NET hosting over Isoplane request dispatch, without a guest listener.</Description>
   </PropertyGroup>
@@ -17,7 +17,7 @@
     <ProjectReference Include="../Isoplane.Sdk.csproj" PrivateAssets="contentfiles;build" />
     <ProjectReference Include="../Conformance/Conformance.csproj" ReferenceOutputAssembly="false" PrivateAssets="all"
                       GlobalPropertiesToRemove="RuntimeIdentifier;RuntimeIdentifiers;PublishAot;SelfContained" />
-    <None Update="README.md" Pack="true" PackagePath="/" />
+    <None Update="PackageReadme.md" Pack="true" PackagePath="/" />
     <None Include="Sdk/**" Exclude="Sdk/Sdk.props" Pack="true" PackagePath="Sdk/" />
     <None Include="../Build/Isoplane.ManagedBundle.*;../Build/Isoplane.Conformance.targets;../Build/Isoplane.Run.targets" Pack="true" PackagePath="tools/Build/" />
     <None Include="buildTransitive/**" Pack="true" PackagePath="buildTransitive/" />

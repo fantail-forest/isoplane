@@ -6,14 +6,14 @@
     <PackageType>Template</PackageType>
     <IncludeBuildOutput>false</IncludeBuildOutput>
     <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageReadmeFile>PackageReadme.md</PackageReadmeFile>
     <IncludeContentInPack>true</IncludeContentInPack>
     <ContentTargetFolders>content</ContentTargetFolders>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <NoDefaultExcludes>true</NoDefaultExcludes>
   </PropertyGroup>
   <ItemGroup>
-    <None Include="../AspNetCore/README.md" Pack="true" PackagePath="/" />
+    <None Include="PackageReadme.md" Pack="true" PackagePath="/" />
     <TemplateProject Include="content/**/*.csproj" />
     <Content Include="content/**" Exclude="content/**/bin/**;content/**/obj/**;content/**/.isoplane/**;@(TemplateProject)" />
   </ItemGroup>

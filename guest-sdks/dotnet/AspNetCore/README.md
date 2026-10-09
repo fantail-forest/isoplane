@@ -1,5 +1,8 @@
 # Isoplane ASP.NET adapter
 
+Notes for working on the adapter. `PackageReadme.md` is the page customers see
+on the package.
+
 `Isoplane.AspNetCore` runs ASP.NET routing, middleware and request-scoped dependency
 injection over Isoplane requests. It replaces the server transport, so the
 application does not bind a listener.
