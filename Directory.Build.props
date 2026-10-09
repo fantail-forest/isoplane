@@ -3,9 +3,11 @@
        the CLI tool and the generated template carry it; scripts/release-version.py
        moves it together with the in-repo SDK pins that must match. -->
   <PropertyGroup Condition="!$(MSBuildProjectDirectory.StartsWith('$(MSBuildThisFileDirectory).build')) AND !$(MSBuildProjectDirectory.StartsWith('$(MSBuildThisFileDirectory).test-runs'))">
-    <_IsoplaneBuildRoot Condition="'$(ISOPLANE_BUILD_ROOT)' != ''">$([MSBuild]::NormalizeDirectory('$(ISOPLANE_BUILD_ROOT)'))</_IsoplaneBuildRoot>
-    <UseArtifactsOutput Condition="'$(_IsoplaneBuildRoot)' == '$(MSBuildThisFileDirectory)' AND '$(ArtifactsPath)' == ''">true</UseArtifactsOutput>
-    <ArtifactsPath Condition="'$(_IsoplaneBuildRoot)' == '$(MSBuildThisFileDirectory)' AND '$(ArtifactsPath)' == ''">$(_IsoplaneBuildRoot).build/clr-anycpu/managed</ArtifactsPath>
+    <!-- Every build of a project in this checkout, from Task, an editor or a bare dotnet command,
+         writes to the checkout's own .build and never beside the sources. A caller that names
+         another artifacts path keeps it. -->
+    <UseArtifactsOutput Condition="'$(ArtifactsPath)' == ''">true</UseArtifactsOutput>
+    <ArtifactsPath Condition="'$(ArtifactsPath)' == ''">$(MSBuildThisFileDirectory).build/clr-anycpu/managed</ArtifactsPath>
     <Version>0.1.0-preview.4</Version>
     <RepositoryUrl>https://github.com/fantail-forest/isoplane</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
