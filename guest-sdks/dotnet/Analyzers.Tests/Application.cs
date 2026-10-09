@@ -4,6 +4,7 @@ using Microsoft.CodeAnalysis.CodeActions;
 using Microsoft.CodeAnalysis.CodeFixes;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.Diagnostics;
+using Microsoft.CodeAnalysis.Formatting;
 using Microsoft.CodeAnalysis.Text;
 using Xunit;
 
@@ -39,6 +40,8 @@ internal static class Application
     internal static Project Project(string source, OutputKind kind = OutputKind.DynamicallyLinkedLibrary)
     {
         var workspace = new AdhocWorkspace();
+        var options = workspace.CurrentSolution.Options.WithChangedOption(FormattingOptions.NewLine, LanguageNames.CSharp, "\n");
+        Assert.True(workspace.TryApplyChanges(workspace.CurrentSolution.WithOptions(options)));
         var project = workspace.AddProject(ProjectInfo.Create(ProjectId.CreateNewId(), VersionStamp.Default, "App", "App", LanguageNames.CSharp,
             compilationOptions: new CSharpCompilationOptions(kind, nullableContextOptions: NullableContextOptions.Enable),
             parseOptions: new CSharpParseOptions(LanguageVersion.Latest), metadataReferences: References));
