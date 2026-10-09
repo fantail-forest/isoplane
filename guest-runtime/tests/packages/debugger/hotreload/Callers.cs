@@ -28,6 +28,18 @@ public static class Callers
         return $"{result}:{preserved}:{constructions}";
     }
 
+    /// <summary>Observes a source edit without requiring a debugger pause.</summary>
+    public static string Running()
+    {
+        System.Diagnostics.Debugger.Break();
+        int value;
+        do { value = Revision(); } while (value == 0);
+        return value.ToString(); // RUNNING_RESULT
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static int Revision() => 0; // RUNNING_EDIT
+
     private sealed class Constructed
     {
         public int Value { get; }
@@ -56,7 +68,8 @@ public static class Callers
     {
         int preserved = 3;
         Span<int> alias = new(ref preserved);
-        int result = Combine(new Box(20), Inner());
+        Func<Number> operation = Inner;
+        int result = Combine(new Box(20), operation());
         result += 10; // INNER_EDIT
         alias[0] += 2;
         return result + preserved;

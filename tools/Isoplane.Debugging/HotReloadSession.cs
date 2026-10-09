@@ -38,7 +38,7 @@ internal sealed class HotReloadSession : IAsyncDisposable
         var comparison = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
         foreach (var source in sources)
             if (!Documents.Contains(source.Path, comparison))
-                throw new ArgumentException($"Source '{source.Path}' is not part of the paused project's compilation.");
+                throw new ArgumentException($"Source '{source.Path}' is not part of the project's compilation.");
         var modules = machine.RootDomain.GetAssemblies()
             .Where(assembly => baseline.Assemblies.ContainsKey(assembly.GetName().Name ?? ""))
             .Select(assembly => assembly.ManifestModule).ToDictionary(module => module.ModuleVersionId);

@@ -53,7 +53,14 @@ public partial class StackFrame
     public int ReturnOffset => vm.conn.FrameReturnOffset(thread.Id, Id);
 
     /// <summary>Schedules an updated continuation after the outstanding call returns.</summary>
-    public void DeferRemap(int offset) => vm.conn.FrameDeferRemap(thread.Id, Id, offset);
+    public void DeferRemap(int offset)
+    {
+        try { vm.conn.FrameDeferRemap(thread.Id, Id, offset); }
+        catch (CommandException error) when (error.ErrorCode == ErrorCode.INVALID_ARGUMENT)
+        {
+            throw new ArgumentException($"Cannot remap caller '{Method.FullName}': {error.Message}", nameof(offset), error);
+        }
+    }
 
     /// <summary>The sequence points describing the instructions executing in this invocation.</summary>
     public Location[] GetMethodLocations() => IsCurrentMethodVersion ? method.Locations.ToArray() : method.PreviousVersion(MethodVersion).Locations;

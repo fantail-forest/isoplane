@@ -36,10 +36,30 @@ public partial class SoftDebuggerSession
     {
         var thread = ActiveThread ?? throw new System.InvalidOperationException("No guest thread is selected.");
         GetThread(thread.Id).InvalidateDebugFrames();
+        RefreshSourceBreakpointsAfterHotReload();
+        if (remappedOffset is { } offset) return MoveExecution(offset, true);
+        StackVersion++;
+        RaiseStopEvent();
+        return ExecutionPosition.Refresh(this);
+    }
+
+    /// <summary>Rebinds source breakpoints after compiler updates while execution is suspended.</summary>
+    public void RefreshSourceBreakpointsAfterHotReload()
+    {
         var sourceBreakpoints = breakpoints.Values.Distinct()
             .Where(info => info.BreakEvent is Breakpoint and not FunctionBreakpoint && info.Location is not null).ToArray();
         foreach (var info in sourceBreakpoints)
         {
+            var breakpoint = (Breakpoint)info.BreakEvent;
+            bool insideRange = false;
+            var location = FindLocationByMethod(info.Location.Method, breakpoint.FileName, breakpoint.Line, breakpoint.Column, ref insideRange);
+            if (location is not null && location.Method == info.Location.Method && location.ILOffset == info.Location.ILOffset)
+            {
+                // Removing an unchanged binding would unpatch the code retained by active frames.
+                info.Location = location;
+                breakpoint.UpdatedByEnC = false;
+                continue;
+            }
             foreach (var request in info.Requests.Keys)
             {
                 request.Disable();
@@ -47,12 +67,6 @@ public partial class SoftDebuggerSession
             }
             RemoveQueuedBreakEvents(info.Requests);
             info.Requests.Clear();
-        }
-        foreach (var info in sourceBreakpoints)
-        {
-            var breakpoint = (Breakpoint)info.BreakEvent;
-            bool insideRange = false;
-            var location = FindLocationByMethod(info.Location.Method, breakpoint.FileName, breakpoint.Line, breakpoint.Column, ref insideRange);
             if (location is null)
             {
                 info.SetStatus(BreakEventStatus.NotBound, "The edited source has no executable statement at this location.");
@@ -64,10 +78,6 @@ public partial class SoftDebuggerSession
             breakpoint.UpdatedByEnC = false;
         }
         TryResolvePendingBreakpoints();
-        if (remappedOffset is { } offset) return MoveExecution(offset, true);
-        StackVersion++;
-        RaiseStopEvent();
-        return ExecutionPosition.Refresh(this);
     }
 
     private bool ResumeRedirectedBreakpoint(Event[] events)

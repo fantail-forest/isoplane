@@ -352,6 +352,7 @@ internal sealed partial class GuestDebugAdapter : DebugAdapterBase, IAsyncDispos
 
     protected override PauseResponse HandlePauseRequest(PauseArguments arguments)
     {
+        RequireNoHotReload();
         if (!session.IsConnected || !session.IsRunning) throw new ProtocolException("Pause requires a running guest.");
         if (!session.GetProcesses().SelectMany(process => process.GetThreads()).Any(thread => thread.Id == arguments.ThreadId))
             throw new ProtocolException("The requested thread is not a running guest thread.");
@@ -404,6 +405,16 @@ internal sealed partial class GuestDebugAdapter : DebugAdapterBase, IAsyncDispos
 
     private void Stopped(TargetEventArgs args, StoppedEvent.ReasonValue reason)
     {
+        lock (lifecycle)
+        {
+            if (Volatile.Read(ref applyingHotReload) != 0)
+                pendingHotReloadStops.Enqueue((args, reason));
+            else PresentStop(args, reason);
+        }
+    }
+
+    private void PresentStop(TargetEventArgs args, StoppedEvent.ReasonValue reason)
+    {
         if (Volatile.Read(ref stopping) != 0) return;
         if (args.Backtrace is null || args.Thread is null)
         {
@@ -441,6 +452,7 @@ internal sealed partial class GuestDebugAdapter : DebugAdapterBase, IAsyncDispos
 
     private void HandlePrepareDetach(IRequestResponder<PrepareDetachArguments> request)
     {
+        RequireNoHotReload();
         if (owner is null || launched && !launchInTerminal || Interlocked.Exchange(ref detaching, 1) != 0)
         {
             request.SetError(new ProtocolException("Select an attached or terminal-launched session that is not already detaching."));
@@ -475,6 +487,7 @@ internal sealed partial class GuestDebugAdapter : DebugAdapterBase, IAsyncDispos
     {
         if (request.Arguments.TerminateDebuggee == false && Volatile.Read(ref ended) == 0)
         {
+            RequireNoHotReload();
             if (launched && !launchInTerminal)
             {
                 request.SetError(new ProtocolException("Detach requires a terminal-owned application. Launch with console: integratedTerminal or attach to isoplane dev --debug."));
@@ -576,6 +589,7 @@ internal sealed partial class GuestDebugAdapter : DebugAdapterBase, IAsyncDispos
         try
         {
             await Task.Yield();
+            await applyingChanges;
             await previousConnection.DisposeAsync();
             if (package is { } currentPackage) await OpenHotReloadAsync(currentPackage);
             lock (lifecycle)

@@ -7,12 +7,8 @@ function register(context) {
     const output = vscode.window.createOutputChannel('Isoplane Hot Reload');
     const key = file => process.platform === 'win32' ? path.resolve(file).toLowerCase() : path.resolve(file);
 
-    async function apply(state, manual = false) {
+    async function apply(state) {
         if (state.applying) return state.applying;
-        if (!state.paused) {
-            if (manual) throw new Error('Pause the application before applying code changes. Saved edits will be applied at the next stop.');
-            return;
-        }
         if (state.pending.size === 0) return;
         const edits = new Map(state.pending);
         state.pending.clear();
@@ -50,32 +46,20 @@ function register(context) {
     context.subscriptions.push(output,
         vscode.debug.registerDebugAdapterTrackerFactory('isoplane', {
             createDebugAdapterTracker(session) {
-                const state = { session, documents: new Map(), pending: new Map(), paused: false, applying: undefined, generation: 0 };
+                const state = { session, documents: new Map(), pending: new Map(), applying: undefined, generation: 0 };
                 sessions.set(session.id, state);
-                const resumes = new Set();
                 return {
-                    onWillReceiveMessage(message) {
-                        if (['continue', 'next', 'stepIn', 'stepOut', 'goto', 'restartFrame'].includes(message.command)) {
-                            resumes.add(message.seq);
-                            state.paused = false;
-                        }
-                    },
                     onDidSendMessage(message) {
-                        if (message.type === 'response' && resumes.delete(message.request_seq) && !message.success) state.paused = true;
                         if (message.type !== 'event') return;
                         if (message.event === 'isoplane/hotReloadReady') {
                             state.generation++;
                             state.documents = new Map(message.body.documents.map(file => [key(file), file]));
                             state.pending.clear();
-                            state.paused = false;
                         } else if (message.event === 'stopped') {
-                            state.paused = true;
                             void apply(state);
-                        } else if (['continued', 'exited', 'terminated'].includes(message.event)) {
-                            state.paused = false;
                         }
                     },
-                    onExit() { state.generation++; state.paused = false; sessions.delete(session.id); }
+                    onExit() { state.generation++; sessions.delete(session.id); }
                 };
             }
         }),
@@ -93,7 +77,7 @@ function register(context) {
             const state = sessions.get(vscode.debug.activeDebugSession?.id);
             if (!state || state.documents.size === 0) throw new Error('Select an Isoplane source debugging session to apply code changes.');
             await vscode.workspace.saveAll(false);
-            await apply(state, true);
+            await apply(state);
         })
     );
 }

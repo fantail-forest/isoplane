@@ -17,7 +17,8 @@ async function run() {
     assert.notEqual(line, -1, 'the prepared application must contain the debugger return statement');
     const breakpoint = new vscode.SourceBreakpoint(new vscode.Location(vscode.Uri.file(source), new vscode.Position(line, 0)));
     const events = new EventEmitter();
-    const signal = AbortSignal.timeout(180000);
+    const adapterMessages = [];
+    const signal = AbortSignal.timeout(600000);
     const ready = once(events, 'ready', { signal });
     let reportExit;
     const adapterExit = new Promise(resolve => { reportExit = resolve; });
@@ -32,10 +33,13 @@ async function run() {
                     }
                 },
                 onDidSendMessage(message) {
+                    adapterMessages.push(message);
+                    if (adapterMessages.length > 50) adapterMessages.shift();
                     if (message.type === 'response' && message.command === 'disconnect') {
                         disconnected = message.success;
                         console.log('Adapter disconnect: ' + JSON.stringify(message));
                     }
+                    if (message.type === 'response' && message.command === 'isoplane/hotReload') events.emit('hotreload', message);
                     if (message.type !== 'event') return;
                     if (message.event === 'output') {
                         const match = /ready .+ at (http:\/\/\S+)/.exec(message.body.output);
@@ -52,7 +56,10 @@ async function run() {
             };
         }
     });
-    vscode.debug.addBreakpoints([breakpoint]);
+    const runningLine = fs.readFileSync(source, 'utf8').split(/\r?\n/).findIndex(value => value.includes('return revision.ToString();'));
+    assert.notEqual(runningLine, -1);
+    const runningBreakpoint = new vscode.SourceBreakpoint(new vscode.Location(vscode.Uri.file(source), new vscode.Position(runningLine, 0)));
+    vscode.debug.addBreakpoints([breakpoint, runningBreakpoint]);
     let stage = 'launch';
     let session;
     let terminal;
@@ -68,8 +75,8 @@ async function run() {
         session = vscode.debug.activeDebugSession;
         assert.ok(session, 'VS Code must own the launched session');
         const [url] = await ready;
-        for (const expected of ['84', '42']) {
-            stage = 'request returning ' + expected;
+        {
+            stage = 'editing the first request';
             const stopping = once(events, 'stopped', { signal });
             const request = fetch(url, { signal });
             const [stopped] = await stopping;
@@ -80,24 +87,51 @@ async function run() {
             assert.equal(hover.result, '42', 'hover must inspect the current request');
             const watch = await session.customRequest('evaluate', { frameId: frame.id, expression: 'answer + 1', context: 'watch' });
             assert.equal(watch.result, '43');
-            if (expected === '84') {
-                const scopes = await session.customRequest('scopes', { frameId: frame.id });
-                const reference = scopes.scopes.find(scope => scope.name === 'Locals').variablesReference;
-                const locals = await session.customRequest('variables', { variablesReference: reference });
-                assert.equal(locals.variables.find(value => value.name === 'answer').value, '42');
-                const changed = await session.customRequest('setVariable', { variablesReference: reference, name: 'answer', value: 'answer * 2' });
-                assert.equal(changed.value, '84');
-            }
+            const scopes = await session.customRequest('scopes', { frameId: frame.id });
+            const reference = scopes.scopes.find(scope => scope.name === 'Locals').variablesReference;
+            const locals = await session.customRequest('variables', { variablesReference: reference });
+            assert.equal(locals.variables.find(value => value.name === 'answer').value, '42');
+            const changed = await session.customRequest('setVariable', { variablesReference: reference, name: 'answer', value: 'answer * 2' });
+            assert.equal(changed.value, '84');
             await session.customRequest('continue', { threadId: stopped.threadId });
             const response = await request;
             assert.equal(response.status, 200);
-            assert.equal(await response.text(), expected);
+            assert.equal(await response.text(), '84');
         }
+        stage = 'Hot Reload while running';
+        const firstStop = once(events, 'stopped', { signal });
+        const hotRequest = fetch(new URL('/hotreload', url), { signal });
+        const [initial] = await firstStop;
+        await session.customRequest('continue', { threadId: initial.threadId });
+        const updated = once(events, 'hotreload', { signal });
+        const updatedStop = once(events, 'stopped', { signal });
+        const document = await vscode.workspace.openTextDocument(source);
+        const marker = 'Revision() => 0';
+        const offset = document.getText().indexOf(marker) + marker.length - 1;
+        assert.ok(offset >= marker.length - 1, 'the prepared application must contain the revision method');
+        const edit = new vscode.WorkspaceEdit();
+        edit.replace(document.uri, new vscode.Range(document.positionAt(offset), document.positionAt(offset + 1)), '42');
+        assert.equal(await vscode.workspace.applyEdit(edit), true);
+        assert.equal(await document.save(), true);
+        const [update] = await updated;
+        assert.equal(update.success, true);
+        assert.equal(update.body.appliedModules, 1);
+        assert.deepEqual(update.body.diagnostics, []);
+        const [afterEdit] = await updatedStop;
+        assert.equal(afterEdit.reason, 'breakpoint', 'saving while running must preserve the real breakpoint without introducing a pause');
+        const changedStack = await session.customRequest('stackTrace', { threadId: afterEdit.threadId });
+        assert.equal(changedStack.stackFrames[0].line, runningLine + 1);
+        const revision = await session.customRequest('evaluate', { frameId: changedStack.stackFrames[0].id, expression: 'revision', context: 'watch' });
+        assert.equal(revision.result, '42');
+        await session.customRequest('continue', { threadId: afterEdit.threadId });
+        assert.equal(await (await hotRequest).text(), '42');
         stage = 'pause before disconnect';
         assert.ok(terminal, 'the editor must own an Isoplane terminal');
         const stopping = once(events, 'stopped', { signal });
         const activeRequest = fetch(url, { signal });
-        await stopping;
+        await Promise.race([stopping, activeRequest.then(response => {
+            throw new Error(`The request completed without its breakpoint: HTTP ${response.status}`);
+        })]);
         const disconnecting = once(events, 'disconnect', { signal });
         const ending = once(events, 'session-ended', { signal });
         const exiting = once(events, 'adapter-exit', { signal });
@@ -139,9 +173,10 @@ async function run() {
             check();
         });
         assert.deepEqual(fs.readdirSync(sessions), [], 'Ctrl+C must release the detached session artifacts');
-        console.log('Isoplane editor launch, value editing, detach and terminal shutdown passed.');
+        console.log('Isoplane editor launch, value editing, running Hot Reload, detach and terminal shutdown passed.');
     } catch (error) {
         console.error(error);
+        console.error('Recent adapter messages: ' + JSON.stringify(adapterMessages));
         throw new Error('Editor debugger scenario failed at ' + stage, { cause: error });
     } finally {
         if (session) {
@@ -151,7 +186,7 @@ async function run() {
         if (terminal) terminal.dispose();
         terminals.dispose();
         terminated.dispose();
-        vscode.debug.removeBreakpoints([breakpoint]);
+        vscode.debug.removeBreakpoints([breakpoint, runningBreakpoint]);
         tracker.dispose();
         fs.rmSync(project, { recursive: true, force: true });
     }

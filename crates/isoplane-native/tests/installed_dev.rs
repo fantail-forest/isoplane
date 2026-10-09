@@ -590,3 +590,8 @@ fn editor_source_edits_are_adopted_by_callers_without_repeating_calls() {
 fn editor_source_edits_are_adopted_after_class_and_value_type_construction() {
     debugger::prepared_acceptance("edit-and-continue-constructor-callers");
 }
+
+#[test]
+fn editor_source_edits_apply_while_running_and_preserve_breakpoints() {
+    debugger::prepared_acceptance("edit-and-continue-running");
+}

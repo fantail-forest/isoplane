@@ -154,9 +154,9 @@ pub fn compiler_acceptance() {
 pub fn prepared_acceptance(mode: &str) {
     let fixture = match mode {
         "watchpoint-steps" => "watchpoints",
-        "edit-and-continue-callers" | "edit-and-continue-constructor-callers" => {
-            "hotreload/Callers"
-        }
+        "edit-and-continue-callers"
+        | "edit-and-continue-constructor-callers"
+        | "edit-and-continue-running" => "hotreload/Callers",
         "edit-and-continue-iterators" => "hotreload/Iterators",
         "edit-and-continue"
         | "edit-and-continue-async"
@@ -194,7 +194,9 @@ pub fn prepared_acceptance(mode: &str) {
         root.join("guest-runtime/tests/packages/debugger")
     };
     let source = sources.join(format!("{fixture}.cs"));
-    let route = if mode == "edit-and-continue-constructor-callers" {
+    let route = if mode == "edit-and-continue-running" {
+        "hotreload-running"
+    } else if mode == "edit-and-continue-constructor-callers" {
         "hotreload-constructor-callers"
     } else if mode == "edit-and-continue-callers" {
         "hotreload-callers"

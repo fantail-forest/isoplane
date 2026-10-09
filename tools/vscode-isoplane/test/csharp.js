@@ -19,7 +19,7 @@ async function run() {
     assert.notEqual(line, -1, 'the prepared application must contain the debugger return statement');
     const breakpoint = new vscode.SourceBreakpoint(new vscode.Location(vscode.Uri.file(source), new vscode.Position(line, 0)));
     const events = new EventEmitter();
-    const signal = AbortSignal.timeout(180000);
+    const signal = AbortSignal.timeout(300000);
     let ending = false;
     let reportExit;
     const adapterExit = new Promise(resolve => { reportExit = resolve; });

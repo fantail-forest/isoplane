@@ -159,7 +159,7 @@
         "command": "isoplane.applyCodeChanges",
         "title": "Isoplane: Apply Code Changes",
         "icon": "$(debug-restart)",
-        "enablement": "debugType == isoplane && debugState == stopped"
+        "enablement": "debugType == isoplane && inDebugMode"
       }
     ],
     "menus": {

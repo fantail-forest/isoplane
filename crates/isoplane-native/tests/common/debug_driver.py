@@ -24,6 +24,7 @@ import debug_hot_reload
 import debug_hot_reload_regions
 import debug_hot_reload_handler
 import debug_hot_reload_constructor_callers
+import debug_hot_reload_running
 import debug_hot_reload_callers
 import debug_hot_reload_iterators
 import debug_hot_reload_resume
@@ -62,6 +63,8 @@ if mode == "statement-iterators":
     scenario = debug_statement_iterators
 if mode == "edit-and-continue-constructor-callers":
     scenario = debug_hot_reload_constructor_callers
+if mode == "edit-and-continue-running":
+    scenario = debug_hot_reload_running
 if mode == "edit-and-continue-callers":
     scenario = debug_hot_reload_callers
 if mode == "edit-and-continue-iterators":
@@ -218,7 +221,7 @@ try:
         probe.shutdown(socket.SHUT_WR)
         assert probe.recv(1) == b"", "an empty connection must close without consuming the debug request"
     previous_frame = None
-    for attempt in range(2 if mode in ("requests", "launch", "reload", "uncaught", "detach-failure", "terminal-launch") else 1):
+    for attempt in range(2 if mode in ("requests", "launch", "reload", "uncaught", "detach-failure", "terminal-launch", "edit-and-continue-running") else 1):
         http_result = concurrent.futures.Future()
         threading.Thread(target=request_http, args=(http_result,), daemon=True).start()
         if attempt == 0 and not launched:

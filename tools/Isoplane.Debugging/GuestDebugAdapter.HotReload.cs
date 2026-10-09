@@ -1,4 +1,5 @@
 using Isoplane.Build;
+using Mono.Debugging.Client;
 using Newtonsoft.Json;
 using Microsoft.VisualStudio.Shared.VSCodeDebugProtocol;
 using Microsoft.VisualStudio.Shared.VSCodeDebugProtocol.Messages;
@@ -11,6 +12,7 @@ internal sealed partial class GuestDebugAdapter
     private string? hotReloadError;
     private Task applyingChanges = Task.CompletedTask;
     private int applyingHotReload;
+    private readonly Queue<(TargetEventArgs Arguments, StoppedEvent.ReasonValue Reason)> pendingHotReloadStops = new();
     private readonly Queue<IRequestResponder<SetBreakpointsArguments, SetBreakpointsResponse>> pendingSourceBreakpoints = new();
 
     private async Task OpenHotReloadAsync(string applicationPackage)
@@ -42,60 +44,82 @@ internal sealed partial class GuestDebugAdapter
 
     private void HandleHotReload(IRequestResponder<HotReloadArguments, HotReloadResponse> request)
     {
-        if (hotReload is null)
+        lock (lifecycle)
         {
-            request.SetError(new ProtocolException(hotReloadError ?? "This session has no Hot Reload project. Launch or attach to a source project's local debug session."));
-            return;
+            if (hotReload is null)
+            {
+                request.SetError(new ProtocolException(hotReloadError ?? "This session has no Hot Reload project. Launch or attach to a source project's local debug session."));
+                return;
+            }
+            if (!session.IsConnected || session.HasExited)
+            {
+                request.SetError(new ProtocolException("Hot Reload requires an active guest invocation."));
+                return;
+            }
+            if (request.Arguments.Sources is not { Length: > 0 } edits
+                || edits.Any(edit => edit is null || !Path.IsPathFullyQualified(edit.Path ?? "") || edit.Text is null))
+            {
+                request.SetError(new ProtocolException("Hot Reload requires source text and an absolute path for each edited document."));
+                return;
+            }
+            edits = edits.Select(edit => edit with { Path = Path.GetFullPath(edit.Path) }).ToArray();
+            if (Interlocked.CompareExchange(ref applyingHotReload, 1, 0) != 0)
+            {
+                request.SetError(new ProtocolException("A Hot Reload operation is already in progress."));
+                return;
+            }
+            applyingChanges = ApplyHotReloadAsync(request, edits);
         }
-        var state = Volatile.Read(ref paused);
-        if (state is null)
-        {
-            request.SetError(new ProtocolException("Pause the guest before applying source edits."));
-            return;
-        }
-        if (request.Arguments.Sources is not { Length: > 0 } edits
-            || edits.Any(edit => edit is null || !Path.IsPathFullyQualified(edit.Path ?? "") || edit.Text is null))
-        {
-            request.SetError(new ProtocolException("Hot Reload requires source text and an absolute path for each edited document."));
-            return;
-        }
-        edits = edits.Select(edit => edit with { Path = Path.GetFullPath(edit.Path) }).ToArray();
-        if (Interlocked.CompareExchange(ref applyingHotReload, 1, 0) != 0)
-        {
-            request.SetError(new ProtocolException("A Hot Reload operation is already in progress."));
-            return;
-        }
-        applyingChanges = ApplyHotReloadAsync(request, state, edits);
     }
 
-    private async Task ApplyHotReloadAsync(IRequestResponder<HotReloadArguments, HotReloadResponse> request, PausedValues original, SourceUpdate[] edits)
+    private async Task ApplyHotReloadAsync(IRequestResponder<HotReloadArguments, HotReloadResponse> request, SourceUpdate[] edits)
     {
         bool ownsOperation = true;
         try
         {
-            var frames = session.VirtualMachine.GetThreads().Single(thread => thread.Id == original.ThreadId).GetFrames();
-            var remapping = ActiveStatementRemapping.Capture(frames[0]);
-            var callers = frames.Skip(1).Select(CallerRemapping.Capture).OfType<CallerRemapping>().ToArray();
-            var reply = await hotReload!.ApplyAsync(session.VirtualMachine, edits, sources, launchCancellation.Token);
-            bool applied = reply.Pending && !reply.RestartRequired && reply.Diagnostics.Length == 0;
-            if (applied)
+            CompilerReply reply;
+            bool applied;
+            PausedValues? refreshedState = null;
+            var machine = session.VirtualMachine;
+            machine.Suspend();
+            bool safeToResume = true;
+            try
             {
-                if (!ReferenceEquals(original, Volatile.Read(ref paused)))
-                    throw new ProtocolException("The guest ended its pause while Hot Reload was being applied.");
-                breakpoints.RefreshAfterHotReload(edits.Select(edit => edit.Path), sources);
-                foreach (var caller in callers) caller.Apply(reply.Updates);
-                var refreshed = session.RefreshAfterHotReload(remapping?.Resolve(reply.Updates));
-                var state = new PausedValues(refreshed, Allocate, session, sources);
-                Interlocked.Exchange(ref paused, state)?.Dispose();
-                ownsOperation = false;
-                CompleteHotReload();
+                var original = Volatile.Read(ref paused);
+                var frames = session.VirtualMachine.GetThreads().Single().GetFrames();
+                var remapping = original is not null ? ActiveStatementRemapping.Capture(frames[0]) : null;
+                var callers = frames.Skip(1).Select(CallerRemapping.Capture).OfType<CallerRemapping>().ToArray();
+                reply = await hotReload!.ApplyAsync(session.VirtualMachine, edits, sources, launchCancellation.Token);
+                applied = reply.Pending && !reply.RestartRequired && reply.Diagnostics.Length == 0;
+                if (applied)
+                {
+                    if (!ReferenceEquals(original, Volatile.Read(ref paused)))
+                        throw new ProtocolException("The guest changed execution state while Hot Reload was being applied.");
+                    breakpoints.RefreshAfterHotReload(edits.Select(edit => edit.Path), sources);
+                    foreach (var caller in callers) caller.Apply(reply.Updates);
+                    if (original is null)
+                        session.RefreshSourceBreakpointsAfterHotReload();
+                    else
+                    {
+                        var refreshed = session.RefreshAfterHotReload(remapping?.Resolve(reply.Updates));
+                        refreshedState = new PausedValues(refreshed, Allocate, session, sources);
+                        Interlocked.Exchange(ref paused, refreshedState)?.Dispose();
+                    }
+                }
+            }
+            catch (HotReloadApplicationException)
+            {
+                safeToResume = false;
+                throw;
+            }
+            finally
+            {
+                if (safeToResume && Volatile.Read(ref stopping) == 0 && !session.HasExited) machine.Resume();
+            }
+            ownsOperation = false;
+            CompleteHotReload();
+            if (refreshedState is { } state)
                 Protocol.SendEvent(new StoppedEvent { Reason = StoppedEvent.ReasonValue.Pause, ThreadId = state.ThreadId, AllThreadsStopped = true });
-            }
-            if (ownsOperation)
-            {
-                ownsOperation = false;
-                CompleteHotReload();
-            }
             request.SetResponse(new HotReloadResponse
             {
                 AppliedModules = applied ? reply.Updates.Length : 0,
@@ -130,6 +154,12 @@ internal sealed partial class GuestDebugAdapter
                 else SetSourceBreakpoints(request);
             }
             Interlocked.Exchange(ref applyingHotReload, 0);
+            while (pendingHotReloadStops.TryDequeue(out var stopped))
+            {
+                if (Volatile.Read(ref stopping) != 0 || session.HasExited) continue;
+                stopped.Arguments.Backtrace = ExecutionPosition.Refresh(session).Backtrace;
+                PresentStop(stopped.Arguments, stopped.Reason);
+            }
         }
     }
 

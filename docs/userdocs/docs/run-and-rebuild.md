@@ -140,11 +140,13 @@ termination on disconnect.
 
 The session uses the SDK's shared debug runtime. The debugger supports stepping,
 watches, editing live locals, exception stops, and data breakpoints on ordinary
-locals, managed fields and array elements. In VS Code, saving source while paused
-applies compiler-supported Hot Reload edits to the current guest. **Isoplane:
-Apply Code Changes** saves and applies pending edits as well. Edits saved while
-running are queued for the next stop. Compilation errors leave the paused code
-and locals usable and appear in the **Isoplane Hot Reload** output channel.
+locals, managed fields and array elements. In VS Code, saving source applies
+compiler-supported Hot Reload edits to the current guest, while running or paused.
+**Isoplane: Apply Code Changes** saves and applies pending edits as well. Running
+updates briefly suspend execution without introducing an editor stop; new calls
+use the edited methods, and real breakpoint or exception stops remain in effect.
+Compilation errors preserve execution state and appear in the **Isoplane Hot
+Reload** output channel.
 Source-only line changes also update paused locations and inline-breakpoint suggestions.
 
 At source-breakpoint, line-step, and `Debugger.Break()` stops, the active frame adopts
