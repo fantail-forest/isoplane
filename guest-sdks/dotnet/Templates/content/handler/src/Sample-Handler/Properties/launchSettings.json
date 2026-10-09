@@ -8,23 +8,6 @@
       "applicationUrl": "http://localhost:5080",
       "environmentVariables": {
         "Greeting__Default": "world"
-      },
-      "//": [
-        "dotnet run rejects comments in this file, so its notes are properties whose names start with //. Nothing reads them.",
-        "commandName: dotnet run and isoplane dev use the first profile whose commandName is Project. Select another with --launch-profile NAME.",
-        "applicationUrl: sets the local port. A local session serves plain HTTP on loopback and ignores an https address.",
-        "environmentVariables: each one becomes an application setting, and overrides the same setting in User Secrets. Two underscores stand for a colon, so Greeting__Default is the setting Greeting:Default. Keep credentials in User Secrets, not here.",
-        "isoplaneLimitsOverride: remove the // from the property below to run the application under tighter limits. Its values are the ones a local session uses without it; lower the ones you want to try and delete the rest.",
-        "memoryBytes: the most memory an instance may use, in bytes; a multiple of 65536.",
-        "occupancyMsPerHttpDispatch: how long one request may keep a worker busy, in milliseconds. Time it spends waiting for I/O does not count.",
-        "subrequestsPerDispatch: how many outbound HTTP requests one request may start.",
-        "pendingFuturesPerDispatch: how many operations one request may be waiting on at once."
-      ],
-      "//isoplaneLimitsOverride": {
-        "memoryBytes": 536870912,
-        "occupancyMsPerHttpDispatch": 300000,
-        "subrequestsPerDispatch": 10000,
-        "pendingFuturesPerDispatch": 4096
       }
     }
   }

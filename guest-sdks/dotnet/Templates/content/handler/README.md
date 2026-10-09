@@ -43,7 +43,7 @@ dotnet test
 | `src/Sample-Handler/Sample-Handler.csproj` | The Isoplane SDK reference, the User Secrets identifier and the build's optional checks |
 | `src/Sample-Handler/Handler.cs` | The handler, the lifecycle hooks, and where settings come from |
 | `src/Sample-Handler/Greeter.cs` | Application logic kept apart from Isoplane, and JSON serialization |
-| `src/Sample-Handler/Properties/launchSettings.json` | The local port, settings, and the limits a local session can run under |
+| `src/Sample-Handler/Properties/launchSettings.json` | The local port and the settings a local session supplies |
 | `.vscode/launch.json` | Debugging the application in VS Code |
 | `tests/Sample-Handler.Tests/SandboxFixture.cs` | Starting the application in the sandbox for a test run |
 
@@ -105,9 +105,14 @@ settings in `tests/Sample-Handler.Tests/SandboxFixture.cs`.
   `SandboxFixture`.
 - **Accept large uploads.** Change the handler's parameter to `StreamingRequest`
   and read `request.Body` as a stream.
-- **Try tighter limits.** `launchSettings.json` lists the limits a local session
-  runs under, switched off. Switch them on to see how the application behaves
-  with less memory or time.
+- **Try tighter limits.** A local session uses default resource limits.
+  To see how the application behaves with less memory or time,
+  add `isoplaneLimitsOverride` to the launch profile in `launchSettings.json`,
+  beside `environmentVariables`:
+
+  ```json
+  "isoplaneLimitsOverride": { "memoryBytes": 134217728, "occupancyMsPerHttpDispatch": 1000 }
+  ```
 - **Add a NuGet package.** `dotnet add src/Sample-Handler package <name>`.
 - **Use ASP.NET Core instead.** Start from `dotnet new isoplane-web` or
   `dotnet new isoplane-webapi`.

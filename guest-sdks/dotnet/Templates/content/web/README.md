@@ -27,7 +27,7 @@ attach to.
 | `Sample-App.csproj` | The Isoplane SDK reference, the User Secrets identifier and the build's optional checks |
 | `Program.cs` | Where configuration comes from, where services and endpoints go, and the lifecycle hooks |
 | `appsettings.json`, `appsettings.Development.json` | Settings for every environment, and for development |
-| `Properties/launchSettings.json` | The local port, settings, and the limits a local session can run under |
+| `Properties/launchSettings.json` | The local port and the settings a local session supplies |
 | `.vscode/launch.json` | Debugging the application in VS Code |
 
 ## How it differs from an ordinary ASP.NET application
@@ -79,9 +79,14 @@ read by the `/greeting` route that `Program.cs` shows commented out.
 - **Add an endpoint or a service.** `Program.cs` marks where each goes.
 - **Serve static files.** Put them in a `wwwroot` folder and add
   `app.MapStaticAssets();` to `Program.cs`.
-- **Try tighter limits.** `launchSettings.json` lists the limits a local session
-  runs under, switched off. Switch them on to see how the application behaves
-  with less memory or time.
+- **Try tighter limits.** A local session uses default resource limits.
+  To see how the application behaves with less memory or time,
+  add `isoplaneLimitsOverride` to the launch profile in `launchSettings.json`,
+  beside `environmentVariables`:
+
+  ```json
+  "isoplaneLimitsOverride": { "memoryBytes": 134217728, "occupancyMsPerHttpDispatch": 1000 }
+  ```
 - **Add a NuGet package.** `dotnet add package <name>`.
 
 For a larger starting point with a database and tests, see

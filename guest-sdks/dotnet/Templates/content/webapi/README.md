@@ -54,7 +54,7 @@ dotnet test
 | `src/Sample-Api/Sample-Api.csproj` | The Isoplane SDK reference, the User Secrets identifier and the build's optional checks |
 | `src/Sample-Api/Program.cs` | Where configuration comes from, services, endpoints, and the initialization and activation hooks |
 | `src/Sample-Api/appsettings.json`, `appsettings.Development.json` | Settings for every environment, and for development |
-| `src/Sample-Api/Properties/launchSettings.json` | The local port, settings, and the limits a local session can run under |
+| `src/Sample-Api/Properties/launchSettings.json` | The local port and the settings a local session supplies |
 | `src/Sample-Api/Todos/` | The todo entity, its `DbContext`, and its endpoints |
 | `src/Sample-Api/Notifications/` | A typed `HttpClient` that posts completed todos to a webhook |
 | `src/Sample-Api/Migrations/` | Entity Framework Core migrations |
@@ -132,9 +132,14 @@ Set `Notifications:WebhookUrl` to have completed todos posted to a URL.
   `Notifications/CompletionNotifier.cs` does, and await it in the request.
 - **Depend on another local service.** Declare it in `compose.yaml` and give
   the application its address in `appsettings.Development.json`.
-- **Try tighter limits.** `launchSettings.json` lists the limits a local session
-  runs under, switched off. Switch them on to see how the application behaves
-  with less memory or time.
+- **Try tighter limits.** A local session uses default resource limits.
+  To see how the application behaves with less memory or time,
+  add `isoplaneLimitsOverride` to the launch profile in `launchSettings.json`,
+  beside `environmentVariables`:
+
+  ```json
+  "isoplaneLimitsOverride": { "memoryBytes": 134217728, "occupancyMsPerHttpDispatch": 1000 }
+  ```
 - **Add a NuGet package.** `dotnet add src/Sample-Api package <name>`.
 
 ## Change the database schema
