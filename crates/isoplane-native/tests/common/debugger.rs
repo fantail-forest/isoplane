@@ -36,7 +36,8 @@ pub fn drive(mut dev: Option<&mut Dev>, command: &mut Command) -> Output {
             }
         }
     });
-    let deadline = Instant::now() + Duration::from_secs(300);
+    // Installed workflows include compilation, rejected edits, reload and process teardown.
+    let deadline = Instant::now() + Duration::from_secs(600);
     let mut output = Vec::new();
     loop {
         let line = match lines.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
