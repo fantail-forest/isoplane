@@ -8,13 +8,10 @@ const COALESCE_GAP: usize = 32;
 const MAGIC: &[u8; 8] = b"ISOPSPR1";
 const HEADER_BYTES: usize = 32;
 const RUN_BYTES: usize = 24;
-#[cfg(target_os = "linux")]
 const LAYER_ALIGNMENT: usize = 65536;
-#[cfg(target_os = "linux")]
 const LAYER_MAGIC: &[u8; 8] = b"ISOPPKD1";
 /// A packed layer over a base image: its runs hold only the pages that
 /// differ from the base, and every gap reads the base.
-#[cfg(target_os = "linux")]
 const OVERLAY_MAGIC: &[u8; 8] = b"ISOPOVL1";
 
 pub(crate) enum ImageStorage {
@@ -77,7 +74,6 @@ struct Run {
 }
 
 impl MemoryImage {
-    #[cfg(target_os = "linux")]
     pub(crate) fn from_layer(
         dense: &[u8],
         selected: &[std::ops::Range<u64>],
@@ -114,7 +110,6 @@ impl MemoryImage {
     /// Captures `dense` as an overlay over `base`: only pages that differ
     /// from the base, and every page past its end, are stored. `selected`
     /// orders the pages initialization touched first, as for a layer.
-    #[cfg(target_os = "linux")]
     pub(crate) fn from_overlay(
         dense: &[u8],
         base: &Arc<MemoryImage>,
@@ -166,7 +161,6 @@ impl MemoryImage {
         )
     }
 
-    #[cfg(target_os = "linux")]
     pub(crate) fn layer_prefetch(&self) -> std::ops::Range<u64> {
         let mut count = [0; 8];
         count.copy_from_slice(&self.encoded()[24..32]);
@@ -214,12 +208,10 @@ impl MemoryImage {
         extents
     }
 
-    #[cfg(target_os = "linux")]
     pub(crate) fn is_layer(&self) -> bool {
         self.is_full_layer() || self.encoded().get(..8) == Some(OVERLAY_MAGIC.as_slice())
     }
 
-    #[cfg(target_os = "linux")]
     fn is_full_layer(&self) -> bool {
         self.encoded().get(..8) == Some(LAYER_MAGIC.as_slice())
     }
@@ -294,7 +286,6 @@ impl MemoryImage {
         self.storage.as_ref().as_ref()
     }
 
-    #[cfg(any(target_os = "linux", test))]
     pub(crate) fn from_storage(
         storage: ImageStorage,
         max_memory_bytes: usize,
@@ -310,7 +301,6 @@ impl MemoryImage {
         max_memory_bytes: usize,
     ) -> Result<Self, &'static str> {
         let bytes = storage.as_ref();
-        #[cfg(target_os = "linux")]
         if bytes.get(..8) == Some(OVERLAY_MAGIC.as_slice()) {
             let base = base.ok_or("an overlay needs the base it was captured over")?;
             if !base.is_full_layer() {
@@ -321,7 +311,6 @@ impl MemoryImage {
         if base.is_some() {
             return Err("only an overlay reads a base image");
         }
-        #[cfg(target_os = "linux")]
         if bytes.get(..8) == Some(LAYER_MAGIC.as_slice()) {
             let len = number(bytes, 8)?;
             let run_count = number(bytes, 16)?;
@@ -448,7 +437,6 @@ impl MemoryImage {
         })
     }
 
-    #[cfg(target_os = "linux")]
     fn decode_overlay(
         storage: ImageStorage,
         base: Arc<MemoryImage>,
@@ -602,26 +590,40 @@ impl MemoryImage {
         live[cursor - off..].iter().all(|&byte| byte == 0)
     }
 
-    /// Expands the baseline for explicit inspection; activation never calls this.
+    /// Expands the baseline for explicit inspection.
     pub fn to_dense(&self) -> Vec<u8> {
-        let mut out = match &self.base {
-            Some(base) => {
-                let mut dense = base.to_dense();
-                dense.resize(self.len, 0);
-                dense
-            }
-            None => vec![0; self.len],
-        };
-        for (offset, bytes) in self.regions() {
-            out[offset..offset + bytes.len()].copy_from_slice(bytes);
-        }
+        let mut out = vec![0; self.len];
+        self.write_to(&mut out);
         out
+    }
+
+    /// Writes the image over the start of `memory`, as far as the shorter of
+    /// the two reaches: an overlay's base first, then this image's own
+    /// regions, with zeros wherever neither stores anything.
+    pub(crate) fn write_to(&self, memory: &mut [u8]) {
+        let end = self.len.min(memory.len());
+        let mut written = 0;
+        if let Some(base) = &self.base {
+            base.write_to(&mut memory[..end]);
+            written = base.len.min(end);
+        }
+        for (offset, bytes) in self.regions() {
+            if offset >= end {
+                break;
+            }
+            if written < offset {
+                memory[written..offset].fill(0);
+            }
+            let stop = (offset + bytes.len()).min(end);
+            memory[offset..stop].copy_from_slice(&bytes[..stop - offset]);
+            written = written.max(stop);
+        }
+        memory[written..end].fill(0);
     }
 }
 
 /// Encodes a packed layer or overlay: `hot` ranges of `dense` first, then
 /// `cold`, with an index of every range sorted by memory offset.
-#[cfg(target_os = "linux")]
 fn encode_packed(
     magic: &[u8; 8],
     dense: &[u8],
@@ -698,7 +700,6 @@ impl std::fmt::Debug for MemoryImage {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(target_os = "linux")]
     fn base_and_application(memory_bytes: usize) -> (std::sync::Arc<super::MemoryImage>, Vec<u8>) {
         let mut base = vec![0; memory_bytes];
         base[100] = 7;
@@ -709,7 +710,21 @@ mod tests {
         (std::sync::Arc::new(image), application)
     }
 
-    #[cfg(target_os = "linux")]
+    #[test]
+    fn writing_an_image_replaces_whatever_the_memory_held() {
+        let (base, application) = base_and_application(2 * 65536);
+        let overlay =
+            super::MemoryImage::from_overlay(&application, &base, &[], 2 * 65536).expect("overlay");
+        for image in [overlay, super::MemoryImage::from_dense(&application)] {
+            let mut memory = vec![0xaa; application.len()];
+            image.write_to(&mut memory);
+            assert!(
+                memory == application,
+                "stored regions, a base's regions and unstored zeros must all overwrite the memory"
+            );
+        }
+    }
+
     #[test]
     fn an_overlay_stores_only_changed_pages_and_reads_the_rest_from_its_base() {
         let (base, application) = base_and_application(65536);
@@ -733,7 +748,6 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn an_overlay_refuses_a_missing_base_a_layered_base_or_memory_past_its_base() {
         let (base, application) = base_and_application(65536);
@@ -785,7 +799,6 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn packed_layer_round_trips_and_serves_the_hibernation_baseline() {
         let mut memory = vec![0; 65536];
@@ -816,7 +829,6 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn packed_layer_rejects_truncation_and_header_garbage() {
         let image = super::MemoryImage::from_layer(&vec![0; 65536], &[]).expect("layer");
@@ -833,7 +845,6 @@ mod tests {
             "unknown dense header data must be refused"
         );
     }
-    #[cfg(target_os = "linux")]
     #[test]
     fn selected_pages_are_contiguous_on_disk_without_changing_logical_memory() {
         let mut memory = vec![0; 65536];
@@ -872,7 +883,6 @@ mod tests {
         }
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn packed_layer_refuses_aliased_or_missing_payload_ranges() {
         let image =
@@ -891,7 +901,6 @@ mod tests {
         }
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn selected_layer_ranges_must_be_ordered_aligned_and_bounded() {
         for ranges in [

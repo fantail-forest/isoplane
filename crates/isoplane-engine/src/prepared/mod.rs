@@ -1,11 +1,9 @@
 //! Locally compiled prepared templates, independent of artifact acquisition and build orchestration.
 
 mod files;
-#[cfg(target_os = "linux")]
 mod layer;
 pub(crate) mod native;
 pub(crate) mod prefetch;
-#[cfg(target_os = "linux")]
 mod residency;
 mod state;
 
@@ -183,13 +181,7 @@ impl IsoplaneEngine {
         let prepared: PreparedTemplate = postcard::from_bytes(bytes)?;
         self.check_prepared(&prepared.manifest, expected)?;
         let base = matching_base(&prepared.manifest, base)?;
-        for (record, payload) in prepared.manifest.files.iter().zip(&prepared.payloads) {
-            if record.bytes != payload.len() as u64
-                || &record.hash != blake3::hash(payload).as_bytes()
-            {
-                return Err(PreparedError::Invalid("builder payload digest or length"));
-            }
-        }
+        prepared.verify_payloads()?;
         let image = crate::MemoryImage::from_storage_over(
             crate::image::ImageStorage::Owned(prepared.payloads[1].clone()),
             base.map(|base| std::sync::Arc::clone(&base.inner.image)),
@@ -213,7 +205,8 @@ impl IsoplaneEngine {
         }
     }
 
-    /// Restore preparation output using temporary backing files within `storage`.
+    /// Restore preparation output, using temporary backing files within
+    /// `storage` where the platform maps templates from files.
     /// # Safety
     /// Native bytes must originate from controlled local compilation and trusted operator-owned storage.
     /// Checksums do not establish compiler origin.
@@ -222,13 +215,81 @@ impl IsoplaneEngine {
         product: &PreparedTemplate,
         storage: &std::path::Path,
     ) -> Result<Template> {
+        self.load_product(product, None, storage)
+    }
+
+    /// Loads `product`, over `base` when it is a layer over one. Linux maps a
+    /// template copy-on-write from files, which it keeps in a directory under
+    /// `storage` and unlinks at once.
+    #[cfg(target_os = "linux")]
+    fn load_product(
+        &self,
+        product: &PreparedTemplate,
+        base: Option<&Template>,
+        storage: &Path,
+    ) -> Result<Template> {
         let directory =
             tempfile::tempdir_in(storage).map_err(|error| PreparedError::Engine(error.into()))?;
         let path = directory.path().join("prepared");
         product.publish_discarded(&path)?;
+        let manifest = files::read_manifest_receipt(&path)?.0;
+        self.check_prepared(&manifest, product.manifest.identity)?;
         // SAFETY: the directory is private to this call and nothing writes its published files;
-        // removing it with the call's end unlinks them, which leaves the mappings intact.
-        unsafe { self.load_prepared(&path, product.manifest.identity, &[]) }
+        // removing it with the call's end unlinks them, which leaves the mappings intact. `base`
+        // retains its own files.
+        unsafe { self.map_prepared(&path, manifest, &[], base) }
+    }
+
+    /// Loads `product`, over `base` when it is a layer over one. Platforms
+    /// other than Linux copy a template into each activation, so the template
+    /// is held in memory and nothing is written to `_storage`: a file it was
+    /// mapped from could not be removed on Windows while the template lived,
+    /// and would be left behind by a session that was killed.
+    #[cfg(not(target_os = "linux"))]
+    fn load_product(
+        &self,
+        product: &PreparedTemplate,
+        base: Option<&Template>,
+        _storage: &Path,
+    ) -> Result<Template> {
+        use std::io::Write;
+        let manifest = &product.manifest;
+        self.check_prepared(manifest, manifest.identity)?;
+        let base = matching_base(manifest, base)?;
+        product.verify_payloads()?;
+        let [native, baseline, state] = &product.payloads;
+        let image = crate::MemoryImage::from_storage_over(
+            crate::image::ImageStorage::Owned(baseline.clone()),
+            base.map(|base| base.inner.image.clone()),
+            self.inner.cfg.max_memory_bytes as usize,
+        )
+        .map_err(PreparedError::Invalid)?;
+        let state: state::State = postcard::from_bytes(state)?;
+        state.validate(&image, self.inner.cfg.max_memory_bytes)?;
+        let native_hash = manifest.files[0].hash;
+        let held = match base {
+            Some(base) => Some(base.inner.native.clone()),
+            None => self.inner.natives.get(&native_hash),
+        };
+        let native = match held {
+            Some(held) => held,
+            None => {
+                let mut copy = native::NativeCopy::new()
+                    .map_err(|error| PreparedError::Engine(error.into()))?;
+                copy.write_all(native)
+                    .map_err(|error| PreparedError::Engine(error.into()))?;
+                // SAFETY: the public loader caller guarantees controlled local compiler origin;
+                // the verified native bytes are held in this private unchanged copy.
+                let module = unsafe { copy.deserialize(&self.inner.wasmtime) }
+                    .map_err(|error| PreparedError::Engine(error.into()))?;
+                self.inner.natives.insert(native_hash, module)
+            }
+        };
+        let mut template = self.finish_prepared(native, manifest, state, image)?;
+        std::sync::Arc::get_mut(&mut template.inner)
+            .ok_or(PreparedError::Invalid("new template is already shared"))?
+            .prepared_hash = Some(manifest.module_hash);
+        Ok(template)
     }
 
     /// Checks a local manifest and returns the exact content digest recorded by selection.
@@ -464,7 +525,7 @@ impl IsoplaneEngine {
             None
         };
         let activation_prefetch = activation_prefetch.select(&state.prefetch)?;
-        let template = self.finish_prepared(native, manifest, state, image)?;
+        let template = self.finish_prepared(native, &manifest, state, image)?;
         #[cfg(target_os = "linux")]
         let template = {
             let mut template = template;
@@ -502,6 +563,18 @@ impl IsoplaneEngine {
 }
 
 impl PreparedTemplate {
+    /// Fails unless every payload has the length and digest the manifest records.
+    fn verify_payloads(&self) -> Result<()> {
+        for (record, payload) in self.manifest.files.iter().zip(&self.payloads) {
+            if record.bytes != payload.len() as u64
+                || &record.hash != blake3::hash(payload).as_bytes()
+            {
+                return Err(PreparedError::Invalid("builder payload digest or length"));
+            }
+        }
+        Ok(())
+    }
+
     /// Exact engine compatibility identity attached by the producer.
     pub fn engine_fingerprint(&self) -> &str {
         &self.manifest.engine

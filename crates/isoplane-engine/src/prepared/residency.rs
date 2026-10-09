@@ -1,12 +1,28 @@
 //! Initialization working-set observation through present process page-table entries.
 
-use std::fs::File;
 use std::io;
 use std::ops::Range;
-use std::os::unix::fs::FileExt;
 
-/// Includes fault-around pages; presence is a conservative observed set, not an access counter.
+/// The ranges of a mapping that initialization left resident, which a layer
+/// stores first so they can be read ahead together. Includes fault-around
+/// pages; presence is a conservative observed set, not an access counter.
+/// Empty on platforms without a page-presence query: a layer captured there
+/// has no read-ahead order.
 pub(super) fn present_ranges(address: usize, length_bytes: usize) -> io::Result<Vec<Range<u64>>> {
+    #[cfg(target_os = "linux")]
+    {
+        pagemap_ranges(address, length_bytes)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (address, length_bytes);
+        Ok(Vec::new())
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn pagemap_ranges(address: usize, length_bytes: usize) -> io::Result<Vec<Range<u64>>> {
+    use std::os::unix::fs::FileExt;
     // SAFETY: sysconf reads the process's host page size and takes no pointer arguments.
     let page_bytes = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
     let page_bytes = usize::try_from(page_bytes)
@@ -21,7 +37,7 @@ pub(super) fn present_ranges(address: usize, length_bytes: usize) -> io::Result<
     }
     let first_page = address / page_bytes;
     let pages = length_bytes.div_ceil(page_bytes);
-    let file = File::open("/proc/self/pagemap")?;
+    let file = std::fs::File::open("/proc/self/pagemap")?;
     let mut ranges: Vec<Range<u64>> = Vec::new();
     let mut entries = [0; 8192];
     for first in (0..pages).step_by(entries.len() / 8) {
@@ -45,7 +61,7 @@ pub(super) fn present_ranges(address: usize, length_bytes: usize) -> io::Result<
     Ok(ranges)
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
 

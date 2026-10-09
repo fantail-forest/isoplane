@@ -102,7 +102,6 @@ pub fn initialize(
             wasm,
             initialized: output.initialized,
         }),
-        #[cfg(target_os = "linux")]
         Captured::Layered { .. } => Err(PrepareError::InvalidRequest(
             "portable initialization captured a layer",
         )),
@@ -123,14 +122,12 @@ pub(crate) enum CaptureMode<'a> {
     },
     /// Only the runtime's own initializer, as a baseline that applications
     /// are prepared over.
-    #[cfg(target_os = "linux")]
     RuntimeBaseline {
         wasm: &'a [u8],
         identity: isoplane_engine::prepared::PreparedIdentity,
     },
     /// The application's initializer, run on an activation of `base`, as a
     /// layer over it.
-    #[cfg(target_os = "linux")]
     Over {
         base: isoplane_engine::Template,
         storage: &'a std::path::Path,
@@ -147,9 +144,7 @@ impl CaptureMode<'_> {
             CaptureMode::Portable { .. } => (Stage::Runtime, Some(Stage::Application)),
             #[cfg(target_os = "linux")]
             CaptureMode::Layered { .. } => (Stage::Runtime, Some(Stage::Application)),
-            #[cfg(target_os = "linux")]
             CaptureMode::RuntimeBaseline { .. } => (Stage::Runtime, None),
-            #[cfg(target_os = "linux")]
             CaptureMode::Over { .. } => (Stage::Application, None),
         }
     }
@@ -241,7 +236,6 @@ pub(crate) enum Captured {
     /// The initialized portable module, which portable consumers compile.
     Portable(Vec<u8>),
     /// The initialized layer, and the portable module only when requested.
-    #[cfg(target_os = "linux")]
     Layered {
         prepared: Box<isoplane_engine::prepared::PreparedTemplate>,
         portable: Option<Vec<u8>>,
@@ -315,7 +309,6 @@ pub(crate) fn initialize_with_cache(
                 }),
             )
             .map_err(PrepareError::State)?;
-        #[cfg(target_os = "linux")]
         if matches!(capture, CaptureMode::RuntimeBaseline { .. })
             && (!template.has_initialize() || !instance.has_initialize_runtime())
         {
@@ -346,7 +339,6 @@ pub(crate) fn initialize_with_cache(
             }
             initialization_budget(request, usage.occupancy_ns, initialization_start.elapsed())?;
             if outcome.completion != Completion::Done {
-                #[cfg(target_os = "linux")]
                 if matches!(capture, CaptureMode::RuntimeBaseline { .. })
                     && (instance.last_capability_violation().is_some()
                         || state.lock().seed_reads > 0)
@@ -409,7 +401,6 @@ pub(crate) fn initialize_with_cache(
                     portable: (portable == crate::PortableTemplate::Returned)
                         .then(|| wasm.to_vec()),
                 },
-                #[cfg(target_os = "linux")]
                 CaptureMode::RuntimeBaseline { .. } | CaptureMode::Over { .. } => {
                     return Err(PrepareError::InvalidRequest(
                         "a runtime baseline needs a module with an initializer",
@@ -449,7 +440,6 @@ pub(crate) fn initialize_with_cache(
             })?
             .unwrap_or_default();
         let deferred: Vec<_> = deferred.into_iter().collect();
-        #[cfg(target_os = "linux")]
         if matches!(capture, CaptureMode::RuntimeBaseline { .. }) {
             let state = state.lock();
             if state.seed_reads > 0 || state.draws > 0 {
@@ -528,7 +518,6 @@ pub(crate) fn initialize_with_cache(
                     },
                 )
             }
-            #[cfg(target_os = "linux")]
             CaptureMode::RuntimeBaseline { identity, .. } => {
                 let prepared = engine
                     .prepare_runtime_baseline(
@@ -559,7 +548,6 @@ pub(crate) fn initialize_with_cache(
                     },
                 )
             }
-            #[cfg(target_os = "linux")]
             CaptureMode::Over {
                 ref base,
                 identity,
@@ -657,8 +645,8 @@ fn load(
     let wasm = match capture {
         CaptureMode::Portable { wasm } => wasm,
         #[cfg(target_os = "linux")]
-        CaptureMode::Layered { wasm, .. } | CaptureMode::RuntimeBaseline { wasm, .. } => wasm,
-        #[cfg(target_os = "linux")]
+        CaptureMode::Layered { wasm, .. } => wasm,
+        CaptureMode::RuntimeBaseline { wasm, .. } => wasm,
         CaptureMode::Over { base, .. } => {
             let template = base
                 .clone()
@@ -673,9 +661,10 @@ fn load(
         None => match capture {
             CaptureMode::Portable { .. } => engine.load_template(&instrumented.wasm),
             #[cfg(target_os = "linux")]
-            CaptureMode::Layered { .. }
-            | CaptureMode::RuntimeBaseline { .. }
-            | CaptureMode::Over { .. } => engine.load_layer_source(&instrumented.wasm),
+            CaptureMode::Layered { .. } => engine.load_layer_source(&instrumented.wasm),
+            CaptureMode::RuntimeBaseline { .. } | CaptureMode::Over { .. } => {
+                engine.load_layer_source(&instrumented.wasm)
+            }
         }
         .map(|template| (template, true)),
     }

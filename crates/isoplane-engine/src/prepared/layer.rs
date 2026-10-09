@@ -1,6 +1,5 @@
 //! Initialization capture against an unchanged compiled module.
 
-use std::fs::File;
 use std::io::Write;
 use std::sync::Arc;
 
@@ -219,7 +218,7 @@ impl IsoplaneEngine {
         }
     }
 
-    /// Restore a layer using temporary backing files within `storage`.
+    /// As [`IsoplaneEngine::load_prepared_product_in`], for a template captured as a layer over `base`.
     /// # Safety
     /// Native bytes must originate from controlled local compilation and trusted operator-owned storage.
     /// Checksums do not establish compiler origin.
@@ -229,12 +228,7 @@ impl IsoplaneEngine {
         product: &PreparedTemplate,
         storage: &std::path::Path,
     ) -> Result<Template> {
-        let directory =
-            tempfile::tempdir_in(storage).map_err(|error| PreparedError::Engine(error.into()))?;
-        let path = directory.path().join("prepared");
-        product.publish_discarded(&path)?;
-        // SAFETY: as for `load_prepared_product`; `base` retains its own files.
-        unsafe { self.load_prepared_over(base, &path, product.manifest.identity, &[]) }
+        self.load_product(product, Some(base), storage)
     }
 }
 
@@ -252,8 +246,9 @@ enum Capture {
 
 /// Maps a layer's own baseline file and, for a layer over a base, the base's.
 /// Returns the layer's own source, for layers captured over this one.
+#[cfg(target_os = "linux")]
 pub(super) fn from_file(
-    file: File,
+    file: std::fs::File,
     image: &crate::MemoryImage,
     base: Option<&wasmtime::CowMemorySource>,
 ) -> Result<(wasmtime::CowMemorySource, wasmtime::CowMemoryImage)> {
@@ -271,6 +266,7 @@ pub(super) fn from_file(
     Ok((own, mapped))
 }
 
+#[cfg(target_os = "linux")]
 pub(super) fn attach(
     template: &mut Template,
     (source, image): (wasmtime::CowMemorySource, wasmtime::CowMemoryImage),

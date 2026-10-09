@@ -1,4 +1,4 @@
-//! Owns disposable published artifacts, including Windows read-only payloads.
+//! Owns disposable published artifacts, on storage that can delete a mapped file.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -43,7 +43,7 @@ impl Directory {
 
 impl Drop for Directory {
     fn drop(&mut self) {
-        if let Err(error) = remove_dir_all(&self.0) {
+        if let Err(error) = std::fs::remove_dir_all(&self.0) {
             if std::thread::panicking() {
                 eprintln!(
                     "failed to remove test artifacts at {}: {error}",
@@ -57,37 +57,4 @@ impl Drop for Directory {
             }
         }
     }
-}
-
-/// Unlinks a test payload, clearing its Windows read-only attribute if needed.
-pub fn remove_file(path: impl AsRef<Path>) -> io::Result<()> {
-    let path = path.as_ref();
-    #[cfg(windows)]
-    #[allow(
-        clippy::permissions_set_readonly_false,
-        reason = "Windows-only: clearing the DOS attribute cannot change Unix permission bits"
-    )]
-    {
-        // Windows requires clearing the attribute even when unlinking, unlike Unix modes.
-        let mut permissions = std::fs::symlink_metadata(path)?.permissions();
-        if permissions.readonly() {
-            permissions.set_readonly(false);
-            std::fs::set_permissions(path, permissions)?;
-        }
-    }
-    std::fs::remove_file(path)
-}
-
-/// Removes a test artifact tree without following directory symlinks.
-pub fn remove_dir_all(path: impl AsRef<Path>) -> io::Result<()> {
-    let path = path.as_ref();
-    for entry in std::fs::read_dir(path)? {
-        let entry = entry?;
-        if entry.file_type()?.is_dir() {
-            remove_dir_all(entry.path())?;
-        } else {
-            remove_file(entry.path())?;
-        }
-    }
-    std::fs::remove_dir(path)
 }

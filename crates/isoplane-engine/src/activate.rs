@@ -225,6 +225,18 @@ pub(crate) fn instantiate(
         )?);
         restore_globals(&mut store, &globals, t)?;
     }
+    // Without a copy-on-write mapping of the layer, activation copies it over
+    // the memory the unchanged module instantiated with.
+    #[cfg(not(target_os = "linux"))]
+    if t.image.is_layer() {
+        let _restore = tracing::info_span!("activation_layer_restore").entered();
+        let pages = memory.size(&store);
+        if u64::from(t.memory_pages) > pages {
+            memory.grow(&mut store, u64::from(t.memory_pages) - pages)?;
+        }
+        t.image.write_to(memory.data_mut(&mut store));
+        restore_globals(&mut store, &globals, t)?;
+    }
     let f_initialize = if t.has_initialize { f_initialize } else { None };
     drop(exports_stage);
     let table_baseline = tracing::info_span!("activation_table_baseline")

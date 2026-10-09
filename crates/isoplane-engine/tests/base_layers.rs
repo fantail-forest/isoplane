@@ -1,5 +1,4 @@
 //! Application templates captured as layers over a shared runtime baseline.
-#![cfg(target_os = "linux")]
 mod common;
 #[path = "common/dispatch.rs"]
 mod dispatch;
@@ -126,6 +125,7 @@ fn a_layer_over_a_baseline_activates_to_the_fully_initialized_memory() {
     );
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn distinct_layers_keep_their_mappings_and_release_private_pages_across_eviction() {
     let engine = test_engine();
@@ -253,6 +253,7 @@ fn distinct_layers_keep_their_mappings_and_release_private_pages_across_eviction
     }
 }
 
+#[cfg(target_os = "linux")]
 fn initialize_layer(
     engine: &IsoplaneEngine,
     base: &Template,
@@ -332,6 +333,7 @@ fn a_layer_refuses_to_load_without_or_over_another_base() {
     );
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn a_failed_baseline_marks_every_layer_over_it_failed() {
     use std::os::unix::fs::PermissionsExt;

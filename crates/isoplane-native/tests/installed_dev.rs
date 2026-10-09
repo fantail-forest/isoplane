@@ -109,7 +109,6 @@ async fn an_installed_application_resumes_ordinary_timers() {
     dev.stop();
 }
 
-#[cfg(target_os = "linux")]
 #[tokio::test]
 async fn a_package_reload_prepares_only_its_layer_over_the_held_runtime_baseline() {
     let directory = tempfile::tempdir().unwrap();

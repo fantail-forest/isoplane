@@ -1,6 +1,6 @@
 //! Captured initialization state restores over unchanged compiled code.
-#![cfg(target_os = "linux")]
 mod common;
+#[cfg(target_os = "linux")]
 #[path = "common/dispatch.rs"]
 mod dispatch;
 
@@ -102,6 +102,7 @@ fn layer_publication_preserves_compiled_code_and_restores_globals_and_memory() {
     );
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn prepared_product_uses_only_the_callers_storage_and_removes_its_scratch() {
     let engine = IsoplaneEngine::new(small_engine_config()).expect("engine");
@@ -131,6 +132,7 @@ fn prepared_product_uses_only_the_callers_storage_and_removes_its_scratch() {
     );
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn a_pre_mapped_guest_still_enforces_its_activation_memory_limit() {
     let engine = test_engine();
@@ -154,6 +156,7 @@ fn a_pre_mapped_guest_still_enforces_its_activation_memory_limit() {
     );
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn a_fresh_reset_restores_globals_without_replacing_the_layer_mapping() {
     let engine = test_engine();
@@ -352,6 +355,7 @@ fn simultaneous_layer_instances_keep_private_writes_isolated() {
     );
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn preparing_growth_preserves_the_guest_heap_and_captured_state() {
     use isoplane_abi::config::GuestMemoryBytes;

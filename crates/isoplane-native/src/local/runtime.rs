@@ -33,7 +33,7 @@ pub struct Prepared {
 impl Prepared {
     /// Validates and pre-initializes an ordinary local application. An
     /// application package is prepared over the runtime baseline `baselines`
-    /// holds, where the platform maps layers.
+    /// holds.
     pub fn build(
         project: &Project,
         wasm: &[u8],

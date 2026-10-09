@@ -84,7 +84,7 @@ impl IsoplaneEngine {
     pub(super) fn finish_prepared(
         &self,
         native: Arc<super::native::SharedNative>,
-        manifest: Manifest,
+        manifest: &Manifest,
         state: State,
         image: MemoryImage,
     ) -> Result<Template> {

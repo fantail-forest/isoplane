@@ -52,6 +52,7 @@ impl BaselineRequest {
     }
 
     /// The request as a worker receives it; its own `baseline()` is itself.
+    #[cfg(target_os = "linux")]
     pub(crate) fn build_request(&self) -> &BuildRequest {
         &self.0
     }
@@ -59,12 +60,14 @@ impl BaselineRequest {
 
 /// A runtime baseline published in a directory, identified by the manifest
 /// digest recorded by local selection.
+#[cfg(target_os = "linux")]
 #[derive(Clone)]
 pub struct PublishedBaseline {
     directory: std::path::PathBuf,
     manifest_sha256: [u8; 32],
 }
 
+#[cfg(target_os = "linux")]
 impl PublishedBaseline {
     /// # Safety
     /// Nothing may change or remove the files in `directory` while any

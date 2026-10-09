@@ -231,7 +231,6 @@ pub(crate) fn produce(
     let preinit_ms = start.elapsed().as_secs_f64() * 1000.0;
     let start = Instant::now();
     let (prepared, portable) = match output.captured {
-        #[cfg(target_os = "linux")]
         crate::initialize::Captured::Layered { prepared, portable } => (
             prepared
                 .encode_builder_output()

@@ -172,7 +172,7 @@ fn published_application_content_restores_with_the_current_host_trust_file() {
     // SAFETY: unlinking the artifact preserves the contents of retained mappings.
     let template = unsafe { replacement.load_prepared(&directory, identity, &[]) }
         .expect("restore published artifact");
-    published_files::remove_dir_all(&directory).expect("remove backing artifact");
+    std::fs::remove_dir_all(&directory).expect("remove backing artifact");
     assert!(
         !directory.exists(),
         "the original publication must no longer resolve"
@@ -238,7 +238,7 @@ fn changed_application_bytes_are_rejected_before_loading() {
         .position(|window| window == content)
         .expect("asset bytes must be in retained state");
     bytes[position] ^= 1;
-    published_files::remove_file(&state_path).expect("remove read-only published state");
+    std::fs::remove_file(&state_path).expect("remove read-only published state");
     std::fs::write(state_path, bytes).expect("simulate modified backing content");
     assert!(
         // SAFETY: the file changed before loading, which must refuse it.

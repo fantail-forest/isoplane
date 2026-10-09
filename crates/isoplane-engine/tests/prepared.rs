@@ -66,7 +66,7 @@ fn prepared_state_matches_portable_state_and_survives_source_removal() {
         expected.memory_image_arc(),
         "prepared sparse state must preserve all initial memory"
     );
-    published_files::remove_dir_all(&path).expect("remove source files");
+    std::fs::remove_dir_all(&path).expect("remove source files");
     assert!(
         !path.exists(),
         "the original publication must no longer resolve"
@@ -268,7 +268,7 @@ fn a_receipt_digest_refuses_a_substituted_manifest() {
         .publish(&other)
         .expect("publish");
     let manifest = path.join("manifest.bin");
-    published_files::remove_file(&manifest).expect("remove the read-only manifest");
+    std::fs::remove_file(&manifest).expect("remove the read-only manifest");
     std::fs::copy(other.join("manifest.bin"), &manifest).expect("substitute the manifest");
     assert!(
         matches!(
@@ -337,7 +337,7 @@ fn receipt_checks_do_not_read_native_or_baseline_payloads() {
         .expect("publish");
     let digest = engine.prepared_manifest_sha256(&path).expect("receipt");
     for name in ["template.cwasm", "baseline.bin", "state.bin"] {
-        published_files::remove_file(path.join(name)).expect("remove payload");
+        std::fs::remove_file(path.join(name)).expect("remove payload");
     }
     assert_eq!(
         engine
@@ -454,7 +454,7 @@ fn publish_mapped(
 fn tamper(payload: &std::path::Path) {
     let mut bytes = std::fs::read(payload).expect("read payload");
     bytes[0] ^= 1;
-    published_files::remove_file(payload).expect("remove read-only payload");
+    std::fs::remove_file(payload).expect("remove read-only payload");
     std::fs::write(payload, bytes).expect("write changed payload");
 }
 

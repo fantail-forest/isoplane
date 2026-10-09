@@ -113,8 +113,8 @@ fn default_persistence() -> Persistence {
 }
 
 impl PreparedTemplate {
-    /// Atomically publishes a new directory of read-only payloads; existing
-    /// versions are never overwritten. Flushes the publication for crash
+    /// Atomically publishes a new directory of payloads, read-only on Unix;
+    /// existing versions are never overwritten. Flushes the publication for crash
     /// durability, except in a debug build whose environment sets
     /// `ISOPLANE_TEST_SKIP_PUBLICATION_FLUSH=1`.
     pub fn publish(&self, directory: &Path) -> Result<()> {
@@ -122,6 +122,7 @@ impl PreparedTemplate {
     }
 
     /// Publishes without flushing, for a directory no one reads after the caller returns.
+    #[cfg(target_os = "linux")]
     pub(super) fn publish_discarded(&self, directory: &Path) -> Result<()> {
         self.publish_as(directory, Persistence::Unflushed)
     }
@@ -145,12 +146,17 @@ impl PreparedTemplate {
         for (index, name) in PAYLOAD_NAMES.iter().enumerate() {
             let path = temporary.path().join(name);
             write_new(&path, &self.payloads[index], persistence)?;
-            let mut permissions = std::fs::metadata(&path)
-                .map_err(|e| io("stat published payload", &path, e))?
-                .permissions();
-            permissions.set_readonly(true);
-            std::fs::set_permissions(&path, permissions)
-                .map_err(|e| io("make published payload read-only", &path, e))?;
+            // Windows refuses to delete a file carrying its read-only attribute, which would
+            // strand a published artifact in a cache or a scratch directory.
+            #[cfg(unix)]
+            {
+                let mut permissions = std::fs::metadata(&path)
+                    .map_err(|e| io("stat published payload", &path, e))?
+                    .permissions();
+                permissions.set_readonly(true);
+                std::fs::set_permissions(&path, permissions)
+                    .map_err(|e| io("make published payload read-only", &path, e))?;
+            }
         }
         let metadata = postcard::to_allocvec(&self.manifest)?;
         write_new(&temporary.path().join(MANIFEST), &metadata, persistence)?;

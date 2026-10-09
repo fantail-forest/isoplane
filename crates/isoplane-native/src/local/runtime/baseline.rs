@@ -7,7 +7,6 @@ use super::Project;
 /// The runtime baseline a session's package preparations reuse. Clones share it.
 #[derive(Clone, Default)]
 pub struct Baselines {
-    #[cfg(target_os = "linux")]
     current: std::sync::Arc<parking_lot::Mutex<Option<isoplane_prepare::RuntimeBaseline>>>,
 }
 
@@ -17,8 +16,7 @@ impl Baselines {
     /// runtime, engine and limits, else the one published in compiler-owned
     /// storage, else prepared and published now. `admit` runs only in that
     /// last case, since any other baseline came from the same admitted
-    /// module. `None` for a module that carries its application, and on
-    /// every platform but Linux, where templates are not mapped from layers.
+    /// module. `None` for a module that carries its application.
     pub(super) fn prepare(
         &self,
         project: &Project,
@@ -30,16 +28,9 @@ impl Baselines {
         if project.application_files.files().is_empty() {
             return None;
         }
-        #[cfg(target_os = "linux")]
-        return Some(self.prepare_package(project, wasm, settings, version, admit));
-        #[cfg(not(target_os = "linux"))]
-        {
-            let _ = (wasm, settings, version, admit);
-            None
-        }
+        Some(self.prepare_package(project, wasm, settings, version, admit))
     }
 
-    #[cfg(target_os = "linux")]
     fn prepare_package(
         &self,
         project: &Project,
@@ -88,7 +79,6 @@ impl Baselines {
     }
 }
 
-#[cfg(target_os = "linux")]
 fn request(
     project: &Project,
     wasm: &[u8],
@@ -120,7 +110,6 @@ fn request(
 /// The published baseline for `wanted`, loaded from the project's
 /// compiler-owned storage, or prepared from `wasm` after `admit` and
 /// published there first. Returns whether preparing it compiled the runtime.
-#[cfg(target_os = "linux")]
 fn published(
     project: &Project,
     wasm: &[u8],
@@ -175,7 +164,6 @@ fn published(
     ))
 }
 
-#[cfg(target_os = "linux")]
 fn load(
     engine: &isoplane_engine::IsoplaneEngine,
     directory: &std::path::Path,
