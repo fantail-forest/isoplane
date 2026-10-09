@@ -15,6 +15,7 @@ public sealed class LocalSecretsTests
         try
         {
             await RunAsync(home.FullName, deadline.Token, "user-secrets", "set", "ConnectionStrings:Todo", "test-only-value", "--id", id);
+            Assert.Single(Directory.EnumerateFiles(home.FullName, "secrets.json", SearchOption.AllDirectories));
             var output = await RunAsync(home.FullName, deadline.Token, typeof(OwnedChild).Assembly.Location, "--read-local-secrets", id);
             using var values = JsonDocument.Parse(output);
             Assert.True(values.RootElement.GetProperty("ConnectionStrings:Todo").GetString() == "test-only-value",
@@ -36,7 +37,6 @@ public sealed class LocalSecretsTests
             RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false
         };
         start.Environment["APPDATA"] = Path.Combine(home, "AppData");
-        start.Environment["DOTNET_CLI_HOME"] = home;
         start.Environment["DOTNET_NOLOGO"] = "1";
         foreach (var argument in arguments)
             start.ArgumentList.Add(argument);
