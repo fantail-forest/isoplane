@@ -74,6 +74,8 @@ internal static class HotReloadAcceptance
         var frame = Frame(stopped, scenario);
         Assert.True(stopped.Thread.GetFrames()[0].Method == frame.Method,
             "The editable method must be the active frame: " + string.Join(" -> ", stopped.Thread.GetFrames().Select(item => item.Method.FullName)));
+        Assert.True(frame.CanRemap, "A completed debugger break is a supported remapping boundary.");
+        Assert.All(stopped.Thread.GetFrames().Skip(1), caller => Assert.False(caller.CanRemap));
         Assert.Equal(11, Value(frame));
         int statement = SourceLine(source, scenario.Marker);
         Assert.Contains(frame.Method.Locations, location => location.LineNumber == statement);

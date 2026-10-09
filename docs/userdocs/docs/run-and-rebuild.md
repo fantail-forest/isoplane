@@ -147,8 +147,10 @@ running are queued for the next stop. Compilation errors leave the paused code
 and locals usable and appear in the **Isoplane Hot Reload** output channel.
 Source-only line changes also update paused locations and inline-breakpoint suggestions.
 
-An active invocation keeps its original instructions until a supported **Jump to
-Cursor** adopts the edited method. Its existing locals are preserved. Remapping
+At source-breakpoint, line-step, and `Debugger.Break()` stops, the active frame adopts
+compatible edits, so **Continue** and **Step** execute the updated method. Other
+active invocations retain their original instructions until a supported **Jump to
+Cursor** adopts the edited method. Existing locals are preserved. Remapping
 can add locals and compiler-generated temporaries while preserving existing local
 types and storage addresses. Edits that change existing local storage or active
 exception-handler state cannot be adopted by that invocation.

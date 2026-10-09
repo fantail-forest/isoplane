@@ -23,6 +23,7 @@ import debug_features
 import debug_hot_reload
 import debug_hot_reload_regions
 import debug_hot_reload_handler
+import debug_hot_reload_resume
 import debug_hot_reload_lines
 import debug_statements
 import debug_statement_awaits
@@ -53,6 +54,8 @@ if mode in ("edit-and-continue-async", "edit-and-continue-try"):
     scenario = debug_hot_reload_regions
 if mode == "edit-and-continue-handler":
     scenario = debug_hot_reload_handler
+if mode == "edit-and-continue-resume":
+    scenario = debug_hot_reload_resume
 if mode == "edit-and-continue-lines":
     scenario = debug_hot_reload_lines
 if mode.startswith("async-"):

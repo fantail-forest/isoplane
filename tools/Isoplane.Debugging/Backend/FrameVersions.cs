@@ -7,12 +7,34 @@ namespace Mono.Debugger.Soft;
 
 public abstract partial class Connection
 {
+    internal bool FrameCanRemap(long thread, long frame) =>
+        SendReceive(CommandSet.STACK_FRAME, 13, new PacketWriter(this).WriteId(thread).WriteId(frame)).ReadBool();
+
+    internal void ThreadRemapIP(long thread, long method, int offset) =>
+        SendReceive(CommandSet.THREAD, 12, new PacketWriter(this).WriteId(thread).WriteId(method).WriteLong(offset));
+
     internal int FrameMethodVersion(long thread, long frame) =>
         SendReceive(CommandSet.STACK_FRAME, 12, new PacketWriter(this).WriteId(thread).WriteId(frame)).ReadInt();
 }
 
 public partial class ThreadMirror
 {
+    /// <summary>Adopts an updated active statement without repeating a completed debugger break.</summary>
+    public void RemapIP(Location location)
+    {
+        ArgumentNullException.ThrowIfNull(location);
+        try
+        {
+            vm.conn.ThreadRemapIP(Id, location.Method.Id, location.ILOffset);
+            InvalidateFrames();
+            FetchFrames(true);
+        }
+        catch (CommandException error) when (error.ErrorCode == ErrorCode.INVALID_ARGUMENT)
+        {
+            throw new ArgumentException("The active statement cannot be remapped: " + error.Message, nameof(location), error);
+        }
+    }
+
     /// <summary>Discards paused frame caches after metadata or execution state changes.</summary>
     public void InvalidateDebugFrames() => InvalidateFrames();
 }
@@ -20,6 +42,9 @@ public partial class ThreadMirror
 public partial class StackFrame
 {
     private int? methodVersion;
+
+    /// <summary>Whether this frame can adopt a compiler-mapped statement without repeating executed work.</summary>
+    public bool CanRemap => vm.conn.FrameCanRemap(thread.Id, Id);
 
     /// <summary>The method generation executing in this invocation, including after newer code is loaded.</summary>
     public int MethodVersion => methodVersion ??= method.DeclaringType.Assembly.ManifestModule.HasAppliedChanges

@@ -9,7 +9,9 @@ public partial class SoftDebuggerSession
     private (long Thread, MethodMirror Method, int Offset, int Depth)? redirectedLocation;
 
     /// <summary>Moves to a validated IL offset and refreshes the stopped stack and stepping location.</summary>
-    public TargetEventArgs MoveExecution(int offset)
+    public TargetEventArgs MoveExecution(int offset) => MoveExecution(offset, false);
+
+    private TargetEventArgs MoveExecution(int offset, bool remap)
     {
         if (!CanSetNextStatement || IsRunning || ActiveThread is null)
             throw new System.NotSupportedException("The guest must be paused in a frame that supports moving execution.");
@@ -17,7 +19,8 @@ public partial class SoftDebuggerSession
         var frame = thread.GetFrames().First();
         var location = frame.Method.LocationAtILOffset(offset)
             ?? throw new System.ArgumentException("The method has no statement at the requested offset.", nameof(offset));
-        thread.SetIP(location);
+        if (remap) thread.RemapIP(location);
+        else thread.SetIP(location);
         StackVersion++;
         RaiseStopEvent();
         var stopped = ExecutionPosition.Refresh(this);
@@ -29,7 +32,7 @@ public partial class SoftDebuggerSession
     }
 
     /// <summary>Rebinds source breakpoints and refreshes the stopped stack after compiler updates.</summary>
-    public TargetEventArgs RefreshAfterHotReload()
+    public TargetEventArgs RefreshAfterHotReload(int? remappedOffset = null)
     {
         var thread = ActiveThread ?? throw new System.InvalidOperationException("No guest thread is selected.");
         GetThread(thread.Id).InvalidateDebugFrames();
@@ -61,6 +64,7 @@ public partial class SoftDebuggerSession
             breakpoint.UpdatedByEnC = false;
         }
         TryResolvePendingBreakpoints();
+        if (remappedOffset is { } offset) return MoveExecution(offset, true);
         StackVersion++;
         RaiseStopEvent();
         return ExecutionPosition.Refresh(this);

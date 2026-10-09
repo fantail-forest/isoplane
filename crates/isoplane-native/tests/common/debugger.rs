@@ -158,6 +158,7 @@ pub fn prepared_acceptance(mode: &str) {
         | "edit-and-continue-async"
         | "edit-and-continue-try"
         | "edit-and-continue-handler"
+        | "edit-and-continue-resume"
         | "edit-and-continue-lines" => "hotreload",
         "hotreload-try"
         | "hotreload-async"
