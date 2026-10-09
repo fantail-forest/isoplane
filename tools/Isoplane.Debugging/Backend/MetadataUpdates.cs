@@ -14,7 +14,7 @@ public partial class ModuleMirror
     internal bool HasAppliedChanges => appliedGeneration != 0;
 
     /// <summary>Applies compiler deltas to a paused guest and refreshes affected method and type metadata.</summary>
-    /// <remarks>Active frames retain their invocation state; adopting edited instructions requires a supported statement jump.</remarks>
+    /// <remarks>Active frames retain their invocation state; adopting edited instructions requires a supported frame remap.</remarks>
     public void ApplyChanges(byte[] metadata, byte[] il, byte[] symbols, IEnumerable<SourceUpdate> sourceUpdates = null)
     {
         ArgumentNullException.ThrowIfNull(metadata);

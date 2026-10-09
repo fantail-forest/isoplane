@@ -7,6 +7,12 @@ namespace Mono.Debugger.Soft;
 
 public abstract partial class Connection
 {
+    internal int FrameReturnOffset(long thread, long frame) =>
+        SendReceive(CommandSet.STACK_FRAME, 14, new PacketWriter(this).WriteId(thread).WriteId(frame)).ReadInt();
+
+    internal void FrameDeferRemap(long thread, long frame, int offset) =>
+        SendReceive(CommandSet.STACK_FRAME, 15, new PacketWriter(this).WriteId(thread).WriteId(frame).WriteInt(offset));
+
     internal bool FrameCanRemap(long thread, long frame) =>
         SendReceive(CommandSet.STACK_FRAME, 13, new PacketWriter(this).WriteId(thread).WriteId(frame)).ReadBool();
 
@@ -42,6 +48,15 @@ public partial class ThreadMirror
 public partial class StackFrame
 {
     private int? methodVersion;
+
+    /// <summary>The IL continuation after this caller's outstanding call, or -1 when unavailable.</summary>
+    public int ReturnOffset => vm.conn.FrameReturnOffset(thread.Id, Id);
+
+    /// <summary>Schedules an updated continuation after the outstanding call returns.</summary>
+    public void DeferRemap(int offset) => vm.conn.FrameDeferRemap(thread.Id, Id, offset);
+
+    /// <summary>The sequence points describing the instructions executing in this invocation.</summary>
+    public Location[] GetMethodLocations() => IsCurrentMethodVersion ? method.Locations.ToArray() : method.PreviousVersion(MethodVersion).Locations;
 
     /// <summary>Whether this frame can adopt a compiler-mapped statement without repeating executed work.</summary>
     public bool CanRemap => vm.conn.FrameCanRemap(thread.Id, Id);

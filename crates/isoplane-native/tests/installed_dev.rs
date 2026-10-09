@@ -580,3 +580,8 @@ fn moving_execution_between_iterator_yields_preserves_values_and_disposal() {
 fn editor_source_edits_preserve_iterator_values_across_yields_and_awaits() {
     debugger::prepared_acceptance("edit-and-continue-iterators");
 }
+
+#[test]
+fn editor_source_edits_are_adopted_by_callers_without_repeating_calls() {
+    debugger::prepared_acceptance("edit-and-continue-callers");
+}

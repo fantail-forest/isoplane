@@ -23,6 +23,7 @@ import debug_features
 import debug_hot_reload
 import debug_hot_reload_regions
 import debug_hot_reload_handler
+import debug_hot_reload_callers
 import debug_hot_reload_iterators
 import debug_hot_reload_resume
 import debug_hot_reload_lines
@@ -58,6 +59,8 @@ if mode == "edit-and-continue-handler":
     scenario = debug_hot_reload_handler
 if mode == "statement-iterators":
     scenario = debug_statement_iterators
+if mode == "edit-and-continue-callers":
+    scenario = debug_hot_reload_callers
 if mode == "edit-and-continue-iterators":
     scenario = debug_hot_reload_iterators
 if mode == "edit-and-continue-resume":
@@ -312,7 +315,9 @@ try:
         if mode in ("requests", "launch", "reload"):
             previous_frame = frame["id"]
         if mode not in ("stop", "detach", "terminal-detach"):
-            assert http_result.result(timeout=180) == (getattr(scenario, "EXPECTED_STATUS", 200), scenario.EXPECTED_RESPONSE if scenario is not None else b"84" if mode in ("reload", "detach-failure") and attempt == 1 else b"42"), "continued customer code must complete the actual HTTP response"
+            actual = http_result.result(timeout=180)
+            expected = (getattr(scenario, "EXPECTED_STATUS", 200), scenario.EXPECTED_RESPONSE if scenario is not None else b"84" if mode in ("reload", "detach-failure") and attempt == 1 else b"42")
+            assert actual == expected, f"continued customer code returned {actual!r}, expected {expected!r}"
         if mode == "detach-failure" and attempt == 0:
             print('request-owner-event:reloaded', flush=True)
             assert sys.stdin.readline() == 'owner-event:reloaded\n'

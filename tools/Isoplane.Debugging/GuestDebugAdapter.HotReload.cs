@@ -73,8 +73,9 @@ internal sealed partial class GuestDebugAdapter
         bool ownsOperation = true;
         try
         {
-            var remapping = ActiveStatementRemapping.Capture(
-                session.VirtualMachine.GetThreads().Single(thread => thread.Id == original.ThreadId).GetFrames()[0]);
+            var frames = session.VirtualMachine.GetThreads().Single(thread => thread.Id == original.ThreadId).GetFrames();
+            var remapping = ActiveStatementRemapping.Capture(frames[0]);
+            var callers = frames.Skip(1).Select(CallerRemapping.Capture).OfType<CallerRemapping>().ToArray();
             var reply = await hotReload!.ApplyAsync(session.VirtualMachine, edits, sources, launchCancellation.Token);
             bool applied = reply.Pending && !reply.RestartRequired && reply.Diagnostics.Length == 0;
             if (applied)
@@ -82,6 +83,7 @@ internal sealed partial class GuestDebugAdapter
                 if (!ReferenceEquals(original, Volatile.Read(ref paused)))
                     throw new ProtocolException("The guest ended its pause while Hot Reload was being applied.");
                 breakpoints.RefreshAfterHotReload(edits.Select(edit => edit.Path), sources);
+                foreach (var caller in callers) caller.Apply(reply.Updates);
                 var refreshed = session.RefreshAfterHotReload(remapping?.Resolve(reply.Updates));
                 var state = new PausedValues(refreshed, Allocate, session, sources);
                 Interlocked.Exchange(ref paused, state)?.Dispose();
