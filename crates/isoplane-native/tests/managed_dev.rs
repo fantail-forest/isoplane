@@ -127,45 +127,53 @@ async fn a_keep_alive_connection_serves_the_new_publication_after_reload() {
             .header("host", "localhost")
             .body(Empty::new())
             .unwrap();
-        sender
-            .send_request(request)
-            .await
-            .unwrap()
-            .into_body()
-            .collect()
-            .await
-            .unwrap()
-            .to_bytes()
+        tokio::time::timeout(std::time::Duration::from_secs(60), async {
+            sender
+                .send_request(request)
+                .await
+                .unwrap()
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+        })
+        .await
+        .expect("the persistent connection must return each response")
     }
 
     let directory = tempfile::tempdir().unwrap();
     let (app, cli) = project(directory.path());
     let mut running = Dev::start_managed(&app, &cli);
-    tokio::time::timeout(std::time::Duration::from_secs(60), async {
-        let address = running.url.strip_prefix("http://").unwrap();
-        let stream = tokio::net::TcpStream::connect(address).await.unwrap();
-        let (mut sender, connection) =
+    let (mut sender, connection) =
+        tokio::time::timeout(std::time::Duration::from_secs(60), async {
+            let address = running.url.strip_prefix("http://").unwrap();
+            let stream = tokio::net::TcpStream::connect(address).await.unwrap();
             hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(stream))
                 .await
-                .unwrap();
-        let connection = tokio::spawn(connection);
-        assert_eq!(
-            request(&mut sender).await,
-            "working publication",
-            "the initial connection must serve the original publication"
-        );
-        source(&app, "replacement publication", "");
-        running.wait_event("reloaded");
-        assert_eq!(
-            request(&mut sender).await,
-            "replacement publication",
-            "the same TCP connection must serve the replacement publication after reload"
-        );
-        running.stop();
-        connection.await.unwrap().unwrap();
-    })
-    .await
-    .expect("the persistent HTTP connection must not hang across reload");
+                .unwrap()
+        })
+        .await
+        .expect("the persistent HTTP connection must be established");
+    let connection = tokio::spawn(connection);
+    assert_eq!(
+        request(&mut sender).await,
+        "working publication",
+        "the initial connection must serve the original publication"
+    );
+    source(&app, "replacement publication", "");
+    running.wait_event("reloaded");
+    assert_eq!(
+        request(&mut sender).await,
+        "replacement publication",
+        "the same TCP connection must serve the replacement publication after reload"
+    );
+    running.stop();
+    tokio::time::timeout(std::time::Duration::from_secs(60), connection)
+        .await
+        .expect("the connection must close after development shutdown")
+        .unwrap()
+        .unwrap();
 }
 
 #[test]
