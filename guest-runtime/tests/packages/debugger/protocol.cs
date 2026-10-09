@@ -9,6 +9,13 @@ internal static class Application
     internal static void Map(WebApplication app) => app.MapGet("/protocol", Handle);
 
     private static bool ReleaseProtocolProbe = false;
+    private static bool ReleaseEvaluationProbe = false;
+
+    private static int EvaluationProbe()
+    {
+        while (!ReleaseEvaluationProbe) { }
+        return 42;
+    }
 
     private sealed class ProtocolSample
     {

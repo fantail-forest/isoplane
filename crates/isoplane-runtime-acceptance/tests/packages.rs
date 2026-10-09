@@ -20,6 +20,9 @@ use isoplane_prepare::{
 };
 use tokio_util::sync::CancellationToken;
 
+#[path = "common/debugger_transport.rs"]
+mod debugger_transport;
+
 /// Limits used when reading package fixtures.
 fn limits() -> PackageLimits {
     PackageLimits {

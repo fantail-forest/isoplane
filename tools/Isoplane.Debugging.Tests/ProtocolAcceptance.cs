@@ -114,6 +114,11 @@ internal static class ProtocolAcceptance
             Assert.False(debuggerOwned.IsCollected, "Debugger-created values must survive function evaluation and nested suspension until the guest resumes.");
         }
         Assert.Equal(new byte[] { 3, 1, 4 }, debuggerOwned.GetValues(0, 3).Cast<PrimitiveValue>().Select(value => (byte)value.Value));
+        var evaluationType = frame.Method.DeclaringType;
+        var evaluating = evaluationType.InvokeMethodAsync(stopped.Thread, evaluationType.GetMethod("EvaluationProbe"), [],
+            InvokeOptions.SingleThreaded | InvokeOptions.DisableBreakpoints);
+        evaluationType.SetValue(evaluationType.GetField("ReleaseEvaluationProbe"), machine.CreateValue(true));
+        Assert.Equal(42, ((PrimitiveValue)await evaluating.WaitAsync(deadline.Token)).Value);
         machine.Resume();
         var changed = UserBreak(machine);
         var events = machine.TakeManagedDataBreakpointHits();
