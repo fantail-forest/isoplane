@@ -23,7 +23,9 @@ internal sealed class OwnedProcess : IDisposable
         this.output = output;
         this.errors = errors;
         this.grace = grace;
-        completion = Task.Run(Wait);
+        // The native wait blocks until process-tree cleanup finishes; it must not
+        // occupy a worker needed by redirected output and shutdown continuations.
+        completion = Task.Factory.StartNew(Wait, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
     }
 
     internal StreamReader StandardOutput => output ?? throw new InvalidOperationException("Output was not redirected.");
