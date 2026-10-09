@@ -57,7 +57,12 @@ impl PreparationOwner {
 impl Drop for PreparationOwner {
     fn drop(&mut self) {
         let mut active = active().lock();
-        drop(self.file.take());
+        if let Some(file) = self.file.take() {
+            // Unlocked here and not left to the close: a child process spawned while this owner
+            // lived keeps the open file, and with it the lock, until it executes its program.
+            // If unlocking fails, the close that follows still releases a lock no child shares.
+            drop(fs4::FileExt::unlock(&file));
+        }
         active.remove(&self.directory);
     }
 }
@@ -65,6 +70,20 @@ impl Drop for PreparationOwner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_released_owner_can_be_replaced_while_a_child_process_holds_its_lock_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let owner = PreparationOwner::create(directory.path()).unwrap();
+        // What a forked child holds until it executes: the same open file, and so the same lock.
+        let inherited = owner.file.as_ref().unwrap().try_clone().unwrap();
+        drop(owner);
+        assert!(
+            PreparationOwner::try_acquire(directory.path()).unwrap().is_some(),
+            "a released preparation must be claimable while another holder of its lock file is open"
+        );
+        drop(inherited);
+    }
 
     #[test]
     fn cleanup_cannot_claim_a_live_preparation_in_the_same_process() {
