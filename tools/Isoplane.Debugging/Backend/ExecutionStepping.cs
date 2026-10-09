@@ -84,12 +84,21 @@ public partial class SoftDebuggerSession
     {
         var redirected = redirectedLocation;
         redirectedLocation = null;
-        if (redirected is not { } location || currentRequest is not StepEventRequest step
+        if (redirected is not { } location
             || events.Any(value => value.EventType != EventType.Breakpoint || value.Thread.Id != location.Thread))
             return false;
         var frames = events[0].Thread.GetFrames();
         if (frames.Length != location.Depth || frames[0].Method != location.Method || frames[0].ILOffset != location.Offset)
             return false;
+        if (currentRequest is not StepEventRequest step)
+        {
+            // Remapping re-enters the breakpoint instruction at the displayed stop.
+            // Continue must execute that statement without presenting the same stop twice.
+            current_thread = null;
+            vm.Resume();
+            DequeueEventsForFirstThread();
+            return true;
+        }
         // The first step was armed before the interpreter resumed at the new IP.
         // Re-arm it here so its starting source line is the jump destination.
         foreach (var breakpoint in events) HandleBreakpoint(breakpoint.Thread, breakpoint.Request);

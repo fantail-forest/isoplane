@@ -1,7 +1,7 @@
 """Apply edits during execution without introducing or consuming debugger stops."""
 from pathlib import Path
 
-EXPECTED_RESPONSE = b'42:1:1:True:{"Value":1,"Added":2}'
+EXPECTED_RESPONSE = b'42:2:2:True:{"Value":1,"Added":3}'
 
 
 def result_line(source):
@@ -31,4 +31,11 @@ def exercise(source, send, response, until):
     assert frame["line"] == result_line(source), frame
     value = response(send("evaluate", {"frameId": frame["id"], "expression": "value"}))["body"]["result"]
     assert value == "42", value
+    response(send("evaluate", {"frameId": frame["id"], "expression": "System.GC.Collect()", "context": "repl"}))
+    edited = edited.replace("Revision() => 42;", "Revision() => 43;").replace("public int Added => 2;", "public int Added => 3;")
+    applied = response(send("isoplane/hotReload", {"sources": [{"path": source, "text": edited}]}))["body"]
+    assert applied["appliedModules"] == 1 and not applied["diagnostics"] and not applied["restartRequired"], applied
+    until(lambda item: item.get("event") == "output" and "notification-fixture-warning" in item.get("body", {}).get("output", ""))
+    refreshed = until(lambda item: item.get("event") == "stopped")
+    assert refreshed["body"]["reason"] == "pause", refreshed
     response(send("continue", {"threadId": thread}))

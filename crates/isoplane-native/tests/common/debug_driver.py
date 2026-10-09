@@ -353,6 +353,12 @@ try:
             assert check.connect_ex((http_endpoint.hostname, http_endpoint.port)) != 0, "disconnect must close the launched HTTP listener"
     print("debug acceptance passed: " + mode, flush=True)
 finally:
+    if sys.exc_info()[0] is not None:
+        while True:
+            try:
+                print("Unconsumed debugger message:", messages.get_nowait(), flush=True)
+            except queue.Empty:
+                break
     if sys.exc_info()[0] is not None and http_result is not None and http_result.done():
         try:
             print("HTTP outcome at debugger failure:", http_result.result(), flush=True)
