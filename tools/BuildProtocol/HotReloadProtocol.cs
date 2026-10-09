@@ -15,6 +15,7 @@ internal sealed record SourceLineUpdate(int OldLine, int NewLine);
 internal sealed record SequencePointUpdate(string FileName, SourceLineUpdate[] Lines);
 internal sealed record ModuleUpdate(Guid Module, byte[] Metadata, byte[] Il, byte[] Symbols)
 {
+    public int[] UpdatedTypes { get; init; } = [];
     public ActiveStatementUpdate[] ActiveStatements { get; init; } = [];
     public SequencePointUpdate[] SequencePoints { get; init; } = [];
 }

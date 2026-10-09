@@ -190,6 +190,7 @@ def any_running(owned):
     return any(pid in tree and not tree[pid][1].startswith('Z') for pid in owned)
 
 
+http_result = None
 try:
     lines = Path(source).read_text().splitlines()
     if scenario is None:
@@ -352,6 +353,11 @@ try:
             assert check.connect_ex((http_endpoint.hostname, http_endpoint.port)) != 0, "disconnect must close the launched HTTP listener"
     print("debug acceptance passed: " + mode, flush=True)
 finally:
+    if sys.exc_info()[0] is not None and http_result is not None and http_result.done():
+        try:
+            print("HTTP outcome at debugger failure:", http_result.result(), flush=True)
+        except Exception as error:
+            print("HTTP failure at debugger failure:", repr(error), flush=True)
     if terminal is not None and terminal.poll() is None:
         if not terminal.stdin.closed:
             terminal.stdin.close()

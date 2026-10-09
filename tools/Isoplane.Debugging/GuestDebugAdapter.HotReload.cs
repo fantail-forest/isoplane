@@ -97,11 +97,14 @@ internal sealed partial class GuestDebugAdapter
                         throw new ProtocolException("The guest changed execution state while Hot Reload was being applied.");
                     breakpoints.RefreshAfterHotReload(edits.Select(edit => edit.Path), sources);
                     foreach (var caller in callers) caller.Apply(reply.Updates);
+                    int? remappedOffset = remapping?.Resolve(reply.Updates);
+                    foreach (string warning in await hotReload.NotifyAsync(machine, reply.Updates, launchCancellation.Token))
+                        Protocol.SendEvent(new OutputEvent { Category = OutputEvent.CategoryValue.Stderr, Output = warning + Environment.NewLine });
                     if (original is null)
                         session.RefreshSourceBreakpointsAfterHotReload();
                     else
                     {
-                        var refreshed = session.RefreshAfterHotReload(remapping?.Resolve(reply.Updates));
+                        var refreshed = session.RefreshAfterHotReload(remappedOffset);
                         refreshedState = new PausedValues(refreshed, Allocate, session, sources);
                         Interlocked.Exchange(ref paused, refreshedState)?.Dispose();
                     }

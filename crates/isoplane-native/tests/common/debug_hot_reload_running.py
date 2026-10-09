@@ -1,7 +1,7 @@
 """Apply edits during execution without introducing or consuming debugger stops."""
 from pathlib import Path
 
-EXPECTED_RESPONSE = b"42"
+EXPECTED_RESPONSE = b'42:1:1:True:{"Value":1,"Added":2}'
 
 
 def result_line(source):
@@ -20,8 +20,10 @@ def exercise(source, send, response, until):
     invalid = response(send("isoplane/hotReload", {"sources": [{"path": source, "text": original + "\n#error running_invalid_edit\n"}]}))["body"]
     assert invalid["appliedModules"] == 0 and invalid["diagnostics"], invalid
     edited = original.replace("Revision() => 0;", "Revision() => 42;")
+    edited = edited.replace("public int Value => 1; // NOTIFICATION_PROPERTY", "public int Value => 1; public int Added => 2; // NOTIFICATION_PROPERTY")
     applied = response(send("isoplane/hotReload", {"sources": [{"path": source, "text": edited}]}))["body"]
     assert applied["appliedModules"] == 1 and not applied["diagnostics"] and not applied["restartRequired"], applied
+    until(lambda item: item.get("event") == "output" and "notification-fixture-warning" in item.get("body", {}).get("output", ""))
     stopped = until(lambda item: item.get("event") == "stopped")
     assert stopped["body"]["reason"] == "breakpoint", stopped
     thread = stopped["body"]["threadId"]

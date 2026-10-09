@@ -9,13 +9,15 @@ internal sealed class HotReloadSession : IAsyncDisposable
 {
     private readonly HotReloadBaseline baseline;
     private readonly HotReloadCompiler compiler;
+    private readonly HotReloadNotifications notifications;
 
     internal string[] Documents => compiler.Documents;
 
-    private HotReloadSession(HotReloadBaseline baseline, HotReloadCompiler compiler)
+    private HotReloadSession(HotReloadBaseline baseline, HotReloadCompiler compiler, HotReloadNotifications notifications)
     {
         this.baseline = baseline;
         this.compiler = compiler;
+        this.notifications = notifications;
     }
 
     internal static async Task<HotReloadSession> StartAsync(DebugProject project, string package, CancellationToken cancellation)
@@ -24,7 +26,12 @@ internal sealed class HotReloadSession : IAsyncDisposable
         try
         {
             var compiler = await HotReloadCompiler.StartAsync(project.Path, project.Properties, baseline.Assemblies, [], cancellation);
-            return new(baseline, compiler);
+            try { return new(baseline, compiler, HotReloadNotifications.Read(compiler.SdkDirectory)); }
+            catch
+            {
+                await compiler.DisposeAsync();
+                throw;
+            }
         }
         catch
         {
@@ -89,6 +96,15 @@ internal sealed class HotReloadSession : IAsyncDisposable
             throw new HotReloadApplicationException("The guest could not complete Hot Reload. Restart debugging to restore a consistent compiler and runtime baseline.", error);
         }
         return reply;
+    }
+
+    internal async Task<string[]> NotifyAsync(VirtualMachine machine, ModuleUpdate[] updates, CancellationToken cancellation)
+    {
+        try { return await notifications.ApplyAsync(machine, updates, cancellation); }
+        catch (Exception error)
+        {
+            throw new HotReloadApplicationException("The guest could not notify its Hot Reload handlers. Restart debugging to restore consistent application caches.", error);
+        }
     }
 
     public async ValueTask DisposeAsync()

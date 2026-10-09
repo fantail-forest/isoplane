@@ -1,4 +1,9 @@
+#nullable enable
 using System;
+using System.Reflection.Metadata;
+using System.Text.Json;
+
+[assembly: MetadataUpdateHandler(typeof(Debugger.HotReload.ReloadNotifications))]
 
 namespace Debugger.HotReload;
 
@@ -31,14 +36,22 @@ public static class Callers
     /// <summary>Observes a source edit without requiring a debugger pause.</summary>
     public static string Running()
     {
+        ReloadNotifications.Enabled = true;
+        var sample = new NotificationSample();
+        if (JsonSerializer.Serialize(sample) != "{\"Value\":1}") throw new InvalidOperationException("The initial JSON contract was not cached.");
         System.Diagnostics.Debugger.Break();
         int value;
         do { value = Revision(); } while (value == 0);
-        return value.ToString(); // RUNNING_RESULT
+        return $"{value}:{ReloadNotifications.Clears}:{ReloadNotifications.Updates}:{ReloadNotifications.TypesMatched}:{JsonSerializer.Serialize(sample)}"; // RUNNING_RESULT
     }
 
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static int Revision() => 0; // RUNNING_EDIT
+
+    private sealed class NotificationSample
+    {
+        public int Value => 1; // NOTIFICATION_PROPERTY
+    }
 
     private sealed class Constructed
     {
@@ -86,5 +99,30 @@ public static class Callers
         System.Diagnostics.Debugger.Break(); // CALLER_PAUSE
         GC.Collect();
         return new Number(1);
+    }
+}
+
+internal static class ReloadNotifications
+{
+    internal static bool Enabled;
+    internal static int Clears;
+    internal static int Updates;
+    internal static bool TypesMatched;
+
+    public static void ClearCache(Type[]? updatedTypes)
+    {
+        if (!Enabled) return;
+        Clears++;
+        TypesMatched = updatedTypes is not null
+            && Array.Exists(updatedTypes, type => type == typeof(Callers))
+            && Array.Exists(updatedTypes, type => type.Name == "NotificationSample");
+    }
+
+    public static void UpdateApplication(Type[]? updatedTypes)
+    {
+        if (!Enabled) return;
+        if (Clears != Updates + 1) throw new InvalidOperationException("Cache clearing must precede application updates.");
+        Updates++;
+        throw new InvalidOperationException("notification-fixture-warning");
     }
 }
