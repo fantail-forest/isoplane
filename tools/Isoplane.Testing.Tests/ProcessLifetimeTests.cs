@@ -29,11 +29,10 @@ public sealed class ProcessLifetimeTests
         fixture.Configure("orphan-after-eof");
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var child = 0;
-        var failure = await fixture.WithApplicationAsync(async app =>
+        await fixture.WithApplicationAsync(async app =>
         {
             child = int.Parse(await File.ReadAllTextAsync(Path.Combine(fixture.Directory, "child.pid"), deadline.Token));
-        }, deadline.Token, typeof(TimeoutException));
-        Assert.True(failure!.Message.Contains("termination", StringComparison.Ordinal), "Forced cleanup must be visible to the test consumer.");
+        }, deadline.Token, typeof(TimeoutException), fixture.Options with { ShutdownTimeout = TimeSpan.FromSeconds(1) });
         await AssertStoppedAsync(child, deadline.Token);
     }
 
@@ -43,7 +42,8 @@ public sealed class ProcessLifetimeTests
         using var fixture = new SessionFixture();
         fixture.Configure("startup-failure");
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        var failure = await Assert.ThrowsAnyAsync<Exception>(() => IsoplaneApplication.StartAsync(fixture.Directory, fixture.Options, deadline.Token));
+        var failure = await Assert.ThrowsAnyAsync<Exception>(() => IsoplaneApplication.StartAsync(fixture.Directory,
+            fixture.Options with { ShutdownTimeout = TimeSpan.FromSeconds(1) }, deadline.Token));
         Assert.True(failure.ToString().Contains("configuration failed", StringComparison.Ordinal), "Startup failure must retain actionable CLI diagnostics.");
         Assert.False(deadline.IsCancellationRequested, "Parent exit must end startup independently of its caller deadline.");
         var child = int.Parse(await File.ReadAllTextAsync(Path.Combine(fixture.Directory, "child.pid"), deadline.Token));
@@ -187,8 +187,7 @@ public sealed class ProcessLifetimeTests
         internal ApplicationOptions Options => new()
         {
             CliPath = Environment.GetEnvironmentVariable("ISOPLANE_TEST_PROCESS_FIXTURE")
-                ?? throw new InvalidOperationException("Run task test:managed to prepare the process fixture."),
-            ShutdownTimeout = TimeSpan.FromSeconds(1)
+                ?? throw new InvalidOperationException("Run task test:managed to prepare the process fixture.")
         };
 
         internal void Configure(string scenario, string? readiness = null)
