@@ -288,7 +288,8 @@ tasks:
           NAME: debugger
 
   package:debugger-optimized:
-    deps: [':runtime', 'debugger:sources']
+    # Both variants write the shared HotReloadFixture project's build outputs.
+    deps: [':runtime', 'debugger:sources', 'package:debugger']
     cmds:
       - task: package:build
         vars:
