@@ -154,6 +154,7 @@ pub fn compiler_acceptance() {
 pub fn prepared_acceptance(mode: &str) {
     let fixture = match mode {
         "watchpoint-steps" => "watchpoints",
+        "edit-and-continue-iterators" => "hotreload/Iterators",
         "edit-and-continue"
         | "edit-and-continue-async"
         | "edit-and-continue-try"
@@ -190,7 +191,9 @@ pub fn prepared_acceptance(mode: &str) {
         root.join("guest-runtime/tests/packages/debugger")
     };
     let source = sources.join(format!("{fixture}.cs"));
-    let route = if mode == "edit-and-continue-async" {
+    let route = if mode == "edit-and-continue-iterators" {
+        "hotreload-iterators"
+    } else if mode == "edit-and-continue-async" {
         "hotreload-async"
     } else if mode == "edit-and-continue-try" {
         "hotreload-try"

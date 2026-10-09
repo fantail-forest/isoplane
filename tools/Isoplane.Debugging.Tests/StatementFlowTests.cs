@@ -48,13 +48,16 @@ public sealed class StatementFlowTests
     }
 
     [Fact]
-    public void unrecognized_move_next_methods_cannot_move_execution()
+    public void ordinary_methods_named_move_next_can_select_empty_stack_boundaries()
     {
         using var module = ModuleDefinition.CreateModule("Statements", ModuleKind.Dll);
         var method = Method(module);
         method.Name = "MoveNext";
-        method.Body.GetILProcessor().Emit(OpCodes.Ret);
-        Assert.Empty(Offsets(module));
+        var il = method.Body.GetILProcessor();
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ret);
+        Assert.Equal([0, 2], Offsets(module));
     }
 
     [Fact]

@@ -6,8 +6,7 @@ namespace Isoplane.Debugging;
 
 internal static class StatementFlow
 {
-    internal static bool CanMove(MethodMirror method) => (method.Name != "MoveNext" || IsAsyncBody(method))
-        && !method.GetCustomAttributes(false).Any(attribute => attribute.Constructor.DeclaringType.FullName is
+    internal static bool CanMove(MethodMirror method) => !method.GetCustomAttributes(false).Any(attribute => attribute.Constructor.DeclaringType.FullName is
             "System.Runtime.CompilerServices.AsyncStateMachineAttribute" or "System.Runtime.CompilerServices.IteratorStateMachineAttribute");
 
     internal static bool IsAsyncBody(MethodMirror method) => method.Name == "MoveNext" && !method.IsStatic
@@ -15,7 +14,6 @@ internal static class StatementFlow
         && method.DeclaringType.GetInterfaces().Any(type => type.FullName == "System.Runtime.CompilerServices.IAsyncStateMachine");
 
     internal static bool CanMove(MethodDefinition method) => method.HasBody
-        && (method.Name != "MoveNext" || IsAsyncBody(method))
         && !method.CustomAttributes.Any(attribute => attribute.AttributeType.FullName is
             "System.Runtime.CompilerServices.AsyncStateMachineAttribute" or "System.Runtime.CompilerServices.IteratorStateMachineAttribute");
 
@@ -118,14 +116,6 @@ internal static class StatementFlow
                 || instructions[indices[item.Key] - 1].OpCode.OpCodeType != OpCodeType.Prefix))
             .Select(item => item.Key).ToHashSet();
     }
-
-    internal static bool IsAsyncBody(MethodDefinition method) => method.Name == "MoveNext"
-        && method.DeclaringType.DeclaringType is { } owner
-        && owner.Methods.Any(candidate => candidate.CustomAttributes.Any(attribute =>
-            attribute.AttributeType.FullName == "System.Runtime.CompilerServices.AsyncStateMachineAttribute"
-            && attribute.ConstructorArguments.Count == 1
-            && attribute.ConstructorArguments[0].Value is TypeReference state
-            && state.FullName == method.DeclaringType.FullName));
 
     internal static HashSet<int> ReachableTargets(MethodDefinition method, int currentOffset)
     {

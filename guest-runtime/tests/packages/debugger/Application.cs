@@ -21,6 +21,8 @@ public static class Application
         Statements.Application.Map(app);
         StatementAwaits.Application.Map(app);
         StatementHandlers.Application.Map(app);
+        StatementIterators.Application.Map(app);
+        app.MapGet("/hotreload-iterators", HotReload.Iterators.Handle);
         app.MapGet("/hotreload", HotReload.Application.Handle);
         app.MapGet("/hotreload-layout", Debugger.HotReload.Application.HandleLayout);
         app.MapGet("/hotreload-try", HotReload.Application.HandleTry);

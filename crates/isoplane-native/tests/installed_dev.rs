@@ -570,3 +570,13 @@ fn editor_source_edits_keep_frames_and_jump_targets_aligned_after_line_changes()
 fn editor_source_edits_are_adopted_when_stepping_and_continuing() {
     debugger::prepared_acceptance("edit-and-continue-resume");
 }
+
+#[test]
+fn moving_execution_between_iterator_yields_preserves_values_and_disposal() {
+    debugger::prepared_acceptance("statement-iterators");
+}
+
+#[test]
+fn editor_source_edits_preserve_iterator_values_across_yields_and_awaits() {
+    debugger::prepared_acceptance("edit-and-continue-iterators");
+}

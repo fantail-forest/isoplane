@@ -190,7 +190,9 @@ across `await` statements within those handler boundaries, including jumping
 backward to await again. Suspended async callers do not have a live instruction
 pointer to move. Constructor bodies and synchronized methods support statement
 jumps; a synchronized method retains its monitor until ordinary method exit.
-Iterator methods do not offer jump targets.
+Active synchronous and asynchronous iterator bodies support jumps across `yield`
+statements. A jump preserves the current iterator values; ordinary enumeration
+and disposal still follow the resulting control flow.
 
 Use ordinary .NET unit tests for isolated application logic and
 [sandbox integration tests](test-an-application.md) to exercise platform behavior.
