@@ -1,9 +1,13 @@
-//! The SDK's activation hook: a generator an app seeded before the template
-//! snapshot is recreated on activation, so two activations of the template
-//! draw apart and each recreation draws host entropy.
+//! Activation: generators seeded before the template snapshot are reseeded
+//! when an instance activates, so two activations of the template draw apart.
+//! The runtime reseeds every generator that chose its own seed; an app
+//! recreates the ones it seeded itself in the SDK's activation hook. Request
+//! identifiers, which ASP.NET numbers from a counter the snapshot copies,
+//! must likewise differ between activations.
 
 use crate::bindings::Recorder;
 use crate::dotnet::{budget, fixture, Fixture, GuestRuntime, Request};
+use isoplane_abi::result::ResultRecord;
 use isoplane_engine::{Completion, Instance, InstanceOps};
 
 fn activation(runtime: GuestRuntime) -> &'static Fixture {
@@ -33,6 +37,24 @@ fn cloned_instances(runtime: GuestRuntime) -> Vec<(Instance, Recorder)> {
         !recorder.entropy_draws.lock().is_empty(),
         "the probe must seed its generator during pre-initialisation, so the template holds it"
     );
+    clone_twice(fixture, original)
+}
+
+/// Two activations of the ASP.NET fixture's template, captured after the
+/// warm-up requests its initialization makes.
+fn cloned_aspnet_instances(runtime: GuestRuntime) -> Vec<(Instance, Recorder)> {
+    let fixture = fixture("isoplane_guest_aspnet", runtime);
+    let (mut original, _) = fixture.activate_with_entropy(0x21);
+    let initialized = original.run_initialize(budget());
+    assert_eq!(
+        initialized.completion,
+        Completion::Done,
+        "the ASP.NET fixture must initialize"
+    );
+    clone_twice(fixture, original)
+}
+
+fn clone_twice(fixture: &Fixture, mut original: Instance) -> Vec<(Instance, Recorder)> {
     let state = original
         .capture_mutable_state()
         .expect("the warm heap must be capturable");
@@ -51,7 +73,89 @@ fn cloned_instances(runtime: GuestRuntime) -> Vec<(Instance, Recorder)> {
         .collect()
 }
 
+/// The identifier ASP.NET gave a request, which the fixture echoes in a
+/// header. The host acknowledges each write of an ASP.NET response.
+fn request_identifier(instance: &mut Instance, recorder: &Recorder) -> String {
+    let mut outcome = Request::get("/request-id").dispatch(instance);
+    for _ in 0..8 {
+        if outcome.completion != Completion::Parked {
+            break;
+        }
+        let (future, bytes) = recorder
+            .response_writes
+            .lock()
+            .pop_front()
+            .expect("a parked ASP.NET response must be awaiting a write");
+        let written = postcard::to_allocvec(&bytes).expect("encode the written byte count");
+        outcome = instance.wake(future, &ResultRecord::Ok(written), budget());
+    }
+    assert_eq!(
+        outcome.completion,
+        Completion::Done,
+        "the ASP.NET fixture must answer /request-id: {outcome:?}"
+    );
+    let response = recorder
+        .responses
+        .lock()
+        .pop()
+        .expect("the ASP.NET fixture must respond to /request-id");
+    response
+        .headers
+        .into_iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("x-request-id"))
+        .map(|(_, value)| value)
+        .expect("the fixture must echo the request identifier")
+}
+
+/// One draw from each of two activations of one template.
+fn draws(runtime: GuestRuntime, path: &str) -> Vec<Vec<u8>> {
+    cloned_instances(runtime)
+        .into_iter()
+        .map(|(mut instance, recorder)| request(&mut instance, &recorder, path))
+        .collect()
+}
+
+fn assert_activations_draw_apart(runtime: GuestRuntime, path: &str, generator: &str) {
+    let draws = draws(runtime, path);
+    assert_ne!(
+        draws[0], draws[1],
+        "two activations of one template must not replay the {generator} state the snapshot holds"
+    );
+}
+
 in_mono_runtime! {
+    fn the_runtimes_shared_generator_is_reseeded_in_each_activation(runtime: GuestRuntime) {
+        assert_activations_draw_apart(runtime, "/shared-draw", "Random.Shared");
+    }
+
+    fn the_runtimes_trace_id_generator_is_reseeded_in_each_activation(runtime: GuestRuntime) {
+        assert_activations_draw_apart(runtime, "/trace-id", "trace identifier");
+    }
+
+    fn a_generator_an_app_created_without_a_seed_is_reseeded_in_each_activation(runtime: GuestRuntime) {
+        assert_activations_draw_apart(runtime, "/unseeded-draw", "unseeded Random");
+        assert_activations_draw_apart(runtime, "/unseeded-derived-draw", "unseeded derived Random");
+    }
+
+    fn aspnet_request_identifiers_differ_between_activations(runtime: GuestRuntime) {
+        let identifiers: Vec<_> = cloned_aspnet_instances(runtime)
+            .into_iter()
+            .map(|(mut instance, recorder)| request_identifier(&mut instance, &recorder))
+            .collect();
+        assert_ne!(
+            identifiers[0], identifiers[1],
+            "two activations of one template must not number their requests alike"
+        );
+    }
+
+    fn a_generator_given_a_fixed_seed_keeps_its_sequence_in_every_activation(runtime: GuestRuntime) {
+        let draws = draws(runtime, "/fixed-seed-draw");
+        assert_eq!(
+            draws[0], draws[1],
+            "a generator seeded by the app is deterministic by request and must not be reseeded"
+        );
+    }
+
     fn initialization_can_capture_settings_before_activation(runtime: GuestRuntime) {
         for (mut instance, recorder) in cloned_instances(runtime) {
             assert_eq!(request(&mut instance, &recorder, "/prepared-setting"), b"captured",

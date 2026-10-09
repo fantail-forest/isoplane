@@ -10,7 +10,7 @@ namespace AdapterFixture;
 /// <summary>Exercises the ASP.NET transport, request scopes, and hosted startup.</summary>
 public static class Application
 {
-    /// <summary>Runs the transport fixture and warms its ordinary and scoped read routes.</summary>
+    /// <summary>Runs the transport fixture and warms its ordinary, scoped and identified read routes.</summary>
     public static async Task Main(string[] args)
     {
         var builder = IsoplaneHosting.CreateBuilder(args);
@@ -48,6 +48,11 @@ public static class Application
             context.Response.StatusCode = 201;
             await context.Request.Body.CopyToAsync(context.Response.Body);
         });
+        app.MapGet("/request-id", async context =>
+        {
+            context.Response.Headers.Append("X-Request-Id", context.TraceIdentifier);
+            await context.Response.WriteAsync("identified");
+        });
         app.MapGet("/scope", async context =>
         {
             if (RequestScope.Active != 0) throw new InvalidOperationException("A previous request scope survived completion.");
@@ -76,6 +81,7 @@ public static class Application
         {
             await app.WarmupAsync("/");
             await app.WarmupAsync("/scope");
+            await app.WarmupAsync("/request-id");
         };
         await app.RunAsync();
     }

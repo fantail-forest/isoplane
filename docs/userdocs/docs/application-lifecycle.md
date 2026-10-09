@@ -53,6 +53,17 @@ Generate request-specific values while handling the request. If a dependency
 maintains its own random state, check its activation and reseeding requirements;
 copying application state does not make that state unique.
 
+Before those callbacks run, the runtime reseeds every `Random` that was created
+without a seed, including `Random.Shared`, and the generator behind `Activity`
+trace and span identifiers. Cryptographic randomness needs no reseeding, because
+every call draws from the host. An ASP.NET application's
+`HttpContext.TraceIdentifier` is drawn for each request, so instances do not
+number their requests alike. Three things are left to you:
+
+- a `Random` constructed with a seed, even when that seed was itself random;
+- a generator that is not a `System.Random`, such as one a library implements;
+- a value already drawn during initialization, which is copied as data.
+
 ## Data protection keys
 
 ASP.NET Core Data Protection, which antiforgery tokens and authentication cookies

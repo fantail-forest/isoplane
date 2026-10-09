@@ -1,5 +1,6 @@
 using System;
 using System.Threading.Tasks;
+using Isoplane.Runtime;
 
 namespace Isoplane;
 
@@ -7,9 +8,14 @@ namespace Isoplane;
 /// The moment an instance first runs after activation from its template.
 /// Every activation is a copy of the memory pre-initialisation left, so a
 /// generator that seeded itself before the snapshot would replay the same
-/// output in each copy; subscribe here to reseed or recreate it. The event
-/// is raised once per activation, before the first dispatch, and not
-/// again after a wake from hibernation, whose state is the instance's own.
+/// output in each copy. By the time the event is raised the runtime has
+/// reseeded every <c>Random</c> created without a seed, <c>Random.Shared</c>
+/// and the generator behind activity trace and span identifiers. Subscribe
+/// here to recreate what it cannot know about: a <c>Random</c> given a seed
+/// that was itself random, a generator of another kind, or a value already
+/// drawn. The event is raised once per activation, before the first dispatch,
+/// and not again after a wake from hibernation, whose state is the instance's
+/// own.
 /// </summary>
 public static class Activation
 {
@@ -21,5 +27,11 @@ public static class Activation
     /// <summary>True after every activation callback has completed successfully.</summary>
     public static bool IsActivated => Hook.IsCompleted;
 
-    internal static Task EnterAsync() => Hook.EnterAsync(Activated);
+    internal static Task EnterAsync() => Hook.EnterAsync(ActivateAsync);
+
+    private static Task ActivateAsync()
+    {
+        RuntimeGenerators.Reseed();
+        return LifecycleHook.InvokeCallbacksAsync(Activated);
+    }
 }

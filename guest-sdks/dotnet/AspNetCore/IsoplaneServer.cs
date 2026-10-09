@@ -93,6 +93,7 @@ internal sealed class IsoplaneServer : IServer
             Headers = headers
         });
         features.Set<IHttpRequestBodyDetectionFeature>(new RequestBody(canHaveBody));
+        features.Set<IHttpRequestIdentifierFeature>(new RequestIdentifier());
         features.Set<IHttpRequestLifetimeFeature>(lifetime);
         features.Set<IHttpResponseFeature>(response);
         features.Set<IHttpResponseBodyFeature>(response);
@@ -108,6 +109,20 @@ internal sealed class IsoplaneServer : IServer
     public void Dispose() => dispatch = null;
 
     private sealed record RequestBody(bool CanHaveBody) : IHttpRequestBodyDetectionFeature;
+
+    // ASP.NET numbers requests from a static counter, which the template snapshot
+    // copies once a warm-up request has started it: every instance would then hand
+    // out the same identifiers. A request draws its own instead, and only if asked.
+    private sealed class RequestIdentifier : IHttpRequestIdentifierFeature
+    {
+        private string? identifier;
+
+        public string TraceIdentifier
+        {
+            get => identifier ??= Random.Shared.NextInt64().ToString("X16");
+            set => identifier = value;
+        }
+    }
 
     private sealed class RequestLifetime(CancellationToken hostCancellation) : IHttpRequestLifetimeFeature, IDisposable
     {
