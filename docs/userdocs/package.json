@@ -15,12 +15,12 @@
   "dependencies": {
     "@docusaurus/core": "3.10.2",
     "@docusaurus/preset-classic": "3.10.2",
+    "@docusaurus/theme-mermaid": "3.10.2",
     "@mdx-js/react": "^3.0.0",
     "clsx": "^2.0.0",
     "prism-react-renderer": "^2.3.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "@docusaurus/theme-mermaid": "3.10.2"
+    "react-dom": "^19.0.0"
   },
   "browserslist": {
     "production": [
@@ -36,5 +36,14 @@
   },
   "engines": {
     "node": ">=20.0"
+  },
+  "overrides": {
+    "postcss-selector-parser": "^7.1.6",
+    "serialize-javascript": "^7.0.5",
+    "tinypool": "^2.1.2",
+    "katex": "^0.18.2",
+    "sockjs": {
+      "uuid": "^11.1.1"
+    }
   }
 }
