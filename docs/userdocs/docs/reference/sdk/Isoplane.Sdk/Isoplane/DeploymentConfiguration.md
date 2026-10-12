@@ -5,7 +5,7 @@ mdx:
 
 # DeploymentConfiguration class
 
-Non-secret settings fixed for an application version at deployment.
+Names and values fixed for one deployed version of the application, which it can read only while it starts.
 
 ```csharp
 public static class DeploymentConfiguration
@@ -15,7 +15,11 @@ public static class DeploymentConfiguration
 
 | name | description |
 | --- | --- |
-| static [ReadVariables](DeploymentConfiguration/ReadVariables.md)() | Reads the manifest's `init_visible_vars`, preserving order and duplicate keys. Call during pre-initialization and retain the result for request handling; the host refuses this import after activation. These values become part of the template. Use RuntimeConfiguration for host-supplied settings and secrets. |
+| static [ReadVariables](DeploymentConfiguration/ReadVariables.md)() | Reads the deployment's variables. |
+
+## Remarks
+
+Most applications do not need this type. Settings and credentials come from [`RuntimeConfiguration`](./RuntimeConfiguration.md), or from `IConfiguration` in an ASP.NET application. These values differ in two ways: they belong to the deployed version and cannot change without deploying again, and they are saved in the template every instance starts from, so they must not be secret.
 
 ## See Also
 

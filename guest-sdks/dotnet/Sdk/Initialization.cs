@@ -3,22 +3,64 @@ using System.Threading.Tasks;
 
 namespace Isoplane;
 
-/// <summary>Initializes reusable application state before its deployment template is captured.</summary>
+/// <summary>
+/// Lets an application prepare captured state ahead of requests, that every instance then starts with.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Isoplane initializes the application ahead of requests and saves its memory as a template. It then
+/// runs as many copies of the application as its traffic needs; each copy is an instance, and each
+/// starts from the template. Captured startup work is reused rather than repeated in every
+/// instance. Subscribe to <see cref="Initializing"/> to do that work: load reference data, build
+/// lookup tables, and run the code a request will run so that no request pays for its first use.
+/// </para>
+/// <para>
+/// An application written without ASP.NET has no start-up code to subscribe from, and marks one
+/// method with <see cref="InitializerAttribute"/> instead. For state that must differ between
+/// instances, use <see cref="Activation"/>.
+/// <see href="https://isoplane.dev/docs/application-lifecycle">The application lifecycle</see>
+/// explains templates and instances in full.
+/// </para>
+/// </remarks>
 public static class Initialization
 {
     private static readonly LifecycleHook Hook = new();
 
-    /// <summary>Raised after application construction, before template capture.</summary>
+    /// <summary>Raised after the application has started and before its template is saved.</summary>
     /// <remarks>
-    /// Subscribe during application construction. Callbacks are awaited in registration order before
-    /// template capture. An ASP.NET application's host has started by then.
-    /// Asynchronous network I/O uses the application's normal outbound policy.
-    /// Await all I/O and dispose its connections, streams, and timers before the callback finishes;
-    /// live host resources cannot be captured. Do not create request-scoped state or start
-    /// background work. State retained here
-    /// is copied into each instance; use <see cref="Activation.Activated"/> for per-instance
-    /// initialization such as reseeding a random generator. Exceptions fail preparation.
+    /// <para>
+    /// Subscribe in <c>Program.cs</c> before <c>await app.RunAsync()</c>. The callbacks run once
+    /// <c>RunAsync</c> has started the application, so its services and routes are available to them.
+    /// They are awaited one at a time, in the order they subscribed.
+    /// </para>
+    /// <para>
+    /// A callback may make network calls, for example to load data or apply database migrations.
+    /// Await all I/O, and dispose connections, streams and timers before the callback returns: an open
+    /// connection cannot be saved in the template. Do not start background work or keep
+    /// request-scoped services. An exception stops the application from being prepared, so it does
+    /// not start.
+    /// </para>
+    /// <para>
+    /// Everything the callbacks leave in memory is identical in every instance. Create what must
+    /// differ between instances, such as a random identifier, in an <see cref="Activation.Activated"/>
+    /// callback.
+    /// </para>
     /// </remarks>
+    /// <example>
+    /// An ASP.NET application serves itself one request, so that the route, its serializers and its
+    /// queries are ready in every instance. <c>WarmupAsync</c> is in <c>Isoplane.AspNetCore</c>.
+    /// <code>
+    /// var app = builder.Build();
+    /// app.MapGet("/todos", (TodoStore store) => store.All());
+    ///
+    /// Initialization.Initializing += async () =>
+    /// {
+    ///     await app.WarmupAsync("/todos");
+    /// };
+    ///
+    /// await app.RunAsync();
+    /// </code>
+    /// </example>
     public static event Func<Task>? Initializing;
 
     internal static event Func<Task>? Starting;

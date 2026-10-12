@@ -5,11 +5,19 @@ mdx:
 
 # DeploymentConfiguration.ReadVariables method
 
-Reads the manifest's `init_visible_vars`, preserving order and duplicate keys. Call during pre-initialization and retain the result for request handling; the host refuses this import after activation. These values become part of the template. Use RuntimeConfiguration for host-supplied settings and secrets.
+Reads the deployment's variables.
 
 ```csharp
 public static IReadOnlyList<KeyValuePair<string, string>> ReadVariables()
 ```
+
+## Return Value
+
+The variables as name and value pairs, in the order the deployment lists them. A name can appear more than once. The list is empty when the deployment defines none.
+
+## Remarks
+
+Call it while the application starts, from an [`InitializerAttribute`](../InitializerAttribute.md) method or an [`Initializing`](../Initialization/Initializing.md) callback, and keep what you need in a static field. The values cannot be read once an instance is handling requests: a request that tries fails.
 
 ## See Also
 

@@ -5,10 +5,21 @@ mdx:
 
 # Response.Json method
 
-A UTF-8 JSON response, with `application/json`. The body is not validated.
+Creates a JSON response from text that is already JSON, sent as UTF-8 with the content type `application/json`.
 
 ```csharp
 public static Response Json(string json, ushort status = 200)
+```
+
+| parameter | description |
+| --- | --- |
+| json | The JSON text. It is sent as it is: serialize an object first, for example with `JsonSerializer.Serialize`. The text is not checked for being valid JSON. |
+| status | The HTTP status code. |
+
+## Examples
+
+```csharp
+return Response.Json(JsonSerializer.Serialize(greeting, AppJson.Default.Greeting));
 ```
 
 ## See Also

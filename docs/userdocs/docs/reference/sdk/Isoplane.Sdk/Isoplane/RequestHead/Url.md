@@ -5,11 +5,15 @@ mdx:
 
 # RequestHead.Url property
 
-The request URI as received by the host; it may be relative.
+The address the client asked for, as it was sent, including any query string.
 
 ```csharp
 public string Url { get; }
 ```
+
+## Remarks
+
+It is often only a path and query, such as `/search?q=tea`, and has a scheme and host name only when the request carried them. To route a request, read [`Path`](./Path.md) and [`Query`](./Query.md) instead.
 
 ## See Also
 

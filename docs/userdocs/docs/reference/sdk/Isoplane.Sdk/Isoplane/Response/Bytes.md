@@ -5,11 +5,17 @@ mdx:
 
 # Response.Bytes method
 
-Bytes with an explicit content type, for a reply a client has to be told the type of.
+Creates a response from bytes with the content type you name, such as `image/png`.
 
 ```csharp
 public static Response Bytes(byte[] body, string? contentType, ushort status = 200)
 ```
+
+| parameter | description |
+| --- | --- |
+| body | The bytes to send. The array is kept, not copied: do not change it after the call. |
+| contentType | The value of the `content-type` header. Null sends no content type, as [`Raw`](./Raw.md) does. |
+| status | The HTTP status code. |
 
 ## See Also
 

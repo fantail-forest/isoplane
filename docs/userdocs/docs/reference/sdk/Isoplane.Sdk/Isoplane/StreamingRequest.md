@@ -5,7 +5,7 @@ mdx:
 
 # StreamingRequest class
 
-A request whose upload can arrive while its handler is running.
+An HTTP request whose body is read as a stream while it is still arriving. Declare it as the parameter of an [`HttpHandlerAttribute`](./HttpHandlerAttribute.md) method, in place of [`Request`](./Request.md), to accept uploads too large to hold in memory.
 
 ```csharp
 public sealed class StreamingRequest : RequestHead
@@ -15,8 +15,27 @@ public sealed class StreamingRequest : RequestHead
 
 | name | description |
 | --- | --- |
-| [Body](StreamingRequest/Body.md) { get; } | The non-seekable upload stream. Cancellation is checked before each read; an outstanding read completes through the host. Disposing prevents new reads, but the host retains the upload until dispatch settlement and does not drain unread content after the response. |
-| [CanHaveBody](StreamingRequest/CanHaveBody.md) { get; } | Whether HTTP framing permits content, including unknown-length uploads. |
+| [Body](StreamingRequest/Body.md) { get; } | The request body as a read-only, forward-only stream. |
+| [CanHaveBody](StreamingRequest/CanHaveBody.md) { get; } | Whether the request can carry a body. It is false for a request sent without one, as a `GET` usually is. |
+
+## Remarks
+
+The handler can start before the body has arrived. The method, path, query, headers and cancellation token are inherited from [`RequestHead`](./RequestHead.md).
+
+## Examples
+
+```csharp
+[HttpHandler]
+public static async Task<Response> HandleAsync(StreamingRequest request)
+{
+    long length = 0;
+    var buffer = new byte[64 * 1024];
+    int read;
+    while ((read = await request.Body.ReadAsync(buffer, request.Aborted)) != 0)
+        length += read;
+    return Response.Text($"Received {length} bytes");
+}
+```
 
 ## See Also
 

@@ -5,11 +5,15 @@ mdx:
 
 # Request.Body property
 
-The buffered request body, without text decoding; empty when absent.
+The request body as the bytes the client sent; empty when the request has no body.
 
 ```csharp
 public ReadOnlyMemory<byte> Body { get; }
 ```
+
+## Remarks
+
+The bytes are not decoded in any way. Turn them into text with `Encoding.UTF8.GetString(request.Body.Span)`, or into an object with `JsonSerializer.Deserialize(request.Body.Span, ...)`.
 
 ## See Also
 

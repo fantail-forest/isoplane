@@ -5,11 +5,15 @@ mdx:
 
 # ApplicationOptions.ShutdownTimeout property
 
-Time allowed for owned process cleanup before the remaining process tree is terminated. Defaults to 10 seconds.
+How long [`DisposeAsync`](../IsoplaneApplication/DisposeAsync.md) waits for the application to stop before stopping it by force. Defaults to 10 seconds.
 
 ```csharp
 public TimeSpan ShutdownTimeout { get; init; }
 ```
+
+## Remarks
+
+When the wait runs out, the processes the test started are terminated and [`DisposeAsync`](../IsoplaneApplication/DisposeAsync.md) throws `TimeoutException`. The value must be greater than zero.
 
 ## See Also
 

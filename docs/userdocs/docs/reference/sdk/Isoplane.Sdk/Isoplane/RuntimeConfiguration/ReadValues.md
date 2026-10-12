@@ -5,10 +5,25 @@ mdx:
 
 # RuntimeConfiguration.ReadValues method
 
-Reads settings for this deployment, including during template initialization.
+Reads the application's settings.
 
 ```csharp
 public static IReadOnlyDictionary<string, string> ReadValues()
+```
+
+## Return Value
+
+The settings by name. Names use ASP.NET's form, `Section:Key`, and are matched ignoring case. The dictionary is empty when the application has no settings.
+
+## Remarks
+
+It can be called while the application starts and while it handles a request. A value read in an [`InitializerAttribute`](../InitializerAttribute.md) method and kept in a static field is saved in the template and shared by every instance.
+
+## Examples
+
+```csharp
+var settings = RuntimeConfiguration.ReadValues();
+var greeting = settings.GetValueOrDefault("Greeting:Default") ?? "world";
 ```
 
 ## See Also

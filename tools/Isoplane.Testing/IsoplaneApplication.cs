@@ -4,7 +4,45 @@ using Isoplane.Processes;
 
 namespace Isoplane.Testing;
 
-/// <summary>Owns an installed CLI session and HTTP client that execute an app in the real WASM sandbox.</summary>
+/// <summary>
+/// Runs your application in the Isoplane sandbox for an integration test, and gives the test an
+/// <c>HttpClient</c> to call it with.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Use it to test the application as a client would, running as it runs under Isoplane. Test logic
+/// that does not depend on the sandbox with ordinary unit tests, which are faster.
+/// </para>
+/// <para>
+/// <see cref="StartAsync"/> runs the <c>isoplane</c> command on the test machine to build the
+/// project and start it, so the command must be installed there, at the same version as this
+/// package. The test itself runs outside the sandbox, in any test framework. Dispose the
+/// application to stop it; <c>await using</c> does so.
+/// </para>
+/// <para>
+/// Starting builds the project, so tests that can share one running application are faster when
+/// they do, through a fixture of the test framework. Two applications running at the same time need
+/// separate project directories.
+/// <see href="https://isoplane.dev/docs/test-an-application">Test an application</see> sets up a test
+/// project from scratch.
+/// </para>
+/// </remarks>
+/// <example>
+/// An xUnit test of the application in the sibling directory <c>MyApi</c>:
+/// <code>
+/// [Fact]
+/// public async Task The_home_page_answers()
+/// {
+///     using var startup = new CancellationTokenSource(TimeSpan.FromMinutes(10));
+///     var project = Path.GetFullPath("../../../../MyApi", AppContext.BaseDirectory);
+///     await using var app = await IsoplaneApplication.StartAsync(project, cancellationToken: startup.Token);
+///
+///     using var response = await app.Client.GetAsync("/");
+///
+///     Assert.True(response.IsSuccessStatusCode, app.DiagnosticOutput);
+/// }
+/// </code>
+/// </example>
 public sealed class IsoplaneApplication : IAsyncDisposable
 {
     private readonly OwnedProcess process;
@@ -26,19 +64,54 @@ public sealed class IsoplaneApplication : IAsyncDisposable
         Client = new HttpClient();
     }
 
-    /// <summary>An owned HTTP client whose base address is the actual bound local listener.</summary>
+    /// <summary>An <c>HttpClient</c> for calling the running application.</summary>
+    /// <remarks>
+    /// Its <c>BaseAddress</c> is the application's address, plain HTTP on a local port chosen when it
+    /// started, so request relative addresses: <c>app.Client.GetAsync("/todos")</c>. The client is
+    /// disposed with the application; do not dispose it yourself.
+    /// </remarks>
     public HttpClient Client { get; }
 
-    /// <summary>The most recent bounded CLI diagnostics, useful when an application assertion fails.</summary>
+    /// <summary>
+    /// What the <c>isoplane</c> command has printed while building and running the application, most
+    /// recent last.
+    /// </summary>
+    /// <remarks>
+    /// Pass it as the message of an assertion, so that a failing test shows a build error or a failure
+    /// inside the application and not only an unexpected response. It holds at most
+    /// <see cref="ApplicationOptions.DiagnosticLimitCharacters"/> characters, dropping the oldest, and
+    /// can be read at any time, including after the application is disposed.
+    /// </remarks>
     public string DiagnosticOutput => diagnostics.ToString();
 
-    /// <summary>Publishes and starts a project using the installed CLI, on an automatically assigned local port.</summary>
-    /// <remarks>The project directory must contain one csproj. Cancellation bounds startup and disposes owned children; it does not cancel an already returned session.</remarks>
-    /// <exception cref="ArgumentException">The directory or options are invalid.</exception>
-    /// <exception cref="InvalidOperationException">The CLI cannot start, exits before readiness, or emits an invalid readiness record.</exception>
-    /// <exception cref="OperationCanceledException">Startup was cancelled.</exception>
-    /// <exception cref="PlatformNotSupportedException">The platform cannot provide native process ownership.</exception>
-    /// <exception cref="AggregateException">Startup failed and owned process cleanup also reported failure.</exception>
+    /// <summary>
+    /// Builds the application and starts it in the sandbox, returning once it is ready to receive
+    /// requests.
+    /// </summary>
+    /// <param name="projectDirectory">
+    /// The directory holding the project file of the application under test, which must be the only
+    /// project file there. A relative path is resolved against the current directory, which varies
+    /// between test runners, so build an absolute one from <c>AppContext.BaseDirectory</c>.
+    /// </param>
+    /// <param name="options">How to run the application; null uses the defaults.</param>
+    /// <param name="cancellationToken">
+    /// Limits how long starting may take. Starting has no time limit of its own, so pass a token that
+    /// times out. Cancelling it after the method has returned does nothing.
+    /// </param>
+    /// <returns>The running application. Dispose it to stop the application.</returns>
+    /// <remarks>
+    /// The application listens on a free local port chosen as it starts, so several can run on one
+    /// machine. When the method throws there is nothing to dispose: it stops what it started first.
+    /// </remarks>
+    /// <exception cref="ArgumentException">The directory does not exist, or an option is not valid.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// The application did not start: the <c>isoplane</c> command could not be run, the project did
+    /// not build, or the application failed while starting. The message includes what the command
+    /// printed.
+    /// </exception>
+    /// <exception cref="OperationCanceledException">The token was cancelled before the application was ready.</exception>
+    /// <exception cref="PlatformNotSupportedException">The operating system is not one the package supports.</exception>
+    /// <exception cref="AggregateException">The application did not start, and stopping what had been started also failed.</exception>
     public static async Task<IsoplaneApplication> StartAsync(string projectDirectory, ApplicationOptions? options = null, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(projectDirectory);
@@ -129,10 +202,20 @@ public sealed class IsoplaneApplication : IAsyncDisposable
         }
     }
 
-    /// <summary>Closes the client, requests CLI cleanup through stdin EOF, and awaits all owned process output.</summary>
-    /// <exception cref="TimeoutException">The CLI required forced termination.</exception>
-    /// <exception cref="InvalidOperationException">The CLI exited unsuccessfully.</exception>
-    /// <exception cref="AggregateException">More than one cleanup operation failed.</exception>
+    /// <summary>Stops the application and releases its port and its <see cref="Client"/>.</summary>
+    /// <remarks>
+    /// <c>await using</c> calls it. A second call returns the result of the first. It throws when the application
+    /// did not stop cleanly, so that a test does not pass over an application that crashed or hung.
+    /// </remarks>
+    /// <exception cref="TimeoutException">
+    /// The application did not stop within <see cref="ApplicationOptions.ShutdownTimeout"/> and was
+    /// stopped by force. The message includes <see cref="DiagnosticOutput"/>.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// The <c>isoplane</c> command reported a failure as it stopped. The message includes
+    /// <see cref="DiagnosticOutput"/>.
+    /// </exception>
+    /// <exception cref="AggregateException">More than one of these happened.</exception>
     public ValueTask DisposeAsync()
     {
         lock (disposalGate)

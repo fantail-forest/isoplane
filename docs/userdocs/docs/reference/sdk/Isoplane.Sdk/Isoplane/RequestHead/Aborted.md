@@ -5,11 +5,15 @@ mdx:
 
 # RequestHead.Aborted property
 
-Cancelled when the host delivers this dispatch's cancellation wake.
+Cancelled when the request should stop: the client has gone away, or the request has used up its running time.
 
 ```csharp
 public CancellationToken Aborted { get; }
 ```
+
+## Remarks
+
+Pass it to the asynchronous calls the handler makes, so that work nobody is waiting for stops. [`OccupancyBudgetMs`](../Ctx/OccupancyBudgetMs.md) describes the running time a request is allowed.
 
 ## See Also
 

@@ -5,11 +5,15 @@ mdx:
 
 # ApplicationOptions.Configuration property
 
-The application's ordinary MSBuild configuration. Debug and Release use the same managed runtime. Defaults to `Debug`.
+The build configuration of the application under test, `Debug` or `Release`. Defaults to `Debug`.
 
 ```csharp
 public string Configuration { get; init; }
 ```
+
+## Remarks
+
+It is the configuration the application is built with, not the test project's. The two differ only in compiler optimization: both run on the same runtime in the sandbox.
 
 ## See Also
 

@@ -5,7 +5,7 @@ mdx:
 
 # IsoplaneHosting.CreateBuilder method
 
-Creates the builder for an application's `Program.cs`.
+Creates the application's builder. Use it in `Program.cs` in place of `WebApplication.CreateBuilder`.
 
 ```csharp
 public static WebApplicationBuilder CreateBuilder(string[] args)
@@ -13,17 +13,21 @@ public static WebApplicationBuilder CreateBuilder(string[] args)
 
 | parameter | description |
 | --- | --- |
-| args | The entry point's arguments. Isoplane starts an application with none. |
+| args | The arguments of `Program.cs`; pass `args`. Isoplane starts an application with none. |
 
 ## Return Value
 
-A builder configured to receive requests from Isoplane without opening a listener.
+An ordinary `WebApplicationBuilder`, set up so that Isoplane delivers the application's requests and collects its logs.
 
 ## Remarks
 
-Configuration is layered as in ASP.NET: `appsettings.json`, then `appsettings.{Environment}.json`, then the settings the platform supplies. In local development those are the project's User Secrets and its launch profile's environment variables. The environment name is the supplied `ASPNETCORE_ENVIRONMENT` or `DOTNET_ENVIRONMENT` setting, and Production without one. The `Logging` configuration section sets log levels. Settings read while the application starts are captured in its template; platform settings are read again when an instance activates. End the entry point with `await app.RunAsync()`.
+Finish `Program.cs` with `await app.RunAsync()`. The synchronous `app.Run()` would block, which an application on Isoplane cannot do, and the build rejects it.
 
-.NET tools that run the entry point on the developer's machine, such as `dotnet ef` or an in-process test host, get a builder that reads `appsettings` files, User Secrets in Development and environment variables as ASP.NET does, and logs to the console.
+`builder.Configuration` is layered as in any ASP.NET application, a later source overriding an earlier one: `appsettings.json`, then `appsettings.{Environment}.json`, then the settings Isoplane supplies. In local development the supplied settings are the project's User Secrets, the `environmentVariables` of its launch profile, and environment variables named `ISOPLANE_APP_<Key>`; the application sees none of the machine's other environment variables. [Supply local development settings](../../../../../local-settings.md) describes each source. The environment name comes from the supplied `ASPNETCORE_ENVIRONMENT` or `DOTNET_ENVIRONMENT` setting, and is `Production` without one. The `Logging` configuration section sets log levels.
+
+Isoplane runs `Program.cs` during template preparation, up to `RunAsync`, and saves the result as the template every instance starts from. A setting read while `Program.cs` runs is captured and shared. The supplied settings are loaded again when each instance starts, so read a setting that can differ, such as a connection string, when it is needed: in a request, or in a service factory.
+
+Some tools run `Program.cs` on your own machine rather than under Isoplane: `dotnet ef`, for one, and an in-process test host. The builder then behaves as `WebApplication.CreateBuilder` does. It reads the `appsettings` files, User Secrets in the Development environment and the machine's environment variables, and logs to the console.
 
 ## See Also
 

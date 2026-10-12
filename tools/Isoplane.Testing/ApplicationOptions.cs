@@ -1,24 +1,73 @@
 namespace Isoplane.Testing;
 
-/// <summary>How a test locates and shuts down its installed development tool.</summary>
+/// <summary>
+/// Optional settings for <see cref="IsoplaneApplication.StartAsync"/>: which build of the application
+/// to run, what settings to give it, and how the <c>isoplane</c> command is found and stopped.
+/// </summary>
+/// <remarks>
+/// Every property has a default that suits most tests, so set only what a test needs, in an object
+/// initializer. The two most often set are <see cref="Settings"/> and <see cref="Configuration"/>.
+/// </remarks>
+/// <example>
+/// <code>
+/// var options = new ApplicationOptions
+/// {
+///     Settings = new Dictionary&lt;string, string&gt; { ["ConnectionStrings:Todos"] = connectionString }
+/// };
+/// await using var app = await IsoplaneApplication.StartAsync(projectDirectory, options);
+/// </code>
+/// </example>
 public sealed record ApplicationOptions
 {
-    /// <summary>The CLI executable, resolved through PATH unless absolute. Defaults to <c>isoplane</c>.</summary>
+    /// <summary>
+    /// The <c>isoplane</c> command the test runs the application with. Defaults to <c>isoplane</c>, found
+    /// on the <c>PATH</c>.
+    /// </summary>
+    /// <remarks>
+    /// Set an absolute path when the command is not on the <c>PATH</c> of the process running the
+    /// tests, as can happen on a build server.
+    /// </remarks>
     public string CliPath { get; init; } = "isoplane";
 
-    /// <summary>The application's ordinary MSBuild configuration. Debug and Release use the same managed runtime. Defaults to <c>Debug</c>.</summary>
+    /// <summary>
+    /// The build configuration of the application under test, <c>Debug</c> or <c>Release</c>. Defaults to
+    /// <c>Debug</c>.
+    /// </summary>
+    /// <remarks>
+    /// It is the configuration the application is built with, not the test project's. The two differ
+    /// only in compiler optimization: both run on the same runtime in the sandbox.
+    /// </remarks>
     public string Configuration { get; init; } = "Debug";
 
-    /// <summary>Time allowed for owned process cleanup before the remaining process tree is terminated. Defaults to 10 seconds.</summary>
+    /// <summary>
+    /// How long <see cref="IsoplaneApplication.DisposeAsync"/> waits for the application to stop before
+    /// stopping it by force. Defaults to 10 seconds.
+    /// </summary>
+    /// <remarks>
+    /// When the wait runs out, the processes the test started are terminated and
+    /// <see cref="IsoplaneApplication.DisposeAsync"/> throws <c>TimeoutException</c>. The value must be
+    /// greater than zero.
+    /// </remarks>
     public TimeSpan ShutdownTimeout { get; init; } = TimeSpan.FromSeconds(10);
 
-    /// <summary>Maximum retained diagnostic characters from the child process. Defaults to 16,384.</summary>
+    /// <summary>
+    /// How many characters <see cref="IsoplaneApplication.DiagnosticOutput"/> keeps. Defaults to 16,384.
+    /// </summary>
+    /// <remarks>
+    /// When the output grows past the limit, the oldest characters are dropped. The value must be
+    /// greater than zero.
+    /// </remarks>
     public int DiagnosticLimitCharacters { get; init; } = 16 * 1024;
 
     /// <summary>
-    /// Configuration settings for this session, such as a connection string to a database the test
-    /// started. Keys use ASP.NET's colon-separated form. They override the project's launch profile
-    /// and User Secrets.
+    /// Settings to give the application for this run, such as the connection string of a database the
+    /// test started. Empty by default.
     /// </summary>
+    /// <remarks>
+    /// Names use ASP.NET's form, <c>Section:Key</c>. The application reads them as it reads any
+    /// setting: through <c>IConfiguration</c>, or <c>RuntimeConfiguration.ReadValues</c> in an
+    /// application written without ASP.NET. They override the same settings in the project's launch
+    /// profile and User Secrets, and apply only to the application this test starts.
+    /// </remarks>
     public IReadOnlyDictionary<string, string> Settings { get; init; } = new Dictionary<string, string>();
 }

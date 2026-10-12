@@ -5,11 +5,15 @@ mdx:
 
 # ApplicationOptions.DiagnosticLimitCharacters property
 
-Maximum retained diagnostic characters from the child process. Defaults to 16,384.
+How many characters [`DiagnosticOutput`](../IsoplaneApplication/DiagnosticOutput.md) keeps. Defaults to 16,384.
 
 ```csharp
 public int DiagnosticLimitCharacters { get; init; }
 ```
+
+## Remarks
+
+When the output grows past the limit, the oldest characters are dropped. The value must be greater than zero.
 
 ## See Also
 

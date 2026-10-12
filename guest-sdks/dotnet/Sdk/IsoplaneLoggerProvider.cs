@@ -7,13 +7,51 @@ using Microsoft.Extensions.Logging;
 
 namespace Isoplane;
 
-/// <summary>Writes .NET application logs through the sandbox's bounded host logging capability.</summary>
+/// <summary>
+/// Sends the messages an application writes with .NET's <c>ILogger</c> to the application's log.
+/// </summary>
+/// <remarks>
+/// <para>
+/// An ASP.NET application does not create one. <c>IsoplaneHosting.CreateBuilder</c> registers it, so
+/// inject <c>ILogger&lt;T&gt;</c> or use <c>app.Logger</c> as in any ASP.NET application, and set log
+/// levels in the <c>Logging</c> configuration section.
+/// </para>
+/// <para>
+/// In an application written without ASP.NET, <c>Console.WriteLine</c> already writes to the same
+/// log. Create a provider there only when you want what <c>ILogger</c> adds: levels, categories and
+/// named values. A logger from a provider you create writes every level except <c>None</c>.
+/// </para>
+/// <para>
+/// While developing, the log appears in the terminal running the application. A message logged at
+/// <c>Critical</c> is recorded at the log's error level. Do not log credentials or connection
+/// strings.
+/// </para>
+/// </remarks>
+/// <example>
+/// In an application written without ASP.NET:
+/// <code>
+/// using Isoplane;
+/// using Microsoft.Extensions.Logging;
+///
+/// public static class Handler
+/// {
+///     private static readonly ILogger Log = new IsoplaneLoggerProvider().CreateLogger("Orders");
+///
+///     [HttpHandler]
+///     public static Task&lt;Response&gt; HandleAsync(Request request)
+///     {
+///         Log.LogInformation("Handling {Path}", request.Path);
+///         return Task.FromResult(Response.Text("ok"));
+///     }
+/// }
+/// </code>
+/// </example>
 public sealed class IsoplaneLoggerProvider : ILoggerProvider, ISupportExternalScope
 {
     private readonly Action<int, string> emit;
     private IExternalScopeProvider scopes = new LoggerExternalScopeProvider();
 
-    /// <summary>Creates a provider for application code executing inside the Isoplane sandbox.</summary>
+    /// <summary>Creates a provider. Its loggers work only while the application runs under Isoplane.</summary>
     public IsoplaneLoggerProvider() : this(Abi.GuestLog.Emit) { }
 
     internal IsoplaneLoggerProvider(Action<int, string> emit) => this.emit = emit;

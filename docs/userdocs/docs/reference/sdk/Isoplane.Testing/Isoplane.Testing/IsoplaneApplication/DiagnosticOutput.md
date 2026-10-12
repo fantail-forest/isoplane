@@ -5,11 +5,15 @@ mdx:
 
 # IsoplaneApplication.DiagnosticOutput property
 
-The most recent bounded CLI diagnostics, useful when an application assertion fails.
+What the `isoplane` command has printed while building and running the application, most recent last.
 
 ```csharp
 public string DiagnosticOutput { get; }
 ```
+
+## Remarks
+
+Pass it as the message of an assertion, so that a failing test shows a build error or a failure inside the application and not only an unexpected response. It holds at most [`DiagnosticLimitCharacters`](../ApplicationOptions/DiagnosticLimitCharacters.md) characters, dropping the oldest, and can be read at any time, including after the application is disposed.
 
 ## See Also
 

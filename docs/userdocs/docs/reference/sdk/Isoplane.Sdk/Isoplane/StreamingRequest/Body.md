@@ -5,11 +5,19 @@ mdx:
 
 # StreamingRequest.Body property
 
-The non-seekable upload stream. Cancellation is checked before each read; an outstanding read completes through the host. Disposing prevents new reads, but the host retains the upload until dispatch settlement and does not drain unread content after the response.
+The request body as a read-only, forward-only stream.
 
 ```csharp
 public Stream Body { get; }
 ```
+
+## Remarks
+
+Read it with `ReadAsync` or `CopyToAsync`; a read returns 0 at the end of the body. The synchronous `Read` throws `NotSupportedException`, and so do `Length`, `Position` and `Seek`. Await each read before starting the next.
+
+A cancellation token passed to a read is checked before the read begins; a read already in progress finishes first. A read throws [`BindingException`](../BindingException.md) when the body cannot be delivered.
+
+The handler need not read the whole body. Content it has not read when it returns its response is not read at all.
 
 ## See Also
 

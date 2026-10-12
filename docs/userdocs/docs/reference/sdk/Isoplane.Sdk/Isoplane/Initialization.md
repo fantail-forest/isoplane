@@ -5,7 +5,7 @@ mdx:
 
 # Initialization class
 
-Initializes reusable application state before its deployment template is captured.
+Lets an application prepare captured state ahead of requests, that every instance then starts with.
 
 ```csharp
 public static class Initialization
@@ -15,7 +15,13 @@ public static class Initialization
 
 | name | description |
 | --- | --- |
-| static event [Initializing](Initialization/Initializing.md) | Raised after application construction, before template capture. |
+| static event [Initializing](Initialization/Initializing.md) | Raised after the application has started and before its template is saved. |
+
+## Remarks
+
+Isoplane initializes the application ahead of requests and saves its memory as a template. It then runs as many copies of the application as its traffic needs; each copy is an instance, and each starts from the template. Captured startup work is reused rather than repeated in every instance. Subscribe to [`Initializing`](./Initialization/Initializing.md) to do that work: load reference data, build lookup tables, and run the code a request will run so that no request pays for its first use.
+
+An application written without ASP.NET has no start-up code to subscribe from, and marks one method with [`InitializerAttribute`](./InitializerAttribute.md) instead. For state that must differ between instances, use [`Activation`](./Activation.md). [The application lifecycle](../../../../application-lifecycle.md) explains templates and instances in full.
 
 ## See Also
 

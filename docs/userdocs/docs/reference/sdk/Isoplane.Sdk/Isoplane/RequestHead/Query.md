@@ -5,10 +5,22 @@ mdx:
 
 # RequestHead.Query property
 
-Query pairs in host order, preserving duplicate names and empty values.
+The query string as name and value pairs, in the order they appear in the URL.
 
 ```csharp
 public IReadOnlyList<KeyValuePair<string, string>> Query { get; }
+```
+
+## Remarks
+
+It is a list, not a dictionary, because a name can appear more than once. A name with no `=` has an empty value. Names and values are as the client sent them: they are not percent-decoded, and a `+` is not turned into a space.
+
+## Examples
+
+The value of `name`, or null when the query has none:
+
+```csharp
+string? name = request.Query.FirstOrDefault(pair => pair.Key == "name").Value;
 ```
 
 ## See Also

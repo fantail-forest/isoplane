@@ -5,7 +5,7 @@ mdx:
 
 # IsoplaneApplication class
 
-Owns an installed CLI session and HTTP client that execute an app in the real WASM sandbox.
+Runs your application in the Isoplane sandbox for an integration test, and gives the test an `HttpClient` to call it with.
 
 ```csharp
 public sealed class IsoplaneApplication : IAsyncDisposable
@@ -15,10 +15,36 @@ public sealed class IsoplaneApplication : IAsyncDisposable
 
 | name | description |
 | --- | --- |
-| [Client](IsoplaneApplication/Client.md) { get; } | An owned HTTP client whose base address is the actual bound local listener. |
-| [DiagnosticOutput](IsoplaneApplication/DiagnosticOutput.md) { get; } | The most recent bounded CLI diagnostics, useful when an application assertion fails. |
-| [DisposeAsync](IsoplaneApplication/DisposeAsync.md)() | Closes the client, requests CLI cleanup through stdin EOF, and awaits all owned process output. |
-| static [StartAsync](IsoplaneApplication/StartAsync.md)(…) | Publishes and starts a project using the installed CLI, on an automatically assigned local port. |
+| [Client](IsoplaneApplication/Client.md) { get; } | An `HttpClient` for calling the running application. |
+| [DiagnosticOutput](IsoplaneApplication/DiagnosticOutput.md) { get; } | What the `isoplane` command has printed while building and running the application, most recent last. |
+| [DisposeAsync](IsoplaneApplication/DisposeAsync.md)() | Stops the application and releases its port and its [`Client`](./IsoplaneApplication/Client.md). |
+| static [StartAsync](IsoplaneApplication/StartAsync.md)(…) | Builds the application and starts it in the sandbox, returning once it is ready to receive requests. |
+
+## Remarks
+
+Use it to test the application as a client would, running as it runs under Isoplane. Test logic that does not depend on the sandbox with ordinary unit tests, which are faster.
+
+[`StartAsync`](./IsoplaneApplication/StartAsync.md) runs the `isoplane` command on the test machine to build the project and start it, so the command must be installed there, at the same version as this package. The test itself runs outside the sandbox, in any test framework. Dispose the application to stop it; `await using` does so.
+
+Starting builds the project, so tests that can share one running application are faster when they do, through a fixture of the test framework. Two applications running at the same time need separate project directories. [Test an application](../../../../test-an-application.md) sets up a test project from scratch.
+
+## Examples
+
+An xUnit test of the application in the sibling directory `MyApi`:
+
+```csharp
+[Fact]
+public async Task The_home_page_answers()
+{
+    using var startup = new CancellationTokenSource(TimeSpan.FromMinutes(10));
+    var project = Path.GetFullPath("../../../../MyApi", AppContext.BaseDirectory);
+    await using var app = await IsoplaneApplication.StartAsync(project, cancellationToken: startup.Token);
+
+    using var response = await app.Client.GetAsync("/");
+
+    Assert.True(response.IsSuccessStatusCode, app.DiagnosticOutput);
+}
+```
 
 ## See Also
 

@@ -5,7 +5,7 @@ mdx:
 
 # Request class
 
-An HTTP request delivered by the host, for any HTTP method.
+An HTTP request whose whole body is in memory before the handler runs. It is the usual parameter of an [`HttpHandlerAttribute`](./HttpHandlerAttribute.md) method.
 
 ```csharp
 public sealed class Request : RequestHead
@@ -15,7 +15,26 @@ public sealed class Request : RequestHead
 
 | name | description |
 | --- | --- |
-| [Body](Request/Body.md) { get; } | The buffered request body, without text decoding; empty when absent. |
+| [Body](Request/Body.md) { get; } | The request body as the bytes the client sent; empty when the request has no body. |
+
+## Remarks
+
+Isoplane creates the request and passes it to the handler; an application does not construct one. The method, path, query, headers and cancellation token are inherited from [`RequestHead`](./RequestHead.md).
+
+To accept an upload too large to hold in memory, declare the handler's parameter as a [`StreamingRequest`](./StreamingRequest.md) instead. An ASP.NET application uses neither type: it reads `HttpContext.Request` as usual.
+
+## Examples
+
+```csharp
+[HttpHandler]
+public static Task<Response> HandleAsync(Request request)
+{
+    if (request.Method != "POST" || request.Path != "/echo")
+        return Task.FromResult(Response.Text("Not found", 404));
+    var text = Encoding.UTF8.GetString(request.Body.Span);
+    return Task.FromResult(Response.Text(text));
+}
+```
 
 ## See Also
 

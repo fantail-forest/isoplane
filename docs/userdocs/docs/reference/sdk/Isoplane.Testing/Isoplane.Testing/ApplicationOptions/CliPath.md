@@ -5,11 +5,15 @@ mdx:
 
 # ApplicationOptions.CliPath property
 
-The CLI executable, resolved through PATH unless absolute. Defaults to `isoplane`.
+The `isoplane` command the test runs the application with. Defaults to `isoplane`, found on the `PATH`.
 
 ```csharp
 public string CliPath { get; init; }
 ```
+
+## Remarks
+
+Set an absolute path when the command is not on the `PATH` of the process running the tests, as can happen on a build server.
 
 ## See Also
 

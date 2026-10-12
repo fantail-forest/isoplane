@@ -5,11 +5,15 @@ mdx:
 
 # Ctx.NowMs property
 
-The clock at dispatch start, in milliseconds, frozen for the slice.
+The time the request started, in milliseconds since the Unix epoch (1970-01-01T00:00:00Z).
 
 ```csharp
 public long NowMs { get; }
 ```
+
+## Remarks
+
+The value does not advance while the handler runs. Convert it with `DateTimeOffset.FromUnixTimeMilliseconds`.
 
 ## See Also
 

@@ -5,7 +5,7 @@ mdx:
 
 # ActivatedAttribute class
 
-Marks the static method that runs once in each instance, before its first request.
+Marks the method that runs in each instance before its first request, in an application written without ASP.NET.
 
 ```csharp
 [AttributeUsage(AttributeTargets.Method)]
@@ -20,7 +20,24 @@ public sealed class ActivatedAttribute : Attribute
 
 ## Remarks
 
-Declare it as `Task ActivatedAsync()`. It runs as an [`Activated`](./Activation/Activated.md) callback: use it for state that must differ between instances, such as reseeding a random generator. An application has at most one.
+Every instance starts as a copy of the same template, so anything created before the template was saved is identical in all of them. Use this method for state that must differ between instances, such as a random identifier or a random generator you seed yourself.
+
+The method is static, returns `Task` and takes no parameters. It can have any name, and an application has at most one. An exception fails the request the instance was started for.
+
+An application with a `Program.cs` subscribes to [`Activated`](./Activation/Activated.md) instead; there the attribute is a build error. [`Activation`](./Activation.md) lists what Isoplane already reseeds for you, and [The application lifecycle](../../../../application-lifecycle.md) explains templates and instances in full.
+
+## Examples
+
+```csharp
+private static Guid instance;
+
+[Activated]
+public static Task ActivatedAsync()
+{
+    instance = Guid.NewGuid();
+    return Task.CompletedTask;
+}
+```
 
 ## See Also
 

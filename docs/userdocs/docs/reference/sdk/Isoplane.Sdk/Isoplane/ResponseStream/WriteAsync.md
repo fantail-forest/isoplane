@@ -5,16 +5,29 @@ mdx:
 
 # ResponseStream.WriteAsync method
 
-Waits until the host accepts the entire buffer; the buffer must remain unchanged until completion.
+Sends one piece of the body, and completes when Isoplane has accepted all of it.
 
 ```csharp
 public ValueTask WriteAsync(ReadOnlyMemory<byte> bytes,
     CancellationToken cancellationToken = default)
 ```
 
+| parameter | description |
+| --- | --- |
+| bytes | The bytes to send. Do not change them until the returned task completes. An empty buffer sends nothing. |
+| cancellationToken | Stops the handler writing to a client that has gone away; pass [`Aborted`](../RequestHead/Aborted.md). It is checked before the write begins and again when it finishes; a write in progress is not interrupted. |
+
+## Exceptions
+
+| exception | condition |
+| --- | --- |
+| InvalidOperationException | [`Complete`](./Complete.md) has been called, or the previous write has not finished. |
+| OperationCanceledException | The token was cancelled. |
+| [BindingException](../BindingException.md) | The piece could not be sent. |
+
 ## Remarks
 
-Cancellation is checked before submission and after acknowledgement. It cannot interrupt a pending host write.
+Await each write before starting the next. Awaiting is what keeps the handler from producing output faster than it can be sent.
 
 ## See Also
 

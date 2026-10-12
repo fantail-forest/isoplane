@@ -5,11 +5,19 @@ mdx:
 
 # Ctx.OccupancyBudgetMs property
 
-Occupied-worker milliseconds available to this dispatch before cancellation grace.
+The running time this request is allowed, in milliseconds.
 
 ```csharp
 public uint OccupancyBudgetMs { get; }
 ```
+
+## Remarks
+
+Running time is the time the request spends executing. Time spent waiting for something the handler awaits, such as a database or another service, does not count. The value is the request's whole allowance, not what remains of it.
+
+When a request has used its allowance, [`Aborted`](../RequestHead/Aborted.md) is cancelled. The request then has a short further period in which to finish; after that Isoplane stops the instance.
+
+A local session allows the most the platform offers. To see how the application behaves with less, set `occupancyMsPerHttpDispatch` as [Try the application under tighter limits](../../../../../local-settings.md#try-the-application-under-tighter-limits) describes.
 
 ## See Also
 

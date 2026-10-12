@@ -5,15 +5,29 @@ using Isoplane.Abi;
 
 namespace Isoplane;
 
-/// <summary>Non-secret settings fixed for an application version at deployment.</summary>
+/// <summary>
+/// Names and values fixed for one deployed version of the application, which it can read only while
+/// it starts.
+/// </summary>
+/// <remarks>
+/// Most applications do not need this type. Settings and credentials come from
+/// <see cref="RuntimeConfiguration"/>, or from <c>IConfiguration</c> in an ASP.NET application. These
+/// values differ in two ways: they belong to the deployed version and cannot change without
+/// deploying again, and they are saved in the template every instance starts from, so they must not
+/// be secret.
+/// </remarks>
 public static class DeploymentConfiguration
 {
-    /// <summary>
-    /// Reads the manifest's <c>init_visible_vars</c>, preserving order and duplicate keys.
-    /// Call during pre-initialization and retain the result for request handling;
-    /// the host refuses this import after activation. These values become part of
-    /// the template. Use RuntimeConfiguration for host-supplied settings and secrets.
-    /// </summary>
+    /// <summary>Reads the deployment's variables.</summary>
+    /// <returns>
+    /// The variables as name and value pairs, in the order the deployment lists them. A name can
+    /// appear more than once. The list is empty when the deployment defines none.
+    /// </returns>
+    /// <remarks>
+    /// Call it while the application starts, from an <see cref="InitializerAttribute"/> method or an
+    /// <see cref="Initialization.Initializing"/> callback, and keep what you need in a static field.
+    /// The values cannot be read once an instance is handling requests: a request that tries fails.
+    /// </remarks>
     public static IReadOnlyList<KeyValuePair<string, string>> ReadVariables()
     {
         byte[] data = Abi.Initialization.ReadConfiguration();

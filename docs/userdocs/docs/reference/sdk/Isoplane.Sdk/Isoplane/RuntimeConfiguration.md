@@ -5,7 +5,7 @@ mdx:
 
 # RuntimeConfiguration class
 
-Deployment-bound application settings supplied during preparation and activation.
+The settings Isoplane supplies to the application, such as connection strings and credentials, for an application written without ASP.NET.
 
 ```csharp
 public static class RuntimeConfiguration
@@ -15,7 +15,13 @@ public static class RuntimeConfiguration
 
 | name | description |
 | --- | --- |
-| static [ReadValues](RuntimeConfiguration/ReadValues.md)() | Reads settings for this deployment, including during template initialization. |
+| static [ReadValues](RuntimeConfiguration/ReadValues.md)() | Reads the application's settings. |
+
+## Remarks
+
+An ASP.NET application does not need this type. `IsoplaneHosting.CreateBuilder` adds the same settings to `builder.Configuration`, so read them through `IConfiguration`.
+
+In local development the settings come from the project's User Secrets, the `environmentVariables` of its launch profile, and environment variables named `ISOPLANE_APP_<Key>`, each overriding the one before. [Supply local development settings](../../../../local-settings.md) describes each source. The application sees none of the machine's other environment variables.
 
 ## See Also
 

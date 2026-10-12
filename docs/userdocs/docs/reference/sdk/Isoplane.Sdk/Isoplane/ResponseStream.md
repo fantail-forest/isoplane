@@ -5,7 +5,7 @@ mdx:
 
 # ResponseStream class
 
-A response whose headers are published immediately and whose writes await host acceptance.
+Writes a response body in pieces, so the client receives each piece while the handler is still producing the rest.
 
 ```csharp
 public sealed class ResponseStream
@@ -15,8 +15,14 @@ public sealed class ResponseStream
 
 | name | description |
 | --- | --- |
-| [Complete](ResponseStream/Complete.md)() | Disallows further writes and returns the handler response. The host sees EOF only after the handler returns it. |
-| [WriteAsync](ResponseStream/WriteAsync.md)(…) | Waits until the host accepts the entire buffer; the buffer must remain unchanged until completion. |
+| [Complete](ResponseStream/Complete.md)() | Ends the body and returns the response for the handler to return. |
+| [WriteAsync](ResponseStream/WriteAsync.md)(…) | Sends one piece of the body, and completes when Isoplane has accepted all of it. |
+
+## Remarks
+
+[`Stream`](./Response/Stream.md) creates one, and shows the whole pattern: write each piece with [`WriteAsync`](./ResponseStream/WriteAsync.md), then return [`Complete`](./ResponseStream/Complete.md) from the handler.
+
+The writer takes bytes. Encode text first, for example with `Encoding.UTF8.GetBytes`.
 
 ## See Also
 

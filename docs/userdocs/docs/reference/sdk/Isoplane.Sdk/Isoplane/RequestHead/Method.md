@@ -5,7 +5,7 @@ mdx:
 
 # RequestHead.Method property
 
-The HTTP method as received by the host.
+The HTTP method, such as `GET` or `POST`. Standard methods are in upper case.
 
 ```csharp
 public string Method { get; }

@@ -5,7 +5,7 @@ mdx:
 
 # IsoplaneHosting class
 
-Hosts ASP.NET applications on Isoplane's buffered and streaming request transport.
+Starts an ASP.NET application on Isoplane. Call [`CreateBuilder`](./IsoplaneHosting/CreateBuilder.md) in `Program.cs` where an ordinary application calls `WebApplication.CreateBuilder`.
 
 ```csharp
 public static class IsoplaneHosting
@@ -15,8 +15,27 @@ public static class IsoplaneHosting
 
 | name | description |
 | --- | --- |
-| static [CreateBuilder](IsoplaneHosting/CreateBuilder.md)(…) | Creates the builder for an application's `Program.cs`. |
-| static [WarmupAsync](IsoplaneHosting/WarmupAsync.md)(…) | Runs a GET through the started application's pipeline and discards its response body. |
+| static [CreateBuilder](IsoplaneHosting/CreateBuilder.md)(…) | Creates the application's builder. Use it in `Program.cs` in place of `WebApplication.CreateBuilder`. |
+| static [WarmupAsync](IsoplaneHosting/WarmupAsync.md)(…) | Sends the application one `GET` request from within, so that the work a route's first request does is already done when real requests arrive. |
+
+## Remarks
+
+The builder it returns is an ordinary `WebApplicationBuilder`, so services, configuration, logging, middleware and endpoints are set up as usual. What differs is that Isoplane delivers requests to the application itself: the application opens no port and runs no web server of its own.
+
+`dotnet new isoplane-webapi` creates a complete project, and [Bring an existing ASP.NET application](../../../../onboard-an-application.md) covers moving one over.
+
+## Examples
+
+```csharp
+using Isoplane.AspNetCore;
+
+var builder = IsoplaneHosting.CreateBuilder(args);
+var app = builder.Build();
+
+app.MapGet("/", () => "Hello from Isoplane!");
+
+await app.RunAsync();
+```
 
 ## See Also
 

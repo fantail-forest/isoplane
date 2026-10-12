@@ -5,11 +5,15 @@ mdx:
 
 # Activation.Activated event
 
-Awaited once, in registration order, before the first dispatch of an activation runs.
+Raised once in each instance, before the instance handles its first request.
 
 ```csharp
 public static event Func<Task>? Activated;
 ```
+
+## Remarks
+
+Subscribe while the application starts: in `Program.cs` before `await app.RunAsync()`, or in an [`Initializing`](../Initialization/Initializing.md) callback. Subscriptions are saved in the template, so every instance runs them. Callbacks are awaited one at a time, in the order they subscribed. An exception from a callback fails the request the instance was started for. The event is not raised again in an instance Isoplane suspends and later resumes, because such an instance keeps its own memory.
 
 ## See Also
 

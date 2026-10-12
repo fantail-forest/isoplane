@@ -5,11 +5,15 @@ mdx:
 
 # RequestHead.Path property
 
-The request path, without the query string.
+The path the client asked for, without the query string. It begins with a slash.
 
 ```csharp
 public string Path { get; }
 ```
+
+## Remarks
+
+The path is not percent-decoded: a space arrives as `%20`. Decode a segment with `Uri.UnescapeDataString`.
 
 ## See Also
 

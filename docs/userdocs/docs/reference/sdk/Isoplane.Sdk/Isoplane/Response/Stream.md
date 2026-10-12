@@ -5,11 +5,39 @@ mdx:
 
 # Response.Stream method
 
-Publishes response headers and creates a writer. Return its completed response from the handler.
+Starts a response whose body is sent in pieces as the handler produces them, and returns the writer for those pieces.
 
 ```csharp
 public static ResponseStream Stream(ushort status,
     IReadOnlyList<KeyValuePair<string, string>> headers)
+```
+
+| parameter | description |
+| --- | --- |
+| status | The HTTP status code, such as 200. |
+| headers | The response headers, one entry for each value. No header is added for you, so include `content-type`. |
+
+## Return Value
+
+The writer for the body.
+
+## Remarks
+
+Use it when the body is large, or produced over time, and the client should receive each piece without waiting for the rest. Write the pieces with [`WriteAsync`](../ResponseStream/WriteAsync.md), then return the result of [`Complete`](../ResponseStream/Complete.md) from the handler.
+
+The status and headers are sent when this method is called, so they cannot change afterwards, and the handler can no longer answer with a different response. Call it at most once for a request.
+
+## Examples
+
+```csharp
+[HttpHandler]
+public static async Task<Response> HandleAsync(Request request)
+{
+    var response = Response.Stream(200, [new("content-type", "text/plain; charset=utf-8")]);
+    for (var remaining = 3; remaining > 0; remaining--)
+        await response.WriteAsync(Encoding.UTF8.GetBytes($"{remaining}\n"), request.Aborted);
+    return response.Complete();
+}
 ```
 
 ## See Also

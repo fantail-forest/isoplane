@@ -5,7 +5,7 @@ mdx:
 
 # IsoplaneLoggerProvider constructor
 
-Creates a provider for application code executing inside the Isoplane sandbox.
+Creates a provider. Its loggers work only while the application runs under Isoplane.
 
 ```csharp
 public IsoplaneLoggerProvider()

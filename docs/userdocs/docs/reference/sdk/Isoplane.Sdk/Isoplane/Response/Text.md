@@ -5,11 +5,16 @@ mdx:
 
 # Response.Text method
 
-A UTF-8 text response, with `text/plain; charset=utf-8`.
+Creates a plain-text response, sent as UTF-8 with the content type `text/plain; charset=utf-8`.
 
 ```csharp
 public static Response Text(string body, ushort status = 200)
 ```
+
+| parameter | description |
+| --- | --- |
+| body | The text to send. |
+| status | The HTTP status code. |
 
 ## See Also
 

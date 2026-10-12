@@ -5,11 +5,20 @@ mdx:
 
 # Response.Raw method
 
-Returns bytes without a Content-Type header. Copy a shared buffer before passing it here if other code might modify it before the response completes.
+Creates a response from bytes, sent without a content type.
 
 ```csharp
 public static Response Raw(byte[] body, ushort status = 200)
 ```
+
+| parameter | description |
+| --- | --- |
+| body | The bytes to send. The array is kept, not copied: do not change it after the call. |
+| status | The HTTP status code. |
+
+## Remarks
+
+A client usually needs to be told what it is receiving, so prefer [`Bytes`](./Bytes.md). Use this for a body no client will interpret, or when the content type does not matter.
 
 ## See Also
 

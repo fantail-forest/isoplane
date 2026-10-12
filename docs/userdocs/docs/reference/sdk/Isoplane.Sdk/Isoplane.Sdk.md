@@ -9,18 +9,18 @@ mdx:
 
 | public type | description |
 | --- | --- |
-| class [ActivatedAttribute](./Isoplane/ActivatedAttribute.md) | Marks the static method that runs once in each instance, before its first request. |
-| static class [Activation](./Isoplane/Activation.md) | The moment an instance first runs after activation from its template. Every activation is a copy of the memory pre-initialisation left, so a generator that seeded itself before the snapshot would replay the same output in each copy. By the time the event is raised the runtime has reseeded every `Random` created without a seed, `Random.Shared` and the generator behind activity trace and span identifiers. Subscribe here to recreate what it cannot know about: a `Random` given a seed that was itself random, a generator of another kind, or a value already drawn. The event is raised once per activation, before the first dispatch, and not again after a wake from hibernation, whose state is the instance's own. |
-| class [BindingException](./Isoplane/BindingException.md) | A capability call the host refused or could not complete; [`IsoplaneError`](./Isoplane/BindingException/IsoplaneError.md) says which. |
-| class [Ctx](./Isoplane/Ctx.md) | The per-dispatch context. |
-| static class [DeploymentConfiguration](./Isoplane/DeploymentConfiguration.md) | Non-secret settings fixed for an application version at deployment. |
-| class [HttpHandlerAttribute](./Isoplane/HttpHandlerAttribute.md) | Marks the static method that handles every HTTP request to an application that has no entry point. |
-| static class [Initialization](./Isoplane/Initialization.md) | Initializes reusable application state before its deployment template is captured. |
-| class [InitializerAttribute](./Isoplane/InitializerAttribute.md) | Marks the static method that prepares reusable state before the application's template is captured. |
-| class [IsoplaneLoggerProvider](./Isoplane/IsoplaneLoggerProvider.md) | Writes .NET application logs through the sandbox's bounded host logging capability. |
-| class [Request](./Isoplane/Request.md) | An HTTP request delivered by the host, for any HTTP method. |
-| class [RequestHead](./Isoplane/RequestHead.md) | HTTP request metadata, independent of whether the body is buffered or streamed. |
-| class [Response](./Isoplane/Response.md) | A buffered or completed streaming response. |
-| class [ResponseStream](./Isoplane/ResponseStream.md) | A response whose headers are published immediately and whose writes await host acceptance. |
-| static class [RuntimeConfiguration](./Isoplane/RuntimeConfiguration.md) | Deployment-bound application settings supplied during preparation and activation. |
-| class [StreamingRequest](./Isoplane/StreamingRequest.md) | A request whose upload can arrive while its handler is running. |
+| class [ActivatedAttribute](./Isoplane/ActivatedAttribute.md) | Marks the method that runs in each instance before its first request, in an application written without ASP.NET. |
+| static class [Activation](./Isoplane/Activation.md) | Lets an application set up state that must differ between instances, as each instance starts. |
+| class [BindingException](./Isoplane/BindingException.md) | Thrown when Isoplane could not carry out an operation on the request being handled: reading from [`Body`](./Isoplane/StreamingRequest/Body.md), or writing with [`WriteAsync`](./Isoplane/ResponseStream/WriteAsync.md). |
+| class [Ctx](./Isoplane/Ctx.md) | Facts about the request being handled: when it started, and how much running time it is allowed. |
+| static class [DeploymentConfiguration](./Isoplane/DeploymentConfiguration.md) | Names and values fixed for one deployed version of the application, which it can read only while it starts. |
+| class [HttpHandlerAttribute](./Isoplane/HttpHandlerAttribute.md) | Marks the method that handles every HTTP request in an application written without ASP.NET. |
+| static class [Initialization](./Isoplane/Initialization.md) | Lets an application prepare captured state ahead of requests, that every instance then starts with. |
+| class [InitializerAttribute](./Isoplane/InitializerAttribute.md) | Marks the method that prepares state every instance shares, in an application written without ASP.NET. |
+| class [IsoplaneLoggerProvider](./Isoplane/IsoplaneLoggerProvider.md) | Sends the messages an application writes with .NET's `ILogger` to the application's log. |
+| class [Request](./Isoplane/Request.md) | An HTTP request whose whole body is in memory before the handler runs. It is the usual parameter of an [`HttpHandlerAttribute`](./Isoplane/HttpHandlerAttribute.md) method. |
+| class [RequestHead](./Isoplane/RequestHead.md) | The parts of an HTTP request other than its body: the method, the URL, the headers, and a token that says when to stop. |
+| class [Response](./Isoplane/Response.md) | The HTTP response an [`HttpHandlerAttribute`](./Isoplane/HttpHandlerAttribute.md) method returns. |
+| class [ResponseStream](./Isoplane/ResponseStream.md) | Writes a response body in pieces, so the client receives each piece while the handler is still producing the rest. |
+| static class [RuntimeConfiguration](./Isoplane/RuntimeConfiguration.md) | The settings Isoplane supplies to the application, such as connection strings and credentials, for an application written without ASP.NET. |
+| class [StreamingRequest](./Isoplane/StreamingRequest.md) | An HTTP request whose body is read as a stream while it is still arriving. Declare it as the parameter of an [`HttpHandlerAttribute`](./Isoplane/HttpHandlerAttribute.md) method, in place of [`Request`](./Isoplane/Request.md), to accept uploads too large to hold in memory. |

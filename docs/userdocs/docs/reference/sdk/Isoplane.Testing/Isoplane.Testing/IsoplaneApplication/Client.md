@@ -5,11 +5,15 @@ mdx:
 
 # IsoplaneApplication.Client property
 
-An owned HTTP client whose base address is the actual bound local listener.
+An `HttpClient` for calling the running application.
 
 ```csharp
 public HttpClient Client { get; }
 ```
+
+## Remarks
+
+Its `BaseAddress` is the application's address, plain HTTP on a local port chosen when it started, so request relative addresses: `app.Client.GetAsync("/todos")`. The client is disposed with the application; do not dispose it yourself.
 
 ## See Also
 

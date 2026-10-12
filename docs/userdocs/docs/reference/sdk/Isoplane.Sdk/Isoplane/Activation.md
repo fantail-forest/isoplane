@@ -5,7 +5,7 @@ mdx:
 
 # Activation class
 
-The moment an instance first runs after activation from its template. Every activation is a copy of the memory pre-initialisation left, so a generator that seeded itself before the snapshot would replay the same output in each copy. By the time the event is raised the runtime has reseeded every `Random` created without a seed, `Random.Shared` and the generator behind activity trace and span identifiers. Subscribe here to recreate what it cannot know about: a `Random` given a seed that was itself random, a generator of another kind, or a value already drawn. The event is raised once per activation, before the first dispatch, and not again after a wake from hibernation, whose state is the instance's own.
+Lets an application set up state that must differ between instances, as each instance starts.
 
 ```csharp
 public static class Activation
@@ -15,8 +15,30 @@ public static class Activation
 
 | name | description |
 | --- | --- |
-| static [IsActivated](Activation/IsActivated.md) { get; } | True after every activation callback has completed successfully. |
-| static event [Activated](Activation/Activated.md) | Awaited once, in registration order, before the first dispatch of an activation runs. |
+| static [IsActivated](Activation/IsActivated.md) { get; } | Whether this instance has finished starting: true once every [`Activated`](./Activation/Activated.md) callback has completed. |
+| static event [Activated](Activation/Activated.md) | Raised once in each instance, before the instance handles its first request. |
+
+## Remarks
+
+Isoplane initializes the application ahead of requests and saves its memory as a template. It then runs as many copies of the application as its traffic needs; each copy is an instance, and each starts from the template. Whatever existed when the template was saved is therefore identical in every instance, including a random value drawn at start-up. Subscribe to [`Activated`](./Activation/Activated.md) to replace such state when an instance starts.
+
+Isoplane already reseeds, before the event is raised, every `Random` created without a seed, `Random.Shared`, and the generator behind `Activity` trace and span identifiers. Cryptographic randomness needs nothing: each call draws fresh bytes. Three things are left to you: a `Random` constructed with a seed, even when that seed was itself random; a generator that is not a `System.Random`, such as one a library implements; and a value already drawn, such as an identifier stored in a static field.
+
+An application written without ASP.NET has no start-up code to subscribe from, and marks one method with [`ActivatedAttribute`](./ActivatedAttribute.md) instead. For state that every instance can share, use [`Initialization`](./Initialization.md). [The application lifecycle](../../../../application-lifecycle.md) explains templates and instances in full.
+
+## Examples
+
+In `Program.cs`, before `await app.RunAsync()`:
+
+```csharp
+var instance = Guid.Empty;
+
+Activation.Activated += () =>
+{
+    instance = Guid.NewGuid();
+    return Task.CompletedTask;
+};
+```
 
 ## See Also
 

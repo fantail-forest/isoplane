@@ -5,7 +5,7 @@ mdx:
 
 # Initialization.Initializing event
 
-Raised after application construction, before template capture.
+Raised after the application has started and before its template is saved.
 
 ```csharp
 public static event Func<Task>? Initializing;
@@ -13,7 +13,27 @@ public static event Func<Task>? Initializing;
 
 ## Remarks
 
-Subscribe during application construction. Callbacks are awaited in registration order before template capture. An ASP.NET application's host has started by then. Asynchronous network I/O uses the application's normal outbound policy. Await all I/O and dispose its connections, streams, and timers before the callback finishes; live host resources cannot be captured. Do not create request-scoped state or start background work. State retained here is copied into each instance; use [`Activated`](../Activation/Activated.md) for per-instance initialization such as reseeding a random generator. Exceptions fail preparation.
+Subscribe in `Program.cs` before `await app.RunAsync()`. The callbacks run once `RunAsync` has started the application, so its services and routes are available to them. They are awaited one at a time, in the order they subscribed.
+
+A callback may make network calls, for example to load data or apply database migrations. Await all I/O, and dispose connections, streams and timers before the callback returns: an open connection cannot be saved in the template. Do not start background work or keep request-scoped services. An exception stops the application from being prepared, so it does not start.
+
+Everything the callbacks leave in memory is identical in every instance. Create what must differ between instances, such as a random identifier, in an [`Activated`](../Activation/Activated.md) callback.
+
+## Examples
+
+An ASP.NET application serves itself one request, so that the route, its serializers and its queries are ready in every instance. `WarmupAsync` is in `Isoplane.AspNetCore`.
+
+```csharp
+var app = builder.Build();
+app.MapGet("/todos", (TodoStore store) => store.All());
+
+Initialization.Initializing += async () =>
+{
+    await app.WarmupAsync("/todos");
+};
+
+await app.RunAsync();
+```
 
 ## See Also
 

@@ -5,10 +5,24 @@ mdx:
 
 # RequestHead.Headers property
 
-Header pairs as supplied by the host, preserving repeated values. Compare header names case-insensitively.
+The request headers as name and value pairs.
 
 ```csharp
 public IReadOnlyList<KeyValuePair<string, string>> Headers { get; }
+```
+
+## Remarks
+
+It is a list, not a dictionary, because a header sent more than once appears once for each value. Compare names ignoring case. Headers that describe the connection itself, such as `Connection` and `Transfer-Encoding`, are not included.
+
+## Examples
+
+The request's content type, or null when it has none:
+
+```csharp
+string? contentType = request.Headers
+    .FirstOrDefault(header => header.Key.Equals("content-type", StringComparison.OrdinalIgnoreCase))
+    .Value;
 ```
 
 ## See Also

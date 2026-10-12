@@ -5,7 +5,7 @@ mdx:
 
 # IsoplaneLoggerProvider class
 
-Writes .NET application logs through the sandbox's bounded host logging capability.
+Sends the messages an application writes with .NET's `ILogger` to the application's log.
 
 ```csharp
 public sealed class IsoplaneLoggerProvider : ILoggerProvider, ISupportExternalScope
@@ -15,10 +15,39 @@ public sealed class IsoplaneLoggerProvider : ILoggerProvider, ISupportExternalSc
 
 | name | description |
 | --- | --- |
-| [IsoplaneLoggerProvider](IsoplaneLoggerProvider/-ctor.md)() | Creates a provider for application code executing inside the Isoplane sandbox. |
+| [IsoplaneLoggerProvider](IsoplaneLoggerProvider/-ctor.md)() | Creates a provider. Its loggers work only while the application runs under Isoplane. |
 | [CreateLogger](IsoplaneLoggerProvider/CreateLogger.md)(…) |  |
 | [Dispose](IsoplaneLoggerProvider/Dispose.md)() |  |
 | [SetScopeProvider](IsoplaneLoggerProvider/SetScopeProvider.md)(…) |  |
+
+## Remarks
+
+An ASP.NET application does not create one. `IsoplaneHosting.CreateBuilder` registers it, so inject `ILogger<T>` or use `app.Logger` as in any ASP.NET application, and set log levels in the `Logging` configuration section.
+
+In an application written without ASP.NET, `Console.WriteLine` already writes to the same log. Create a provider there only when you want what `ILogger` adds: levels, categories and named values. A logger from a provider you create writes every level except `None`.
+
+While developing, the log appears in the terminal running the application. A message logged at `Critical` is recorded at the log's error level. Do not log credentials or connection strings.
+
+## Examples
+
+In an application written without ASP.NET:
+
+```csharp
+using Isoplane;
+using Microsoft.Extensions.Logging;
+
+public static class Handler
+{
+    private static readonly ILogger Log = new IsoplaneLoggerProvider().CreateLogger("Orders");
+
+    [HttpHandler]
+    public static Task<Response> HandleAsync(Request request)
+    {
+        Log.LogInformation("Handling {Path}", request.Path);
+        return Task.FromResult(Response.Text("ok"));
+    }
+}
+```
 
 ## See Also
 

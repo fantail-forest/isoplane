@@ -5,26 +5,36 @@ mdx:
 
 # IsoplaneApplication.StartAsync method
 
-Publishes and starts a project using the installed CLI, on an automatically assigned local port.
+Builds the application and starts it in the sandbox, returning once it is ready to receive requests.
 
 ```csharp
 public static Task<IsoplaneApplication> StartAsync(string projectDirectory,
     ApplicationOptions? options = null, CancellationToken cancellationToken = default)
 ```
 
+| parameter | description |
+| --- | --- |
+| projectDirectory | The directory holding the project file of the application under test, which must be the only project file there. A relative path is resolved against the current directory, which varies between test runners, so build an absolute one from `AppContext.BaseDirectory`. |
+| options | How to run the application; null uses the defaults. |
+| cancellationToken | Limits how long starting may take. Starting has no time limit of its own, so pass a token that times out. Cancelling it after the method has returned does nothing. |
+
+## Return Value
+
+The running application. Dispose it to stop the application.
+
 ## Exceptions
 
 | exception | condition |
 | --- | --- |
-| ArgumentException | The directory or options are invalid. |
-| InvalidOperationException | The CLI cannot start, exits before readiness, or emits an invalid readiness record. |
-| OperationCanceledException | Startup was cancelled. |
-| PlatformNotSupportedException | The platform cannot provide native process ownership. |
-| AggregateException | Startup failed and owned process cleanup also reported failure. |
+| ArgumentException | The directory does not exist, or an option is not valid. |
+| InvalidOperationException | The application did not start: the `isoplane` command could not be run, the project did not build, or the application failed while starting. The message includes what the command printed. |
+| OperationCanceledException | The token was cancelled before the application was ready. |
+| PlatformNotSupportedException | The operating system is not one the package supports. |
+| AggregateException | The application did not start, and stopping what had been started also failed. |
 
 ## Remarks
 
-The project directory must contain one csproj. Cancellation bounds startup and disposes owned children; it does not cancel an already returned session.
+The application listens on a free local port chosen as it starts, so several can run on one machine. When the method throws there is nothing to dispose: it stops what it started first.
 
 ## See Also
 

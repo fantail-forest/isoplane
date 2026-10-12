@@ -5,11 +5,15 @@ mdx:
 
 # Activation.IsActivated property
 
-True after every activation callback has completed successfully.
+Whether this instance has finished starting: true once every [`Activated`](./Activated.md) callback has completed.
 
 ```csharp
 public static bool IsActivated { get; }
 ```
+
+## Remarks
+
+It is false while the application starts and its template is prepared. Code that runs in both phases, such as a library's lazy initialization, can read it to tell whether the state it is about to create will be shared by every instance or belongs to this one.
 
 ## See Also
 

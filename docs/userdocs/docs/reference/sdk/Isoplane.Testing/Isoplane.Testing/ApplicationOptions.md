@@ -5,7 +5,7 @@ mdx:
 
 # ApplicationOptions record
 
-How a test locates and shuts down its installed development tool.
+Optional settings for [`StartAsync`](./IsoplaneApplication/StartAsync.md): which build of the application to run, what settings to give it, and how the `isoplane` command is found and stopped.
 
 ```csharp
 public record ApplicationOptions
@@ -16,11 +16,25 @@ public record ApplicationOptions
 | name | description |
 | --- | --- |
 | [ApplicationOptions](ApplicationOptions/-ctor.md)() | The default constructor. |
-| [CliPath](ApplicationOptions/CliPath.md) { get; set; } | The CLI executable, resolved through PATH unless absolute. Defaults to `isoplane`. |
-| [Configuration](ApplicationOptions/Configuration.md) { get; set; } | The application's ordinary MSBuild configuration. Debug and Release use the same managed runtime. Defaults to `Debug`. |
-| [DiagnosticLimitCharacters](ApplicationOptions/DiagnosticLimitCharacters.md) { get; set; } | Maximum retained diagnostic characters from the child process. Defaults to 16,384. |
-| [Settings](ApplicationOptions/Settings.md) { get; set; } | Configuration settings for this session, such as a connection string to a database the test started. Keys use ASP.NET's colon-separated form. They override the project's launch profile and User Secrets. |
-| [ShutdownTimeout](ApplicationOptions/ShutdownTimeout.md) { get; set; } | Time allowed for owned process cleanup before the remaining process tree is terminated. Defaults to 10 seconds. |
+| [CliPath](ApplicationOptions/CliPath.md) { get; init; } | The `isoplane` command the test runs the application with. Defaults to `isoplane`, found on the `PATH`. |
+| [Configuration](ApplicationOptions/Configuration.md) { get; init; } | The build configuration of the application under test, `Debug` or `Release`. Defaults to `Debug`. |
+| [DiagnosticLimitCharacters](ApplicationOptions/DiagnosticLimitCharacters.md) { get; init; } | How many characters [`DiagnosticOutput`](./IsoplaneApplication/DiagnosticOutput.md) keeps. Defaults to 16,384. |
+| [Settings](ApplicationOptions/Settings.md) { get; init; } | Settings to give the application for this run, such as the connection string of a database the test started. Empty by default. |
+| [ShutdownTimeout](ApplicationOptions/ShutdownTimeout.md) { get; init; } | How long [`DisposeAsync`](./IsoplaneApplication/DisposeAsync.md) waits for the application to stop before stopping it by force. Defaults to 10 seconds. |
+
+## Remarks
+
+Every property has a default that suits most tests, so set only what a test needs, in an object initializer. The two most often set are [`Settings`](./ApplicationOptions/Settings.md) and [`Configuration`](./ApplicationOptions/Configuration.md).
+
+## Examples
+
+```csharp
+var options = new ApplicationOptions
+{
+    Settings = new Dictionary<string, string> { ["ConnectionStrings:Todos"] = connectionString }
+};
+await using var app = await IsoplaneApplication.StartAsync(projectDirectory, options);
+```
 
 ## See Also
 

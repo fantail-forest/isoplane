@@ -5,7 +5,7 @@ mdx:
 
 # BindingException class
 
-A capability call the host refused or could not complete; [`IsoplaneError`](./BindingException/IsoplaneError.md) says which.
+Thrown when Isoplane could not carry out an operation on the request being handled: reading from [`Body`](./StreamingRequest/Body.md), or writing with [`WriteAsync`](./ResponseStream/WriteAsync.md).
 
 ```csharp
 public sealed class BindingException : Exception
@@ -15,7 +15,11 @@ public sealed class BindingException : Exception
 
 | name | description |
 | --- | --- |
-| [IsoplaneError](BindingException/IsoplaneError.md) { get; } | The numeric error code returned by the host for the failed capability call. |
+| [IsoplaneError](BindingException/IsoplaneError.md) { get; } | A number identifying why the operation failed. |
+
+## Remarks
+
+The request cannot continue normally once this is thrown, for example because it was cancelled. Let the exception end the handler, or catch it to release what the handler holds and then stop; retrying the same read or write does not help.
 
 ## See Also
 

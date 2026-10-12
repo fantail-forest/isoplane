@@ -5,7 +5,7 @@ mdx:
 
 # Response class
 
-A buffered or completed streaming response.
+The HTTP response an [`HttpHandlerAttribute`](./HttpHandlerAttribute.md) method returns.
 
 ```csharp
 public sealed class Response
@@ -15,12 +15,27 @@ public sealed class Response
 
 | name | description |
 | --- | --- |
-| static [Bytes](Response/Bytes.md)(…) | Bytes with an explicit content type, for a reply a client has to be told the type of. |
-| static [Http](Response/Http.md)(…) | Creates a buffered response preserving repeated header values. |
-| static [Json](Response/Json.md)(…) | A UTF-8 JSON response, with `application/json`. The body is not validated. |
-| static [Raw](Response/Raw.md)(…) | Returns bytes without a Content-Type header. Copy a shared buffer before passing it here if other code might modify it before the response completes. |
-| static [Text](Response/Text.md)(…) | A UTF-8 text response, with `text/plain; charset=utf-8`. |
-| static [Stream](Response/Stream.md)(…) | Publishes response headers and creates a writer. Return its completed response from the handler. |
+| static [Bytes](Response/Bytes.md)(…) | Creates a response from bytes with the content type you name, such as `image/png`. |
+| static [Http](Response/Http.md)(…) | Creates a response with exactly the status, body and headers you give it. |
+| static [Json](Response/Json.md)(…) | Creates a JSON response from text that is already JSON, sent as UTF-8 with the content type `application/json`. |
+| static [Raw](Response/Raw.md)(…) | Creates a response from bytes, sent without a content type. |
+| static [Text](Response/Text.md)(…) | Creates a plain-text response, sent as UTF-8 with the content type `text/plain; charset=utf-8`. |
+| static [Stream](Response/Stream.md)(…) | Starts a response whose body is sent in pieces as the handler produces them, and returns the writer for those pieces. |
+
+## Remarks
+
+Create one with the static method that fits what you are sending:
+
+* [`Text`](./Response/Text.md) for plain text.
+* [`Json`](./Response/Json.md) for JSON you have already serialized to a string.
+* [`Bytes`](./Response/Bytes.md) for binary content with a content type, such as an image.
+* [`Raw`](./Response/Raw.md) for bytes sent without a content type.
+* [`Http`](./Response/Http.md) to choose every header yourself, as a redirect or a cookie needs.
+* [`Stream`](./Response/Stream.md) to send the body in pieces as it is produced, instead of building it all first.
+
+[`Bytes`](./Response/Bytes.md), [`Raw`](./Response/Raw.md) and [`Http`](./Response/Http.md) keep the array they are given rather than copying it, so do not change it after the call. Isoplane answers the client with status 502 in place of a response whose status is below 200 or whose headers are not valid HTTP.
+
+An ASP.NET application does not use this type: it writes to `HttpContext.Response` as usual.
 
 ## See Also
 

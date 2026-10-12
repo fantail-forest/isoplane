@@ -5,11 +5,25 @@ mdx:
 
 # ResponseStream.Complete method
 
-Disallows further writes and returns the handler response. The host sees EOF only after the handler returns it.
+Ends the body and returns the response for the handler to return.
 
 ```csharp
 public Response Complete()
 ```
+
+## Return Value
+
+The [`Response`](../Response.md) the handler must return.
+
+## Exceptions
+
+| exception | condition |
+| --- | --- |
+| InvalidOperationException | A write has not finished. |
+
+## Remarks
+
+Calling it is not enough: the client is told the body has ended only when the handler returns the response. No piece can be written afterwards.
 
 ## See Also
 

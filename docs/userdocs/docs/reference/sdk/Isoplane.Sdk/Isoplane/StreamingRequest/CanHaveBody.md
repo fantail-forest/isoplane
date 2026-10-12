@@ -5,11 +5,15 @@ mdx:
 
 # StreamingRequest.CanHaveBody property
 
-Whether HTTP framing permits content, including unknown-length uploads.
+Whether the request can carry a body. It is false for a request sent without one, as a `GET` usually is.
 
 ```csharp
 public bool CanHaveBody { get; }
 ```
+
+## Remarks
+
+True does not mean the body has content: an upload whose length the client did not announce can still turn out to be empty. When it is false, [`Body`](./Body.md) is an empty stream.
 
 ## See Also
 

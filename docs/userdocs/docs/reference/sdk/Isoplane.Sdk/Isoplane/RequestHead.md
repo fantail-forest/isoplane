@@ -5,7 +5,7 @@ mdx:
 
 # RequestHead class
 
-HTTP request metadata, independent of whether the body is buffered or streamed.
+The parts of an HTTP request other than its body: the method, the URL, the headers, and a token that says when to stop.
 
 ```csharp
 public class RequestHead
@@ -15,12 +15,16 @@ public class RequestHead
 
 | name | description |
 | --- | --- |
-| [Aborted](RequestHead/Aborted.md) { get; } | Cancelled when the host delivers this dispatch's cancellation wake. |
-| [Headers](RequestHead/Headers.md) { get; } | Header pairs as supplied by the host, preserving repeated values. Compare header names case-insensitively. |
-| [Method](RequestHead/Method.md) { get; } | The HTTP method as received by the host. |
-| [Path](RequestHead/Path.md) { get; } | The request path, without the query string. |
-| [Query](RequestHead/Query.md) { get; } | Query pairs in host order, preserving duplicate names and empty values. |
-| [Url](RequestHead/Url.md) { get; } | The request URI as received by the host; it may be relative. |
+| [Aborted](RequestHead/Aborted.md) { get; } | Cancelled when the request should stop: the client has gone away, or the request has used up its running time. |
+| [Headers](RequestHead/Headers.md) { get; } | The request headers as name and value pairs. |
+| [Method](RequestHead/Method.md) { get; } | The HTTP method, such as `GET` or `POST`. Standard methods are in upper case. |
+| [Path](RequestHead/Path.md) { get; } | The path the client asked for, without the query string. It begins with a slash. |
+| [Query](RequestHead/Query.md) { get; } | The query string as name and value pairs, in the order they appear in the URL. |
+| [Url](RequestHead/Url.md) { get; } | The address the client asked for, as it was sent, including any query string. |
+
+## Remarks
+
+It is the base of the two types an [`HttpHandlerAttribute`](./HttpHandlerAttribute.md) method can take: [`Request`](./Request.md), whose body is in memory, and [`StreamingRequest`](./StreamingRequest.md), whose body is read as a stream. An application receives one of those rather than a `RequestHead` itself.
 
 ## See Also
 

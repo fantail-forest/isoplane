@@ -5,11 +5,15 @@ mdx:
 
 # ApplicationOptions.Settings property
 
-Configuration settings for this session, such as a connection string to a database the test started. Keys use ASP.NET's colon-separated form. They override the project's launch profile and User Secrets.
+Settings to give the application for this run, such as the connection string of a database the test started. Empty by default.
 
 ```csharp
 public IReadOnlyDictionary<string, string> Settings { get; init; }
 ```
+
+## Remarks
+
+Names use ASP.NET's form, `Section:Key`. The application reads them as it reads any setting: through `IConfiguration`, or `RuntimeConfiguration.ReadValues` in an application written without ASP.NET. They override the same settings in the project's launch profile and User Secrets, and apply only to the application this test starts.
 
 ## See Also
 

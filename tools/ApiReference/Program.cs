@@ -46,6 +46,9 @@ finally
 internal static class Reference
 {
     private static readonly Regex Link = new(@"\[([^\]]+)\]\(([^)]+)\)", RegexOptions.CultureInvariant);
+    // Doc comments link to the published guides, which is what an editor's tooltip needs. On the site
+    // those become links between files, so that the build fails on one whose guide has gone.
+    private static readonly Regex GuideLink = new(@"\]\(https://isoplane\.dev/docs/([^)#]+)(#[^)]*)?\)", RegexOptions.CultureInvariant);
     private static readonly Assembly[] Assemblies = [typeof(Isoplane.Request).Assembly, typeof(Isoplane.AspNetCore.IsoplaneHosting).Assembly, typeof(Isoplane.Testing.IsoplaneApplication).Assembly];
     private static readonly HashSet<string> Namespaces = ["Isoplane", "Isoplane.AspNetCore", "Isoplane.Testing"];
 
@@ -65,6 +68,8 @@ internal static class Reference
             {
                 var text = Filter(File.ReadAllText(page), page, pages, types);
                 var relative = Path.Combine("sdk", name, Path.GetRelativePath(directory, Published(page, pages)));
+                var guides = string.Concat(Enumerable.Repeat("../", relative.Split(Path.DirectorySeparatorChar).Length));
+                text = GuideLink.Replace(text, match => $"]({guides}{match.Groups[1].Value}.md{match.Groups[2].Value})");
                 output.Add(relative, "---\nmdx:\n  format: md\n---\n\n" + text.TrimEnd() + "\n");
             }
         }
@@ -111,9 +116,13 @@ internal static class Reference
             var prefix = Path.Combine(type.Namespace!, type.Name.Replace('`', '-')) + Path.DirectorySeparatorChar;
             foreach (var property in type.GetProperties(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly))
             {
-                if (page.EndsWith(prefix + property.Name + ".md", StringComparison.Ordinal) &&
-                    property.SetMethod?.ReturnParameter.GetRequiredCustomModifiers().Contains(typeof(System.Runtime.CompilerServices.IsExternalInit)) == true)
+                if (property.SetMethod?.ReturnParameter.GetRequiredCustomModifiers().Contains(typeof(System.Runtime.CompilerServices.IsExternalInit)) != true) continue;
+                if (page.EndsWith(prefix + property.Name + ".md", StringComparison.Ordinal))
                     rendered = rendered.Replace("{ get; set; }", "{ get; init; }", StringComparison.Ordinal);
+                // The type page's member table separates these tokens with no-break spaces.
+                var row = $"[{property.Name}]({type.Name}/{property.Name}.md)\u00A0{{\u00A0get;\u00A0";
+                if (page.EndsWith(prefix.TrimEnd(Path.DirectorySeparatorChar) + ".md", StringComparison.Ordinal))
+                    rendered = rendered.Replace(row + "set;", row + "init;", StringComparison.Ordinal);
             }
         }
         return rendered;
@@ -152,11 +161,25 @@ mdx:
 
 # SDK API reference
 
-These pages describe the customer HTTP, ASP.NET and integration-testing APIs in the installed packages. Signatures and member documentation are generated from the compiled assemblies and their XML documentation comments.
+The types and members of the Isoplane packages an application uses. Signatures and descriptions are generated from the compiled assemblies and their documentation comments, so they match the version you have installed.
 
-- [Isoplane.Sdk](sdk/Isoplane.Sdk/Isoplane.Sdk.md): requests, responses, HTTP handlers, activation, configuration and logging.
-- [Isoplane.AspNetCore](sdk/Isoplane.AspNetCore/Isoplane.AspNetCore.md): ASP.NET application hosting over the sandbox's request transport.
-- [Isoplane.Testing](sdk/Isoplane.Testing/Isoplane.Testing.md): test-owned application sessions and startup options. Its C# namespace is `Isoplane.Testing`.
+## Which package you need
+
+An application is written in one of two ways, and tested with a third package.
+
+- **An ASP.NET application** has a `Program.cs`. It calls [`IsoplaneHosting.CreateBuilder`](sdk/Isoplane.AspNetCore/Isoplane.AspNetCore/IsoplaneHosting/CreateBuilder.md) from [Isoplane.AspNetCore](sdk/Isoplane.AspNetCore/Isoplane.AspNetCore.md) and is otherwise ordinary ASP.NET. From [Isoplane.Sdk](sdk/Isoplane.Sdk/Isoplane.Sdk.md) it needs only [`Initialization`](sdk/Isoplane.Sdk/Isoplane/Initialization.md) and [`Activation`](sdk/Isoplane.Sdk/Isoplane/Activation.md), and those only to prepare state ahead of time. Start with [Your first application](../create-an-application.md) or [Bring an existing ASP.NET application](../onboard-an-application.md).
+- **An application without ASP.NET** is one static method marked [`[HttpHandler]`](sdk/Isoplane.Sdk/Isoplane/HttpHandlerAttribute.md) that takes a [`Request`](sdk/Isoplane.Sdk/Isoplane/Request.md) and returns a [`Response`](sdk/Isoplane.Sdk/Isoplane/Response.md). Everything it uses is in [Isoplane.Sdk](sdk/Isoplane.Sdk/Isoplane.Sdk.md). Start with [Handle requests without ASP.NET](../handle-requests-without-aspnet.md).
+- **A test project** uses [Isoplane.Testing](sdk/Isoplane.Testing/Isoplane.Testing.md) to start either kind of application in the sandbox and send it requests: [`IsoplaneApplication.StartAsync`](sdk/Isoplane.Testing/Isoplane.Testing/IsoplaneApplication/StartAsync.md). Start with [Test an application](../test-an-application.md).
+
+## Words these pages use
+
+- **Instance.** One running copy of your application. Isoplane runs as many as the traffic needs and may discard one between requests, so memory is not a place to keep anything that must last.
+- **Template.** Isoplane starts your application once ahead of time and saves its memory. That saved memory is the template, and every instance starts as a copy of it. Work done before the template is saved is done once; state created then is identical in every instance.
+- **Initialization.** The start-up work that runs before the template is saved: [`Initialization.Initializing`](sdk/Isoplane.Sdk/Isoplane/Initialization/Initializing.md), or an [`[Initializer]`](sdk/Isoplane.Sdk/Isoplane/InitializerAttribute.md) method.
+- **Activation.** The moment an instance starts from the template, before its first request: [`Activation.Activated`](sdk/Isoplane.Sdk/Isoplane/Activation/Activated.md), or an [`[Activated]`](sdk/Isoplane.Sdk/Isoplane/ActivatedAttribute.md) method. State that must differ between instances is created here.
+- **Sandbox.** The isolated environment your application runs in, on your machine and when deployed. It reaches the network and its settings only through Isoplane.
+
+[The application lifecycle](../application-lifecycle.md) explains these in full.
 
 <!-- Generated by tools/ApiReference. -->
 """ + "\n";

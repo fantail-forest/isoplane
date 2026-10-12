@@ -5,7 +5,7 @@ mdx:
 
 # Ctx class
 
-The per-dispatch context.
+Facts about the request being handled: when it started, and how much running time it is allowed.
 
 ```csharp
 public sealed class Ctx
@@ -15,8 +15,23 @@ public sealed class Ctx
 
 | name | description |
 | --- | --- |
-| [NowMs](Ctx/NowMs.md) { get; } | The clock at dispatch start, in milliseconds, frozen for the slice. |
-| [OccupancyBudgetMs](Ctx/OccupancyBudgetMs.md) { get; } | Occupied-worker milliseconds available to this dispatch before cancellation grace. |
+| [NowMs](Ctx/NowMs.md) { get; } | The time the request started, in milliseconds since the Unix epoch (1970-01-01T00:00:00Z). |
+| [OccupancyBudgetMs](Ctx/OccupancyBudgetMs.md) { get; } | The running time this request is allowed, in milliseconds. |
+
+## Remarks
+
+Isoplane passes one to an [`HttpHandlerAttribute`](./HttpHandlerAttribute.md) method that declares it as a second parameter. A handler that needs neither value can leave the parameter out.
+
+## Examples
+
+```csharp
+[HttpHandler]
+public static Task<Response> HandleAsync(Request request, Ctx ctx)
+{
+    var started = DateTimeOffset.FromUnixTimeMilliseconds(ctx.NowMs);
+    return Task.FromResult(Response.Text($"Started at {started:O}"));
+}
+```
 
 ## See Also
 

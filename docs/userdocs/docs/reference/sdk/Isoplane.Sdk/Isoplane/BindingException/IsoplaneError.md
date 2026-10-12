@@ -5,11 +5,15 @@ mdx:
 
 # BindingException.IsoplaneError property
 
-The numeric error code returned by the host for the failed capability call.
+A number identifying why the operation failed.
 
 ```csharp
 public int IsoplaneError { get; }
 ```
+
+## Remarks
+
+The SDK defines no named constants for these numbers. Include the value when you log or report the failure.
 
 ## See Also
 

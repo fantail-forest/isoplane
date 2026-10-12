@@ -5,7 +5,7 @@ mdx:
 
 # IsoplaneApplication.DisposeAsync method
 
-Closes the client, requests CLI cleanup through stdin EOF, and awaits all owned process output.
+Stops the application and releases its port and its [`Client`](./Client.md).
 
 ```csharp
 public ValueTask DisposeAsync()
@@ -15,9 +15,13 @@ public ValueTask DisposeAsync()
 
 | exception | condition |
 | --- | --- |
-| TimeoutException | The CLI required forced termination. |
-| InvalidOperationException | The CLI exited unsuccessfully. |
-| AggregateException | More than one cleanup operation failed. |
+| TimeoutException | The application did not stop within [`ShutdownTimeout`](../ApplicationOptions/ShutdownTimeout.md) and was stopped by force. The message includes [`DiagnosticOutput`](./DiagnosticOutput.md). |
+| InvalidOperationException | The `isoplane` command reported a failure as it stopped. The message includes [`DiagnosticOutput`](./DiagnosticOutput.md). |
+| AggregateException | More than one of these happened. |
+
+## Remarks
+
+`await using` calls it. A second call returns the result of the first. It throws when the application did not stop cleanly, so that a test does not pass over an application that crashed or hung.
 
 ## See Also
 
