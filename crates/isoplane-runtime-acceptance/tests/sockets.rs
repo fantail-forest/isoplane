@@ -259,25 +259,32 @@ in_mono_runtime! {
 }
 
 in_mono_runtime! {
-    #[tokio::test(start_paused = true)]
+    #[tokio::test]
     async fn cancelling_a_read_releases_the_connection(runtime: GuestRuntime) {
         let silent = peer(Peer::Silent).await;
         let reactor = reactor_for_peers(17, vec![silent]);
         reactor.context.begin_slice(1, 1);
         let mut guest = guest(&reactor, runtime);
-        let mut outcome = guest.start(&format!(
+        let outcome = guest.start(&format!(
             "/sockets/cancel/{}/{}/50",
             silent.ip(),
             silent.port()
         ));
-        // connect, then the read that waits on the peer
-        for _ in 0..2 {
+        assert_eq!(outcome.completion, Completion::Parked, "{outcome:?}");
+        if reactor.futures.pending_total(reactor.context.instance) != 2 {
+            // Real TCP readiness must arrive before virtual time can skip ahead.
+            tokio::time::timeout(std::time::Duration::from_secs(60), async {
+                while !reactor.futures.has_ready(reactor.context.instance) {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("the connection must become ready before the hang deadline");
+            tokio::time::pause();
+            let outcome = guest.wake(&reactor).await;
             assert_eq!(outcome.completion, Completion::Parked, "{outcome:?}");
-            tokio::task::yield_now().await;
-            if reactor.futures.pending_total(reactor.context.instance) == 2 {
-                break;
-            }
-            outcome = guest.wake(&reactor).await;
+        } else {
+            tokio::time::pause();
         }
         assert_eq!(
             reactor.futures.pending_total(reactor.context.instance),
