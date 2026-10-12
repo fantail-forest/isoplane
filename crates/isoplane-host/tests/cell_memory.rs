@@ -46,12 +46,23 @@ fn dispatch_growth(
             EngineActivator::load(engine, module.clone(), &wasm)
                 .expect("small initial memory fits the engine"),
         );
-        let (cell, _) = common::rig_resolving(
+        // macOS network mounts can require writing every reserved byte eagerly.
+        #[cfg(target_os = "macos")]
+        let snapshots = tempfile::tempdir_in("/tmp").expect("create native snapshot storage");
+        #[cfg(not(target_os = "macos"))]
+        let snapshots = tempfile::tempdir().expect("create snapshot storage");
+        let (services, _) = common::services_resolving("93.184.216.34:80");
+        let cell = isoplane_host::cell::Cell::with_snapshot_storage(
             CellConfig {
                 ..CellConfig::for_test("memory-budget")
             },
-            "93.184.216.34:80",
-        );
+            services,
+            Arc::new(
+                isoplane_hibernate::snapshot::LocalSnapshotStorage::new(snapshots.path())
+                    .expect("open snapshot storage"),
+            ),
+        )
+        .expect("a cell starts");
         let mut manifest = common::manifest(
             "memory-budget",
             HandlerLifecycle::Reuse,
@@ -89,6 +100,10 @@ fn dispatch_growth(
             Completion::Done,
             "memory.grow must observe the application ceiling under either allocator"
         );
+        drop(cell);
+        snapshots
+            .close()
+            .expect("remove the test's snapshot storage");
     }
 }
 
