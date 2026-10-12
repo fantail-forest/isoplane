@@ -4,13 +4,13 @@ Customer-facing documentation for the Isoplane SDK and tools.
 
 ```bash
 cd docs/userdocs
-npm ci
-npm start        # http://localhost:3123
-npm run build
-npm run serve
+pnpm install --frozen-lockfile
+pnpm start        # http://localhost:3123
+pnpm run build
+pnpm run serve
 ```
 
-The servers bind loopback by default. Pass `-- --host 0.0.0.0` to make a local
+The servers bind loopback by default. Pass `--host 0.0.0.0` to make a local
 preview accessible from another machine. Nothing is published by these commands.
 
 Follow [the Diátaxis opinion](../opinion-registry/frameworks/docusaurus.md):

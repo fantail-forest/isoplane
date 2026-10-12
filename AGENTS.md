@@ -87,7 +87,7 @@ task daemon -- --config isoplaned.toml --check    # Validate a config without ru
 isoplane deploy --app <name> --project <directory> --team <name>
 isoplane doctor <wasm>             # Validate a module locally
 
-cd docs/userdocs && npm run start                  # Serve customer docs
+cd docs/userdocs && pnpm run start                 # Serve customer docs
 
 scripts/clean                                      # Reclaim build intermediates
 ```

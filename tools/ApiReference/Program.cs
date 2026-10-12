@@ -24,7 +24,7 @@ try
     if (args.Length == 2)
     {
         if (differences.Length == 0) return 0;
-        Console.Error.WriteLine("SDK reference is stale. Run npm run generate:reference in docs/userdocs.");
+        Console.Error.WriteLine("SDK reference is stale. Run pnpm run generate:reference in docs/userdocs.");
         foreach (var path in differences) Console.Error.WriteLine(path);
         return 1;
     }

@@ -1,0 +1,16 @@
+# Minutes a published version must age before pnpm will resolve to it.
+minimumReleaseAge: 1440
+
+# Patched releases of transitive dependencies that Docusaurus still resolves
+# to versions with known advisories.
+overrides:
+  postcss-selector-parser: ^7.1.6
+  serialize-javascript: ^7.0.5
+  tinypool: ^2.1.2
+  katex: ^0.18.2
+  sockjs>uuid: ^11.1.1
+
+# pnpm runs a dependency's install scripts only when it is allowed here.
+allowBuilds:
+  # Its postinstall prints a funding banner and builds nothing.
+  core-js: false
