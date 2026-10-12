@@ -1,4 +1,7 @@
 //! Post-response execution restrictions through the actual WASM engine and cell.
+//! Production daemon policy is qualified on its Linux deployment platform.
+
+#![cfg(target_os = "linux")]
 
 mod common;
 

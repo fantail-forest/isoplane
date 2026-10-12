@@ -1,4 +1,7 @@
 //! Response EOF follows the empty-stack dispatch boundary, including adversarial guests.
+//! Production daemon policy is qualified on its Linux deployment platform.
+
+#![cfg(target_os = "linux")]
 
 mod common;
 
