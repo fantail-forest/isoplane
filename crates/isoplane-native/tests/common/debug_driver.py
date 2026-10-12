@@ -1,4 +1,8 @@
-"""Drive the installed modern adapter with maintained debugpy DAP framing."""
+"""Drive the installed modern adapter with maintained debugpy DAP framing.
+
+The Rust owner bounds the entire journey, including paused HTTP requests and shutdown,
+and cleans up its process tree on timeout.
+"""
 import concurrent.futures
 import json
 import http.client
@@ -119,8 +123,7 @@ def launch_terminal(message):
 def owner_event(event):
     if terminal_mode:
         marker = "  debugger detached;" if event == "debugger_detached" else "  reloaded "
-        deadline = time.monotonic() + 180
-        while marker not in terminal_output.get(timeout=max(0, deadline - time.monotonic())):
+        while marker not in terminal_output.get():
             pass
     else:
         print("request-owner-event:" + event, flush=True)
@@ -130,7 +133,7 @@ def owner_event(event):
 def stop_owner():
     if terminal_mode:
         terminal.stdin.close()
-        assert terminal.wait(timeout=30) == 0, "closing the terminal input must stop the detached application"
+        assert terminal.wait() == 0, "closing the terminal input must stop the detached application"
     else:
         print("request-owner-stop", flush=True)
         assert sys.stdin.readline() == "owner-stopped\n"
@@ -140,9 +143,8 @@ def until(predicate):
     for index, value in enumerate(deferred):
         if predicate(value):
             return deferred.pop(index)
-    deadline = time.monotonic() + 180
     while True:
-        value = messages.get(timeout=max(0, deadline - time.monotonic()))
+        value = messages.get()
         print(json.dumps(value), flush=True)
         if value.get("type") == "request" and value.get("command") == "runInTerminal":
             launch_terminal(value)
@@ -162,7 +164,7 @@ def response(identifier):
 
 def request_http(result):
     try:
-        with urllib.request.urlopen(url, timeout=180) as reply:
+        with urllib.request.urlopen(url) as reply:
             result.set_result((reply.status, reply.read()))
     except urllib.error.HTTPError as error:
         result.set_result((error.code, error.read()))
@@ -276,10 +278,10 @@ try:
                     if terminal_mode:
                         response(send("isoplane/prepareDetach", {}))
                     response(send("disconnect", {"terminateDebuggee": False}))
-                    assert adapter.wait(timeout=30) == 0, "detach must close the editor adapter"
-                    assert http_result.result(timeout=180) == (200, b"84"), "detach must resume the same guest with its edited local"
+                    assert adapter.wait() == 0, "detach must close the editor adapter"
+                    assert http_result.result() == (200, b"84"), "detach must resume the same guest with its edited local"
                     owner_event("debugger_detached")
-                    with urllib.request.urlopen(url, timeout=180) as reply:
+                    with urllib.request.urlopen(url) as reply:
                         assert (reply.status, reply.read()) == (200, b"42"), "subsequent requests must run without a debugger"
                     if not terminal_mode:
                         with socket.socket() as check:
@@ -287,7 +289,7 @@ try:
                     original = Path(source).read_text()
                     Path(source).write_text(original.replace("int answer = 42;", "int answer = 84;"))
                     owner_event("reloaded")
-                    with urllib.request.urlopen(url, timeout=180) as reply:
+                    with urllib.request.urlopen(url) as reply:
                         assert (reply.status, reply.read()) == (200, b"84"), "source reload must keep using the ordinary runtime after detach"
                     stop_owner()
                     assert (not any((Path(module) / ".isoplane/debug").iterdir()) if terminal_mode else not Path(module).exists()), "stopping the terminal owner must release detached session artifacts"
@@ -306,9 +308,7 @@ try:
                     with socket.socket() as check:
                         assert check.connect_ex((http_endpoint.hostname, http_endpoint.port)) != 0, "CLI stop must close its HTTP listener"
                     try:
-                        http_result.result(timeout=30)
-                    except (concurrent.futures.TimeoutError, socket.timeout) as error:
-                        raise AssertionError("paused HTTP requester did not observe connection termination") from error
+                        http_result.result()
                     except (http.client.RemoteDisconnected, ConnectionResetError, ConnectionAbortedError, BrokenPipeError, http.client.IncompleteRead):
                         print("paused HTTP connection terminated", flush=True)
                     except urllib.error.URLError as error:
@@ -322,7 +322,7 @@ try:
         if mode in ("requests", "launch", "reload"):
             previous_frame = frame["id"]
         if mode not in ("stop", "detach", "terminal-detach"):
-            actual = http_result.result(timeout=180)
+            actual = http_result.result()
             expected = (getattr(scenario, "EXPECTED_STATUS", 200), scenario.EXPECTED_RESPONSE if scenario is not None else b"84" if mode in ("reload", "detach-failure") and attempt == 1 else b"42")
             assert actual == expected, f"continued customer code returned {actual!r}, expected {expected!r}"
         if mode == "detach-failure" and attempt == 0:
@@ -333,10 +333,10 @@ try:
                   and "  reloaded " in item["body"]["output"])
     if mode == "detach-idle":
         response(send("disconnect", {"terminateDebuggee": False}))
-        assert adapter.wait(timeout=30) == 0, "idle detach must cancel the pending guest handshake"
+        assert adapter.wait() == 0, "idle detach must cancel the pending guest handshake"
         print('request-owner-event:debugger_detached', flush=True)
         assert sys.stdin.readline() == 'owner-event:debugger_detached\n'
-        with urllib.request.urlopen(url, timeout=180) as reply:
+        with urllib.request.urlopen(url) as reply:
             assert (reply.status, reply.read()) == (200, b"42"), "idle detach must keep the application serving requests"
         print('request-owner-stop', flush=True)
         assert sys.stdin.readline() == 'owner-stopped\n'
@@ -344,9 +344,9 @@ try:
         until(lambda item: item.get("event") == "terminated")
     if mode not in ("detach", "detach-idle", "terminal-detach"):
         response(send("disconnect", {"terminateDebuggee": mode != "stop"}))
-    assert adapter.wait(timeout=30) == 0, "the adapter must exit cleanly after editor disconnect or owner cancellation"
+    assert adapter.wait() == 0, "the adapter must exit cleanly after editor disconnect or owner cancellation"
     if terminal is not None:
-        assert terminal.wait(timeout=30) == 0, "terminal application must exit cleanly"
+        assert terminal.wait() == 0, "terminal application must exit cleanly"
     if launched:
         assert not any_running(owned), "disconnect must reap the launched application and its children"
         with socket.socket() as check:
