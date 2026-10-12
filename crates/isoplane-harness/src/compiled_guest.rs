@@ -1,7 +1,10 @@
 //! Share disk-backed compilation while keeping engines and guest state isolated.
 
-use std::path::PathBuf;
-use std::sync::{Arc, OnceLock};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock, Weak};
+
+use parking_lot::Mutex;
 
 use isoplane_cache::{Cache, CacheKey, PROJECT_CACHE_BYTES};
 use isoplane_engine::{
@@ -9,6 +12,20 @@ use isoplane_engine::{
 };
 
 struct CompiledGuests(Cache);
+
+type CompilationLocks = Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>;
+
+fn local_compilation_lock(path: &Path) -> Arc<Mutex<()>> {
+    static LOCKS: OnceLock<CompilationLocks> = OnceLock::new();
+    let mut locks = LOCKS.get_or_init(Mutex::default).lock();
+    locks.retain(|_, lock| lock.strong_count() != 0);
+    if let Some(lock) = locks.get(path).and_then(Weak::upgrade) {
+        return lock;
+    }
+    let lock = Arc::new(Mutex::new(()));
+    locks.insert(path.into(), Arc::downgrade(&lock));
+    lock
+}
 
 impl CompiledGuests {
     fn new(directory: PathBuf) -> Self {
@@ -25,6 +42,9 @@ impl CompiledGuests {
                 .expect("lease compiled guest storage"),
         );
         let path = lease.directory();
+        // NFS file locks can be process-owned, so local writers also need a mutex.
+        let local = local_compilation_lock(path);
+        let _local = local.lock();
         let lock = std::fs::OpenOptions::new()
             .create(true)
             .truncate(false)

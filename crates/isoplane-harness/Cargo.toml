@@ -19,6 +19,7 @@ isoplane-host = { workspace = true }
 isoplane-runtime = { workspace = true }
 tokio = { workspace = true }
 fs4 = { workspace = true }
+parking_lot.workspace = true
 serde_json = { workspace = true }
 
 [dev-dependencies]
