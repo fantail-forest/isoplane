@@ -16,7 +16,7 @@ public sealed class InitializerAttribute : Attribute
 
 | name | description |
 | --- | --- |
-| [InitializerAttribute](InitializerAttribute/InitializerAttribute.md)() | The default constructor. |
+| [InitializerAttribute](InitializerAttribute/-ctor.md)() | The default constructor. |
 
 ## Remarks
 

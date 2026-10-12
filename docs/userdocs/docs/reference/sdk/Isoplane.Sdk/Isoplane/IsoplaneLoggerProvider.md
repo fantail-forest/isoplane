@@ -15,7 +15,7 @@ public sealed class IsoplaneLoggerProvider : ILoggerProvider, ISupportExternalSc
 
 | name | description |
 | --- | --- |
-| [IsoplaneLoggerProvider](IsoplaneLoggerProvider/IsoplaneLoggerProvider.md)() | Creates a provider for application code executing inside the Isoplane sandbox. |
+| [IsoplaneLoggerProvider](IsoplaneLoggerProvider/-ctor.md)() | Creates a provider for application code executing inside the Isoplane sandbox. |
 | [CreateLogger](IsoplaneLoggerProvider/CreateLogger.md)(…) |  |
 | [Dispose](IsoplaneLoggerProvider/Dispose.md)() |  |
 | [SetScopeProvider](IsoplaneLoggerProvider/SetScopeProvider.md)(…) |  |

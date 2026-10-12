@@ -15,7 +15,7 @@ public record ApplicationOptions
 
 | name | description |
 | --- | --- |
-| [ApplicationOptions](ApplicationOptions/ApplicationOptions.md)() | The default constructor. |
+| [ApplicationOptions](ApplicationOptions/-ctor.md)() | The default constructor. |
 | [CliPath](ApplicationOptions/CliPath.md) { get; set; } | The CLI executable, resolved through PATH unless absolute. Defaults to `isoplane`. |
 | [Configuration](ApplicationOptions/Configuration.md) { get; set; } | The application's ordinary MSBuild configuration. Debug and Release use the same managed runtime. Defaults to `Debug`. |
 | [DiagnosticLimitCharacters](ApplicationOptions/DiagnosticLimitCharacters.md) { get; set; } | Maximum retained diagnostic characters from the child process. Defaults to 16,384. |

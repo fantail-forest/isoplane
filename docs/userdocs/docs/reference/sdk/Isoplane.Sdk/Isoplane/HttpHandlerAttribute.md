@@ -16,7 +16,7 @@ public sealed class HttpHandlerAttribute : Attribute
 
 | name | description |
 | --- | --- |
-| [HttpHandlerAttribute](HttpHandlerAttribute/HttpHandlerAttribute.md)() | The default constructor. |
+| [HttpHandlerAttribute](HttpHandlerAttribute/-ctor.md)() | The default constructor. |
 
 ## Remarks
 

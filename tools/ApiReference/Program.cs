@@ -64,7 +64,7 @@ internal static class Reference
             foreach (var page in pages)
             {
                 var text = Filter(File.ReadAllText(page), page, pages, types);
-                var relative = Path.Combine("sdk", name, Path.GetRelativePath(directory, page));
+                var relative = Path.Combine("sdk", name, Path.GetRelativePath(directory, Published(page, pages)));
                 output.Add(relative, "---\nmdx:\n  format: md\n---\n\n" + text.TrimEnd() + "\n");
             }
         }
@@ -102,8 +102,8 @@ internal static class Reference
                     !types.Any(type => line == $"## {type.Namespace} namespace");
             if (skipSection) continue;
             var links = Link.Matches(line);
-            if (line.StartsWith('|') && links.Count > 0 && !TargetIncluded(links[0].Groups[2].Value, page, pages)) continue;
-            result.Append(Link.Replace(line, match => TargetIncluded(match.Groups[2].Value, page, pages) ? match.Value : match.Groups[1].Value).TrimEnd()).Append('\n');
+            if (line.StartsWith('|') && links.Count > 0 && Target(links[0].Groups[2].Value, page) is { } first && !pages.Contains(first)) continue;
+            result.Append(Link.Replace(line, match => Rendered(match, page, pages)).TrimEnd()).Append('\n');
         }
         var rendered = result.ToString();
         foreach (var type in types)
@@ -119,10 +119,28 @@ internal static class Reference
         return rendered;
     }
 
-    private static bool TargetIncluded(string link, string page, HashSet<string> pages)
+    private static string Rendered(Match link, string page, HashSet<string> pages)
     {
-        if (Uri.TryCreate(link, UriKind.Absolute, out _) || !link.Split('#')[0].EndsWith(".md", StringComparison.Ordinal)) return true;
-        return pages.Contains(Path.GetFullPath(Path.Combine(Path.GetDirectoryName(page)!, link.Split('#')[0])));
+        var (text, destination) = (link.Groups[1].Value, link.Groups[2].Value);
+        if (Target(destination, page) is not { } target) return link.Value;
+        if (!pages.Contains(target)) return text;
+        return $"[{text}]({destination.Replace(Path.GetFileName(target), Path.GetFileName(Published(target, pages)), StringComparison.Ordinal)})";
+    }
+
+    private static string? Target(string link, string page)
+    {
+        var path = link.Split('#')[0];
+        if (Uri.TryCreate(link, UriKind.Absolute, out _) || !path.EndsWith(".md", StringComparison.Ordinal)) return null;
+        return Path.GetFullPath(Path.Combine(Path.GetDirectoryName(page)!, path));
+    }
+
+    // xmldocmd writes a type's constructors to <Type>/<Type>.md. Docusaurus serves a page named after
+    // its directory as that directory's index, which is the address <Type>.md already has.
+    private static string Published(string page, HashSet<string> pages)
+    {
+        var directory = Path.GetDirectoryName(page)!;
+        var constructors = Path.GetFileNameWithoutExtension(page) == Path.GetFileName(directory) && pages.Contains(directory + ".md");
+        return constructors ? Path.Combine(directory, "-ctor.md") : page;
     }
 
     private const string Overview = """

@@ -16,7 +16,7 @@ public sealed class ActivatedAttribute : Attribute
 
 | name | description |
 | --- | --- |
-| [ActivatedAttribute](ActivatedAttribute/ActivatedAttribute.md)() | The default constructor. |
+| [ActivatedAttribute](ActivatedAttribute/-ctor.md)() | The default constructor. |
 
 ## Remarks
 
