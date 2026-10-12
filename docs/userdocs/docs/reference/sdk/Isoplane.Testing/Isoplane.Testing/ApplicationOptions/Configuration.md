@@ -5,7 +5,7 @@ mdx:
 
 # ApplicationOptions.Configuration property
 
-The application's ordinary MSBuild configuration, which selects its guest execution mode. Defaults to `Debug`.
+The application's ordinary MSBuild configuration. Debug and Release use the same managed runtime. Defaults to `Debug`.
 
 ```csharp
 public string Configuration { get; init; }

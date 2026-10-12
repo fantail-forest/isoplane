@@ -75,12 +75,31 @@ a warm-up request to a database that is not running, fails preparation.
 
 ## Breakpoints stay grey
 
-A grey breakpoint in a running debug session has not been matched to code. If
-every breakpoint is grey, the ordinary C# debugger is attached to the `isoplane`
-tool instead of the Isoplane debugger to your application: start the session
-with **Debug local Isoplane**, as in [debugging](run-and-rebuild.md#debugging).
-If one is grey, no statement starts on its line, which its hover text says, or
-its file is not part of the built application.
+A grey breakpoint in a running debug session has not been matched to code. Read
+its hover message first. If every breakpoint is grey, check that the session uses
+the Isoplane debugger: the ordinary C# debugger attached to the `isoplane` tool
+cannot reach the guest application. Start with **Debug local Isoplane**, as in
+[debugging](run-and-rebuild.md#debugging).
+
+Other causes include a line with no executable statement, a file outside the
+built application, missing symbols, or source that does not match the built
+package. A failed rebuild leaves the last working package running. If the package
+was built in another checkout, use `sourceFileMap` to map its recorded paths to
+your local source; a mapping does not bypass source-checksum validation.
+
+## Saved edits do not affect the current request
+
+Hot Reload on save requires an Isoplane source-debugging session and an active
+guest request. Check **Isoplane Hot Reload** for compiler diagnostics and the
+Debug Console for setup errors. Save again after correcting a rejected edit.
+Some edits require restarting the session.
+
+Source watching rebuilds the package for subsequent requests separately. With
+`--no-watch` or `"watch": false`, Hot Reload changes the active guest but the next
+request still uses the original package. Outside a debugging session, saving
+through `isoplane dev` affects subsequent requests, not the request in progress.
+See [editing during a session](run-and-rebuild.md#edit-code-during-a-session) for
+active-frame behavior and the limits of **Jump to Cursor**.
 
 ## Application log messages
 

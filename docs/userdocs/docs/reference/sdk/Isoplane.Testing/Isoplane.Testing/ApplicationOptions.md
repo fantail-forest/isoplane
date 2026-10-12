@@ -17,7 +17,7 @@ public record ApplicationOptions
 | --- | --- |
 | [ApplicationOptions](ApplicationOptions/ApplicationOptions.md)() | The default constructor. |
 | [CliPath](ApplicationOptions/CliPath.md) { get; set; } | The CLI executable, resolved through PATH unless absolute. Defaults to `isoplane`. |
-| [Configuration](ApplicationOptions/Configuration.md) { get; set; } | The application's ordinary MSBuild configuration, which selects its guest execution mode. Defaults to `Debug`. |
+| [Configuration](ApplicationOptions/Configuration.md) { get; set; } | The application's ordinary MSBuild configuration. Debug and Release use the same managed runtime. Defaults to `Debug`. |
 | [DiagnosticLimitCharacters](ApplicationOptions/DiagnosticLimitCharacters.md) { get; set; } | Maximum retained diagnostic characters from the child process. Defaults to 16,384. |
 | [Settings](ApplicationOptions/Settings.md) { get; set; } | Configuration settings for this session, such as a connection string to a database the test started. Keys use ASP.NET's colon-separated form. They override the project's launch profile and User Secrets. |
 | [ShutdownTimeout](ApplicationOptions/ShutdownTimeout.md) { get; set; } | Time allowed for owned process cleanup before the remaining process tree is terminated. Defaults to 10 seconds. |

@@ -82,9 +82,11 @@ Isoplane debugger described below to apply edits to a running guest.
 
 ## Debugging
 
-Debugging in VS Code needs the Isoplane debugger extension. It is not on the
-Visual Studio Marketplace: it is a `.vsix` file, installed with VS Code's
+Debugging in VS Code needs the Isoplane debugger extension and the matching
+Isoplane CLI and SDK. Install the extension's `.vsix` file with VS Code's
 **Extensions: Install from VSIX** command.
+
+### Launch or attach
 
 With the extension installed, open your application
 folder, choose **Debug local Isoplane**, set a breakpoint, and press **F5**. A
@@ -92,8 +94,11 @@ project created from a template has that configuration in `.vscode/launch.json`.
 C# Dev Kit's **Debug project associated with this file** button starts the same
 session for an Isoplane project. The
 adapter builds and starts the application in an **Isoplane** terminal. Send an HTTP
-request to the URL printed in the terminal or Debug Console. Stopping the debugger stops the application and its owned
-processes.
+request to the URL printed in the terminal or Debug Console. Stopping the debugger
+stops the application and its owned processes. No application-code call or
+`IsoplaneDebug` project property is needed for this workflow. The default build
+configuration is Debug; optimized Release builds can have fewer inspectable locals
+and source locations.
 
 A breakpoint is shown as verified when a statement of the built application
 starts on its line. That is checked when the session starts, when you add or move
@@ -118,9 +123,11 @@ To start a session in a terminal instead:
 isoplane dev --debug
 ```
 
-Attach through `isoplane debug-adapter` using the printed loopback address and
-port. In VS Code with the Isoplane debugger extension installed, choose
-**Run and Debug → Isoplane** and enter that port. Set a breakpoint before sending
+In VS Code, add the Isoplane **Attach to local Isoplane** configuration and enter
+the printed debugger port when prompted. This is a different port from the
+application's HTTP listener. The extension starts `isoplane debug-adapter` for
+you; that command speaks the Debug Adapter Protocol to the editor, not an
+interactive debugger prompt. Set a breakpoint before sending
 an HTTP request to the application's local URL. Keep the debugger attached for
 subsequent requests; source breakpoints are rebound for each fresh guest.
 
@@ -139,16 +146,32 @@ remains available. IDE launches use the integrated terminal when supported. Sett
 `"console": "internalConsole"` keeps output in the Debug Console but requires
 termination on disconnect.
 
-The session uses the SDK's shared debug runtime. The debugger supports stepping,
-watches, editing live locals, exception stops, and data breakpoints on ordinary
-locals, managed fields and array elements. In VS Code, saving source applies
-compiler-supported Hot Reload edits to the current guest, while running or paused.
-**Isoplane: Apply Code Changes** saves and applies pending edits as well. Running
-updates briefly suspend execution without introducing an editor stop; new calls
+### Inspect values and control breakpoints
+
+The session uses the SDK's shared debug runtime. Use the editor's stepping,
+hover, Watch, Locals, and value-editing controls. Source and function breakpoints,
+conditional breakpoints, hit counts, and logpoints are supported. A hit condition
+can be a positive count such as `5`, a comparison such as `>= 5`, or `% 5` to stop
+on every fifth hit. Logpoints write their message without stopping execution.
+
+The call stack hides runtime machinery and methods marked as generated or
+non-user code. Application frames and reconstructed async callers remain visible.
+
+### Edit code during a session
+
+In VS Code, saving source automatically applies compiler-supported Hot Reload
+edits to the current guest, while running or paused. No separate command is
+required. **Isoplane: Apply Code Changes** is an optional save-all-and-apply action.
+Running updates briefly suspend execution without introducing an editor stop; new calls
 use the edited methods, and real breakpoint or exception stops remain in effect.
 Compilation errors preserve execution state and appear in the **Isoplane Hot
-Reload** output channel.
+Reload** output channel. Correct the error and save again. Edits reported as
+requiring a restart cannot be applied to the current guest; restart the session
+to use them throughout the application.
 Source-only line changes also update paused locations and inline-breakpoint suggestions.
+Hot Reload tracks edits to source documents in the current compiler baseline.
+Adding source files or changing project references requires a rebuild; those
+changes do not update the active guest through save-triggered Hot Reload.
 
 At source-breakpoint, line-step, and `Debugger.Break()` stops, the active frame adopts
 compatible edits, so **Continue** and **Step** execute the updated method. Callers
@@ -166,22 +189,32 @@ available. Use `--no-watch` (or `"watch": false` in an IDE launch configuration)
 to disable those rebuilds. Hot Reload updates the active guest; without a rebuild,
 the next request still starts from the original application package.
 
-Data breakpoints stop when a value changes. A local watch expires when its lexical
+### Watch values and async callers
+
+Use the variable's data-breakpoint action in Locals or Watch to track an ordinary
+local, managed object field, or array element. Data breakpoints stop when a value
+changes. A local watch expires when its lexical
 scope or method invocation ends, including exception unwinding; the editor marks
 it unverified. Select the local again in a later invocation to watch its new
 storage. Parameters and by-reference locals cannot be watched directly. Reads
 and writes that leave the value unchanged do not stop execution.
+Data breakpoint identities are tied to the guest's storage: select the values
+again after a fresh guest or debug session starts.
 
 Select an async caller in the call stack to inspect its saved locals, evaluate
 watches, edit values, or set data breakpoints on saved locals, captured object
 fields and array elements. `Task` and `ValueTask` callers remain visible across
 suspension in normal and optimized builds, including pooled async method builders,
 custom awaiters, and `Task.WhenAll`/`Task.WhenAny` chains.
+Only values retained in the suspended state machine can be inspected; a local
+the compiler has optimized away or not saved across the await is unavailable.
 
 The **Uncaught exceptions** filter also stops on failures the SDK converts into
 guest traps. Exception details retain the original throw stack. At this boundary,
 methods may already have unwound; their original locals are no longer live.
 Disabling the filter lets the failed request finish without this stop.
+
+### Move execution
 
 In the current physical frame, **Jump to Cursor** can move execution to another
 statement in the same method without executing the intervening statements or
@@ -198,6 +231,11 @@ jumps; a synchronized method retains its monitor until ordinary method exit.
 Active synchronous and asynchronous iterator bodies support jumps across `yield`
 statements. A jump preserves the current iterator values; ordinary enumeration
 and disposal still follow the resulting control flow.
+
+Moving execution does not undo writes, I/O, or other effects of statements already
+executed. Restarting a frame, reverse stepping, and time-travel debugging are not
+supported. Debugging is local and uses the guest's single execution thread; full
+Visual Studio and Rider IDE integration has not been qualified.
 
 Use ordinary .NET unit tests for isolated application logic and
 [sandbox integration tests](test-an-application.md) to exercise platform behavior.

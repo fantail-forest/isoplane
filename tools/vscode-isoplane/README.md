@@ -25,8 +25,10 @@ hosts the application, and leave the application's breakpoints unverified.
 Running without debugging is left to the project's run command.
 
 Keep the debugger attached for subsequent requests. Breakpoint configuration
-is retained as each fresh guest starts. Saving source during an active request applies Hot
-Reload edits; **Isoplane: Apply Code Changes** saves and applies pending edits.
+is retained as each fresh guest starts. Saving source during an active request
+automatically applies Hot Reload edits, while running or paused. No separate
+command is required; **Isoplane: Apply Code Changes** is an optional
+save-all-and-apply action.
 Compiler diagnostics appear in **Isoplane Hot Reload**. Use **Jump to Cursor** to
 repeat an edited statement in the current invocation while preserving its locals.
 Supported active frames adopt edited statements automatically. Jump destinations

@@ -6,7 +6,7 @@ public sealed record ApplicationOptions
     /// <summary>The CLI executable, resolved through PATH unless absolute. Defaults to <c>isoplane</c>.</summary>
     public string CliPath { get; init; } = "isoplane";
 
-    /// <summary>The application's ordinary MSBuild configuration, which selects its guest execution mode. Defaults to <c>Debug</c>.</summary>
+    /// <summary>The application's ordinary MSBuild configuration. Debug and Release use the same managed runtime. Defaults to <c>Debug</c>.</summary>
     public string Configuration { get; init; } = "Debug";
 
     /// <summary>Time allowed for owned process cleanup before the remaining process tree is terminated. Defaults to 10 seconds.</summary>
