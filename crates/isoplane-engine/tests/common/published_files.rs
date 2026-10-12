@@ -22,7 +22,14 @@ pub fn tempdir() -> io::Result<Directory> {
             .prefix("isoplane-publication-test-")
             .tempdir_in(Path::new(&local).join("Temp"))?
     };
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    let directory = {
+        // NFS retains unlinked mappings as .nfs files, preventing directory removal.
+        tempfile::Builder::new()
+            .prefix("isoplane-publication-test-")
+            .tempdir_in("/tmp")?
+    };
+    #[cfg(not(any(windows, target_os = "macos")))]
     let directory = tempfile::tempdir()?;
     Ok(Directory(directory.keep()))
 }
