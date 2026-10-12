@@ -76,8 +76,9 @@ dotnet watch --no-hot-reload run
 On an edit it stops the application, rebuilds, and starts it again, so the
 application is unavailable in between. If compilation fails, fix the source; the
 watcher retries after the next edit. `--no-hot-reload` requests that restart
-directly. Isoplane applications do not support hot reload; without the flag the
-.NET watcher reports that and falls back to restarting.
+directly. The .NET watcher cannot apply Hot Reload updates to Isoplane's guest
+runtime; without the flag it reports that and falls back to restarting. Use the
+Isoplane debugger described below to apply edits to a running guest.
 
 ## Debugging
 
