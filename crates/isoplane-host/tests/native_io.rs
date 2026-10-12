@@ -547,22 +547,10 @@ in_mono_runtime! {
 
     #[tokio::test]
     async fn a_refused_managed_connection_preserves_its_socket_error_after_restoring(runtime: GuestRuntime) {
-        let reservation = socket2::Socket::new(
-            socket2::Domain::IPV4,
-            socket2::Type::STREAM,
-            Some(socket2::Protocol::TCP),
-        )
-        .expect("the test must reserve its non-listening TCP endpoint");
-        reservation
-            .bind(&std::net::SocketAddr::from(([127, 0, 0, 1], 0)).into())
-            .expect("the non-listening endpoint must bind");
-        let peer = reservation
-            .local_addr()
-            .expect("the reservation must have an endpoint")
-            .as_socket()
-            .expect("the reservation must be an IP endpoint");
+        let peer = std::net::SocketAddr::from(([127, 0, 0, 1], 1));
         let policy = isoplane_harness::Network::with_resolver(Box::new(NoDns))
-            .with_destinations(Arc::new(ExactPeer(peer)));
+            .with_destinations(Arc::new(ExactPeer(peer)))
+            .with_connections(Arc::new(RefusedConnections));
         let owner = InstanceId::alloc();
         let reactor = Reactor::with_network(owner, policy);
         let context = &reactor.context;

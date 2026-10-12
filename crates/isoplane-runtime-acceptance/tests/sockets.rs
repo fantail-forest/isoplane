@@ -14,8 +14,6 @@ mod fixed_dns;
 mod no_dns;
 #[path = "common/peers.rs"]
 mod peers;
-#[path = "common/refusing.rs"]
-mod refusing;
 
 use admitted::released;
 use common::{guest, GuestRuntime};
@@ -25,7 +23,19 @@ use peers::{
     fnv1a, gated_peer, pattern, peer, peer_with_receive_buffer, reactor_for_peers,
     reactor_for_peers_with_send_buffer, slow_drain_peer, Peer,
 };
-use refusing::refusing_endpoint;
+
+struct RefusedConnections;
+
+#[async_trait::async_trait]
+impl isoplane_host::egress::ConnectionFactory for RefusedConnections {
+    async fn connect(
+        &self,
+        _: &isoplane_host::egress::ConnectionOwner,
+        _: std::net::SocketAddr,
+    ) -> std::io::Result<tokio::net::TcpStream> {
+        Err(std::io::ErrorKind::ConnectionRefused.into())
+    }
+}
 
 in_mono_runtime! {
     #[tokio::test]
@@ -153,8 +163,12 @@ in_mono_runtime! {
 in_mono_runtime! {
     #[tokio::test]
     async fn a_refused_connection_is_reported_inline_as_connection_refused(runtime: GuestRuntime) {
-        let (_reservation, refused) = refusing_endpoint();
-        let reactor = reactor_for_peers(13, vec![refused]);
+        let refused = std::net::SocketAddr::from(([127, 0, 0, 1], 1));
+        let reactor = isoplane_harness::Reactor::with_network(
+            isoplane_host::InstanceId::alloc(),
+            admitted::admitting(vec![refused], Box::new(no_dns::NoDns))
+                .with_connections(std::sync::Arc::new(RefusedConnections)),
+        );
         reactor.context.begin_slice(1, 1);
         let mut guest = guest(&reactor, runtime);
         let answer = guest
