@@ -224,6 +224,7 @@ tasks:
       - task: debugger:hotreload:package
 
   package:build:
+    run: when_changed
     deps: [":managed:build"]
     internal: true
     label: 'package:{{.NAME}}'
