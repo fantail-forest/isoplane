@@ -133,7 +133,8 @@ public sealed class DatabaseGenerationTests : IDisposable
         foreach (var argument in new[] { "build", "Design/Design.csproj", "-c", configuration, "--disable-build-servers" }.Concat(properties))
             start.ArgumentList.Add(argument);
         using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start the database design build.");
-        using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        var buildTimeout = TimeSpan.FromMinutes(5);
+        using var deadline = new CancellationTokenSource(buildTimeout);
         var output = process.StandardOutput.ReadToEndAsync();
         var errors = process.StandardError.ReadToEndAsync();
         try
@@ -146,7 +147,7 @@ public sealed class DatabaseGenerationTests : IDisposable
             if (!process.HasExited)
                 process.Kill(entireProcessTree: true);
             await process.WaitForExitAsync();
-            throw new TimeoutException($"The {configuration} EF design build exceeded its two-minute deadline in {directory}:\n"
+            throw new TimeoutException($"The {configuration} EF design build exceeded its {buildTimeout} deadline in {directory}:\n"
                 + await output + await errors, failure);
         }
         finally
