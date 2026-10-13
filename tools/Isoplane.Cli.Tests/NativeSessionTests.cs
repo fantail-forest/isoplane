@@ -115,6 +115,7 @@ public sealed class NativeSessionTests
         using var directory = new SessionFixture();
         Assert.True(await Compilation(directory, directory.Options), "The first session must compile its platform runtime.");
         Assert.False(await Compilation(directory, directory.Options), "A second session must reuse the same platform runtime compilation.");
+        Assert.Single(Directory.GetFiles(directory.RuntimeCache, "*.cwasm", SearchOption.AllDirectories));
     }
 
     [Fact]

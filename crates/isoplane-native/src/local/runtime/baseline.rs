@@ -110,6 +110,12 @@ fn request(
     })
 }
 
+/// Where an entry keeps the compiler's own copy of the runtime while its
+/// baseline is prepared. A published baseline carries the same code, so the
+/// copy is removed then; until then it lets a preparation that was
+/// interrupted resume without compiling again.
+const COMPILATION: &str = "compilation";
+
 /// The published baseline for `wanted`, loaded from the runtime cache, or
 /// prepared from `wasm` after `admit` and published there first. Returns
 /// whether preparing it compiled the runtime.
@@ -147,12 +153,18 @@ fn published(
         Err(_) => {}
     }
     admit()?;
-    let prepared = RuntimeBaseline::prepare(wasm, wanted, Some(&cache.cache))
-        .map_err(PrepareError::Rejected)?;
+    let compilation = cache.lease.directory().join(COMPILATION);
+    // SAFETY: only the compiler writes into this private, leased directory.
+    let compiler =
+        unsafe { isoplane_engine::CompilationCache::from_trusted_directory(compilation.clone()) }?;
+    let prepared =
+        RuntimeBaseline::prepare(wasm, wanted, Some(&compiler)).map_err(PrepareError::Rejected)?;
     let engine = std::sync::Arc::clone(prepared.baseline.engine());
+    let compiled = prepared.product.initialized.compiled;
     // SAFETY: RuntimeBaseline::prepare produced these bytes in this process.
     let product =
         unsafe { engine.decode_builder_output(prepared.product.prepared_bytes(), identity) }?;
+    drop(prepared);
     if let Err(error) = product.publish(&directory) {
         // Another session preparing the same baseline published it first.
         if !directory.exists() {
@@ -161,10 +173,10 @@ fn published(
     }
     let mut template = load(&engine, &directory, identity)?;
     template.retain_storage(cache.lease.clone());
-    Ok((
-        RuntimeBaseline::loaded(engine, template, wanted)?,
-        prepared.product.initialized.compiled,
-    ))
+    if let Err(error) = std::fs::remove_dir_all(&compilation) {
+        tracing::warn!(path = %compilation.display(), %error, "the runtime's compilation scratch is not removed yet");
+    }
+    Ok((RuntimeBaseline::loaded(engine, template, wanted)?, compiled))
 }
 
 fn load(
