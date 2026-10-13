@@ -136,5 +136,5 @@ valid chain. Trusting its CA does not disable those checks. Keep its private key
 on the database server, not in the application. Restart the development session
 after changing which authorities are trusted.
 
-See [connection-pool and eviction behavior](application-lifecycle.md) before
-enabling pooling in your own application.
+See [pool database connections outside the application](dotnet-runtime-differences.md#pool-database-connections-outside-the-application)
+before enabling pooling in your own application.
