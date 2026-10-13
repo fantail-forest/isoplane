@@ -1,0 +1,37 @@
+<!--
+  Tests for an Isoplane application. This is an ordinary test project: it runs
+  on your machine with `dotnet test`, and starts the application in the Isoplane
+  sandbox to send it requests. Only the application itself is built with an
+  Isoplane SDK.
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Starts an application in the Isoplane sandbox from a test. Keep its version equal to the one the `isoplane` tool reports. -->
+    <PackageReference Include="Isoplane.Testing" Version="0.1.0-preview.4" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      The application under test. The reference lets unit tests call its classes
+      directly and lets sandbox tests share its request and response types.
+      SandboxFixture.cs holds the same location, as the directory to run.
+    -->
+    <ProjectReference Include="APPLICATION_PROJECT" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,66 @@
+{
+  "$schema": "http://json.schemastore.org/template",
+  "author": "Isoplane",
+  "classifications": ["Test", "Isoplane", "xUnit"],
+  "identity": "Isoplane.Templates.Tests",
+  "name": "Isoplane Sandbox Tests",
+  "description": "An xUnit project that starts an existing Isoplane application in the sandbox and sends it requests.",
+  "shortName": "isoplane-tests",
+  "sourceName": "Sample-App.Tests",
+  "preferNameDirectory": true,
+  "tags": {
+    "language": "C#",
+    "type": "project"
+  },
+  "forms": {
+    "withoutTestsSuffix": {
+      "identifier": "replace",
+      "pattern": "\\.Tests$",
+      "replacement": ""
+    }
+  },
+  "symbols": {
+    "Application": {
+      "type": "parameter",
+      "datatype": "string",
+      "description": "Path from the test project to the application's project file. Without it, the application is the sibling project named like the test project less its '.Tests' suffix: ../MyApi/MyApi.csproj for MyApi.Tests."
+    },
+    "SiblingName": {
+      "type": "derived",
+      "valueSource": "name",
+      "valueTransform": "withoutTestsSuffix"
+    },
+    "SiblingProject": {
+      "type": "generated",
+      "generator": "join",
+      "parameters": {
+        "symbols": [
+          { "type": "const", "value": "../" },
+          { "type": "ref", "value": "SiblingName" },
+          { "type": "const", "value": "/" },
+          { "type": "ref", "value": "SiblingName" },
+          { "type": "const", "value": ".csproj" }
+        ]
+      }
+    },
+    "ApplicationProject": {
+      "type": "generated",
+      "generator": "coalesce",
+      "parameters": { "sourceVariableName": "Application", "fallbackVariableName": "SiblingProject" },
+      "replaces": "APPLICATION_PROJECT"
+    },
+    "ApplicationDirectory": {
+      "type": "generated",
+      "generator": "regex",
+      "parameters": {
+        "source": "ApplicationProject",
+        "steps": [
+          { "regex": "\\\\", "replacement": "/" },
+          { "regex": "/[^/]+$", "replacement": "" }
+        ]
+      },
+      "replaces": "APPLICATION_DIRECTORY"
+    }
+  },
+  "primaryOutputs": [{ "path": "Sample-App.Tests.csproj" }]
+}

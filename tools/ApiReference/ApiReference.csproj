@@ -20,6 +20,7 @@
     <Compile Include="../BuildProtocol/BuildDiagnostics.cs" Link="BuildDiagnostics.cs" />
     <EmbeddedResource Include="ErrorCodes.md" LogicalName="ErrorCodes.md" />
     <EmbeddedResource Include="../../guest-sdks/dotnet/Templates/content/**/.template.config/template.json" LogicalName="Templates/%(RecursiveDir)template.json" />
+    <EmbeddedResource Include="../../guest-sdks/dotnet/Templates/content/**/.template.config/dotnetcli.host.json" LogicalName="TemplateOptions/%(RecursiveDir)template.json" />
     <!-- Loads the analyzers to read the diagnostics they declare; the version is the one they are built against. -->
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" />
     <ProjectReference Include="../../guest-sdks/dotnet/Analyzers/Isoplane.Analyzers.csproj" />

@@ -122,24 +122,38 @@ internal static class Reference
     private static string Templates()
     {
         var sections = new SortedDictionary<string, string>(StringComparer.Ordinal);
-        foreach (var resource in typeof(Reference).Assembly.GetManifestResourceNames().Where(name => name.StartsWith("Templates/", StringComparison.Ordinal)))
+        var resources = typeof(Reference).Assembly.GetManifestResourceNames();
+        foreach (var resource in resources.Where(name => name.StartsWith("Templates/", StringComparison.Ordinal)))
         {
             using var definition = JsonDocument.Parse(Resource(resource));
             var template = definition.RootElement;
             var shortName = template.GetProperty("shortName").GetString()!;
             var source = template.GetProperty("sourceName").GetString()!;
+            // A template added beside an application is named after it, as its source name is.
+            var name = source.EndsWith(".Tests", StringComparison.Ordinal) ? "MyApp.Tests" : "MyApp";
             var section = new StringBuilder($"### `{shortName}`\n\n**{template.GetProperty("name").GetString()}.** {template.GetProperty("description").GetString()}\n\n");
-            section.Append($"```bash\ndotnet new {shortName} --name MyApp\n```\n\nIn a new `MyApp` directory, it creates:\n\n");
+            section.Append($"```bash\ndotnet new {shortName} --name {name}\n```\n\nIn a new `{name}` directory, it creates:\n\n");
             section.AppendJoin('\n', template.GetProperty("primaryOutputs").EnumerateArray()
-                .Select(output => $"- `{output.GetProperty("path").GetString()!.Replace(source, "MyApp")}`")).Append('\n');
+                .Select(output => $"- `{output.GetProperty("path").GetString()!.Replace(source, name)}`")).Append('\n');
             var options = template.GetProperty("symbols").EnumerateObject()
                 .Where(symbol => symbol.Value.GetProperty("type").GetString() == "parameter").ToArray();
+            var names = OptionNames(resources, "TemplateOptions/" + resource["Templates/".Length..]);
             if (options.Length != 0)
                 section.Append("\n| Option | Value | Description |\n| --- | --- | --- |\n").AppendJoin('\n', options.Select(option =>
-                    $"| `--{option.Name}` | {option.Value.GetProperty("datatype").GetString()} | {option.Value.GetProperty("description").GetString()} |")).Append('\n');
+                    $"| `--{names.GetValueOrDefault(option.Name, option.Name)}` | {option.Value.GetProperty("datatype").GetString()} | {option.Value.GetProperty("description").GetString()} |")).Append('\n');
             sections.Add(shortName, section.ToString());
         }
         return string.Join("\n", sections.Values).TrimEnd();
+    }
+
+    /// <summary>The command-line names a template gives its options; an option without one is spelled as its symbol.</summary>
+    private static Dictionary<string, string> OptionNames(string[] resources, string resource)
+    {
+        if (!resources.Contains(resource)) return [];
+        using var host = JsonDocument.Parse(Resource(resource));
+        return host.RootElement.GetProperty("symbolInfo").EnumerateObject()
+            .Where(symbol => symbol.Value.TryGetProperty("longName", out _))
+            .ToDictionary(symbol => symbol.Name, symbol => symbol.Value.GetProperty("longName").GetString()!);
     }
 
     private static Stream Resource(string name) => typeof(Reference).Assembly.GetManifestResourceStream(name)
@@ -442,15 +456,16 @@ mdx:
 
 # Project templates
 
-The `dotnet new` templates that create an Isoplane application. `isoplane setup` installs them. The names, descriptions and options on this page are generated from the templates themselves, so they match the version you have installed.
+The `dotnet new` templates that create an Isoplane application or add tests to one. `isoplane setup` installs them. The names, descriptions and options on this page are generated from the templates themselves, so they match the version you have installed.
 
-Every file in a generated project is commented, and the project's `README.md` says what each file is for and how to make common changes. That README is the guide to a template's contents. This page helps you choose a template and create a project from it.
+Every file in a generated project is commented, and an application's `README.md` says what each file is for and how to make common changes. That README is the guide to a template's contents. This page helps you choose a template and create a project from it.
 
 ## Choosing a template
 
 - **Starting something new?** Use [`isoplane-handler`](#isoplane-handler). It has no web framework: one static method receives every request. [Build a small lightweight web service](../build-a-web-service.md) walks through it.
 - **Want ASP.NET Core with a database?** Use [`isoplane-webapi`](#isoplane-webapi). [Build a small API with ASP.NET Core and EF Core](../build-an-api.md) walks through it.
 - **Bringing an existing ASP.NET application over, or want ASP.NET Core and nothing else?** Use [`isoplane-web`](#isoplane-web), as [Bring an existing ASP.NET application](../onboard-an-application.md) and the [Quickstart](../quickstart.md) do.
+- **Have an application without sandbox tests?** Add them with [`isoplane-tests`](#isoplane-tests), created beside the application. [Test an application](../test-an-application.md) walks through it. `isoplane-handler` and `isoplane-webapi` already include a test project.
 
 ## Creating a project
 
