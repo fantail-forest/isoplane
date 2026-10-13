@@ -12,10 +12,11 @@ what each platform needs.
 ## 1. Install the CLI
 
 ```bash
-dotnet tool install --global Isoplane.Cli --prerelease
+dotnet tool install --global Isoplane.Cli --version 0.1.0-preview.5
 ```
 
-This adds the `isoplane` command. If your shell cannot find it afterwards, the
+This adds the `isoplane` command from the current preview release,
+`0.1.0-preview.5`. If your shell cannot find it afterwards, the
 .NET tools directory is missing from your `PATH`: see
 [Install the CLI and the SDK](install.md#install-the-cli-and-the-sdk).
 
@@ -27,7 +28,7 @@ isoplane setup
 
 Setup checks that your machine has what Isoplane needs and installs the project
 templates. If something is missing it names it and stops. It ends by reporting
-that Isoplane is ready.
+that Isoplane `0.1.0-preview.5` is ready.
 
 ## 3. Create an application
 
