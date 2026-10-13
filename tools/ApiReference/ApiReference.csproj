@@ -2,7 +2,7 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <IsPackable>false</IsPackable>
-    <Description>Generates and checks the customer SDK API reference from assemblies and XML documentation.</Description>
+    <Description>Generates and checks the customer SDK reference: the API from assemblies and XML documentation, and project settings from the SDK's build files.</Description>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
@@ -14,5 +14,6 @@
     <ProjectReference Include="../../guest-sdks/dotnet/AspNetCore/Isoplane.AspNetCore.csproj" />
     <ProjectReference Include="../Isoplane.Testing/Isoplane.Testing.csproj" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <EmbeddedResource Include="../../guest-sdks/dotnet/Build/Isoplane.Conformance.targets" LogicalName="Isoplane.Conformance.targets" />
   </ItemGroup>
 </Project>

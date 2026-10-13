@@ -1,6 +1,19 @@
 <Project>
+  <!-- The comment above each property is its description in the generated project settings reference. -->
   <PropertyGroup>
+    <!--
+      Set to `true` to inspect the assemblies of NuGet packages as well, and report the thread
+      starts (ISOPLANE1002), synchronous waits (ISOPLANE1003) and, when
+      `IsoplaneWarnOnNativeImports` is on, native imports (ISOPLANE1001) found in them. When it is
+      `false` the build reports these only for the application's own project and the projects it
+      references.
+    -->
     <IsoplaneAnalyzeDependencies Condition="'$(IsoplaneAnalyzeDependencies)' == ''">false</IsoplaneAnalyzeDependencies>
+    <!--
+      Set to `true` to report each native import an inspected assembly declares, as ISOPLANE1001.
+      It is off by default because a declaration alone does not show that the native call will
+      be reached.
+    -->
     <IsoplaneWarnOnNativeImports Condition="'$(IsoplaneWarnOnNativeImports)' == ''">false</IsoplaneWarnOnNativeImports>
   </PropertyGroup>
   <UsingTask TaskName="Isoplane.Conformance.InspectManagedAssemblies"
