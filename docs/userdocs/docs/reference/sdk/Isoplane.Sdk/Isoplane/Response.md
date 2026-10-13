@@ -33,7 +33,9 @@ Create one with the static method that fits what you are sending:
 * [`Http`](./Response/Http.md) to choose every header yourself, as a redirect or a cookie needs.
 * [`Stream`](./Response/Stream.md) to send the body in pieces as it is produced, instead of building it all first.
 
-[`Bytes`](./Response/Bytes.md), [`Raw`](./Response/Raw.md) and [`Http`](./Response/Http.md) keep the array they are given rather than copying it, so do not change it after the call. Isoplane answers the client with status 502 in place of a response whose status is below 200 or whose headers are not valid HTTP.
+[`Bytes`](./Response/Bytes.md), [`Raw`](./Response/Raw.md) and [`Http`](./Response/Http.md) keep the array they are given rather than copying it, so do not change it after the call.
+
+The client receives status 502 when the handler throws an exception instead of returning a response, and when it returns one whose status is below 200 or whose headers are not valid HTTP.
 
 An ASP.NET application does not use this type: it writes to `HttpContext.Response` as usual.
 

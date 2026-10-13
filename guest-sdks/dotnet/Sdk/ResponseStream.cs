@@ -67,7 +67,9 @@ public sealed class ResponseStream
     /// <returns>The <see cref="Response"/> the handler must return.</returns>
     /// <remarks>
     /// Calling it is not enough: the client is told the body has ended only when the handler returns
-    /// the response. No piece can be written afterwards.
+    /// the response. No piece can be written afterwards. If the handler throws an exception instead
+    /// of returning it, the body is broken off and the client sees an incomplete response, as
+    /// <see cref="Response.Stream"/> describes.
     /// </remarks>
     /// <exception cref="InvalidOperationException">A write has not finished.</exception>
     public Response Complete()

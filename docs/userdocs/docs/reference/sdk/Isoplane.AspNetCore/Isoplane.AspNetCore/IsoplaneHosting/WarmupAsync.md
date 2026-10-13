@@ -28,7 +28,7 @@ public static Task WarmupAsync(this WebApplication application, string path)
 
 The first request to a route is slower than those that follow: ASP.NET builds the route's handler, serializers are created, a database model is compiled. Isoplane saves the application's memory as a template after it has started, and every instance starts from that template. A request served before the template is saved leaves all of that work in it, so no instance repeats it.
 
-Call it from an `Isoplane.Initialization.Initializing` callback, which is where the application has started and the template has not yet been saved. Call it once for each route worth warming.
+Call it from a callback subscribed to the [Initialization.Initializing](../../../../../reference/sdk/Isoplane.Sdk/Isoplane/Initialization/Initializing.md) event, which is raised when the application has started and the template has not yet been saved. Call it once for each route worth warming.
 
 The request is a real one. It passes through the application's middleware and runs the endpoint, including any database query the endpoint makes, so choose routes that only read. Its `Host` header is `localhost`, and its response body is discarded. The endpoint must answer with a success status; any other status throws, which stops the application from starting.
 

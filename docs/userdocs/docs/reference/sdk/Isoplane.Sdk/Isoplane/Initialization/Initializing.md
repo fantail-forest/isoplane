@@ -21,7 +21,7 @@ Everything the callbacks leave in memory is identical in every instance. Create 
 
 ## Examples
 
-An ASP.NET application serves itself one request, so that the route, its serializers and its queries are ready in every instance. `WarmupAsync` is in `Isoplane.AspNetCore`.
+An ASP.NET application serves itself one request, so that the route, its serializers and its queries are ready in every instance. [WarmupAsync](../../../../../reference/sdk/Isoplane.AspNetCore/Isoplane.AspNetCore/IsoplaneHosting/WarmupAsync.md) is in the `Isoplane.AspNetCore` package.
 
 ```csharp
 var app = builder.Build();

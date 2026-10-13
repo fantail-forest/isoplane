@@ -71,10 +71,10 @@ public static class IsoplaneHosting
     /// </para>
     /// <para>
     /// Isoplane runs <c>Program.cs</c> during template preparation, up to <c>RunAsync</c>, and saves the
-    /// result as the template every instance starts from. A setting read while <c>Program.cs</c> runs
-    /// is captured and shared. The supplied settings are loaded again when each instance
-    /// starts, so read a setting that can differ, such as a connection string, when it is needed:
-    /// in a request, or in a service factory.
+    /// result as the template every instance starts from. The supplied settings are available while
+    /// it runs, and they are the settings every instance has: when one changes, the application is
+    /// prepared again with the new value. <c>Program.cs</c> can therefore read a connection string
+    /// and use it, for example to warm a route that queries a database.
     /// </para>
     /// <para>
     /// Some tools run <c>Program.cs</c> on your own machine rather than under Isoplane:
@@ -160,9 +160,10 @@ public static class IsoplaneHosting
     /// instance repeats it.
     /// </para>
     /// <para>
-    /// Call it from an <c>Isoplane.Initialization.Initializing</c> callback, which is where the
-    /// application has started and the template has not yet been saved. Call it once for each route
-    /// worth warming.
+    /// Call it from a callback subscribed to the
+    /// <see href="https://isoplane.dev/docs/reference/sdk/Isoplane.Sdk/Isoplane/Initialization/Initializing">Initialization.Initializing</see>
+    /// event, which is raised when the application has started and the template has not yet been
+    /// saved. Call it once for each route worth warming.
     /// </para>
     /// <para>
     /// The request is a real one. It passes through the application's middleware and runs the

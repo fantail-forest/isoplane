@@ -117,22 +117,10 @@ installing it, name its PEM file in `SSL_CERT_FILE`:
 SSL_CERT_FILE=/path/to/private-ca.pem dotnet run
 ```
 
-## Read settings when they are needed
+## Settings and the template
 
-Settings an application reads while it starts, or in an initialization hook,
-become part of its template. For request-scoped services, register a factory that
-resolves configuration when the service is created:
-
-```csharp
-builder.Services.AddDbContext<TodoDb>((services, options) =>
-{
-    var configuration = services.GetRequiredService<IConfiguration>();
-    var connection = configuration.GetConnectionString("Todo")
-        ?? throw new InvalidOperationException("Set ConnectionStrings:Todo with dotnet user-secrets.");
-    options.UseNpgsql(connection);
-});
-```
-
-This example uses the EF Core PostgreSQL provider and its `TodoDb` application
-context. The [PostgreSQL guide](connect-postgresql.md) shows a complete sample,
-including verified TLS and its compiled EF model.
+Settings are available while the application starts, and every instance has the
+same ones. Read a setting wherever it suits the code: in `Program.cs`, in an
+initialization hook or while handling a request. A value read during start-up is
+saved in the template every instance starts from, which is why the tools prepare
+the application again when a setting changes.

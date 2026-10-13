@@ -48,7 +48,9 @@ public static class Initialization
     /// </remarks>
     /// <example>
     /// An ASP.NET application serves itself one request, so that the route, its serializers and its
-    /// queries are ready in every instance. <c>WarmupAsync</c> is in <c>Isoplane.AspNetCore</c>.
+    /// queries are ready in every instance.
+    /// <see href="https://isoplane.dev/docs/reference/sdk/Isoplane.AspNetCore/Isoplane.AspNetCore/IsoplaneHosting/WarmupAsync">WarmupAsync</see>
+    /// is in the <c>Isoplane.AspNetCore</c> package.
     /// <code>
     /// var app = builder.Build();
     /// app.MapGet("/todos", (TodoStore store) => store.All());

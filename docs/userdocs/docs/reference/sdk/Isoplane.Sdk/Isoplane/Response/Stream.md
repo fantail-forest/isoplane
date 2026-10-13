@@ -25,7 +25,9 @@ The writer for the body.
 
 Use it when the body is large, or produced over time, and the client should receive each piece without waiting for the rest. Write the pieces with [`WriteAsync`](../ResponseStream/WriteAsync.md), then return the result of [`Complete`](../ResponseStream/Complete.md) from the handler.
 
-The status and headers are sent when this method is called, so they cannot change afterwards, and the handler can no longer answer with a different response. Call it at most once for a request.
+The status and headers are sent when this method is called, so they cannot change afterwards, and the handler can no longer answer with a different response. Call it at most once for a request: a second call throws `InvalidOperationException`.
+
+If the handler throws an exception after this call, the client cannot be sent an error status, because it already has the status and the pieces written so far. The body is broken off instead of being ended normally, so the client can tell the response is incomplete.
 
 ## Examples
 

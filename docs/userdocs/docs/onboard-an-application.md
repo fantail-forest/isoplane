@@ -47,11 +47,13 @@ await app.RunAsync();
 Everything between stays as it was: service registrations before
 `builder.Build()`, middleware and endpoints after it.
 
-Isoplane runs `Program.cs` up to `RunAsync` during template preparation,
-and every instance starts from the captured result. Preparation may retry;
-reusing a prepared template runs no initialization. Do not open database
-connections or create request-specific secrets at the top level of `Program.cs`;
-see [the application lifecycle](application-lifecycle.md).
+Isoplane runs `Program.cs` up to `RunAsync` during template preparation.
+Preparation may retry; reusing a prepared template runs no initialization.
+Every instance starts from the captured result. Settings, including
+connection strings, are available while it runs. Two things do not carry over
+into an instance: an open connection, so close any that start-up opens, and
+uniqueness, so create a value that must differ between instances when an instance
+activates. See [the application lifecycle](application-lifecycle.md).
 
 ## Configuration
 

@@ -21,8 +21,11 @@ namespace Isoplane;
 /// </list>
 /// <para>
 /// <see cref="Bytes"/>, <see cref="Raw"/> and <see cref="Http"/> keep the array they are given rather
-/// than copying it, so do not change it after the call. Isoplane answers the client with status 502
-/// in place of a response whose status is below 200 or whose headers are not valid HTTP.
+/// than copying it, so do not change it after the call.
+/// </para>
+/// <para>
+/// The client receives status 502 when the handler throws an exception instead of returning a
+/// response, and when it returns one whose status is below 200 or whose headers are not valid HTTP.
 /// </para>
 /// <para>
 /// An ASP.NET application does not use this type: it writes to <c>HttpContext.Response</c> as usual.
@@ -58,7 +61,12 @@ public sealed class Response
     /// <para>
     /// The status and headers are sent when this method is called, so they cannot change afterwards,
     /// and the handler can no longer answer with a different response. Call it at most once for a
-    /// request.
+    /// request: a second call throws <c>InvalidOperationException</c>.
+    /// </para>
+    /// <para>
+    /// If the handler throws an exception after this call, the client cannot be sent an error status,
+    /// because it already has the status and the pieces written so far. The body is broken off
+    /// instead of being ended normally, so the client can tell the response is incomplete.
     /// </para>
     /// </remarks>
     /// <example>

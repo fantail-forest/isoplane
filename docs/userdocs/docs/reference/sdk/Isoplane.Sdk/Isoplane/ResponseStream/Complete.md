@@ -23,7 +23,7 @@ The [`Response`](../Response.md) the handler must return.
 
 ## Remarks
 
-Calling it is not enough: the client is told the body has ended only when the handler returns the response. No piece can be written afterwards.
+Calling it is not enough: the client is told the body has ended only when the handler returns the response. No piece can be written afterwards. If the handler throws an exception instead of returning it, the body is broken off and the client sees an incomplete response, as [`Stream`](../Response/Stream.md) describes.
 
 ## See Also
 
