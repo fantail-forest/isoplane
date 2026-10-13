@@ -14,6 +14,12 @@
   },
   "guids": ["b7c3d2a1-5e4f-4a6b-9c8d-0e1f2a3b4c5d"],
   "symbols": {
+    "UseControllers": {
+      "type": "parameter",
+      "datatype": "bool",
+      "defaultValue": "false",
+      "description": "Whether to use controllers instead of minimal APIs."
+    },
     "HttpPort": {
       "type": "parameter",
       "datatype": "integer",
@@ -31,6 +37,14 @@
       "replaces": "5080"
     }
   },
+  "sources": [
+    {
+      "modifiers": [
+        { "condition": "(UseControllers)", "exclude": ["src/Sample-Api/Todos/TodoEndpoints.cs"] },
+        { "condition": "(!UseControllers)", "exclude": ["src/Sample-Api/Todos/TodosController.cs"] }
+      ]
+    }
+  ],
   "primaryOutputs": [
     { "path": "src/Sample-Api/Sample-Api.csproj" },
     { "path": "tests/Sample-Api.Tests/Sample-Api.Tests.csproj" }

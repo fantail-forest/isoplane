@@ -1,8 +1,14 @@
 # Sample-Api
 
+<!--#if (UseControllers) -->
+An ASP.NET Core Web API that runs in the Isoplane sandbox: controllers, Entity
+Framework Core with PostgreSQL, OpenAPI, an outbound webhook, and tests.
+<!--#else -->
 An ASP.NET Core Web API that runs in the Isoplane sandbox: minimal API
 endpoints, Entity Framework Core with PostgreSQL, OpenAPI, an outbound webhook,
-and tests.
+and tests. `dotnet new isoplane-webapi --use-controllers` creates the same
+project with controllers.
+<!--#endif -->
 
 The files here are commented as a guide to setting up a project of this kind,
 whether you build on this one or copy from it.
@@ -76,7 +82,11 @@ dotnet test
 - **`Activation.Activated` runs in each instance.** State that must differ between
   instances, such as `InstanceInfo.Id`, is set there and not during initialization.
 - **A request owns its work.** Nothing runs in an instance after its response, so
-  `TodoEndpoints.Update` awaits the webhook before returning. An application
+<!--#if (UseControllers) -->
+  `TodosController.Update` awaits the webhook before returning.
+<!--#else -->
+  `TodoEndpoints.Update` awaits the webhook before returning.
+<!--#endif --> An application
   with a `BackgroundService` that keeps running after startup refuses to start,
   and names the service.
 - **Connections are not pooled inside an instance.** `TodoServices` sets
@@ -120,10 +130,17 @@ Set `Notifications:WebhookUrl` to have completed todos posted to a URL.
 
 ## Common changes
 
+<!--#if (UseControllers) -->
+- **Add an endpoint.** Add an action to `TodosController`, with a request to
+  `Sample-Api.http` and a test to `TodoApiTests`.
+- **Add a feature.** Give it a folder like `Todos/`: its entity, a controller,
+  and a services extension called from `Program.cs`.
+<!--#else -->
 - **Add an endpoint.** Add a handler to `TodoEndpoints` and map it in `MapTodos`,
   with a request to `Sample-Api.http` and a test to `TodoApiTests`.
 - **Add a feature.** Give it a folder like `Todos/`: its entity, an endpoints
   class, and a services extension, each called from `Program.cs`.
+<!--#endif -->
 - **Add a setting.** Bind it to an options class as `NotificationOptions` does,
   give it a default in `appsettings.json`, and a test value in `SandboxFixture`.
 - **Warm another route.** Add an `app.WarmupAsync` call to the initialization

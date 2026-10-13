@@ -38,7 +38,12 @@ var builder = IsoplaneHosting.CreateBuilder(args);
 // code (Todos/TodoServices.cs, Notifications/CompletionNotifier.cs), which keeps
 // this file a table of contents.
 builder.Services.AddProblemDetails();
+#if (UseControllers)
+// Finds the controllers in this project (Todos/TodosController.cs).
+builder.Services.AddControllers();
+#else
 builder.Services.AddValidation();
+#endif
 builder.Services.AddOpenApi();
 builder.Services.AddTodos(builder.Configuration);
 builder.Services.AddCompletionNotifications(builder.Configuration);
@@ -64,7 +69,11 @@ if (app.Environment.IsDevelopment())
 
 app.MapGet("/", (InstanceInfo instance) =>
     new ServiceInfo(app.Environment.ApplicationName, app.Environment.EnvironmentName, instance.Id));
+#if (UseControllers)
+app.MapControllers();
+#else
 app.MapTodos();
+#endif
 
 // Initialization runs while Isoplane prepares the template that every
 // instance starts from. Whatever it leaves in memory is copied into each instance.
