@@ -250,6 +250,21 @@ fn the_minimum_handler_age_is_checked_at_the_returned_stack_boundary() {
 }
 
 #[test]
+fn activity_in_the_millisecond_a_candidate_was_listed_still_invalidates_it() {
+    let cell = test_cell(Storage::new(1), 0);
+    let slot = idle(&cell, "same-millisecond", 10);
+    let stale = candidate(&cell, slot.id);
+    slot.park(10);
+    assert!(
+        !cell
+            .reclaim_candidate(stale)
+            .expect("stale candidate refusal"),
+        "activity must invalidate a candidate even when the clock reads the same"
+    );
+    assert_eq!(slot.state(), LifecycleTier::Parked);
+}
+
+#[test]
 fn a_candidate_observed_before_recent_activity_cannot_reclaim_the_slot() {
     let cell = test_cell(Storage::new(1), 0);
     let slot = idle(&cell, "recent", 10);

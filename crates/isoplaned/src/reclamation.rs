@@ -268,6 +268,7 @@ mod tests {
             instance: ReclaimCandidate {
                 instance: isoplane_host::InstanceId(id),
                 last_used_ms,
+                parks: 0,
                 kind,
             },
         }

@@ -23,8 +23,12 @@ pub enum ReclaimKind {
 pub struct ReclaimCandidate {
     /// Identity within the owning cell.
     pub instance: InstanceId,
-    /// Last activity boundary in Unix milliseconds.
+    /// Last activity boundary in Unix milliseconds: the candidate's place
+    /// in least-recently-used order.
     pub last_used_ms: u64,
+    /// The instance's park count when it was listed. Reclamation is refused
+    /// once the instance has parked again.
+    pub parks: u64,
     /// The permitted reclamation action.
     pub kind: ReclaimKind,
 }
@@ -127,6 +131,7 @@ impl Cell {
                 Some(ReclaimCandidate {
                     instance: slot.id,
                     last_used_ms,
+                    parks: slot.parks(),
                     kind,
                 })
             })
@@ -142,7 +147,8 @@ impl Cell {
         let ReclaimCandidate {
             instance: id,
             kind,
-            last_used_ms,
+            parks,
+            last_used_ms: _,
         } = candidate;
         let Some((slot, module)) = self
             .residents
@@ -170,7 +176,7 @@ impl Cell {
         let Some(_execution) = slot.try_lock_execution() else {
             return Ok(false);
         };
-        if slot.last_used_ms() != last_used_ms {
+        if slot.parks() != parks {
             return Ok(false);
         }
         if self.active.contains_key(&id) != (kind == ReclaimKind::Active) {

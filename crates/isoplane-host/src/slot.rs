@@ -146,6 +146,7 @@ pub struct Slot {
     state_hint: AtomicU8,
     parked_since_hint: AtomicU64,
     last_used_ms: AtomicU64,
+    parks: AtomicU64,
 }
 
 impl Slot {
@@ -168,6 +169,7 @@ impl Slot {
             state_hint: AtomicU8::new(tier_as_u8(LifecycleTier::Parked)),
             parked_since_hint: AtomicU64::new(0),
             last_used_ms: AtomicU64::new(crate::now_ms()),
+            parks: AtomicU64::new(0),
         }
     }
 
@@ -227,6 +229,12 @@ impl Slot {
         self.last_used_ms.load(Ordering::Relaxed)
     }
 
+    /// How many times the instance has parked. Unlike [`Self::last_used_ms`]
+    /// it differs after every activity boundary, whatever the clock read.
+    pub fn parks(&self) -> u64 {
+        self.parks.load(Ordering::Relaxed)
+    }
+
     /// Capture is eligible only when Parked and never from a tombstone.
     pub fn is_capture_eligible(&self) -> bool {
         let g = self.inner.lock();
@@ -268,6 +276,7 @@ impl Slot {
 
     pub fn park(&self, now_ms: u64) {
         self.last_used_ms.store(now_ms, Ordering::Relaxed);
+        self.parks.fetch_add(1, Ordering::Relaxed);
         let mut g = self.inner.lock();
         debug_assert!(
             g.state.may_transition_to(LifecycleTier::Parked) || g.state == LifecycleTier::Parked,
