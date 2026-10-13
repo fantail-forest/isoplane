@@ -59,6 +59,9 @@ html[data-theme='dark'] {
   --ifm-table-stripe-background: transparent;
   --ifm-table-border-color: var(--border);
   --ifm-footer-background-color: var(--background);
+  --ifm-color-info-contrast-background: var(--surface);
+  --ifm-color-info-contrast-foreground: var(--foreground);
+  --ifm-color-info-dark: var(--primary);
   --docusaurus-highlighted-code-line-bg: color-mix(in srgb, var(--foreground) 10%, transparent);
 }
 
