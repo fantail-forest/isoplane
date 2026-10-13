@@ -65,7 +65,7 @@ Press Ctrl+C to finish the session.
 ## Continue
 
 Use [run and watch](run-and-rebuild.md) to rebuild automatically after edits,
-[debug it](run-and-rebuild.md#debugging) from your editor, or
+[debug it](debug-an-application.md) from your editor, or
 [add an integration test](test-an-application.md) for the response you just
 created. [Application packages](execution-modes.md) explains how the SDK selects the
 shared runtime.

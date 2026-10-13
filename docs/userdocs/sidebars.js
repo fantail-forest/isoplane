@@ -6,7 +6,7 @@ export default {
     'quickstart',
     {type: 'category', label: 'Tutorials', items: ['create-an-application']},
     {type: 'category', label: 'How-to guides', items: [
-      'install', 'onboard-an-application', 'handle-requests-without-aspnet', 'run-and-rebuild', 'local-settings',
+      'install', 'onboard-an-application', 'handle-requests-without-aspnet', 'run-and-rebuild', 'debug-an-application', 'local-settings',
       'connect-postgresql', 'test-an-application', 'troubleshooting',
     ]},
     {type: 'category', label: 'Explanation', items: [

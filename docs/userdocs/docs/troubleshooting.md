@@ -79,7 +79,7 @@ A grey breakpoint in a running debug session has not been matched to code. Read
 its hover message first. If every breakpoint is grey, check that the session uses
 the Isoplane debugger: the ordinary C# debugger attached to the `isoplane` tool
 cannot reach the guest application. Start with **Debug local Isoplane**, as in
-[debugging](run-and-rebuild.md#debugging).
+[debugging](debug-an-application.md).
 
 Other causes include a line with no executable statement, a file outside the
 built application, missing symbols, or source that does not match the built
@@ -98,7 +98,7 @@ Source watching rebuilds the package for subsequent requests separately. With
 `--no-watch` or `"watch": false`, Hot Reload changes the active guest but the next
 request still uses the original package. Outside a debugging session, saving
 through `isoplane dev` affects subsequent requests, not the request in progress.
-See [editing during a session](run-and-rebuild.md#edit-code-during-a-session) for
+See [editing during a session](debug-an-application.md#edit-code-during-a-session) for
 active-frame behavior and the limits of **Jump to Cursor**.
 
 ## Application log messages

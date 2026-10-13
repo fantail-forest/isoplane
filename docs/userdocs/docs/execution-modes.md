@@ -27,7 +27,7 @@ loading. Sandbox capability and resource limits still apply to managed code and
 its dependencies.
 
 The shared debug runtime supports breakpoints, stepping, watches and editing
-locals. See the [debugging workflow](run-and-rebuild.md#debugging).
+locals. See the [debugging workflow](debug-an-application.md).
 
 Use [build and run](run-and-rebuild.md) for local development and
 [sandbox integration tests](test-an-application.md) to exercise application
