@@ -3,7 +3,10 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
+using Isoplane.Analyzers;
+using Isoplane.Build;
 using Isoplane.Cli;
+using Microsoft.CodeAnalysis.Diagnostics;
 using XmlDocMarkdown.Core;
 
 if (args.Length is < 1 or > 2 || (args.Length == 2 && args[1] != "--check"))
@@ -53,6 +56,7 @@ internal static class Reference
     // those become links between files, so that the build fails on one whose guide has gone.
     private static readonly Regex GuideLink = new(@"\]\(https://isoplane\.dev/docs/([^)#]+)(#[^)]*)?\)", RegexOptions.CultureInvariant);
     private static readonly Regex ErrorCode = new(@"ISOPLANE\d{4}", RegexOptions.CultureInvariant);
+    private static readonly Regex ErrorCodeSection = new(@"^### (ISOPLANE\d{4})$", RegexOptions.CultureInvariant | RegexOptions.Multiline);
     private static readonly Assembly[] Assemblies = [typeof(Isoplane.Request).Assembly, typeof(Isoplane.AspNetCore.IsoplaneHosting).Assembly, typeof(Isoplane.Testing.IsoplaneApplication).Assembly];
     private static readonly HashSet<string> Namespaces = ["Isoplane", "Isoplane.AspNetCore", "Isoplane.Testing"];
 
@@ -79,11 +83,38 @@ internal static class Reference
         }
         output.Add("sdk.md", Overview);
         output.Add("project-settings.md", ProjectSettings.Replace("{settings}", Settings()));
+        output.Add("error-codes.md", ErrorCodes());
         output.Add("launch-settings.md", LaunchSettings
             .Replace("{profile}", Keys(LaunchProfileKeys.Profile.Select(key => (key.Name, key.Description))))
             .Replace("{limits}", Keys(LaunchProfileKeys.LimitOverrides.Select(key => (key.Name, key.Description)))));
         output.Add("vscode-launch.md", DebugConfiguration.Replace("{launch}", DebugAttributes("launch")).Replace("{attach}", DebugAttributes("attach")));
         return output;
+    }
+
+    /// <summary>
+    /// The error code page. Its explanations are the template's; the codes, with the severity and title of
+    /// each, are the ones the analyzers and the build declare. A code the template does not explain, or an
+    /// explanation of a code nothing declares, fails generation.
+    /// </summary>
+    private static string ErrorCodes()
+    {
+        var declared = typeof(BlockingCallAnalyzer).Assembly.GetExportedTypes()
+            .Where(type => !type.IsAbstract && typeof(DiagnosticAnalyzer).IsAssignableFrom(type))
+            .SelectMany(type => ((DiagnosticAnalyzer)Activator.CreateInstance(type)!).SupportedDiagnostics)
+            .Select(rule => (Code: rule.Id, Severity: rule.DefaultSeverity.ToString(), Title: rule.Title.ToString()))
+            .Concat(BuildDiagnostics.All.Select(rule => (Code: rule.Code, Severity: rule.IsError ? "Error" : "Warning", Title: rule.Title)))
+            .DistinctBy(rule => rule.Code).OrderBy(rule => rule.Code, StringComparer.Ordinal)
+            .Select(rule => rule with { Title = rule.Title.Replace("<", "&lt;") }).ToArray();
+        using var reader = new StreamReader(Resource("ErrorCodes.md"));
+        var page = reader.ReadToEnd();
+        var explained = ErrorCodeSection.Matches(page).Select(section => section.Groups[1].Value).ToArray();
+        var codes = declared.Select(rule => rule.Code).ToArray();
+        if (codes.Except(explained).Concat(explained.Except(codes)).Order(StringComparer.Ordinal).ToArray() is { Length: > 0 } unmatched)
+            throw new InvalidOperationException("ErrorCodes.md and the declared diagnostics differ on: " + string.Join(", ", unmatched));
+        foreach (var rule in declared)
+            page = page.Replace($"### {rule.Code}\n", $"### {rule.Code}\n\n**{rule.Severity}.** {rule.Title}.\n");
+        return page.Replace("{codes}", "| Code | Severity | Meaning |\n| --- | --- | --- |\n" + string.Join("\n",
+            declared.Select(rule => $"| [`{rule.Code}`](#{rule.Code.ToLowerInvariant()}) | {rule.Severity} | {rule.Title} |")));
     }
 
     private static Stream Resource(string name) => typeof(Reference).Assembly.GetManifestResourceStream(name)

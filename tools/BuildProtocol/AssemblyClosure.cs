@@ -138,7 +138,7 @@ internal static class AssemblyClosure
         foreach (var assembly in assemblies.OrderBy(item => item.Identity.Key, StringComparer.Ordinal))
         {
             foreach (var import in (warnOnNativeImports ? assembly.NativeImports : []).OrderBy(item => item.Member, StringComparer.Ordinal))
-                yield return new("ISOPLANE1001", $"Assembly '{assembly.Identity.Name}', member '{import.Member}' declares native import '{import.Library}!{import.EntryPoint}'. " +
+                yield return new(BuildDiagnostics.NativeImport.Code, $"Assembly '{assembly.Identity.Name}', member '{import.Member}' declares native import '{import.Library}!{import.EntryPoint}'. " +
                     "The declaration is permitted; an unsupported native call fails if reached. Use managed .NET APIs for platform services. Conformance rules: 1.");
             foreach (var method in assembly.Methods.OrderBy(method => method.Type, StringComparer.Ordinal).ThenBy(method => method.Name, StringComparer.Ordinal))
             {

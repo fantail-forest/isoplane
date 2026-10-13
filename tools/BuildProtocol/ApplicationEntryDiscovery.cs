@@ -9,7 +9,7 @@ namespace Isoplane.Build;
 /// <summary>An application assembly that does not declare one usable entry.</summary>
 internal sealed class ApplicationEntryException(string message) : InvalidOperationException(message)
 {
-    internal const string Code = "ISOPLANE1005";
+    internal static string Code => BuildDiagnostics.NoUsableEntry.Code;
 }
 
 /// <summary>
