@@ -240,6 +240,7 @@ internal static class Reference
     private const string Overview = """
 ---
 title: SDK API reference
+sidebar_position: 5
 mdx:
   format: md
 ---
@@ -271,6 +272,7 @@ An application is written in one of two ways, and tested with a third package.
 
     private const string ProjectSettings = """
 ---
+sidebar_position: 2
 mdx:
   format: md
 ---
@@ -310,6 +312,7 @@ The warnings these properties produce also follow the ordinary .NET properties `
 
     private const string LaunchSettings = """
 ---
+sidebar_position: 3
 mdx:
   format: md
 ---
@@ -364,6 +367,7 @@ Each key is optional, and each value is a positive whole number. A local session
 
     private const string DebugConfiguration = """
 ---
+sidebar_position: 4
 mdx:
   format: md
 ---
