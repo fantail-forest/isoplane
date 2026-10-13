@@ -28,7 +28,8 @@ and waiting, so an application can do only what Isoplane provides.
 Each instance has exactly one thread, and `Environment.ProcessorCount` is 1.
 
 - **Starting a thread fails.** `Thread.Start` throws
-  `PlatformNotSupportedException`. The build warns about it as `ISOPLANE1002`.
+  `PlatformNotSupportedException`. The build warns about it as
+  [`ISOPLANE1002`](error-codes.md#isoplane1002).
 - **The thread pool is that one thread.** `Task.Run` and
   `ThreadPool.QueueUserWorkItem` queue work that runs once the code that is
   running now awaits or returns. `Task.Run` does not make work parallel and does
@@ -42,34 +43,42 @@ Each instance has exactly one thread, and `Environment.ProcessorCount` is 1.
   same request. Cancellation reaches the application only while it is waiting, so
   a long computation does not see its request being cancelled. It also uses up
   the request's [running time](execution-limits.md#running-time).
-- **A `lock` is never contended.** A wait that would have to block for another
-  thread, such as `Monitor.Wait`, `SemaphoreSlim.Wait` or
-  `ManualResetEventSlim.Wait`, throws instead.
+- **A `lock` always succeeds.** With one thread there is never another holder,
+  so `lock` and `Monitor.Enter` take the lock at once and never throw.
+- **Blocking primitives throw every time.** `SemaphoreSlim.Wait` and
+  `ManualResetEventSlim.Wait` throw `PlatformNotSupportedException` on every
+  call, even when the semaphore has a free slot or the event is already set.
+  `Monitor.Wait` with no timeout does the same. Use `SemaphoreSlim.WaitAsync`, or
+  a `TaskCompletionSource` in place of an event.
 
 ## Waiting is asynchronous
 
-Waiting synchronously for work that has not finished throws
-`PlatformNotSupportedException`. Waiting on work that has already finished is
-fine, so reading `.Result` from a completed task works.
+A synchronous wait throws `PlatformNotSupportedException`. Some calls throw only
+when they would actually have to wait, and others throw every time:
 
-| Instead of | Use |
-| --- | --- |
-| `Thread.Sleep(...)` | `await Task.Delay(...)` |
-| `task.Wait()`, `task.Result` | `await task` |
-| `Task.WaitAll(...)`, `Task.WaitAny(...)` | `await Task.WhenAll(...)`, `await Task.WhenAny(...)` |
-| `semaphore.Wait()` | `await semaphore.WaitAsync()` |
-| `app.Run()` | `await app.RunAsync()` |
+| Call | Throws | Use instead |
+| --- | --- | --- |
+| `task.Result` | when the task has not finished | `await task` |
+| `task.Wait()` | unless the task has already completed successfully | `await task` |
+| `Task.WaitAny(...)` | when no task has finished | `await Task.WhenAny(...)` |
+| `Task.WaitAll(...)` | always | `await Task.WhenAll(...)` |
+| `Thread.Sleep(...)` | always, except `Thread.Sleep(0)` | `await Task.Delay(...)` |
+| `semaphore.Wait()` | always | `await semaphore.WaitAsync()` |
+
+`app.Run()` is refused earlier, when the application builds: use
+`await app.RunAsync()`.
 
 The network behaves the same way. A synchronous socket call or name lookup that
 would have to wait fails rather than waiting, so use the asynchronous methods.
 A library's synchronous API usually blocks underneath: on an EF Core context,
 call `SaveChangesAsync` and `ToListAsync`, not `SaveChanges` and `ToList`.
 
-The build warns about several of these calls as `ISOPLANE1003`, and the editor
-offers a quick fix for most of them. It does not catch every case: `.Result` is
-not flagged, and NuGet packages are not inspected unless you ask.
-[Control compatibility warnings](run-and-rebuild.md#control-compatibility-warnings)
-covers both. `app.Run()` is an error, described in
+The build warns about several of these calls as
+[`ISOPLANE1003`](error-codes.md#isoplane1003), and the editor offers a quick fix
+for most of them. It does not catch every case: `.Result` is not flagged, and
+NuGet packages are not inspected unless you set
+[`IsoplaneAnalyzeDependencies`](reference/project-settings.md#isoplaneanalyzedependencies).
+The `app.Run()` error is described in
 [Adapt `Program.cs`](onboard-an-application.md#adapt-programcs).
 
 ## Work belongs to a request
@@ -158,9 +167,9 @@ APIs, which covers `HttpClient`, TLS and database drivers.
   not include fails when it is called, not when the application builds or
   starts. A NuGet package that ships a native binary therefore still works as
   long as the code you use stays in managed code, and fails only on a path that
-  reaches the native call. The build can report such declarations as
-  `ISOPLANE1001`; see
-  [Control compatibility warnings](run-and-rebuild.md#control-compatibility-warnings).
+  reaches the native call. The build reports such declarations as
+  [`ISOPLANE1001`](error-codes.md#isoplane1001) when you set
+  [`IsoplaneWarnOnNativeImports`](reference/project-settings.md#isoplanewarnonnativeimports).
 - **The process is 32-bit.** `Environment.Is64BitProcess` is `false`.
 - **Local time is UTC**, and the default culture is the invariant culture. Named
   cultures and time zones are available when you ask for them.

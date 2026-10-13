@@ -10,6 +10,8 @@ Codes marked **error** are requirements: the application cannot run until they
 are fixed. Codes marked **warning** point at code that fails only if it is
 reached at run time. You can silence a warning or promote it to an error; see
 [Control compatibility warnings](run-and-rebuild.md#control-compatibility-warnings).
+[Project settings](reference/project-settings.md) defines the properties that
+decide what the build inspects.
 
 | Code | Severity | Meaning |
 | --- | --- | --- |
@@ -55,7 +57,9 @@ the runtime includes that native function, because an application cannot load
 native libraries of its own.
 
 This warning is off by default, since a declaration alone does not show that the
-call will happen. Turn it on with `IsoplaneWarnOnNativeImports`.
+call will happen. To turn it on, set
+[`IsoplaneWarnOnNativeImports`](reference/project-settings.md#isoplanewarnonnativeimports)
+to `true` in the application's project file.
 
 Check whether your application reaches the call. If it does, use a managed .NET
 API for the same job, or a different package. If it never does, there is nothing
@@ -79,8 +83,9 @@ behaviour off, or an asynchronous alternative in the same package.
 
 **Code can wait synchronously.** The code calls one of `Thread.Sleep`,
 `Thread.Join`, `Monitor.Wait`, `Task.Wait`, `Task.WaitAll`, `Task.WaitAny` or
-`SemaphoreSlim.Wait`. If the work it waits for has not finished, the call throws
-`PlatformNotSupportedException` when it runs.
+`SemaphoreSlim.Wait`. When it runs, the call throws
+`PlatformNotSupportedException`, in most cases on every call and not only when
+it would have to wait.
 
 Await instead. The editor offers a quick fix for the first four rows:
 
@@ -92,15 +97,18 @@ Await instead. The editor offers a quick fix for the first four rows:
 | `semaphore.Wait()` | `await semaphore.WaitAsync()` |
 | `Task.WaitAny(...)` | `await Task.WhenAny(...)` |
 
-Waiting on work that has already finished does not throw. If you know that is
-the case at a particular call, suppress the warning there. See
-[waiting is asynchronous](dotnet-runtime-differences.md#waiting-is-asynchronous).
+`task.Wait()` on a task that has already completed successfully does not throw.
+If you know that is the case at a particular call, suppress the warning there.
+[Waiting is asynchronous](dotnet-runtime-differences.md#waiting-is-asynchronous)
+lists what each call does.
 
 ### Where these warnings are reported
 
 `ISOPLANE1002` and `ISOPLANE1003` are reported on the call itself in your own C#
 code, and from the compiled assembly for projects you reference. NuGet packages
-are not inspected unless you set `IsoplaneAnalyzeDependencies`.
+are not inspected unless you set
+[`IsoplaneAnalyzeDependencies`](reference/project-settings.md#isoplaneanalyzedependencies)
+to `true` in the application's project file.
 
 ## The entry point
 
