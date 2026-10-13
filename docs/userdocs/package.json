@@ -5,8 +5,9 @@
   "description": "Isoplane customer development guides",
   "scripts": {
     "start": "docusaurus start --host 127.0.0.1 --port 3123",
-    "build": "docusaurus build",
-    "serve": "docusaurus serve --host 127.0.0.1 --port 3123",
+    "build": "docusaurus build --out-dir build/docs",
+    "serve": "docusaurus serve --dir build/docs --host 127.0.0.1 --port 3123",
+    "deploy:prod": "pnpm run build && wrangler deploy",
     "clear": "docusaurus clear",
     "generate:reference": "dotnet run --project ../../tools/ApiReference -p:IsoplaneManagedOnly=true -- docs/reference",
     "check:reference": "dotnet run --project ../../tools/ApiReference -p:IsoplaneManagedOnly=true -- docs/reference --check",
@@ -24,6 +25,9 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
+  "devDependencies": {
+    "wrangler": "4.149.0"
+  },
   "browserslist": {
     "production": [
       ">0.5%",
@@ -37,7 +41,7 @@
     ]
   },
   "engines": {
-    "node": ">=20.0"
+    "node": "^20.12.0 || >=21.7.0"
   },
   "packageManager": "pnpm@12.11.2"
 }

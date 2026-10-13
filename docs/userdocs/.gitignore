@@ -2,6 +2,7 @@
 /build
 /.docusaurus
 /.cache-loader
+/.wrangler
 
 # Dependencies. `pnpm-lock.yaml` IS committed: it pins the exact toolchain
 # this site was built and verified against, and an unpinned float is a docs

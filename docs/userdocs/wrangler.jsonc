@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "isoplane-docs",
+  "compatibility_date": "2026-09-07",
+  "workers_dev": false,
+  "preview_urls": false,
+  // The marketing Worker holds isoplane.dev as a Custom Domain. Routes on a
+  // hostname run ahead of its Custom Domain, so these take only the docs paths.
+  "routes": [
+    { "pattern": "isoplane.dev/docs", "zone_name": "isoplane.dev" },
+    { "pattern": "isoplane.dev/docs/*", "zone_name": "isoplane.dev" },
+  ],
+  // Requests arrive with their /docs prefix intact, so the site is built into
+  // build/docs and this directory is its parent.
+  "assets": { "directory": "build", "not_found_handling": "404-page" },
+  "observability": { "enabled": true },
+}

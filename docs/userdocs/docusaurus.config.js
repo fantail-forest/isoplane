@@ -26,7 +26,8 @@ const onBrandSurface = (theme) => ({
   plain: {color: 'var(--foreground)', backgroundColor: 'var(--surface)'},
 });
 
-const baseUrl = '/';
+// The marketing Worker serves the rest of this origin; see wrangler.jsonc.
+const baseUrl = '/docs/';
 
 /** @type {import('@docusaurus/types').Config} */
 export default {
@@ -36,8 +37,14 @@ export default {
   headTags: [{tagName: 'link', attributes: {
     rel: 'icon', href: `${baseUrl}img/favicon.svg`, sizes: 'any', type: 'image/svg+xml',
   }}],
-  url: 'http://localhost:3123',
+  url: 'https://isoplane.dev',
   baseUrl,
+  // Cloudflare serves `install.html` at `/docs/install` and redirects the
+  // slashed form to it, so links and canonical URLs leave the slash off.
+  trailingSlash: false,
+  // Unlisted until launch: every page asks crawlers not to index it and no
+  // sitemap is generated. Nothing on the marketing site links here either.
+  noIndex: true,
   onBrokenLinks: 'throw',
   onBrokenAnchors: 'throw',
   i18n: {defaultLocale: 'en', locales: ['en']},
