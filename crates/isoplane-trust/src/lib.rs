@@ -157,6 +157,8 @@ pub enum TrustError {
          form YYYY-MM-DDTHH:MM:SSZ"
     )]
     IngestedAtMalformed { path: String, value: String },
+    #[error("trust manifest {path} has bundle_date `{value}`, which is not a date of the form YYYY-MM-DD")]
+    BundleDateMalformed { path: String, value: String },
 }
 
 /// The facts a node reports about the bundle it serves.
@@ -234,6 +236,8 @@ pub struct TrustBundle {
     source: TrustSource,
     manifest: Option<Manifest>,
     last_check_unix_secs: Option<u64>,
+    /// Midnight UTC on the manifest's `bundle_date`.
+    published_unix_secs: Option<u64>,
     warn_after_days: u32,
 }
 
@@ -277,6 +281,7 @@ impl TrustBundle {
             source,
             manifest: None,
             last_check_unix_secs: None,
+            published_unix_secs: None,
             warn_after_days: default_warn_after_days(),
         })
     }
@@ -351,6 +356,7 @@ impl TrustBundle {
             return Err(TrustError::NoCertificates { bundle: source });
         }
         let mut last_check_unix_secs = None;
+        let mut published_unix_secs = None;
         let manifest = match manifest {
             Some((path, manifest)) => {
                 if !manifest.bundle_sha256.eq_ignore_ascii_case(&actual) {
@@ -368,6 +374,14 @@ impl TrustBundle {
                         bundle: certificate_count,
                     });
                 }
+                published_unix_secs = Some(
+                    parse_utc(&format!("{}T00:00:00Z", manifest.bundle_date)).ok_or_else(|| {
+                        TrustError::BundleDateMalformed {
+                            path: path.clone(),
+                            value: manifest.bundle_date.clone(),
+                        }
+                    })?,
+                );
                 last_check_unix_secs = Some(parse_utc(&manifest.ingested_at).ok_or_else(|| {
                     TrustError::IngestedAtMalformed {
                         path,
@@ -385,6 +399,7 @@ impl TrustBundle {
             source,
             manifest,
             last_check_unix_secs,
+            published_unix_secs,
             warn_after_days,
         })
     }
@@ -407,14 +422,22 @@ impl TrustBundle {
     }
 
     /// The modification time guests see on the file, in nanoseconds since
-    /// the Unix epoch. It is derived from the content, not from any clock
-    /// or file: [`MODIFIED_EPOCH_UNIX_SECS`] plus the first eight bytes of
-    /// the SHA-256, read big-endian, as seconds modulo
-    /// [`MODIFIED_SPAN_SECS`]. Two nodes serving the same bytes agree, and a
-    /// rollback changes it, but it says nothing about when the bundle was
-    /// published.
+    /// the Unix epoch.
+    ///
+    /// A bundle with a manifest reports when it was published: midnight UTC
+    /// on [`Manifest::bundle_date`]. A bundle without one, such as local
+    /// development's, which joins a machine's roots to the shipped ones, has
+    /// no such date, and reports a time derived from its content instead:
+    /// [`MODIFIED_EPOCH_UNIX_SECS`] plus the first eight bytes of the
+    /// SHA-256, read big-endian, as seconds modulo [`MODIFIED_SPAN_SECS`].
+    /// That time is not a date. Either way two nodes serving the same bundle
+    /// agree, and serving other bytes changes it, which is what makes a
+    /// guest's runtime load the roots again.
     pub fn modified_ns(&self) -> u64 {
-        modified_ns(&self.sha256)
+        match self.published_unix_secs {
+            Some(secs) => secs * 1_000_000_000,
+            None => content_modified_ns(&self.sha256),
+        }
     }
 
     pub fn facts(&self) -> TrustFacts {
@@ -456,8 +479,8 @@ impl TrustBundle {
     }
 }
 
-/// See [`TrustBundle::modified_ns`].
-pub fn modified_ns(sha256: &[u8; 32]) -> u64 {
+/// The time a bundle with no publication date reports; see [`TrustBundle::modified_ns`].
+fn content_modified_ns(sha256: &[u8; 32]) -> u64 {
     let mut head = [0u8; 8];
     head.copy_from_slice(&sha256[..8]);
     let offset_secs = u64::from_be_bytes(head) % MODIFIED_SPAN_SECS;
@@ -933,29 +956,57 @@ mod tests {
     }
 
     #[test]
-    fn the_guest_timestamp_is_derived_from_the_content() {
+    fn a_bundle_with_a_manifest_reports_the_date_it_was_published() {
+        let mut manifest = shipped_manifest();
+        manifest.bundle_date = "2025-01-02".into();
+        let (_dir, path) = operator_dir(SHIPPED_PEM, Some(&manifest));
+        let bundle = TrustBundle::load(&operator_config(&path, &manifest.bundle_sha256))
+            .expect("an operator bundle with a manifest loads");
+        assert_eq!(bundle.modified_ns(), 1_735_776_000 * 1_000_000_000);
+    }
+
+    #[test]
+    fn a_manifest_whose_bundle_date_is_not_a_date_is_refused() {
+        let mut manifest = shipped_manifest();
+        manifest.bundle_date = "last Tuesday".into();
+        let (_dir, path) = operator_dir(SHIPPED_PEM, Some(&manifest));
+        assert!(matches!(
+            TrustBundle::load(&operator_config(&path, &manifest.bundle_sha256)),
+            Err(TrustError::BundleDateMalformed { value, .. }) if value == "last Tuesday"
+        ));
+    }
+
+    #[test]
+    fn a_bundle_without_a_manifest_reports_a_time_derived_from_its_content() {
         let a: [u8; 32] = Sha256::digest(b"bundle a").into();
         let b: [u8; 32] = Sha256::digest(b"bundle b").into();
         assert_eq!(
-            modified_ns(&a),
-            modified_ns(&a),
+            content_modified_ns(&a),
+            content_modified_ns(&a),
             "the same bytes give the same timestamp on every node"
         );
         assert_ne!(
-            modified_ns(&a),
-            modified_ns(&b),
+            content_modified_ns(&a),
+            content_modified_ns(&b),
             "different bytes give a different timestamp, so a rollback is visible"
         );
-        let secs = modified_ns(&a) / 1_000_000_000;
+        let secs = content_modified_ns(&a) / 1_000_000_000;
         assert!(
             (MODIFIED_EPOCH_UNIX_SECS..MODIFIED_EPOCH_UNIX_SECS + MODIFIED_SPAN_SECS)
                 .contains(&secs),
             "the timestamp lies within fifty years of 2000-01-01"
         );
         assert_eq!(
-            modified_ns(&a) % 1_000_000_000,
+            content_modified_ns(&a) % 1_000_000_000,
             0,
             "the derivation is in whole seconds"
+        );
+        let (_dir, path) = operator_dir(SHIPPED_PEM, None);
+        let bundle = TrustBundle::load(&operator_config(&path, &shipped_manifest().bundle_sha256))
+            .expect("an operator bundle without a manifest loads");
+        assert_eq!(
+            bundle.modified_ns(),
+            content_modified_ns(&Sha256::digest(SHIPPED_PEM).into())
         );
     }
 
