@@ -82,9 +82,11 @@ Isoplane debugger described below to apply edits to a running guest.
 
 ## Debugging
 
-Debugging in VS Code needs the Isoplane debugger extension and the matching
-Isoplane CLI and SDK. Install the extension's `.vsix` file with VS Code's
-**Extensions: Install from VSIX** command.
+Install the [Isoplane extension from the Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=Isoplane.isoplane)
+and the matching Isoplane CLI and SDK to debug your application in VS Code.
+You can also find the extension in VS Code's Extensions view by searching for
+`@id:Isoplane.isoplane`. Choose **Install Pre-Release Version** to use the
+preview extension.
 
 ### Launch or attach
 
