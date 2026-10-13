@@ -1,5 +1,17 @@
 // @ts-check
+import {readFileSync} from 'node:fs';
+import {parseEnv} from 'node:util';
 import {themes as prismThemes} from 'prism-react-renderer';
+
+// Set DOCS_GTM_CONTAINER_ID in .env beside this config to enable the tag;
+// an absent file or blank value leaves it out.
+let siteEnvironment = {};
+try {
+  siteEnvironment = parseEnv(readFileSync(new URL('.env', import.meta.url), 'utf8'));
+} catch (error) {
+  if (error.code !== 'ENOENT') throw error;
+}
+const gtmContainerId = siteEnvironment.DOCS_GTM_CONTAINER_ID?.trim();
 
 // A page beside a directory of the same name is that directory's landing page.
 // Docusaurus lists the two as siblings, so link the directory's category to the
@@ -58,12 +70,14 @@ export default {
       },
     },
     blog: false,
+    ...(gtmContainerId ? {googleTagManager: {containerId: gtmContainerId}} : {}),
     theme: {customCss: './src/css/custom.css'},
   }]],
   themeConfig: {
     colorMode: {respectPrefersColorScheme: true},
-    navbar: {title: 'isoplane', items: [
+    navbar: {items: [
       {type: 'doc', docId: 'index', label: 'Documentation', position: 'left'},
+      {type: 'custom-siteLink', href: '/blog', label: 'Blog', position: 'left'},
     ]},
     footer: {copyright: '© 2026 Fantail Forest, Ltd. · A New Zealand limited company.'},
     prism: {
