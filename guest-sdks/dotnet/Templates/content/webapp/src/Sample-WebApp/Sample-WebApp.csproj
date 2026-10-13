@@ -1,0 +1,51 @@
+<!--
+  Isoplane.AspNetCore builds this project into an application package for the
+  Isoplane sandbox, and makes `dotnet run` start it there. It takes the place of
+  Microsoft.NET.Sdk.Web: Razor pages are compiled and the files in wwwroot are
+  packaged as they are there. The number after the slash is the SDK version,
+  which also selects the runtime the application runs on.
+-->
+<Project Sdk="Isoplane.AspNetCore/0.1.0-preview.4">
+
+  <PropertyGroup>
+    <!-- The SDK sets TargetFramework to net10.0, the framework it supports. -->
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- Names this project's User Secrets store. Program.cs shows where configuration comes from. -->
+    <UserSecretsId>9d2e4b7a-1c3f-4a85-b6e0-7f1a2c3d4e58</UserSecretsId>
+
+    <!--
+      The build warns about code that does not suit the sandbox: starting a thread
+      (ISOPLANE1002) and waiting synchronously (ISOPLANE1003). It inspects this
+      project and the projects it references. Remove the comment markers from a
+      line below to change that.
+    -->
+    <!-- Inspect NuGet packages too: -->
+    <!-- <IsoplaneAnalyzeDependencies>true</IsoplaneAnalyzeDependencies> -->
+    <!-- Report declarations of native imports (ISOPLANE1001): -->
+    <!-- <IsoplaneWarnOnNativeImports>true</IsoplaneWarnOnNativeImports> -->
+    <!-- Fail the build on these warnings: -->
+    <!-- <WarningsAsErrors>$(WarningsAsErrors);ISOPLANE1002;ISOPLANE1003</WarningsAsErrors> -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      ASP.NET Core itself, Razor Pages included, comes with the SDK. Add other
+      NuGet packages as in any .NET project:
+        dotnet add src/Sample-WebApp package <name>
+    -->
+    <!--
+      Supplies the DataProtectionKeys table that Data/AppDbContext.cs declares.
+      Referencing it is also what makes UseKeysFromDbContext available in
+      Program.cs: Isoplane.AspNetCore adds that method to a project that
+      references this package.
+    -->
+    <PackageReference Include="Microsoft.AspNetCore.DataProtection.EntityFrameworkCore" Version="10.0.12" />
+    <!-- Used by `dotnet ef` on your machine only; PrivateAssets keeps it out of the application package. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.12" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.12" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
+  </ItemGroup>
+
+</Project>

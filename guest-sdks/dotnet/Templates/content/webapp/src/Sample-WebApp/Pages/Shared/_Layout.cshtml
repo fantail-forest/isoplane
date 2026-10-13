@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>@ViewData["Title"] - Sample-WebApp</title>
+    @* wwwroot/css/site.css. asp-append-version links to the fingerprinted name the build gives the file. *@
+    <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
+</head>
+<body>
+    <header>
+        <a asp-page="/Index">Sample-WebApp</a>
+    </header>
+    <main>
+        @* A page handler sets TempData["Flash"] before it redirects, and the page redirected
+           to shows it once. TempData keeps it in a cookie that Data Protection encrypts
+           (see Program.cs). *@
+        @if (TempData["Flash"] is string flash)
+        {
+            <p class="flash" role="status">@flash</p>
+        }
+        @RenderBody()
+    </main>
+</body>
+</html>

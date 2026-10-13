@@ -1,0 +1,12 @@
+# Build output.
+bin/
+obj/
+
+# What Isoplane builds and keeps for local sessions of this project: the
+# application package and session state. All of it is produced again by the
+# next `dotnet run`. The compiled runtime is not here: every project shares
+# one copy in your user cache directory.
+.isoplane/
+
+# Per-user editor settings.
+*.user

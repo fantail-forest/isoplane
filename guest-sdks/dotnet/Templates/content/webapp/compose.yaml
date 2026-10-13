@@ -1,0 +1,37 @@
+# The development database. Start it before the application and stop it when done:
+#
+#   docker compose up -d --wait    start, and return once it accepts connections
+#   docker compose down            stop, keeping the data
+#   docker compose down -v         stop, and delete the data
+#
+# src/Sample-WebApp/appsettings.Development.json holds the matching connection
+# string. The sandbox tests do not use this database: they start a disposable one
+# of their own (tests/Sample-WebApp.Tests/SandboxFixture.cs).
+services:
+  database:
+    # Keep the major version equal to your production database's.
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: sample_webapp
+      # A development default, not a secret: the port below is open to this machine only.
+      POSTGRES_PASSWORD: postgres
+    ports:
+      # host:container. If 5432 is taken, change the middle number here and the
+      # Port in appsettings.Development.json.
+      - "127.0.0.1:5432:5432"
+    volumes:
+      # A named volume, so the data survives `docker compose down`.
+      - database:/var/lib/postgresql/data
+    healthcheck:
+      # What `up --wait` waits for.
+      test: ["CMD-SHELL", "pg_isready -U postgres -d sample_webapp"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  # To add another service the application depends on, such as a cache or a
+  # queue, declare it here beside the database and give the application its
+  # address in appsettings.Development.json.
+
+volumes:
+  database:

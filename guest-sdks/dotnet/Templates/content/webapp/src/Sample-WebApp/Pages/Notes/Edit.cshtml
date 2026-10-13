@@ -1,0 +1,26 @@
+@page "{id:int}"
+@* The route template above adds the note's identifier to the page's path: /Notes/Edit/5. *@
+@model Sample_WebApp.Pages.Notes.EditModel
+@{
+    ViewData["Title"] = "Edit note";
+}
+
+<h1>Edit note</h1>
+
+<form method="post" id="edit-note" class="note-form">
+    <label asp-for="Input.Title"></label>
+    <input asp-for="Input.Title" autocomplete="off" />
+    <span asp-validation-for="Input.Title" class="error"></span>
+
+    <label asp-for="Input.Body"></label>
+    <textarea asp-for="Input.Body" rows="8"></textarea>
+    <span asp-validation-for="Input.Body" class="error"></span>
+
+    <button type="submit">Save</button>
+    <a asp-page="/Index">Cancel</a>
+</form>
+
+@* asp-page-handler="Delete" posts to OnPostDeleteAsync in Edit.cshtml.cs. *@
+<form method="post" asp-page-handler="Delete" id="delete-note">
+    <button type="submit" class="danger">Delete</button>
+</form>

@@ -196,6 +196,9 @@ Initialization.Initializing += async () =>
 };
 ```
 
+The [`isoplane-webapp`](reference/project-templates.md#isoplane-webapp)
+template is set up this way.
+
 A prepared template retains the key ring loaded during initialization, even
 after keys expire. When initialization loads the store, it creates and persists
 a new key if no unrevoked active key remains valid beyond the renewal window.

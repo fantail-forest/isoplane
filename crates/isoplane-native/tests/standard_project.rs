@@ -7,7 +7,12 @@ use std::process::Command;
 
 #[test]
 fn solution_templates_build_under_a_name_that_is_not_an_identifier() {
-    for template in ["isoplane-handler", "isoplane-mcpserver", "isoplane-webapi"] {
+    for template in [
+        "isoplane-handler",
+        "isoplane-mcpserver",
+        "isoplane-webapi",
+        "isoplane-webapp",
+    ] {
         let directory = tempfile::tempdir().expect("isolate the solution template journey");
         let solution = isoplane_fixtures::template_project(directory.path(), template);
         let output = Command::new("dotnet")

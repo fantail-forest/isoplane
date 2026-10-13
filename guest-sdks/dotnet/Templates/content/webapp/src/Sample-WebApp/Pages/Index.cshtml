@@ -1,0 +1,37 @@
+@page
+@model IndexModel
+@{
+    ViewData["Title"] = "Notes";
+}
+
+<h1>Notes</h1>
+
+@* A form with method="post" gets a hidden antiforgery token from the form tag
+   helper, and Razor Pages refuses a post without a valid one. The asp-for
+   helpers take names, values, lengths and messages from NoteInput. *@
+<form method="post" id="new-note" class="note-form">
+    <label asp-for="Input.Title"></label>
+    <input asp-for="Input.Title" autocomplete="off" />
+    <span asp-validation-for="Input.Title" class="error"></span>
+
+    <label asp-for="Input.Body"></label>
+    <textarea asp-for="Input.Body" rows="3"></textarea>
+    <span asp-validation-for="Input.Body" class="error"></span>
+
+    <button type="submit">Add note</button>
+</form>
+
+@if (Model.Notes.Count == 0)
+{
+    <p class="empty">No notes yet.</p>
+}
+<ul class="notes">
+    @foreach (var note in Model.Notes)
+    {
+        <li>
+            <a asp-page="/Notes/Edit" asp-route-id="@note.Id">@note.Title</a>
+            <time datetime="@note.UpdatedAt.ToString("O")">@note.UpdatedAt.ToString("d MMM yyyy, HH:mm") UTC</time>
+            <p>@note.Body</p>
+        </li>
+    }
+</ul>
