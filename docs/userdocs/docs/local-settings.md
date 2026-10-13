@@ -47,7 +47,9 @@ dotnet user-secrets remove "ConnectionStrings:Todo"
 ## Use the launch profile
 
 `dotnet run` and `isoplane dev` read the first profile in
-`Properties/launchSettings.json` whose `commandName` is `Project`. Select another
+`Properties/launchSettings.json` whose `commandName` is `Project`.
+[launchSettings.json](reference/launch-settings.md) lists every key Isoplane
+reads from it. Select another
 with `dotnet run --launch-profile NAME` or `isoplane dev --launch-profile NAME`,
 or run without one with `--no-launch-profile`.
 
@@ -102,6 +104,8 @@ launch profile:
 ```
 
 Each key is optional. `memoryBytes` must be a multiple of 65536.
+[Keys of `isoplaneLimitsOverride`](reference/launch-settings.md#keys-of-isoplanelimitsoverride)
+defines each one.
 
 ## Reach local services and private certificate authorities
 

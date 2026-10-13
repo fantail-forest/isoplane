@@ -27,14 +27,17 @@ Use these when you have a particular task to complete:
 
 ## Reference
 
-Look up public types, methods and properties in the [SDK API reference](reference/sdk.md).
+Look up public types, methods and properties in the [SDK API reference](reference/sdk.md),
+and what each `ISOPLANE` diagnostic means in [Error codes](reference/error-codes.md).
+The settings Isoplane reads are defined in [Project settings](reference/project-settings.md),
+[launchSettings.json](reference/launch-settings.md) and
+[launch.json for VS Code](reference/vscode-launch.md).
 
-## Explanation
+## Concepts
 
 Read [how .NET differs on Isoplane](dotnet-runtime-differences.md) for everything
 that behaves differently from .NET in a server process, and
-[execution limits](execution-limits.md) for what the platform bounds.
-[Error codes](error-codes.md) explains each `ISOPLANE` diagnostic. Understand
+[execution limits](execution-limits.md) for what the platform bounds. Understand
 [application packages and the shared runtime](execution-modes.md) and
 [the application lifecycle](application-lifecycle.md) before choosing where to
 keep state or when to perform work.

@@ -9,8 +9,8 @@ causes them, and all of them appear when the application builds.
 Codes marked **error** are requirements: the application cannot run until they
 are fixed. Codes marked **warning** point at code that fails only if it is
 reached at run time. You can silence a warning or promote it to an error; see
-[Control compatibility warnings](run-and-rebuild.md#control-compatibility-warnings).
-[Project settings](reference/project-settings.md) defines the properties that
+[Control compatibility warnings](../run-and-rebuild.md#control-compatibility-warnings).
+[Project settings](project-settings.md) defines the properties that
 decide what the build inspects.
 
 | Code | Severity | Meaning |
@@ -34,7 +34,7 @@ decide what the build inspects.
 
 An *entry method* below is a method marked `[HttpHandler]`, `[Initializer]` or
 `[Activated]` in an application
-[without ASP.NET](handle-requests-without-aspnet.md). A *lifecycle method* is one
+[without ASP.NET](../handle-requests-without-aspnet.md). A *lifecycle method* is one
 marked `[Initializer]` or `[Activated]`.
 
 ## Assemblies and compatibility
@@ -58,13 +58,13 @@ native libraries of its own.
 
 This warning is off by default, since a declaration alone does not show that the
 call will happen. To turn it on, set
-[`IsoplaneWarnOnNativeImports`](reference/project-settings.md#isoplanewarnonnativeimports)
+[`IsoplaneWarnOnNativeImports`](project-settings.md#isoplanewarnonnativeimports)
 to `true` in the application's project file.
 
 Check whether your application reaches the call. If it does, use a managed .NET
 API for the same job, or a different package. If it never does, there is nothing
 to fix. See
-[the machine underneath](dotnet-runtime-differences.md#the-machine-underneath).
+[the machine underneath](../dotnet-runtime-differences.md#the-machine-underneath).
 
 ### ISOPLANE1002 {#isoplane1002}
 
@@ -74,7 +74,7 @@ thread and cannot start another, so the call throws
 
 Use asynchronous APIs in place of a thread: start the operations and
 `await Task.WhenAll(...)`. `Task.Run` compiles and runs, but it does not add a
-thread either. See [one thread](dotnet-runtime-differences.md#one-thread).
+thread either. See [one thread](../dotnet-runtime-differences.md#one-thread).
 
 If the call is in a NuGet package, look for an option that turns the threaded
 behaviour off, or an asynchronous alternative in the same package.
@@ -99,7 +99,7 @@ Await instead. The editor offers a quick fix for the first four rows:
 
 `task.Wait()` on a task that has already completed successfully does not throw.
 If you know that is the case at a particular call, suppress the warning there.
-[Waiting is asynchronous](dotnet-runtime-differences.md#waiting-is-asynchronous)
+[Waiting is asynchronous](../dotnet-runtime-differences.md#waiting-is-asynchronous)
 lists what each call does.
 
 ### Where these warnings are reported
@@ -107,7 +107,7 @@ lists what each call does.
 `ISOPLANE1002` and `ISOPLANE1003` are reported on the call itself in your own C#
 code, and from the compiled assembly for projects you reference. NuGet packages
 are not inspected unless you set
-[`IsoplaneAnalyzeDependencies`](reference/project-settings.md#isoplaneanalyzedependencies)
+[`IsoplaneAnalyzeDependencies`](project-settings.md#isoplaneanalyzedependencies)
 to `true` in the application's project file.
 
 ## The entry point
@@ -119,7 +119,7 @@ Isoplane will have something to call. This error means it found nothing it can
 use. The message says which of these applies:
 
 - **The project has no entry at all.** Mark one static method `[HttpHandler]`.
-  See [Handle requests without ASP.NET](handle-requests-without-aspnet.md).
+  See [Handle requests without ASP.NET](../handle-requests-without-aspnet.md).
 - **The entry point is synchronous.** End `Program.cs` with
   `await app.RunAsync();` in place of `app.Run();`. In C# the editor reports this
   earlier, as [`ISOPLANE1020`](#isoplane1020).
@@ -135,7 +135,7 @@ waits for requests.
 
 Replace it with `await app.RunAsync();`. The quick fix does this, and makes an
 explicit `void Main` asynchronous when there is one. See
-[Adapt `Program.cs`](onboard-an-application.md#adapt-programcs).
+[Adapt `Program.cs`](../onboard-an-application.md#adapt-programcs).
 
 ### ISOPLANE1021 {#isoplane1021}
 
@@ -148,7 +148,7 @@ Await it: `await app.RunAsync();`. The quick fix does this.
 
 ## Entry methods
 
-These apply to an application [without ASP.NET](handle-requests-without-aspnet.md).
+These apply to an application [without ASP.NET](../handle-requests-without-aspnet.md).
 Each error is reported on the method, and the message names it.
 
 ### ISOPLANE1010 {#isoplane1010}
@@ -225,5 +225,5 @@ point, so Isoplane runs that and never calls the attributed method.
 In an ASP.NET application, remove the attribute and subscribe to
 `Isoplane.Initialization.Initializing` or `Isoplane.Activation.Activated` before
 awaiting `RunAsync`; see
-[preparation and activation](application-lifecycle.md#preparation-and-activation-are-different).
+[preparation and activation](../application-lifecycle.md#preparation-and-activation-are-different).
 The quick fix removes the attribute.

@@ -29,7 +29,7 @@ Each instance has exactly one thread, and `Environment.ProcessorCount` is 1.
 
 - **Starting a thread fails.** `Thread.Start` throws
   `PlatformNotSupportedException`. The build warns about it as
-  [`ISOPLANE1002`](error-codes.md#isoplane1002).
+  [`ISOPLANE1002`](reference/error-codes.md#isoplane1002).
 - **The thread pool is that one thread.** `Task.Run` and
   `ThreadPool.QueueUserWorkItem` queue work that runs once the code that is
   running now awaits or returns. `Task.Run` does not make work parallel and does
@@ -74,7 +74,7 @@ A library's synchronous API usually blocks underneath: on an EF Core context,
 call `SaveChangesAsync` and `ToListAsync`, not `SaveChanges` and `ToList`.
 
 The build warns about several of these calls as
-[`ISOPLANE1003`](error-codes.md#isoplane1003), and the editor offers a quick fix
+[`ISOPLANE1003`](reference/error-codes.md#isoplane1003), and the editor offers a quick fix
 for most of them. It does not catch every case: `.Result` is not flagged, and
 NuGet packages are not inspected unless you set
 [`IsoplaneAnalyzeDependencies`](reference/project-settings.md#isoplaneanalyzedependencies).
@@ -168,7 +168,7 @@ APIs, which covers `HttpClient`, TLS and database drivers.
   starts. A NuGet package that ships a native binary therefore still works as
   long as the code you use stays in managed code, and fails only on a path that
   reaches the native call. The build reports such declarations as
-  [`ISOPLANE1001`](error-codes.md#isoplane1001) when you set
+  [`ISOPLANE1001`](reference/error-codes.md#isoplane1001) when you set
   [`IsoplaneWarnOnNativeImports`](reference/project-settings.md#isoplanewarnonnativeimports).
 - **The process is 32-bit.** `Environment.Is64BitProcess` is `false`.
 - **Local time is UTC**, and the default culture is the invariant culture. Named

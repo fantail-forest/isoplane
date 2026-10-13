@@ -15,15 +15,11 @@ internal sealed record LimitOverrides(ulong? MemoryBytes, Dictionary<string, ulo
 /// </summary>
 internal sealed record LaunchProfile(string Name, ushort? Port, IReadOnlyDictionary<string, string> Environment, LimitOverrides Limits)
 {
-    internal const string LimitsKey = "isoplaneLimitsOverride";
+    private static readonly string LimitsKey = LaunchProfileKeys.Limits.Name;
 
     /// <summary>The manifest's resource limit for each override a profile may name.</summary>
-    private static readonly Dictionary<string, string> ResourceLimits = new(StringComparer.Ordinal)
-    {
-        ["occupancyMsPerHttpDispatch"] = "occupancy_ms_per_http_dispatch",
-        ["subrequestsPerDispatch"] = "subrequests_per_dispatch",
-        ["pendingFuturesPerDispatch"] = "pending_futures_per_dispatch",
-    };
+    private static readonly Dictionary<string, string> ResourceLimits = LaunchProfileKeys.LimitOverrides
+        .Where(key => key.ResourceLimit is not null).ToDictionary(key => key.Name, key => key.ResourceLimit!, StringComparer.Ordinal);
 
     private static readonly JsonDocumentOptions Lenient = new() { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true };
 
@@ -57,15 +53,15 @@ internal sealed record LaunchProfile(string Name, ushort? Port, IReadOnlyDiction
     }
 
     private static bool LaunchesProject(JsonElement profile) =>
-        profile.ValueKind == JsonValueKind.Object && profile.TryGetProperty("commandName", out var command)
+        profile.ValueKind == JsonValueKind.Object && profile.TryGetProperty(LaunchProfileKeys.Command.Name, out var command)
         && command.ValueKind == JsonValueKind.String && command.GetString() == "Project";
 
     private static LaunchProfile Parse(string name, JsonElement profile, string path)
     {
         if (!LaunchesProject(profile))
-            throw new ArgumentException($"Launch profile '{name}' in {path} does not launch the project; its commandName must be \"Project\".");
+            throw new ArgumentException($"Launch profile '{name}' in {path} does not launch the project; its {LaunchProfileKeys.Command.Name} must be \"Project\".");
         var environment = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        if (profile.TryGetProperty("environmentVariables", out var variables) && variables.ValueKind == JsonValueKind.Object)
+        if (profile.TryGetProperty(LaunchProfileKeys.Environment.Name, out var variables) && variables.ValueKind == JsonValueKind.Object)
             foreach (var variable in variables.EnumerateObject())
                 environment[variable.Name] = variable.Value.ValueKind == JsonValueKind.String ? variable.Value.GetString()! : variable.Value.GetRawText();
         return new(name, HttpPort(name, profile, path), environment, Overrides(name, profile, path));
@@ -74,11 +70,11 @@ internal sealed record LaunchProfile(string Name, ushort? Port, IReadOnlyDiction
     /// <summary>The first HTTP address's port. The session serves plain HTTP on loopback, so HTTPS addresses are passed over.</summary>
     private static ushort? HttpPort(string name, JsonElement profile, string path)
     {
-        if (!profile.TryGetProperty("applicationUrl", out var urls) || urls.ValueKind != JsonValueKind.String) return null;
+        if (!profile.TryGetProperty(LaunchProfileKeys.Url.Name, out var urls) || urls.ValueKind != JsonValueKind.String) return null;
         foreach (var url in urls.GetString()!.Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
         {
             if (!Uri.TryCreate(url, UriKind.Absolute, out var address) || address.Scheme is not ("http" or "https"))
-                throw new ArgumentException($"Launch profile '{name}' in {path} has an invalid applicationUrl '{url}'.");
+                throw new ArgumentException($"Launch profile '{name}' in {path} has an invalid {LaunchProfileKeys.Url.Name} '{url}'.");
             if (address.Scheme == "http") return checked((ushort)address.Port);
         }
         return null;
@@ -87,7 +83,7 @@ internal sealed record LaunchProfile(string Name, ushort? Port, IReadOnlyDiction
     private static LimitOverrides Overrides(string name, JsonElement profile, string path)
     {
         if (!profile.TryGetProperty(LimitsKey, out var overrides)) return LimitOverrides.None;
-        var supported = string.Join(", ", ResourceLimits.Keys.Prepend("memoryBytes"));
+        var supported = string.Join(", ", LaunchProfileKeys.LimitOverrides.Select(key => key.Name));
         if (overrides.ValueKind != JsonValueKind.Object)
             throw new ArgumentException($"{LimitsKey} in launch profile '{name}' in {path} must be an object with any of: {supported}.");
         ulong? memory = null;
@@ -96,7 +92,7 @@ internal sealed record LaunchProfile(string Name, ushort? Port, IReadOnlyDiction
         {
             if (limit.Value.ValueKind != JsonValueKind.Number || !limit.Value.TryGetUInt64(out var value) || value == 0)
                 throw new ArgumentException($"{LimitsKey}.{limit.Name} in launch profile '{name}' in {path} must be a positive whole number.");
-            if (limit.Name == "memoryBytes") memory = value;
+            if (limit.Name == LaunchProfileKeys.Memory.Name) memory = value;
             else if (ResourceLimits.TryGetValue(limit.Name, out var resource)) limits[resource] = value;
             else throw new ArgumentException($"{LimitsKey} in launch profile '{name}' in {path} does not support '{limit.Name}'; it supports: {supported}.");
         }

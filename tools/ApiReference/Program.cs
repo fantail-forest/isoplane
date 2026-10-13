@@ -1,7 +1,9 @@
 using System.Reflection;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
+using Isoplane.Cli;
 using XmlDocMarkdown.Core;
 
 if (args.Length is < 1 or > 2 || (args.Length == 2 && args[1] != "--check"))
@@ -77,7 +79,37 @@ internal static class Reference
         }
         output.Add("sdk.md", Overview);
         output.Add("project-settings.md", ProjectSettings.Replace("{settings}", Settings()));
+        output.Add("launch-settings.md", LaunchSettings
+            .Replace("{profile}", Keys(LaunchProfileKeys.Profile.Select(key => (key.Name, key.Description))))
+            .Replace("{limits}", Keys(LaunchProfileKeys.LimitOverrides.Select(key => (key.Name, key.Description)))));
+        output.Add("vscode-launch.md", DebugConfiguration.Replace("{launch}", DebugAttributes("launch")).Replace("{attach}", DebugAttributes("attach")));
         return output;
+    }
+
+    private static Stream Resource(string name) => typeof(Reference).Assembly.GetManifestResourceStream(name)
+        ?? throw new InvalidOperationException($"{name} is not embedded in this tool.");
+
+    private static string Keys(IEnumerable<(string Name, string Description)> keys) =>
+        "| Key | Description |\n| --- | --- |\n" + string.Join("\n", keys.Select(key => $"| `{key.Name}` | {key.Description} |"));
+
+    /// <summary>The attributes the debugger extension's manifest declares for one kind of debug configuration.</summary>
+    private static string DebugAttributes(string request)
+    {
+        using var manifest = JsonDocument.Parse(Resource("vscode-isoplane.package.json"));
+        var attributes = manifest.RootElement.GetProperty("contributes").GetProperty("debuggers")[0]
+            .GetProperty("configurationAttributes").GetProperty(request);
+        var required = attributes.TryGetProperty("required", out var names)
+            ? names.EnumerateArray().Select(name => name.GetString()).ToHashSet() : [];
+        return "| Attribute | Value | Default | Description |\n| --- | --- | --- | --- |\n" + string.Join("\n",
+            attributes.GetProperty("properties").EnumerateObject().Select(attribute =>
+            {
+                var value = attribute.Value.TryGetProperty("enum", out var choices)
+                    ? string.Join(" or ", choices.EnumerateArray().Select(choice => $"`{choice.GetString()}`"))
+                    : attribute.Value.GetProperty("type").GetString();
+                var initial = required.Contains(attribute.Name) ? "required"
+                    : attribute.Value.TryGetProperty("default", out var preset) ? $"`{preset.GetRawText().Trim('"')}`" : "";
+                return $"| `{attribute.Name}` | {value} | {initial} | {attribute.Value.GetProperty("description").GetString()} |";
+            }));
     }
 
     /// <summary>
@@ -85,8 +117,7 @@ internal static class Reference
     /// </summary>
     private static string Settings()
     {
-        using var targets = typeof(Reference).Assembly.GetManifestResourceStream("Isoplane.Conformance.targets")
-            ?? throw new InvalidOperationException("Isoplane.Conformance.targets is not embedded in this tool.");
+        using var targets = Resource("Isoplane.Conformance.targets");
         var settings = new StringBuilder();
         foreach (var property in XDocument.Load(targets).Root!.Elements("PropertyGroup").First().Elements())
         {
@@ -94,7 +125,7 @@ internal static class Reference
             if (property.PreviousNode is not XComment comment)
                 throw new InvalidOperationException($"{name} has no comment describing it in Isoplane.Conformance.targets.");
             var description = string.Join(' ', comment.Value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
-            description = ErrorCode.Replace(description, code => $"[`{code.Value}`](../error-codes.md#{code.Value.ToLowerInvariant()})");
+            description = ErrorCode.Replace(description, code => $"[`{code.Value}`](error-codes.md#{code.Value.ToLowerInvariant()})");
             settings.Append($"### `{name}`\n\nDefault: `{property.Value}`.\n\n{description}\n\n");
         }
         return settings.ToString().TrimEnd();
@@ -241,7 +272,103 @@ dotnet build -p:IsoplaneAnalyzeDependencies=true
 
 ## Standard .NET properties
 
-The warnings these properties produce also follow the ordinary .NET properties `NoWarn`, `WarningsAsErrors`, `TreatWarningsAsErrors` and `WarningsNotAsErrors`. [Control compatibility warnings](../run-and-rebuild.md#control-compatibility-warnings) shows how to use them, and [Error codes](../error-codes.md) explains each warning.
+The warnings these properties produce also follow the ordinary .NET properties `NoWarn`, `WarningsAsErrors`, `TreatWarningsAsErrors` and `WarningsNotAsErrors`. [Control compatibility warnings](../run-and-rebuild.md#control-compatibility-warnings) shows how to use them, and [Error codes](error-codes.md) explains each warning.
+
+<!-- Generated by tools/ApiReference. -->
+""" + "\n";
+
+    private const string LaunchSettings = """
+---
+mdx:
+  format: md
+---
+
+# launchSettings.json
+
+`Properties/launchSettings.json` is the ordinary .NET file of launch profiles. `dotnet run` and `isoplane dev` read one profile from it when they start a local session. This page lists the keys Isoplane reads. It ignores every other key, such as `launchBrowser`. The key tables are generated from the list the Isoplane CLI parses, so they match the version you have installed.
+
+[Supply local development settings](../local-settings.md) shows the file in use.
+
+## Which profile is used
+
+A local session uses the first profile whose `commandName` is `Project`. Select another with `dotnet run --launch-profile NAME` or `isoplane dev --launch-profile NAME`, or run without a profile with `--no-launch-profile`.
+
+## Profile keys
+
+{profile}
+
+## Keys of `isoplaneLimitsOverride`
+
+Each key is optional, and each value is a positive whole number. A local session otherwise runs with the largest limits the platform offers. [Execution limits](../execution-limits.md) explains what each limit measures.
+
+{limits}
+
+## Example
+
+```json
+{
+  "profiles": {
+    "http": {
+      "commandName": "Project",
+      "applicationUrl": "http://localhost:5080",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "Greeting__Default": "world"
+      },
+      "isoplaneLimitsOverride": {
+        "memoryBytes": 134217728,
+        "occupancyMsPerHttpDispatch": 1000
+      }
+    }
+  }
+}
+```
+
+## Comments
+
+`dotnet run` does not accept comments in this file. A project created from an Isoplane template carries its notes in a property named `//`, which nothing reads.
+
+<!-- Generated by tools/ApiReference. -->
+""" + "\n";
+
+    private const string DebugConfiguration = """
+---
+mdx:
+  format: md
+---
+
+# launch.json for VS Code
+
+`.vscode/launch.json` holds the debug configurations Visual Studio Code offers when you press F5. The Isoplane Debugger extension adds the `isoplane` configuration type. This page lists the attributes of that type. The tables are generated from the extension's manifest.
+
+[Debug an application](../debug-an-application.md) shows how to use these configurations.
+
+## Launch
+
+A configuration with `"request": "launch"` builds the application, starts it in a local session and attaches the debugger.
+
+{launch}
+
+```json
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug local Isoplane",
+      "type": "isoplane",
+      "request": "launch",
+      "project": "${workspaceFolder}",
+      "configuration": "Debug"
+    }
+  ]
+}
+```
+
+## Attach
+
+A configuration with `"request": "attach"` attaches the debugger to a local debug session that is already running.
+
+{attach}
 
 <!-- Generated by tools/ApiReference. -->
 """ + "\n";
