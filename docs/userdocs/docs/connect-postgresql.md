@@ -8,8 +8,8 @@ directory (see [installation](install.md)); an installation from NuGet does not
 include it. It requires verified TLS and
 turns connection pooling off. Debug and Release builds use the shared Mono runtime.
 
-To start a new application with a database, `dotnet new isoplane-webapi` creates
-one with EF Core migrations, a local database in `compose.yaml`, and tests. This
+To start a new application with a database, the
+[`isoplane-webapi`](reference/project-templates.md#isoplane-webapi) template creates one with EF Core migrations, a local database in `compose.yaml`, and tests. This
 guide walks through the sample, which adds verified TLS and a compiled EF model.
 
 ## Use an existing development database

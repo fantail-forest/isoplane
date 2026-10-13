@@ -38,7 +38,9 @@ cd MyApi
 ```
 
 `MyApi` is an ordinary ASP.NET project: a `Program.cs`, a project file and
-settings files, with one route at `/`.
+settings files, with one route at `/`. It comes from the
+[`isoplane-web`](reference/project-templates.md#isoplane-web) template;
+[Project templates](reference/project-templates.md) lists the others.
 
 ## 4. Run it
 

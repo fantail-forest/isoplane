@@ -17,7 +17,8 @@ dotnet new isoplane-handler --name HelloService
 cd HelloService
 ```
 
-The application is in `src/HelloService/`, and its tests are in
+This is the [`isoplane-handler`](reference/project-templates.md#isoplane-handler) template. The
+application is in `src/HelloService/`, and its tests are in
 `tests/HelloService.Tests/`. The project's `README.md` describes every file.
 
 ## 2. Run it

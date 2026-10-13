@@ -75,7 +75,8 @@ new ApplicationOptions
 ```
 
 Settings override the project's launch profile and User Secrets for that session.
-The `isoplane-webapi` and `isoplane-handler` templates include a test project
+The [`isoplane-webapi`](reference/project-templates.md#isoplane-webapi) and
+[`isoplane-handler`](reference/project-templates.md#isoplane-handler) templates include a test project
 that shares one session between its tests.
 
 Use a separate application directory for each concurrent session. The fixture

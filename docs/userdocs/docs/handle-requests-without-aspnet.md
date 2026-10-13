@@ -3,8 +3,8 @@ title: Handle requests without ASP.NET
 ---
 
 An application that does not need ASP.NET can handle its requests in one static
-method. `dotnet new isoplane-handler` creates a complete example with tests; this
-page describes its parts.
+method. The [`isoplane-handler`](reference/project-templates.md#isoplane-handler) template creates a
+complete example with tests; this page describes its parts.
 
 ## The project
 

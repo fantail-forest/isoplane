@@ -18,7 +18,8 @@ dotnet new isoplane-webapi --name TodoApi
 cd TodoApi
 ```
 
-The template is a complete application. These are the parts this tutorial
+The [`isoplane-webapi`](reference/project-templates.md#isoplane-webapi) template is a complete
+application. These are the parts this tutorial
 touches; the project's `README.md` describes the rest.
 
 | Path | What it holds |
