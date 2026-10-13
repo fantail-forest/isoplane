@@ -256,7 +256,7 @@ point, so Isoplane runs that and never calls the attributed method.
 In an ASP.NET application, remove the attribute and subscribe to
 `Isoplane.Initialization.Initializing` or `Isoplane.Activation.Activated` before
 awaiting `RunAsync`; see
-[startup](../application-lifecycle.md#startup) and
+[initialization](../application-lifecycle.md#initialization) and
 [activation](../application-lifecycle.md#activation).
 The quick fix removes the attribute.
 

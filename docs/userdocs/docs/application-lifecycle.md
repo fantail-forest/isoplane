@@ -8,7 +8,7 @@ what is left to your application.
 
 | Stage | When | Isoplane | Your application |
 | --- | --- | --- | --- |
-| [Startup](#startup) | When creating a template, before requests | Runs your startup code and saves the application's memory as a template | Prepares shared state, and leaves nothing open |
+| [Initialization](#initialization) | When creating a template, before requests | Runs `Program.cs` and saves the application's memory as a template | Prepares shared state, and leaves nothing open |
 | [Activation](#activation) | Each time an instance starts | Copies the template and reseeds random generators | Creates what must differ between instances |
 | [Handling a request](#handling-a-request) | Each request | Delivers the request, suspends the instance while it waits, enforces limits | Awaits its work and passes cancellation on |
 | [Between requests](#between-requests) | Whenever an instance has no request | Keeps the instance for later, or discards it | Expects nothing to run and nothing to survive |
@@ -17,7 +17,7 @@ what is left to your application.
 An *instance* is one running copy of the application. Isoplane runs as many as
 the traffic needs. The *template* is the memory every instance starts from.
 
-## Startup
+## Initialization
 
 Isoplane runs initialization while creating a template, ahead of requests. In an ASP.NET
 application it runs `Program.cs` up to `RunAsync`, then raises
@@ -40,12 +40,12 @@ await app.RunAsync();
 
 **Isoplane**
 
-- Runs your startup code during preparation, with the application's settings and the network
+- Runs `Program.cs` during preparation, with the application's settings and the network
   available to it.
 - Awaits the `Initializing` callbacks one at a time, in the order they
   subscribed.
 - Saves everything left in memory, and starts every instance from it.
-- Refuses to start the application if startup throws, or if a
+- Refuses to start the application if initialization throws, or if a
   `BackgroundService` is still running once the host has started.
 
 **Your application**
@@ -56,12 +56,12 @@ await app.RunAsync();
   so that routes, serializers and database models are ready.
 - Awaits all I/O, and closes every connection, stream and timer before the
   callbacks return. An open connection cannot be saved in the template.
-- Creates nothing that should be unique to an instance. Whatever startup leaves
+- Creates nothing that should be unique to an instance. Whatever initialization leaves
   in memory, including a random value or an identifier in a static field, is the
   same in every instance.
 - Starts no background work.
 
-A setting read during startup is saved in the template with everything else, and
+A setting read during initialization is saved in the template with everything else, and
 every instance has the same settings.
 
 An application [without ASP.NET](handle-requests-without-aspnet.md#lifecycle-methods)
@@ -95,9 +95,9 @@ Activation.Activated += () =>
 
 **Your application**
 
-- Subscribes during startup. Subscriptions are saved in the template, so every
+- Subscribes during initialization. Subscriptions are saved in the template, so every
   instance runs them.
-- Replaces any value from startup that must differ between instances.
+- Replaces any value from initialization that must differ between instances.
 - Reseeds what Isoplane cannot: a `Random` constructed with a seed, even when
   that seed was itself random, and a generator that is not a `System.Random`,
   such as one inside a library.
@@ -171,7 +171,7 @@ without rerunning initialization callbacks.
 
 - Keeps what must outlive a build outside the instance.
 - Does not depend on data protected by ASP.NET Core Data Protection outliving a
-  build. The key is created during startup, so it is part of the template: every
+  build. The key is created during initialization, so it is part of the template: every
   instance of the same template shares it, which keeps antiforgery tokens and
   authentication cookies working across instances, and fresh initialization may create a different captured
   key; reusing a template retains its key.

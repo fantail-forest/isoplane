@@ -124,18 +124,18 @@ after any request. Successive requests can reach different instances.
   must last in a database or another external service.
 - **Open connections may not survive between requests.** A stale connection is
   possible even after a request that completed normally.
-- **Startup state is captured and copied.** `Program.cs` runs up to `RunAsync` while
+- **Initialization state is captured and copied.** `Program.cs` runs up to `RunAsync` while
   Isoplane prepares the application, and every instance starts from a copy of
-  that memory. A connection opened during startup cannot be carried into an
-  instance, so close it before startup finishes.
-- **A value created during startup is the same in every instance.** Create
+  that memory. A connection opened during initialization cannot be carried
+  into an instance, so close it before initialization finishes.
+- **A value created during initialization is the same in every instance.** Create
   anything that must differ between instances when an instance activates, by
   subscribing to `Isoplane.Activation.Activated`.
 - **Random numbers are reseeded for you, with exceptions.** Each instance
   reseeds `Random.Shared` and every `Random` created without a seed, and
   cryptographic randomness is always drawn fresh. A `Random` you gave a seed, a
   generator that is not a `System.Random`, and a value already drawn during
-  startup are copied as they are.
+  initialization are copied as they are.
 - **ASP.NET Core Data Protection keys are shared.** Every instance of a
   deployment protects and unprotects with the same key, so antiforgery tokens
   and authentication cookies work across instances.
