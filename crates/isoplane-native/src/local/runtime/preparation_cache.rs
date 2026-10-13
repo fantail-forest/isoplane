@@ -149,15 +149,10 @@ impl Cache {
     }
 }
 
-/// Hashes a file set so that a file moving between sets, or a set boundary
-/// moving, changes the result.
+/// Hashes a file set by its content, so that a file moving between sets
+/// changes the result and a file's time does not.
 pub(super) fn hash_files(hash: &mut blake3::Hasher, files: &isoplane_engine::PlatformFiles) {
-    hash_part(hash, &(files.files().len() as u64).to_le_bytes());
-    for file in files.files() {
-        hash_part(hash, file.path.as_bytes());
-        hash_part(hash, &file.bytes);
-        hash_part(hash, &file.modified_ns.to_le_bytes());
-    }
+    hash_part(hash, &files.content_digest());
 }
 
 fn hash_part(hash: &mut blake3::Hasher, bytes: &[u8]) {
@@ -420,13 +415,24 @@ mod tests {
             &fixture.executable,
             "changed runtime provenance",
         );
-        for change in ["path", "bytes", "timestamp", "removed"] {
+        project = fixture.project.clone();
+        let mut files = project.platform_files.files().to_vec();
+        files[0].modified_ns += 1;
+        project.platform_files = PlatformFiles::new(files).unwrap();
+        assert!(
+            Cache::new(&project, &fixture.wasm, &fixture.executable, b"{}")
+                .unwrap()
+                .read()
+                .unwrap()
+                .is_some(),
+            "a file whose time alone changed is the same file"
+        );
+        for change in ["path", "bytes", "removed"] {
             project = fixture.project.clone();
             let mut files = project.platform_files.files().to_vec();
             match change {
                 "path" => files[0].path = "/other-ca.crt".into(),
                 "bytes" => files[0].bytes = (&b"rotated trust roots"[..]).into(),
-                "timestamp" => files[0].modified_ns += 1,
                 "removed" => files.clear(),
                 _ => panic!("every fixture change has an explicit mutation"),
             }

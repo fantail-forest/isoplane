@@ -249,6 +249,22 @@ impl PlatformFiles {
         &self.0.files
     }
 
+    /// Identifies the set by what it holds: every file's path and bytes.
+    /// A file's time is left out, so two sets with the same content are the
+    /// same set whenever their files were written.
+    pub fn content_digest(&self) -> [u8; 32] {
+        let mut hash = blake3::Hasher::new();
+        hash.update(b"isoplane.platform-files.content.v1\0");
+        hash.update(&(self.0.files.len() as u64).to_le_bytes());
+        for file in &self.0.files {
+            for part in [file.path.as_bytes(), &file.bytes[..]] {
+                hash.update(&(part.len() as u64).to_le_bytes());
+                hash.update(part);
+            }
+        }
+        *hash.finalize().as_bytes()
+    }
+
     /// The node a record word names, or `None` for a word outside this set.
     pub(crate) fn decode(&self, word: u32) -> Option<Node> {
         let node = Node(word);
@@ -454,6 +470,37 @@ mod tests {
             modified("/usr/share/zoneinfo/UTC", 300),
         ])
         .expect("a well-formed set")
+    }
+
+    #[test]
+    fn a_set_is_identified_by_its_paths_and_bytes_and_not_by_its_times() {
+        let set = |files: &[(&str, &[u8], u64)]| {
+            PlatformFiles::new(
+                files
+                    .iter()
+                    .map(|&(path, bytes, modified_ns)| PlatformFile {
+                        path: path.into(),
+                        bytes: bytes.into(),
+                        modified_ns,
+                    })
+                    .collect(),
+            )
+            .expect("a well-formed set")
+            .content_digest()
+        };
+        let original = set(&[("/a", b"one", 5), ("/b", b"two", 6)]);
+        assert_eq!(original, set(&[("/b", b"two", 900), ("/a", b"one", 0)]));
+        for (change, changed) in [
+            ("bytes", set(&[("/a", b"one", 5), ("/b", b"twO", 6)])),
+            ("path", set(&[("/a", b"one", 5), ("/c", b"two", 6)])),
+            ("a missing file", set(&[("/a", b"one", 5)])),
+            (
+                "a byte moved from content to path",
+                set(&[("/ao", b"ne", 5), ("/b", b"two", 6)]),
+            ),
+        ] {
+            assert_ne!(original, changed, "{change}");
+        }
     }
 
     #[test]

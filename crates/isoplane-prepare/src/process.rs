@@ -40,17 +40,19 @@ pub enum PortableTemplate {
 }
 
 impl BuildRequest {
-    /// Bind the prepared state to its input, runtime and exact initialization-visible files.
+    /// Bind the prepared state to its input, runtime and the content of the
+    /// files initialization can read. The times of those files are not bound:
+    /// a file set is identified by its paths and bytes.
     pub fn identity(&self) -> Result<isoplane_engine::prepared::PreparedIdentity, postcard::Error> {
         let mut hash = blake3::Hasher::new();
-        hash.update(b"isoplane.prepared-initialization.v1\0");
+        hash.update(b"isoplane.prepared-initialization.v2\0");
         hash.update(&self.initialization.digest(self.input_hash)?);
         hash.update(&postcard::to_allocvec(&self.limits)?);
         hash.update(&postcard::to_allocvec(&self.guest_memory_bytes)?);
         hash.update(&postcard::to_allocvec(&self.validation_limits)?);
         hash.update(&self.engine.max_memory_bytes.to_le_bytes());
-        hash.update(&postcard::to_allocvec(&self.engine.platform_files)?);
-        hash.update(&postcard::to_allocvec(&self.application_files)?);
+        hash.update(&self.engine.platform_files.content_digest());
+        hash.update(&self.application_files.content_digest());
         Ok(isoplane_engine::prepared::PreparedIdentity {
             input_hash: self.input_hash,
             runtime_profile: self.runtime.digest()?,
