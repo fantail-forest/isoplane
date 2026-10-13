@@ -33,7 +33,8 @@ Look up public types, methods and properties in the [SDK API reference](referenc
 
 Read [how .NET differs on Isoplane](dotnet-runtime-differences.md) for everything
 that behaves differently from .NET in a server process, and
-[execution limits](execution-limits.md) for what the platform bounds. Understand
+[execution limits](execution-limits.md) for what the platform bounds.
+[Error codes](error-codes.md) explains each `ISOPLANE` diagnostic. Understand
 [application packages and the shared runtime](execution-modes.md) and
 [the application lifecycle](application-lifecycle.md) before choosing where to
 keep state or when to perform work.
