@@ -90,7 +90,7 @@ export default {
     prism: {
       theme: onBrandSurface(prismThemes.gruvboxMaterialLight),
       darkTheme: onBrandSurface(prismThemes.gruvboxMaterialDark),
-      additionalLanguages: ['bash', 'csharp', 'json', 'markup'],
+      additionalLanguages: ['bash', 'csharp', 'json', 'markup', 'powershell'],
     },
   },
 };

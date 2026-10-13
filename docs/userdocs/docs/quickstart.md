@@ -6,7 +6,7 @@ Four commands take you from a .NET SDK to an ASP.NET application running in
 Isoplane's sandbox on your own machine.
 
 You need the .NET 10 SDK on Linux x64, Windows x64 or macOS ARM64, and an
-internet connection. [Install the SDK](install.md#prerequisite-a-net-sdk) lists
+internet connection. [Install the SDK](install.md#install-the-net-10-sdk) lists
 what each platform needs.
 
 ## 1. Install the CLI
@@ -18,7 +18,7 @@ dotnet tool install --global Isoplane.Cli --version 0.1.0-preview.5
 This adds the `isoplane` command from the current preview release,
 `0.1.0-preview.5`. If your shell cannot find it afterwards, the
 .NET tools directory is missing from your `PATH`: see
-[Install the CLI and the SDK](install.md#install-the-cli-and-the-sdk).
+[Install the CLI](install.md#install-the-cli).
 
 ## 2. Set up your machine
 
