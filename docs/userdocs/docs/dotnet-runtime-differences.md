@@ -109,10 +109,11 @@ requests it does not run at all.
 - **Nothing else is guaranteed to run after the response.** Code that is ready to
   run at that moment may still run while the request is within its limits. Do
   not rely on it to save data or to release something.
-- **Pass cancellation on.** `HttpContext.RequestAborted`, or
+- **Pass the request's cancellation token to the calls you await.** That token
+  is `HttpContext.RequestAborted`, or
   [`RequestHead.Aborted`](reference/sdk/Isoplane.Sdk/Isoplane/RequestHead/Aborted.md)
-  without ASP.NET, is cancelled when the client goes away or the request uses up
-  its running time.
+  without ASP.NET. It is cancelled when the client goes away or the request uses
+  up its running time, so work nobody is waiting for stops.
 
 ## Instances come and go
 

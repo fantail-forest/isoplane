@@ -10,7 +10,7 @@ what is left to your application.
 | --- | --- | --- | --- |
 | [Initialization](#initialization) | When creating a template, before requests | Runs `Program.cs` and saves the application's memory as a template | Prepares shared state, and leaves nothing open |
 | [Activation](#activation) | Each time an instance starts | Copies the template and reseeds random generators | Replaces copied state that has to be unique to each instance, such as an identifier |
-| [Handling a request](#handling-a-request) | Each request | Delivers the request, suspends the instance while it waits, enforces limits | Awaits its work and passes cancellation on |
+| [Handling a request](#handling-a-request) | Each request | Delivers the request, suspends the instance while it waits, enforces limits | Awaits its work, and passes the request's cancellation token to the asynchronous calls it makes |
 | [Between requests](#between-requests) | Whenever an instance has no request | Keeps the instance for later, or discards it | Expects nothing to run and nothing to survive |
 | [A new build or changed settings](#a-new-build-or-changed-settings) | When you change the application or its settings | Prepares a new template when needed; matching captured state may be reused | Keeps what must outlive a build somewhere else |
 
