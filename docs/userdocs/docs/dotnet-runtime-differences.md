@@ -263,11 +263,12 @@ APIs, which covers `HttpClient`, TLS and database drivers.
   or writing a file fails, so there is nowhere to put temporary files. Keep uploads
   and generated files in memory while you handle the request, or in external
   storage.
-- **A file's modification time is derived from its content.** It is a date
-  between 2000 and 2019 that changes whenever the file's content does, and it
-  is the same on every instance and in every build with the same content. It
-  says nothing about when the file was written or built. ASP.NET Core sends it
-  as the `Last-Modified` header of a static file.
+- **A file's modification time is the one it had when the application was
+  built**, to the second. ASP.NET Core sends it as the `Last-Modified` header
+  of a static file, as it does anywhere else. `UseStaticFiles` sends no
+  `Cache-Control` header, so a browser may keep such a file for a while without
+  asking whether it has changed, here as on any host: `MapStaticAssets`, or a
+  link with `asp-append-version`, avoids that.
 - **Environment variables are empty.** Settings reach the application through
   configuration; see [local development settings](local-settings.md).
 - **There are no other processes.** An application cannot start one.

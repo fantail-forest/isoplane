@@ -223,6 +223,31 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
     }
 
     [Fact]
+    public async Task a_bundle_dates_each_file_as_its_source_and_its_manifest_as_the_entry_assembly()
+    {
+        using var directory = new BundleDirectory();
+        var built = new DateTime(2026, 1, 2, 3, 4, 5, DateTimeKind.Utc);
+        var application = Path.Combine(directory.Path, "Application.dll");
+        foreach (var extension in new[] { ".dll", ".pdb" })
+        {
+            File.Copy(Path.ChangeExtension(fixture.Application, extension), Path.ChangeExtension(application, extension));
+            File.SetLastWriteTimeUtc(Path.ChangeExtension(application, extension), built);
+        }
+        var output = Path.Combine(directory.Path, "application.tar");
+        await ManagedBundle.WriteAsync(fixture.Metadata(applicationPath: application), output, default);
+        using var stream = File.OpenRead(output);
+        using var archive = new TarReader(stream);
+        var times = new Dictionary<string, DateTimeOffset>();
+        while (archive.GetNextEntry() is { } entry) times.Add(entry.Name, entry.ModificationTime);
+        // Writing an unchanged application again must produce the same times, or the
+        // platform would prepare it afresh on every run.
+        Assert.Equal(built, times["application.json"].UtcDateTime);
+        Assert.Equal(built, times["assemblies/Application.dll"].UtcDateTime);
+        Assert.Equal(File.GetLastWriteTimeUtc(fixture.Dependency).Ticks / TimeSpan.TicksPerSecond,
+            times["assemblies/Dependency.dll"].UtcDateTime.Ticks / TimeSpan.TicksPerSecond);
+    }
+
+    [Fact]
     public async Task an_interpreted_bundle_carries_its_sdk_runtime_identity_unchanged()
     {
         using var directory = new BundleDirectory();

@@ -134,9 +134,16 @@ pub fn read(archive: &[u8], limits: PackageLimits) -> Result<Package, PackageErr
             continue;
         }
         let served = served_path(&path)?;
+        // The time the build gave the file, which the application sees as the
+        // file's own and a web framework sends as `Last-Modified`.
+        let modified_secs = entry.header().mtime().map_err(PackageError::Archive)?;
         let mut bytes = Vec::with_capacity(entry.size() as usize);
         std::io::Read::read_to_end(&mut entry, &mut bytes).map_err(PackageError::Archive)?;
-        files.push(served_file(served, bytes));
+        files.push(PlatformFile {
+            path: served,
+            bytes: bytes.into(),
+            modified_ns: modified_secs.saturating_mul(1_000_000_000),
+        });
     }
     if !files
         .iter()
@@ -246,32 +253,14 @@ fn served_path(path: &str) -> Result<String, PackageError> {
     Ok(served)
 }
 
-/// The earliest time a packaged file is stamped with: 2000-01-01T00:00:00Z.
-const STAMP_ORIGIN_UNIX_SECS: u64 = 946_684_800;
-/// The range the stamps fall in: twenty years of 365 days from the origin.
-const STAMP_SPAN_SECS: u64 = 20 * 365 * 86_400;
-
-/// Stamps a file with a time derived from its content, so its metadata, and
-/// with it the template's identity, depends only on what the package holds.
-/// The time falls in a fixed range that has passed, because an application
-/// serves it as `Last-Modified`, which must not be later than the response.
-fn served_file(path: String, bytes: Vec<u8>) -> PlatformFile {
-    let digest = blake3::hash(&bytes);
-    let mut stamp = [0; 8];
-    stamp.copy_from_slice(&digest.as_bytes()[..8]);
-    let offset_secs = u64::from_le_bytes(stamp) % STAMP_SPAN_SECS;
-    PlatformFile {
-        path,
-        bytes: bytes.into(),
-        modified_ns: (STAMP_ORIGIN_UNIX_SECS + offset_secs) * 1_000_000_000,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const IDENTITY: &[u8] = br#"{"sdkVersion":"1.2.3-test","sourceRevision":"abc","modules":{"Isoplane.MonoRuntime.wasm":{"sha256":"00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"}}}"#;
+
+    /// The time every test entry carries: 2026-01-02T03:04:05Z.
+    const MODIFIED_SECS: u64 = 1_767_323_045;
 
     /// A package with `entries` built against the runtime [`IDENTITY`] names.
     fn archive(entries: &[(&str, &[u8])]) -> Vec<u8> {
@@ -286,6 +275,7 @@ mod tests {
             let mut header = tar::Header::new_ustar();
             header.set_size(bytes.len() as u64);
             header.set_mode(0o644);
+            header.set_mtime(MODIFIED_SECS);
             header.set_entry_type(tar::EntryType::Regular);
             builder
                 .append_data(&mut header, path, *bytes)
@@ -578,33 +568,9 @@ mod tests {
     }
 
     #[test]
-    fn a_files_time_depends_only_on_its_content() {
-        let first = application_files(&archive(&[("application.json", b"{}")]))
+    fn a_file_reports_the_time_its_package_entry_carries() {
+        let files = application_files(&archive(&[("application.json", b"{}")]))
             .expect("a manifest-only package maps");
-        let second = application_files(&archive(&[("application.json", b"{}")]))
-            .expect("a manifest-only package maps");
-        assert_eq!(
-            first.files()[0].modified_ns,
-            second.files()[0].modified_ns,
-            "rebuilding identical content must not change the template's identity"
-        );
-    }
-
-    #[test]
-    fn a_files_time_is_a_whole_second_in_a_range_that_has_passed() {
-        let range = STAMP_ORIGIN_UNIX_SECS..STAMP_ORIGIN_UNIX_SECS + STAMP_SPAN_SECS;
-        let times: Vec<u64> = (0u8..16)
-            .map(|content| served_file("/asset".into(), vec![content]).modified_ns)
-            .collect();
-        for time in &times {
-            assert_eq!(time % 1_000_000_000, 0, "{time} ns");
-            assert!(range.contains(&(time / 1_000_000_000)), "{time} ns");
-        }
-        let distinct: std::collections::BTreeSet<_> = times.iter().collect();
-        assert_eq!(
-            distinct.len(),
-            times.len(),
-            "a file whose content changes must not keep its time"
-        );
+        assert_eq!(files.files()[0].modified_ns, MODIFIED_SECS * 1_000_000_000);
     }
 }

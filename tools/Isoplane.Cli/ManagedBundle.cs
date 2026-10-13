@@ -108,7 +108,15 @@ internal static class ManagedBundle
             await using (var tar = new TarWriter(file, leaveOpen: true))
             {
                 using var content = new MemoryStream(manifest, writable: false);
-                await tar.WriteEntryAsync(new PaxTarEntry(TarEntryType.RegularFile, "application.json") { DataStream = content }, cancellation);
+                // An application sees each entry's time as that file's own, and the platform starts
+                // a package with the same files and times from the template it already prepared.
+                // The manifest is read out of the entry assembly, so it is as old as that assembly:
+                // dated with the time of writing, every run would look like a new application.
+                await tar.WriteEntryAsync(new PaxTarEntry(TarEntryType.RegularFile, "application.json")
+                {
+                    DataStream = content,
+                    ModificationTime = File.GetLastWriteTimeUtc(assemblies[entry!].Origin)
+                }, cancellation);
                 await tar.WriteEntryAsync(runtime, "runtime.json", cancellation);
                 foreach (var assembly in assemblies.Values.OrderBy(value => value.Identity.Key, StringComparer.Ordinal))
                 {
