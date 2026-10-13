@@ -9,8 +9,9 @@ synchronously, starts a thread or a timer, writes a file, or loads a native
 library.
 
 This page lists the incompatibilities we know of, by package. Each entry says
-what fails, what you can do about it today, how much of your code that touches,
-and what a fix would take. [Packages that work](#works) and
+what fails, what you can do about it today, how much of your code has to
+change, and whether the incompatibility can be fixed and, if it can, what
+that requires. [Packages that work](#works) and
 [packages not checked yet](#not-checked) are at the end.
 
 Everything here was run in the sandbox with SDK 0.1.0-preview.4, unless its
@@ -28,7 +29,8 @@ with.
 | Moderate | Some restructuring, or a few lines of your own. |
 | Large | A different library, or a different approach. |
 
-**Outlook** is what a fix takes. It describes what is possible, not a schedule.
+**Outlook** is whether the incompatibility can be fixed, and what that
+requires. It describes what is possible, not a schedule.
 
 | Outlook | Meaning |
 | --- | --- |
@@ -39,7 +41,7 @@ with.
 | Unsupported | Requires a connection or execution lifetime the host does not provide. |
 | Native code | Depends on a native library that has no managed replacement. It cannot run in the sandbox. |
 | By design | Conflicts with how the sandbox works, such as a call that has to block until I/O finishes. This will not change. |
-| Not yet known | We have not established what a fix takes. |
+| Not yet known | We do not yet know whether it can be fixed, or how. |
 
 ## At a glance {#summary}
 
