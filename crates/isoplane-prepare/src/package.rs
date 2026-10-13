@@ -246,16 +246,24 @@ fn served_path(path: &str) -> Result<String, PackageError> {
     Ok(served)
 }
 
+/// The earliest time a packaged file is stamped with: 2000-01-01T00:00:00Z.
+const STAMP_ORIGIN_UNIX_SECS: u64 = 946_684_800;
+/// The range the stamps fall in: twenty years of 365 days from the origin.
+const STAMP_SPAN_SECS: u64 = 20 * 365 * 86_400;
+
 /// Stamps a file with a time derived from its content, so its metadata, and
 /// with it the template's identity, depends only on what the package holds.
+/// The time falls in a fixed range that has passed, because an application
+/// serves it as `Last-Modified`, which must not be later than the response.
 fn served_file(path: String, bytes: Vec<u8>) -> PlatformFile {
     let digest = blake3::hash(&bytes);
     let mut stamp = [0; 8];
     stamp.copy_from_slice(&digest.as_bytes()[..8]);
+    let offset_secs = u64::from_le_bytes(stamp) % STAMP_SPAN_SECS;
     PlatformFile {
         path,
         bytes: bytes.into(),
-        modified_ns: u64::from_le_bytes(stamp),
+        modified_ns: (STAMP_ORIGIN_UNIX_SECS + offset_secs) * 1_000_000_000,
     }
 }
 
@@ -579,6 +587,24 @@ mod tests {
             first.files()[0].modified_ns,
             second.files()[0].modified_ns,
             "rebuilding identical content must not change the template's identity"
+        );
+    }
+
+    #[test]
+    fn a_files_time_is_a_whole_second_in_a_range_that_has_passed() {
+        let range = STAMP_ORIGIN_UNIX_SECS..STAMP_ORIGIN_UNIX_SECS + STAMP_SPAN_SECS;
+        let times: Vec<u64> = (0u8..16)
+            .map(|content| served_file("/asset".into(), vec![content]).modified_ns)
+            .collect();
+        for time in &times {
+            assert_eq!(time % 1_000_000_000, 0, "{time} ns");
+            assert!(range.contains(&(time / 1_000_000_000)), "{time} ns");
+        }
+        let distinct: std::collections::BTreeSet<_> = times.iter().collect();
+        assert_eq!(
+            distinct.len(),
+            times.len(),
+            "a file whose content changes must not keep its time"
         );
     }
 }
