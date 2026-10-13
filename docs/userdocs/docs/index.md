@@ -8,9 +8,9 @@ and ordinary .NET commands.
 
 ## Tutorials
 
-New to Isoplane? [Install the tools](install.md), then follow
-[Your first application](create-an-application.md) to create a small API, run it,
-and change its response.
+New to Isoplane? The [Quickstart](quickstart.md) installs the tools and gets an
+application running in four commands. [Your first application](create-an-application.md)
+then takes it more slowly: create a small API, run it, and change its response.
 
 ## How-to guides
 
