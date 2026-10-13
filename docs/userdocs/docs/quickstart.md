@@ -71,10 +71,10 @@ Ctrl+C in the terminal to stop the application.
 Two tutorials go further. Each starts from a larger template and has you add a
 feature to it:
 
-- [Build a small API with ASP.NET Core and EF Core](build-an-api.md), with a
-  PostgreSQL database.
 - [Build a small lightweight web service](build-a-web-service.md), without
   ASP.NET.
+- [Build a small API with ASP.NET Core and EF Core](build-an-api.md), with a
+  PostgreSQL database.
 
 For a particular task, such as rebuilding on every save, debugging, local
 settings or testing, see the how-to guides on the

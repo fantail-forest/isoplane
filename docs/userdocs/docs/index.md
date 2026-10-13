@@ -11,11 +11,11 @@ and ordinary .NET commands.
 New to Isoplane? The [Quickstart](quickstart.md) installs the tools and gets an
 application running in four commands. Then build something real:
 
+- [Build a small lightweight web service](build-a-web-service.md): a service
+  with no web framework, to which you add a route and a test.
 - [Build a small API with ASP.NET Core and EF Core](build-an-api.md): a todo
   API on PostgreSQL, to which you add a field, a migration, an endpoint and a
   test.
-- [Build a small lightweight web service](build-a-web-service.md): a service
-  with no web framework, to which you add a route and a test.
 
 ## How-to guides
 
