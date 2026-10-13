@@ -2,10 +2,10 @@
 title: How .NET differs on Isoplane
 ---
 
-An Isoplane application is ordinary .NET code, but the runtime it runs on is not
-the one a server process gets, and some things .NET normally lets you do are
-missing or behave differently. This page lists all of them. Where another page
-covers one in more depth, the entry links to it.
+An Isoplane application is ordinary .NET code, but it runs inside a sandbox
+instead of as a process on a server. Some things .NET normally lets you do are
+missing there, and others behave differently. This page lists all of them. Where
+another page covers one in more depth, the entry links to it.
 
 The limits Isoplane places on memory and running time are a separate subject:
 see [execution limits](execution-limits.md).
