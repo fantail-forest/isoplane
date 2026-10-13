@@ -68,10 +68,9 @@ Ctrl+C in the terminal to stop the application.
 
 ## Next steps
 
-The tutorials cover the same ground more slowly and go further:
-
-- [Your first application](create-an-application.md) walks through this project,
-  changes its response, and introduces the larger templates.
+The [Your first application](create-an-application.md) tutorial covers the same
+ground more slowly and goes further: it walks through this project, changes its
+response, and introduces the larger templates.
 
 For a particular task, such as rebuilding on every save, debugging, local
 settings or testing, see the how-to guides on the
