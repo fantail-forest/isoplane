@@ -167,9 +167,32 @@ APIs, which covers `HttpClient`, TLS and database drivers.
 - **The process is 32-bit.** `Environment.Is64BitProcess` is `false`.
 - **Local time is UTC**, and the default culture is the invariant culture. Named
   cultures and time zones are available when you ask for them.
-- **The clock moves only when the application waits.** Time does not advance
-  during a stretch of pure computation, so a `Stopwatch` around code that never
-  awaits can report no elapsed time.
+
+## Time
+
+The clock an application sees is deliberately coarse. A precise timer is what
+timing attacks between applications on shared hardware depend on, so Isoplane
+does not provide one.
+
+- **Time stands still while code runs.** The clock is set when a request starts
+  and each time the application resumes after waiting. Between those points
+  every reading returns the same value, from `DateTime.UtcNow`, `Stopwatch` and
+  `Environment.TickCount64` alike.
+- **Resolution is one millisecond.** `Stopwatch.IsHighResolution` still reports
+  `true`, and `Stopwatch.Frequency` still reports nanoseconds.
+
+What follows from that:
+
+- `Stopwatch` cannot time a piece of computation, and a benchmark run inside
+  the application measures nothing. Across an `await` it measures the wait, to
+  the millisecond.
+- Timestamps the application takes without waiting in between are identical, so
+  log lines it stamps itself can all show the same time.
+- A loop that computes and checks the time for its own deadline never sees the
+  deadline arrive.
+- A timeout only fires while the application is waiting. `Task.Delay`,
+  `CancellationTokenSource.CancelAfter` and `Timer` callbacks are delivered when
+  it next waits, not in the middle of a computation.
 
 ## How code runs
 
