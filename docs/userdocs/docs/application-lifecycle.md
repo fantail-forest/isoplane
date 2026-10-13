@@ -18,6 +18,8 @@ Asynchronous network APIs allow an instance to wait without retaining a live
 execution stack. Waiting synchronously for network activity is not supported.
 Reading or setting a supported socket configuration value is a different
 operation from waiting for network traffic.
+[Runtime limitations](runtime-limitations.md) lists the calls this rules out and
+what to use instead.
 
 ## Pools belong to instances
 
