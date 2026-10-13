@@ -70,8 +70,18 @@ public class RequestHead
     /// its running time.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Pass it to the asynchronous calls the handler makes, so that work nobody is waiting for stops.
-    /// <see cref="Ctx.OccupancyBudgetMs"/> describes the running time a request is allowed.
+    /// </para>
+    /// <para>
+    /// Running time is the time a request spends executing. Time spent waiting for something the
+    /// handler awaits, such as a database or another service, does not count. Once a request has used
+    /// its allowance and the token is cancelled, it has a short further period in which to finish;
+    /// after that Isoplane stops the instance. A local session allows the most the platform offers.
+    /// To see how the application behaves with less, set <c>occupancyMsPerHttpDispatch</c> as
+    /// <see href="https://isoplane.dev/docs/local-settings#try-the-application-under-tighter-limits">Try the application under tighter limits</see>
+    /// describes.
+    /// </para>
     /// </remarks>
     public CancellationToken Aborted { get; }
 
@@ -120,8 +130,8 @@ public sealed class StreamingRequest : RequestHead
     /// </para>
     /// <para>
     /// A cancellation token passed to a read is checked before the read begins; a read already in
-    /// progress finishes first. A read throws <see cref="BindingException"/> when the body cannot be
-    /// delivered.
+    /// progress finishes first. A read throws <c>IOException</c> when the body cannot be delivered,
+    /// for example because the request was cancelled.
     /// </para>
     /// <para>
     /// The handler need not read the whole body. Content it has not read when it returns its response

@@ -10,7 +10,7 @@ public static class RequestProbe
 {
     /// <summary>Returns 200 only when the request matches the caller's expected field summary.</summary>
     [HttpHandler]
-    public static async Task<Response> HandleAsync(Request req, Ctx ctx)
+    public static async Task<Response> HandleAsync(Request req)
     {
         await Task.Delay(1);
         var summary = new StringBuilder();

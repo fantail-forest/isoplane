@@ -11,7 +11,7 @@ public static class TimerProbe
 
     /// <summary>Exercises awaited timers and observes abandoned timer continuations.</summary>
     [HttpHandler]
-    public static async Task<Response> HandleAsync(Request request, Ctx context)
+    public static async Task<Response> HandleAsync(Request request)
     {
         _requests++;
         if (request.Path == "/abandon")

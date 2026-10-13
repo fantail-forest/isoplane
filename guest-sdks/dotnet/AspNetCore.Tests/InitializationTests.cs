@@ -116,15 +116,14 @@ public sealed class InitializationTests
         {
             var router = new RecordingRouter();
             var record = new DispatchRecord { Kind = DispatchKind.CronTick };
-            var context = new Ctx(0, 1);
-            Task<Response> dispatch = RequestDispatch.RouteAsync(router, record, context);
+            Task<Response> dispatch = RequestDispatch.RouteAsync(router, record);
             Assert.False(dispatch.IsCompleted || router.Called || Activation.IsActivated,
                 "an unfinished activation must prevent dispatch and remain inactive");
             release.SetResult();
             await dispatch;
             Assert.True(router.Called && Activation.IsActivated,
                 "dispatch must run once every activation callback has completed");
-            await RequestDispatch.RouteAsync(router, record, context);
+            await RequestDispatch.RouteAsync(router, record);
             Assert.True(activations == 1, "a later dispatch must not repeat activation");
         }
         finally
@@ -137,7 +136,7 @@ public sealed class InitializationTests
     {
         internal bool Called { get; private set; }
         public void Boot() { }
-        public Task<Response> Route(DispatchRecord record, Ctx context)
+        public Task<Response> Route(DispatchRecord record)
         {
             Called = true;
             return Task.FromResult(Response.Text("ready"));

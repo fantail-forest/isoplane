@@ -11,8 +11,8 @@ namespace Isoplane;
 /// </summary>
 internal sealed class AttributedHandlerRouter : IStreamingHttpRouter
 {
-    private readonly Func<Request, Ctx, Task<Response>>? buffered;
-    private readonly Func<StreamingRequest, Ctx, Task<Response>>? streaming;
+    private readonly Func<Request, Task<Response>>? buffered;
+    private readonly Func<StreamingRequest, Task<Response>>? streaming;
     private readonly Func<Task>? initializer;
     private readonly Func<Task>? activated;
 
@@ -20,18 +20,13 @@ internal sealed class AttributedHandlerRouter : IStreamingHttpRouter
     internal AttributedHandlerRouter(MethodInfo http, MethodInfo? initializer, MethodInfo? activated)
     {
         ParameterInfo[] parameters = http.GetParameters();
-        bool context = parameters.Length == 2;
         if (parameters.Length > 0 && parameters[0].ParameterType == typeof(StreamingRequest))
-            streaming = context ? http.CreateDelegate<Func<StreamingRequest, Ctx, Task<Response>>>()
-                : Discard(http.CreateDelegate<Func<StreamingRequest, Task<Response>>>());
+            streaming = http.CreateDelegate<Func<StreamingRequest, Task<Response>>>();
         else
-            buffered = context ? http.CreateDelegate<Func<Request, Ctx, Task<Response>>>()
-                : Discard(http.CreateDelegate<Func<Request, Task<Response>>>());
+            buffered = http.CreateDelegate<Func<Request, Task<Response>>>();
         this.initializer = initializer?.CreateDelegate<Func<Task>>();
         this.activated = activated?.CreateDelegate<Func<Task>>();
     }
-
-    private static Func<T, Ctx, Task<Response>> Discard<T>(Func<T, Task<Response>> handler) => (request, _) => handler(request);
 
     public void Boot()
     {
@@ -41,11 +36,11 @@ internal sealed class AttributedHandlerRouter : IStreamingHttpRouter
 
     public bool StreamsRequest(RequestHead request) => streaming is not null;
 
-    public Task<Response> RouteStreamingAsync(StreamingRequest request, Ctx ctx) => streaming!(request, ctx);
+    public Task<Response> RouteStreamingAsync(StreamingRequest request) => streaming!(request);
 
-    public Task<Response> Route(DispatchRecord d, Ctx ctx)
+    public Task<Response> Route(DispatchRecord d)
     {
         if (d.Kind != DispatchKind.Http || buffered is null) throw new PostcardException();
-        return buffered(Request.FromDispatch(d), ctx);
+        return buffered(Request.FromDispatch(d));
     }
 }

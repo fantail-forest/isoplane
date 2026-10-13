@@ -14,7 +14,7 @@ public static class CertificateProbe
     private static X509Certificate2? saved;
 
     [HttpHandler]
-    public static Task<Response> HandleAsync(Request request, Ctx context)
+    public static Task<Response> HandleAsync(Request request)
     {
         byte[] der = Convert.FromBase64String(CertificateDer);
         string result;

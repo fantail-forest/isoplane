@@ -73,11 +73,10 @@ internal static class ApplicationEntryDiscovery
             ?? throw new ApplicationEntryException($"'{name}' declares no application entry. Mark one static method with [HttpHandler], " +
                 "for example: [HttpHandler] public static Task<Response> HandleAsync(Request request).");
         var signature = Static(metadata, http, HttpHandler);
-        if (signature.ReturnType != ResponseTask || signature.ParameterTypes.Length is not (1 or 2)
-            || signature.ParameterTypes[0] is not ("Isoplane.Request" or "Isoplane.StreamingRequest")
-            || (signature.ParameterTypes.Length == 2 && signature.ParameterTypes[1] != "Isoplane.Ctx"))
-            throw new ApplicationEntryException($"The [HttpHandler] method '{Reference(metadata, http)}' must return Task<Response> and take a Request, " +
-                "or a StreamingRequest to read the body as it arrives, optionally followed by a Ctx.");
+        if (signature.ReturnType != ResponseTask || signature.ParameterTypes.Length != 1
+            || signature.ParameterTypes[0] is not ("Isoplane.Request" or "Isoplane.StreamingRequest"))
+            throw new ApplicationEntryException($"The [HttpHandler] method '{Reference(metadata, http)}' must return Task<Response> and take one parameter: " +
+                "a Request, or a StreamingRequest to read the body as it arrives.");
         return new(Reference(metadata, http), Lifecycle(metadata, attributed, Initializer), Lifecycle(metadata, attributed, Activated));
     }
 

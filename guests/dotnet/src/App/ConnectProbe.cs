@@ -12,7 +12,7 @@ public static class ConnectProbe
 {
     /// <summary>Connects to the test endpoint and disposes the socket after resuming.</summary>
     [HttpHandler]
-    public static async Task<Response> HandleAsync(Request request, Ctx context)
+    public static async Task<Response> HandleAsync(Request request)
     {
         string[] parts = request.Path.Split('/', StringSplitOptions.RemoveEmptyEntries);
         IPAddress address = IPAddress.Parse(parts[0]);

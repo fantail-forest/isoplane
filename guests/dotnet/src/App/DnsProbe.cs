@@ -12,7 +12,7 @@ public static class DnsProbe
 {
     /// <summary>Returns the first host-resolved address.</summary>
     [HttpHandler]
-    public static async Task<Response> HandleAsync(Request request, Ctx context)
+    public static async Task<Response> HandleAsync(Request request)
     {
         using var cancellation = new CancellationTokenSource();
         if (request.Path == "/cancel.test") cancellation.CancelAfter(100);

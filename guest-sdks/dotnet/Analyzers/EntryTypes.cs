@@ -7,7 +7,7 @@ namespace Isoplane.Analyzers;
 internal sealed class EntryTypes
 {
     private readonly INamedTypeSymbol handler, initializer, activated;
-    private readonly INamedTypeSymbol? request, streamingRequest, context, response, task, taskOf;
+    private readonly INamedTypeSymbol? request, streamingRequest, response, task, taskOf;
 
     private EntryTypes(Compilation compilation, INamedTypeSymbol handler, INamedTypeSymbol initializer, INamedTypeSymbol activated)
     {
@@ -16,7 +16,6 @@ internal sealed class EntryTypes
         this.activated = activated;
         request = compilation.GetTypeByMetadataName("Isoplane.Request");
         streamingRequest = compilation.GetTypeByMetadataName("Isoplane.StreamingRequest");
-        context = compilation.GetTypeByMetadataName("Isoplane.Ctx");
         response = compilation.GetTypeByMetadataName("Isoplane.Response");
         task = compilation.GetTypeByMetadataName("System.Threading.Tasks.Task");
         taskOf = compilation.GetTypeByMetadataName("System.Threading.Tasks.Task`1");
@@ -40,13 +39,10 @@ internal sealed class EntryTypes
     internal bool IsResponseTask(ITypeSymbol type) =>
         type is INamedTypeSymbol { TypeArguments.Length: 1 } named && Same(named.OriginalDefinition, taskOf) && Same(named.TypeArguments[0], response);
 
-    /// <summary>A <c>Request</c> or <c>StreamingRequest</c>, optionally followed by a <c>Ctx</c>, each passed by value.</summary>
-    internal bool AreHandlerParameters(ImmutableArray<IParameterSymbol> parameters)
-    {
-        if (parameters.Length is not (1 or 2) || parameters[0].RefKind != RefKind.None) return false;
-        if (!Same(parameters[0].Type, request) && !Same(parameters[0].Type, streamingRequest)) return false;
-        return parameters.Length == 1 || parameters[1].RefKind == RefKind.None && Same(parameters[1].Type, context);
-    }
+    /// <summary>One <c>Request</c> or <c>StreamingRequest</c>, passed by value.</summary>
+    internal bool AreHandlerParameters(ImmutableArray<IParameterSymbol> parameters) =>
+        parameters.Length == 1 && parameters[0].RefKind == RefKind.None
+        && (Same(parameters[0].Type, request) || Same(parameters[0].Type, streamingRequest));
 
     /// <summary><c>Task&lt;Response&gt;</c>, or null when the compilation lacks either type.</summary>
     internal INamedTypeSymbol? ResponseTask => taskOf is null || response is null ? null : taskOf.Construct(response);

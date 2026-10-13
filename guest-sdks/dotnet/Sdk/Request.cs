@@ -43,7 +43,7 @@ public sealed class Request : RequestHead
     public ReadOnlyMemory<byte> Body { get; }
 
     /// <summary>Creates an HTTP request from a decoded host dispatch.</summary>
-    public static Request FromDispatch(DispatchRecord record)
+    internal static Request FromDispatch(DispatchRecord record)
     {
         if (record.Kind != DispatchKind.Http) throw new PostcardException();
         return new Request(record);

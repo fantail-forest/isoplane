@@ -41,7 +41,7 @@ public static class Handler
 
     /// <summary>Answers the JSON <see cref="Report"/> for the request path.</summary>
     [HttpHandler]
-    public static async Task<Response> HandleAsync(Request req, Ctx ctx)
+    public static async Task<Response> HandleAsync(Request req)
     {
         await Task.Delay(TimeSpan.FromMilliseconds(50)).ConfigureAwait(false);
         return Answer(req.Path);

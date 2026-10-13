@@ -12,7 +12,6 @@ public sealed class EntryMethodTests
     public static TheoryData<string, string[]> Cases => new()
     {
         { Handler, [] },
-        { "[HttpHandler] public static Task<Response> HandleAsync(Request request, Ctx ctx) => Task.FromResult(Response.Text(\"ok\"));", [] },
         { "[HttpHandler] public static async Task<Response> HandleAsync(StreamingRequest request) { await Task.Yield(); return Response.Text(\"ok\"); }", [] },
         { "[HttpHandler] internal static Task<Response> HandleAsync(Request request) => Task.FromResult(Response.Text(\"ok\"));", [] },
         { Handler + "\n[Initializer] public static Task InitializeAsync() => Task.CompletedTask;\n[Activated] private static Task ActivatedAsync() => Task.CompletedTask;", [] },
@@ -22,7 +21,6 @@ public sealed class EntryMethodTests
         { "[HttpHandler] public static Task HandleAsync(Request request) => Task.CompletedTask;", ["ISOPLANE1011"] },
         { "[HttpHandler] public static Task<Response> HandleAsync() => Task.FromResult(Response.Text(\"ok\"));", ["ISOPLANE1012"] },
         { "[HttpHandler] public static Task<Response> HandleAsync(Request request, string extra) => Task.FromResult(Response.Text(\"ok\"));", ["ISOPLANE1012"] },
-        { "[HttpHandler] public static Task<Response> HandleAsync(Ctx ctx, Request request) => Task.FromResult(Response.Text(\"ok\"));", ["ISOPLANE1012"] },
         { "[HttpHandler] public static Task<Response> HandleAsync(ref Request request) => Task.FromResult(Response.Text(\"ok\"));", ["ISOPLANE1012"] },
         { "[HttpHandler] public static Task<Response> HandleAsync<T>(Request request) => Task.FromResult(Response.Text(\"ok\"));", ["ISOPLANE1015"] },
         { Handler + "\npublic static Task<Response> HandleAsync(StreamingRequest request) => Task.FromResult(Response.Text(\"ok\"));", ["ISOPLANE1016"] },

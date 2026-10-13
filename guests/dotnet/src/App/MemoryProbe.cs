@@ -18,7 +18,7 @@ internal static class MemoryProbe
     }
 
     [HttpHandler]
-    public static Task<Response> HandleAsync(Request request, Ctx context)
+    public static Task<Response> HandleAsync(Request request)
     {
         GC.Collect();
         long currentMemoryBytes = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes;

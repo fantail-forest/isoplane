@@ -18,7 +18,6 @@ public sealed class ApplicationEntryDiscoveryTests : IDisposable
         public sealed class Request;
         public sealed class StreamingRequest;
         public sealed class Response;
-        public sealed class Ctx;
         """);
 
     [Theory]
@@ -49,7 +48,7 @@ public sealed class ApplicationEntryDiscoveryTests : IDisposable
             namespace App;
             static class Api
             {
-                [HttpHandler] static Task<Response> HandleAsync(Request request, Ctx context) => throw null!;
+                [HttpHandler] static Task<Response> HandleAsync(Request request) => throw null!;
                 static class Lifecycle
                 {
                     [Initializer] internal static Task InitializeAsync() => Task.CompletedTask;
@@ -65,8 +64,7 @@ public sealed class ApplicationEntryDiscoveryTests : IDisposable
     [Theory]
     [InlineData("Task<Response> HandleAsync(Request request)")]
     [InlineData("Task<Response> HandleAsync(StreamingRequest request)")]
-    [InlineData("Task<Response> HandleAsync(StreamingRequest request, Ctx context)")]
-    public void a_handler_may_omit_the_context_or_stream_its_request(string signature)
+    public void a_handler_may_buffer_or_stream_its_request(string signature)
     {
         var entry = Assert.IsType<HandlerApplication>(ApplicationEntryDiscovery.Discover(Library($"[HttpHandler] public static {signature} => throw null!;")));
         Assert.Equal(new MethodReference("Api", "HandleAsync"), entry.Http);
@@ -81,7 +79,7 @@ public sealed class ApplicationEntryDiscoveryTests : IDisposable
     [InlineData("[HttpHandler] public static Task<Response> HandleAsync<T>(Request request) => throw null!;", "must be a static, non-generic method")]
     [InlineData("[HttpHandler] public static Response HandleAsync(Request request) => throw null!;", "must return Task<Response>")]
     [InlineData("[HttpHandler] public static Task<Response> HandleAsync(string path) => throw null!;", "must return Task<Response>")]
-    [InlineData("[HttpHandler] public static Task<Response> HandleAsync(Request request, Ctx context, int more) => throw null!;", "must return Task<Response>")]
+    [InlineData("[HttpHandler] public static Task<Response> HandleAsync(Request request, int more) => throw null!;", "must return Task<Response>")]
     [InlineData("[HttpHandler] public static Task<Response> HandleAsync(Request request) => throw null!; static Task<Response> HandleAsync(Request request, int more) => throw null!;", "must not be overloaded")]
     [InlineData("[HttpHandler] public static Task<Response> HandleAsync(Request request) => throw null!; [Initializer] public static void Initialize() { }", "[Initializer] method 'Api.Initialize' must return Task")]
     [InlineData("[HttpHandler] public static Task<Response> HandleAsync(Request request) => throw null!; [Activated] public static Task Activated(int instance) => Task.CompletedTask;", "[Activated] method 'Api.Activated' must return Task")]

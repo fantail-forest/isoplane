@@ -29,10 +29,10 @@ internal sealed class EntryPointRouter : IStreamingHttpRouter
 
     public bool StreamsRequest(RequestHead request) => true;
 
-    public async Task<Response> RouteStreamingAsync(StreamingRequest request, Ctx ctx) =>
+    public async Task<Response> RouteStreamingAsync(StreamingRequest request) =>
         await (await Started()).SendAsync(request, request.Body, request.CanHaveBody);
 
-    public async Task<Response> Route(DispatchRecord d, Ctx ctx) =>
+    public async Task<Response> Route(DispatchRecord d) =>
         await (await Started()).SendAsync(Request.FromDispatch(d));
 
     private Task<IsoplaneServer> Started() => started ??= StartedAsync();

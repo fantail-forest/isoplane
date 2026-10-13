@@ -18,7 +18,7 @@ public static class RandomnessProbe
     }
 
     [HttpHandler]
-    public static Task<Response> HandleAsync(Request request, Ctx context)
+    public static Task<Response> HandleAsync(Request request)
     {
         if (request.Path == "/instance")
         {

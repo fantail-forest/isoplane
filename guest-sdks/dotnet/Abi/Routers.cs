@@ -16,7 +16,7 @@ public interface IIsoplaneRouter
     /// <see cref="PostcardException"/>, which the entrypoint turns into
     /// <see cref="TrapCode.Protocol"/>.
     /// </summary>
-    Task<Response> Route(DispatchRecord d, Ctx ctx);
+    Task<Response> Route(DispatchRecord d);
 }
 
 /// <summary>Explicitly selects HTTP routes that consume uploads without SDK buffering.</summary>
@@ -26,5 +26,5 @@ public interface IStreamingHttpRouter : IIsoplaneRouter
     bool StreamsRequest(RequestHead request);
 
     /// <summary>Handles a selected HTTP request while its body can still arrive.</summary>
-    Task<Response> RouteStreamingAsync(StreamingRequest request, Ctx ctx);
+    Task<Response> RouteStreamingAsync(StreamingRequest request);
 }

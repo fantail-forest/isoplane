@@ -9,7 +9,7 @@ namespace Isoplane.App;
 public static class StreamingProbe
 {
     [HttpHandler]
-    public static async Task<Response> HandleAsync(Request request, Ctx context)
+    public static async Task<Response> HandleAsync(Request request)
     {
         if (request.Path == "/pending")
         {

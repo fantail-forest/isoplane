@@ -47,7 +47,7 @@ public sealed class ResponseStream
     /// <see cref="Complete"/> has been called, or the previous write has not finished.
     /// </exception>
     /// <exception cref="OperationCanceledException">The token was cancelled.</exception>
-    /// <exception cref="BindingException">The piece could not be sent.</exception>
+    /// <exception cref="System.IO.IOException">The piece could not be sent, for example because the request was cancelled.</exception>
     public async ValueTask WriteAsync(ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken = default)
     {
         if (complete) throw new InvalidOperationException("The streaming response is complete.");

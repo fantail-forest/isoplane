@@ -11,7 +11,7 @@ public static class NetworkRefusalProbe
 {
     /// <summary>Returns the actual SocketError raised by an attempted listener.</summary>
     [HttpHandler]
-    public static Task<Response> HandleAsync(Request request, Ctx context)
+    public static Task<Response> HandleAsync(Request request)
     {
         try
         {

@@ -65,12 +65,12 @@ public sealed class HostingTests
         router.Boot();
         try
         {
-            var first = router.Route(Dispatch(), null!);
+            var first = router.Route(Dispatch());
             await startupEntered.Task.WaitAsync(TimeSpan.FromSeconds(30));
             Assert.True(events.Count == 0 && !first.IsCompleted, "a request must wait for hosted services to start");
             startupRelease.SetResult();
             Assert.Equal("ready", System.Text.Encoding.UTF8.GetString((await first).Body));
-            await router.Route(Dispatch(), null!);
+            await router.Route(Dispatch());
             Assert.Equal(["host", "request", "request"], events);
         }
         finally
@@ -85,7 +85,7 @@ public sealed class HostingTests
     {
         var router = new EntryPointRouter(() => Task.CompletedTask, "Application");
         router.Boot();
-        var error = await Record.ExceptionAsync(() => router.Route(Dispatch(), null!));
+        var error = await Record.ExceptionAsync(() => router.Route(Dispatch()));
         Assert.True(error is InvalidOperationException && error.Message.Contains("RunAsync", StringComparison.Ordinal),
             "an entry point that starts no application must be refused with the missing call named: " + error);
     }
@@ -106,8 +106,8 @@ public sealed class HostingTests
             await application.RunAsync();
         }, "Application");
         router.Boot();
-        var failure = await Record.ExceptionAsync(() => router.Route(Dispatch(), null!));
-        var repeated = await Record.ExceptionAsync(() => router.Route(Dispatch(), null!));
+        var failure = await Record.ExceptionAsync(() => router.Route(Dispatch()));
+        var repeated = await Record.ExceptionAsync(() => router.Route(Dispatch()));
         Assert.True(failure is InvalidOperationException { Message: "startup failed" } && ReferenceEquals(failure, repeated) && starts == 1,
             "a startup failure must reach every request without rerunning hosted services");
     }

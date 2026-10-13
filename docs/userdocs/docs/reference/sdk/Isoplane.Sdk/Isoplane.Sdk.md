@@ -11,9 +11,6 @@ mdx:
 | --- | --- |
 | class [ActivatedAttribute](./Isoplane/ActivatedAttribute.md) | Marks the method that runs in each instance before its first request, in an application written without ASP.NET. |
 | static class [Activation](./Isoplane/Activation.md) | Lets an application set up state that must differ between instances, as each instance starts. |
-| class [BindingException](./Isoplane/BindingException.md) | Thrown when Isoplane could not carry out an operation on the request being handled: reading from [`Body`](./Isoplane/StreamingRequest/Body.md), or writing with [`WriteAsync`](./Isoplane/ResponseStream/WriteAsync.md). |
-| class [Ctx](./Isoplane/Ctx.md) | Facts about the request being handled: when it started, and how much running time it is allowed. |
-| static class [DeploymentConfiguration](./Isoplane/DeploymentConfiguration.md) | Names and values fixed for one deployed version of the application, which it can read only while it starts. |
 | class [HttpHandlerAttribute](./Isoplane/HttpHandlerAttribute.md) | Marks the method that handles every HTTP request in an application written without ASP.NET. |
 | static class [Initialization](./Isoplane/Initialization.md) | Lets an application prepare captured state ahead of requests, that every instance then starts with. |
 | class [InitializerAttribute](./Isoplane/InitializerAttribute.md) | Marks the method that prepares state every instance shares, in an application written without ASP.NET. |

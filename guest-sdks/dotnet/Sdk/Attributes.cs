@@ -17,10 +17,9 @@ namespace Isoplane;
 /// <para>
 /// The method is static, returns <c>Task&lt;Response&gt;</c> and takes a <see cref="Request"/>. It can
 /// have any name. It may take a <see cref="StreamingRequest"/> in place of the <see cref="Request"/>,
-/// to read a large body as it arrives, and it may take a <see cref="Ctx"/> as a second parameter, to
-/// learn when the request started and how much running time it has. An application has exactly one
-/// such method. The build reports an error on a method that breaks these rules, on a second marked
-/// method, and on a project that has none.
+/// to read a large body as it arrives. An application has exactly one such method. The build reports
+/// an error on a method that breaks these rules, on a second marked method, and on a project that
+/// has none.
 /// </para>
 /// <para>
 /// Isoplane runs as many copies of the application as its traffic needs. Each copy is an instance,

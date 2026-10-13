@@ -13,7 +13,7 @@ public static class HashingProbe
     private static SHA256? savedSha;
 
     [HttpHandler]
-    public static Task<Response> HandleAsync(Request request, Ctx context)
+    public static Task<Response> HandleAsync(Request request)
     {
         byte[] data = request.Body.ToArray();
         byte[] key = Convert.FromHexString(request.Query[0].Value);

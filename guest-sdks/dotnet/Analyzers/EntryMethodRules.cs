@@ -19,7 +19,7 @@ internal static class EntryMethodRules
         "The [HttpHandler] method '{0}' returns '{1}'; it must return Task<Response>");
 
     internal static readonly DiagnosticDescriptor HandlerParameters = Rule("ISOPLANE1012", "An [HttpHandler] method takes a request",
-        "The [HttpHandler] method '{0}' must take a Request, or a StreamingRequest to read the body as it arrives, optionally followed by a Ctx");
+        "The [HttpHandler] method '{0}' must take one parameter: a Request, or a StreamingRequest to read the body as it arrives");
 
     internal static readonly DiagnosticDescriptor LifecycleReturn = Rule("ISOPLANE1013", "A lifecycle method must return Task",
         "The [{1}] method '{0}' returns '{2}'; it must return Task");

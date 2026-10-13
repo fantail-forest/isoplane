@@ -27,7 +27,7 @@ internal static class TrustProbe
     }
 
     [HttpHandler]
-    public static Task<Response> HandleAsync(Request request, Ctx context)
+    public static Task<Response> HandleAsync(Request request)
     {
         string text = request.Path switch
         {

@@ -23,7 +23,7 @@ public static class Handler
 
     /// <summary>Answers <c>alpha:</c> and the request path.</summary>
     [HttpHandler]
-    public static async Task<Response> HandleAsync(Request req, Ctx ctx)
+    public static async Task<Response> HandleAsync(Request req)
     {
         if (req.Path == "/load-library")
         {

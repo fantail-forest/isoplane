@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Threading.Tasks;
 using Isoplane.Runtime;
 
@@ -40,7 +41,7 @@ internal sealed class ResponseHandle
                 future = H.RespWrite(handle, pointer, bytes.Length);
         }
         var result = await FutureTable.Register(future).ConfigureAwait(true);
-        if (!result.IsOk) throw new BindingException(result.Error);
+        if (!result.IsOk) throw new IOException($"The response body could not be sent: the host reported {result.Error}.");
     }
 
     internal int Finish()

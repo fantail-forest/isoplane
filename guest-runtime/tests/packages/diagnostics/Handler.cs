@@ -14,7 +14,7 @@ public static class Handler
 {
     /// <summary>Runs the report the request path names.</summary>
     [HttpHandler]
-    public static Task<Response> HandleAsync(Request req, Ctx ctx)
+    public static Task<Response> HandleAsync(Request req)
     {
         switch (req.Path)
         {

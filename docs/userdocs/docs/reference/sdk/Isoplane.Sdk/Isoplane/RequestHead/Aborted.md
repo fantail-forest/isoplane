@@ -13,7 +13,9 @@ public CancellationToken Aborted { get; }
 
 ## Remarks
 
-Pass it to the asynchronous calls the handler makes, so that work nobody is waiting for stops. [`OccupancyBudgetMs`](../Ctx/OccupancyBudgetMs.md) describes the running time a request is allowed.
+Pass it to the asynchronous calls the handler makes, so that work nobody is waiting for stops.
+
+Running time is the time a request spends executing. Time spent waiting for something the handler awaits, such as a database or another service, does not count. Once a request has used its allowance and the token is cancelled, it has a short further period in which to finish; after that Isoplane stops the instance. A local session allows the most the platform offers. To see how the application behaves with less, set `occupancyMsPerHttpDispatch` as [Try the application under tighter limits](../../../../../local-settings.md#try-the-application-under-tighter-limits) describes.
 
 ## See Also
 

@@ -77,12 +77,9 @@ public static class Handler
     /// Receives every HTTP request. To add a route, add a line to the switch.
     /// </summary>
     /// <remarks>
-    /// The method may take other parameters:
-    /// <list type="bullet">
-    /// <item><c>HandleAsync(StreamingRequest request)</c> reads the body from <c>request.Body</c>, a
-    /// stream, as it arrives. Use it for uploads too large to hold in memory.</item>
-    /// <item><c>HandleAsync(Request request, Ctx ctx)</c> also receives the request's start time and its time budget.</item>
-    /// </list>
+    /// The method may take a <c>StreamingRequest</c> in place of the <c>Request</c>. It then reads the
+    /// body from <c>request.Body</c>, a stream, as it arrives. Use it for uploads too large to hold in
+    /// memory.
     /// </remarks>
     [HttpHandler]
     public static Task<Response> HandleAsync(Request request) => (request.Method, request.Path) switch

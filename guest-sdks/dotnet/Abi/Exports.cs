@@ -21,7 +21,6 @@ public static unsafe class Exports<TRouter>
     private static TRouter? _router;
     private static Task<Response>? _root;
     private static Task? _initialization;
-    private static Ctx? _ctx;
 
     /// <summary>Ensures guest scheduling and application state are initialized. Captured state may already contain initialized objects.</summary>
     private static void Boot()
@@ -112,11 +111,10 @@ public static unsafe class Exports<TRouter>
 
             TraceDispatch(d);
 
-            _ctx = new Ctx((long)d.NowMs, d.OccupancyBudgetMs);
             FutureTable.Reset();
             FutureTable.BeginCancellation(d.CancelFuture);
 
-            _root = RequestDispatch.RouteAsync(_router!, d, _ctx);
+            _root = RequestDispatch.RouteAsync(_router!, d);
 
             return Settle();
         }

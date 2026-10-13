@@ -14,7 +14,7 @@ public static class Handler
 {
     /// <summary>Answers <c>before/after</c> for the transition the path names.</summary>
     [HttpHandler]
-    public static async Task<Response> HandleAsync(Request req, Ctx ctx)
+    public static async Task<Response> HandleAsync(Request req)
     {
         string before = Attempt(req.Path);
         await Task.Delay(TimeSpan.FromMilliseconds(50)).ConfigureAwait(false);

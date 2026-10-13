@@ -43,7 +43,6 @@ tasks:
       - task: dotnet:isoplane_guest_dotnet_trust
       - task: dotnet:isoplane_guest_dotnet_randomness
       - task: dotnet:isoplane_guest_dotnet_memory
-      - task: dotnet:isoplane_guest_dotnet_config
       - task: dotnet:isoplane_guest_dotnet_failing_boot
       - task: dotnet:isoplane_guest_dotnet_network_refusal
       - task: dotnet:isoplane_guest_dotnet_dns
@@ -106,13 +105,6 @@ tasks:
         vars:
           NAME: isoplane_guest_dotnet_memory
           PROBE: MemoryProbe
-
-  dotnet:isoplane_guest_dotnet_config:
-    cmds:
-      - task: probe:build
-        vars:
-          NAME: isoplane_guest_dotnet_config
-          PROBE: ConfigProbe
 
   dotnet:isoplane_guest_dotnet_failing_boot:
     cmds:

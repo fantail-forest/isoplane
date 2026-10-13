@@ -21,8 +21,8 @@ internal sealed class PackageRouter : IStreamingHttpRouter
     public bool StreamsRequest(RequestHead request) =>
         application is IStreamingHttpRouter streaming && streaming.StreamsRequest(request);
 
-    public Task<Response> RouteStreamingAsync(StreamingRequest request, Ctx ctx) =>
-        ((IStreamingHttpRouter)application!).RouteStreamingAsync(request, ctx);
+    public Task<Response> RouteStreamingAsync(StreamingRequest request) =>
+        ((IStreamingHttpRouter)application!).RouteStreamingAsync(request);
 
-    public Task<Response> Route(DispatchRecord d, Ctx ctx) => application!.Route(d, ctx);
+    public Task<Response> Route(DispatchRecord d) => application!.Route(d);
 }

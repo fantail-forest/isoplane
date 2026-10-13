@@ -16,7 +16,7 @@ public static class CleanupProbe
 
     /// <summary>Arms one abandoned operation, or observes the same guest on a later request.</summary>
     [HttpHandler]
-    public static async Task<Response> HandleAsync(Request request, Ctx context)
+    public static async Task<Response> HandleAsync(Request request)
     {
         _requests++;
         if (request.Path == "/idle-socket")

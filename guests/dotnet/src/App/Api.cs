@@ -18,7 +18,7 @@ namespace Isoplane.App;
 public static class Api
 {
     [HttpHandler]
-    public static async Task<Response> HandleAsync(Request req, Ctx ctx)
+    public static async Task<Response> HandleAsync(Request req)
     {
         await Task.Delay(1);
         return Response.Text(req.Path);

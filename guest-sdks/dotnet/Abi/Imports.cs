@@ -18,10 +18,6 @@ internal static unsafe partial class H
     internal static extern void EntropyFill(byte* ptr, int len);
 
     [WasmImportLinkage]
-    [DllImport("isoplane", EntryPoint = "init_config_get")]
-    internal static extern int InitConfigGet(byte* ptr, int len);
-
-    [WasmImportLinkage]
     [DllImport("isoplane", EntryPoint = "runtime_config_get")]
     internal static extern int RuntimeConfigGet(byte* ptr, int len);
 

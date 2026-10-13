@@ -23,7 +23,7 @@ public ValueTask WriteAsync(ReadOnlyMemory<byte> bytes,
 | --- | --- |
 | InvalidOperationException | [`Complete`](./Complete.md) has been called, or the previous write has not finished. |
 | OperationCanceledException | The token was cancelled. |
-| [BindingException](../BindingException.md) | The piece could not be sent. |
+| IOException | The piece could not be sent, for example because the request was cancelled. |
 
 ## Remarks
 

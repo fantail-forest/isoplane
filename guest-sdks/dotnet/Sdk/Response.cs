@@ -6,26 +6,6 @@ using Isoplane.Runtime;
 
 namespace Isoplane;
 
-/// <summary>
-/// Thrown when Isoplane could not carry out an operation on the request being handled: reading from
-/// <see cref="StreamingRequest.Body"/>, or writing with <see cref="ResponseStream.WriteAsync"/>.
-/// </summary>
-/// <remarks>
-/// The request cannot continue normally once this is thrown, for example because it was cancelled.
-/// Let the exception end the handler, or catch it to release what the handler holds and then stop;
-/// retrying the same read or write does not help.
-/// </remarks>
-public sealed class BindingException : Exception
-{
-    internal BindingException(FutureError e) => IsoplaneError = (int)e;
-    /// <summary>A number identifying why the operation failed.</summary>
-    /// <remarks>
-    /// The SDK defines no named constants for these numbers. Include the value when you log or report
-    /// the failure.
-    /// </remarks>
-    public int IsoplaneError { get; }
-}
-
 /// <summary>The HTTP response an <see cref="HttpHandlerAttribute"/> method returns.</summary>
 /// <remarks>
 /// <para>
@@ -180,59 +160,3 @@ public sealed class Response
     public static Response Bytes(byte[] body, string? contentType, ushort status = 200) =>
         new(status, body, contentType);
 }
-
-/// <summary>
-/// Facts about the request being handled: when it started, and how much running time it is allowed.
-/// </summary>
-/// <remarks>
-/// Isoplane passes one to an <see cref="HttpHandlerAttribute"/> method that declares it as a second
-/// parameter. A handler that needs neither value can leave the parameter out.
-/// </remarks>
-/// <example>
-/// <code>
-/// [HttpHandler]
-/// public static Task&lt;Response&gt; HandleAsync(Request request, Ctx ctx)
-/// {
-///     var started = DateTimeOffset.FromUnixTimeMilliseconds(ctx.NowMs);
-///     return Task.FromResult(Response.Text($"Started at {started:O}"));
-/// }
-/// </code>
-/// </example>
-public sealed class Ctx
-{
-    /// <summary>
-    /// The time the request started, in milliseconds since the Unix epoch (1970-01-01T00:00:00Z).
-    /// </summary>
-    /// <remarks>
-    /// The value does not advance while the handler runs. Convert it with
-    /// <c>DateTimeOffset.FromUnixTimeMilliseconds</c>.
-    /// </remarks>
-    public long NowMs { get; }
-    /// <summary>The running time this request is allowed, in milliseconds.</summary>
-    /// <remarks>
-    /// <para>
-    /// Running time is the time the request spends executing. Time spent waiting for something the
-    /// handler awaits, such as a database or another service, does not count. The value is the
-    /// request's whole allowance, not what remains of it.
-    /// </para>
-    /// <para>
-    /// When a request has used its allowance, <see cref="RequestHead.Aborted"/> is cancelled. The
-    /// request then has a short further period in which to finish; after that Isoplane stops the
-    /// instance.
-    /// </para>
-    /// <para>
-    /// A local session allows the most the platform offers. To see how the application behaves with
-    /// less, set <c>occupancyMsPerHttpDispatch</c> as
-    /// <see href="https://isoplane.dev/docs/local-settings#try-the-application-under-tighter-limits">Try the application under tighter limits</see>
-    /// describes.
-    /// </para>
-    /// </remarks>
-    public uint OccupancyBudgetMs { get; }
-
-    internal Ctx(long nowMs, uint occupancyBudgetMs)
-    {
-        NowMs = nowMs;
-        OccupancyBudgetMs = occupancyBudgetMs;
-    }
-}
-

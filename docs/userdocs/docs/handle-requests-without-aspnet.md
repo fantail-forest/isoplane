@@ -38,8 +38,8 @@ public static class Handler
 ```
 
 An application has exactly one. The method returns `Task<Response>` and takes a
-`Request`. It may take a second `Ctx` parameter, and it may take a
-`StreamingRequest` in place of the `Request` to read a large body as it arrives.
+`Request`. It may take a `StreamingRequest` in place of the `Request` to read a
+large body as it arrives.
 
 The SDK checks these requirements as you type. A method that misses one is
 underlined in the editor and fails the build with an error on that method that

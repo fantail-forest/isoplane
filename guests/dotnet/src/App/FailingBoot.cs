@@ -13,6 +13,6 @@ public static class FailingBoot
 
     /// <summary>Cannot be reached when initialization failed.</summary>
     [HttpHandler]
-    public static Task<Response> HandleAsync(Request request, Ctx context) =>
+    public static Task<Response> HandleAsync(Request request) =>
         throw new InvalidOperationException("a failed application must never dispatch");
 }

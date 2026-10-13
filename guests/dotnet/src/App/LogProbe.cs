@@ -10,11 +10,11 @@ public static class LogProbe
 {
     /// <summary>Completes after the host resumes the logging request.</summary>
     [HttpHandler]
-    public static async Task<Response> HandleAsync(Request req, Ctx ctx)
+    public static async Task<Response> HandleAsync(Request req)
     {
         if (req.Path == "/after-response")
         {
-            _ = LogAfterResponse(ctx);
+            _ = LogAfterResponse();
             return Response.Text("returned");
         }
         using var provider = new IsoplaneLoggerProvider();
@@ -27,7 +27,7 @@ public static class LogProbe
         return Response.Text("logged");
     }
 
-    private static async Task LogAfterResponse(Ctx ctx)
+    private static async Task LogAfterResponse()
     {
         await Task.Delay(1);
         Console.WriteLine("forbidden-after-response");

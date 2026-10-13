@@ -14,7 +14,7 @@ public static class StreamProbe
 {
     /// <summary>Reads the endpoint's payload and writes the same bytes back.</summary>
     [HttpHandler]
-    public static async Task<Response> HandleAsync(Request request, Ctx context)
+    public static async Task<Response> HandleAsync(Request request)
     {
         string[] parts = request.Path.Split('/', StringSplitOptions.RemoveEmptyEntries);
         IPAddress address = IPAddress.Parse(parts[0]);
