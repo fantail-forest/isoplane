@@ -1,0 +1,22 @@
+/* The brand palette. The documentation site imports this file too, so a
+   change here restyles both. */
+:root {
+  color-scheme: light dark;
+  --background: light-dark(#f7f8f2, #101d18);
+  --foreground: light-dark(#183f32, #e4eddf);
+  --primary: light-dark(#245c42, #bddb8e);
+  --primary-foreground: light-dark(#fff, #142219);
+  --border: light-dark(#ccd5c9, #344d3e);
+  --muted-foreground: light-dark(#54685b, #adbeae);
+  --surface: light-dark(#edf1e7, #1c3025);
+  --wordmark-dot: light-dark(#639139, #a6ce7c);
+  --lime: #d1f178;
+  --diagram-app: light-dark(#487947, #a6ce7c);
+  --diagram-rule: light-dark(#9caa8c, #57734c);
+}
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+:root[data-theme='dark'] {
+  color-scheme: dark;
+}
