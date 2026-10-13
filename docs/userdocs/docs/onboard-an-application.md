@@ -107,3 +107,5 @@ connection pools, cancellation, and work after the response.
 [How .NET differs on Isoplane](dotnet-runtime-differences.md) lists everything
 else that differs from a server process, including threads, the file system and
 native libraries.
+[Library compatibility](library-compatibility.md) lists the packages and
+framework features known not to work, with what to use in their place.

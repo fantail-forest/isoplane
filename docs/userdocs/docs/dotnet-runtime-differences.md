@@ -72,6 +72,9 @@ The network behaves the same way. A synchronous socket call or name lookup that
 would have to wait fails rather than waiting, so use the asynchronous methods.
 A library's synchronous API usually blocks underneath: on an EF Core context,
 call `SaveChangesAsync` and `ToListAsync`, not `SaveChanges` and `ToList`.
+Some libraries block inside a call that looks asynchronous, or behind an
+interface with no asynchronous form:
+[Library compatibility](library-compatibility.md) lists the ones we know of.
 
 The build warns about several of these calls as
 [`ISOPLANE1003`](reference/error-codes.md#isoplane1003), and the editor offers a quick fix
