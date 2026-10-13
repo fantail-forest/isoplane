@@ -1,6 +1,6 @@
 # Determinism
 
-## Inject time; never observe it
+## Inject time rather than observing it
 
 Give a test that needs time a clock, and advance it. Wall-clock reads in a test make the assertion depend on the machine, the load, and the scheduler, and every such test either flakes or has its threshold widened until it proves nothing. The store's tests with a manual clock are the reference pattern.
 
