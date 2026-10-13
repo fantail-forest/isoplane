@@ -21,6 +21,9 @@
     <None Include="Sdk/**" Exclude="Sdk/Sdk.props" Pack="true" PackagePath="Sdk/" />
     <None Include="../Build/Isoplane.ManagedBundle.*;../Build/Isoplane.Conformance.targets;../Build/Isoplane.Run.targets" Pack="true" PackagePath="tools/Build/" />
     <None Include="buildTransitive/**" Pack="true" PackagePath="buildTransitive/" />
+    <!-- Compiled by applications that reference the packages it needs, not by this project. -->
+    <Compile Remove="source/**" />
+    <None Include="source/**" Pack="true" PackagePath="source/" />
   </ItemGroup>
   <Target Name="StampPackagedSdkVersion" BeforeTargets="_GetPackageFiles">
     <PropertyGroup>

@@ -9,6 +9,10 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.1" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.AspNetCore.DataProtection.EntityFrameworkCore" Version="10.0.12" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="10.0.12" />
     <ProjectReference Include="../AspNetCore/Isoplane.AspNetCore.csproj" />
+    <!-- The source an application compiles when it references the Entity Framework Core key store package. -->
+    <Compile Include="../AspNetCore/source/DataProtectionDbContextKeys.cs" Link="DataProtectionDbContextKeys.cs" />
   </ItemGroup>
 </Project>

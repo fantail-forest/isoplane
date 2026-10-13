@@ -25,6 +25,7 @@ internal sealed class EntryPointRouter : IStreamingHttpRouter
     {
         running = startup.Invoke(entryPoint);
         Initialization.Starting += () => Started();
+        Initialization.Completing += async () => await (await Started()).LoadDataProtectionKeysAsync();
     }
 
     public bool StreamsRequest(RequestHead request) => true;

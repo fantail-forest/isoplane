@@ -67,6 +67,9 @@ public static class Initialization
 
     internal static event Func<Task>? Starting;
 
+    /// <summary>Raised after every <see cref="Initializing"/> subscriber has finished, before the template is captured.</summary>
+    internal static event Func<Task>? Completing;
+
     internal static Task EnterAsync() => Hook.EnterAsync(RunStagesAsync);
 
     // Each stage reads its subscribers when it begins: an entry point that
@@ -75,5 +78,6 @@ public static class Initialization
     {
         await LifecycleHook.InvokeCallbacksAsync(Starting);
         await LifecycleHook.InvokeCallbacksAsync(Initializing);
+        await LifecycleHook.InvokeCallbacksAsync(Completing);
     }
 }

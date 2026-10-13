@@ -137,12 +137,76 @@ after any request. Successive requests can reach different instances.
   cryptographic randomness is always drawn fresh. A `Random` you gave a seed, a
   generator that is not a `System.Random`, and a value already drawn during
   initialization are copied as they are.
-- **ASP.NET Core Data Protection keys are shared.** Every instance of a
-  deployment protects and unprotects with the same key, so antiforgery tokens
-  and authentication cookies work across instances.
+- **ASP.NET Core Data Protection keys are shared within a template.** Instances
+  use the keys captured in that template. Fresh initialization may create a
+  different key; reusing a template retains its key. [Keep the keys across
+  builds](#keep-data-protection-keys-across-builds) while earlier protected data
+  must remain readable.
 
 [The application lifecycle](application-lifecycle.md) explains each of these in
 more depth.
+
+### Keep Data Protection keys across builds
+
+By default a key created during initialization is captured in the template.
+Fresh initialization may create a different key; reusing a prepared template
+retains its captured key. Keep earlier keys while data protected with them
+must remain readable, using one of these stores.
+
+**From a secret in the application's settings.** Add one line where you
+configure services:
+
+```csharp
+builder.Services.AddDataProtection().UseConfiguredKeys();
+```
+
+It reads `DataProtection:Keys:0`, which must be at least 32 random bytes in
+Base64. For local development, keep it in User Secrets:
+
+```bash
+dotnet user-secrets set "DataProtection:Keys:0" "$(openssl rand -base64 48)"
+```
+
+The application refuses to start without a usable secret. To replace a key,
+put the new secret at `DataProtection:Keys:0` and move the old one to
+`DataProtection:Keys:1`: the first protects new data and every one listed still
+unprotects, so remove the old one once nothing it protected is in use.
+
+**From the application's database.** If the application uses Entity Framework
+Core, reference `Microsoft.AspNetCore.DataProtection.EntityFrameworkCore`, add
+its `DataProtectionKeys` table to your context as that package describes, and
+write:
+
+```csharp
+builder.Services.AddDataProtection().UseKeysFromDbContext<AppDbContext>();
+```
+
+Initialization loads the stored keys and can create and store a key if none is usable. The keys are
+read once, when initialization finishes, so the table must exist by then: a
+migration applied in an `Initialization.Initializing` callback has run. If such
+a callback itself protects or unprotects data, for instance by warming up a
+page that renders a form, load the keys first:
+
+```csharp
+Initialization.Initializing += async () =>
+{
+    await database.MigrateAsync();
+    await app.LoadDataProtectionKeysAsync();
+    await app.WarmupAsync("/");
+};
+```
+
+A prepared template retains the key ring loaded during initialization, even
+after keys expire. When initialization loads the store, it creates and persists
+a new key if no unrevoked active key remains valid beyond the renewal window.
+The new key uses the configured key lifetime. Reusing a prepared template
+neither reloads nor renews its key ring. For a store other than Entity Framework Core,
+`UseKeysFrom` takes the two asynchronous functions that read and add keys.
+
+ASP.NET Core's own key stores for a database or another service, such as
+`PersistKeysToDbContext`, do not work here. Data Protection reads and writes
+its keys synchronously, and an application in the sandbox cannot block on the
+network, so reading the keys fails with `PlatformNotSupportedException`.
 
 ### Pool database connections outside the application
 

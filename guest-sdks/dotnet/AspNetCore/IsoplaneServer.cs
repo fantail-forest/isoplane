@@ -24,6 +24,9 @@ internal sealed class IsoplaneServer : IServer
     /// <summary>Builds the route table now, so a template captures it instead of each instance's first request.</summary>
     internal void PrimeEndpoints() => _ = services.GetService<Microsoft.AspNetCore.Routing.EndpointDataSource>()?.Endpoints;
 
+    /// <summary>Loads the application's Data Protection keys if it keeps them in a store and has not loaded them itself.</summary>
+    internal Task LoadDataProtectionKeysAsync() => services.GetService<LoadedKeyStore>()?.LoadAsync() ?? Task.CompletedTask;
+
     public IFeatureCollection Features { get; } = new FeatureCollection();
 
     public Task StartAsync<TContext>(IHttpApplication<TContext> application, CancellationToken cancellationToken)

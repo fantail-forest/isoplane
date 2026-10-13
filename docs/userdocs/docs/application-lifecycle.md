@@ -214,10 +214,11 @@ without rerunning initialization callbacks.
 
 - Keeps what must outlive a build outside the instance.
 - Does not depend on data protected by ASP.NET Core Data Protection outliving a
-  build. The key is created during initialization, so it is part of the template: every
-  instance of the same template shares it, which keeps antiforgery tokens and
-  authentication cookies working across instances, and fresh initialization may create a different captured
-  key; reusing a template retains its key.
+  build, unless it [keeps its keys across builds](dotnet-runtime-differences.md#keep-data-protection-keys-across-builds).
+  By default the key is created during initialization, so it is part of the
+  template: every instance of the same template shares it, which keeps antiforgery
+  tokens and authentication cookies working across instances. Fresh initialization
+  may create a different key; reusing a template retains its key.
 
 **What can go wrong**
 
