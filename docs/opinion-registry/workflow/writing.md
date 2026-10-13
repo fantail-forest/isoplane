@@ -4,7 +4,7 @@ Information here should be easy and pleasant to take in, for internal and
 external readers alike: documentation, comments, reports, issues and commit
 messages.
 
-## Never make the reader decode
+## Write text that needs no decoding
 
 Write each sentence, table cell and label so that a reader new to the subject
 understands it where it stands. Text that leans on its own legend, rating scale
