@@ -19,8 +19,9 @@ to another one.
 
 Most of the rules below follow from this: waits are asynchronous, the
 application has no threads of its own, and nothing runs between requests. The
-rest follow from the sandbox itself, which gives an application the network and
-its settings but not the machine underneath.
+rest follow from the sandbox itself: Isoplane mediates every interaction an
+application has with the outside world, including the network, files, the clock
+and waiting, so an application can do only what Isoplane provides.
 
 ## One thread
 
