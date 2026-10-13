@@ -17,65 +17,53 @@ that requires. [Packages that work](#works) and
 Everything here was run in the sandbox with SDK 0.1.0-preview.4, unless its
 entry says otherwise.
 
-## How to read the entries {#ratings}
-
-**Your code** is how much of your application changes once the problem is dealt
-with.
-
-| Rating | Meaning |
-| --- | --- |
-| None | Your code is right as it is, and the fix is Isoplane's to make. Until then the entry gives a setting that gets you past the problem, or says that nothing does. |
-| Small | A one-for-one replacement: usually the asynchronous form of the same call, or a method Isoplane provides. |
-| Moderate | Some restructuring, or a few lines of your own. |
-| Large | A different library, or a different approach. |
-
-**Outlook** is whether the incompatibility can be fixed, and what that
-requires. It describes what is possible, not a schedule.
-
-| Outlook | Meaning |
-| --- | --- |
-| No fix needed | A good alternative already exists and costs little to adopt. |
-| Isoplane fix | Can be fixed in Isoplane's SDK or runtime, with no change to your code. |
-| Isoplane adapter | Can be fixed by a replacement that Isoplane provides and you call in place of the original. |
-| Library change | Needs a change in the library itself, by its maintainers or in a fork. |
-| Unsupported | Requires a connection or execution lifetime the host does not provide. |
-| Native code | Depends on a native library that has no managed replacement. It cannot run in the sandbox. |
-| By design | Conflicts with how the sandbox works, such as a call that has to block until I/O finishes. This will not change. |
-| Not yet known | We do not yet know whether it can be fixed, or how. |
-
 ## At a glance {#summary}
 
-| Package | API or feature | Your code | Outlook |
+| Package | API or feature | Change to your code | Can it be fixed? |
 | --- | --- | --- | --- |
-| Any | [Synchronous calls that reach the network](#synchronous-io) | Small | By design |
-| ASP.NET Core | [Session over a distributed cache, and TempData kept in it](#session) | Small | Isoplane fix |
-| ASP.NET Core | [`Request.Form`](#request-form) | Small | No fix needed |
-| ASP.NET Core | [File uploads over 64 KB](#uploads) | None; one setting until fixed | Isoplane fix |
-| ASP.NET Core | [`Request.EnableBuffering()` over 30 KB](#enable-buffering) | None; one argument until fixed | Isoplane fix |
-| ASP.NET Core | [Synchronous reads and writes of the request and response body](#synchronous-body) | Small | No fix needed |
-| ASP.NET Core | [Data Protection key stores](#data-protection) | Small | Isoplane adapter, provided |
-| ASP.NET Core | [`Html.Partial` and `Html.RenderPartial`](#html-partial) | Small | No fix needed |
-| ASP.NET Core | [XML formatters over 30 KB](#xml-formatters) | None; blocked until fixed | Isoplane fix |
-| ASP.NET Core | [Rate limiting middleware](#rate-limiting) | Large | Isoplane fix, in part |
-| ASP.NET Core | [`AddConsole`, `AddJsonConsole` and `ClearProviders`](#console-logging) | Small | Isoplane fix |
-| ASP.NET Core | [Validation attributes, localizers, token callbacks and service factories that do I/O](#synchronous-extension-points) | Moderate | By design |
-| ASP.NET Core | [WebSockets, SignalR's WebSocket transport, Blazor Server](#connections-and-background-work) | Large | Unsupported |
-| ASP.NET Core | [gRPC over HTTP/2](#connections-and-background-work) | Moderate | Not yet known |
-| ASP.NET Core | [`BackgroundService` and other work between requests](#connections-and-background-work) | Large | Unsupported |
-| Newtonsoft.Json for MVC | [Bodies over 30 KB](#newtonsoft-json) | None; two settings until fixed | Isoplane fix |
-| Configuration providers | [Loading settings from Azure Key Vault and other remote services](#remote-configuration) | Moderate | Isoplane adapter |
-| Entity Framework Core | [Lazy loading](#lazy-loading) | Moderate | By design |
-| Entity Framework Core | [`UseHiLo` keys with `Add`](#hilo) | Small | No fix needed |
-| Entity Framework Core | [`TransactionScope`](#transaction-scope) | Small to moderate | Library change |
-| Npgsql | [Disposing a reader that has unread rows](#reader-dispose) | Small | No fix needed |
-| SqlClient | [SQL Server, including its Entity Framework Core provider](#sql-server) | Large | Library change |
-| MySqlConnector | [MySQL](#mysql) | None; blocked until fixed | Isoplane fix |
-| Sqlite | [SQLite, including its Entity Framework Core provider](#sqlite) | Large | Native code |
-| MongoDB.Driver | [MongoDB](#mongodb) | Large | Library change |
-| StackExchange.Redis | [Redis, including the Redis distributed cache](#redis) | Large | Library change |
-| OpenTelemetry | [Exporting telemetry over OTLP](#opentelemetry) | Large | Not yet known |
+| Any | [Synchronous calls that reach the network](#synchronous-io) | Small: call the asynchronous method | No: these calls have to block |
+| ASP.NET Core | [Session over a distributed cache, and TempData kept in it](#session) | Small: add one middleware | Yes, in Isoplane |
+| ASP.NET Core | [`Request.Form`](#request-form) | Small: use `ReadFormAsync` | Nothing to fix |
+| ASP.NET Core | [File uploads over 64 KB](#uploads) | Small: set one option | Yes, in Isoplane |
+| ASP.NET Core | [`Request.EnableBuffering()` over 30 KB](#enable-buffering) | Small: pass one argument | Yes, in Isoplane |
+| ASP.NET Core | [Synchronous reads and writes of the request and response body](#synchronous-body) | Small: call the asynchronous method | Nothing to fix |
+| ASP.NET Core | [Data Protection key stores](#data-protection) | Small: use Isoplane's replacement | Fixed, by that replacement |
+| ASP.NET Core | [`Html.Partial` and `Html.RenderPartial`](#html-partial) | Small: use `<partial>` | Nothing to fix |
+| ASP.NET Core | [XML formatters over 30 KB](#xml-formatters) | No workaround | Yes, in Isoplane |
+| ASP.NET Core | [Rate limiting middleware](#rate-limiting) | Large: limit requests elsewhere | Partly, in Isoplane |
+| ASP.NET Core | [`AddConsole`, `AddJsonConsole` and `ClearProviders`](#console-logging) | Small: delete the calls | Yes, in Isoplane |
+| ASP.NET Core | [Validation attributes, localizers, token callbacks and service factories that do I/O](#synchronous-extension-points) | Moderate: move the I/O elsewhere | No: these have to block |
+| ASP.NET Core | [WebSockets, SignalR's WebSocket transport, Blazor Server](#connections-and-background-work) | No workaround | Needs instances that stay connected |
+| ASP.NET Core | [gRPC over HTTP/2](#connections-and-background-work) | Moderate: use gRPC-Web | Not known yet |
+| ASP.NET Core | [`BackgroundService` and other work between requests](#connections-and-background-work) | Large: do the work during a request | Needs instances that stay running |
+| Newtonsoft.Json for MVC | [Bodies over 30 KB](#newtonsoft-json) | Small: set two options | Yes, in Isoplane |
+| Configuration providers | [Loading settings from Azure Key Vault and other remote services](#remote-configuration) | Moderate: fetch them before `Build()` | Yes, by a replacement from Isoplane |
+| Entity Framework Core | [Lazy loading](#lazy-loading) | Moderate: load with `Include` | No: it has to block |
+| Entity Framework Core | [`UseHiLo` keys with `Add`](#hilo) | Small: use `AddAsync` | Nothing to fix |
+| Entity Framework Core | [`TransactionScope`](#transaction-scope) | Small: use a database transaction | Only in .NET itself |
+| Npgsql | [Disposing a reader that has unread rows](#reader-dispose) | Small: use `await using` | Nothing to fix |
+| SqlClient | [SQL Server, including its Entity Framework Core provider](#sql-server) | Large: use another database | Only in the driver |
+| MySqlConnector | [MySQL](#mysql) | No workaround | Probably, in Isoplane |
+| Sqlite | [SQLite, including its Entity Framework Core provider](#sqlite) | Large: use another database | No: it needs native code |
+| MongoDB.Driver | [MongoDB](#mongodb) | Large: use another database | Only in the driver |
+| StackExchange.Redis | [Redis, including the Redis distributed cache](#redis) | Large: use another cache store | Only in the client library |
+| OpenTelemetry | [Exporting telemetry over OTLP](#opentelemetry) | No workaround | Not known yet |
 
 The sections below give each package's full name.
+
+<details>
+<summary>How the changes are sized</summary>
+
+- **Small** is a one-for-one replacement: the asynchronous form of the same
+  call, a setting, or a method Isoplane provides.
+- **Moderate** is some restructuring, or a few lines of your own.
+- **Large** is a different library or a different approach.
+
+"Yes, in Isoplane" means the SDK or runtime can be changed so that your code
+works as it was written, and any workaround can then come out. It describes
+what is possible, not a schedule.
+
+</details>
 
 ## Recognize a failure {#symptoms}
 
@@ -108,11 +96,12 @@ explains why.
 
 - **Used for:** older code, and code written to be called from a synchronous
   method.
-- **Workaround:** call the asynchronous method and await it: `OpenAsync`,
+- **What to do today:** call the asynchronous method and await it: `OpenAsync`,
   `ExecuteReaderAsync`, `SaveChangesAsync`, `ToListAsync`, `SendAsync`.
-- **Your code:** Small. Each call has an asynchronous twin, though the methods
+- **Size of the change:** Small. Each call has an asynchronous twin, though the methods
   that contain it have to become asynchronous too.
-- **Outlook:** By design. An application in the sandbox cannot block.
+- **Can it be fixed?** No. An application in the sandbox cannot block, and these calls
+  have to.
 
 The rest of this page is about the cases where your own code is asynchronous
 and the blocking call is inside a library, or behind an interface that has no
@@ -137,7 +126,7 @@ TempData is lost the same way when it is kept in the session with
 
 - **Used for:** sign-in flows, shopping carts, multi-step forms, and messages
   shown after a redirect.
-- **Workaround:** load the session asynchronously before anything uses it, in a
+- **What to do today:** load the session asynchronously before anything uses it, in a
   middleware placed directly after `UseSession`:
 
   ```csharp
@@ -149,9 +138,9 @@ TempData is lost the same way when it is kept in the session with
   });
   ```
 
-- **Your code:** Small. One middleware, added once.
-- **Outlook:** Isoplane fix. The SDK can report an unloaded session as an error
-  in place of losing data, and provide this middleware.
+- **Size of the change:** Small. One middleware, added once.
+- **Can it be fixed?** Yes, in Isoplane. The SDK can report an unloaded session as
+  an error in place of losing data, and provide this middleware.
 
 We ran this with a PostgreSQL-backed cache. The Redis cache does not run at
 all; see [Redis](#redis).
@@ -162,11 +151,12 @@ Reading `HttpRequest.Form` before the form has been read asynchronously throws
 `PlatformNotSupportedException`, whatever the size of the body.
 
 - **Used for:** reading posted fields and files directly from the request.
-- **Workaround:** `var form = await Request.ReadFormAsync();`. A minimal API
+- **What to do today:** `var form = await Request.ReadFormAsync();`. A minimal API
   handler that takes a form value or an `IFormFile` as a parameter already
   reads asynchronously.
-- **Your code:** Small.
-- **Outlook:** No fix needed.
+- **Size of the change:** Small.
+- **Can it be fixed?** There is nothing to fix: the asynchronous call does the
+  same job.
 
 ### File uploads over 64 KB {#uploads}
 
@@ -177,7 +167,7 @@ handler that takes an `IFormFile` parameter answers 400 with an empty body
 instead.
 
 - **Used for:** any multipart upload: images, documents, imports.
-- **Workaround:** keep uploads in memory.
+- **What to do today:** keep uploads in memory.
 
   ```csharp
   using Microsoft.AspNetCore.Http.Features;
@@ -188,8 +178,10 @@ instead.
   An upload held in memory counts toward the instance's
   [memory limit](execution-limits.md#memory). ASP.NET Core still refuses a form
   larger than `FormOptions.MultipartBodyLengthLimit`.
-- **Your code:** None. One setting until this is fixed.
-- **Outlook:** Isoplane fix. The SDK can make this the default.
+- **Size of the change:** Small, and temporary. It is one setting, which can come
+  out once this is fixed.
+- **Can it be fixed?** Yes, in Isoplane, with no change to your code. The SDK can
+  make this the default.
 
 Large fields of an ordinary URL-encoded form are not affected.
 
@@ -201,11 +193,11 @@ memory and moves a larger body to a temporary file, which fails with
 
 - **Used for:** verifying a webhook signature before binding the body, and
   logging request bodies.
-- **Workaround:** pass a threshold, so the body stays in memory:
+- **What to do today:** pass a threshold, so the body stays in memory:
   `Request.EnableBuffering(bufferThreshold: int.MaxValue)`. The body then counts
   toward the instance's [memory limit](execution-limits.md#memory).
-- **Your code:** None. One argument until this is fixed.
-- **Outlook:** Isoplane fix.
+- **Size of the change:** Small, and temporary. It is one argument.
+- **Can it be fixed?** Yes, in Isoplane, with no change to your code.
 
 ### Synchronous reads and writes of the request and response body {#synchronous-body}
 
@@ -215,11 +207,12 @@ server refuses these calls by default as well.
 
 - **Used for:** serializers and writers that take a `Stream` and write to it
   synchronously, such as `XmlSerializer.Serialize(Response.Body, value)`.
-- **Workaround:** use `ReadAsync` and `WriteAsync`, or the library's
+- **What to do today:** use `ReadAsync` and `WriteAsync`, or the library's
   asynchronous method. Where a library has none, have it write to a
   `MemoryStream` and copy that to the response with `CopyToAsync`.
-- **Your code:** Small.
-- **Outlook:** No fix needed.
+- **Size of the change:** Small.
+- **Can it be fixed?** There is nothing to fix: the asynchronous methods do the
+  same job.
 
 ### Data Protection key stores {#data-protection}
 
@@ -232,17 +225,19 @@ store that keeps them in a database or another service cannot work.
 
 - **Used for:** keeping authentication cookies and antiforgery tokens valid
   after a new build.
-- **Workaround:** Isoplane provides replacements, described in
+- **What to do today:** Isoplane provides replacements, described in
   [Keep Data Protection keys across builds](dotnet-runtime-differences.md#keep-data-protection-keys-across-builds).
   `UseKeysFromDbContext` takes the place of `PersistKeysToDbContext` and uses
   the same table. `UseConfiguredKeys` derives the keys from a secret in the
   application's settings.
   [`UseKeysFrom`](reference/sdk/Isoplane.AspNetCore/Isoplane.AspNetCore/DataProtectionKeys/UseKeysFrom.md)
   serves any other store.
-- **Your code:** Small for Entity Framework Core. Moderate for another store,
-  where you supply the two functions that read and add keys.
-- **Outlook:** Isoplane adapter, provided for Entity Framework Core and for
-  configured secrets.
+- **Size of the change:** Small for Entity Framework Core, where one call
+  replaces another. Moderate for another store, where you supply the two
+  functions that read and add keys.
+- **Can it be fixed?** It has been, for Entity Framework Core and for configured
+  secrets, by the replacements above. The stores ASP.NET Core ships cannot
+  work, because they have to block.
 
 ### `Html.Partial` and `Html.RenderPartial` {#html-partial}
 
@@ -251,11 +246,12 @@ in the partial waits, and throw `PlatformNotSupportedException` when the
 partial awaits a query or a request.
 
 - **Used for:** rendering a partial view from a Razor view or page.
-- **Workaround:** `<partial name="_Name" />`, or
+- **What to do today:** `<partial name="_Name" />`, or
   `@await Html.PartialAsync("_Name")`. The build already reports the
   synchronous forms as `MVC1000`.
-- **Your code:** Small.
-- **Outlook:** No fix needed.
+- **Size of the change:** Small.
+- **Can it be fixed?** There is nothing to fix: the asynchronous forms do the
+  same job.
 
 ### XML formatters over 30 KB {#xml-formatters}
 
@@ -264,10 +260,11 @@ than about 30 KB to a temporary file, which fails with
 `DirectoryNotFoundException: /tmp/`.
 
 - **Used for:** APIs that accept or return XML.
-- **Workaround:** none through a setting that we have found. JSON through
+- **What to do today:** none through a setting that we have found. JSON through
   `System.Text.Json` has no such limit.
-- **Your code:** None, but large XML bodies are blocked until this is fixed.
-- **Outlook:** Isoplane fix.
+- **Size of the change:** None once this is fixed. Until then, large XML
+  bodies do not work.
+- **Can it be fixed?** Yes, in Isoplane, with no change to your code.
 
 ### Rate limiting middleware {#rate-limiting}
 
@@ -277,11 +274,12 @@ application starts, and a timer cannot be carried from initialization into an
 instance. Other policies have not been checked.
 
 - **Used for:** limiting how often a client may call an endpoint.
-- **Workaround:** none inside the application. Count requests in a store that
+- **What to do today:** none inside the application. Count requests in a store that
   every instance shares, or limit them in front of the application.
-- **Your code:** Large.
-- **Outlook:** Isoplane fix, in part. The SDK can let the application start.
-  The limiter would still count for one instance at a time, because its
+- **Size of the change:** Large. Limiting moves out of the application, or onto
+  a store the instances share.
+- **Can it be fixed?** Partly, in Isoplane. The SDK can let the application
+  start. The limiter would still count for one instance at a time, because its
   counters are in memory and
   [memory belongs to one instance](dotnet-runtime-differences.md#instances-come-and-go).
 
@@ -298,12 +296,12 @@ shown.
 
 - **Used for:** these lines are in many `Program.cs` files, often copied from a
   template.
-- **Workaround:** delete them. Isoplane already sends `ILogger` output to the
+- **What to do today:** delete them. Isoplane already sends `ILogger` output to the
   terminal that runs the session, and the `Logging` section of `appsettings.json`
   filters it as usual. Serilog's console sink also works.
-- **Your code:** Small.
-- **Outlook:** Isoplane fix. The SDK can keep its provider registered and leave
-  the console provider out.
+- **Size of the change:** Small.
+- **Can it be fixed?** Yes, in Isoplane, with no change to your code. The SDK can
+  keep its provider registered and leave the console provider out.
 
 ### Validation attributes, localizers, token callbacks and service factories that do I/O {#synchronous-extension-points}
 
@@ -321,7 +319,7 @@ queries a database or calls a service has to block, and throws
 
 Each has a different way out:
 
-- **Workaround:**
+- **What to do today:**
   - **Validation.** Run the check in the handler, or with a validator that has
     an asynchronous form. FluentValidation's `MustAsync` rules run with
     `ValidateAsync`.
@@ -334,9 +332,10 @@ Each has a different way out:
     options. The handler then fetches and refreshes the keys asynchronously.
   - **Services.** Construct the object without connecting, and connect
     asynchronously the first time it is used.
-- **Your code:** Moderate.
-- **Outlook:** By design. Where one of these is common enough, Isoplane can
-  provide an adapter, as it does for
+- **Size of the change:** Moderate. The I/O moves to a place that can await
+  it.
+- **Can it be fixed?** Not in general: these interfaces have to block. Where one
+  is common enough, Isoplane can provide a replacement, as it does for
   [Data Protection keys](#data-protection).
 
 ### Connections and background work {#connections-and-background-work}
@@ -345,16 +344,16 @@ These are described on other pages and listed here so that this page is
 complete.
 
 - **WebSockets, SignalR's WebSocket transport and Blazor Server
-  interactivity** are unavailable. Statically rendered Blazor pages work. See
-  [Network](dotnet-runtime-differences.md#network).
-  **Your code:** Large. **Outlook:** Unsupported.
+  interactivity** are unavailable, and nothing takes their place today.
+  Statically rendered Blazor pages work. See [Network](dotnet-runtime-differences.md#network).
 - **gRPC over HTTP/2** is unavailable, because requests arrive as HTTP/1.1.
-  gRPC-Web works, and needs gRPC-Web enabled in the service and its clients.
-  **Your code:** Moderate. **Outlook:** Not yet known.
+  gRPC-Web works, which is a moderate change: it has to be enabled in the
+  service and in its clients. Whether HTTP/2 can be supported is not known
+  yet.
 - **A `BackgroundService` that keeps running**, a recurring timer or a queue
-  consumer has nothing to run on between requests. See
+  consumer has nothing to run on between requests. Doing that work while a
+  request is handled is a large change. See
   [Work belongs to a request](dotnet-runtime-differences.md#work-belongs-to-a-request).
-  **Your code:** Large. **Outlook:** Unsupported.
 
 ## `Microsoft.AspNetCore.Mvc.NewtonsoftJson`
 
@@ -366,7 +365,7 @@ about 30 KB to a temporary file, which fails with
 
 - **Used for:** applications that keep Newtonsoft.Json for its converters or
   for compatibility with existing clients.
-- **Workaround:** raise both thresholds, so bodies stay in memory.
+- **What to do today:** raise both thresholds, so bodies stay in memory.
 
   ```csharp
   builder.Services.AddControllers().AddNewtonsoftJson(options =>
@@ -376,8 +375,8 @@ about 30 KB to a temporary file, which fails with
   });
   ```
 
-- **Your code:** None. Two settings until this is fixed.
-- **Outlook:** Isoplane fix.
+- **Size of the change:** Small, and temporary. It is two settings.
+- **Can it be fixed?** Yes, in Isoplane, with no change to your code.
 
 ## Configuration providers for remote stores
 
@@ -394,7 +393,7 @@ Manager load the same way and are expected to fail likewise. They have not been
 run in the sandbox.
 
 - **Used for:** taking secrets and settings from a vault.
-- **Workaround:** `Program.cs` may await before it builds the application, so
+- **What to do today:** `Program.cs` may await before it builds the application, so
   fetch the values asynchronously there and add them as an in-memory source:
 
   ```csharp
@@ -411,9 +410,10 @@ run in the sandbox.
   so the values are fetched once and every instance starts with them. For
   local development, [User Secrets](local-settings.md#keep-credentials-in-user-secrets)
   need none of this.
-- **Your code:** Moderate.
-- **Outlook:** Isoplane adapter. An asynchronous registration method for each
-  provider would make this one line.
+- **Size of the change:** Moderate.
+- **Can it be fixed?** Yes, by a replacement from Isoplane: an asynchronous
+  registration method for each provider would make this one line. The
+  providers as they are cannot work, because they have to block.
 
 {/* TODO: say how settings and secrets reach a deployed application once that exists; it is expected to make this entry unnecessary for most applications. */}
 
@@ -431,7 +431,7 @@ tracks is read from memory, so the same line can work for one row and fail for
 another.
 
 - **Used for:** loading related entities when they are first touched.
-- **Workaround:** load what the request needs as part of the query, with
+- **What to do today:** load what the request needs as part of the query, with
   `Include`:
 
   ```csharp
@@ -440,9 +440,10 @@ another.
 
   Or load a navigation explicitly before reading it:
   `await db.Entry(book).Reference(book => book.Author).LoadAsync();`.
-- **Your code:** Moderate. Every place that relies on a navigation being loaded
-  on demand has to say what it needs.
-- **Outlook:** By design. Reading a property cannot wait.
+- **Size of the change:** Moderate. Every place that relies on a navigation
+  being loaded on demand has to say what it needs.
+- **Can it be fixed?** No. Reading a property cannot wait, so it would have to
+  block.
 
 ### `UseHiLo` keys with `Add` {#hilo}
 
@@ -454,11 +455,11 @@ points `Add` works, so the failure looks intermittent.
 
 - **Used for:** assigning keys before `SaveChanges`, with fewer round trips
   than a sequence.
-- **Workaround:** `await db.AddAsync(entity)`, which fetches the block
+- **What to do today:** `await db.AddAsync(entity)`, which fetches the block
   asynchronously. Or use identity columns, the Npgsql provider's default, which
   need no fetch.
-- **Your code:** Small.
-- **Outlook:** No fix needed.
+- **Size of the change:** Small.
+- **Can it be fixed?** There is nothing to fix: `AddAsync` does the same job.
 
 ### `TransactionScope` {#transaction-scope}
 
@@ -468,7 +469,7 @@ throws `TransactionInDoubtException`.
 
 - **Used for:** a transaction around several operations, without passing a
   transaction object between them.
-- **Workaround:** use the provider's transaction and commit it asynchronously.
+- **What to do today:** use the provider's transaction and commit it asynchronously.
 
   ```csharp
   await using var transaction = await db.Database.BeginTransactionAsync();
@@ -477,11 +478,11 @@ throws `TransactionInDoubtException`.
   await transaction.CommitAsync();
   ```
 
-- **Your code:** Small for one context. Moderate when the scope spans several
-  contexts or connections, which then have to share one transaction
-  explicitly.
-- **Outlook:** Library change. .NET has no asynchronous way to complete a
-  `TransactionScope`.
+- **Size of the change:** Small for one context. Moderate when the scope
+  spans several contexts or connections, which then have to share one
+  transaction explicitly.
+- **Can it be fixed?** Only in .NET itself, which has no asynchronous way to
+  complete a `TransactionScope`.
 
 ## Database drivers
 
@@ -495,9 +496,9 @@ Other synchronous disposal works: a connection, a transaction, including one
 that was never committed, and a reader that was read to the end.
 
 - **Used for:** `using var reader = ...` in code that stops reading early.
-- **Workaround:** `await using var reader = await command.ExecuteReaderAsync();`.
-- **Your code:** Small.
-- **Outlook:** No fix needed.
+- **What to do today:** `await using var reader = await command.ExecuteReaderAsync();`.
+- **Size of the change:** Small.
+- **Can it be fixed?** There is nothing to fix: `await using` does the same job.
 
 ### SQL Server {#sql-server}
 
@@ -508,12 +509,13 @@ Everything built on it fails with it, including
 `Microsoft.EntityFrameworkCore.SqlServer`.
 
 - **Used for:** SQL Server and Azure SQL.
-- **Workaround:** none. PostgreSQL through Npgsql works; see
+- **What to do today:** none. PostgreSQL through Npgsql works; see
   [Connect PostgreSQL](connect-postgresql.md).
-- **Your code:** Large.
-- **Outlook:** Library change. We also ran the driver's Unix implementation in
-  the sandbox: it signs in synchronously inside `OpenAsync`, so it would need
-  to open connections asynchronously throughout.
+- **Size of the change:** Large: a different database.
+- **Can it be fixed?** Only by a change to the driver. We also ran the driver's
+  Unix implementation in the sandbox: it signs in synchronously inside
+  `OpenAsync`, so it would need to open connections asynchronously
+  throughout.
 
 ### MySQL {#mysql}
 
@@ -525,10 +527,11 @@ driver reports the refusal as an unreachable host. Providers built on
 fail the same way and have not been run.
 
 - **Used for:** MySQL and MariaDB.
-- **Workaround:** none.
-- **Your code:** None, but blocked until this is fixed.
-- **Outlook:** Isoplane fix. The runtime can accept the option. Whether the
-  driver then works has not been established.
+- **What to do today:** none.
+- **Size of the change:** None once this is fixed. Until then, MySQL cannot
+  be used.
+- **Can it be fixed?** Probably, in Isoplane. The runtime can accept the option.
+  Whether the driver then works has not been established.
 
 ### SQLite {#sqlite}
 
@@ -538,11 +541,12 @@ includes in-memory databases, and `Microsoft.EntityFrameworkCore.Sqlite`,
 which is built on it.
 
 - **Used for:** local development databases, tests and small applications.
-- **Workaround:** none. Use PostgreSQL in development as well. The
+- **What to do today:** none. Use PostgreSQL in development as well. The
   `isoplane-webapi` template includes a compose file for it; see the
   [project templates](reference/project-templates.md).
-- **Your code:** Large.
-- **Outlook:** Native code.
+- **Size of the change:** Large: a different database, in development as
+  well as in production.
+- **Can it be fixed?** No. It needs native code, which cannot run in the sandbox.
 
 ### MongoDB {#mongodb}
 
@@ -550,10 +554,10 @@ which is built on it.
 operation throws `PlatformNotSupportedException` from `Thread.Start`.
 
 - **Used for:** MongoDB and compatible document databases.
-- **Workaround:** none.
-- **Your code:** Large.
-- **Outlook:** Library change. The driver would need to monitor its servers
-  without threads of its own.
+- **What to do today:** none.
+- **Size of the change:** Large: a different database.
+- **Can it be fixed?** Only by a change to the driver, which would need to
+  monitor its servers without threads of its own.
 
 ## Caching
 
@@ -575,13 +579,13 @@ Everything built on the client fails with it:
 
 - **Used for:** a cache shared between instances, session state, and
   Data Protection keys.
-- **Workaround:** none with this client. `IDistributedCache`, session and
+- **What to do today:** none with this client. `IDistributedCache`, session and
   `HybridCache` work over a cache that reaches its store through asynchronous
   calls; we ran them over PostgreSQL. For Data Protection keys, see
   [Data Protection key stores](#data-protection).
-- **Your code:** Large.
-- **Outlook:** Library change. Why the thread-pool configuration stalls is not
-  yet known.
+- **Size of the change:** Large: a different store for the cache.
+- **Can it be fixed?** Only by a change to the client library. Why the
+  thread-pool configuration stalls is not yet known.
 
 ## Observability
 
@@ -592,9 +596,9 @@ An application that adds OpenTelemetry tracing with the OTLP exporter, from
 sends it in batches from the background.
 
 - **Used for:** sending traces, metrics and logs to a collector.
-- **Workaround:** none that we have run.
-- **Your code:** Large, for now.
-- **Outlook:** Not yet known. Sending in batches after the response is
+- **What to do today:** none that we have run.
+- **Size of the change:** Not known. Nothing works today.
+- **Can it be fixed?** Not known yet. Sending in batches after the response is
   [work between requests](dotnet-runtime-differences.md#work-belongs-to-a-request),
   so an exporter would have to send within the request instead.
 
