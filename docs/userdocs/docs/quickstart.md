@@ -68,9 +68,13 @@ Ctrl+C in the terminal to stop the application.
 
 ## Next steps
 
-The [Your first application](create-an-application.md) tutorial covers the same
-ground more slowly and goes further: it walks through this project, changes its
-response, and introduces the larger templates.
+Two tutorials go further. Each starts from a larger template and has you add a
+feature to it:
+
+- [Build a small API with ASP.NET Core and EF Core](build-an-api.md), with a
+  PostgreSQL database.
+- [Build a small lightweight web service](build-a-web-service.md), without
+  ASP.NET.
 
 For a particular task, such as rebuilding on every save, debugging, local
 settings or testing, see the how-to guides on the

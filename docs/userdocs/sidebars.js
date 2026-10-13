@@ -4,7 +4,7 @@ export default {
   guides: [
     'index',
     'quickstart',
-    {type: 'category', label: 'Tutorials', items: ['create-an-application']},
+    {type: 'category', label: 'Tutorials', items: ['build-an-api', 'build-a-web-service']},
     {type: 'category', label: 'How-to guides', items: [
       'install', 'onboard-an-application', 'handle-requests-without-aspnet', 'run-and-rebuild', 'debug-an-application', 'local-settings',
       'connect-postgresql', 'test-an-application', 'troubleshooting',

@@ -11,7 +11,7 @@ sandbox's capabilities.
 
 ## Create the application project
 
-Follow [the template creation steps](create-an-application.md#create-the-application) to make a `MyApi`
+Follow [the Quickstart's creation step](quickstart.md#3-create-an-application) to make a `MyApi`
 project next to your existing code. This supplies the matching SDK and launch
 settings. Move your startup code into its `Program.cs`. If your application logic
 is already in a separate library, add an ordinary project reference to that

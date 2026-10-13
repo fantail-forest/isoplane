@@ -183,7 +183,7 @@ Doctor checks the .NET SDK, Isoplane's native library and the templates. It
 reports problems and does not repair them. The template list shows
 `isoplane-web`, `isoplane-webapi` and `isoplane-handler`.
 
-Now [create your first application](create-an-application.md).
+Now [create your first application](quickstart.md#3-create-an-application).
 
 ## Update
 
