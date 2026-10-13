@@ -16,10 +16,16 @@ from the others on the same hardware. A few incompatibilities are the price of
 those two choices, and [will stay](#trade-offs). Most are not: they have a
 simple replacement today, or can be fixed.
 
-This page lists the incompatibilities we know of, by package. Each entry says
-what fails, what you can do about it today, how much of your code has to
-change, and whether the incompatibility can be fixed and, if it can, what
-that requires. [Packages that work](#works) and
+This page lists the specific incompatibilities we know of, by package: APIs,
+packages and framework features that fail even though your own code is
+asynchronous. It does not repeat the general rules. If your code calls a
+synchronous method such as `SaveChanges`, or waits on a task with `.Result`,
+[Waiting is asynchronous](dotnet-runtime-differences.md#waiting-is-asynchronous)
+covers it.
+
+Each entry says what fails, what you can do about it today, how much of your
+code has to change, and whether the incompatibility can be fixed and, if it
+can, what that requires. [Packages that work](#works) and
 [packages not checked yet](#not-checked) are at the end.
 
 Everything here was run in the sandbox with SDK 0.1.0-preview.4, unless its
@@ -29,7 +35,6 @@ entry says otherwise.
 
 | Package | API or feature | Change to your code | Can it be fixed? |
 | --- | --- | --- | --- |
-| Any | [Synchronous calls that reach the network](#synchronous-io) | Small: call the asynchronous method | No: blocking would hold a shared worker |
 | ASP.NET Core | [Session over a distributed cache, and TempData kept in it](#session) | Small: add one middleware | Yes, in Isoplane |
 | ASP.NET Core | [`Request.Form`](#request-form) | Small: use `ReadFormAsync` | Nothing to fix |
 | ASP.NET Core | [File uploads over 64 KB](#uploads) | Small: set one option | Yes, in Isoplane |
@@ -40,19 +45,19 @@ entry says otherwise.
 | ASP.NET Core | [XML formatters over 30 KB](#xml-formatters) | No workaround | Yes, in Isoplane |
 | ASP.NET Core | [Rate limiting middleware](#rate-limiting) | Large: limit requests elsewhere | Partly, in Isoplane |
 | ASP.NET Core | [`AddConsole`, `AddJsonConsole` and `ClearProviders`](#console-logging) | Small: delete the calls | Yes, in Isoplane |
-| ASP.NET Core | [Validation attributes, localizers, token callbacks and service factories that do I/O](#synchronous-extension-points) | Moderate: move the I/O elsewhere | No: blocking would hold a shared worker |
+| ASP.NET Core | [Validation attributes, localizers, token callbacks and service factories that do I/O](#synchronous-extension-points) | Moderate: move the I/O elsewhere | No: it can only work by [blocking](#trade-offs) |
 | ASP.NET Core | [WebSockets, SignalR's WebSocket transport, Blazor Server](#connections-and-background-work) | No workaround | Needs instances that stay connected |
 | ASP.NET Core | [gRPC over HTTP/2](#connections-and-background-work) | Moderate: use gRPC-Web | Not known yet |
 | ASP.NET Core | [`BackgroundService` and other work between requests](#connections-and-background-work) | Large: do the work during a request | Needs instances that stay running |
 | Newtonsoft.Json for MVC | [Bodies over 30 KB](#newtonsoft-json) | Small: set two options | Yes, in Isoplane |
 | Configuration providers | [Loading settings from Azure Key Vault and other remote services](#remote-configuration) | Moderate: fetch them before `Build()` | Yes, by a replacement from Isoplane |
-| Entity Framework Core | [Lazy loading](#lazy-loading) | Moderate: load with `Include` | No: blocking would hold a shared worker |
+| Entity Framework Core | [Lazy loading](#lazy-loading) | Moderate: load with `Include` | No: it can only work by [blocking](#trade-offs) |
 | Entity Framework Core | [`UseHiLo` keys with `Add`](#hilo) | Small: use `AddAsync` | Nothing to fix |
 | Entity Framework Core | [`TransactionScope`](#transaction-scope) | Small: use a database transaction | Only in .NET itself |
 | Npgsql | [Disposing a reader that has unread rows](#reader-dispose) | Small: use `await using` | Nothing to fix |
 | SqlClient | [SQL Server, including its Entity Framework Core provider](#sql-server) | Large: use another database | Only in the driver |
 | MySqlConnector | [MySQL](#mysql) | No workaround | Probably, in Isoplane |
-| Sqlite | [SQLite, including its Entity Framework Core provider](#sqlite) | Large: use another database | No: native code would bypass the sandbox |
+| Sqlite | [SQLite, including its Entity Framework Core provider](#sqlite) | Large: use another database | No: it depends on [native code](#trade-offs) |
 | MongoDB.Driver | [MongoDB](#mongodb) | Large: use another database | Only in the driver |
 | StackExchange.Redis | [Redis, including the Redis distributed cache](#redis) | Large: use another cache store | Only in the client library |
 | OpenTelemetry | [Exporting telemetry over OTLP](#opentelemetry) | No workaround | Not known yet |
@@ -80,8 +85,8 @@ read the stack trace to see which call failed.
 
 | What you see | What it means |
 | --- | --- |
-| `PlatformNotSupportedException: Arg_PlatformNotSupported`, with `Task.InternalWait`, `SemaphoreSlim.Wait`, `Thread.Sleep`, `Socket` or `NetworkStream` near the top of the stack | Something waited synchronously. Start with [synchronous calls](#synchronous-io). |
-| `PlatformNotSupportedException: net_wasi_sync_name_resolution` | A connection was opened synchronously. Same cause. |
+| `PlatformNotSupportedException: Arg_PlatformNotSupported`, with `Task.InternalWait`, `SemaphoreSlim.Wait`, `Thread.Sleep`, `Socket` or `NetworkStream` near the top of the stack | Something waited synchronously. If the call is in your own code, see [Waiting is asynchronous](dotnet-runtime-differences.md#waiting-is-asynchronous). If it is inside a library, find the library in the table above. |
+| `PlatformNotSupportedException: net_wasi_sync_name_resolution` | The same, for a connection that was opened synchronously. |
 | `PlatformNotSupportedException: Arg_PlatformNotSupported`, with `Thread.Start` near the top of the stack | A library started a thread. See [MongoDB](#mongodb) and [Redis](#redis). |
 | `DirectoryNotFoundException: /tmp/` | ASP.NET Core tried to move a large request or response to a temporary file. See [uploads](#uploads), [`EnableBuffering`](#enable-buffering), [Newtonsoft.Json](#newtonsoft-json) and [XML formatters](#xml-formatters). |
 | `IOException: Read-only file system` | Something tried to write a file. The [file system is read-only](dotnet-runtime-differences.md#the-machine-underneath). |
@@ -89,32 +94,6 @@ read the stack trace to see which call failed.
 | The application refuses to start with `initialization retains a timer` | Something registered at startup started a timer. See [rate limiting](#rate-limiting) and [OpenTelemetry](#opentelemetry). |
 | The application refuses to start with `unhandled System.PlatformNotSupportedException` and no stack trace | A call made while the application starts failed. The known ones are [console logging](#console-logging) and [remote configuration](#remote-configuration). |
 | No error, but session values or TempData are missing on the next request | The session was loaded synchronously. See [session](#session). |
-
-## Any library
-
-### Synchronous calls that reach the network {#synchronous-io}
-
-A synchronous method that has to wait for the network throws
-`PlatformNotSupportedException`. That covers `DbConnection.Open`,
-`DbCommand.ExecuteReader`, `DbContext.SaveChanges`, a LINQ `ToList` on an Entity
-Framework Core query, `HttpClient.Send`, and waiting on an unfinished task with
-`.Result` or `.GetAwaiter().GetResult()`.
-[Waiting is asynchronous](dotnet-runtime-differences.md#waiting-is-asynchronous)
-explains why.
-
-- **Used for:** older code, and code written to be called from a synchronous
-  method.
-- **What to do today:** call the asynchronous method and await it: `OpenAsync`,
-  `ExecuteReaderAsync`, `SaveChangesAsync`, `ToListAsync`, `SendAsync`.
-- **Size of the change:** Small. Each call has an asynchronous twin, though the methods
-  that contain it have to become asynchronous too.
-- **Can it be fixed?** No. A blocked call would hold a worker thread that other
-  applications share, and never holding one is what makes a sandbox for every
-  instance affordable. See [why some of these will stay](#trade-offs).
-
-The rest of this page is about the cases where your own code is asynchronous
-and the blocking call is inside a library, or behind an interface that has no
-asynchronous form.
 
 ## ASP.NET Core
 
@@ -681,10 +660,10 @@ We have not run these, so this page makes no claim about them. Where the
 general rules suggest what to expect, the entry says so.
 
 - **Azure and AWS SDK clients**, such as `Azure.Storage.Blobs` and
-  `AWSSDK.S3`. Their synchronous methods fall under
-  [synchronous calls](#synchronous-io). Their asynchronous methods are built
-  on `HttpClient`, whose asynchronous methods work, but the clients themselves
-  have not been run.
+  `AWSSDK.S3`. Their asynchronous methods are built on `HttpClient`, whose
+  asynchronous methods work, but the clients themselves have not been run.
+  Their synchronous methods block, as
+  [any synchronous I/O does](dotnet-runtime-differences.md#waiting-is-asynchronous).
 - **`Microsoft.Identity.Web`.**
 - **`MailKit`.** It builds into an application package. Sending mail has not
   been run.
