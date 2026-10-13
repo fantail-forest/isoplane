@@ -11,7 +11,7 @@ internal static class DebugDevelopment
     internal static async Task<int> RunAsync(DevelopmentOptions options, CancellationToken cancellation)
     {
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
-        var session = Path.Combine(options.Directory, ".isoplane", "debug", Guid.NewGuid().ToString("N"));
+        var session = new LocalProject(options.Directory).Scratch("debug");
         try
         {
             if (OperatingSystem.IsWindows())

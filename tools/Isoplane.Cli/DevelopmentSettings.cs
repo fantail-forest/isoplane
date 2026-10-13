@@ -28,7 +28,7 @@ internal sealed record DevelopmentSettings(string Name, ushort? Port, Dictionary
         var profile = options.UseLaunchProfile ? LaunchProfile.Read(options.Directory, options.LaunchProfile) : null;
         var configuration = Layer(LocalSecrets.Read(project.UserSecretsId), profile, Environment.GetEnvironmentVariables());
         return new(project.AssemblyName, options.Port ?? profile?.Port, configuration, profile?.Limits ?? LimitOverrides.None,
-            MachineTrust.Export(new LocalProject(options.Directory).Trust), project.IntermediateDirectory, Path.Combine(CliPaths.Cache, "runtimes"));
+            MachineTrust.Export(new LocalProject(options.Directory).Trust), project.IntermediateDirectory, CliPaths.RuntimeCache);
     }
 
     /// <summary>Applies the launch profile's variables, then this process's prefixed ones, over <paramref name="secrets"/>.</summary>

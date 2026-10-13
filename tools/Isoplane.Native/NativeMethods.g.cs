@@ -17,7 +17,7 @@ namespace Isoplane.Native.Interop
         /// <summary>
         ///  Version of the native entry points and their report schema.
         /// </summary>
-        internal const uint ABI_VERSION = 2;
+        internal const uint ABI_VERSION = 3;
 
 
 
@@ -130,6 +130,31 @@ namespace Isoplane.Native.Interop
         /// </summary>
         [DllImport(__DllName, EntryPoint = "isoplane_process_free", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern void isoplane_process_free(void* handle);
+
+        /// <summary>
+        ///  Reports the compiled runtimes in the per-user runtime cache at the
+        ///  absolute UTF-8 `directory`: the cache's byte budget and each runtime's
+        ///  size and last use. A directory that does not exist is an empty cache and
+        ///  is not created.
+        ///
+        ///  # Safety
+        ///  The nonempty buffer points to readable memory for its length and remains
+        ///  alive and unchanged for the call. The managed wrapper pins it.
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "isoplane_runtime_cache_inventory", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern NativeResult isoplane_runtime_cache_inventory(byte* directory, nuint directory_length);
+
+        /// <summary>
+        ///  Removes every compiled runtime from the per-user runtime cache at the
+        ///  absolute UTF-8 `directory`, including one a running session uses, and
+        ///  reports the bytes removed, the runtimes that remain and why each could
+        ///  not be removed.
+        ///
+        ///  # Safety
+        ///  As for `isoplane_runtime_cache_inventory`.
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "isoplane_runtime_cache_clear", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern NativeResult isoplane_runtime_cache_clear(byte* directory, nuint directory_length);
 
 
     }

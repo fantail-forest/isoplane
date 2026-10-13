@@ -16,9 +16,18 @@ pub struct CacheBytes(pub u64);
 pub const PROJECT_CACHE_BYTES: CacheBytes = CacheBytes(5 * 1024 * 1024 * 1024);
 
 /// Disk budget for the compiled shared runtimes one user's projects reuse.
-/// A runtime's entry is about 230 MB, so this holds the ordinary and debug
-/// runtimes of the SDK in use and of the one before it.
+/// An SDK's ordinary runtime takes about 150 MB and its debug runtime about
+/// 80 MB, so this holds those of the SDK in use and of the three before it.
 pub const RUNTIME_CACHE_BYTES: CacheBytes = CacheBytes(1024 * 1024 * 1024);
+
+/// One entry a cache owns, as [`Cache::entries`] reports it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Entry {
+    /// Bytes the entry's files occupy.
+    pub bytes: u64,
+    /// When a reader last leased the entry.
+    pub last_used: SystemTime,
+}
 
 /// Content identity of one independently evictable artifact directory.
 #[derive(Clone, Copy)]
@@ -152,21 +161,8 @@ impl Cache {
         let mut gate = self.catalog()?;
         gate.entries.retain(|_, file| file.strong_count() != 0);
         self.delete_evicted_entries()?;
-        let entries = self.root.clone();
-        let mut inventory = Vec::new();
-        for entry in fs::read_dir(&entries).map_err(|error| io(&entries, error))? {
-            let path = entry.map_err(|error| io(&entries, error))?.path();
-            let marker = path.join(".lease");
-            if path.is_symlink() || !path.is_dir() || marker.is_symlink() || !marker.is_file() {
-                continue;
-            }
-            let touched = fs::metadata(&marker)
-                .and_then(|metadata| metadata.modified())
-                .map_err(|error| io(&marker, error))?;
-            inventory.push((touched, path.clone(), size(&path)?));
-        }
+        let inventory = self.owned()?;
         let mut total: u64 = inventory.iter().map(|(_, _, bytes)| bytes).sum();
-        inventory.sort();
         for (_, path, bytes) in inventory {
             if total <= self.budget.0 {
                 break;
@@ -187,6 +183,52 @@ impl Cache {
             total -= bytes;
         }
         Ok(())
+    }
+
+    /// The entries this cache owns, least recently used first.
+    pub fn entries(&self) -> Result<Vec<Entry>, Error> {
+        let _gate = self.catalog()?;
+        Ok(self
+            .owned()?
+            .into_iter()
+            .map(|(last_used, _, bytes)| Entry { bytes, last_used })
+            .collect())
+    }
+
+    /// Evicts every entry this cache owns, including one a reader has leased:
+    /// on Unix the reader keeps the files it already mapped, and the next
+    /// reader builds the entry again. Returns the failures of entries that
+    /// could not be evicted, which on Windows is every entry a reader still
+    /// has leased. Directories the cache does not own stay.
+    pub fn clear(&self) -> Result<Vec<Error>, Error> {
+        let _gate = self.catalog()?;
+        let mut failures = Vec::new();
+        for (_, path, _) in self.owned()? {
+            if let Err(error) = self.evict(&path) {
+                failures.push(error);
+            }
+        }
+        self.delete_evicted_entries()?;
+        Ok(failures)
+    }
+
+    /// Each owned entry's last use, path and size, least recently used
+    /// first. The caller holds the catalog.
+    fn owned(&self) -> Result<Vec<(SystemTime, PathBuf, u64)>, Error> {
+        let mut inventory = Vec::new();
+        for entry in fs::read_dir(&self.root).map_err(|error| io(&self.root, error))? {
+            let path = entry.map_err(|error| io(&self.root, error))?.path();
+            let marker = path.join(".lease");
+            if path.is_symlink() || !path.is_dir() || marker.is_symlink() || !marker.is_file() {
+                continue;
+            }
+            let touched = fs::metadata(&marker)
+                .and_then(|metadata| metadata.modified())
+                .map_err(|error| io(&marker, error))?;
+            inventory.push((touched, path.clone(), size(&path)?));
+        }
+        inventory.sort();
+        Ok(inventory)
     }
 
     /// Moves an entry out of its key before deleting it. Deleting in place
@@ -512,6 +554,76 @@ mod tests {
         assert!(
             new.directory().exists(),
             "retention must preserve the new live artifact"
+        );
+    }
+
+    #[test]
+    fn entries_report_each_owned_artifact_least_recently_used_first() {
+        let root = tempfile::tempdir().unwrap();
+        let cache = Cache::new(root.path().into(), CacheBytes(u64::MAX)).unwrap();
+        for (key, seconds, content) in [(2, 20, &b"12345"[..]), (1, 10, &b"123"[..])] {
+            let lease = cache
+                .lease_at(
+                    CacheKey([key; 32]),
+                    UNIX_EPOCH + Duration::from_secs(seconds),
+                )
+                .unwrap();
+            fs::write(lease.directory().join("module"), content).unwrap();
+        }
+        fs::create_dir(root.path().join("customer")).unwrap();
+        assert_eq!(
+            cache.entries().unwrap(),
+            [(3, 10), (5, 20)].map(|(bytes, seconds)| Entry {
+                bytes,
+                last_used: UNIX_EPOCH + Duration::from_secs(seconds),
+            }),
+            "an inventory must list owned entries only, oldest use first"
+        );
+    }
+
+    #[test]
+    fn clearing_evicts_leased_and_released_entries_and_leaves_unowned_directories() {
+        let root = tempfile::tempdir().unwrap();
+        let cache = Cache::new(root.path().into(), CacheBytes(u64::MAX)).unwrap();
+        let released = cache.lease(CacheKey([1; 32])).unwrap();
+        let released_path = released.directory().to_path_buf();
+        fs::write(released_path.join("module"), b"compiled").unwrap();
+        drop(released);
+        let leased = cache.lease(CacheKey([2; 32])).unwrap();
+        fs::write(leased.directory().join("module"), b"compiled").unwrap();
+        let unknown = root.path().join("customer");
+        fs::create_dir(&unknown).unwrap();
+        fs::write(unknown.join("data"), b"keep").unwrap();
+
+        let failures = cache.clear().unwrap();
+
+        assert!(
+            !released_path.exists(),
+            "clearing must evict an entry no reader has leased"
+        );
+        if cfg!(windows) {
+            // Windows cannot move a directory while a file in it is open, and a reader's lease is one.
+            assert_eq!(
+                (failures.len(), leased.directory().exists()),
+                (1, true),
+                "an entry a reader holds open must be reported, not half removed: {failures:?}"
+            );
+            let directory = leased.directory().to_path_buf();
+            drop(leased);
+            assert!(
+                cache.clear().unwrap().is_empty() && !directory.exists(),
+                "clearing again after the reader has gone must evict its entry"
+            );
+        } else {
+            assert!(
+                failures.is_empty() && !leased.directory().exists(),
+                "clearing must evict an entry a reader has leased: {failures:?}"
+            );
+        }
+        assert_eq!(cache.entries().unwrap(), [], "a cleared cache owns nothing");
+        assert!(
+            unknown.join("data").exists(),
+            "clearing must leave unowned directories untouched"
         );
     }
 

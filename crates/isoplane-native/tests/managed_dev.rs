@@ -226,7 +226,7 @@ async def run():
 asyncio.run(run())
 "#])
         .arg(script).arg(cli).arg(app).arg(directory.path())
-        .env("ISOPLANE_HOME", directory.path().join("home"))
+        .env("ISOPLANE_CACHE_DIR", directory.path().join("cache"))
         .output().unwrap();
     assert!(
         output.status.success(),

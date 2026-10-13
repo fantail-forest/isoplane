@@ -57,7 +57,7 @@ internal static class ManagedBundle
     internal static async Task<SharedRuntime> CreateAsync(BundleOptions options, CancellationToken cancellation)
     {
         string project = ProjectFile(options.Directory);
-        var temporary = Directory.CreateDirectory(Path.Combine(options.Directory, ".isoplane", "bundle", Guid.NewGuid().ToString("N")));
+        var temporary = Directory.CreateDirectory(new LocalProject(options.Directory).Scratch("bundle"));
         try
         {
             var metadata = Path.Combine(temporary.FullName, "inputs.json");

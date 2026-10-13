@@ -6,6 +6,7 @@ mod process;
 #[cfg(windows)]
 #[path = "process_windows.rs"]
 mod process;
+mod runtime_cache;
 mod session;
 mod session_events;
 mod validation;
@@ -13,7 +14,7 @@ mod validation;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 /// Version of the native entry points and their report schema.
-pub const ABI_VERSION: u32 = 2;
+pub const ABI_VERSION: u32 = 3;
 
 /// Outcome of a native operation, separate from a module's validation verdict.
 #[repr(C)]
@@ -89,8 +90,11 @@ fn boundary(operation: impl FnOnce() -> Result<Vec<u8>, validation::Error>) -> N
                 validation::Error::Process(_) => NativeStatus::ProcessError,
                 validation::Error::Buffer
                 | validation::Error::Policy(_)
-                | validation::Error::Module(_) => NativeStatus::InvalidInput,
-                validation::Error::Session(_) => NativeStatus::InternalError,
+                | validation::Error::Module(_)
+                | validation::Error::CacheDirectory => NativeStatus::InvalidInput,
+                validation::Error::Session(_) | validation::Error::Cache(_) => {
+                    NativeStatus::InternalError
+                }
             };
             NativeResult::new(status, error.to_string().into_bytes())
         }
@@ -333,6 +337,43 @@ pub unsafe extern "C" fn isoplane_process_free(handle: *mut std::ffi::c_void) {
     };
     #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     let _handle = handle;
+}
+
+/// Reports the compiled runtimes in the per-user runtime cache at the
+/// absolute UTF-8 `directory`: the cache's byte budget and each runtime's
+/// size and last use. A directory that does not exist is an empty cache and
+/// is not created.
+///
+/// # Safety
+/// The nonempty buffer points to readable memory for its length and remains
+/// alive and unchanged for the call. The managed wrapper pins it.
+#[no_mangle]
+pub unsafe extern "C" fn isoplane_runtime_cache_inventory(
+    directory: *const u8,
+    directory_length: usize,
+) -> NativeResult {
+    boundary(|| {
+        // SAFETY: the managed wrapper pins the supplied path throughout this call.
+        runtime_cache::inventory(unsafe { input(directory, directory_length)? })
+    })
+}
+
+/// Removes every compiled runtime from the per-user runtime cache at the
+/// absolute UTF-8 `directory`, including one a running session uses, and
+/// reports the bytes removed, the runtimes that remain and why each could
+/// not be removed.
+///
+/// # Safety
+/// As for `isoplane_runtime_cache_inventory`.
+#[no_mangle]
+pub unsafe extern "C" fn isoplane_runtime_cache_clear(
+    directory: *const u8,
+    directory_length: usize,
+) -> NativeResult {
+    boundary(|| {
+        // SAFETY: the managed wrapper pins the supplied path throughout this call.
+        runtime_cache::clear(unsafe { input(directory, directory_length)? })
+    })
 }
 
 /// Runs the isolated diagnostic response-pair experiment.

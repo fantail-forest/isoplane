@@ -70,7 +70,7 @@ impl Dev {
         command.env("ISOPLANE_ENDPOINT", "http://127.0.0.1:1");
         if let Some(project) = project_of(command) {
             // The runtimes a session compiles for its user stay in the test's own directory.
-            command.env("ISOPLANE_HOME", project.join(".isoplane/home"));
+            command.env("ISOPLANE_CACHE_DIR", project.join(".isoplane/cache"));
         }
         if managed_toolchain {
             command.env(

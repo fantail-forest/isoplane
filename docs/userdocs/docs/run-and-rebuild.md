@@ -28,14 +28,30 @@ projects:
 | macOS    | `~/Library/Caches/isoplane/runtimes` |
 | Windows  | `%LOCALAPPDATA%\Isoplane\Cache\runtimes` |
 
-When `ISOPLANE_HOME` is set, it is `ISOPLANE_HOME/cache/runtimes` instead. One
-runtime takes about 230 MB. The cache keeps at most 1 GB, removing the runtimes
-used least recently, and you can delete the directory at any time while no
-session is running: the next session compiles the runtime again.
+Set `ISOPLANE_CACHE_DIR` to an absolute path to keep the cache there instead,
+in a `runtimes` folder; when `ISOPLANE_HOME` is set and `ISOPLANE_CACHE_DIR` is
+not, it is `ISOPLANE_HOME/cache/runtimes`. One runtime takes about 150 MB, and
+the debug runtime another 80 MB once you debug. The cache keeps at most 1 GB,
+removing the runtimes used least recently.
+
+```bash
+isoplane cache info
+isoplane cache clean
+```
+
+`isoplane cache info` prints the cache's location, its size and when each
+compiled runtime was last used. `isoplane cache clean` removes every compiled
+runtime, including one a running session is using: that session keeps running,
+and the next session to start compiles the runtime again. On Windows a runtime
+that a running session has open cannot be removed; the command says so, and
+removes it when you run it again after stopping the session.
 
 What a session prepares from your project alone goes under the project's
 MSBuild intermediate output directory (`obj/` by default), and its application
-package and session state under the project's `.isoplane/` directory.
+package and session state under the project's `.isoplane/` directory. To keep
+all of that outside the project, for example when the project is on a network
+drive, set `ISOPLANE_TARGET_DIR` to an absolute path outside it. Each project
+then gets a folder of its own under that directory.
 
 ## Control compatibility warnings
 

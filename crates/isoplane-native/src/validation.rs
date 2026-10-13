@@ -14,6 +14,10 @@ pub(crate) enum Error {
     Policy(#[from] serde_json::Error),
     #[error("cannot inspect module: {0}")]
     Module(#[from] wasmparser::BinaryReaderError),
+    #[error("the runtime cache directory must be an absolute UTF-8 path")]
+    CacheDirectory,
+    #[error("runtime cache operation failed: {0}")]
+    Cache(#[from] isoplane_cache::Error),
 }
 
 #[derive(Default, Deserialize)]

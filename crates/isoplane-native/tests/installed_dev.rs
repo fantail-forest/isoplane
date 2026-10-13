@@ -333,7 +333,7 @@ fn installed_debug_acceptance(mode: &str) {
     command
         .arg(driver)
         .arg(&cli)
-        .env("ISOPLANE_HOME", directory.path().join("home"));
+        .env("ISOPLANE_CACHE_DIR", directory.path().join("cache"));
     if let Some(dev) = &dev {
         let metadata = dev
             .debugger
