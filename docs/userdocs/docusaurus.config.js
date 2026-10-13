@@ -20,13 +20,24 @@ function linkCategoriesToTheirPages(items, titles) {
   });
 }
 
+// Code keeps the Prism theme's syntax colours but sits on the site's own surface.
+const onBrandSurface = (theme) => ({
+  ...theme,
+  plain: {color: 'var(--foreground)', backgroundColor: 'var(--surface)'},
+});
+
+const baseUrl = '/';
+
 /** @type {import('@docusaurus/types').Config} */
 export default {
   title: 'Isoplane',
   tagline: 'Build and run your .NET application',
-  favicon: 'img/favicon.svg',
+  favicon: 'img/favicon.ico',
+  headTags: [{tagName: 'link', attributes: {
+    rel: 'icon', href: `${baseUrl}img/favicon.svg`, sizes: 'any', type: 'image/svg+xml',
+  }}],
   url: 'http://localhost:3123',
-  baseUrl: '/',
+  baseUrl,
   onBrokenLinks: 'throw',
   onBrokenAnchors: 'throw',
   i18n: {defaultLocale: 'en', locales: ['en']},
@@ -44,10 +55,14 @@ export default {
   }]],
   themeConfig: {
     colorMode: {respectPrefersColorScheme: true},
-    navbar: {title: 'Isoplane', items: [
+    navbar: {title: 'isoplane', items: [
       {type: 'doc', docId: 'index', label: 'Documentation', position: 'left'},
     ]},
-    prism: {theme: prismThemes.github, darkTheme: prismThemes.dracula,
-      additionalLanguages: ['bash', 'csharp', 'json', 'markup']},
+    footer: {copyright: '© 2026 Fantail Forest, Ltd. · A New Zealand limited company.'},
+    prism: {
+      theme: onBrandSurface(prismThemes.gruvboxMaterialLight),
+      darkTheme: onBrandSurface(prismThemes.gruvboxMaterialDark),
+      additionalLanguages: ['bash', 'csharp', 'json', 'markup'],
+    },
   },
 };
