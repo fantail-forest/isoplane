@@ -239,8 +239,8 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
         using var archive = new TarReader(stream);
         var times = new Dictionary<string, DateTimeOffset>();
         while (archive.GetNextEntry() is { } entry) times.Add(entry.Name, entry.ModificationTime);
-        // Writing an unchanged application again must produce the same times, or the
-        // platform would prepare it afresh on every run.
+        // Writing an unchanged application again must produce the same times, or it
+        // would report a new version on every run.
         Assert.Equal(built, times["application.json"].UtcDateTime);
         Assert.Equal(built, times["assemblies/Application.dll"].UtcDateTime);
         Assert.Equal(File.GetLastWriteTimeUtc(fixture.Dependency).Ticks / TimeSpan.TicksPerSecond,

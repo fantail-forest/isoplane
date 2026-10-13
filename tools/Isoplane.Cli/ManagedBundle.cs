@@ -108,10 +108,10 @@ internal static class ManagedBundle
             await using (var tar = new TarWriter(file, leaveOpen: true))
             {
                 using var content = new MemoryStream(manifest, writable: false);
-                // An application sees each entry's time as that file's own, and the platform starts
-                // a package with the same files and times from the template it already prepared.
-                // The manifest is read out of the entry assembly, so it is as old as that assembly:
-                // dated with the time of writing, every run would look like a new application.
+                // An application sees each entry's time as that file's own, and the times are part
+                // of the version a local session reports. The manifest is read out of the entry
+                // assembly, so it is as old as that assembly: dated with the time of writing, an
+                // unchanged application would report a new version on every run.
                 await tar.WriteEntryAsync(new PaxTarEntry(TarEntryType.RegularFile, "application.json")
                 {
                     DataStream = content,
