@@ -227,6 +227,11 @@ public static class IsoplaneHosting
             services.RemoveAll<IHostLifetime>();
             services.AddSingleton<IHostLifetime, IsoplaneLifetime>();
             services.AddHostedService<BackgroundWorkGuard>();
+            // IHttpClientFactory retires a handler on a timer it starts when it creates a client.
+            // A timer started during initialization cannot be captured, so a route that uses a
+            // client could not be warmed up; and an instance does not outlive a handler's
+            // connections long enough for retiring them to matter.
+            services.ConfigureHttpClientDefaults(client => client.SetHandlerLifetime(Timeout.InfiniteTimeSpan));
         });
     }
 }

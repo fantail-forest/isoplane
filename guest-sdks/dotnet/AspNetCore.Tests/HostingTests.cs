@@ -432,6 +432,18 @@ public sealed class HostingTests
     }
 
     [Fact]
+    public async Task a_client_from_the_factory_starts_no_timer_to_retire_its_handler()
+    {
+        var builder = Builder();
+        builder.Services.AddHttpClient("webhook");
+        await using var app = builder.Build();
+        var options = app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptionsMonitor<Microsoft.Extensions.Http.HttpClientFactoryOptions>>();
+        // The factory starts its retirement timer only for a finite lifetime, and an
+        // initialization that leaves a timer running cannot be captured.
+        Assert.Equal(Timeout.InfiniteTimeSpan, options.Get("webhook").HandlerLifetime);
+    }
+
+    [Fact]
     public async Task the_data_protection_key_exists_once_the_host_has_started()
     {
         var keys = Directory.CreateTempSubdirectory("isoplane-data-protection-");
