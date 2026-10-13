@@ -180,10 +180,9 @@ dotnet new list isoplane
 ```
 
 Doctor checks the .NET SDK, Isoplane's native library and the templates. It
-reports problems and does not repair them. The template list shows
-[`isoplane-web`](reference/project-templates.md#isoplane-web),
-[`isoplane-webapi`](reference/project-templates.md#isoplane-webapi) and
-[`isoplane-handler`](reference/project-templates.md#isoplane-handler).
+reports problems and does not repair them. The template list shows the
+[project templates](reference/project-templates.md), from
+[`isoplane-web`](reference/project-templates.md#isoplane-web) on.
 
 Now [create your first application](quickstart.md#3-create-an-application).
 

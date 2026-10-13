@@ -1,0 +1,27 @@
+{
+  // Debugging in VS Code. Press F5, or use C# Dev Kit's "Debug project associated
+  // with this file" button: both start this session when the Isoplane Debugger
+  // extension is installed.
+  //
+  // The application runs inside the Isoplane sandbox, so the ordinary C# debugger
+  // cannot reach it: it would attach to the `isoplane` tool, and breakpoints in
+  // the application would stay grey. The Isoplane debugger builds the
+  // application, starts it on the SDK's debug runtime, and stops at breakpoints
+  // when a request reaches them. The Debug Console prints the URL to send
+  // requests to.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug local Isoplane",
+      "type": "isoplane",
+      "request": "launch",
+      // The directory holding the application's project file.
+      "project": "${workspaceFolder}/src/Sample-McpServer",
+      "configuration": "Debug"
+
+      // Optional:
+      //   "watch": false    do not rebuild when a source file is saved
+      //   "port": 0         serve on any free port; another number selects that port
+    }
+  ]
+}

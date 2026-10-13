@@ -7,7 +7,7 @@ that check as you type what the platform requires of an application.
 For ASP.NET applications, use the
 [Isoplane.AspNetCore](https://www.nuget.org/packages/Isoplane.AspNetCore) project
 SDK. [Isoplane.Templates](https://www.nuget.org/packages/Isoplane.Templates)
-provides the `isoplane-web`, `isoplane-webapi` and `isoplane-handler` templates.
+provides `dotnet new` templates, such as `isoplane-web` and `isoplane-webapi`.
 The [Isoplane.Cli](https://www.nuget.org/packages/Isoplane.Cli) tool runs
 applications locally, and its `isoplane setup` command checks prerequisites and
 installs the templates.

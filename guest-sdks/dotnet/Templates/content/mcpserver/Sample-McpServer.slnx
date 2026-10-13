@@ -1,0 +1,12 @@
+<!--
+  The solution. `dotnet build` and `dotnet test` in this directory act on every
+  project listed here. Add one with `dotnet sln add <path to project>`.
+-->
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Sample-McpServer/Sample-McpServer.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Sample-McpServer.Tests/Sample-McpServer.Tests.csproj" />
+  </Folder>
+</Solution>

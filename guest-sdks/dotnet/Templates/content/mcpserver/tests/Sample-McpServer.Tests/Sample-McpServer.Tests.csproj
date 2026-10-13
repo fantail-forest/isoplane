@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Starts an application in the Isoplane sandbox from a test. Keep its version equal to the one the `isoplane` tool reports. -->
+    <PackageReference Include="Isoplane.Testing" Version="0.1.0-preview.4" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      Lets unit tests call the application's classes directly. The MCP client the
+      sandbox tests connect with comes from the application's ModelContextProtocol
+      package, through this reference, so both sides use one version.
+    -->
+    <ProjectReference Include="../../src/Sample-McpServer/Sample-McpServer.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+</Project>

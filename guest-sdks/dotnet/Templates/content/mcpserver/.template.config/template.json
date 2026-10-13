@@ -1,0 +1,38 @@
+{
+  "$schema": "http://json.schemastore.org/template",
+  "author": "Isoplane",
+  "classifications": ["Web", "MCP", "AI", "Service", "Isoplane"],
+  "identity": "Isoplane.Templates.McpServer",
+  "name": "Isoplane MCP Server",
+  "description": "A Model Context Protocol server over HTTP for the Isoplane sandbox, with example tools and tests.",
+  "shortName": "isoplane-mcpserver",
+  "sourceName": "Sample-McpServer",
+  "preferNameDirectory": true,
+  "tags": {
+    "language": "C#",
+    "type": "solution"
+  },
+  "guids": ["3f8a1c6e-2b7d-4e59-a0c4-6d9e1f2b3a47"],
+  "symbols": {
+    "HttpPort": {
+      "type": "parameter",
+      "datatype": "integer",
+      "description": "Port number to use for the HTTP endpoint in launchSettings.json."
+    },
+    "HttpPortGenerated": {
+      "type": "generated",
+      "generator": "port",
+      "parameters": { "low": 5000, "high": 5300 }
+    },
+    "HttpPortReplacer": {
+      "type": "generated",
+      "generator": "coalesce",
+      "parameters": { "sourceVariableName": "HttpPort", "fallbackVariableName": "HttpPortGenerated" },
+      "replaces": "5080"
+    }
+  },
+  "primaryOutputs": [
+    { "path": "src/Sample-McpServer/Sample-McpServer.csproj" },
+    { "path": "tests/Sample-McpServer.Tests/Sample-McpServer.Tests.csproj" }
+  ]
+}

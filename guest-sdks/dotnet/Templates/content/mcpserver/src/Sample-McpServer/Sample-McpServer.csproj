@@ -1,0 +1,50 @@
+<!--
+  Isoplane.AspNetCore builds this project into an application package for the
+  Isoplane sandbox, and makes `dotnet run` start it there. It takes the place of
+  Microsoft.NET.Sdk.Web. The number after the slash is the SDK version, which
+  also selects the runtime the application runs on.
+-->
+<Project Sdk="Isoplane.AspNetCore/0.1.0-preview.4">
+
+  <PropertyGroup>
+    <!-- The SDK sets TargetFramework to net10.0, the framework it supports. -->
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- Names this project's User Secrets store. Program.cs shows where configuration comes from. -->
+    <UserSecretsId>3f8a1c6e-2b7d-4e59-a0c4-6d9e1f2b3a47</UserSecretsId>
+
+    <!--
+      The build warns about code that does not suit the sandbox: starting a thread
+      (ISOPLANE1002) and waiting synchronously (ISOPLANE1003). It inspects this
+      project and the projects it references. Remove the comment markers from a
+      line below to change that.
+    -->
+    <!-- Inspect NuGet packages too: -->
+    <!-- <IsoplaneAnalyzeDependencies>true</IsoplaneAnalyzeDependencies> -->
+    <!-- Report declarations of native imports (ISOPLANE1001): -->
+    <!-- <IsoplaneWarnOnNativeImports>true</IsoplaneWarnOnNativeImports> -->
+    <!-- Fail the build on these warnings: -->
+    <!-- <WarningsAsErrors>$(WarningsAsErrors);ISOPLANE1002;ISOPLANE1003</WarningsAsErrors> -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      ASP.NET Core itself comes with the SDK. Add other NuGet packages as in any
+      .NET project:
+        dotnet add src/Sample-McpServer package <name>
+    -->
+    <!-- The official C# SDK for the Model Context Protocol, with its HTTP transport for ASP.NET Core. -->
+    <PackageReference Include="ModelContextProtocol.AspNetCore" Version="2.2.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      Files the application reads while it runs go into the application package
+      as content. Inside the sandbox they are the only files there are: the file
+      system holds the package, read-only. Program.cs loads these.
+    -->
+    <Content Include="Knowledge/Articles/**/*.md" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>
