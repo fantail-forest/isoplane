@@ -76,7 +76,7 @@ export default {
   themeConfig: {
     colorMode: {respectPrefersColorScheme: true},
     navbar: {items: [
-      {type: 'doc', docId: 'index', label: 'Documentation', position: 'left'},
+      {type: 'doc', docId: 'index', label: 'Docs', position: 'left'},
       {type: 'custom-siteLink', href: '/blog', label: 'Blog', position: 'left'},
     ]},
     footer: {copyright: '© 2026 Fantail Forest, Ltd. · A New Zealand limited company.'},
