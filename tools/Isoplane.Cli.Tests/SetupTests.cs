@@ -100,7 +100,7 @@ public sealed class SetupTests
         {
             LinuxDistribution = null,
             CanLoad = _ => throw new InvalidOperationException("Linux library checks must not run on this platform."),
-            FileExists = _ => throw new InvalidOperationException("Linux certificate checks must not run on this platform."),
+            HasTrustedRoots = () => throw new InvalidOperationException("Linux certificate checks must not run on this platform."),
         };
         Assert.True(await RunAsync(fixture, machine) == 0, "Non-Linux setup must use its bundled native dependencies.");
     }
@@ -157,7 +157,7 @@ public sealed class SetupTests
         using var fixture = new ReleaseFixture();
         var machine = Machines.Ready(fixture, new FakeRegistrations()) with
         {
-            FileExists = path => path != Prerequisites.CertificateBundle,
+            HasTrustedRoots = () => false,
             RunPrivileged = (_, _) => Task.FromResult(100),
         };
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() => RunAsync(fixture, machine, yes: true));

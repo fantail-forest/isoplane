@@ -22,10 +22,10 @@ internal sealed record SetupOptions(string? Source, bool AssumeYes)
     }
 }
 
-/// <summary>The machine-facing pieces of setup that tests replace: what the loader can find, who answers prompts, how privileged commands run.</summary>
+/// <summary>The machine-facing pieces of setup that tests replace: what the loader and the certificate store can find, who answers prompts, how privileged commands run.</summary>
 internal sealed record SetupMachine(
     Func<string, bool> CanLoad,
-    Func<string, bool> FileExists,
+    Func<bool> HasTrustedRoots,
     OperatingSystemRelease? LinuxDistribution,
     Func<string, Task<bool>> Confirm,
     Func<string, CancellationToken, Task<int>> RunPrivileged,
@@ -34,7 +34,7 @@ internal sealed record SetupMachine(
 {
     internal static SetupMachine Production() => new(
         Prerequisites.CanLoad,
-        File.Exists,
+        Prerequisites.HasTrustedRoots,
         OperatingSystem.IsLinux() ? Prerequisites.Detect() : null,
         ConfirmOnTerminal,
         (command, cancellation) => Processes.RunAsync("/bin/sh", ["-c", command], Environment.CurrentDirectory, cancellation),
@@ -138,7 +138,7 @@ internal static class Setup
 
     private static async Task EnsurePrerequisitesAsync(SetupOptions options, SetupMachine machine, OperatingSystemRelease distribution, CancellationToken cancellation)
     {
-        var missing = Prerequisites.Missing(machine.CanLoad, machine.FileExists);
+        var missing = Prerequisites.Missing(machine.CanLoad, machine.HasTrustedRoots);
         if (missing.Count == 0)
             return;
         var described = Prerequisites.Describe(missing);
@@ -149,7 +149,7 @@ internal static class Setup
             throw new InvalidOperationException($"Setup is incomplete: the missing prerequisites were not installed. Run this, then rerun isoplane setup (or pass --yes to let setup run it):{Environment.NewLine}  {command}");
         Console.Error.WriteLine($"Running: {command}");
         var exit = await machine.RunPrivileged(command, cancellation);
-        var remaining = Prerequisites.Missing(machine.CanLoad, machine.FileExists);
+        var remaining = Prerequisites.Missing(machine.CanLoad, machine.HasTrustedRoots);
         if (exit != 0 || remaining.Count > 0)
             throw new InvalidOperationException($"Setup is incomplete: '{command}' exited {exit} and this machine still lacks {(remaining.Count > 0 ? Prerequisites.Describe(remaining) : "nothing")}. Resolve the package installation, then rerun isoplane setup.");
     }

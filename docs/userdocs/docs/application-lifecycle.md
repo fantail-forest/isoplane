@@ -2,9 +2,9 @@
 title: "The application lifecycle: who does what"
 ---
 
-An application on Isoplane moves through the same few stages every time.
-Isoplane decides when each one happens. This page says, for each stage, what
-Isoplane takes care of and what is left to your application.
+An application on Isoplane goes through five stages, and Isoplane decides when
+each one happens. For each stage, this page says what Isoplane takes care of and
+what is left to your application.
 
 | Stage | When | Isoplane | Your application |
 | --- | --- | --- | --- |

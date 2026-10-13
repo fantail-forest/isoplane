@@ -95,7 +95,7 @@ internal sealed class FakeRegistrations : ISdkRegistrations
 internal static class Machines
 {
     internal static SetupMachine Ready(ReleaseFixture bundle, FakeRegistrations registrations) => new(
-        _ => true, _ => true, new OperatingSystemRelease("ubuntu", "24.04"),
+        _ => true, () => true, new OperatingSystemRelease("ubuntu", "24.04"),
         _ => throw new InvalidOperationException("nothing should be asked on a ready machine"),
         (_, _) => throw new InvalidOperationException("nothing privileged should run on a ready machine"),
         _ => registrations, _ => Task.CompletedTask);

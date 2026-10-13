@@ -10,7 +10,7 @@ internal static class EnvironmentDoctor
         await Readiness.ProveAsync(cancellation);
         if (OperatingSystem.IsLinux())
         {
-            var missing = Prerequisites.Missing(Prerequisites.CanLoad, File.Exists);
+            var missing = Prerequisites.Missing(Prerequisites.CanLoad, Prerequisites.HasTrustedRoots);
             if (missing.Count != 0)
                 throw new InvalidOperationException($"Missing native prerequisites: {Prerequisites.Describe(missing)}. Run isoplane setup.");
         }
