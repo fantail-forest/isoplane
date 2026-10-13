@@ -67,6 +67,12 @@ background work or retained state, and
 [how .NET differs on Isoplane](dotnet-runtime-differences.md) for the calls that
 fail in the sandbox.
 
+A `PlatformNotSupportedException` raised while ASP.NET Core Data Protection
+reads its keys comes from a key store that reads synchronously, such as
+`PersistKeysToDbContext`. Use one of the stores that
+[keep the keys across builds](dotnet-runtime-differences.md#keep-data-protection-keys-across-builds)
+in the sandbox.
+
 ## The application refuses to start
 
 Read the message printed with the failure; it names what stopped preparation.

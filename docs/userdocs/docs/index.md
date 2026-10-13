@@ -32,7 +32,10 @@ Use these when you have a particular task to complete:
 
 ## Reference
 
-Choose a starting point from the [Project templates](reference/project-templates.md).
+Choose a starting point from the [Project templates](reference/project-templates.md):
+an empty ASP.NET Core application, a Web API, a Razor Pages web application, a
+Model Context Protocol server, a service without a web framework, and sandbox
+tests for an application you already have.
 Look up public types, methods and properties in the [SDK API reference](reference/sdk.md),
 and what each `ISOPLANE` diagnostic means in [Error codes](reference/error-codes.md).
 The settings Isoplane reads are defined in [Project settings](reference/project-settings.md),

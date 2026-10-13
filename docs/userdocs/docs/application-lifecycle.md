@@ -54,7 +54,11 @@ await app.RunAsync();
 - Does its expensive one-time work here, so that no request pays for it: load
   reference data, build lookup tables, and serve itself a request with
   [`WarmupAsync`](reference/sdk/Isoplane.AspNetCore/Isoplane.AspNetCore/IsoplaneHosting/WarmupAsync.md)
-  so that routes, serializers and database models are ready.
+  so that routes, serializers and database models are ready. Given a path it
+  sends a `GET`; given an `HttpRequestMessage` it sends any method, with headers
+  and a body, for a route such as a search that takes a `POST`. Preparation attempts
+  can serve these requests again, so send requests safe to repeat. Reusing a
+  prepared template sends none.
 - Awaits all I/O, and closes every connection, stream and timer before the
   callbacks return. An open connection cannot be saved in the template, so
   Isoplane refuses to start an application that leaves one. A database driver's

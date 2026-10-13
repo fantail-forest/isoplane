@@ -16,7 +16,9 @@ dotnet run
 ```
 
 `dotnet new isoplane-webapi` creates a larger Web API with Entity Framework Core,
-PostgreSQL and tests.
+PostgreSQL and tests, `dotnet new isoplane-webapp` a Razor Pages application on
+the same database setup, and `dotnet new isoplane-mcpserver` a Model Context
+Protocol server.
 
 ## The project
 

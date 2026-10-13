@@ -79,6 +79,22 @@ response trailers. WebSockets are therefore unavailable, and so is what depends 
 them or on HTTP/2: SignalR's WebSocket transport, Blazor Server interactivity and
 gRPC over HTTP/2. gRPC-Web and statically rendered Blazor pages work.
 
+Razor Pages work as they do elsewhere, with tag helpers, model validation,
+antiforgery tokens and TempData. A form's antiforgery token and the TempData
+cookie are protected with ASP.NET Core Data Protection. A key created during
+initialization is captured in the template. Fresh initialization may create a
+different key; reusing a template retains its key. Keep earlier keys while
+protected data must remain readable. See how to
+[keep the keys across builds](dotnet-runtime-differences.md#keep-data-protection-keys-across-builds).
+The [`isoplane-webapp`](reference/project-templates.md#isoplane-webapp) template
+is a Razor Pages application set up this way.
+
+A Model Context Protocol server built with `ModelContextProtocol.AspNetCore`
+works over Streamable HTTP in its stateless mode. With session tracking switched
+on, that package registers a background service and the application refuses to
+start. The [`isoplane-mcpserver`](reference/project-templates.md#isoplane-mcpserver)
+template is such a server.
+
 Files in `wwwroot` are part of the application package. Serve them with
 `app.MapStaticAssets()` or `app.UseStaticFiles()`.
 
