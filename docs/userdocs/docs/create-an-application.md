@@ -67,8 +67,8 @@ Press Ctrl+C to finish the session.
 Use [run and watch](run-and-rebuild.md) to rebuild automatically after edits,
 [debug it](debug-an-application.md) from your editor, or
 [add an integration test](test-an-application.md) for the response you just
-created. [Application packages](execution-modes.md) explains how the SDK selects the
-shared runtime.
+created. [How .NET differs on Isoplane](dotnet-runtime-differences.md) lists what
+to keep in mind as the application grows.
 
 `isoplane-web` is the smallest starting point. Two larger templates show more of
 what an application can do, each with tests and a README:

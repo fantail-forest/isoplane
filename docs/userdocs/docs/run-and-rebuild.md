@@ -16,7 +16,7 @@ when you want the Release configuration.
 
 The local host caches preparation and native runtime compilation. Changes to the
 application package, settings or runtime invalidate the corresponding cached
-state. See [application packages](execution-modes.md) for the execution model.
+state.
 
 ## Control compatibility warnings
 

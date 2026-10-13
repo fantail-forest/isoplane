@@ -124,16 +124,40 @@ after any request. Successive requests can reach different instances.
   must last in a database or another external service.
 - **Open connections may not survive between requests.** A stale connection is
   possible even after a request that completed normally.
-- **A connection pool limit applies to one instance**, not to the application as
-  a whole.
 - **Startup state is captured and copied.** `Program.cs` runs up to `RunAsync` while
   Isoplane prepares the application, and every instance starts from a copy of
   that memory. A connection opened during startup cannot be carried into an
-  instance, and a value created then is the same in every instance.
+  instance, so close it before startup finishes.
+- **A value created during startup is the same in every instance.** Create
+  anything that must differ between instances when an instance activates, by
+  subscribing to `Isoplane.Activation.Activated`.
+- **Random numbers are reseeded for you, with exceptions.** Each instance
+  reseeds `Random.Shared` and every `Random` created without a seed, and
+  cryptographic randomness is always drawn fresh. A `Random` you gave a seed, a
+  generator that is not a `System.Random`, and a value already drawn during
+  startup are copied as they are.
+- **ASP.NET Core Data Protection keys are shared.** Every instance of a
+  deployment protects and unprotects with the same key, so antiforgery tokens
+  and authentication cookies work across instances.
 
-[The application lifecycle](application-lifecycle.md) explains each of these,
-including what to create when an instance activates, how random number
-generators are reseeded and what happens to ASP.NET Core Data Protection keys.
+[The application lifecycle](application-lifecycle.md) explains each of these in
+more depth.
+
+### Pool database connections outside the application
+
+A connection pool inside the application belongs to one instance. Its size
+limit applies to that instance alone, so it does not cap the connections your
+application as a whole opens: ten instances with a pool of twenty can hold two
+hundred. The pool is also lost whenever its instance is discarded, and a
+connection it kept open may be stale by the next request.
+
+Put the pool in front of the database instead. Use your database provider's
+pooler, such as PgBouncer or a provider's pooled connection endpoint, and point
+the application's connection string at it. The pooler caps the total and keeps
+connecting cheap, and the application can open a connection for each request
+and dispose it when the request is done. The
+[PostgreSQL sample](connect-postgresql.md) runs with the driver's own pooling
+off.
 
 ## Network
 
@@ -204,5 +228,9 @@ What follows from that:
 
 Your code runs as IL on an interpreter. There is no JIT compiler, and nothing is
 trimmed or compiled ahead of time, so reflection, runtime type loading,
-`Reflection.Emit` and compiled expressions all work. See
-[application packages and the shared runtime](execution-modes.md).
+`Reflection.Emit` and compiled expressions all work.
+
+The SDK version in the project file, the number in
+`Sdk="Isoplane.AspNetCore/..."`, also selects the runtime the application runs
+on. Debug and Release run on that same runtime and differ only in how the C#
+compiler optimizes your code.
