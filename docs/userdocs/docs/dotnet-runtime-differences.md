@@ -13,13 +13,9 @@ see [execution limits](execution-limits.md).
 ## Why the sandbox works this way
 
 Isoplane runs many applications on a small number of worker threads. Whenever an
-application is waiting, whether for a database reply or for its next request,
-Isoplane sets that instance aside and gives the worker to another one.
-
-It can only do that when the application has handed control back with no call in
-progress. An `await` on unfinished work does exactly that: the method returns,
-and what it needs to continue is kept in memory. A call that blocks does not,
-because the wait happens inside the call.
+application is idle, because it is waiting on an asynchronous operation or has
+no requests to process, Isoplane sets that instance aside and gives the worker
+to another one.
 
 Most of the rules below follow from this: waits are asynchronous, the
 application has no threads of its own, and nothing runs between requests. The
