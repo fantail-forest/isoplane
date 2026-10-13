@@ -8,7 +8,7 @@ what is left to your application.
 
 | Stage | When | Isoplane | Your application |
 | --- | --- | --- | --- |
-| [Initialization](#initialization) | When creating a template, before requests | Runs `Program.cs` and saves the application's memory as a template | Prepares shared state, and leaves nothing open |
+| [Initialization](#initialization) | When creating a template, before requests | Runs `Program.cs` and saves the application's memory as a template | Prepares shared state, and closes every connection and timer it opened |
 | [Activation](#activation) | Each time an instance starts | Copies the template and reseeds random generators | Replaces copied state that has to be unique to each instance, such as an identifier |
 | [Handling a request](#handling-a-request) | Each request | Delivers the request, suspends the instance while it waits, enforces limits | Awaits its work, and passes the request's cancellation token to the asynchronous calls it makes |
 | [Between requests](#between-requests) | Whenever an instance has no request | Keeps the instance for later, or discards it | Expects nothing to run and nothing to survive |
@@ -45,8 +45,9 @@ await app.RunAsync();
 - Awaits the `Initializing` callbacks one at a time, in the order they
   subscribed.
 - Saves everything left in memory, and starts every instance from it.
-- Refuses to start the application if initialization throws, or if a
-  `BackgroundService` is still running once the host has started.
+- Refuses to start the application if initialization throws, if a
+  `BackgroundService` is still running once the host has started, or if a
+  connection, stream or timer is still open when the callbacks have finished.
 
 **Your application**
 
@@ -55,7 +56,10 @@ await app.RunAsync();
   [`WarmupAsync`](reference/sdk/Isoplane.AspNetCore/Isoplane.AspNetCore/IsoplaneHosting/WarmupAsync.md)
   so that routes, serializers and database models are ready.
 - Awaits all I/O, and closes every connection, stream and timer before the
-  callbacks return. An open connection cannot be saved in the template.
+  callbacks return. An open connection cannot be saved in the template, so
+  Isoplane refuses to start an application that leaves one. A database driver's
+  connection pool keeps connections open after use, so initialize with pooling
+  off, as the [PostgreSQL sample](connect-postgresql.md) does.
 - Creates nothing that should be unique to an instance. Whatever initialization leaves
   in memory, including a random value or an identifier in a static field, is the
   same in every instance.

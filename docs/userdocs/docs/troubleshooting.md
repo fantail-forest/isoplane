@@ -70,11 +70,15 @@ fail in the sandbox.
 ## The application refuses to start
 
 Read the message printed with the failure; it names what stopped preparation.
-Three causes are particular to Isoplane. A `BackgroundService` that is still
+Four causes are particular to Isoplane. A `BackgroundService` that is still
 running once the host has started is refused by name, because work cannot
 continue between requests. An entry point that returns without awaiting
 `RunAsync` cannot serve requests. An initialization callback that throws, such as
-a warm-up request to a database that is not running, fails preparation.
+a warm-up request to a database that is not running, fails preparation. So does
+initialization that leaves a connection, stream or timer open: the message names
+the kind, for example `initialization retains a TCP socket`, and the fix is to
+dispose it before the callback returns. See
+[initialization](application-lifecycle.md#initialization).
 
 ## Breakpoints stay grey
 
