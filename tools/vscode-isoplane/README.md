@@ -1,4 +1,16 @@
-# Isoplane Debugger
+# Isoplane
+
+**Ship your .NET API. Skip the infrastructure.**
+
+Build and debug Isoplane applications directly in VS Code: launch your API, set
+breakpoints, inspect variables, and rebuild source edits for the next request.
+
+This is a pre-release extension for local development. It requires VS Code
+1.95 or later, the .NET 10 SDK, and the Isoplane CLI and SDK installed separately.
+The CLI must be available on VS Code's PATH, or selected with `cliPath`.
+See [isoplane.dev](https://isoplane.dev) for the platform.
+
+## Debug your application
 
 Install the Isoplane CLI and SDK, open your application folder in VS Code, and
 choose **Run and Debug → Isoplane → Debug local Isoplane**. Set a breakpoint and
@@ -55,15 +67,6 @@ To attach to a session started in a terminal, run
 Set `cliPath` in that configuration if `isoplane` is not on VS Code's PATH.
 It accepts an executable or a CLI `.dll` assembly; assemblies run through `dotnet`.
 
-For development, run `npm ci` and `npm run package` in this directory. Install
-the resulting VSIX with VS Code's **Extensions: Install from VSIX** command.
-`ISOPLANE_TEST_CLI=/absolute/path/to/isoplane npm test` exercises registration
-and the real CLI adapter inside VS Code. Linux CI needs a display, such as
-`xvfb-run -a npm test`.
+## License
 
-The full editor journey launches a prepared customer application, inspects hover
-and watch expressions, edits a local, and debugs a second request. From the
-repository root, run `task test:editor`. Task prepares the CLI, application and
-editor dependencies; Linux uses `xvfb-run`. Set `ISOPLANE_TEST_CLI` to exercise
-a different CLI executable or assembly. Use `task test:editor -- suite` for the
-registration and adapter checks.
+This extension is supplied under the [Elastic License 2.0](../../LICENSE.txt).

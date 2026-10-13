@@ -9,6 +9,12 @@ vars:
   NOTICES: '{{.ROOT_DIR}}/.build/clr-anycpu/notices'
 
 tasks:
+  editor:
+    desc: Package the pre-release Isoplane VS Code extension
+    deps: [':test:editor:environment']
+    cmds:
+      - npm --prefix tools/vscode-isoplane run package
+
   shared:
     run: once
     desc: Prepare platform-independent release inputs on Linux

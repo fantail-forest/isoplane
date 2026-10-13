@@ -7,7 +7,7 @@ const path = require('node:path');
 const vscode = require('vscode');
 
 async function run() {
-    const extension = vscode.extensions.getExtension('fantail-forest.isoplane-debugger');
+    const extension = vscode.extensions.getExtension('Isoplane.isoplane');
     assert.ok(extension, 'VS Code must discover the Isoplane debugger extension');
     await extension.activate();
     csharpLaunches();

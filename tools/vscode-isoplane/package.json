@@ -1,14 +1,10 @@
 {
-  "name": "isoplane-debugger",
-  "displayName": "Isoplane Debugger",
-  "description": "Debug local interpreted Isoplane .NET applications.",
+  "name": "isoplane",
+  "displayName": "Isoplane",
+  "description": "Build and debug your Isoplane .NET APIs without leaving VS Code.",
   "version": "0.1.1",
-  "publisher": "fantail-forest",
-  "license": "UNLICENSED",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/fantail-forest/isoplane.git"
-  },
+  "publisher": "Isoplane",
+  "license": "SEE LICENSE IN LICENSE.txt",
   "engines": {
     "vscode": "^1.95.0"
   },
@@ -180,11 +176,20 @@
   "scripts": {
     "test": "node test/run.js",
     "test:launch": "node test/run.js launch",
-    "package": "vsce package --skip-license --out out/isoplane-debugger.vsix",
-    "prepackage": "node -e \"require('node:fs').mkdirSync('out', {recursive:true})\""
+    "package": "vsce package --pre-release --out out/ --allow-missing-repository",
+    "prepackage": "node -e \"const fs=require('node:fs'); fs.mkdirSync('out',{recursive:true}); fs.copyFileSync('../../licenses/Isoplane-SDK-LICENSE.txt','LICENSE.txt')\""
   },
   "devDependencies": {
     "@vscode/test-electron": "3.1.0",
     "@vscode/vsce": "4.0.0"
-  }
+  },
+  "icon": "icon.png",
+  "homepage": "https://isoplane.dev",
+  "keywords": [
+    "isoplane",
+    "dotnet",
+    "csharp",
+    "debugging",
+    "webassembly"
+  ]
 }

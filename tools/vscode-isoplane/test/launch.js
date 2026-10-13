@@ -6,7 +6,7 @@ const { EventEmitter, once } = require('node:events');
 const vscode = require('vscode');
 
 async function run() {
-    const extension = vscode.extensions.getExtension('fantail-forest.isoplane-debugger');
+    const extension = vscode.extensions.getExtension('Isoplane.isoplane');
     assert.ok(extension);
     await extension.activate();
     await require('./csharp').run();
