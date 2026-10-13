@@ -175,6 +175,10 @@ public static class IsoplaneHosting
     /// must answer with a success status; any other status throws, which stops the application from
     /// starting.
     /// </para>
+    /// <para>
+    /// To warm a route that takes another method, a body or particular headers, pass an
+    /// <see cref="HttpRequestMessage"/> to <see cref="WarmupAsync(WebApplication, HttpRequestMessage)"/>.
+    /// </para>
     /// </remarks>
     /// <example>
     /// <code>
@@ -195,24 +199,92 @@ public static class IsoplaneHosting
     /// <c>Initializing</c> callback, or it was not created with <see cref="CreateBuilder(string[])"/>.
     /// </exception>
     /// <exception cref="HttpRequestException">The endpoint answered with a status outside 200–299.</exception>
-    public static async Task WarmupAsync(this WebApplication application, string path)
+    public static Task WarmupAsync(this WebApplication application, string path) =>
+        application.WarmupAsync(HttpMethod.Get.Method, path, [], [], nameof(path));
+
+    /// <summary>
+    /// Sends the application one request of any method from within, with the headers and body
+    /// given, so that the work a route's first request does is already done when real requests
+    /// arrive.
+    /// </summary>
+    /// <param name="application">The application built in <c>Program.cs</c>.</param>
+    /// <param name="request">
+    /// The request to serve. Its address is a path beginning with a slash, with an optional query
+    /// string. The caller keeps it and disposes it.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// Use it for a route that <see cref="WarmupAsync(WebApplication, string)"/> cannot reach with a
+    /// plain <c>GET</c>: a search or a query sent by <c>POST</c>, or an endpoint that answers only
+    /// when a header is present. Everything that method's remarks say applies here: call it from an
+    /// <c>Initialization.Initializing</c> callback, the endpoint must answer with a success status,
+    /// and the response body is discarded.
+    /// </para>
+    /// <para>
+    /// The request is real and can repeat if preparation retries initialization. Reusing an
+    /// existing prepared template sends no request. Send one that changes nothing, or that is
+    /// harmless to repeat: retries do not undo a <c>POST</c> that already created a row.
+    /// </para>
+    /// <para>
+    /// The request carries the headers of the message and of its content. A <c>Host</c> header of
+    /// <c>localhost</c> is added when the message names none.
+    /// </para>
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// app.MapPost("/search", (SearchQuery query, Catalog catalog) => catalog.Search(query));
+    ///
+    /// Initialization.Initializing += async () =>
+    /// {
+    ///     using var search = new HttpRequestMessage(HttpMethod.Post, "/search")
+    ///     {
+    ///         Content = JsonContent.Create(new SearchQuery("warm-up"))
+    ///     };
+    ///     await app.WarmupAsync(search);
+    /// };
+    /// </code>
+    /// </example>
+    /// <exception cref="ArgumentException">The request's address is missing, names a host, or does not begin with a single slash.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// The application has not started, because the call was made outside an
+    /// <c>Initializing</c> callback, or it was not created with <see cref="CreateBuilder(string[])"/>.
+    /// </exception>
+    /// <exception cref="HttpRequestException">The endpoint answered with a status outside 200–299.</exception>
+    public static async Task WarmupAsync(this WebApplication application, HttpRequestMessage request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var body = request.Content is null ? [] : await request.Content.ReadAsByteArrayAsync();
+        var headers = request.Headers.Concat(request.Content?.Headers ?? Enumerable.Empty<KeyValuePair<string, IEnumerable<string>>>())
+            // The length is that of the bytes just read, whether or not the content had computed one.
+            .Where(header => !header.Key.Equals("Content-Length", StringComparison.OrdinalIgnoreCase))
+            .SelectMany(header => header.Value.Select(value => new KeyValuePair<string, string>(header.Key, value)))
+            .ToList();
+        if (request.Content is not null) headers.Add(new("Content-Length", body.Length.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        var path = request.RequestUri is { IsAbsoluteUri: false } address ? address.OriginalString : "";
+        await application.WarmupAsync(request.Method.Method, path, headers, body, nameof(request));
+    }
+
+    private static async Task WarmupAsync(this WebApplication application, string method, string path,
+        IReadOnlyList<KeyValuePair<string, string>> headers, byte[] body, string parameter)
     {
         var server = application.Services.GetRequiredService<IServer>() as IsoplaneServer
             ?? throw new InvalidOperationException("Create the application with IsoplaneHosting.CreateBuilder.");
         if (!server.Started)
             throw new InvalidOperationException("WarmupAsync needs the started application. Call it from an Isoplane.Initialization.Initializing callback, which runs once RunAsync has started the host.");
         if (string.IsNullOrEmpty(path) || !path.StartsWith('/') || path.StartsWith("//", StringComparison.Ordinal))
-            throw new ArgumentException("Use an application-relative path beginning with a slash.", nameof(path));
+            throw new ArgumentException("Use an application-relative path beginning with a slash.", parameter);
         var query = path.IndexOf('?');
+        // Every real request names a host, and code that builds absolute URLs,
+        // such as Blazor's navigation, fails without one.
+        var named = headers.Any(header => header.Key.Equals("Host", StringComparison.OrdinalIgnoreCase));
         var request = Request.FromDispatch(new Isoplane.Abi.DispatchRecord
         {
             Kind = Isoplane.Abi.DispatchKind.Http,
-            Method = "GET",
+            Method = method,
             Path = query < 0 ? path : path[..query],
             Url = path,
-            // Every real request names a host, and code that builds absolute URLs,
-            // such as Blazor's navigation, fails without one.
-            Headers = [new("Host", "localhost")]
+            Headers = named ? [.. headers] : [new("Host", "localhost"), .. headers],
+            Body = body
         });
         await server.SendAsync(request, new WarmupResponseTransport());
     }

@@ -1,3 +1,4 @@
+using System.Text;
 using Isoplane;
 using Isoplane.AspNetCore;
 using Sample_McpServer.Knowledge;
@@ -86,11 +87,25 @@ app.MapGet("/", () => $"Sample-McpServer is an MCP server with {handbook.Count} 
 
 // Initialization callbacks run once the application has started and before the
 // template is saved. Serving a request here leaves the work of a route's first
-// use in the template. WarmupAsync sends a GET, and the MCP endpoint accepts
-// only POST, so it is not warmed: the first MCP call an instance receives does
-// that work. Await any I/O and dispose its connections before the callback
-// returns: an open connection cannot be captured.
-Initialization.Initializing += () => app.WarmupAsync("/");
+// use in the template, so no instance pays for it on its first call. The MCP
+// endpoint takes its messages by POST, so the request is spelled out: a search,
+// which exercises the transport, a tool and the serializers, and changes
+// nothing. Preparation can retry warm-up requests, so send only ones
+// that are harmless to repeat, and each must answer with a success status.
+// Await any I/O and dispose its connections before the callback returns: an
+// open connection cannot be captured.
+Initialization.Initializing += async () =>
+{
+    using var search = new HttpRequestMessage(HttpMethod.Post, "/mcp")
+    {
+        Content = new StringContent(
+            """{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search_handbook","arguments":{"query":"warm-up"}}}""",
+            Encoding.UTF8, "application/json"),
+        // What an MCP client sends: the server answers with either.
+        Headers = { Accept = { new("application/json"), new("text/event-stream") } }
+    };
+    await app.WarmupAsync(search);
+};
 
 // Activation runs in each instance, before its first request. Set state that
 // must differ between instances here, because initialization state is shared:

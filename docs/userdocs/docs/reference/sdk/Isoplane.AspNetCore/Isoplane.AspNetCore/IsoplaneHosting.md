@@ -16,7 +16,7 @@ public static class IsoplaneHosting
 | name | description |
 | --- | --- |
 | static [CreateBuilder](IsoplaneHosting/CreateBuilder.md)(…) | Creates the application's builder. Use it in `Program.cs` in place of `WebApplication.CreateBuilder`. |
-| static [WarmupAsync](IsoplaneHosting/WarmupAsync.md)(…) | Sends the application one `GET` request from within, so that the work a route's first request does is already done when real requests arrive. |
+| static [WarmupAsync](IsoplaneHosting/WarmupAsync.md)(…) | Sends the application one `GET` request from within, so that the work a route's first request does is already done when real requests arrive. (2 methods) |
 
 ## Remarks
 

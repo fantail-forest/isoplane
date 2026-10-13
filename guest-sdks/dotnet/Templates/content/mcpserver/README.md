@@ -85,6 +85,9 @@ dotnet test
   to `RunAsync`, before Isoplane captures the template that every instance
   starts from. The articles it reads are already in memory when an instance
   serves its first request.
+- **The endpoint is warm before the first call.** An
+  `Initialization.Initializing` callback posts one search to `/mcp` before the
+  template is captured, so the work of a first call is in the template too.
 - **A tool is a method.** `[McpServerTool]` marks it, `[Description]` tells the
   model when and how to call it, and its parameters are the tool's inputs.
 - **A request owns its work.** Nothing runs in an instance after its response,
@@ -134,6 +137,9 @@ settings in `tests/Sample-McpServer.Tests/SandboxFixture.cs`.
 - **Add a tool.** Add a method marked `[McpServerTool]` to `HandbookTools`, and
   a test to `McpServerTests`. For a new group of tools, add a class marked
   `[McpServerToolType]` and a `WithTools<...>()` line in `Program.cs`.
+- **Warm another tool.** Send it a call in the initialization callback in
+  `Program.cs`, as the search is sent. Choose calls that change nothing: every
+  build of the application serves them again.
 - **Add an article.** Put a Markdown file in `Knowledge/Articles/`. Its file
   name is its slug and its first heading is its title.
 - **Call another service from a tool.** Register a typed client with

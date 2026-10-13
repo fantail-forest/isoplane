@@ -488,6 +488,53 @@ public sealed class HostingTests
         Assert.Equal("localhost", host);
     }
 
+    [Fact]
+    public async Task warmup_serves_a_request_with_its_method_headers_and_body()
+    {
+        var received = new List<string?>();
+        await using var app = Builder().Build();
+        app.MapPost("/search", async (HttpContext context) =>
+        {
+            using var reader = new StreamReader(context.Request.Body);
+            received.AddRange([
+                context.Request.ContentType, context.Request.ContentLength?.ToString(), context.Request.Headers.Accept,
+                context.Request.Host.Value, context.Request.QueryString.Value, await reader.ReadToEndAsync()]);
+        });
+        await app.StartedAsync();
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/search?limit=3")
+        {
+            Content = new StringContent("{\"query\":\"tea\"}", System.Text.Encoding.UTF8, "application/json"),
+            Headers = { Accept = { new("text/event-stream") } }
+        };
+        await app.WarmupAsync(request);
+        Assert.Equal(["application/json; charset=utf-8", "15", "text/event-stream", "localhost", "?limit=3", "{\"query\":\"tea\"}"], received);
+    }
+
+    [Fact]
+    public async Task warmup_keeps_the_host_a_request_names()
+    {
+        string? host = null;
+        await using var app = Builder().Build();
+        app.MapDelete("/cache", (HttpContext context) => { host = context.Request.Host.Value; });
+        await app.StartedAsync();
+        using var request = new HttpRequestMessage(HttpMethod.Delete, "/cache") { Headers = { Host = "tenant.example" } };
+        await app.WarmupAsync(request);
+        Assert.Equal("tenant.example", host);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("https://example.com/search")]
+    [InlineData("search")]
+    public async Task warmup_refuses_a_request_that_is_not_addressed_to_the_application(string? address)
+    {
+        await using var app = Builder().Build();
+        await app.StartedAsync();
+        using var request = new HttpRequestMessage(HttpMethod.Post, address);
+        var error = await Record.ExceptionAsync(() => app.WarmupAsync(request));
+        Assert.IsType<ArgumentException>(error);
+    }
+
     [Theory]
     [InlineData(404)]
     [InlineData(500)]
