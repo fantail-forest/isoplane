@@ -10,7 +10,7 @@ what is left to your application.
 | --- | --- | --- | --- |
 | [Initialization](#initialization) | When creating a template, before requests | Runs `Program.cs` and saves the application's memory as a template | Prepares shared state, and closes every connection and timer it opened |
 | [Activation](#activation) | Each time an instance starts | Copies the template and reseeds random generators | Replaces copied state that has to be unique to each instance, such as an identifier |
-| [Handling a request](#handling-a-request) | Each request | Delivers the request, suspends the instance while it waits, enforces limits | Awaits its work, and passes the request's cancellation token to the asynchronous calls it makes |
+| [Handling a request](#handling-a-request) | Each request | Delivers the request, suspends the instance while it waits, enforces limits | Awaits its work, and forwards the request's cancellation token to the asynchronous calls it makes |
 | [Between requests](#between-requests) | Whenever an instance has no request | Keeps the instance for later, or discards it | Expects nothing to run and nothing to survive |
 | [A new build or changed settings](#a-new-build-or-changed-settings) | When you change the application or its settings | Prepares a new template when needed; matching captured state may be reused | Keeps what must outlive a build somewhere else |
 
@@ -133,7 +133,7 @@ operation completes.
   awaited may never finish.
 - Uses asynchronous APIs throughout; see
   [how .NET differs on Isoplane](dotnet-runtime-differences.md#waiting-is-asynchronous).
-- Passes the cancellation token to the asynchronous calls it makes.
+- Forwards the cancellation token to the asynchronous calls it makes.
 - Disposes what it opens. Do not leave cleanup to a finalizer.
 - Saves anything that must last to a database or another external service
   before it responds.
