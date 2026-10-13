@@ -65,6 +65,19 @@ await app.RunAsync();
   same in every instance.
 - Starts no background work.
 
+**What can go wrong**
+
+In each case the application does not start, and the terminal shows the reason.
+
+| Condition | What you see |
+| --- | --- |
+| `Program.cs` or an `Initializing` callback throws | The exception that was thrown |
+| A `BackgroundService` is still running once the host has started | An error that names the service |
+| A connection, stream, DNS result or timer is still open when the callbacks finish | A message that names the kind, such as `initialization retains a TCP socket; dispose it before capture` |
+| Code waits synchronously or starts a thread | `PlatformNotSupportedException`, unless the code catches it |
+| Initialization runs longer than Isoplane allows | Initialization is stopped |
+| The entry point calls `Run`, or does not await `RunAsync` | A build error, [`ISOPLANE1020`](reference/error-codes.md#isoplane1020) or [`ISOPLANE1021`](reference/error-codes.md#isoplane1021), before anything runs |
+
 A setting read during initialization is saved in the template with everything else, and
 every instance has the same settings.
 
@@ -107,6 +120,13 @@ Activation.Activated += () =>
   that seed was itself random, and a generator that is not a `System.Random`,
   such as one inside a library.
 
+**What can go wrong**
+
+| Condition | What happens |
+| --- | --- |
+| An `Activated` callback throws | The request the instance was started for fails, and the instance is not used again. The next request starts another instance, which runs the callbacks again. |
+| Initialization left more in memory than an instance is allowed | No instance can start. Reduce what initialization keeps. |
+
 An application without ASP.NET marks one method `[Activated]` instead.
 
 ## Handling a request
@@ -138,6 +158,17 @@ operation completes.
 - Saves anything that must last to a database or another external service
   before it responds.
 
+**What can go wrong**
+
+| Condition | What happens |
+| --- | --- |
+| The application throws an exception it does not handle | That request fails. Without ASP.NET, the client receives status 502. |
+| Code waits synchronously or starts a thread | The call throws `PlatformNotSupportedException` |
+| The client goes away | The request's token is cancelled |
+| The request uses up its running time | The token is cancelled. If the request has not finished shortly afterwards, Isoplane stops the instance and the request fails. |
+| The request has too many asynchronous operations pending at once | The request fails |
+| The response is complete while work is still pending | That work is cancelled and never finishes. No error is reported. |
+
 ## Between requests
 
 An instance with no request does not run at all. Isoplane may keep it for the
@@ -160,6 +191,13 @@ next request, or discard it. Successive requests can reach different instances.
   [outside the application](dotnet-runtime-differences.md#pool-database-connections-outside-the-application),
   because a pool inside it belongs to one instance.
 
+**What can go wrong**
+
+| Condition | What happens |
+| --- | --- |
+| Isoplane discards the instance | Nothing is reported. Its memory is gone, and the next request reaches an instance that starts from the template. |
+| A connection kept from an earlier request has gone stale | Its next use fails as a dropped connection does anywhere. Open a new one. |
+
 ## A new build or changed settings
 
 When preparation inputs change, Isoplane prepares a new template. Local
@@ -180,3 +218,11 @@ without rerunning initialization callbacks.
   instance of the same template shares it, which keeps antiforgery tokens and
   authentication cookies working across instances, and fresh initialization may create a different captured
   key; reusing a template retains its key.
+
+**What can go wrong**
+
+| Condition | What happens |
+| --- | --- |
+| The rebuild fails under `isoplane dev` | The terminal says why, and the last working application stays available |
+| Initialization fails for the new build | The same as under [Initialization](#initialization) |
+| A cookie or token was protected with a key absent from the new template | It cannot be unprotected unless that key is retained |
