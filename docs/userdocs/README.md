@@ -28,7 +28,9 @@ robots tag and no sitemap is generated.
 
 The site takes its palette from `docs/userdocs/src/css/tokens.css` and uses
 root-relative addresses for its wordmark and Blog links.
-The site honors the visitor’s light or dark preference.
+The site honors the visitor’s light or dark and operating-system preferences.
+The operating-system choice comes from `docs/userdocs/src/platform/preference.ts`;
+pages show per-platform content with `src/components/Platform.js`.
 
 Follow [the Diátaxis opinion](../opinion-registry/frameworks/docusaurus.md):
 keep tutorials, how-to guides, generated reference and explanation distinct.

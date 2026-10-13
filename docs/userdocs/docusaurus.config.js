@@ -2,6 +2,7 @@
 import {readFileSync} from 'node:fs';
 import {parseEnv} from 'node:util';
 import {themes as prismThemes} from 'prism-react-renderer';
+import {visitorPlatformExpression} from './src/platform/preference.ts';
 
 // Set DOCS_GTM_CONTAINER_ID in .env beside this config to enable the tag;
 // an absent file or blank value leaves it out.
@@ -46,9 +47,15 @@ export default {
   title: 'Isoplane',
   tagline: 'Build and run your .NET application',
   favicon: 'img/favicon.ico',
-  headTags: [{tagName: 'link', attributes: {
-    rel: 'icon', href: `${baseUrl}img/favicon.svg`, sizes: 'any', type: 'image/svg+xml',
-  }}],
+  headTags: [
+    {tagName: 'link', attributes: {
+      rel: 'icon', href: `${baseUrl}img/favicon.svg`, sizes: 'any', type: 'image/svg+xml',
+    }},
+    // Names the visitor's operating system on the root element before the page
+    // paints, so a page with per-platform content shows only theirs.
+    {tagName: 'script', attributes: {},
+      innerHTML: `document.documentElement.dataset.os=${visitorPlatformExpression};`},
+  ],
   url: 'https://isoplane.dev',
   baseUrl,
   // Cloudflare serves `install.html` at `/docs/install` and redirects the

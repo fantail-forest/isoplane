@@ -210,6 +210,56 @@ code {
   text-align: left;
 }
 
+/* Per-platform content. An inline script names the visitor's operating system
+   on the root element before the page paints. Without JavaScript nothing does,
+   so every block shows under its platforms' names and the toggle, which could
+   not work, is left out. */
+html[data-os='mac'] [data-only-on]:not([data-only-on~='mac']),
+html[data-os='win'] [data-only-on]:not([data-only-on~='win']),
+html[data-os='linux'] [data-only-on]:not([data-only-on~='linux']),
+html:not([data-os]) .platform-toggle {
+  display: none;
+}
+html:not([data-os]) [data-only-on]::before {
+  content: attr(data-platform-names);
+  display: block;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--muted-foreground);
+}
+.platform-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+  padding: 0.625rem 0.875rem;
+  border: 1px solid var(--border);
+  border-radius: var(--ifm-global-radius);
+  background: var(--surface);
+  font-size: 0.875rem;
+}
+.platform-toggle span {
+  margin-right: 0.25rem;
+  color: var(--muted-foreground);
+}
+.platform-toggle button {
+  padding: 0.25rem 0.875rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--background);
+  font: inherit;
+  color: var(--foreground);
+  cursor: pointer;
+}
+html[data-os='mac'] .platform-toggle button[data-platform='mac'],
+html[data-os='win'] .platform-toggle button[data-platform='win'],
+html[data-os='linux'] .platform-toggle button[data-platform='linux'] {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
 /* Footer */
 .footer {
   border-top: 1px solid var(--border);
