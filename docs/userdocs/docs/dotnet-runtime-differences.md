@@ -239,6 +239,17 @@ Outbound, an application can open TCP connections through the asynchronous
 APIs, which covers `HttpClient`, TLS and database drivers.
 
 - There is no UDP.
+- A client from `IHttpClientFactory` keeps one handler for as long as its
+  instance lives. Elsewhere the factory replaces a handler every two minutes,
+  on a timer, so that new connections pick up a DNS change. A timer does not
+  run between requests, so Isoplane switches that one off and gives each
+  pooled connection a lifetime of two minutes instead: a connection older than
+  that is closed and replaced the next time the client uses it.
+  `SetHandlerLifetime` with a finite value switches the timer back on, and a
+  route that creates that client then cannot be warmed up during
+  [initialization](application-lifecycle.md). A client you construct yourself
+  with `new HttpClient()` has no connection lifetime unless you set
+  `SocketsHttpHandler.PooledConnectionLifetime` on its handler.
 - TLS certificates are validated as usual. Switching validation off is not a fix
   for a connection that fails.
 

@@ -42,6 +42,9 @@ namespace Isoplane.AspNetCore;
 /// </example>
 public static class IsoplaneHosting
 {
+    /// <summary>How long a client from <c>IHttpClientFactory</c> reuses one connection; the factory's own default handler lifetime.</summary>
+    internal static readonly TimeSpan PooledConnectionLifetime = TimeSpan.FromMinutes(2);
+
     /// <summary>
     /// Creates the application's builder. Use it in <c>Program.cs</c> in place of
     /// <c>WebApplication.CreateBuilder</c>.
@@ -229,9 +232,16 @@ public static class IsoplaneHosting
             services.AddHostedService<BackgroundWorkGuard>();
             // IHttpClientFactory retires a handler on a timer it starts when it creates a client.
             // A timer started during initialization cannot be captured, so a route that uses a
-            // client could not be warmed up; and an instance does not outlive a handler's
-            // connections long enough for retiring them to matter.
-            services.ConfigureHttpClientDefaults(client => client.SetHandlerLifetime(Timeout.InfiniteTimeSpan));
+            // client could not be warmed up, and a timer pending when a request ends never fires.
+            // The connection pool replaces a connection past its lifetime when it is next used,
+            // which needs no timer and is what lets a client follow a DNS change. The factory
+            // sets that lifetime from the handler lifetime only when the latter is finite.
+            services.ConfigureHttpClientDefaults(client => client
+                .SetHandlerLifetime(Timeout.InfiniteTimeSpan)
+                .ConfigurePrimaryHttpMessageHandler((handler, _) =>
+                {
+                    if (handler is SocketsHttpHandler sockets) sockets.PooledConnectionLifetime = PooledConnectionLifetime;
+                }));
         });
     }
 }
