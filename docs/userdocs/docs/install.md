@@ -18,23 +18,30 @@ Package restore needs internet access.
 
 <OnlyOn platforms="linux">
 
-On Ubuntu 24.04, install the packaged one, which also brings every native
-library the Isoplane toolchain needs:
+Isoplane runs on x64 distributions that use glibc. Install the .NET 10 SDK
+from your distribution's own packages where it has one. On Ubuntu 24.04:
 
 ```bash
 sudo apt-get install -y dotnet-sdk-10.0
 ```
 
-On another Linux distribution, install the .NET 10 SDK its packages provide,
-or Microsoft's SDK with its own runtime in its own directory; do not mix the
-two in one root (see [troubleshooting](troubleshooting.md)).
+Where it has none, install Microsoft's SDK together with its runtime in a
+directory of its own, such as `~/.dotnet`. A Microsoft SDK placed into a root
+that holds a distribution's runtime cannot install tools: see
+[troubleshooting](troubleshooting.md#dotnet-tool-install-cannot-find-dotnettoolsettingsxml).
+
+Isoplane also loads ICU, OpenSSL 3, zlib and libstdc++ from the system, and
+reads its CA certificate bundle. Ubuntu's .NET package brings all of them. On
+any distribution, `isoplane setup` looks for them before it downloads anything
+and names the ones that are missing.
 
 </OnlyOn>
 
 <OnlyOn platforms="win">
 
 Install the .NET 10 SDK before installing the CLI. Also install the
-[Visual C++ x64 Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe).
+[Visual C++ x64 Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe);
+`isoplane setup` stops and asks for it when it is missing.
 
 </OnlyOn>
 
@@ -45,8 +52,6 @@ Install the ARM64 .NET 10 SDK.
 </OnlyOn>
 
 Setup reuses whatever `dotnet` you have and never changes your `DOTNET_ROOT`.
-It checks the native libraries it needs before downloading anything and names
-what is missing.
 
 ## Install the CLI and the SDK
 
@@ -101,9 +106,11 @@ Setup does not report success while anything is missing.
 
 <OnlyOn platforms="linux">
 
-When setup finds a native library missing on Ubuntu 24.04, it shows the one
+When setup finds a system library missing on Ubuntu 24.04, it shows the one
 `sudo apt-get install` command that provides it and asks before running it;
-`isoplane setup --yes` runs it without asking.
+`isoplane setup --yes` runs it without asking. On any other distribution it
+names what is missing and stops: install your distribution's packages for
+those libraries, then run `isoplane setup` again.
 
 </OnlyOn>
 
