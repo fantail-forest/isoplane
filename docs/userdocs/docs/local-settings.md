@@ -87,9 +87,10 @@ Integration tests supply settings the same way through
 
 ## Try the application under tighter limits
 
-A local session runs with the largest limits the platform offers. To see how the
-application behaves under smaller ones, add `isoplaneLimitsOverride` to a launch
-profile:
+A local session runs with the largest limits the platform offers.
+[Execution limits](execution-limits.md) explains what each one measures. To see
+how the application behaves under smaller ones, add `isoplaneLimitsOverride` to a
+launch profile:
 
 ```json
 "isoplaneLimitsOverride": {

@@ -1,11 +1,14 @@
 ---
-title: Runtime limitations
+title: How .NET differs on Isoplane
 ---
 
-An Isoplane application is ordinary .NET code, but the sandbox it runs in is not
-a server process, and some things a server lets you do are missing or behave
-differently. This page lists all of them. Where another page covers one in more
-depth, the entry links to it.
+An Isoplane application is ordinary .NET code, but the runtime it runs on is not
+the one a server process gets, and some things .NET normally lets you do are
+missing or behave differently. This page lists all of them. Where another page
+covers one in more depth, the entry links to it.
+
+The limits Isoplane places on memory and running time are a separate subject:
+see [execution limits](execution-limits.md).
 
 ## Why the sandbox works this way
 
@@ -40,7 +43,8 @@ Each instance has exactly one thread, and `Environment.ProcessorCount` is 1.
 - **Computation holds the thread.** While a method computes without awaiting,
   nothing else in the instance runs, including the other asynchronous work of the
   same request. Cancellation reaches the application only while it is waiting, so
-  a long computation does not see its request being cancelled.
+  a long computation does not see its request being cancelled. It also uses up
+  the request's [running time](execution-limits.md#running-time).
 - **A `lock` is never contended.** A wait that would have to block for another
   thread, such as `Monitor.Wait`, `SemaphoreSlim.Wait` or
   `ManualResetEventSlim.Wait`, throws instead.
@@ -85,9 +89,20 @@ requests it does not run at all.
   complete the request is over. A timer or outbound call that is still pending is
   cancelled and never completes, so a task started and not awaited, such as
   `_ = SendEmailAsync()`, may never finish.
-- **Nothing is guaranteed to run after the response.** Code that is ready to run
-  at that moment may still run, and so may finalizers, while the request is
-  within its limits. Do not rely on either to save data or to release something.
+- **`finally` blocks and disposal are part of the request.** They run as the
+  awaited code unwinds, as they do anywhere else, and that includes middleware
+  code after `await next()` and the disposal of scoped services. Two cases
+  differ. Work in them that has to wait for I/O after the response is complete
+  may not finish. And when Isoplane stops an instance because a request went
+  over its [limits](execution-limits.md), they do not run at all.
+- **Finalizers may never run.** There is no finalizer thread: a finalizer runs on
+  the application's thread during a garbage collection. That can be in a later
+  request, whose running time it then uses, and it does not happen if the
+  instance is discarded first. Release what matters with `Dispose` or
+  `DisposeAsync`.
+- **Nothing else is guaranteed to run after the response.** Code that is ready to
+  run at that moment may still run while the request is within its limits. Do
+  not rely on it to save data or to release something.
 - **Pass cancellation on.** `HttpContext.RequestAborted`, or
   [`RequestHead.Aborted`](reference/sdk/Isoplane.Sdk/Isoplane/RequestHead/Aborted.md)
   without ASP.NET, is cancelled when the client goes away or the request uses up
@@ -143,8 +158,10 @@ APIs, which covers `HttpClient`, TLS and database drivers.
   configuration; see [local development settings](local-settings.md).
 - **There are no other processes.** An application cannot start one.
 - **Native libraries are not loaded.** A P/Invoke into a library the runtime does
-  not include fails when it is called, so a NuGet package that ships its own
-  native binary will not work. The build can report such declarations as
+  not include fails when it is called, not when the application builds or
+  starts. A NuGet package that ships a native binary therefore still works as
+  long as the code you use stays in managed code, and fails only on a path that
+  reaches the native call. The build can report such declarations as
   `ISOPLANE1001`; see
   [Control compatibility warnings](run-and-rebuild.md#control-compatibility-warnings).
 - **The process is 32-bit.** `Environment.Is64BitProcess` is `false`.
@@ -160,19 +177,3 @@ Your code runs as IL on an interpreter. There is no JIT compiler, and nothing is
 trimmed or compiled ahead of time, so reflection, runtime type loading,
 `Reflection.Emit` and compiled expressions all work. See
 [application packages and the shared runtime](execution-modes.md).
-
-## Resource limits
-
-Each instance has a memory limit and cannot grow past it.
-
-Each request has an allowance of running time, which counts the time it spends
-executing and not the time it spends waiting on something it awaits. When the
-allowance runs out the request's cancellation token is cancelled; if the request
-does not finish shortly afterwards, Isoplane stops the instance.
-
-Each request can also have only so many asynchronous operations pending at once.
-A request that goes over that number fails.
-
-A local session runs with the largest limits the platform offers. To see how an
-application behaves under smaller ones, see
-[Try the application under tighter limits](local-settings.md#try-the-application-under-tighter-limits).

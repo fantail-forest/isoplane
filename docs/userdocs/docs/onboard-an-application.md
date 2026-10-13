@@ -88,5 +88,6 @@ gets the framework's copy, as in an ordinary ASP.NET Core project.
 Keep durable state outside the instance. Review
 [the application lifecycle](application-lifecycle.md) for startup state,
 connection pools, cancellation, and work after the response.
-[Runtime limitations](runtime-limitations.md) lists everything else that differs
-from a server process, including threads, the file system and native libraries.
+[How .NET differs on Isoplane](dotnet-runtime-differences.md) lists everything
+else that differs from a server process, including threads, the file system and
+native libraries.

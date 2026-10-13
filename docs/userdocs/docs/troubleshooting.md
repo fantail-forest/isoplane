@@ -62,8 +62,9 @@ Keep the terminal open while running locally. Build and runtime diagnostics are
 written there. In a test, include `app.DiagnosticOutput` in failure diagnostics.
 Check that request work is awaited and that network calls use asynchronous APIs.
 See [the application lifecycle](application-lifecycle.md) before relying on
-background work or retained state, and [runtime limitations](runtime-limitations.md)
-for the calls that fail in the sandbox.
+background work or retained state, and
+[how .NET differs on Isoplane](dotnet-runtime-differences.md) for the calls that
+fail in the sandbox.
 
 ## The application refuses to start
 
