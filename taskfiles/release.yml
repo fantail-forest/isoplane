@@ -7,6 +7,7 @@ vars:
   RELEASES: '{{.ROOT_DIR}}/.build/releases'
   RELEASE: '{{.RELEASES}}/isoplane-{{.PLATFORM}}-{{.VERSION}}'
   NOTICES: '{{.ROOT_DIR}}/.build/clr-anycpu/notices'
+  NATIVE_PACKAGES: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/release-packages'
 
 tasks:
   editor:
@@ -23,10 +24,10 @@ tasks:
   default:
     label: 'release:{{.PLATFORM}}:{{.VERSION}}:{{.RELEASES}}'
     desc: Assemble this platform's prepared NuGet packages
-    deps: [shared, ':managed:native-packages']
+    deps: [shared, native-packages]
     sources:
       - '{{.PACKAGES}}/*.{{.VERSION}}.nupkg'
-      - '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/packages/*.{{.VERSION}}.nupkg'
+      - '{{.NATIVE_PACKAGES}}/*.{{.VERSION}}.nupkg'
       - '{{.ROOT_DIR}}/taskfiles/release.yml'
       - '{{.ROOT_DIR}}/taskfiles/Release.proj'
       - '{{.ROOT_DIR}}/scripts/release-manifest.py'
@@ -39,9 +40,19 @@ tasks:
       - '{{.RELEASE}}/release.json'
       - '{{.RELEASE}}/README.md'
     cmds:
-      - '"{{.DOTNET}}" msbuild taskfiles/Release.proj -nologo -t:StageRelease -p:Version={{.VERSION}} -p:SharedPackages="{{.PACKAGES}}" -p:NativePackages="{{.ROOT_DIR}}/.build/{{.PLATFORM}}/packages" -p:ReleaseDirectory="{{.RELEASE}}"'
+      - '"{{.DOTNET}}" msbuild taskfiles/Release.proj -nologo -t:StageRelease -p:Version={{.VERSION}} -p:SharedPackages="{{.PACKAGES}}" -p:NativePackages="{{.NATIVE_PACKAGES}}" -p:ReleaseDirectory="{{.RELEASE}}"'
       - '{{.PYTHON}} scripts/release-manifest.py release "{{.RELEASE}}" --platform {{.PLATFORM}} --version {{.VERSION}} --revision {{.REVISION}}'
       - task: readme
+
+  native-packages:
+    internal: true
+    run: once
+    deps: [':managed:build', ':native:release', ':notices']
+    cmds:
+      - task: ':managed:pack-native'
+        vars:
+          OUTPUT: '{{.NATIVE_PACKAGES}}'
+          PACKAGE_NOTICES: '{{.NOTICES}}'
 
   readme:
     internal: true
