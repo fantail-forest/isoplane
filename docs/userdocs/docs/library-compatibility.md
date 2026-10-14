@@ -225,11 +225,6 @@ builder.Services.Configure<FormOptions>(options =>
 
 Size of the change: small.
 
-#### Looking ahead
-
-A later release is expected to let `IFormFile` work as written for uploads that
-fit in memory. Reading a large upload as a stream stays the better choice.
-
 ### `Request.EnableBuffering()` over 30 KB {#enable-buffering}
 
 [`HttpRequest.EnableBuffering`][EnableBuffering] lets a request body be read more than
@@ -288,11 +283,6 @@ This holds the whole body for the length of the request, counted toward the
 instance's [memory limit](execution-limits.md#memory), so prefer the single pass where it fits.
 
 Size of the change: small.
-
-#### Looking ahead
-
-A later release is expected to let `EnableBuffering` work as written for bodies
-that fit in memory. Reading the body once stays the better choice.
 
 ### Minimal API handlers that use source-generated code {#generated-code-in-handlers}
 
@@ -438,11 +428,6 @@ The whole body is then held in memory, counted toward the instance's [memory lim
 
 Size of the change: small to moderate.
 
-#### Looking ahead
-
-A later release is expected to make the XML formatters work as written for
-bodies that fit in memory.
-
 ### Newtonsoft.Json formatters over 30 KB {#newtonsoft-json}
 
 With [`AddNewtonsoftJson`][AddNewtonsoftJson], from the
@@ -511,11 +496,6 @@ A body up to that size is then held in memory in full, counted toward the
 instance's [memory limit](execution-limits.md#memory), and a larger one fails as before.
 
 Size of the change: small.
-
-#### Looking ahead
-
-A later release is expected to make the thresholds unnecessary for bodies that
-fit in memory.
 
 ### Rate limiting middleware {#rate-limiting}
 
