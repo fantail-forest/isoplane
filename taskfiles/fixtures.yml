@@ -3,7 +3,7 @@ version: '3'
 tasks:
   default:
     desc: Prepare shared fixtures before running tests
-    deps: [':node:runtimes', ':fixtures:rust', ':fixtures:dotnet', ':fixtures:acceptance', ':fixtures:package', ':cli', ':managed:tests', ':test:debugger:environment', ':fixtures:feed', ':test:managed:host']
+    deps: [':node:runtimes', ':fixtures:rust', ':fixtures:dotnet', ':fixtures:acceptance', ':fixtures:package', ':cli', ':managed:tests', ':test:debugger:environment', ':fixtures:feed', ':fixtures:runtime', ':test:managed:host']
 
   rust:
     desc: Build portable Rust WASM fixtures
@@ -33,6 +33,19 @@ tasks:
   feed:
     run: once
     deps: [':managed:packages', ':managed:native-packages']
+
+  runtime:
+    desc: Compile the shared runtime once for the sessions the native tests start
+    run: once
+    deps: [':initialize', ':fixtures:feed']
+    vars:
+      # The packaged CLI's files and release library, so that its runtime cache entries match the installed tool's.
+      PACKAGED_CLI: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/test-runtimes/cli'
+    env:
+      ISOPLANE_CACHE_DIR: '{{.TEST_RUNTIME_CACHE}}'
+    cmds:
+      - '"{{.DOTNET}}" msbuild taskfiles/StageCli.proj -nologo -p:PublishedCli="{{.MANAGED}}/publish/Isoplane.Cli/release" -p:NativeLibrary="{{.RELEASE_NATIVE_LIBRARY}}" -p:CliDirectory="{{.PACKAGED_CLI}}" -p:Platform={{.PLATFORM}}'
+      - '"{{.DOTNET}}" "{{.PACKAGED_CLI}}/Isoplane.Cli.dll" prepare-runtime --runtime "{{.MODULES}}"'
 
   dotnet:
     deps:

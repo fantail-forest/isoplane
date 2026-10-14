@@ -226,7 +226,7 @@ async def run():
 asyncio.run(run())
 "#])
         .arg(script).arg(cli).arg(app).arg(directory.path())
-        .env("ISOPLANE_CACHE_DIR", directory.path().join("cache"))
+        .env("ISOPLANE_CACHE_DIR", isoplane_fixtures::runtime_cache())
         .output().unwrap();
     assert!(
         output.status.success(),

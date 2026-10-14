@@ -151,8 +151,9 @@ fn a_second_debug_session_reuses_the_compiled_debug_runtime() {
     let directory = tempfile::tempdir().unwrap();
     let app = isoplane_fixtures::aspnet_project(directory.path());
     let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
+    let cache = directory.path().join("cache");
     for compiled in [true, false] {
-        let mut dev = Dev::start_managed_with_args(&app, &cli, &["--debug", "--no-watch"]);
+        let mut dev = Dev::start_managed_with_cache(&app, &cli, &["--debug", "--no-watch"], &cache);
         let diagnostics = dev.diagnostics();
         dev.stop();
         let compilations: Vec<&str> = diagnostics
@@ -180,11 +181,12 @@ fn a_prepared_runtime_spares_the_first_sessions_its_compilation() {
         .parent()
         .expect("the runtime module has a directory")
         .to_owned();
+    let cache = directory.path().join("cache");
     let prepare = || {
         let output = std::process::Command::new(&cli)
             .args(["prepare-runtime", "--runtime"])
             .arg(&runtime)
-            .env("ISOPLANE_CACHE_DIR", app.join(".isoplane/cache"))
+            .env("ISOPLANE_CACHE_DIR", &cache)
             .output()
             .expect("run isoplane prepare-runtime");
         assert!(
@@ -216,7 +218,7 @@ fn a_prepared_runtime_spares_the_first_sessions_its_compilation() {
             "local debug runtime compilation ready",
         ),
     ] {
-        let mut dev = Dev::start_managed_with_args(&app, &cli, arguments);
+        let mut dev = Dev::start_managed_with_cache(&app, &cli, arguments, &cache);
         let diagnostics = dev.diagnostics();
         dev.stop();
         let line = diagnostics
@@ -388,11 +390,10 @@ fn installed_debug_acceptance(mode: &str) {
     let driver =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/common/debug_driver.py");
     let mut command = std::process::Command::new(python);
-    // Sessions the driver launches keep their compiled runtimes in the test's own directory.
     command
         .arg(driver)
         .arg(&cli)
-        .env("ISOPLANE_CACHE_DIR", directory.path().join("cache"));
+        .env("ISOPLANE_CACHE_DIR", isoplane_fixtures::runtime_cache());
     if let Some(dev) = &dev {
         let metadata = dev
             .debugger

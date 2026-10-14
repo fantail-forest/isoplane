@@ -161,6 +161,21 @@ pub fn guest_runtime_feed() -> PathBuf {
         .unwrap_or_else(|| repo_root().join(".build/wasm32/runtime/feed"))
 }
 
+/// The runtime cache Task filled by running the packaged CLI's
+/// `prepare-runtime`, which sessions of the installed CLI reuse instead of
+/// compiling the shared runtime themselves.
+pub fn runtime_cache() -> PathBuf {
+    let path = std::env::var_os("ISOPLANE_TEST_RUNTIME_CACHE")
+        .map(PathBuf::from)
+        .expect("run task fixtures:runtime to select the prepared runtime cache");
+    assert!(
+        path.is_dir(),
+        "the prepared runtime cache is missing at {}; run task fixtures:runtime",
+        path.display()
+    );
+    path
+}
+
 /// The identity of the pack the local feed currently offers `runtime`, from
 /// the props file `guest-runtime/build.sh feed` writes: the pack version and
 /// the digest NuGet records for the package, `version@sha512:digest`, the

@@ -76,7 +76,7 @@ public sealed class ApplicationTests
         ])
         .env("TEST_APP", &app)
         .env("TEST_CLI", &cli)
-        .env("ISOPLANE_CACHE_DIR", directory.path().join("cache"))
+        .env("ISOPLANE_CACHE_DIR", isoplane_fixtures::runtime_cache())
         .env(
             "ISOPLANE_GUEST_RUNTIME_FEED",
             isoplane_fixtures::guest_runtime_feed(),

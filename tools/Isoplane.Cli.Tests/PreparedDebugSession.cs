@@ -16,7 +16,7 @@ internal static class PreparedDebugSession
             Console.WriteLine(JsonSerializer.Serialize(new { @event = "debugger_ready", endpoint = relay.AdapterEndpoint.ToString(), package }));
             await using var host = new LocalSession(await File.ReadAllBytesAsync(module),
                 new LocalProject(project).SessionOptions(new DevelopmentSettings(Path.GetFileName(project), 0, [], LimitOverrides.None, null,
-                        Path.Combine(session, "obj"), Path.Combine(session, "runtimes")),
+                        Path.Combine(session, "obj"), CliPaths.RuntimeCache),
                     relay.Endpoint.ToString(), session, package),
                 message => LocalEvents.Write(message, json: true));
             await DebugDevelopment.RunHostAsync(host, relay, cancellation.Token);

@@ -1,5 +1,11 @@
 <Project DefaultTargets="Stage">
+  <ItemGroup Condition="'$(PublishedCli)' != ''">
+    <PublishedCliFile Include="$(PublishedCli)/**/*" />
+  </ItemGroup>
   <Target Name="Stage">
+    <Copy SourceFiles="@(PublishedCliFile)"
+          DestinationFiles="@(PublishedCliFile->'$(CliDirectory)/%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
     <Copy SourceFiles="$(NativeLibrary)"
           DestinationFolder="$(CliDirectory)/runtimes/$(Platform)/native"
           SkipUnchangedFiles="true" />

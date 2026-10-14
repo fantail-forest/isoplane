@@ -23,15 +23,22 @@ struct Terminal {
     _master: Box<dyn portable_pty::MasterPty + Send>,
 }
 
-/// The project a development command runs: its `--project` argument, else
-/// its working directory.
-fn project_of(command: &Command) -> Option<std::path::PathBuf> {
-    let mut arguments = command.get_args();
-    arguments
-        .find(|argument| *argument == "--project")
-        .and_then(|_| arguments.next())
-        .map(Into::into)
-        .or_else(|| command.get_current_dir().map(Into::into))
+fn managed_command(
+    project: &std::path::Path,
+    executable: &std::path::Path,
+    args: &[&str],
+) -> Command {
+    let mut command = Command::new(executable);
+    command
+        .args(["dev", "--json", "--port", "0", "--project"])
+        .arg(project)
+        .args(args);
+    if cfg!(windows) {
+        command
+            .arg("--shutdown-on-stdin-close")
+            .stdin(Stdio::piped());
+    }
+    command
 }
 
 impl Dev {
@@ -44,17 +51,26 @@ impl Dev {
         executable: &std::path::Path,
         args: &[&str],
     ) -> Self {
-        let mut command = Command::new(executable);
-        command
-            .args(["dev", "--json", "--port", "0", "--project"])
-            .arg(project)
-            .args(args);
-        if cfg!(windows) {
-            command
-                .arg("--shutdown-on-stdin-close")
-                .stdin(Stdio::piped());
-        }
-        Self::spawn(&mut command, Duration::from_secs(600), true)
+        Self::spawn(
+            &mut managed_command(project, executable, args),
+            Duration::from_secs(600),
+            true,
+        )
+    }
+
+    /// Starts a session that compiles into `cache` instead of reusing the
+    /// runtime Task prepared, for tests of a user's first sessions.
+    pub fn start_managed_with_cache(
+        project: &std::path::Path,
+        executable: &std::path::Path,
+        args: &[&str],
+        cache: &std::path::Path,
+    ) -> Self {
+        Self::spawn(
+            managed_command(project, executable, args).env("ISOPLANE_CACHE_DIR", cache),
+            Duration::from_secs(600),
+            true,
+        )
     }
 
     pub fn spawn(command: &mut Command, output_timeout: Duration, structured_stdout: bool) -> Self {
@@ -68,9 +84,11 @@ impl Dev {
         managed_toolchain: bool,
     ) -> Self {
         command.env("ISOPLANE_ENDPOINT", "http://127.0.0.1:1");
-        if let Some(project) = project_of(command) {
-            // The runtimes a session compiles for its user stay in the test's own directory.
-            command.env("ISOPLANE_CACHE_DIR", project.join(".isoplane/cache"));
+        if !command
+            .get_envs()
+            .any(|(name, _)| name == "ISOPLANE_CACHE_DIR")
+        {
+            command.env("ISOPLANE_CACHE_DIR", isoplane_fixtures::runtime_cache());
         }
         if managed_toolchain {
             command.env(
