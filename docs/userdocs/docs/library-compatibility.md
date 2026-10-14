@@ -35,7 +35,7 @@ entry says otherwise.
 
 | Package | API or feature | What to do |
 | --- | --- | --- |
-| ASP.NET Core | [Session over a distributed cache, and TempData kept in it](#session) | Small change: add one middleware |
+| ASP.NET Core | [Session over a distributed cache, and TempData kept in it](#session) | Small change: call `UseLoadedSession` in place of `UseSession` |
 | ASP.NET Core | [File uploads over 64 KB](#uploads) | Moderate change: read the upload as a stream. Or hold small uploads in memory |
 | ASP.NET Core | [`Request.EnableBuffering()` over 30 KB](#enable-buffering) | Moderate change: read the body once, as a stream. Or buffer up to a limit |
 | ASP.NET Core | [Minimal API handlers that use source-generated code](#generated-code-in-handlers) | Small change: register the JSON context and return objects. Or switch one generator off |
@@ -87,7 +87,7 @@ read the stack trace to see which call failed.
 | The application refuses to start with `unhandled System.PlatformNotSupportedException` and no stack trace | A call made while the application starts failed. The known ones are [console logging](#console-logging) and [remote configuration](#remote-configuration). |
 | The application refuses to start, naming a service that was `Still running once the application had started` | A package registered a background service. See [MCP sessions](#mcp-sessions) and [background work](#connections-and-background-work). |
 | A minimal API endpoint answers 200 with an empty body, or the build fails with `CS9144: Cannot intercept method` | A handler names code that another source generator produces. See [generated code in handlers](#generated-code-in-handlers). |
-| No error, but session values or TempData are missing on the next request | The session was loaded synchronously. See [session](#session). |
+| `InvalidOperationException: The session could not be loaded from its cache` | The session was used before it was loaded. See [session](#session). |
 
 ## ASP.NET Core
 
@@ -97,54 +97,57 @@ package of their own.
 
 ### Session over a distributed cache {#session}
 
-With [`AddSession`][AddSession] and an [`IDistributedCache`][IDistributedCache]
-that reaches a database or another service, the first read or write of
-[`HttpContext.Session`][HttpContext.Session] in a request loads the session
-synchronously. The load fails, ASP.NET Core logs `Session cache read exception`
-under the category `Microsoft.AspNetCore.Session.DistributedSession`, and the
-request carries on with an empty session. Reads return nothing and writes are
-not saved. No exception reaches your code.
+With [`AddSession`][AddSession], [`UseSession`][UseSession] and an
+[`IDistributedCache`][IDistributedCache] that reaches a database or another
+service, the first read or write of [`HttpContext.Session`][HttpContext.Session]
+in a request loads the session synchronously, and the load fails. The read or
+write throws `InvalidOperationException: The session could not be loaded from
+its cache`, and the request fails. The cache's own exception is logged as
+`Session cache read exception`, under the category
+`Microsoft.AspNetCore.Session.DistributedSession`.
 
 ```csharp
+app.UseSession();
 app.MapPost("/cart/items", (HttpContext context, string item) =>
 {
-    var cart = context.Session.GetString("cart");          // null: the load failed
-    context.Session.SetString("cart", $"{cart},{item}");   // not saved
+    var cart = context.Session.GetString("cart");   // throws: the session could not be loaded
+    context.Session.SetString("cart", $"{cart},{item}");
 });
 ```
 
-[TempData][Controller.TempData] is lost the same way when it is kept in the
+[TempData][Controller.TempData] fails the same way when it is kept in the
 session with MVC's
 [`AddSessionStateTempDataProvider`][AddSessionStateTempDataProvider].
+
+The in-memory cache, [`AddDistributedMemoryCache`][AddDistributedMemoryCache],
+loads synchronously and works with `UseSession`, but it keeps each session in
+one instance's memory, which
+[can be discarded after any request](dotnet-runtime-differences.md#instances-come-and-go).
 
 Typically used for sign-in flows, shopping carts, multi-step forms, and messages
 shown after a redirect.
 
-We ran this with a PostgreSQL-backed cache. The Redis cache works too, with
-the client version given under [Redis](#redis).
+#### Workaround: call `UseLoadedSession`
 
-#### Workaround: load the session in a middleware
-
-Load the session with
-[`ISession.LoadAsync`][ISession.LoadAsync] before anything uses it, in a middleware
-placed directly after [`UseSession`][UseSession]:
+Call [`UseLoadedSession`][UseLoadedSession], from the ASP.NET Core adapter
+library `Isoplane.AspNetCore`, in place of `UseSession`. It adds the same
+session middleware and loads each request's session asynchronously before the
+rest of the pipeline runs:
 
 ```csharp
-app.UseSession();
-app.Use(async (context, next) =>
-{
-    await context.Session.LoadAsync(context.RequestAborted);
-    await next();
-});
+app.UseStaticFiles();
+app.UseLoadedSession();   // in place of app.UseSession()
 ```
 
-Size of the change: small. One middleware, added once.
+Every request that passes through it reads the cache once, whether or not it
+uses the session, so place it after middleware that answers requests without
+one, such as `UseStaticFiles`.
 
-#### Looking ahead
+We ran the failing load with a PostgreSQL-backed cache, and `UseLoadedSession`
+with a cache that answers asynchronously, as one backed by a database does. The
+Redis cache works too, with the client version given under [Redis](#redis).
 
-The workaround should get smaller. Isoplane's ASP.NET Core adapter library, `Isoplane.AspNetCore`,
-can provide this middleware, and report an unloaded session as an error in
-place of losing data.
+Size of the change: small. One call, replaced once.
 
 ### File uploads over 64 KB {#uploads}
 
@@ -1055,7 +1058,7 @@ var greeting = (string?)await db.StringGetAsync("greeting");
 ```
 
 [`HybridCache`][HybridCache] with Redis as its second level, and session state
-with the [middleware that loads it](#session), use the same cache, and ran in
+[loaded with `UseLoadedSession`](#session), use the same cache, and ran in
 an earlier check of this client.
 
 What to know before relying on it:
@@ -1502,6 +1505,7 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [AddAzureKeyVault]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.configuration.azurekeyvaultconfigurationextensions.addazurekeyvault
 [AddConsole]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.logging.consoleloggerextensions.addconsole
 [AddDbContextCheck]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.dependencyinjection.entityframeworkcorehealthchecksbuilderextensions.adddbcontextcheck
+[AddDistributedMemoryCache]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.dependencyinjection.memorycacheservicecollectionextensions.adddistributedmemorycache
 [AddFixedWindowLimiter]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.ratelimiting.ratelimiteroptionsextensions.addfixedwindowlimiter
 [AddInMemoryCollection]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.configuration.memoryconfigurationbuilderextensions.addinmemorycollection
 [AddJsonConsole]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.logging.consoleloggerextensions.addjsonconsole
@@ -1551,7 +1555,6 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [ILogger]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.logging.ilogger
 [Include]: https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.entityframeworkqueryableextensions.include
 [InputFormatterMemoryBufferThreshold]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.mvc.mvcnewtonsoftjsonoptions.inputformattermemorybufferthreshold
-[ISession.LoadAsync]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.http.isession.loadasync
 [IssuerSigningKeyResolver]: https://learn.microsoft.com/dotnet/api/microsoft.identitymodel.tokens.tokenvalidationparameters.issuersigningkeyresolver
 [IStringLocalizer]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.localization.istringlocalizer
 [IValidatableObject.Validate]: https://learn.microsoft.com/dotnet/api/system.componentmodel.dataannotations.ivalidatableobject.validate
@@ -1612,6 +1615,7 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [TransactionScope]: https://learn.microsoft.com/dotnet/api/system.transactions.transactionscope
 [TryReplenish]: https://learn.microsoft.com/dotnet/api/system.threading.ratelimiting.replenishingratelimiter.tryreplenish
 [UseLazyLoadingProxies]: https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.proxiesextensions.uselazyloadingproxies
+[UseLoadedSession]: reference/sdk/Isoplane.AspNetCore/Isoplane.AspNetCore/SessionLoading/UseLoadedSession.md
 [UseRateLimiter]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.builder.ratelimiterapplicationbuilderextensions.useratelimiter
 [UseSession]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.builder.sessionmiddlewareextensions.usesession
 [UseSqlite]: https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.sqlitedbcontextoptionsbuilderextensions.usesqlite
