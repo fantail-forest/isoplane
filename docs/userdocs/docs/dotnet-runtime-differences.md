@@ -58,27 +58,56 @@ Each instance has exactly one thread, and `Environment.ProcessorCount` is 1.
   same request. Cancellation reaches the application only while it is waiting, so
   a long computation does not see its request being cancelled. It also uses up
   the request's [running time](execution-limits.md#running-time).
-- **A `lock` always succeeds.** With one thread there is never another holder,
-  so `lock` and `Monitor.Enter` take the lock at once and never throw.
-- **Blocking primitives throw every time.** `SemaphoreSlim.Wait` and
-  `ManualResetEventSlim.Wait` throw `PlatformNotSupportedException` on every
-  call, even when the semaphore has a free slot or the event is already set.
-  `Monitor.Wait` with no timeout does the same. Use `SemaphoreSlim.WaitAsync`, or
-  a `TaskCompletionSource` in place of an event.
+- **A lock is always free.** With one thread there is never another holder, so
+  `lock`, `Monitor.Enter` and `Monitor.TryEnter`, `System.Threading.Lock`,
+  `SpinLock`, `Mutex`, `ReaderWriterLockSlim` and `ReaderWriterLock` take the
+  lock at once, in every mode and with or without a timeout. Entering a lock
+  the code already holds behaves as it does elsewhere: a recursive lock lets it
+  in, and one that refuses recursion throws `LockRecursionException`. A
+  `SpinLock` that does not track its owner would wait for itself forever
+  elsewhere; here it throws `PlatformNotSupportedException`.
+- **A wait that can be satisfied at once succeeds.** Taking a free
+  `SemaphoreSlim` or `Semaphore`, waiting on a set event or a finished task, and
+  taking from a non-empty `BlockingCollection` all return straight away, as they
+  do anywhere else. A wait with a timeout of zero that cannot be satisfied
+  returns `false`.
+- **A wait that would have to block throws.** Nothing else in the instance
+  can run while the code waits, so nothing could release the semaphore, set
+  the event or finish the task. Such a wait throws
+  `PlatformNotSupportedException` straight away, whatever timeout it was
+  given. [Waiting is asynchronous](#waiting-is-asynchronous) lists each call
+  and what to use instead.
+- **Thread-safe types work as usual.** `Lazy<T>` in its default thread-safe
+  mode, `ConcurrentDictionary`, `ConcurrentQueue`, `ConcurrentStack` and
+  `ConcurrentBag` need no change.
 
 ## Waiting is asynchronous
 
-A synchronous wait throws `PlatformNotSupportedException`. Some calls throw only
-when they would actually have to wait, and others throw every time:
+A synchronous wait that cannot be satisfied at once throws
+`PlatformNotSupportedException` instead of waiting, even when it was given a
+timeout. A wait with a timeout of zero returns `false` instead, as it does
+anywhere else. `Monitor.Wait`, `Thread.Sleep` and joining the current thread
+always have to wait, because only another thread could pulse the monitor or
+finish the thread, so they throw whenever their timeout is not zero.
 
 | Call | Throws | Use instead |
 | --- | --- | --- |
-| `task.Result` | when the task has not finished | `await task` |
-| `task.Wait()` | unless the task has already completed successfully | `await task` |
+| `task.Wait()`, `task.Result` | when the task has not finished | `await task` |
+| `Task.WaitAll(...)` | when a task has not finished | `await Task.WhenAll(...)` |
 | `Task.WaitAny(...)` | when no task has finished | `await Task.WhenAny(...)` |
-| `Task.WaitAll(...)` | always | `await Task.WhenAll(...)` |
+| `semaphore.Wait()` on a `SemaphoreSlim` | when no slot is free | `await semaphore.WaitAsync()` |
+| `Wait()` on a `ManualResetEventSlim` or a `CountdownEvent` | when the event is not set, or the count has not reached zero | `await` a `TaskCompletionSource` |
+| `WaitOne()`, `WaitHandle.WaitAny(...)` and `WaitHandle.WaitAll(...)` on events or a `Semaphore` | when the handles are not signalled | `await` a `TaskCompletionSource`, or `await semaphore.WaitAsync()` on a `SemaphoreSlim` |
+| `Take()` and `Add()` on a `BlockingCollection` | when it is empty, or full | `await` `ReadAsync` and `WriteAsync` on a `Channel` |
+| `barrier.SignalAndWait()` | unless this is the last participant to arrive | — |
+| `SpinWait.SpinUntil(...)` | when the condition is false | `await` the work the condition waits for |
+| `Monitor.Wait(...)` | always, except with a timeout of zero | `await` a `TaskCompletionSource` |
 | `Thread.Sleep(...)` | always, except `Thread.Sleep(0)` | `await Task.Delay(...)` |
-| `semaphore.Wait()` | always | `await semaphore.WaitAsync()` |
+| `Thread.CurrentThread.Join(...)` | always, except with a timeout of zero | — |
+
+`task.Wait()` with no timeout, on a task that `Task.Run` queued and that has not
+started yet, runs the task there and then, as .NET can do anywhere, and returns
+once it has finished.
 
 `app.Run()` is refused earlier, when the application builds: use
 `await app.RunAsync()`.

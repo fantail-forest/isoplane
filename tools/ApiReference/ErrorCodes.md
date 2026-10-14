@@ -73,8 +73,8 @@ behaviour off, or an asynchronous alternative in the same package.
 The code calls one of `Thread.Sleep`,
 `Thread.Join`, `Monitor.Wait`, `Task.Wait`, `Task.WaitAll`, `Task.WaitAny` or
 `SemaphoreSlim.Wait`. When it runs, the call throws
-`PlatformNotSupportedException`, in most cases on every call and not only when
-it would have to wait.
+`PlatformNotSupportedException` if it would have to wait. `Thread.Sleep`,
+`Thread.Join` and `Monitor.Wait` always would, unless their timeout is zero.
 
 Await instead. The editor offers a quick fix for the first four rows:
 
@@ -86,8 +86,10 @@ Await instead. The editor offers a quick fix for the first four rows:
 | `semaphore.Wait()` | `await semaphore.WaitAsync()` |
 | `Task.WaitAny(...)` | `await Task.WhenAny(...)` |
 
-`task.Wait()` on a task that has already completed successfully does not throw.
-If you know that is the case at a particular call, suppress the warning there.
+A wait that can be satisfied at once behaves as it does anywhere else, such as
+`task.Wait()` on a task that has finished or `semaphore.Wait()` on a semaphore
+with a free slot. If you know that is the case at a particular call, suppress
+the warning there.
 [Waiting is asynchronous](../dotnet-runtime-differences.md#waiting-is-asynchronous)
 lists what each call does.
 
