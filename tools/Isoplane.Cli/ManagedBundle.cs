@@ -74,7 +74,7 @@ internal static class ManagedBundle
             var exit = await Processes.RunAsync("dotnet", arguments.ToArray(), options.Directory, cancellation, redirectOutput: true);
             if (exit != 0) throw new InvalidOperationException($"Managed application compilation failed (exit {exit}); resolve the build diagnostics before submitting.");
             using var document = JsonDocument.Parse(await File.ReadAllBytesAsync(metadata, cancellation));
-            await WriteAsync(document.RootElement, options.Output, cancellation);
+            await WriteAsync(document.RootElement, options.Output, SourceDate.FromEnvironment(), cancellation);
             return new(document.RootElement.GetProperty("Properties").GetProperty("IsoplaneRuntimeDirectory").GetString() ?? "");
         }
         finally { temporary.Delete(recursive: true); }
@@ -87,7 +87,12 @@ internal static class ManagedBundle
         return Path.GetFullPath(projects[0]);
     }
 
-    internal static async Task WriteAsync(JsonElement metadata, string output, CancellationToken cancellation)
+    /// <summary>
+    /// Writes the package. Each file is dated as its source is, or as
+    /// <paramref name="sourceDate"/> when one is given, and carries no owner or
+    /// permissions of the machine it was built on.
+    /// </summary>
+    internal static async Task WriteAsync(JsonElement metadata, string output, DateTimeOffset? sourceDate, CancellationToken cancellation)
     {
         var properties = metadata.GetProperty("Properties");
         var items = metadata.GetProperty("Items");
@@ -107,34 +112,51 @@ internal static class ManagedBundle
             await using (var file = new FileStream(partial, FileMode.CreateNew, FileAccess.Write, FileShare.None))
             await using (var tar = new TarWriter(file, leaveOpen: true))
             {
-                using var content = new MemoryStream(manifest, writable: false);
-                // An application sees each entry's time as that file's own, and the times are part
-                // of the version a local session reports. The manifest is read out of the entry
-                // assembly, so it is as old as that assembly: dated with the time of writing, an
-                // unchanged application would report a new version on every run.
-                await tar.WriteEntryAsync(new PaxTarEntry(TarEntryType.RegularFile, "application.json")
-                {
-                    DataStream = content,
-                    ModificationTime = File.GetLastWriteTimeUtc(assemblies[entry!].Origin)
-                }, cancellation);
-                await tar.WriteEntryAsync(runtime, "runtime.json", cancellation);
+                // An application sees each entry's time as that file's own. The manifest is read
+                // out of the entry assembly, so it is as old as that assembly.
+                await WriteEntryAsync(tar, "application.json", manifest,
+                    sourceDate ?? File.GetLastWriteTimeUtc(assemblies[entry!].Origin), cancellation);
+                await WriteFileAsync(tar, "runtime.json", runtime, sourceDate, cancellation);
                 foreach (var assembly in assemblies.Values.OrderBy(value => value.Identity.Key, StringComparer.Ordinal))
                 {
-                    await tar.WriteEntryAsync(assembly.Origin, "assemblies/" + assembly.Identity.RelativePath, cancellation);
+                    await WriteFileAsync(tar, "assemblies/" + assembly.Identity.RelativePath, assembly.Origin, sourceDate, cancellation);
                     var pdbPath = Path.ChangeExtension(assembly.Origin, ".pdb");
                     if (symbols.Contains(pdbPath))
                     {
                         ValidateSymbols(pdbPath);
-                        await tar.WriteEntryAsync(pdbPath, "assemblies/" + Path.ChangeExtension(assembly.Identity.RelativePath, ".pdb"), cancellation);
+                        await WriteFileAsync(tar, "assemblies/" + Path.ChangeExtension(assembly.Identity.RelativePath, ".pdb"), pdbPath, sourceDate, cancellation);
                     }
                 }
                 foreach (var asset in assets)
-                    await tar.WriteEntryAsync(asset.Source, "assets/" + asset.Target, cancellation);
+                {
+                    if (sourceDate is { } date && asset.Target.EndsWith(StaticAssetEndpoints.Suffix, StringComparison.Ordinal))
+                        await WriteEntryAsync(tar, "assets/" + asset.Target,
+                            StaticAssetEndpoints.Dated(await File.ReadAllBytesAsync(asset.Source, cancellation), date), date, cancellation);
+                    else
+                        await WriteFileAsync(tar, "assets/" + asset.Target, asset.Source, sourceDate, cancellation);
+                }
             }
             File.Move(partial, output, overwrite: true);
         }
         finally { File.Delete(partial); }
     }
+
+    private static async Task WriteFileAsync(TarWriter tar, string name, string source, DateTimeOffset? sourceDate, CancellationToken cancellation)
+    {
+        await using var content = File.OpenRead(source);
+        await WriteEntryAsync(tar, name, content, sourceDate ?? File.GetLastWriteTimeUtc(source), cancellation);
+    }
+
+    private static async Task WriteEntryAsync(TarWriter tar, string name, byte[] content, DateTimeOffset modified, CancellationToken cancellation)
+    {
+        using var stream = new MemoryStream(content, writable: false);
+        await WriteEntryAsync(tar, name, stream, modified, cancellation);
+    }
+
+    // The entry is described here and not read from the file's own metadata, which would put
+    // the builder's user name, identifiers and file permissions into the package.
+    private static Task WriteEntryAsync(TarWriter tar, string name, Stream content, DateTimeOffset modified, CancellationToken cancellation) =>
+        tar.WriteEntryAsync(new PaxTarEntry(TarEntryType.RegularFile, name) { DataStream = content, ModificationTime = modified }, cancellation);
 
     private static (string Source, string Target)[] ReadAssets(JsonElement items)
     {
@@ -189,5 +211,52 @@ internal static class ManagedBundle
         foreach (var path in paths) RequireRegularFile(path);
         var metadata = paths.Select(AssemblyClosure.InspectFile);
         return platform ? AssemblyClosure.Platform(metadata) : AssemblyClosure.Application(metadata);
+    }
+}
+
+/// <summary>
+/// The date a reproducible build gives everything it produces, from the
+/// <c>SOURCE_DATE_EPOCH</c> environment variable: seconds since 1970, by
+/// convention the time of the commit being built.
+/// </summary>
+internal static class SourceDate
+{
+    internal const string Variable = "SOURCE_DATE_EPOCH";
+
+    internal static DateTimeOffset? FromEnvironment() => Parse(Environment.GetEnvironmentVariable(Variable));
+
+    internal static DateTimeOffset? Parse(string? value)
+    {
+        if (string.IsNullOrEmpty(value)) return null;
+        if (!long.TryParse(value, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var seconds))
+            throw new InvalidOperationException($"{Variable} is '{value}'; set it to a whole number of seconds since 1970-01-01T00:00:00Z, or unset it.");
+        try { return DateTimeOffset.FromUnixTimeSeconds(seconds); }
+        catch (ArgumentOutOfRangeException)
+        {
+            throw new InvalidOperationException($"{Variable} is '{value}', which is later than any date .NET represents; set it to the time of the commit being built.");
+        }
+    }
+}
+
+/// <summary>
+/// The manifest the .NET SDK generates for the files in <c>wwwroot</c>. It
+/// records each file's modification time as the <c>Last-Modified</c> header
+/// ASP.NET Core sends, so the manifest's own bytes depend on when the files
+/// were written.
+/// </summary>
+internal static class StaticAssetEndpoints
+{
+    internal const string Suffix = ".staticwebassets.endpoints.json";
+
+    /// <summary>The manifest with every file dated <paramref name="date"/>.</summary>
+    internal static byte[] Dated(byte[] manifest, DateTimeOffset date)
+    {
+        var document = System.Text.Json.Nodes.JsonNode.Parse(manifest)
+            ?? throw new InvalidOperationException("The static web assets manifest is empty.");
+        foreach (var endpoint in document["Endpoints"]?.AsArray() ?? [])
+            foreach (var header in endpoint?["ResponseHeaders"]?.AsArray() ?? [])
+                if (header?["Name"]?.GetValue<string>() == "Last-Modified")
+                    header["Value"] = date.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
+        return System.Text.Encoding.UTF8.GetBytes(document.ToJsonString());
     }
 }

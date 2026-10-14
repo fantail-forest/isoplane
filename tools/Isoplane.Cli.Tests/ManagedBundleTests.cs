@@ -121,7 +121,7 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
     {
         using var directory = new BundleDirectory();
         var output = Path.Combine(directory.Path, "application.tar");
-        await ManagedBundle.WriteAsync(fixture.Metadata(), output, CancellationToken.None);
+        await ManagedBundle.WriteAsync(fixture.Metadata(), output, null, CancellationToken.None);
         using var stream = File.OpenRead(output);
         using var archive = new TarReader(stream);
         var entries = new Dictionary<string, byte[]>();
@@ -144,7 +144,7 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
     {
         using var directory = new BundleDirectory();
         var output = Path.Combine(directory.Path, "application.tar");
-        await ManagedBundle.WriteAsync(fixture.Metadata(includeSatellites: true), output, default);
+        await ManagedBundle.WriteAsync(fixture.Metadata(includeSatellites: true), output, null, default);
         using var input = File.OpenRead(output);
         using var reader = new TarReader(input);
         var satellites = new Dictionary<string, byte[]>();
@@ -165,7 +165,7 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
     {
         using var directory = new BundleDirectory();
         var output = Path.Combine(directory.Path, "sdk.tar");
-        await ManagedBundle.WriteAsync(fixture.SdkMetadata, output, default);
+        await ManagedBundle.WriteAsync(fixture.SdkMetadata, output, null, default);
         using var input = File.OpenRead(output);
         using var reader = new TarReader(input);
         var names = new HashSet<string>();
@@ -180,7 +180,7 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
     {
         using var directory = new BundleDirectory();
         var output = Path.Combine(directory.Path, "application.tar");
-        var error = await Assert.ThrowsAsync<AssemblyInputException>(() => ManagedBundle.WriteAsync(fixture.Metadata(includeDependency: false), output, CancellationToken.None));
+        var error = await Assert.ThrowsAsync<AssemblyInputException>(() => ManagedBundle.WriteAsync(fixture.Metadata(includeDependency: false), output, null, CancellationToken.None));
         Assert.True(error.Message.Contains("missing dependency 'Dependency'", StringComparison.Ordinal), "The error must identify the missing transitive dependency.");
         Assert.True(!File.Exists(output), "Invalid dependency closures must not produce an uploadable archive.");
     }
@@ -194,7 +194,7 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
         var asset = Path.Combine(directory.Path, "required-data.json");
         await File.WriteAllTextAsync(asset, "application data");
         var output = Path.Combine(directory.Path, "application.tar");
-        await ManagedBundle.WriteAsync(fixture.Metadata(asset: asset, assetTarget: target), output, default);
+        await ManagedBundle.WriteAsync(fixture.Metadata(asset: asset, assetTarget: target), output, null, default);
         using var stream = File.OpenRead(output);
         using var archive = new TarReader(stream);
         var found = false;
@@ -219,7 +219,7 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
         var asset = Path.Combine(directory.Path, "data.txt");
         await File.WriteAllTextAsync(asset, "data");
         await Assert.ThrowsAsync<InvalidOperationException>(() => ManagedBundle.WriteAsync(fixture.Metadata(asset: asset, assetTarget: target),
-            Path.Combine(directory.Path, "application.tar"), default));
+            Path.Combine(directory.Path, "application.tar"), null, default));
     }
 
     [Fact]
@@ -234,13 +234,12 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
             File.SetLastWriteTimeUtc(Path.ChangeExtension(application, extension), built);
         }
         var output = Path.Combine(directory.Path, "application.tar");
-        await ManagedBundle.WriteAsync(fixture.Metadata(applicationPath: application), output, default);
+        await ManagedBundle.WriteAsync(fixture.Metadata(applicationPath: application), output, null, default);
         using var stream = File.OpenRead(output);
         using var archive = new TarReader(stream);
         var times = new Dictionary<string, DateTimeOffset>();
         while (archive.GetNextEntry() is { } entry) times.Add(entry.Name, entry.ModificationTime);
-        // Writing an unchanged application again must produce the same times, or it
-        // would report a new version on every run.
+        // The manifest has no file of its own: it is as old as the assembly it is read from.
         Assert.Equal(built, times["application.json"].UtcDateTime);
         Assert.Equal(built, times["assemblies/Application.dll"].UtcDateTime);
         Assert.Equal(File.GetLastWriteTimeUtc(fixture.Dependency).Ticks / TimeSpan.TicksPerSecond,
@@ -248,11 +247,84 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
     }
 
     [Fact]
+    public async Task a_bundle_records_nothing_about_the_machine_that_built_it()
+    {
+        using var directory = new BundleDirectory();
+        var output = Path.Combine(directory.Path, "application.tar");
+        await ManagedBundle.WriteAsync(fixture.Metadata(), output, null, default);
+        using var stream = File.OpenRead(output);
+        using var archive = new TarReader(stream);
+        while (archive.GetNextEntry() is PosixTarEntry entry)
+            Assert.Equal((entry.Name, 0, 0, "", ""), (entry.Name, entry.Uid, entry.Gid, entry.UserName, entry.GroupName));
+    }
+
+    [Fact]
+    public async Task a_source_date_makes_the_bundle_the_same_whenever_its_files_were_written()
+    {
+        using var directory = new BundleDirectory();
+        var sourceDate = new DateTimeOffset(2026, 3, 4, 5, 6, 7, TimeSpan.Zero);
+        async Task<string> BuildAsync(string name, DateTime written)
+        {
+            var build = Directory.CreateDirectory(Path.Combine(directory.Path, name)).FullName;
+            var application = Path.Combine(build, "Application.dll");
+            foreach (var extension in new[] { ".dll", ".pdb" })
+            {
+                File.Copy(Path.ChangeExtension(fixture.Application, extension), Path.ChangeExtension(application, extension));
+                File.SetLastWriteTimeUtc(Path.ChangeExtension(application, extension), written);
+            }
+            // What the .NET SDK writes for a file in wwwroot: its date is part of the manifest's content.
+            var endpoints = Path.Combine(build, "Application.staticwebassets.endpoints.json");
+            await File.WriteAllTextAsync(endpoints, $$"""
+                {"Version":1,"ManifestType":"Build","Endpoints":[{"Route":"site.css","AssetFile":"site.css","Selectors":[],
+                "ResponseHeaders":[{"Name":"ETag","Value":"\"abc\""},{"Name":"Last-Modified","Value":"{{written:R}}"}],"EndpointProperties":[]}]}
+                """);
+            var output = Path.Combine(build, "application.tar");
+            await ManagedBundle.WriteAsync(fixture.Metadata(applicationPath: application, asset: endpoints), output, sourceDate, default);
+            return output;
+        }
+
+        var first = await BuildAsync("monday", new DateTime(2026, 1, 5, 9, 0, 0, DateTimeKind.Utc));
+        var second = await BuildAsync("friday", new DateTime(2026, 1, 9, 17, 30, 0, DateTimeKind.Utc));
+
+        Assert.Equal(await File.ReadAllBytesAsync(first), await File.ReadAllBytesAsync(second));
+        using var stream = File.OpenRead(first);
+        using var archive = new TarReader(stream);
+        string? endpoints = null;
+        while (archive.GetNextEntry() is { } entry)
+        {
+            Assert.Equal((entry.Name, sourceDate), (entry.Name, entry.ModificationTime));
+            if (entry.Name == "assets/Application.staticwebassets.endpoints.json")
+                endpoints = await new StreamReader(entry.DataStream!).ReadToEndAsync();
+        }
+        using var manifest = JsonDocument.Parse(endpoints!);
+        var headers = manifest.RootElement.GetProperty("Endpoints")[0].GetProperty("ResponseHeaders").EnumerateArray()
+            .ToDictionary(header => header.GetProperty("Name").GetString()!, header => header.GetProperty("Value").GetString());
+        Assert.Equal(("Wed, 04 Mar 2026 05:06:07 GMT", "\"abc\""), (headers["Last-Modified"], headers["ETag"]));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public void no_source_date_is_set_by_default(string? value) => Assert.Null(SourceDate.Parse(value));
+
+    [Fact]
+    public void a_source_date_is_seconds_since_1970() =>
+        Assert.Equal(new DateTimeOffset(2026, 3, 4, 5, 6, 7, TimeSpan.Zero), SourceDate.Parse("1772600767"));
+
+    [Theory]
+    [InlineData("yesterday")]
+    [InlineData("-5")]
+    [InlineData("1772600767.5")]
+    [InlineData("99999999999999999")]
+    public void a_source_date_that_is_not_a_time_is_refused_by_name(string value) =>
+        Assert.Contains("SOURCE_DATE_EPOCH", Assert.Throws<InvalidOperationException>(() => SourceDate.Parse(value)).Message);
+
+    [Fact]
     public async Task an_interpreted_bundle_carries_its_sdk_runtime_identity_unchanged()
     {
         using var directory = new BundleDirectory();
         var output = Path.Combine(directory.Path, "application.tar");
-        await ManagedBundle.WriteAsync(fixture.Metadata(), output, default);
+        await ManagedBundle.WriteAsync(fixture.Metadata(), output, null, default);
         using var stream = File.OpenRead(output);
         using var archive = new TarReader(stream);
         string? identity = null;
@@ -271,7 +343,7 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
     {
         using var directory = new BundleDirectory();
         var output = Path.Combine(directory.Path, "application.tar");
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => ManagedBundle.WriteAsync(fixture.Metadata(runtimeDirectory: directory.Path), output, default));
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => ManagedBundle.WriteAsync(fixture.Metadata(runtimeDirectory: directory.Path), output, null, default));
         Assert.True(error.Message.Contains("runtime.json", StringComparison.Ordinal) && !File.Exists(output),
             "A package the platform cannot match to a runtime must be refused before anything is uploaded.");
     }
@@ -282,7 +354,7 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
         using var directory = new BundleDirectory();
         var duplicate = Path.Combine(directory.Path, "duplicate.dll");
         File.Copy(fixture.Dependency, duplicate);
-        var error = await Assert.ThrowsAsync<AssemblyInputException>(() => ManagedBundle.WriteAsync(fixture.Metadata(additionalAssembly: duplicate), Path.Combine(directory.Path, "application.tar"), CancellationToken.None));
+        var error = await Assert.ThrowsAsync<AssemblyInputException>(() => ManagedBundle.WriteAsync(fixture.Metadata(additionalAssembly: duplicate), Path.Combine(directory.Path, "application.tar"), null, CancellationToken.None));
         Assert.True(error.Message.Contains("Conflicting inputs define assembly 'Dependency'", StringComparison.Ordinal), "Two files claiming the same dependency identity must not be arbitrarily selected.");
     }
 
@@ -294,7 +366,7 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
         await File.WriteAllTextAsync(output, "previous bundle");
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => ManagedBundle.WriteAsync(fixture.Metadata(), output, cancellation.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => ManagedBundle.WriteAsync(fixture.Metadata(), output, null, cancellation.Token));
         Assert.True(await File.ReadAllTextAsync(output) == "previous bundle" && Directory.GetFiles(directory.Path).Length == 1,
             "A cancelled build must preserve the previous bundle and leave no partial upload files.");
     }
@@ -310,7 +382,7 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
         var invalid = input == "assembly" ? application : Path.ChangeExtension(application, ".pdb");
         await File.WriteAllTextAsync(invalid, "not managed metadata");
         var output = Path.Combine(directory.Path, "application.tar");
-        var error = await Assert.ThrowsAnyAsync<InvalidOperationException>(() => ManagedBundle.WriteAsync(fixture.Metadata(applicationPath: application), output, CancellationToken.None));
+        var error = await Assert.ThrowsAnyAsync<InvalidOperationException>(() => ManagedBundle.WriteAsync(fixture.Metadata(applicationPath: application), output, null, CancellationToken.None));
         Assert.True(error.Message.Contains(input == "assembly" ? "not a valid managed assembly" : "portable PDB", StringComparison.Ordinal),
             "Malformed managed inputs must name the unsupported input format.");
         Assert.True(!File.Exists(output) && Directory.GetFiles(directory.Path, "*.tmp").Length == 0, "Malformed inputs must leave no complete or partial upload archive.");
@@ -322,7 +394,7 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
         using var directory = new FileSystemTestDirectory("isoplane-bundle-links-");
         var application = Path.Combine(directory.Path, "Application.dll");
         File.CreateSymbolicLink(application, fixture.Application);
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => ManagedBundle.WriteAsync(fixture.Metadata(applicationPath: application), Path.Combine(directory.Path, "application.tar"), CancellationToken.None));
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => ManagedBundle.WriteAsync(fixture.Metadata(applicationPath: application), Path.Combine(directory.Path, "application.tar"), null, CancellationToken.None));
         Assert.True(error.Message.Contains("regular file", StringComparison.Ordinal), "A link must not be uploaded as a tar link or followed outside the declared assembly input.");
     }
 }

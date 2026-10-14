@@ -53,6 +53,38 @@ all of that outside the project, for example when the project is on a network
 drive, set `ISOPLANE_TARGET_DIR` to an absolute path outside it. Each project
 then gets a folder of its own under that directory.
 
+## Build the same package on any machine
+
+An application's package records when each of its files was last written. An
+ASP.NET Core application's package records it a second time for the files in
+`wwwroot`, in the manifest ASP.NET Core serves them from. Two builds of the same
+source therefore differ when their files were written at different times, as
+they are after a fresh checkout, and they report different versions.
+
+To make them identical, set
+[`SOURCE_DATE_EPOCH`](https://reproducible-builds.org/docs/source-date-epoch/)
+to a number of seconds since 1970, by convention the time of the commit being
+built:
+
+```bash
+SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) dotnet run
+```
+
+In PowerShell:
+
+```powershell
+$env:SOURCE_DATE_EPOCH = git log -1 --format=%ct
+dotnet run
+```
+
+Every file in the package then carries that time. The application sees it as
+each file's modification time, and ASP.NET Core sends it as the `Last-Modified`
+of each static file. A value that is not such a number stops the build with a
+message that names the variable.
+
+A package never records the user or the file permissions of the machine that
+built it.
+
 ## Control compatibility warnings
 
 Thread-start (`ISOPLANE1002`) and synchronous-wait (`ISOPLANE1003`) warnings

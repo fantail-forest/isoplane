@@ -41,7 +41,9 @@ compiled shared runtime is kept once per user: in `ISOPLANE_CACHE_DIR/runtimes`
 when that is set, else `ISOPLANE_HOME/cache/runtimes` when `ISOPLANE_HOME` is
 set, and otherwise in the platform's cache directory (`~/.cache/isoplane`,
 `~/Library/Caches/isoplane` or `%LOCALAPPDATA%\Isoplane\Cache`).
-`isoplane cache info` reports it and `isoplane cache clean` empties it. Standard NuGet
+`isoplane cache info` reports it and `isoplane cache clean` empties it. Set
+`SOURCE_DATE_EPOCH` to date every file in an application package with that time,
+so that the same source builds the same package on any machine. Standard NuGet
 and SourceLink caches remain shared.
 The session's port, settings and limit overrides come from the project's launch
 profile and User Secrets. Source edits rebuild the application package and replace
