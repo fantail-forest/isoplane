@@ -148,6 +148,34 @@ fn a_completed_initializer_cannot_capture_a_retained_native_socket() {
     );
 }
 
+#[test]
+fn a_refused_capture_carries_the_guests_warnings_without_its_routine_logs() {
+    let wasm = common::guest(
+        &format!(
+            r#"{} (import "isoplane" "log_emit" (func $log (param i32 i32 i32)))
+            (data (i32.const 128) "entering the initializer")
+            (data (i32.const 192) "the cache client is still connected")"#,
+            import("tcp_create_socket_create_tcp_socket", "create")
+        ),
+        r#"(call $log (i32.const 1) (i32.const 128) (i32.const 24))
+        (call $log (i32.const 3) (i32.const 192) (i32.const 35))
+        (call $create (i32.const 0) (i32.const 64))"#,
+    );
+    let detail = initialize(&common::engine(), &wasm, &request())
+        .err()
+        .expect("a retained socket must refuse the capture")
+        .to_string();
+    assert!(
+        detail.contains("initialization retains a TCP socket")
+            && detail.contains("guest log: the cache client is still connected"),
+        "the refusal must give the host's reason and what the guest warned of: {detail}"
+    );
+    assert!(
+        !detail.contains("entering the initializer"),
+        "a guest that returned successfully must not bury its warnings in routine logs: {detail}"
+    );
+}
+
 fn socket_imports() -> String {
     [
         ("instance_network_instance_network", "network"),

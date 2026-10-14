@@ -216,12 +216,12 @@ async fn finish_across_restored_stores(
     guest.finish(reactor, 8).await
 }
 
-/// The detail of a preparation the shared runtime's loader refused.
+/// The detail of a preparation whose initialization on the shared runtime was refused.
 async fn refusal(files: Vec<PlatformFile>) -> String {
     let runtime = isoplane_fixtures::mono_runtime();
     let preparation = LocalPreparation::with_cache(shared_cache()).expect("local preparation");
     match prepare(&preparation, &runtime, files).await {
-        Ok(_) => panic!("the loader must refuse the package"),
+        Ok(_) => panic!("preparation must refuse the package"),
         Err(PrepareError::Rejected(failure)) => {
             assert_eq!(
                 failure.stage,
@@ -447,6 +447,38 @@ async fn a_recorded_handler_the_assembly_lacks_is_refused() {
         detail.contains("PackageEntryException"),
         "the recorded handler must exist: {detail}"
     );
+}
+
+#[tokio::test]
+async fn initialization_that_leaves_timers_running_is_refused_naming_each() {
+    let files = package("alpha");
+    let manifest = String::from_utf8(package_file(&files, "application.json"))
+        .expect("the manifest is UTF-8")
+        .replace("\"InitializeAsync\"", "\"LeaveTimersRunningAsync\"");
+    assert!(
+        manifest.contains("\"LeaveTimersRunningAsync\""),
+        "the manifest must name its initializer for this test to replace: {manifest}"
+    );
+    let detail = refusal(with_package_file(
+        files,
+        "application.json",
+        manifest.as_bytes(),
+    ))
+    .await;
+    assert!(
+        detail.contains("initialization retains a timer"),
+        "the host must be what refuses to capture a running timer: {detail}"
+    );
+    for timer in [
+        "initialization left 2 timers running:",
+        "a timer every 30 s calling Alpha.Handler.Beat",
+        "a delay of 45 s awaited by Alpha.Handler.PollAsync",
+    ] {
+        assert!(
+            detail.contains(timer),
+            "the refusal must name each timer the runtime's one host timer stands for: {detail}"
+        );
+    }
 }
 
 /// The `native` package's outcome for one transition, before and after a

@@ -252,7 +252,26 @@ public static unsafe class Exports<TRouter>
         if (initialization.IsFaulted || initialization.IsCanceled)
             return initialization.Exception is { } error ? Panic("pre-initialization", error.GetBaseException()) : PollStatus.Trapped(TrapCode.Panic);
         _initialization = null;
+        WarnOfRunningTimers();
         return PollStatus.Done(0);
+    }
+
+    /// <summary>
+    /// Logs the timers pre-initialization left running. The host refuses to
+    /// capture a template while one runs but can say only that a timer exists,
+    /// so this line is what tells an application author whose it is.
+    /// </summary>
+    private static void WarnOfRunningTimers()
+    {
+        try
+        {
+            if (RunningTimers.Describe() is { } timers) Log(3, timers);
+        }
+        catch (Exception error)
+        {
+            // The host still refuses the capture; a listing that fails must not fail initialization in its place.
+            Log(3, "initialization left timers running, which could not be listed: " + error.GetType().FullName + ": " + error.Message);
+        }
     }
 
     private static void Abort(string operation, Exception error)

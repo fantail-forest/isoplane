@@ -370,18 +370,13 @@ pub(crate) fn initialize_with_cache(
                             .unwrap_or_else(|| "forbidden initialization capability".into()),
                     });
                 }
-                let mut detail = outcome
+                let detail = outcome
                     .trap
                     .map(|trap| trap.message)
                     .unwrap_or_else(|| "initializer did not return successfully".into());
-                // Worker reports are bounded, so keep the latest diagnosis before older context.
-                for line in state.lock().logs.iter().rev() {
-                    detail.push_str("\n  guest log: ");
-                    detail.push_str(line.trim_end());
-                }
                 return Err(PrepareError::Initialization {
                     completion: outcome.completion,
-                    detail,
+                    detail: with_guest_logs(detail, state.lock().logs.iter()),
                 });
             }
         } else {
@@ -434,9 +429,14 @@ pub(crate) fn initialize_with_cache(
             .map(|io| io.finish())
             .transpose()
             .map_err(|error| {
-                PrepareError::State(anyhow::anyhow!(
-                    "initialization retained native state: {error}"
-                ))
+                // The initializer returned successfully, so of what it logged
+                // only its warnings bear on why its state cannot be captured.
+                let state = state.lock();
+                let warnings = state.logs.iter().filter(|log| log.level >= WARNING);
+                PrepareError::State(anyhow::anyhow!(with_guest_logs(
+                    format!("initialization retained native state: {error}"),
+                    warnings,
+                )))
             })?
             .unwrap_or_default();
         let deferred: Vec<_> = deferred.into_iter().collect();
@@ -610,7 +610,7 @@ pub(crate) fn initialize_with_cache(
             .initialization_pal_calls()
             .map_err(PrepareError::State)?;
         let state = state.lock();
-        let logs = state.logs.clone();
+        let logs = state.logs.iter().map(|log| log.line.clone()).collect();
         return Ok(InitializationOutput {
             captured: representation,
             restored: Some(restored_template),
@@ -729,6 +729,28 @@ fn captured_globals(
     Ok(indexes.into_iter().zip(values.iter().copied()).collect())
 }
 
+/// `log_emit` severities run from trace at 0 to error at 4.
+const WARNING: u64 = 3;
+
+/// A line the guest logged, at the severity it gave.
+struct GuestLog {
+    level: u64,
+    line: String,
+}
+
+/// `detail` followed by `logs`, latest first: worker reports are bounded, so
+/// the latest diagnosis comes before older context.
+fn with_guest_logs<'a>(
+    mut detail: String,
+    logs: impl DoubleEndedIterator<Item = &'a GuestLog>,
+) -> String {
+    for log in logs.rev() {
+        detail.push_str("\n  guest log: ");
+        detail.push_str(log.line.trim_end());
+    }
+    detail
+}
+
 struct Sandbox {
     seed: Option<[u8; 16]>,
     config: Vec<u8>,
@@ -738,7 +760,7 @@ struct Sandbox {
     last_deferred: Option<u32>,
     bringup: bool,
     draws: u64,
-    logs: Vec<String>,
+    logs: Vec<GuestLog>,
     remaining_log_bytes: usize,
     seed_reads: u32,
 }
@@ -827,9 +849,10 @@ impl isoplane_engine::bindings::InitializationBindings for Bindings {
             "log_emit" => {
                 let length = call.payload.len().min(state.remaining_log_bytes);
                 if length > 0 {
-                    state
-                        .logs
-                        .push(String::from_utf8_lossy(&call.payload[..length]).into_owned());
+                    state.logs.push(GuestLog {
+                        level: call.scalars[0],
+                        line: String::from_utf8_lossy(&call.payload[..length]).into_owned(),
+                    });
                     state.remaining_log_bytes -= length;
                 }
                 Ok(0)

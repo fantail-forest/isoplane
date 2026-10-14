@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using System.Reflection;
+using System.Threading;
 using System.Threading.Tasks;
 using Isoplane;
 
@@ -10,6 +11,7 @@ namespace Alpha;
 public static class Handler
 {
     private static bool libraryLoadedDuringInitialization;
+    private static Timer? heartbeat;
 
     /// <summary>Warms the response path before template capture.</summary>
     [Initializer]
@@ -39,4 +41,19 @@ public static class Handler
 
     /// <summary>A public static method of the wrong shape to be recorded as the handler.</summary>
     public static string Describe() => "not a handler";
+
+    /// <summary>
+    /// A method of the right shape to be recorded as the initializer, which returns with a
+    /// periodic timer and an awaited delay still running.
+    /// </summary>
+    public static Task LeaveTimersRunningAsync()
+    {
+        heartbeat = new Timer(Beat, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+        _ = PollAsync();
+        return Task.CompletedTask;
+    }
+
+    private static void Beat(object? state) => GC.KeepAlive(heartbeat);
+
+    private static async Task PollAsync() => await Task.Delay(TimeSpan.FromSeconds(45));
 }
