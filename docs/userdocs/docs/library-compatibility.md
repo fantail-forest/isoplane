@@ -50,8 +50,8 @@ entry says otherwise.
 | Entity Framework Core | [`TransactionScope`](#transaction-scope) | Small change: use a database transaction |
 | SqlClient | [SQL Server, including its Entity Framework Core provider](#sql-server) | Not supported yet: waits on work under way in the driver. PostgreSQL works today |
 | Sqlite | [SQLite, including its Entity Framework Core provider](#sqlite) | Cannot be supported: use another database |
-| MongoDB.Driver | [MongoDB](#mongodb) | Not supported: use another database |
-| StackExchange.Redis | [Redis, including the Redis distributed cache](#redis) | Not supported: use another cache store |
+| MongoDB.Driver | [MongoDB](#mongodb) | Not supported yet: needs changes in the driver and in Isoplane |
+| StackExchange.Redis | [Redis, including the Redis distributed cache](#redis) | Small change: reference the client's 4.0 prerelease and call it asynchronously |
 | OpenTelemetry | [OpenTelemetry SDK](#opentelemetry) | Large change, traces only: collect spans without the SDK and send them before the response completes |
 | ModelContextProtocol | [An MCP server that tracks sessions](#mcp-sessions) | Small change: use stateless mode |
 
@@ -930,79 +930,133 @@ run outside the sandbox, and
 
 ### MongoDB {#mongodb}
 
-[`MongoDB.Driver`][MongoDB.Driver] starts a thread for each server it
-monitors. The first operation throws
+[`MongoDB.Driver`][MongoDB.Driver] does not run on Isoplane yet. It starts a
+thread for each server it monitors, so creating a `MongoClient` throws
 [`PlatformNotSupportedException`][PlatformNotSupportedException] from
 [`Thread.Start`][Thread.Start].
 
 ```csharp
-var client = new MongoClient(connectionString);
+var client = new MongoClient(connectionString);   // throws
 var orders = client.GetDatabase("shop").GetCollection<Order>("orders");
-await orders.InsertOneAsync(order);   // the first operation: throws
+await orders.InsertOneAsync(order);
 ```
 
 Typically used for MongoDB and compatible document databases.
 
-#### Workaround: none
+#### Workaround: none with the driver, yet
 
-There is no way to use MongoDB from an application today.
+No setting gets past this for an ordinary deployment. A direct connection, the
+polling monitoring mode and the heartbeat settings all still start the monitor
+thread, and releases from before the driver used threads fail for another
+reason. Every other .NET client for MongoDB that we found is built on this
+driver.
 
-Size of the change: large: a different database.
+What remains today is to reach MongoDB through an HTTP service placed in front
+of it, called with `HttpClient`. We have not run one.
+
+Size of the change: large.
 
 #### Looking ahead
 
-MongoDB will work when its driver can monitor its
-servers without threads of its own, which is a change for the driver's
-maintainers.
+Two things stand in the way, and one of them is ours.
+
+- **The driver's threads.** Its maintainers moved monitoring onto dedicated
+  threads [on purpose][csharp-3761], and in 2023
+  [declined a request to use fewer][csharp-4661]. Nobody has yet asked them
+  to support a runtime without threads, so there is no work under way to
+  cite.
+- **Two socket options that Isoplane refuses.** The driver sets the receive
+  and send buffer sizes on every connection. Accepting them is a change on our
+  side.
+
+With the second in place, one kind of deployment would work using only the
+driver's public settings: a load-balanced one (`loadBalanced=true`), which has
+no server monitor, with the connection pool's maintenance switched off. We ran
+that arrangement in the sandbox, with the buffer-size calls bypassed, against
+a MongoDB router: inserts, queries and updates worked, and the client
+reconnected by itself after the server restarted.
 
 ## Caching
 
 ### Redis {#redis}
 
-[`StackExchange.Redis`][StackExchange.Redis] starts threads for its
-connections, so [`ConnectionMultiplexer.Connect`][se-redis-basics] and
-`ConnectAsync` throw
-[`PlatformNotSupportedException`][PlatformNotSupportedException] from
-[`Thread.Start`][Thread.Start].
+[`StackExchange.Redis`][StackExchange.Redis] does not work in its stable
+releases yet, for a different reason in each line of them:
+
+- **2.x**, which is what
+  [`AddStackExchangeRedisCache`][AddStackExchangeRedisCache] from
+  `Microsoft.Extensions.Caching.StackExchangeRedis` brings in, starts threads
+  for its connections. `ConnectionMultiplexer.ConnectAsync` throws
+  [`PlatformNotSupportedException`][PlatformNotSupportedException] from
+  [`Thread.Start`][Thread.Start].
+- **3.x**, the current stable line, [rewrote its I/O][se-redis-3] and starts
+  no threads on its normal path. It fails on one call instead: it tests a
+  free lock with `SemaphoreSlim.Wait(0)`, which
+  [throws on Isoplane even when nothing would wait](dotnet-runtime-differences.md#one-thread).
 
 ```csharp
-builder.Services.AddSingleton<IConnectionMultiplexer>(
-    ConnectionMultiplexer.Connect(builder.Configuration.GetConnectionString("Redis")!));   // throws
-
 builder.Services.AddStackExchangeRedisCache(options =>
-    options.Configuration = builder.Configuration.GetConnectionString("Redis"));   // connects, and fails, on first use
+    options.Configuration = builder.Configuration.GetConnectionString("Redis"));   // fails when the cache is first used
 ```
 
-Configuring the client with `SocketManager.ThreadPool`, a
-[configuration option][se-redis-configuration] in the `StackExchange.Redis`
-namespace, avoids the threads but does not help: the connection opens, the
-handshake never completes, and `ConnectAsync` fails when its timeout passes.
-With the Redis cache registered that way as the session store, every request
-stalled.
+Typically used for a cache shared between instances, session state, and Data
+Protection keys.
 
-Everything built on the client fails with it:
-[`AddStackExchangeRedisCache`][AddStackExchangeRedisCache] from
-`Microsoft.Extensions.Caching.StackExchangeRedis`, ASP.NET Core's Redis output
-cache store
-([`AddStackExchangeRedisOutputCache`][AddStackExchangeRedisOutputCache]), and
-Data Protection's
-[`PersistKeysToStackExchangeRedis`][PersistKeysToStackExchangeRedis].
+#### Workaround: the client's 4.0 prerelease, through its asynchronous API
 
-Typically used for a cache shared between instances, session state, and
-Data Protection keys.
+Version [4.0 of the client][se-redis-4], which is in alpha, works. Add a direct
+reference to it, which replaces the 2.x that the Microsoft package would bring
+in, and leave the rest of the application as it is:
 
-#### Workaround: none with this client
+```xml
+<PackageReference Include="StackExchange.Redis" Version="4.0.127-alpha" />
+<PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="10.0.13" />
+```
 
-For Data Protection
-keys, see [Data Protection key stores](#data-protection).
+With that in place these ran as they do elsewhere:
+[`IDistributedCache`][IDistributedCache] through `AddStackExchangeRedisCache`,
+[`HybridCache`][HybridCache] with Redis as its second level, session state
+(with the [middleware that loads it](#session)), and the client used directly:
 
-Size of the change: large: a different store for the cache.
+```csharp
+await using var redis = await ConnectionMultiplexer.ConnectAsync(connectionString);
+var db = redis.GetDatabase();
+await db.StringSetAsync("greeting", "kia ora", TimeSpan.FromSeconds(30));
+var greeting = (string?)await db.StringGetAsync("greeting");
+```
+
+What to know before relying on it:
+
+- **It is a prerelease.** Its maintainers describe the 4.0 work as not ready
+  to merge.
+- **Use the asynchronous methods only.** `ConnectionMultiplexer.Connect`
+  throws. A synchronous command such as `db.StringGet(...)` does not throw: it
+  never returns, and the request runs until its
+  [time limit](execution-limits.md#running-time).
+- **Connect inside a request, not during initialization.** The prerelease
+  leaves a timer running even after it is disposed, which initialization
+  refuses.
+- **Each request reconnects.** The client keeps its connection open, and a
+  request that ends with a connection open is
+  [followed by a fresh instance](dotnet-runtime-differences.md#work-belongs-to-a-request).
+- **The Redis output cache store does not start**
+  ([`AddStackExchangeRedisOutputCache`][AddStackExchangeRedisOutputCache]): it
+  runs a clean-up loop on a timer from start-up, whichever client is used.
+
+We ran this against Redis 7 without TLS or authentication. Clusters, sentinel
+and [`PersistKeysToStackExchangeRedis`][PersistKeysToStackExchangeRedis] were
+not run.
+
+Size of the change: small, with a prerelease dependency to carry.
 
 #### Looking ahead
 
-Redis will work when the client can run without
-threads of its own, which is a change for its maintainers. Why its
-thread-pool configuration stalls is not yet known.
+The stable 3.x client is one call away from working, and that call is in
+Isoplane's runtime, not in the client. We ran 3.4.5 built in a way that avoids
+`SemaphoreSlim.Wait(0)`, and everything above passed, including connecting
+during initialization. When the runtime lets a free semaphore be taken without
+throwing, as .NET itself is [being asked to][runtime-134972], the stable
+client is expected to work with no change to your code.
 
 ## Observability
 
@@ -1335,6 +1389,8 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [Controller.TempData]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.mvc.controller.tempdata
 [CryptographicException]: https://learn.microsoft.com/dotnet/api/system.security.cryptography.cryptographicexception
 [CryptoStream]: https://learn.microsoft.com/dotnet/api/system.security.cryptography.cryptostream
+[csharp-3761]: https://jira.mongodb.org/browse/CSHARP-3761
+[csharp-4661]: https://jira.mongodb.org/browse/CSHARP-4661
 [dapper]: https://www.learndapper.com/
 [DbConnection.OpenAsync]: https://learn.microsoft.com/dotnet/api/system.data.common.dbconnection.openasync
 [DbContext.SaveChanges]: https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontext.savechanges
@@ -1349,6 +1405,7 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [HttpClient]: https://learn.microsoft.com/dotnet/api/system.net.http.httpclient
 [HttpContext.Session]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.http.httpcontext.session
 [HttpRequest.ReadFormAsync]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.http.httprequest.readformasync
+[HybridCache]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.caching.hybrid.hybridcache
 [HybridCache.GetOrCreateAsync]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.caching.hybrid.hybridcache.getorcreateasync
 [IConfigurationProvider.Load]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.configuration.iconfigurationprovider.load
 [IDataProtectionBuilder]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.dataprotection.idataprotectionbuilder
@@ -1392,8 +1449,9 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [Pomelo]: https://github.com/PomeloFoundation/Pomelo.EntityFrameworkCore.MySql
 [rdg]: https://learn.microsoft.com/aspnet/core/fundamentals/aot/request-delegate-generator/rdg
 [ReferenceEntry.LoadAsync]: https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.changetracking.referenceentry.loadasync
-[se-redis-basics]: https://stackexchange.github.io/StackExchange.Redis/Basics
-[se-redis-configuration]: https://stackexchange.github.io/StackExchange.Redis/Configuration
+[runtime-134972]: https://github.com/dotnet/runtime/issues/134972
+[se-redis-3]: https://github.com/StackExchange/StackExchange.Redis/releases/tag/3.0.0
+[se-redis-4]: https://github.com/StackExchange/StackExchange.Redis/pull/3262
 [SemaphoreSlim.Wait]: https://learn.microsoft.com/dotnet/api/system.threading.semaphoreslim.wait
 [serilog-aspnetcore]: https://github.com/serilog/serilog-aspnetcore
 [serilog-console]: https://github.com/serilog/serilog-sinks-console
