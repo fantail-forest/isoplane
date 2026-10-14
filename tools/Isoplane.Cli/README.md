@@ -72,3 +72,17 @@ bundle. CLI downloads and telemetry use that bundle as their trust roots
 on every platform, while still verifying certificate validity and hostnames.
 Without it, the operating system trust configuration applies.
 
+## Telemetry
+
+A CLI built with `-p:IsoplaneTelemetryEndpoint=URL` records one event per command
+under `ISOPLANE_HOME/telemetry` and sends earlier runs' events to that URL while a
+later command works. A build without the property records and sends nothing, which
+is every build from source. `tools/TelemetryProtocol/command-event.schema.json`
+defines the event. The customer reference page, generated from the same
+definitions, covers opting out and what is collected.
+
+The debugger includes Mono's MIT-licensed `debugger-libs` and Microsoft's
+`Microsoft.VisualStudio.Shared.VSCodeDebugProtocol` library. Their license files
+are included under `licenses/` in the tool package. The latter is governed by
+[Microsoft's redistribution terms](https://go.microsoft.com/fwlink/?linkid=832965),
+including requirements for distributor and end-user agreements.

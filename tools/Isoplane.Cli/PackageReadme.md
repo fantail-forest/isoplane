@@ -28,4 +28,8 @@ C++ x64 Redistributable.
 
 Keep this tool, the project SDK packages and the templates at the same version.
 
+`isoplane telemetry status` shows whether this tool collects anonymous usage
+data, and `isoplane telemetry disable` turns that off.
+[Telemetry](https://isoplane.dev/docs/reference/telemetry) lists what is collected.
+
 Learn more at [isoplane.dev](https://isoplane.dev/).
