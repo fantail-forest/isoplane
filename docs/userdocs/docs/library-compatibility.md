@@ -12,8 +12,9 @@ library. That page also explains
 This page lists the specific incompatibilities we know of, by package: APIs,
 packages and framework features that fail even though your own code is
 asynchronous. It does not repeat the general rules. If your code calls a
-synchronous method such as [`SaveChanges`][DbContext.SaveChanges], or waits on
-a task with [`.Result`][Task.Result],
+synchronous method such as Entity Framework Core's
+[`SaveChanges`][DbContext.SaveChanges], or waits on a task with
+[`Task.Result`][Task.Result],
 [Waiting is asynchronous](dotnet-runtime-differences.md#waiting-is-asynchronous)
 covers it.
 
@@ -40,13 +41,13 @@ entry says otherwise.
 | ASP.NET Core | [`Html.Partial` and `Html.RenderPartial`](#html-partial) | Small: use `<partial>` | No: use the asynchronous form |
 | ASP.NET Core | [XML formatters over 30 KB](#xml-formatters) | None yet | Yes, with no code change |
 | ASP.NET Core | [Rate limiting middleware](#rate-limiting) | Large: limit requests elsewhere | Partly |
-| ASP.NET Core | [`AddConsole`, `AddJsonConsole` and `ClearProviders`](#console-logging) | Small: delete the calls | Yes, with no code change |
+| ASP.NET Core | [Console logging: `AddConsole`, `AddJsonConsole` and `ClearProviders`](#console-logging) | Small: delete the calls | Yes, with no code change |
 | ASP.NET Core | [Validation attributes, localizers, token callbacks and service factories that do I/O](#synchronous-extension-points) | Moderate: move the I/O elsewhere | No: it can only work by [blocking](dotnet-runtime-differences.md#never-blocks) |
 | ASP.NET Core | [WebSockets, SignalR's WebSocket transport, Blazor Server](#connections-and-background-work) | None yet | Needs instances that stay connected |
 | ASP.NET Core | [gRPC over HTTP/2](#connections-and-background-work) | Moderate: use gRPC-Web | Not known yet |
 | ASP.NET Core | [`BackgroundService` and other work between requests](#connections-and-background-work) | Large: do the work during a request | Needs instances that stay running |
 | Newtonsoft.Json for MVC | [Bodies over 30 KB](#newtonsoft-json) | Small: set two options | Yes, with no code change |
-| Configuration providers | [Loading settings from Azure Key Vault and other remote services](#remote-configuration) | Moderate: fetch them before `Build()` | No: it can only work by [blocking](dotnet-runtime-differences.md#never-blocks) |
+| Configuration providers | [Loading settings from Azure Key Vault and other remote services](#remote-configuration) | Moderate: fetch them before `builder.Build()` | No: it can only work by [blocking](dotnet-runtime-differences.md#never-blocks) |
 | Entity Framework Core | [Lazy loading](#lazy-loading) | Moderate: load with `Include` | No: it can only work by [blocking](dotnet-runtime-differences.md#never-blocks) |
 | Entity Framework Core | [`UseHiLo` keys with `Add`](#hilo) | Small: use `AddAsync` | No: use the asynchronous form |
 | Entity Framework Core | [`TransactionScope`](#transaction-scope) | Small: use a database transaction | Only in .NET itself |
@@ -82,7 +83,7 @@ read the stack trace to see which call failed.
 | `PlatformNotSupportedException: Arg_PlatformNotSupported`, with `Task.InternalWait` (internal to [`Task`][Task]), [`SemaphoreSlim.Wait`][SemaphoreSlim.Wait], [`Thread.Sleep`][Thread.Sleep], [`Socket`][Socket] or [`NetworkStream`][NetworkStream] near the top of the stack | Something waited synchronously. If the call is in your own code, see [Waiting is asynchronous](dotnet-runtime-differences.md#waiting-is-asynchronous). If it is inside a library, find the library in the table above. |
 | `PlatformNotSupportedException: net_wasi_sync_name_resolution` | The same, for a connection that was opened synchronously. |
 | `PlatformNotSupportedException: Arg_PlatformNotSupported`, with [`Thread.Start`][Thread.Start] near the top of the stack | A library started a thread. See [MongoDB](#mongodb) and [Redis](#redis). |
-| `DirectoryNotFoundException: /tmp/` | ASP.NET Core tried to move a large request or response to a temporary file. See [uploads](#uploads), [`EnableBuffering`](#enable-buffering), [Newtonsoft.Json](#newtonsoft-json) and [XML formatters](#xml-formatters). |
+| `DirectoryNotFoundException: /tmp/` | ASP.NET Core tried to move a large request or response to a temporary file. See [uploads](#uploads), [request buffering](#enable-buffering), [Newtonsoft.Json](#newtonsoft-json) and [XML formatters](#xml-formatters). |
 | `IOException: Read-only file system` | Something tried to write a file. The [file system is read-only](dotnet-runtime-differences.md#the-machine-underneath). |
 | [`DllNotFoundException`][DllNotFoundException], sometimes inside a `TypeInitializationException` | A package called into a native library. See [SQLite](#sqlite). |
 | The application refuses to start with `initialization retains a timer` | Something registered at startup started a timer. See [rate limiting](#rate-limiting) and [OpenTelemetry](#opentelemetry). |
@@ -113,13 +114,13 @@ app.MapPost("/cart/items", (HttpContext context, string item) =>
 ```
 
 [TempData][Controller.TempData] is lost the same way when it is kept in the
-session with
+session with MVC's
 [`AddSessionStateTempDataProvider`][AddSessionStateTempDataProvider].
 
 - **Used for:** sign-in flows, shopping carts, multi-step forms, and messages
   shown after a redirect.
 - **Workaround:** load the session with
-  [`LoadAsync`][ISession.LoadAsync] before anything uses it, in a middleware
+  [`ISession.LoadAsync`][ISession.LoadAsync] before anything uses it, in a middleware
   placed directly after [`UseSession`][UseSession]:
 
   ```csharp
@@ -157,7 +158,7 @@ app.MapPost("/contact", (HttpContext context) =>
 
 - **Used for:** reading posted fields and files directly from the request.
 - **Workaround:** read the form with
-  [`ReadFormAsync`][HttpRequest.ReadFormAsync]:
+  [`HttpRequest.ReadFormAsync`][HttpRequest.ReadFormAsync]:
   `var form = await context.Request.ReadFormAsync();`. A minimal API handler
   that takes a form value or an [`IFormFile`][IFormFile] as a parameter already
   reads asynchronously.
@@ -168,7 +169,7 @@ app.MapPost("/contact", (HttpContext context) =>
 ### File uploads over 64 KB {#uploads}
 
 When ASP.NET Core reads a form, through
-[`ReadFormAsync`][HttpRequest.ReadFormAsync] or an
+[`HttpRequest.ReadFormAsync`][HttpRequest.ReadFormAsync] or an
 [`IFormFile`][IFormFile] parameter, it keeps the first 64 KB of an uploaded
 file in memory and moves a larger one to a temporary file. There is nowhere to
 write one, so `ReadFormAsync` throws `DirectoryNotFoundException: /tmp/`. A
@@ -232,7 +233,7 @@ Large fields of an ordinary URL-encoded form are not affected.
 
 ### `Request.EnableBuffering()` over 30 KB {#enable-buffering}
 
-[`EnableBuffering`][EnableBuffering] lets a request body be read more than
+[`HttpRequest.EnableBuffering`][EnableBuffering] lets a request body be read more than
 once. It keeps 30 KB in memory and moves a larger body to a temporary file,
 which fails with `DirectoryNotFoundException: /tmp/` when the body is read.
 
@@ -263,11 +264,12 @@ context.Request.Body.Position = 0;   // so that the body can be bound afterwards
 ### Synchronous reads and writes of the request and response body {#synchronous-body}
 
 [`Request.Body`][HttpRequest.Body] and [`Response.Body`][HttpResponse.Body]
-are streams whose synchronous [`Read`][Stream.Read] and
-[`Write`][Stream.Write] throw
+are streams whose synchronous [`Stream.Read`][Stream.Read] and
+[`Stream.Write`][Stream.Write] throw
 [`NotSupportedException`][NotSupportedException], with a message that says to
-use the asynchronous form. ASP.NET Core's own server refuses these calls as
-well, unless [`AllowSynchronousIO`][AllowSynchronousIO] is set.
+use the asynchronous form. Kestrel, ASP.NET Core's own server, refuses these
+calls as well unless its [`AllowSynchronousIO`][AllowSynchronousIO] option is
+set.
 
 ```csharp
 var serializer = new XmlSerializer(typeof(Report));
@@ -276,11 +278,12 @@ serializer.Serialize(context.Response.Body, report);   // writes synchronously: 
 
 - **Used for:** serializers and writers that take a stream and write to it
   synchronously, such as [`XmlSerializer.Serialize`][XmlSerializer.Serialize].
-- **Workaround:** use [`ReadAsync`][Stream.ReadAsync] and
-  [`WriteAsync`][Stream.WriteAsync], or the library's asynchronous method.
+- **Workaround:** use [`Stream.ReadAsync`][Stream.ReadAsync] and
+  [`Stream.WriteAsync`][Stream.WriteAsync], or the library's asynchronous
+  method.
   Where a library has none, have it write to a
   [`MemoryStream`][MemoryStream] and copy that to the response with
-  [`CopyToAsync`][Stream.CopyToAsync].
+  [`Stream.CopyToAsync`][Stream.CopyToAsync].
 - **Size of the change:** Small.
 - **Can it be fixed?** No, as on ASP.NET Core's own server. The asynchronous
   methods are the lasting answer.
@@ -308,8 +311,8 @@ builder.Services.AddDataProtection().PersistKeysToDbContext<AppDbContext>();
   - `UseKeysFromDbContext` takes the place of `PersistKeysToDbContext` and uses
     the same table. It is an extension method on
     [`IDataProtectionBuilder`][IDataProtectionBuilder] in the
-    `Isoplane.AspNetCore` namespace, which the SDK adds to an application that
-    references the
+    `Isoplane.AspNetCore` namespace, which the adapter library adds to an
+    application that references the
     [`Microsoft.AspNetCore.DataProtection.EntityFrameworkCore`][nuget-dp-ef]
     package. It has no reference page yet.
   - [`UseConfiguredKeys`](reference/sdk/Isoplane.AspNetCore/Isoplane.AspNetCore/DataProtectionKeys/UseConfiguredKeys.md)
@@ -326,8 +329,9 @@ builder.Services.AddDataProtection().PersistKeysToDbContext<AppDbContext>();
 
 ### `Html.Partial` and `Html.RenderPartial` {#html-partial}
 
-[`Html.Partial`][Html.Partial] and [`Html.RenderPartial`][Html.RenderPartial]
-wait synchronously for the partial view to render. They work when nothing in
+The Razor helpers [`Html.Partial`][Html.Partial] and
+[`Html.RenderPartial`][Html.RenderPartial] wait synchronously for the partial
+view to render. They work when nothing in
 the partial waits, and throw
 [`PlatformNotSupportedException`][PlatformNotSupportedException] when the
 partial awaits a query or a request.
@@ -348,8 +352,9 @@ partial awaits a query or a request.
 - **Workaround:** the [partial tag helper][PartialTagHelper],
   `<partial name="_RecentOrders" />`, or
   `@await Html.PartialAsync("_RecentOrders")`
-  ([`PartialAsync`][Html.PartialAsync]). The build already reports the
-  synchronous forms as [`MVC1000`][MVC1000].
+  ([`Html.PartialAsync`][Html.PartialAsync]). ASP.NET Core's own analyzer
+  already reports the synchronous forms when the application builds, as
+  warning [`MVC1000`][MVC1000].
 - **Size of the change:** Small.
 - **Can it be fixed?** No. Both can only render a partial that awaits by
   [blocking](dotnet-runtime-differences.md#never-blocks), so the asynchronous forms are the lasting answer.
@@ -401,7 +406,7 @@ The policy above is registered with [`AddRateLimiter`][AddRateLimiter] and
   instance at a time, because its counters are in memory and
   [memory belongs to one instance](dotnet-runtime-differences.md#instances-come-and-go).
 
-### `AddConsole`, `AddJsonConsole` and `ClearProviders` {#console-logging}
+### Console logging: `AddConsole`, `AddJsonConsole` and `ClearProviders` {#console-logging}
 
 An application that calls [`AddConsole`][AddConsole] or
 [`AddJsonConsole`][AddJsonConsole] on `builder.Logging` refuses to start, with
@@ -470,9 +475,9 @@ Each has a different way out:
     [`Initialization.Initializing`](reference/sdk/Isoplane.Sdk/Isoplane/Initialization/Initializing.md)
     callback and serve them from memory. What initialization leaves in memory
     is copied into every instance.
-  - **Signing keys.** Set [`Authority`][JwtBearerOptions.Authority] or
-    [`MetadataAddress`][JwtBearerOptions.MetadataAddress] on the JWT bearer
-    options. The handler then fetches and refreshes the keys asynchronously.
+  - **Signing keys.** Set
+    [`JwtBearerOptions.Authority`][JwtBearerOptions.Authority] or
+    [`JwtBearerOptions.MetadataAddress`][JwtBearerOptions.MetadataAddress]. The handler then fetches and refreshes the keys asynchronously.
   - **Services.** Construct the object without connecting, and connect
     asynchronously the first time it is used.
 - **Size of the change:** Moderate. The I/O moves to a place that can await
@@ -511,7 +516,7 @@ which fails with `DirectoryNotFoundException: /tmp/`.
 
 - **Used for:** applications that keep Newtonsoft.Json for its converters or
   for compatibility with existing clients.
-- **Workaround:** raise
+- **Workaround:** on `MvcNewtonsoftJsonOptions`, raise
   [`InputFormatterMemoryBufferThreshold`][InputFormatterMemoryBufferThreshold]
   and
   [`OutputFormatterMemoryBufferThreshold`][OutputFormatterMemoryBufferThreshold]
@@ -547,17 +552,17 @@ builder.Configuration.AddAzureKeyVault(
     new Uri("https://contoso.vault.azure.net/"), new DefaultAzureCredential());
 ```
 
-We confirmed this with a provider written for the purpose. The providers
-registered with [`AddAzureKeyVault`][AddAzureKeyVault] and
-[`AddAzureAppConfiguration`][AddAzureAppConfiguration], and with
-`AddSystemsManager` from the
+We confirmed this with a provider written for the purpose. The Azure
+providers registered with [`AddAzureKeyVault`][AddAzureKeyVault] and
+[`AddAzureAppConfiguration`][AddAzureAppConfiguration], and the AWS provider
+registered with `AddSystemsManager` from the
 [`Amazon.Extensions.Configuration.SystemsManager`][nuget-aws-ssm] package,
 load the same way and are expected to fail likewise. They have not been run in
 the sandbox.
 
 - **Used for:** taking secrets and settings from a vault.
 - **Workaround:** `Program.cs` may await before it builds the
-  application, so fetch the values asynchronously there and add them with
+  application, so fetch the values asynchronously there and add them to the configuration with
   [`AddInMemoryCollection`][AddInMemoryCollection]:
 
   ```csharp
@@ -620,7 +625,8 @@ return order.Customer.Name;   // reading Customer runs a query synchronously: th
 
 ### `UseHiLo` keys with `Add` {#hilo}
 
-With [`UseHiLo`][UseHiLo] key generation, [`DbContext.Add`][DbContext.Add] and
+With the Npgsql provider's [`UseHiLo`][UseHiLo] key generation,
+[`DbContext.Add`][DbContext.Add] and
 [`DbSet.Add`][DbSet.Add] fetch a block of key values from the database
 synchronously when the current block runs out. The call throws
 [`PlatformNotSupportedException`][PlatformNotSupportedException] on the first
@@ -647,7 +653,8 @@ await db.SaveChangesAsync();
 
 ### `TransactionScope` {#transaction-scope}
 
-A [`TransactionScope`][TransactionScope] commits when it is disposed, and it
+A [`TransactionScope`][TransactionScope], from `System.Transactions`, commits
+when it is disposed, and it
 can only be disposed synchronously. With work done on a connection inside the
 scope, disposing it throws
 [`TransactionInDoubtException`][TransactionInDoubtException].
@@ -663,9 +670,9 @@ using (var scope = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled)
 
 - **Used for:** a transaction around several operations, without passing a
   transaction object between them.
-- **Workaround:** use the provider's transaction, from
-  [`BeginTransactionAsync`][BeginTransactionAsync], and commit it with
-  [`CommitAsync`][CommitAsync].
+- **Workaround:** use the database's own transaction, from
+  [`Database.BeginTransactionAsync`][BeginTransactionAsync] on the context,
+  and commit it with its [`CommitAsync`][CommitAsync].
 
   ```csharp
   await using var transaction = await db.Database.BeginTransactionAsync();
@@ -718,7 +725,7 @@ Everything built on it fails with it, including
 - **Size of the change:** Large: a different database.
 - **Can it be fixed?** Only by a change to the driver. We also ran the driver's
   Unix implementation in the sandbox: it signs in synchronously inside
-  [`OpenAsync`][DbConnection.OpenAsync], so it would need to open connections
+  [`SqlConnection.OpenAsync`][DbConnection.OpenAsync], so it would need to open connections
   asynchronously throughout.
 
 ### MySQL {#mysql}
@@ -810,9 +817,10 @@ stalled.
 
 Everything built on the client fails with it:
 [`AddStackExchangeRedisCache`][AddStackExchangeRedisCache] from
-`Microsoft.Extensions.Caching.StackExchangeRedis`, the Redis output cache
-store ([`AddStackExchangeRedisOutputCache`][AddStackExchangeRedisOutputCache]),
-and
+`Microsoft.Extensions.Caching.StackExchangeRedis`, ASP.NET Core's Redis output
+cache store
+([`AddStackExchangeRedisOutputCache`][AddStackExchangeRedisOutputCache]), and
+Data Protection's
 [`PersistKeysToStackExchangeRedis`][PersistKeysToStackExchangeRedis].
 
 - **Used for:** a cache shared between instances, session state, and
@@ -875,7 +883,7 @@ exercised, which is not everything the package does.
   10.0.12.** [`AddDbContextCheck`][AddDbContextCheck].
 - **[`Dapper`][dapper] 2.1.89** with Npgsql. `QueryAsync`, `QueryFirstAsync` over a
   large result, and `ExecuteAsync`.
-- **`Microsoft.Extensions.Caching.Hybrid` 10.10.0.** [`GetOrCreateAsync`][HybridCache.GetOrCreateAsync],
+- **`Microsoft.Extensions.Caching.Hybrid` 10.10.0.** [`HybridCache.GetOrCreateAsync`][HybridCache.GetOrCreateAsync],
   with and without a distributed second level.
 - **`Microsoft.Extensions.Http.Resilience` 10.10.0.** A request through
   [`AddStandardResilienceHandler`][AddStandardResilienceHandler].
@@ -883,7 +891,7 @@ exercised, which is not everything the package does.
   [console sink][serilog-console].
 - **[`FluentValidation`][fluentvalidation] 12.2.0.** Synchronous and
   asynchronous rules through [`ValidateAsync`][fluentvalidation-async].
-- **[`MediatR`][mediatr] 12.5.0.** `Send` to a handler that queries a database.
+- **[`MediatR`][mediatr] 12.5.0.** `IMediator.Send` to a handler that queries a database.
 - **[`AutoMapper`][automapper] 14.0.0.** Mapping an entity to a record.
 - **[`Swashbuckle.AspNetCore`][swashbuckle] 10.3.0.** Generating the OpenAPI document. The
   Swagger UI was not exercised.
