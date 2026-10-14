@@ -30,7 +30,7 @@ applications share, for as long as it waited. That is why waits are
 asynchronous, why the application has no threads of its own, and why nothing
 runs between requests.
 
-### Nothing goes around the sandbox {#nothing-around-the-sandbox}
+### Nothing runs outside the sandbox {#nothing-outside-the-sandbox}
 
 Isoplane mediates every interaction an application has with the outside world,
 including the network, files, the clock and waiting. That is what keeps one

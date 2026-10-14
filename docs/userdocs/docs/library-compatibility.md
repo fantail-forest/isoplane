@@ -11,12 +11,15 @@ library. That page also explains
 
 This page lists the specific incompatibilities we know of, by package: APIs,
 packages and framework features that fail even though your own code is
-asynchronous. It does not repeat the general rules. If your code calls a
-synchronous method such as Entity Framework Core's
-[`SaveChanges`][DbContext.SaveChanges], or waits on a task with
-[`Task.Result`][Task.Result],
-[Waiting is asynchronous](dotnet-runtime-differences.md#waiting-is-asynchronous)
-covers it.
+asynchronous.
+
+It does not list synchronous methods whose whole remedy is to call their
+asynchronous counterpart, such as Entity Framework Core's
+[`SaveChanges`][DbContext.SaveChanges], which becomes
+[`SaveChangesAsync`][DbContext.SaveChangesAsync], or a task read with
+[`Task.Result`][Task.Result], which is awaited instead. Most packages have
+some, and one rule covers them all:
+[Waiting is asynchronous](dotnet-runtime-differences.md#waiting-is-asynchronous).
 
 Each entry says what fails and how to work around it today, with the size of
 that change. Where there is more than one way through, the entry says which we
@@ -924,9 +927,8 @@ well as in production.
 
 #### Looking ahead
 
-No fix is possible. SQLite is native code, which would
-run outside the sandbox, and
-[nothing is allowed around it](dotnet-runtime-differences.md#nothing-around-the-sandbox).
+No fix is possible. SQLite is native code, and
+[nothing runs outside the sandbox](dotnet-runtime-differences.md#nothing-outside-the-sandbox).
 
 ### MongoDB {#mongodb}
 
@@ -1394,6 +1396,7 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [dapper]: https://www.learndapper.com/
 [DbConnection.OpenAsync]: https://learn.microsoft.com/dotnet/api/system.data.common.dbconnection.openasync
 [DbContext.SaveChanges]: https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontext.savechanges
+[DbContext.SaveChangesAsync]: https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontext.savechangesasync
 [DllNotFoundException]: https://learn.microsoft.com/dotnet/api/system.dllnotfoundexception
 [EnableBuffering]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.http.httprequestrewindextensions.enablebuffering
 [FixedWindowRateLimiter]: https://learn.microsoft.com/dotnet/api/system.threading.ratelimiting.fixedwindowratelimiter
