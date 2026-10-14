@@ -220,7 +220,8 @@ tasks:
 
   package:build:
     run: when_changed
-    deps: [":managed:build"]
+    # Runs the CLI, which needs its native library beside it.
+    deps: [":cli"]
     internal: true
     label: 'package:{{.NAME}}'
     env:
@@ -361,7 +362,7 @@ tasks:
   debugger:hotreload:package:
     desc: Prepare the reusable guest whose symbols match this host's compiler paths
     label: 'debugger:hotreload:package:{{.PLATFORM}}'
-    deps: [':managed:build', ':runtime', 'debugger:sources', 'debugger:hotreload']
+    deps: [':cli', ':runtime', 'debugger:sources', 'debugger:hotreload']
     env:
       ArtifactsPath: '{{.HOT_RELOAD_ARTIFACTS}}'
       ISOPLANE_MANAGED_ARTIFACTS: '{{.HOT_RELOAD_ARTIFACTS}}'
