@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Isoplane;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using SQLitePCL;
 
 namespace Sqlite;
 
@@ -18,6 +19,30 @@ public static class Handler
 
     // An in-memory database lives while a connection to it is open.
     private static SqliteConnection? reference;
+
+    /// <summary>
+    /// Advances SQLite's generator before the template is captured, through SQLitePCLRaw: the
+    /// first <see cref="SqliteConnection"/> starts a timer that initialization refuses.
+    /// </summary>
+    [Initializer]
+    public static Task InitializeAsync()
+    {
+        Batteries_V2.Init();
+        Check(raw.sqlite3_open(":memory:", out sqlite3 database), "open");
+        using (database)
+        {
+            Check(raw.sqlite3_prepare_v2(database, "SELECT random()", out sqlite3_stmt statement), "prepare");
+            using (statement)
+                Check(raw.sqlite3_step(statement), "step", raw.SQLITE_ROW);
+        }
+        return Task.CompletedTask;
+    }
+
+    private static void Check(int result, string step, int expected = raw.SQLITE_OK)
+    {
+        if (result != expected)
+            throw new InvalidOperationException($"SQLite {step} during initialization returned {result}");
+    }
 
     /// <summary>Loads reference data in each instance, which starts from the captured template.</summary>
     [Activated]
@@ -44,6 +69,7 @@ public static class Handler
                 "/catalog" => await CatalogAsync(),
                 "/file" => await FileAsync(),
                 "/locked" => await LockedAsync(),
+                "/random" => await RandomAsync(),
                 _ => throw new ArgumentException("unknown SQLite probe")
             });
         }
@@ -125,6 +151,14 @@ public static class Handler
         await using var reader = new SqliteConnection(locks);
         await reader.OpenAsync();
         return await ScalarAsync(reader, "SELECT count(*) FROM entry");
+    }
+
+    // The instance's first draw from SQLite's generator.
+    private static async Task<string> RandomAsync()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        return await ScalarAsync(connection, "SELECT random()");
     }
 
     private static async Task ExecuteAsync(SqliteConnection connection, string sql)

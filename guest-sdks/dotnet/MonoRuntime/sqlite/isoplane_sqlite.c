@@ -148,9 +148,23 @@ static sqlite3_vfs isoplane_vfs = {
     .xCurrentTimeInt64 = isoplane_vfs_current_time_int64,
 };
 
+/* Set by the first sqlite3_initialize, whose state a template can hold. */
+static int isoplane_sqlite_initialized;
+
 int sqlite3_os_init(void)
 {
+    isoplane_sqlite_initialized = 1;
     return sqlite3_vfs_register(&isoplane_vfs, 1);
+}
+
+/* Called as each instance activates. A PRNG seeded before the template was
+ * captured would give every instance the template's sequence, so it is made to
+ * reseed from xRandomness on its next draw, inside the instance. A SQLite never
+ * initialized has no seed to replace, and initializing it here would cost every
+ * application that does not use it. */
+void isoplane_sqlite_reseed(void)
+{
+    if (isoplane_sqlite_initialized) sqlite3_randomness(0, 0);
 }
 
 int sqlite3_os_end(void)

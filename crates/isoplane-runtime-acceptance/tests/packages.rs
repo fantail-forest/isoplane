@@ -191,16 +191,31 @@ fn decode(product: &BuildProduct, request: &BuildRequest) -> PreparedTemplate {
 /// on its host timer and a Store restoration at every later park, returning
 /// the response body.
 async fn answer_across_restored_stores(files: Vec<PlatformFile>, path: &str) -> String {
+    let (product, request) = prepare_on_the_shared_runtime(files).await;
+    answer_on_an_instance(&product, &request, isoplane_host::InstanceId::alloc(), path).await
+}
+
+async fn prepare_on_the_shared_runtime(files: Vec<PlatformFile>) -> (BuildProduct, BuildRequest) {
     let runtime = isoplane_fixtures::mono_runtime();
     let preparation = LocalPreparation::with_cache(shared_cache()).expect("local preparation");
-    let (product, request) = prepare(&preparation, &runtime, files)
+    prepare(&preparation, &runtime, files)
         .await
-        .unwrap_or_else(|error| panic!("the package must prepare on the shared runtime: {error}"));
-    let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
+        .unwrap_or_else(|error| panic!("the package must prepare on the shared runtime: {error}"))
+}
+
+/// Activates `instance` from the prepared template and answers `path` on it
+/// as [`answer_across_restored_stores`] does.
+async fn answer_on_an_instance(
+    product: &BuildProduct,
+    request: &BuildRequest,
+    instance: isoplane_host::InstanceId,
+    path: &str,
+) -> String {
+    let reactor = isoplane_harness::Reactor::new(instance);
     reactor.context.begin_slice(1, 1);
     let guest = {
         // SAFETY: The private decode helper receives only products from this test module's local preparation paths.
-        unsafe { ReturnedGuest::prepared(decode(&product, &request), &reactor) }
+        unsafe { ReturnedGuest::prepared(decode(product, request), &reactor) }
     };
     finish_across_restored_stores(guest, &reactor, path).await
 }
@@ -684,6 +699,25 @@ async fn a_locked_sqlite_table_fails_the_command_instead_of_waiting() {
         sqlite_use("/locked").await,
         "PlatformNotSupportedException: Arg_PlatformNotSupported",
         "Microsoft.Data.Sqlite's retry on a locked table must fail the command, not wait inside the call"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn sqlites_generator_is_reseeded_in_each_activation() {
+    // The package's initializer draws from SQLite's generator, so the
+    // template holds its seeded state.
+    let (product, request) = prepare_on_the_shared_runtime(package("sqlite")).await;
+    let mut draws = Vec::new();
+    for instance in [7301, 7302].map(isoplane_host::InstanceId) {
+        let answer = answer_on_an_instance(&product, &request, instance, "/random").await;
+        let draw: i64 = answer.parse().unwrap_or_else(|error| {
+            panic!("SELECT random() must answer an integer, not {answer:?}: {error}")
+        });
+        draws.push(draw);
+    }
+    assert_ne!(
+        draws[0], draws[1],
+        "two activations of one template must not replay the SQLite generator state the snapshot holds"
     );
 }
 
