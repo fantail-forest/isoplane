@@ -354,24 +354,25 @@ after a new build.
 
 #### Workaround: use the key stores Isoplane provides
 
-Isoplane's ASP.NET Core adapter library, `Isoplane.AspNetCore`,
-which every Isoplane ASP.NET Core project already references, provides
-replacements. They are described in
+Isoplane provides replacements, extension methods on
+[`IDataProtectionBuilder`][IDataProtectionBuilder] described in
 [Keep Data Protection keys across builds](dotnet-runtime-differences.md#keep-data-protection-keys-across-builds).
-- `UseKeysFromDbContext` takes the place of `PersistKeysToDbContext` and uses
-  the same table. It is an extension method on
-  [`IDataProtectionBuilder`][IDataProtectionBuilder] in the
-  `Isoplane.AspNetCore` namespace, which the adapter library adds to an
-  application that references the
-  [`Microsoft.AspNetCore.DataProtection.EntityFrameworkCore`][nuget-dp-ef]
-  package. It has no reference page yet.
+- [`UseKeysFromDbContext`](reference/sdk/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore/DataProtectionDbContextKeys/UseKeysFromDbContext.md)
+  takes the place of `PersistKeysToDbContext` and uses the same table. It is in
+  the [`Isoplane.AspNetCore.DataProtection.EntityFrameworkCore`](reference/sdk/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.md)
+  package, which brings in
+  [`Microsoft.AspNetCore.DataProtection.EntityFrameworkCore`][nuget-dp-ef].
 - [`UseConfiguredKeys`](reference/sdk/Isoplane.AspNetCore/Isoplane.AspNetCore/DataProtectionKeys/UseConfiguredKeys.md)
   derives the keys from a secret in the application's settings.
 - [`UseKeysFrom`](reference/sdk/Isoplane.AspNetCore/Isoplane.AspNetCore/DataProtectionKeys/UseKeysFrom.md)
   serves any other store.
 
-Size of the change: small for Entity Framework Core, where one call
-replaces another. Moderate for another store, where you supply the two
+The last two are in Isoplane's ASP.NET Core adapter library,
+`Isoplane.AspNetCore`, which every Isoplane ASP.NET Core project already
+references.
+
+Size of the change: small for Entity Framework Core, where one package
+reference is added and one call replaces another. Moderate for another store, where you supply the two
 functions that read and add keys.
 
 ### XML formatters over 30 KB {#xml-formatters}

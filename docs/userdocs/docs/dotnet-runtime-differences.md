@@ -236,13 +236,26 @@ put the new secret at `DataProtection:Keys:0` and move the old one to
 unprotects, so remove the old one once nothing it protected is in use.
 
 **From the application's database.** If the application uses Entity Framework
-Core, reference `Microsoft.AspNetCore.DataProtection.EntityFrameworkCore`, add
-its `DataProtectionKeys` table to your context as that package describes, and
-write:
+Core, add the
+[`Isoplane.AspNetCore.DataProtection.EntityFrameworkCore`](reference/sdk/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.md)
+package at the version of your Isoplane SDK:
+
+```bash
+dotnet add package Isoplane.AspNetCore.DataProtection.EntityFrameworkCore --version VERSION
+```
+
+It brings in `Microsoft.AspNetCore.DataProtection.EntityFrameworkCore`. Add that
+package's `DataProtectionKeys` table to your context as it describes, and write:
 
 ```csharp
+using Isoplane.AspNetCore.DataProtection.EntityFrameworkCore;
+
 builder.Services.AddDataProtection().UseKeysFromDbContext<AppDbContext>();
 ```
+
+[`UseKeysFromDbContext`](reference/sdk/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore/DataProtectionDbContextKeys/UseKeysFromDbContext.md)
+is in a package of its own so that an application that does not use Entity
+Framework Core never restores it.
 
 Initialization loads the stored keys and can create and store a key if none is usable. The keys are
 read once, when initialization finishes, so the table must exist by then: a

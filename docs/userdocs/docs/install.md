@@ -200,8 +200,9 @@ Setup replaces the templates with the ones for the new CLI, so new projects
 use the new SDK. Existing applications keep the SDK version they name. To move
 one, change the version in its project file, in `<Project Sdk="Isoplane.AspNetCore/VERSION">`
 or `Isoplane.Sdk/VERSION` for an application without ASP.NET, and in any
-explicit Isoplane package references such as `Isoplane.Testing` in test
-projects. Then rebuild and test it.
+explicit Isoplane package references, such as `Isoplane.Testing` in test
+projects and `Isoplane.AspNetCore.DataProtection.EntityFrameworkCore`. Then
+rebuild and test it.
 
 If your current CLI comes from an early preview that installed an Isoplane
 workload or MSI, run `isoplane uninstall-sdk` with it before updating. The new

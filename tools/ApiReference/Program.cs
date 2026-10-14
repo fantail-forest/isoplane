@@ -57,8 +57,8 @@ internal static class Reference
     private static readonly Regex GuideLink = new(@"\]\(https://isoplane\.dev/docs/([^)#]+)(#[^)]*)?\)", RegexOptions.CultureInvariant);
     private static readonly Regex ErrorCode = new(@"ISOPLANE\d{4}", RegexOptions.CultureInvariant);
     private static readonly Regex ErrorCodeSection = new(@"^### (ISOPLANE\d{4})$", RegexOptions.CultureInvariant | RegexOptions.Multiline);
-    private static readonly Assembly[] Assemblies = [typeof(Isoplane.Request).Assembly, typeof(Isoplane.AspNetCore.IsoplaneHosting).Assembly, typeof(Isoplane.Testing.IsoplaneApplication).Assembly];
-    private static readonly HashSet<string> Namespaces = ["Isoplane", "Isoplane.AspNetCore", "Isoplane.Testing"];
+    private static readonly Assembly[] Assemblies = [typeof(Isoplane.Request).Assembly, typeof(Isoplane.AspNetCore.IsoplaneHosting).Assembly, typeof(Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.DataProtectionDbContextKeys).Assembly, typeof(Isoplane.Testing.IsoplaneApplication).Assembly];
+    private static readonly HashSet<string> Namespaces = ["Isoplane", "Isoplane.AspNetCore", "Isoplane.AspNetCore.DataProtection.EntityFrameworkCore", "Isoplane.Testing"];
 
     internal static Dictionary<string, string> Generate(string temporary)
     {
@@ -316,6 +316,10 @@ An application is written in one of two ways, and tested with a third package.
 - **An ASP.NET application** has a `Program.cs`. It calls [`IsoplaneHosting.CreateBuilder`](sdk/Isoplane.AspNetCore/Isoplane.AspNetCore/IsoplaneHosting/CreateBuilder.md) from [Isoplane.AspNetCore](sdk/Isoplane.AspNetCore/Isoplane.AspNetCore.md) and is otherwise ordinary ASP.NET. From [Isoplane.Sdk](sdk/Isoplane.Sdk/Isoplane.Sdk.md) it needs only [`Initialization`](sdk/Isoplane.Sdk/Isoplane/Initialization.md) and [`Activation`](sdk/Isoplane.Sdk/Isoplane/Activation.md), and those only to prepare state ahead of time. Start with [Build a small API with ASP.NET Core and EF Core](../build-an-api.md) or [Bring an existing ASP.NET application](../onboard-an-application.md).
 - **An application without ASP.NET** is one static method marked [`[HttpHandler]`](sdk/Isoplane.Sdk/Isoplane/HttpHandlerAttribute.md) that takes a [`Request`](sdk/Isoplane.Sdk/Isoplane/Request.md) and returns a [`Response`](sdk/Isoplane.Sdk/Isoplane/Response.md). Everything it uses is in [Isoplane.Sdk](sdk/Isoplane.Sdk/Isoplane.Sdk.md). Start with [Build a small lightweight web service](../build-a-web-service.md) or [Handle requests without ASP.NET](../handle-requests-without-aspnet.md).
 - **A test project** uses [Isoplane.Testing](sdk/Isoplane.Testing/Isoplane.Testing.md) to start either kind of application in the sandbox and send it requests: [`IsoplaneApplication.StartAsync`](sdk/Isoplane.Testing/Isoplane.Testing/IsoplaneApplication/StartAsync.md). Start with [Test an application](../test-an-application.md).
+
+Other packages each adapt one library an ASP.NET application may use. They are separate so that an application without that library never restores it.
+
+- **[Isoplane.AspNetCore.DataProtection.EntityFrameworkCore](sdk/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.md)** keeps the Data Protection keys in the application's Entity Framework Core database: [`UseKeysFromDbContext`](sdk/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore/DataProtectionDbContextKeys/UseKeysFromDbContext.md). Start with [Keep Data Protection keys across builds](../dotnet-runtime-differences.md#keep-data-protection-keys-across-builds).
 
 ## Words these pages use
 

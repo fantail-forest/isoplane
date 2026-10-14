@@ -17,6 +17,10 @@ An application is written in one of two ways, and tested with a third package.
 - **An application without ASP.NET** is one static method marked [`[HttpHandler]`](sdk/Isoplane.Sdk/Isoplane/HttpHandlerAttribute.md) that takes a [`Request`](sdk/Isoplane.Sdk/Isoplane/Request.md) and returns a [`Response`](sdk/Isoplane.Sdk/Isoplane/Response.md). Everything it uses is in [Isoplane.Sdk](sdk/Isoplane.Sdk/Isoplane.Sdk.md). Start with [Build a small lightweight web service](../build-a-web-service.md) or [Handle requests without ASP.NET](../handle-requests-without-aspnet.md).
 - **A test project** uses [Isoplane.Testing](sdk/Isoplane.Testing/Isoplane.Testing.md) to start either kind of application in the sandbox and send it requests: [`IsoplaneApplication.StartAsync`](sdk/Isoplane.Testing/Isoplane.Testing/IsoplaneApplication/StartAsync.md). Start with [Test an application](../test-an-application.md).
 
+Other packages each adapt one library an ASP.NET application may use. They are separate so that an application without that library never restores it.
+
+- **[Isoplane.AspNetCore.DataProtection.EntityFrameworkCore](sdk/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.md)** keeps the Data Protection keys in the application's Entity Framework Core database: [`UseKeysFromDbContext`](sdk/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore/DataProtectionDbContextKeys/UseKeysFromDbContext.md). Start with [Keep Data Protection keys across builds](../dotnet-runtime-differences.md#keep-data-protection-keys-across-builds).
+
 ## Words these pages use
 
 - **Instance.** One running copy of your application. Isoplane runs as many as the traffic needs and may discard one between requests, so memory is not a place to keep anything that must last.
