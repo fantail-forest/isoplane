@@ -8,6 +8,10 @@ Give a change the one test that would catch its regression most cheaply, not a t
 
 Cover critical behaviour thoroughly: the sandbox boundary, budget enforcement, fencing, hibernation and wake, tenant isolation. Don't write tests that are unlikely ever to fail.
 
+## Test the real code
+
+Make sure tests exercise the real code, not some bullshit you made up.
+
 ## Any test can run on its own
 
 Tests should reuse each other's work rather than repeating it, but a test must pass when run by itself, without another test having run first. A test of starting from nothing leaves out only what it checks.
