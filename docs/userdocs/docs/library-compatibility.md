@@ -54,7 +54,6 @@ entry says otherwise.
 | Entity Framework Core | [`TransactionScope`](#transaction-scope) | Small change: use a database transaction |
 | Npgsql | [Disposing a reader that has unread rows](#reader-dispose) | Small change: use `await using` |
 | SqlClient | [SQL Server, including its Entity Framework Core provider](#sql-server) | Not supported yet: waits on work under way in the driver. PostgreSQL works today |
-| MySqlConnector | [MySQL](#mysql) | Not supported yet. A later release should fix the cause we found |
 | Sqlite | [SQLite, including its Entity Framework Core provider](#sqlite) | Cannot be supported: use another database |
 | MongoDB.Driver | [MongoDB](#mongodb) | Not supported: use another database |
 | StackExchange.Redis | [Redis, including the Redis distributed cache](#redis) | Not supported: use another cache store |
@@ -997,29 +996,6 @@ select the driver's managed implementation for its platform, which needs no
 change to your code. We will recheck SQL Server as the driver's releases
 arrive.
 
-### MySQL {#mysql}
-
-[`MySqlConnection.OpenAsync`][MySqlConnection.OpenAsync], from the
-[`MySqlConnector`][MySqlConnector] package, fails with
-`Unable to connect to any of the specified MySQL hosts`. The driver sets the
-keep-alive option on its socket, the sandbox refuses that option, and the
-driver reports the refusal as an unreachable host. Providers built on
-`MySqlConnector`, such as
-[`Pomelo.EntityFrameworkCore.MySql`][Pomelo], are expected to fail the same way
-and have not been run.
-
-Typically used for MySQL and MariaDB.
-
-#### Workaround: none yet
-
-There is no way to use MySQL from an application today.
-
-#### Looking ahead
-
-We expect to fix the cause we found, in Isoplane's
-runtime, with no change to your code. Whether the driver then works in full
-is not yet known.
-
 ### SQLite {#sqlite}
 
 [`Microsoft.Data.Sqlite`][Microsoft.Data.Sqlite] calls a native SQLite
@@ -1224,6 +1200,9 @@ exercised, which is not everything the package does.
   context pooling.
 - **`Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore`
   10.0.12.** [`AddDbContextCheck`][AddDbContextCheck].
+- **[`MySqlConnector`][MySqlConnector] 2.6.2.** Opening a connection to
+  MySQL and running a query. Transactions and the Entity Framework Core
+  providers built on this driver have not been run.
 - **[`Dapper`][dapper] 2.1.89** with Npgsql. `QueryAsync`, `QueryFirstAsync` over a
   large result, and `ExecuteAsync`.
 - **`Microsoft.Extensions.Caching.Hybrid` 10.10.0.** [`HybridCache.GetOrCreateAsync`][HybridCache.GetOrCreateAsync],
@@ -1254,6 +1233,9 @@ general rules suggest what to expect, the entry says so.
   asynchronous methods work, but the clients themselves have not been run.
   Their synchronous methods block, as
   [any synchronous I/O does](dotnet-runtime-differences.md#waiting-is-asynchronous).
+- **[`Pomelo.EntityFrameworkCore.MySql`][Pomelo]** and other Entity Framework
+  Core providers for MySQL. The driver beneath them,
+  [`MySqlConnector`][MySqlConnector], [connects and queries](#works).
 - **`Microsoft.Identity.Web`.**
 - **`MailKit`.** It builds into an application package. Sending mail has not
   been run.
@@ -1347,7 +1329,6 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [MongoDB.Driver]: https://www.mongodb.com/docs/drivers/csharp/current/
 [MultipartReader]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.webutilities.multipartreader
 [MVC1000]: https://learn.microsoft.com/aspnet/core/diagnostics/mvc1000
-[MySqlConnection.OpenAsync]: https://mysqlconnector.net/api/mysqlconnector/mysqlconnection/openasync/
 [MySqlConnector]: https://mysqlconnector.net/
 [NetworkStream]: https://learn.microsoft.com/dotnet/api/system.net.sockets.networkstream
 [NotSupportedException]: https://learn.microsoft.com/dotnet/api/system.notsupportedexception
