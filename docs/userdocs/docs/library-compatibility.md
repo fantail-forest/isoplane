@@ -18,59 +18,56 @@ synchronous method such as Entity Framework Core's
 [Waiting is asynchronous](dotnet-runtime-differences.md#waiting-is-asynchronous)
 covers it.
 
-Each entry says what fails, how to work around it today and how big a change
-that is, and whether a fix is possible. A fix here means that your code then
-runs as you wrote it. Anything that asks you to change code is a workaround,
-including a replacement method that Isoplane provides.
-[Packages that work](#works) and [packages not checked yet](#not-checked) are
-at the end.
+Each entry says what fails and how to work around it today, with the size of
+that change. This list is meant to shrink. Where a later release is expected
+to remove a problem, or to make its workaround smaller, the entry says so under
+"Looking ahead". [Packages that work](#works) and
+[packages not checked yet](#not-checked) are at the end.
 
 Everything here was run in the sandbox with SDK 0.1.0, unless its
 entry says otherwise.
 
 ## At a glance {#summary}
 
-| Package | API or feature | Workaround | Can it be fixed? |
-| --- | --- | --- | --- |
-| ASP.NET Core | [Session over a distributed cache, and TempData kept in it](#session) | Small: add one middleware | No fix known |
-| ASP.NET Core | [`Request.Form`](#request-form) | Small: use `ReadFormAsync` | No: use the asynchronous form |
-| ASP.NET Core | [File uploads over 64 KB](#uploads) | Moderate: read the upload as a stream | Yes, for uploads that fit in memory |
-| ASP.NET Core | [`Request.EnableBuffering()` over 30 KB](#enable-buffering) | Small: pass a size limit | Yes, with no code change |
-| ASP.NET Core | [Synchronous reads and writes of the request and response body](#synchronous-body) | Small: call the asynchronous method | No: use the asynchronous form |
-| ASP.NET Core | [Data Protection key stores](#data-protection) | Small: use the replacement Isoplane provides | No: use the replacement |
-| ASP.NET Core | [`Html.Partial` and `Html.RenderPartial`](#html-partial) | Small: use `<partial>` | No: use the asynchronous form |
-| ASP.NET Core | [XML formatters over 30 KB](#xml-formatters) | None yet | Yes, with no code change |
-| ASP.NET Core | [Rate limiting middleware](#rate-limiting) | Large: limit requests elsewhere | Partly |
-| ASP.NET Core | [Console logging: `AddConsole`, `AddJsonConsole` and `ClearProviders`](#console-logging) | Small: delete the calls | Yes, with no code change |
-| ASP.NET Core | [Validation attributes, localizers, token callbacks and service factories that do I/O](#synchronous-extension-points) | Moderate: move the I/O elsewhere | No: it can only work by [blocking](dotnet-runtime-differences.md#never-blocks) |
-| ASP.NET Core | [WebSockets, SignalR's WebSocket transport, Blazor Server](#connections-and-background-work) | None yet | Needs instances that stay connected |
-| ASP.NET Core | [gRPC over HTTP/2](#connections-and-background-work) | Moderate: use gRPC-Web | Not known yet |
-| ASP.NET Core | [`BackgroundService` and other work between requests](#connections-and-background-work) | Large: do the work during a request | Needs instances that stay running |
-| Newtonsoft.Json for MVC | [Bodies over 30 KB](#newtonsoft-json) | Small: set two options | Yes, with no code change |
-| Configuration providers | [Loading settings from Azure Key Vault and other remote services](#remote-configuration) | Moderate: fetch them before `builder.Build()` | No: it can only work by [blocking](dotnet-runtime-differences.md#never-blocks) |
-| Entity Framework Core | [Lazy loading](#lazy-loading) | Moderate: load with `Include` | No: it can only work by [blocking](dotnet-runtime-differences.md#never-blocks) |
-| Entity Framework Core | [`UseHiLo` keys with `Add`](#hilo) | Small: use `AddAsync` | No: use the asynchronous form |
-| Entity Framework Core | [`TransactionScope`](#transaction-scope) | Small: use a database transaction | Only in .NET itself |
-| Npgsql | [Disposing a reader that has unread rows](#reader-dispose) | Small: use `await using` | No: use the asynchronous form |
-| SqlClient | [SQL Server, including its Entity Framework Core provider](#sql-server) | Large: use another database | Only in the driver |
-| MySqlConnector | [MySQL](#mysql) | None yet | Probably, with no code change |
-| Sqlite | [SQLite, including its Entity Framework Core provider](#sqlite) | Large: use another database | No: it depends on [native code](dotnet-runtime-differences.md#nothing-around-the-sandbox) |
-| MongoDB.Driver | [MongoDB](#mongodb) | Large: use another database | Only in the driver |
-| StackExchange.Redis | [Redis, including the Redis distributed cache](#redis) | Large: use another cache store | Only in the client library |
-| OpenTelemetry | [Exporting telemetry over OTLP](#opentelemetry) | None yet | Not known yet |
-| ModelContextProtocol | [An MCP server that tracks sessions](#mcp-sessions) | Small: use stateless mode | Needs instances that stay running |
+| Package | API or feature | What to do |
+| --- | --- | --- |
+| ASP.NET Core | [Session over a distributed cache, and TempData kept in it](#session) | Small change: add one middleware |
+| ASP.NET Core | [`Request.Form`](#request-form) | Small change: use `ReadFormAsync` |
+| ASP.NET Core | [File uploads over 64 KB](#uploads) | Moderate change: read the upload as a stream |
+| ASP.NET Core | [`Request.EnableBuffering()` over 30 KB](#enable-buffering) | Small change: pass a size limit. A later release should not need it |
+| ASP.NET Core | [Synchronous reads and writes of the request and response body](#synchronous-body) | Small change: call the asynchronous method |
+| ASP.NET Core | [Data Protection key stores](#data-protection) | Small change: use the replacement Isoplane provides |
+| ASP.NET Core | [`Html.Partial` and `Html.RenderPartial`](#html-partial) | Small change: use `<partial>` |
+| ASP.NET Core | [XML formatters over 30 KB](#xml-formatters) | No workaround yet. A later release should fix it |
+| ASP.NET Core | [Rate limiting middleware](#rate-limiting) | Large change: limit requests elsewhere |
+| ASP.NET Core | [Console logging: `AddConsole`, `AddJsonConsole` and `ClearProviders`](#console-logging) | Small change: delete the calls. A later release should not need it |
+| ASP.NET Core | [Validation attributes, localizers, token callbacks and service factories that do I/O](#synchronous-extension-points) | Moderate change: move the I/O elsewhere |
+| ASP.NET Core | [WebSockets, SignalR's WebSocket transport, Blazor Server](#connections-and-background-work) | Unsupported |
+| ASP.NET Core | [gRPC over HTTP/2](#connections-and-background-work) | Moderate change: use gRPC-Web |
+| ASP.NET Core | [`BackgroundService` and other work between requests](#connections-and-background-work) | Large change: do the work during a request |
+| Newtonsoft.Json for MVC | [Bodies over 30 KB](#newtonsoft-json) | Small change: set two options. A later release should not need them |
+| Configuration providers | [Loading settings from Azure Key Vault and other remote services](#remote-configuration) | Moderate change: fetch them before `builder.Build()` |
+| Entity Framework Core | [Lazy loading](#lazy-loading) | Moderate change: load with `Include` |
+| Entity Framework Core | [`UseHiLo` keys with `Add`](#hilo) | Small change: use `AddAsync` |
+| Entity Framework Core | [`TransactionScope`](#transaction-scope) | Small change: use a database transaction |
+| Npgsql | [Disposing a reader that has unread rows](#reader-dispose) | Small change: use `await using` |
+| SqlClient | [SQL Server, including its Entity Framework Core provider](#sql-server) | Not supported: use another database |
+| MySqlConnector | [MySQL](#mysql) | Not supported yet. A later release should fix the cause we found |
+| Sqlite | [SQLite, including its Entity Framework Core provider](#sqlite) | Cannot be supported: use another database |
+| MongoDB.Driver | [MongoDB](#mongodb) | Not supported: use another database |
+| StackExchange.Redis | [Redis, including the Redis distributed cache](#redis) | Not supported: use another cache store |
+| OpenTelemetry | [Exporting telemetry over OTLP](#opentelemetry) | No workaround yet |
+| ModelContextProtocol | [An MCP server that tracks sessions](#mcp-sessions) | Small change: use stateless mode |
 
 The sections below give each package's full name.
 
 <details>
-<summary>How the workarounds are sized</summary>
+<summary>How the changes are sized</summary>
 
 - **Small** is a one-for-one replacement: the asynchronous form of the same
   call, a setting, or a method Isoplane provides.
 - **Moderate** is some restructuring, or a few lines of your own.
 - **Large** is a different library or a different approach.
-
-"Can it be fixed?" describes what is possible, not a schedule.
 
 </details>
 
@@ -135,9 +132,8 @@ session with MVC's
   ```
 
 - **Size of the change:** Small. One middleware, added once.
-- **Can it be fixed?** No fix is known that would let the code above work as
-  written. The workaround can get smaller: Isoplane's ASP.NET Core adapter library, `Isoplane.AspNetCore`,
-  could provide this middleware, and report an unloaded session as an error in
+- **Looking ahead:** the workaround should get smaller. Isoplane's ASP.NET Core adapter library, `Isoplane.AspNetCore`,
+  can provide this middleware, and report an unloaded session as an error in
   place of losing data.
 
 We ran this with a PostgreSQL-backed cache. The Redis cache does not run at
@@ -165,8 +161,6 @@ app.MapPost("/contact", (HttpContext context) =>
   that takes a form value or an [`IFormFile`][IFormFile] as a parameter already
   reads asynchronously.
 - **Size of the change:** Small.
-- **Can it be fixed?** No. Reading the form synchronously can only work by
-  [blocking](dotnet-runtime-differences.md#never-blocks), so the asynchronous call is the lasting answer.
 
 ### File uploads over 64 KB {#uploads}
 
@@ -226,10 +220,9 @@ app.MapPost("/documents", async (HttpContext context, DocumentStore store) =>
   same size, so that a larger file is refused instead of buffered.
 - **Size of the change:** Moderate. The handler reads the multipart body
   itself instead of taking an `IFormFile`.
-- **Can it be fixed?** Yes, for uploads that fit in memory, with no change to your
-  code: Isoplane can give ASP.NET Core somewhere in memory to buffer, so that
-  `IFormFile` works as written. Reading a large upload as a stream stays the
-  better choice.
+- **Looking ahead:** a later release is expected to let `IFormFile` work as
+  written for uploads that fit in memory. Reading a large upload as a stream
+  stays the better choice.
 
 Large fields of an ordinary URL-encoded form are not affected.
 
@@ -260,8 +253,8 @@ context.Request.Body.Position = 0;   // so that the body can be bound afterwards
   The buffered body counts toward the instance's
   [memory limit](execution-limits.md#memory).
 - **Size of the change:** Small, and temporary. It is two arguments.
-- **Can it be fixed?** Yes, with no change to your code. Isoplane can give
-  ASP.NET Core somewhere in memory to buffer.
+- **Looking ahead:** a later release is expected to make the code above work
+  as written, by giving ASP.NET Core somewhere in memory to buffer.
 
 ### Synchronous reads and writes of the request and response body {#synchronous-body}
 
@@ -290,8 +283,6 @@ serializer.Serialize(context.Response.Body, report);   // writes synchronously: 
   [`MemoryStream`][MemoryStream] and copy that to the response with
   [`Stream.CopyToAsync`][Stream.CopyToAsync].
 - **Size of the change:** Small.
-- **Can it be fixed?** No, as on ASP.NET Core's own server. The asynchronous
-  methods are the lasting answer.
 
 ### Data Protection key stores {#data-protection}
 
@@ -311,7 +302,9 @@ builder.Services.AddDataProtection().PersistKeysToDbContext<AppDbContext>();
 
 - **Used for:** keeping authentication cookies and antiforgery tokens valid
   after a new build.
-- **Workaround:** Isoplane provides replacements, described in
+- **Workaround:** Isoplane's ASP.NET Core adapter library, `Isoplane.AspNetCore`,
+  which every Isoplane ASP.NET Core project already references, provides
+  replacements. They are described in
   [Keep Data Protection keys across builds](dotnet-runtime-differences.md#keep-data-protection-keys-across-builds).
   - `UseKeysFromDbContext` takes the place of `PersistKeysToDbContext` and uses
     the same table. It is an extension method on
@@ -327,10 +320,6 @@ builder.Services.AddDataProtection().PersistKeysToDbContext<AppDbContext>();
 - **Size of the change:** Small for Entity Framework Core, where one call
   replaces another. Moderate for another store, where you supply the two
   functions that read and add keys.
-- **Can it be fixed?** No. The stores ASP.NET Core ships can only reach
-  their store by [blocking](dotnet-runtime-differences.md#never-blocks). The replacements above are the
-  lasting answer. They come with Isoplane's ASP.NET Core adapter library, `Isoplane.AspNetCore`,
-  which every Isoplane ASP.NET Core project already references.
 
 ### `Html.Partial` and `Html.RenderPartial` {#html-partial}
 
@@ -361,8 +350,6 @@ partial awaits a query or a request.
   already reports the synchronous forms when the application builds, as
   warning [`MVC1000`][MVC1000].
 - **Size of the change:** Small.
-- **Can it be fixed?** No. Both can only render a partial that awaits by
-  [blocking](dotnet-runtime-differences.md#never-blocks), so the asynchronous forms are the lasting answer.
 
 ### XML formatters over 30 KB {#xml-formatters}
 
@@ -373,10 +360,9 @@ fails with `DirectoryNotFoundException: /tmp/`.
 - **Used for:** APIs that accept or return XML.
 - **Workaround:** none through a setting that we have found. JSON through
   [`System.Text.Json`][System.Text.Json] has no such limit.
-- **Size of the change:** None once this is fixed. Until then, large XML
-  bodies do not work.
-- **Can it be fixed?** Yes, with no change to your code. Isoplane can give
-  ASP.NET Core somewhere in memory to buffer.
+- **Looking ahead:** a later release is expected to make large XML bodies
+  work with no change to your code, by giving ASP.NET Core somewhere in memory
+  to buffer.
 
 ### Rate limiting middleware {#rate-limiting}
 
@@ -406,10 +392,11 @@ The policy above is registered with [`AddRateLimiter`][AddRateLimiter] and
   every instance shares, or limit them in front of the application.
 - **Size of the change:** Large. Limiting moves out of the application, or onto
   a store the instances share.
-- **Can it be fixed?** Partly. A change to Isoplane's ASP.NET Core adapter library, `Isoplane.AspNetCore`,
-  could let this code start as written. The limiter would still count for one
-  instance at a time, because its counters are in memory and
-  [memory belongs to one instance](dotnet-runtime-differences.md#instances-come-and-go).
+- **Looking ahead:** a change to Isoplane's ASP.NET Core adapter library, `Isoplane.AspNetCore`,
+  can let an application with this middleware start. Its limiter would still
+  count for one instance at a time, because its counters are in memory and
+  [memory belongs to one instance](dotnet-runtime-differences.md#instances-come-and-go),
+  so a shared store remains the place to count.
 
 ### Console logging: `AddConsole`, `AddJsonConsole` and `ClearProviders` {#console-logging}
 
@@ -434,9 +421,9 @@ builder.Logging.AddConsole();
   `appsettings.json` filters it as usual. Serilog's
   [console sink][serilog-console] also works.
 - **Size of the change:** Small.
-- **Can it be fixed?** Yes, with no change to your code.
-  Isoplane's ASP.NET Core adapter library, `Isoplane.AspNetCore`, can keep its
-  own provider registered and leave the console provider out.
+- **Looking ahead:** a later release is expected to make these calls
+  harmless. Isoplane's ASP.NET Core adapter library, `Isoplane.AspNetCore`, can keep
+  its own provider registered and leave the console provider out.
 
 ### Validation attributes, localizers, token callbacks and service factories that do I/O {#synchronous-extension-points}
 
@@ -487,11 +474,10 @@ Each has a different way out:
     asynchronously the first time it is used.
 - **Size of the change:** Moderate. The I/O moves to a place that can await
   it.
-- **Can it be fixed?** No. These interfaces can only do I/O by
-  blocking, and [blocking is ruled out](dotnet-runtime-differences.md#never-blocks). For one that is common
-  enough, Isoplane can provide a replacement to call in its place, as it does
-  for [Data Protection keys](#data-protection). That makes the workaround
-  smaller; your code still changes.
+- **Looking ahead:** these interfaces can only do I/O by
+  [blocking](dotnet-runtime-differences.md#never-blocks), so the I/O has to move. Where one is common enough,
+  Isoplane can provide a replacement that makes the change smaller, as it does
+  for [Data Protection keys](#data-protection).
 
 ### Connections and background work {#connections-and-background-work}
 
@@ -539,8 +525,8 @@ which fails with `DirectoryNotFoundException: /tmp/`.
   ```
 
 - **Size of the change:** Small, and temporary. It is two settings.
-- **Can it be fixed?** Yes, with no change to your code. Isoplane can give
-  ASP.NET Core somewhere in memory to buffer.
+- **Looking ahead:** a later release is expected to make these settings
+  unnecessary, by giving ASP.NET Core somewhere in memory to buffer.
 
 ## Configuration providers for remote stores
 
@@ -585,10 +571,9 @@ the sandbox.
   local development, [User Secrets](local-settings.md#keep-credentials-in-user-secrets)
   need none of this.
 - **Size of the change:** Moderate.
-- **Can it be fixed?** No. A provider as it is can only load by
-  [blocking](dotnet-runtime-differences.md#never-blocks). An adapter library from Isoplane could provide an
-  asynchronous registration method for each provider, which would make the
-  workaround one line.
+- **Looking ahead:** the workaround should get smaller. An adapter library
+  from Isoplane can provide an asynchronous registration method for each
+  provider, which would make it one line.
 
 {/* TODO: say how settings and secrets reach a deployed application once that exists; it is expected to make this entry unnecessary for most applications. */}
 
@@ -623,10 +608,10 @@ return order.Customer.Name;   // reading Customer runs a query synchronously: th
   Or load a navigation explicitly before reading it, with
   [`LoadAsync`][ReferenceEntry.LoadAsync]:
   `await db.Entry(order).Reference(order => order.Customer).LoadAsync();`.
+  This is the lasting approach: a property read can only load by
+  [blocking](dotnet-runtime-differences.md#never-blocks).
 - **Size of the change:** Moderate. Every place that relies on a navigation
   being loaded on demand has to say what it needs.
-- **Can it be fixed?** No. A property read cannot await, so the query would
-  have to block, and [blocking is ruled out](dotnet-runtime-differences.md#never-blocks).
 
 ### `UseHiLo` keys with `Add` {#hilo}
 
@@ -653,8 +638,6 @@ await db.SaveChangesAsync();
   ([`AddAsync`][DbContext.AddAsync]), which fetches the block asynchronously.
   Or use identity columns, the Npgsql provider's default, which need no fetch.
 - **Size of the change:** Small.
-- **Can it be fixed?** No. `Add` can only fetch its keys by [blocking](dotnet-runtime-differences.md#never-blocks), so
-  `AddAsync` is the lasting answer.
 
 ### `TransactionScope` {#transaction-scope}
 
@@ -689,8 +672,6 @@ using (var scope = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled)
 - **Size of the change:** Small for one context. Moderate when the scope
   spans several contexts or connections, which then have to share one
   transaction explicitly.
-- **Can it be fixed?** Only in .NET itself, which has no asynchronous way to
-  complete a `TransactionScope`.
 
 ## Database drivers
 
@@ -712,8 +693,6 @@ that was never committed, and a reader that was read to the end.
 - **Used for:** `using var reader = ...` in code that stops reading early.
 - **Workaround:** `await using var reader = await command.ExecuteReaderAsync();`.
 - **Size of the change:** Small.
-- **Can it be fixed?** No. A synchronous dispose can only read the remaining
-  rows by [blocking](dotnet-runtime-differences.md#never-blocks), so `await using` is the lasting answer.
 
 ### SQL Server {#sql-server}
 
@@ -728,10 +707,10 @@ Everything built on it fails with it, including
 - **Workaround:** none. PostgreSQL through Npgsql works; see
   [Connect PostgreSQL](connect-postgresql.md).
 - **Size of the change:** Large: a different database.
-- **Can it be fixed?** Only by a change to the driver. We also ran the driver's
-  Unix implementation in the sandbox: it signs in synchronously inside
-  [`SqlConnection.OpenAsync`][DbConnection.OpenAsync], so it would need to open connections
-  asynchronously throughout.
+- **Looking ahead:** SQL Server will work when its driver can open a
+  connection without blocking, which is a change for the driver's maintainers.
+  We also ran the driver's Unix implementation in the sandbox: it signs in
+  synchronously inside [`SqlConnection.OpenAsync`][DbConnection.OpenAsync].
 
 ### MySQL {#mysql}
 
@@ -746,10 +725,9 @@ and have not been run.
 
 - **Used for:** MySQL and MariaDB.
 - **Workaround:** none.
-- **Size of the change:** None once this is fixed. Until then, MySQL cannot
-  be used.
-- **Can it be fixed?** Probably, with no change to your code. Isoplane's runtime can
-  accept the option. Whether the driver then works has not been established.
+- **Looking ahead:** we expect to fix the cause we found, in Isoplane's
+  runtime, with no change to your code. Whether the driver then works in full
+  is not yet known.
 
 ### SQLite {#sqlite}
 
@@ -773,7 +751,8 @@ await connection.OpenAsync();
   [project templates](reference/project-templates.md).
 - **Size of the change:** Large: a different database, in development as
   well as in production.
-- **Can it be fixed?** No. Native code would run outside the sandbox, and
+- **Looking ahead:** no fix is possible. SQLite is native code, which would
+  run outside the sandbox, and
   [nothing is allowed around it](dotnet-runtime-differences.md#nothing-around-the-sandbox).
 
 ### MongoDB {#mongodb}
@@ -792,8 +771,9 @@ await orders.InsertOneAsync(order);   // the first operation: throws
 - **Used for:** MongoDB and compatible document databases.
 - **Workaround:** none.
 - **Size of the change:** Large: a different database.
-- **Can it be fixed?** Only by a change to the driver, which would need to
-  monitor its servers without threads of its own.
+- **Looking ahead:** MongoDB will work when its driver can monitor its
+  servers without threads of its own, which is a change for the driver's
+  maintainers.
 
 ## Caching
 
@@ -836,7 +816,8 @@ Data Protection's
   through asynchronous calls; we ran them over PostgreSQL. For Data Protection
   keys, see [Data Protection key stores](#data-protection).
 - **Size of the change:** Large: a different store for the cache.
-- **Can it be fixed?** Only by a change to the client library. Why the
+- **Looking ahead:** Redis will work when the client can run without
+  threads of its own, which is a change for its maintainers. Why its
   thread-pool configuration stalls is not yet known.
 
 ## Observability
@@ -858,8 +839,7 @@ builder.Services.AddOpenTelemetry()
 
 - **Used for:** sending traces, metrics and logs to a collector.
 - **Workaround:** none that we have run.
-- **Size of the change:** Not known. Nothing works today.
-- **Can it be fixed?** Not known yet. Sending in batches after the response is
+- **Looking ahead:** not yet known. Sending in batches after the response is
   [work between requests](dotnet-runtime-differences.md#work-belongs-to-a-request),
   so an exporter would have to send within the request instead.
 
@@ -890,9 +870,8 @@ builder.Services
   template is a server set up this way.
 - **Size of the change:** Small for a server that only answers tool calls. A
   server that depends on sampling or elicitation has no workaround.
-- **Can it be fixed?** It needs instances that stay running. Session tracking
-  keeps each session in memory between requests and tidies up from a
-  background service. This session-tracking mode is not supported.
+- **Looking ahead:** session tracking keeps each session in memory between
+  requests and tidies up from a background service. This session-tracking mode is not supported.
 
 ## Packages that work {#works}
 
