@@ -46,6 +46,16 @@
       <PrunePackageReference Include="@(_IsoplanePrunePackageReference)" Exclude="@(PrunePackageReference)" />
     </ItemGroup>
   </Target>
+  <!-- Restore leaves some framework assemblies in, such as System.Security.Cryptography.Pkcs. The SDK
+       then keeps the framework's copy unless a package's is newer, comparing against the platform
+       manifests of the project's framework references, so ASP.NET's manifest is named here. Without
+       it a package's copy replaces the framework's even when older. -->
+  <Target Name="IsoplaneAspNetCoreConflictManifest" BeforeTargets="_HandlePackageFileConflicts" DependsOnTargets="IsoplaneSelectAspNetCore"
+          Condition="'$(IsoplaneAspNetCoreProvidedAssemblies)' != 'true'">
+    <ItemGroup>
+      <PackageConflictPlatformManifests Include="$(NuGetPackageRoot)/microsoft.aspnetcore.app.ref/$(IsoplaneAspNetCoreRuntimeVersion)/data/PlatformManifest.txt" />
+    </ItemGroup>
+  </Target>
   <Target Name="IsoplaneAspNetCoreFrameworkAssemblies" BeforeTargets="ResolveAssemblyReferences" DependsOnTargets="IsoplaneSelectAspNetCore;ResolvePackageAssets" Condition="'$(IsoplaneAspNetCoreProvidedAssemblies)' != 'true'">
     <ItemGroup>
       <_IsoplaneAspNetAssembly Include="$(NuGetPackageRoot)/microsoft.aspnetcore.app.runtime.linux-x64/$(IsoplaneAspNetCoreRuntimeVersion)/runtimes/linux-x64/lib/net10.0/*.dll" />

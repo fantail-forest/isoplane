@@ -15,66 +15,86 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
     [Fact]
     public async Task application_framework_selection_survives_restore_compile_and_bundle()
     {
-        var root = Environment.GetEnvironmentVariable("ISOPLANE_BUILD_ROOT")
-            ?? throw new InvalidOperationException("Run this suite with task test:managed.");
-        var sdk = Path.Combine(root, "guest-sdks", "dotnet");
         foreach (var version in new[] { "10.0.11", "10.0.12" })
         {
             using var directory = new BundleDirectory();
-            var project = new System.Xml.Linq.XElement("Project", new System.Xml.Linq.XAttribute("Sdk", "Microsoft.NET.Sdk.Web"),
-                new System.Xml.Linq.XElement("Import", new System.Xml.Linq.XAttribute("Project", Path.Combine(sdk, "AspNetCore/buildTransitive/Isoplane.AspNetCore.props"))),
-                new System.Xml.Linq.XElement("PropertyGroup",
-                    new System.Xml.Linq.XElement("TargetFramework", "net10.0"),
-                    new System.Xml.Linq.XElement("RuntimeFrameworkVersion", version),
-                    new System.Xml.Linq.XElement("IsoplaneManagedBundleBuild", "true"),
-                    new System.Xml.Linq.XElement("OutputType", "Library"),
-                    new System.Xml.Linq.XElement("CopyLocalLockFileAssemblies", "true")),
-                new System.Xml.Linq.XElement("ItemGroup", new System.Xml.Linq.XElement("PackageReference",
-                    new System.Xml.Linq.XAttribute("Include", "Microsoft.Extensions.Logging.Abstractions"),
-                    new System.Xml.Linq.XAttribute("Version", "10.0.11"))),
-                new System.Xml.Linq.XElement("Import", new System.Xml.Linq.XAttribute("Project", Path.Combine(sdk, "AspNetCore/buildTransitive/Isoplane.AspNetCore.targets"))),
-                new System.Xml.Linq.XElement("Import", new System.Xml.Linq.XAttribute("Project", Path.Combine(sdk, "Build/Isoplane.ManagedBundle.targets"))));
-            project.Save(Path.Combine(directory.Path, "Application.csproj"));
-            await File.WriteAllTextAsync(Path.Combine(directory.Path, "Application.cs"), """
-                using Microsoft.AspNetCore.Builder;
-                public static class Application {
-                    public static WebApplication Create() {
-                        var app = WebApplication.CreateBuilder().Build();
-                        app.MapGet("/", () => "hello");
-                        return app;
-                    }
-                }
-                """);
-            var start = new ProcessStartInfo("dotnet") { WorkingDirectory = directory.Path, RedirectStandardOutput = true, RedirectStandardError = true };
-            start.Environment["DOTNET_RUNTIME_ID"] = "linux-x64";
-            foreach (var argument in new[] { "msbuild", "Application.csproj", "-restore", "-t:IsoplaneManagedBundle",
-                "-getProperty:IsoplaneAspNetCoreRuntimeVersion", "-getItem:Analyzer,IsoplaneBundleAssembly,IsoplaneBundlePlatformReference", "-nologo", "-p:NuGetAudit=false" })
-                start.ArgumentList.Add(argument);
-            using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not run MSBuild.");
-            var output = process.StandardOutput.ReadToEndAsync();
-            var errors = process.StandardError.ReadToEndAsync();
-            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(180));
-            try { await process.WaitForExitAsync(deadline.Token); }
-            finally
-            {
-                if (!process.HasExited) { process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); }
-            }
-            Assert.True(process.ExitCode == 0, await output + await errors);
-            var text = await output;
-            using var result = JsonDocument.Parse(text[text.IndexOf('{')..]);
+            using var result = await AspNetBundleInputs(directory.Path, version, ("Microsoft.Extensions.Logging.Abstractions", "10.0.11"));
             Assert.Equal(version, result.RootElement.GetProperty("Properties").GetProperty("IsoplaneAspNetCoreRuntimeVersion").GetString());
-            var items = result.RootElement.GetProperty("Items");
-            string[] Paths(string name) => items.GetProperty(name).EnumerateArray().Select(item => item.GetProperty("Identity").GetString()!.Replace('\\', '/')).ToArray();
-            var generator = Assert.Single(Paths("Analyzer"), path => path.EndsWith("Microsoft.AspNetCore.Http.RequestDelegateGenerator.dll", StringComparison.Ordinal));
+            var generator = Assert.Single(ItemPaths(result, "Analyzer"), path => path.EndsWith("Microsoft.AspNetCore.Http.RequestDelegateGenerator.dll", StringComparison.Ordinal));
             Assert.Contains($"/microsoft.aspnetcore.app.ref/{version}/", generator);
-            var implementation = Assert.Single(Paths("IsoplaneBundleAssembly"), path => path.EndsWith("/Microsoft.AspNetCore.dll", StringComparison.Ordinal));
+            var implementation = Assert.Single(ItemPaths(result, "IsoplaneBundleAssembly"), path => path.EndsWith("/Microsoft.AspNetCore.dll", StringComparison.Ordinal));
             Assert.Contains($"/microsoft.aspnetcore.app.runtime.linux-x64/{version}/", implementation);
             // As in an ordinary ASP.NET project, a package the framework already provides yields to the framework's copy.
-            var logging = Assert.Single(Paths("IsoplaneBundleAssembly"), path => path.EndsWith("/Microsoft.Extensions.Logging.Abstractions.dll", StringComparison.Ordinal));
+            var logging = Assert.Single(ItemPaths(result, "IsoplaneBundleAssembly"), path => path.EndsWith("/Microsoft.Extensions.Logging.Abstractions.dll", StringComparison.Ordinal));
             Assert.Contains($"/microsoft.aspnetcore.app.runtime.linux-x64/{version}/", logging);
-            Assert.DoesNotContain(Paths("IsoplaneBundlePlatformReference"), path => path.EndsWith("/Microsoft.AspNetCore.dll", StringComparison.Ordinal));
+            Assert.DoesNotContain(ItemPaths(result, "IsoplaneBundlePlatformReference"), path => path.EndsWith("/Microsoft.AspNetCore.dll", StringComparison.Ordinal));
         }
     }
+
+    [Theory]
+    [InlineData("9.0.11", "/microsoft.aspnetcore.app.runtime.linux-x64/10.0.12/")]
+    [InlineData("10.0.13", "/system.security.cryptography.pkcs/10.0.13/")]
+    public async Task a_package_copy_of_an_aspnet_assembly_is_bundled_only_when_newer_than_the_frameworks(string package, string bundled)
+    {
+        // Restore keeps System.Security.Cryptography.Pkcs although ASP.NET provides it, as Microsoft.Data.SqlClient 6 brings 9.0.
+        using var directory = new BundleDirectory();
+        using var result = await AspNetBundleInputs(directory.Path, "10.0.12", ("System.Security.Cryptography.Pkcs", package));
+        // Without a runtime identifier the package's Windows-only copy is listed too; a guest build selects none.
+        var pkcs = Assert.Single(ItemPaths(result, "IsoplaneBundleAssembly"), path =>
+            path.EndsWith("/System.Security.Cryptography.Pkcs.dll", StringComparison.Ordinal) && !path.Contains("/runtimes/win/", StringComparison.Ordinal));
+        Assert.Contains(bundled, pkcs);
+    }
+
+    private static async Task<JsonDocument> AspNetBundleInputs(string directory, string aspNetVersion, params (string Id, string Version)[] packages)
+    {
+        var root = Environment.GetEnvironmentVariable("ISOPLANE_BUILD_ROOT")
+            ?? throw new InvalidOperationException("Run this suite with task test:managed.");
+        var sdk = Path.Combine(root, "guest-sdks", "dotnet");
+        var project = new System.Xml.Linq.XElement("Project", new System.Xml.Linq.XAttribute("Sdk", "Microsoft.NET.Sdk.Web"),
+            new System.Xml.Linq.XElement("Import", new System.Xml.Linq.XAttribute("Project", Path.Combine(sdk, "AspNetCore/buildTransitive/Isoplane.AspNetCore.props"))),
+            new System.Xml.Linq.XElement("PropertyGroup",
+                new System.Xml.Linq.XElement("TargetFramework", "net10.0"),
+                new System.Xml.Linq.XElement("RuntimeFrameworkVersion", aspNetVersion),
+                new System.Xml.Linq.XElement("IsoplaneManagedBundleBuild", "true"),
+                new System.Xml.Linq.XElement("OutputType", "Library"),
+                new System.Xml.Linq.XElement("CopyLocalLockFileAssemblies", "true")),
+            new System.Xml.Linq.XElement("ItemGroup", packages.Select(package => new System.Xml.Linq.XElement("PackageReference",
+                new System.Xml.Linq.XAttribute("Include", package.Id),
+                new System.Xml.Linq.XAttribute("Version", package.Version)))),
+            new System.Xml.Linq.XElement("Import", new System.Xml.Linq.XAttribute("Project", Path.Combine(sdk, "AspNetCore/buildTransitive/Isoplane.AspNetCore.targets"))),
+            new System.Xml.Linq.XElement("Import", new System.Xml.Linq.XAttribute("Project", Path.Combine(sdk, "Build/Isoplane.ManagedBundle.targets"))));
+        project.Save(Path.Combine(directory, "Application.csproj"));
+        await File.WriteAllTextAsync(Path.Combine(directory, "Application.cs"), """
+            using Microsoft.AspNetCore.Builder;
+            public static class Application {
+                public static WebApplication Create() {
+                    var app = WebApplication.CreateBuilder().Build();
+                    app.MapGet("/", () => "hello");
+                    return app;
+                }
+            }
+            """);
+        var start = new ProcessStartInfo("dotnet") { WorkingDirectory = directory, RedirectStandardOutput = true, RedirectStandardError = true };
+        start.Environment["DOTNET_RUNTIME_ID"] = "linux-x64";
+        foreach (var argument in new[] { "msbuild", "Application.csproj", "-restore", "-t:IsoplaneManagedBundle",
+            "-getProperty:IsoplaneAspNetCoreRuntimeVersion", "-getItem:Analyzer,IsoplaneBundleAssembly,IsoplaneBundlePlatformReference", "-nologo", "-p:NuGetAudit=false" })
+            start.ArgumentList.Add(argument);
+        using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not run MSBuild.");
+        var output = process.StandardOutput.ReadToEndAsync();
+        var errors = process.StandardError.ReadToEndAsync();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(180));
+        try { await process.WaitForExitAsync(deadline.Token); }
+        finally
+        {
+            if (!process.HasExited) { process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); }
+        }
+        Assert.True(process.ExitCode == 0, await output + await errors);
+        var text = await output;
+        return JsonDocument.Parse(text[text.IndexOf('{')..]);
+    }
+
+    private static string[] ItemPaths(JsonDocument result, string name) => result.RootElement.GetProperty("Items").GetProperty(name).EnumerateArray()
+        .Select(item => item.GetProperty("Identity").GetString()!.Replace('\\', '/')).ToArray();
 
     [Fact]
     public async Task building_a_bundle_uses_and_cleans_project_local_metadata()
