@@ -1,4 +1,5 @@
-@* Applies to every page: the namespaces they may use without a using line, and the tag helpers (asp-for, asp-page and the rest). *@
-@using Sample_WebApp.Notes
+@* Applies to every page: the namespace of the classes the pages compile to, and the tag helpers (asp-for, asp-page and the rest).
+   A page in a folder below this one is in a namespace named after the folder: Notes/Edit.cshtml is in Sample_WebApp.Pages.Notes,
+   beside its EditModel, so its @model line names the class alone. *@
 @namespace Sample_WebApp.Pages
 @addTagHelper *, Microsoft.AspNetCore.Mvc.TagHelpers

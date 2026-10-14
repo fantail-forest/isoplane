@@ -6,15 +6,19 @@ pub mod common;
 use std::process::Command;
 
 #[test]
-fn solution_templates_build_under_a_name_that_is_not_an_identifier() {
-    for template in [
-        "isoplane-handler",
-        "isoplane-mcpserver",
-        "isoplane-webapi",
-        "isoplane-webapp",
+fn solution_templates_build_under_a_name_that_is_not_an_identifier_and_repeats_a_folder() {
+    // The hyphen makes file names and namespaces differ. The first part names a
+    // namespace the template declares for one of its folders: C# resolves a
+    // root-qualified name written inside a namespace from the inside out, so
+    // such a reference finds the folder's namespace instead of the root.
+    for (template, name) in [
+        ("isoplane-handler", "Tests.Template-App"),
+        ("isoplane-mcpserver", "Tools.Template-App"),
+        ("isoplane-webapi", "Todos.Template-App"),
+        ("isoplane-webapp", "Notes.Template-App"),
     ] {
         let directory = tempfile::tempdir().expect("isolate the solution template journey");
-        let solution = isoplane_fixtures::template_project(directory.path(), template);
+        let solution = isoplane_fixtures::template_project(directory.path(), template, name);
         let output = Command::new("dotnet")
             .arg("build")
             .current_dir(&solution)
@@ -22,7 +26,7 @@ fn solution_templates_build_under_a_name_that_is_not_an_identifier() {
             .expect("build the generated solution with the .NET SDK");
         assert!(
             output.status.success(),
-            "{template} must build when its files carry the project's name and its code a namespace derived from it:\n{}{}",
+            "{template} must build as {name}, whose files carry the project's name and whose code has a namespace derived from it:\n{}{}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );

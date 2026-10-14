@@ -32,13 +32,13 @@ pub fn release_version() -> String {
 /// consumer for its managed application configurations. The returned project resolves
 /// Isoplane packages exclusively from its local feed.
 pub fn aspnet_project(destination: &Path) -> PathBuf {
-    template_project(destination, "isoplane-web")
+    template_project(destination, "isoplane-web", "Template-App")
 }
 
 /// Installs the packaged templates into an isolated hive and creates `template`
-/// beneath `destination` as `Template-App`, a name that is not a C# identifier.
-/// The returned directory resolves Isoplane packages exclusively from its local feed.
-pub fn template_project(destination: &Path, template: &str) -> PathBuf {
+/// beneath `destination` under the project name `name`. The returned directory
+/// resolves Isoplane packages exclusively from its local feed.
+pub fn template_project(destination: &Path, template: &str, name: &str) -> PathBuf {
     let root = super::repo_root();
     let packages = package_feed("ISOPLANE_TEST_PACKAGE_FEED");
     let native_packages = package_feed("ISOPLANE_TEST_NATIVE_PACKAGE_FEED");
@@ -52,7 +52,7 @@ pub fn template_project(destination: &Path, template: &str) -> PathBuf {
         .arg(&hive));
     let app = destination.join("app");
     run(Command::new("dotnet")
-        .args(["new", template, "--name", "Template-App"])
+        .args(["new", template, "--name", name])
         .arg("--output")
         .arg(&app)
         .arg("--debug:custom-hive")
