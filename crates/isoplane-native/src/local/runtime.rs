@@ -98,14 +98,7 @@ impl Prepared {
         identity.update(blake3::hash(wasm).as_bytes());
         preparation_cache::hash_files(&mut identity, &project.application_files);
         let version = identity.finalize().to_hex().to_string();
-        let engine = Arc::new(isoplane_engine::IsoplaneEngine::new(
-            isoplane_engine::EngineConfig {
-                pooling: false,
-                max_memory_bytes: manifest.memory_max_bytes(),
-                platform_files: project.served_files()?,
-                ..Default::default()
-            },
-        )?);
+        let engine = debug_engine(project)?;
         let (template, compiled) =
             runtime_cache(project, blake3::hash(wasm).as_bytes())?.load(&engine, wasm)?;
         tracing::info!(compiled, "local debug runtime compilation ready");
@@ -120,6 +113,45 @@ impl Prepared {
             version,
         })
     }
+}
+
+/// What preparing a shared runtime ahead of its first session did.
+pub struct RuntimePreparation {
+    /// Whether the runtime baseline was compiled, rather than found in the cache.
+    pub baseline_compiled: bool,
+    /// Whether the debug runtime was compiled, rather than found in the cache.
+    pub debug_compiled: bool,
+}
+
+/// Compiles the shared runtime `wasm` and its debug build `debug_wasm` into
+/// `project`'s runtime cache, as the first session and the first debug
+/// session of an application package on them would.
+pub fn prepare_runtime(
+    project: &Project,
+    wasm: &[u8],
+    debug_wasm: &[u8],
+) -> anyhow::Result<RuntimePreparation> {
+    let baseline_compiled =
+        baseline::prepare_runtime(project, wasm, || validate_runtime(project, wasm).map(drop))?;
+    validate(project, debug_wasm, true)?;
+    let engine = debug_engine(project)?;
+    let (_, debug_compiled) =
+        runtime_cache(project, blake3::hash(debug_wasm).as_bytes())?.load(&engine, debug_wasm)?;
+    Ok(RuntimePreparation {
+        baseline_compiled,
+        debug_compiled,
+    })
+}
+
+fn debug_engine(project: &Project) -> anyhow::Result<Arc<isoplane_engine::IsoplaneEngine>> {
+    Ok(Arc::new(isoplane_engine::IsoplaneEngine::new(
+        isoplane_engine::EngineConfig {
+            pooling: false,
+            max_memory_bytes: project.manifest.memory_max_bytes(),
+            platform_files: project.served_files()?,
+            ..Default::default()
+        },
+    )?))
 }
 
 fn engine_configuration(project: &Project) -> isoplane_engine::EngineConfig {

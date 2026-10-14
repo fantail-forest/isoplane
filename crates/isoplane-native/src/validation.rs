@@ -18,6 +18,8 @@ pub(crate) enum Error {
     CacheDirectory,
     #[error("runtime cache operation failed: {0}")]
     Cache(#[from] isoplane_cache::Error),
+    #[error("preparing the shared runtime failed: {0:#}")]
+    RuntimePreparation(#[source] anyhow::Error),
 }
 
 #[derive(Default, Deserialize)]

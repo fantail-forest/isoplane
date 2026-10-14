@@ -171,6 +171,65 @@ fn a_second_debug_session_reuses_the_compiled_debug_runtime() {
     }
 }
 
+#[test]
+fn a_prepared_runtime_spares_the_first_sessions_its_compilation() {
+    let directory = tempfile::tempdir().unwrap();
+    let app = isoplane_fixtures::aspnet_project(directory.path());
+    let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
+    let runtime = isoplane_fixtures::mono_runtime_module()
+        .parent()
+        .expect("the runtime module has a directory")
+        .to_owned();
+    let prepare = || {
+        let output = std::process::Command::new(&cli)
+            .args(["prepare-runtime", "--runtime"])
+            .arg(&runtime)
+            .env("ISOPLANE_CACHE_DIR", app.join(".isoplane/cache"))
+            .output()
+            .expect("run isoplane prepare-runtime");
+        assert!(
+            output.status.success(),
+            "prepare-runtime failed:\n{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+    let first = prepare();
+    assert!(
+        first.contains("Compiled the runtime.") && first.contains("Compiled the debug runtime."),
+        "{first}"
+    );
+    let second = prepare();
+    assert!(
+        second.contains("The runtime was already compiled.")
+            && second.contains("The debug runtime was already compiled."),
+        "{second}"
+    );
+    for (arguments, ready) in [
+        (
+            &["--no-watch"][..],
+            "local preparation over the runtime baseline ready",
+        ),
+        (
+            &["--debug", "--no-watch"][..],
+            "local debug runtime compilation ready",
+        ),
+    ] {
+        let mut dev = Dev::start_managed_with_args(&app, &cli, arguments);
+        let diagnostics = dev.diagnostics();
+        dev.stop();
+        let line = diagnostics
+            .lines()
+            .find(|line| line.contains(ready))
+            .unwrap_or_else(|| panic!("no \"{ready}\" event:\n{diagnostics}"));
+        assert!(
+            line.contains("\"compiled\":false"),
+            "a session after prepare-runtime must not compile the runtime:\n{diagnostics}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn an_installed_template_streams_an_upload_through_the_shared_runtime() {
     let directory = tempfile::tempdir().unwrap();

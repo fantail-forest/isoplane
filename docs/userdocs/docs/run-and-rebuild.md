@@ -46,6 +46,10 @@ and the next session to start compiles the runtime again. On Windows a runtime
 that a running session has open cannot be removed; the command says so, and
 removes it when you run it again after stopping the session.
 
+`isoplane prepare-runtime --runtime DIRECTORY` compiles a runtime into the
+cache before any session needs it, for example while building a CI image.
+`DIRECTORY` is the `tools/runtime` folder of an `Isoplane.Sdk` package.
+
 What a session prepares from your project alone goes under the project's
 MSBuild intermediate output directory (`obj/` by default), and its application
 package and session state under the project's `.isoplane/` directory. To keep

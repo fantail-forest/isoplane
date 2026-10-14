@@ -89,20 +89,7 @@ impl Options {
             isoplane_prepare::package::PackageLimits::of(&self.manifest),
         )
         .with_context(|| format!("serving the application package {}", self.package.display()))?;
-        let trust = match &self.machine_roots {
-            Some(path) => {
-                let machine = std::fs::read(path).with_context(|| {
-                    format!("reading the machine's trusted roots {}", path.display())
-                })?;
-                isoplane_trust::TrustBundle::local_development(&machine)?
-            }
-            None => isoplane_trust::TrustBundle::load(&isoplane_trust::TrustConfig::default())?,
-        };
-        let mut files = vec![isoplane_engine::PlatformFile {
-            path: isoplane_trust::GUEST_PATH.into(),
-            bytes: trust.pem().into(),
-            modified_ns: trust.modified_ns(),
-        }];
+        let mut files = vec![trust_file(self.machine_roots.as_deref())?];
         if let Some(endpoint) = self.debug_endpoint {
             files.push(isoplane_engine::PlatformFile {
                 path: isoplane_abi::filesystem::DEBUG_AGENT_PATH.into(),
@@ -117,9 +104,7 @@ impl Options {
             runtime_library: self.runtime_library.clone(),
             compilation_directory: self.compilation_directory.clone(),
             runtime_cache_directory: self.runtime_cache_directory.clone(),
-            // An application package runs on the shared managed runtime, which
-            // reads the clock and draws entropy while it comes up.
-            init_sandbox: isoplane_abi::config::InitSandbox::RuntimeBringUp,
+            init_sandbox: RUNTIME_SANDBOX,
             platform_files,
             application_files: package.files,
             runtime_profile: isoplane_prepare::RuntimeProfile::SharedRuntime {
@@ -127,6 +112,32 @@ impl Options {
             },
         })
     }
+}
+
+/// An application package runs on the shared managed runtime, which reads the
+/// clock and draws entropy while it comes up.
+pub(crate) const RUNTIME_SANDBOX: isoplane_abi::config::InitSandbox =
+    isoplane_abi::config::InitSandbox::RuntimeBringUp;
+
+/// The trusted roots a guest reads: the machine's exported roots joined to the
+/// shipped ones, or the shipped ones alone.
+pub(crate) fn trust_file(
+    machine_roots: Option<&std::path::Path>,
+) -> anyhow::Result<isoplane_engine::PlatformFile> {
+    let trust = match machine_roots {
+        Some(path) => {
+            let machine = std::fs::read(path).with_context(|| {
+                format!("reading the machine's trusted roots {}", path.display())
+            })?;
+            isoplane_trust::TrustBundle::local_development(&machine)?
+        }
+        None => isoplane_trust::TrustBundle::load(&isoplane_trust::TrustConfig::default())?,
+    };
+    Ok(isoplane_engine::PlatformFile {
+        path: isoplane_trust::GUEST_PATH.into(),
+        bytes: trust.pem().into(),
+        modified_ns: trust.modified_ns(),
+    })
 }
 
 impl Session {

@@ -14,7 +14,7 @@ mod validation;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 /// Version of the native entry points and their report schema.
-pub const ABI_VERSION: u32 = 3;
+pub const ABI_VERSION: u32 = 4;
 
 /// Outcome of a native operation, separate from a module's validation verdict.
 #[repr(C)]
@@ -92,9 +92,9 @@ fn boundary(operation: impl FnOnce() -> Result<Vec<u8>, validation::Error>) -> N
                 | validation::Error::Policy(_)
                 | validation::Error::Module(_)
                 | validation::Error::CacheDirectory => NativeStatus::InvalidInput,
-                validation::Error::Session(_) | validation::Error::Cache(_) => {
-                    NativeStatus::InternalError
-                }
+                validation::Error::Session(_)
+                | validation::Error::Cache(_)
+                | validation::Error::RuntimePreparation(_) => NativeStatus::InternalError,
             };
             NativeResult::new(status, error.to_string().into_bytes())
         }
@@ -373,6 +373,36 @@ pub unsafe extern "C" fn isoplane_runtime_cache_clear(
     boundary(|| {
         // SAFETY: the managed wrapper pins the supplied path throughout this call.
         runtime_cache::clear(unsafe { input(directory, directory_length)? })
+    })
+}
+
+/// Compiles a shared runtime and its debug build into the runtime cache ahead
+/// of the first session on them, as that session would. The UTF-8 JSON
+/// `options` give the application manifest, native library, runtime cache
+/// directory, machine roots and the runtime's `runtime.json`. Reports
+/// `baseline_compiled` and `debug_compiled`: whether each had to be compiled.
+///
+/// # Safety
+/// All three buffers stay pinned and readable for this call.
+#[no_mangle]
+pub unsafe extern "C" fn isoplane_runtime_prepare(
+    wasm: *const u8,
+    wasm_length: usize,
+    debug_wasm: *const u8,
+    debug_wasm_length: usize,
+    options: *const u8,
+    options_length: usize,
+) -> NativeResult {
+    boundary(|| {
+        // SAFETY: the managed wrapper pins all three buffers throughout this call.
+        let (wasm, debug_wasm, options) = unsafe {
+            (
+                input(wasm, wasm_length)?,
+                input(debug_wasm, debug_wasm_length)?,
+                input(options, options_length)?,
+            )
+        };
+        runtime_cache::prepare(wasm, debug_wasm, options)
     })
 }
 

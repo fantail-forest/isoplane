@@ -29,6 +29,7 @@ isoplane-hibernate.workspace = true
 isoplane-trust.workspace = true
 parking_lot.workspace = true
 blake3.workspace = true
+sha2.workspace = true
 rand.workspace = true
 zstd.workspace = true
 tempfile.workspace = true

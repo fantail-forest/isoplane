@@ -41,7 +41,8 @@ compiled shared runtime is kept once per user: in `ISOPLANE_CACHE_DIR/runtimes`
 when that is set, else `ISOPLANE_HOME/cache/runtimes` when `ISOPLANE_HOME` is
 set, and otherwise in the platform's cache directory (`~/.cache/isoplane`,
 `~/Library/Caches/isoplane` or `%LOCALAPPDATA%\Isoplane\Cache`).
-`isoplane cache info` reports it and `isoplane cache clean` empties it. Set
+`isoplane cache info` reports it and `isoplane cache clean` empties it;
+`isoplane prepare-runtime --runtime DIRECTORY` fills it ahead of the first session. Set
 `SOURCE_DATE_EPOCH` to date every file in an application package with that time,
 so that the same source builds the same package on any machine. Standard NuGet
 and SourceLink caches remain shared.
@@ -78,8 +79,9 @@ A CLI built with `-p:IsoplaneTelemetryEndpoint=URL` records one event per comman
 under `ISOPLANE_HOME/telemetry` and sends earlier runs' events to that URL while a
 later command works. A build without the property records and sends nothing, which
 is every build from source. `tools/TelemetryProtocol/command-event.schema.json`
-defines the event. The customer reference page, generated from the same
-definitions, covers opting out and what is collected.
+defines the event. The customer
+reference page, generated from the same definitions, covers opting out and what
+is collected.
 
 The debugger includes Mono's MIT-licensed `debugger-libs` and Microsoft's
 `Microsoft.VisualStudio.Shared.VSCodeDebugProtocol` library. Their license files

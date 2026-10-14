@@ -76,6 +76,20 @@ impl Baselines {
     }
 }
 
+/// Publishes the runtime baseline for `wasm` in the runtime cache, as the
+/// first preparation of a package on it would, and returns whether that
+/// compiled the runtime. `admit` runs only when it does.
+pub(super) fn prepare_runtime(
+    project: &Project,
+    wasm: &[u8],
+    admit: impl FnOnce() -> anyhow::Result<()>,
+) -> anyhow::Result<bool> {
+    // A baseline's identity leaves out the application's settings and version.
+    let request = request(project, wasm, b"{}", "")?;
+    let (_, compiled) = published(project, wasm, &request.baseline(), admit)?;
+    Ok(compiled)
+}
+
 /// The project's application, loaded over `baseline` from the layer a
 /// previous preparation published for the same identity, or prepared now and
 /// published for the next one. Returns whether it was reused. Every other

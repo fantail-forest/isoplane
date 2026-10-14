@@ -17,7 +17,7 @@ namespace Isoplane.Native.Interop
         /// <summary>
         ///  Version of the native entry points and their report schema.
         /// </summary>
-        internal const uint ABI_VERSION = 3;
+        internal const uint ABI_VERSION = 4;
 
 
 
@@ -155,6 +155,19 @@ namespace Isoplane.Native.Interop
         /// </summary>
         [DllImport(__DllName, EntryPoint = "isoplane_runtime_cache_clear", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern NativeResult isoplane_runtime_cache_clear(byte* directory, nuint directory_length);
+
+        /// <summary>
+        ///  Compiles a shared runtime and its debug build into the runtime cache ahead
+        ///  of the first session on them, as that session would. The UTF-8 JSON
+        ///  `options` give the application manifest, native library, runtime cache
+        ///  directory, machine roots and the runtime's `runtime.json`. Reports
+        ///  `baseline_compiled` and `debug_compiled`: whether each had to be compiled.
+        ///
+        ///  # Safety
+        ///  All three buffers stay pinned and readable for this call.
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "isoplane_runtime_prepare", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern NativeResult isoplane_runtime_prepare(byte* wasm, nuint wasm_length, byte* debug_wasm, nuint debug_wasm_length, byte* options, nuint options_length);
 
 
     }

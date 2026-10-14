@@ -1,7 +1,10 @@
-//! Inspection and clearing of the per-user runtime cache local sessions fill.
+//! Preparation, inspection and clearing of the per-user runtime cache local
+//! sessions fill.
 
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
+
+use sha2::Digest;
 
 use crate::validation::Error;
 
@@ -27,6 +30,66 @@ pub(crate) fn clear(directory: &[u8]) -> Result<Vec<u8>, Error> {
         .collect::<Vec<_>>()
         .into();
     Ok(after.to_string().into_bytes())
+}
+
+/// What a shared runtime is compiled for: the settings a session of an
+/// application package on it would compile it with.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Preparation {
+    manifest: isoplane_abi::config::AppManifest,
+    runtime_library: PathBuf,
+    runtime_cache_directory: PathBuf,
+    machine_roots: Option<PathBuf>,
+    /// The runtime's `runtime.json`, which names its SDK and the runtime module's digest.
+    runtime_identity: String,
+}
+
+/// Compiles the shared runtime `wasm` and its debug build `debug_wasm` into
+/// the runtime cache, and reports whether each had to be compiled.
+pub(crate) fn prepare(wasm: &[u8], debug_wasm: &[u8], options: &[u8]) -> Result<Vec<u8>, Error> {
+    let options: Preparation = serde_json::from_slice(options)?;
+    let prepared = prepare_runtime(wasm, debug_wasm, options).map_err(Error::RuntimePreparation)?;
+    Ok(serde_json::json!({
+        "baseline_compiled": prepared.baseline_compiled,
+        "debug_compiled": prepared.debug_compiled,
+    })
+    .to_string()
+    .into_bytes())
+}
+
+fn prepare_runtime(
+    wasm: &[u8],
+    debug_wasm: &[u8],
+    options: Preparation,
+) -> anyhow::Result<crate::local::RuntimePreparation> {
+    anyhow::ensure!(
+        options.runtime_cache_directory.is_absolute(),
+        "the runtime cache directory must be absolute"
+    );
+    let identity =
+        isoplane_prepare::package::RuntimeIdentity::from_json(options.runtime_identity.as_bytes())?;
+    anyhow::ensure!(
+        <[u8; 32]>::from(sha2::Sha256::digest(wasm)) == identity.module_sha256,
+        "the runtime module is not the one its runtime.json names"
+    );
+    let inputs = crate::local::Inputs {
+        manifest: options.manifest,
+        // Neither is read: a runtime has no application state or files of its own.
+        state_directory: options.runtime_cache_directory.clone(),
+        compilation_directory: options.runtime_cache_directory.clone(),
+        runtime_library: options.runtime_library,
+        runtime_cache_directory: options.runtime_cache_directory,
+        init_sandbox: crate::session::RUNTIME_SANDBOX,
+        platform_files: isoplane_engine::PlatformFiles::new(vec![crate::session::trust_file(
+            options.machine_roots.as_deref(),
+        )?])?,
+        application_files: isoplane_engine::PlatformFiles::default(),
+        runtime_profile: isoplane_prepare::RuntimeProfile::SharedRuntime {
+            sdk_version: identity.sdk_version,
+        },
+    };
+    crate::local::prepare_runtime(&inputs, wasm, debug_wasm)
 }
 
 fn path(directory: &[u8]) -> Result<PathBuf, Error> {

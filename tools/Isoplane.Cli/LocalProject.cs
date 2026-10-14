@@ -44,22 +44,9 @@ internal sealed class LocalProject(string directory, string? targetDirectory)
     internal byte[] SessionOptions(DevelopmentSettings settings, string? debugEndpoint = null, string? debugDirectory = null, string? package = null)
     {
         var identity = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(settings.Name)));
-        // A development session is not held to a plan: it runs with the largest
-        // limits the platform offers unless the launch profile narrows them.
-        Dictionary<string, object?> manifest = new() { ["name"] = settings.Name, ["limits"] = new Dictionary<string, object>
-            {
-                ["module_bytes_compressed"] = 52428800UL,
-                ["package_bytes"] = 52428800UL,
-                ["instance_memory_max"] = 536870912UL,
-                ["occupancy_ms_per_http_dispatch"] = 300000UL,
-                ["subrequests_per_dispatch"] = 10000UL,
-                ["pending_futures_per_dispatch"] = 4096UL,
-            } };
-        if (settings.Limits.MemoryBytes is { } memory) manifest["guest_memory_bytes"] = memory;
-        if (settings.Limits.ResourceLimits is { Count: > 0 } limits) manifest["resource_limits"] = limits;
         Dictionary<string, object?> options = new()
         {
-            ["manifest"] = manifest,
+            ["manifest"] = Manifest(settings.Name, settings.Limits),
             ["state_directory"] = debugDirectory ?? Path.Combine(Root, "local", identity),
             ["runtime_library"] = NativeRuntime.LibraryPath,
             ["compilation_directory"] = targetDirectory is null ? Path.Combine(settings.IntermediateDirectory, "isoplane") : Path.Combine(Root, "obj"),
@@ -72,5 +59,25 @@ internal sealed class LocalProject(string directory, string? targetDirectory)
         };
         if (settings.MachineRoots is { } roots) options["machine_roots"] = roots;
         return JsonSerializer.SerializeToUtf8Bytes(options);
+    }
+
+    /// <summary>
+    /// The manifest a local session uses, with explicit numeric budgets and
+    /// <paramref name="overrides"/> applied to them. Runtime preparation uses the same manifest.
+    /// </summary>
+    internal static Dictionary<string, object?> Manifest(string name, LimitOverrides overrides)
+    {
+        Dictionary<string, object?> manifest = new() { ["name"] = name, ["limits"] = new Dictionary<string, object>
+            {
+                ["module_bytes_compressed"] = 52428800UL,
+                ["package_bytes"] = 52428800UL,
+                ["instance_memory_max"] = 536870912UL,
+                ["occupancy_ms_per_http_dispatch"] = 300000UL,
+                ["subrequests_per_dispatch"] = 10000UL,
+                ["pending_futures_per_dispatch"] = 4096UL,
+            } };
+        if (overrides.MemoryBytes is { } memory) manifest["guest_memory_bytes"] = memory;
+        if (overrides.ResourceLimits is { Count: > 0 } limits) manifest["resource_limits"] = limits;
+        return manifest;
     }
 }
