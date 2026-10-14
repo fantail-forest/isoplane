@@ -262,13 +262,37 @@ internal sealed class Sockets
                 return "unconnected=" + unconnected + " connected=" + connected + " zero=" + zero + " after=" + KeepAlive(socket)
                     + " echo=" + await EchoThroughSocketAsync(socket, new byte[] { 0x77, 0x69, 0x73, 0x70 }).ConfigureAwait(false);
             }
+            case "buffer-sizes":
+            {
+                // Sized either before the host has a socket or once it does.
+                // The receive size is below what the host allows and the send
+                // size above it, so both read back clamped.
+                using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+                void Configure()
+                {
+                    socket.ReceiveBufferSize = 1;
+                    socket.SendBufferSize = 1 << 30;
+                }
+                bool beforeConnecting = path[3] == "before";
+                if (beforeConnecting) Configure();
+                string unconnected = BufferSizes(socket);
+                await socket.ConnectAsync(Endpoint(path[1], path[2])).ConfigureAwait(false);
+                if (!beforeConnecting) Configure();
+                string connected = BufferSizes(socket);
+                // The refused value marks the managed Socket disconnected, as
+                // in the invalid-value case, so the echo uses the socket calls.
+                string zero = Attempt(() => socket.ReceiveBufferSize = 0);
+                return "unconnected=" + unconnected + " connected=" + connected + " zero=" + zero + " after=" + BufferSizes(socket)
+                    + " echo=" + await EchoThroughSocketAsync(socket, new byte[] { 0x77, 0x69, 0x73, 0x70 }).ConfigureAwait(false);
+            }
             case "unsupported-option":
             {
+                // The hop limit is a socket option the host refuses.
                 using var socket = await ConnectAsync(path[1], path[2]).ConfigureAwait(false);
                 socket.NoDelay = true;
-                string setReceiveBuffer = Attempt(() => socket.ReceiveBufferSize = 65536);
-                string getSendBuffer = Attempt(() => socket.SendBufferSize.ToString(CultureInfo.InvariantCulture));
-                return setReceiveBuffer + " " + getSendBuffer
+                string setHopLimit = Attempt(() => socket.Ttl = 32);
+                string getHopLimit = Attempt(() => socket.Ttl.ToString(CultureInfo.InvariantCulture));
+                return setHopLimit + " " + getHopLimit
                     + " nodelay=" + socket.NoDelay
                     + " echo=" + await EchoAsync(socket, new byte[] { 0x77, 0x69, 0x73, 0x70 }).ConfigureAwait(false);
             }
@@ -373,6 +397,12 @@ internal sealed class Sockets
         socket.GetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveTime),
         socket.GetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveInterval),
         socket.GetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveRetryCount));
+
+    /// <summary>
+    /// The socket's receive and send buffer sizes as the platform reports them.
+    /// </summary>
+    private static string BufferSizes(Socket socket) =>
+        socket.ReceiveBufferSize.ToString(CultureInfo.InvariantCulture) + "/" + socket.SendBufferSize.ToString(CultureInfo.InvariantCulture);
 
     private static IPEndPoint Endpoint(string address, string port) =>
         new(IPAddress.Parse(address), int.Parse(port, CultureInfo.InvariantCulture));

@@ -1,5 +1,5 @@
 //! Canonical native socket and readiness entrypoints observed in the pinned runtime.
-use super::ResourceKind;
+use super::{ResourceKind, SocketBuffer};
 use crate::imports::{Sig, Ty};
 use crate::pal::{Delegation, Disposition, PalDef};
 
@@ -37,6 +37,10 @@ pub enum Action {
     KeepAlive(KeepAliveSetting),
     /// Change one of the host socket's TCP keep-alive settings.
     SetKeepAlive(KeepAliveSetting),
+    /// Read the size of one of the host socket's kernel buffers.
+    BufferSize(SocketBuffer),
+    /// Set the size of one of the host socket's kernel buffers.
+    SetBufferSize(SocketBuffer),
     /// Obtain the instance network capability.
     Network,
     /// Begin a host-owned DNS lookup.
@@ -844,10 +848,7 @@ pub const DEFINITIONS: &[Definition] = &[
             params: &[Ty::I32, Ty::I32],
             results: &[],
         },
-        Action::Reject {
-            error_offset: 8,
-            code: 2,
-        },
+        Action::BufferSize(SocketBuffer::Receive),
     ),
     definition(
         49,
@@ -859,10 +860,7 @@ pub const DEFINITIONS: &[Definition] = &[
             params: &[Ty::I32, Ty::I64, Ty::I32],
             results: &[],
         },
-        Action::Reject {
-            error_offset: 1,
-            code: 2,
-        },
+        Action::SetBufferSize(SocketBuffer::Receive),
     ),
     definition(
         50,
@@ -874,10 +872,7 @@ pub const DEFINITIONS: &[Definition] = &[
             params: &[Ty::I32, Ty::I32],
             results: &[],
         },
-        Action::Reject {
-            error_offset: 8,
-            code: 2,
-        },
+        Action::BufferSize(SocketBuffer::Send),
     ),
     definition(
         51,
@@ -889,10 +884,7 @@ pub const DEFINITIONS: &[Definition] = &[
             params: &[Ty::I32, Ty::I64, Ty::I32],
             results: &[],
         },
-        Action::Reject {
-            error_offset: 1,
-            code: 2,
-        },
+        Action::SetBufferSize(SocketBuffer::Send),
     ),
     definition(
         52,

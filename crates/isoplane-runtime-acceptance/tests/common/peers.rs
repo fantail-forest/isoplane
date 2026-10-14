@@ -99,6 +99,27 @@ impl ConnectionFactory for HostSockets {
     }
 }
 
+/// The receive and send sizes this host OS reports for a socket given
+/// `bytes` for each, which Linux, unlike other systems, doubles.
+pub fn as_the_kernel_reports(bytes: usize) -> (usize, usize) {
+    let reference = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None)
+        .expect("a reference socket must open");
+    reference
+        .set_recv_buffer_size(bytes)
+        .expect("a reference socket must take a receive size");
+    reference
+        .set_send_buffer_size(bytes)
+        .expect("a reference socket must take a send size");
+    (
+        reference
+            .recv_buffer_size()
+            .expect("a reference socket must report its receive size"),
+        reference
+            .send_buffer_size()
+            .expect("a reference socket must report its send size"),
+    )
+}
+
 /// The deterministic byte pattern a large transfer carries; the guest's
 /// `Sockets.Pattern` produces the same bytes.
 pub fn pattern(length: usize) -> Vec<u8> {

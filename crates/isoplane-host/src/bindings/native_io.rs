@@ -1,6 +1,7 @@
 //! Instance-owned native networking resources, independent of the Wasmtime Store.
 
 mod addresses;
+mod buffer_sizes;
 mod keep_alive;
 mod streams;
 
@@ -12,8 +13,8 @@ use std::sync::Arc;
 use streams::{Input, Output};
 
 use isoplane_abi::native_io::{
-    AddressFamily, Error, KeepAlive, KeepAliveChange, Request, ResourceHandle, ResourceKind,
-    Response,
+    AddressFamily, ByteCount, Error, KeepAlive, KeepAliveChange, Request, ResourceHandle,
+    ResourceKind, Response, SocketBuffer,
 };
 use isoplane_abi::result::ResultRecord;
 use parking_lot::Mutex;
@@ -154,6 +155,7 @@ mod tests {
                 family,
                 no_delay: Arc::new(AtomicBool::new(false)),
                 keep_alive: Arc::default(),
+                buffer_sizes: Arc::default(),
                 streams_taken: false,
                 state: Arc::new(Mutex::new(SocketState::Connected(Arc::new(Connection {
                     stream: stream.clone(),
@@ -352,6 +354,135 @@ mod tests {
         );
     }
 
+    fn buffer_size(
+        resources: &mut Resources,
+        bindings: &CellBindings,
+        socket: ResourceHandle,
+        buffer: SocketBuffer,
+        requested: Option<u64>,
+    ) -> Result<ByteCount, Error> {
+        let request = Request::BufferSize {
+            socket,
+            buffer,
+            requested: requested.map(ByteCount),
+        };
+        match resources.call(request, bindings)? {
+            Response::BufferSize(size) => Ok(size),
+            response => panic!("a buffer-size request returned {response:?}"),
+        }
+    }
+
+    /// The receive and send sizes this host OS reports for a socket given
+    /// `bytes` for each, which Linux, unlike other systems, doubles.
+    fn as_the_kernel_reports(bytes: usize) -> (usize, usize) {
+        let reference = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None)
+            .expect("a reference socket must open");
+        reference.set_recv_buffer_size(bytes).unwrap();
+        reference.set_send_buffer_size(bytes).unwrap();
+        (
+            reference.recv_buffer_size().unwrap(),
+            reference.send_buffer_size().unwrap(),
+        )
+    }
+
+    #[tokio::test]
+    async fn a_buffer_size_requested_on_a_connected_socket_reaches_the_host_socket_clamped() {
+        let Connected {
+            mut resources,
+            bindings,
+            socket,
+            stream,
+            _accepted,
+            ..
+        } = connected(AddressFamily::V4).await;
+        let host = socket2::SockRef::from(stream.as_ref());
+        let kernel_send_bytes = host.send_buffer_size().unwrap();
+
+        assert_eq!(
+            buffer_size(
+                &mut resources,
+                &bindings,
+                socket,
+                SocketBuffer::Receive,
+                Some(1)
+            ),
+            Ok(ByteCount(4_096)),
+            "the guest must read back a one-byte receive buffer raised to the floor"
+        );
+        let (floor_receive_bytes, _) = as_the_kernel_reports(4_096);
+        assert_eq!(host.recv_buffer_size().unwrap(), floor_receive_bytes);
+        assert_eq!(
+            host.send_buffer_size().unwrap(),
+            kernel_send_bytes,
+            "sizing the receive buffer must leave the send buffer to the kernel"
+        );
+
+        assert_eq!(
+            buffer_size(
+                &mut resources,
+                &bindings,
+                socket,
+                SocketBuffer::Send,
+                Some(1 << 30)
+            ),
+            Ok(ByteCount(212_992)),
+            "the guest must read back a 1 GiB send buffer cut to the ceiling"
+        );
+        let (_, ceiling_send_bytes) = as_the_kernel_reports(212_992);
+        assert_eq!(host.send_buffer_size().unwrap(), ceiling_send_bytes);
+
+        assert!(
+            matches!(
+                buffer_size(
+                    &mut resources,
+                    &bindings,
+                    socket,
+                    SocketBuffer::Receive,
+                    Some(0)
+                ),
+                Err(Error::InvalidArgument(_))
+            ),
+            "a zero size must be refused"
+        );
+        assert_eq!(
+            host.recv_buffer_size().unwrap(),
+            floor_receive_bytes,
+            "a refused size must leave the host socket as it was"
+        );
+        assert_eq!(
+            buffer_size(
+                &mut resources,
+                &bindings,
+                socket,
+                SocketBuffer::Receive,
+                None
+            ),
+            Ok(ByteCount(4_096)),
+            "a refused size must leave the size the guest reads as it was"
+        );
+    }
+
+    #[test]
+    fn a_buffer_size_requested_before_connecting_is_held_for_the_connection() {
+        let (mut resources, bindings) = resources(1);
+        let socket = created(&mut resources, &bindings);
+        let mut size = |buffer, requested| {
+            buffer_size(&mut resources, &bindings, socket, buffer, requested)
+                .expect("an unconnected socket must accept and report buffer sizes")
+        };
+        assert_eq!(
+            size(SocketBuffer::Send, None),
+            ByteCount(65_536),
+            "a buffer the guest has not sized must read as the nominal size"
+        );
+        size(SocketBuffer::Send, Some(100_000));
+        assert_eq!(
+            (size(SocketBuffer::Send, None), size(SocketBuffer::Receive, None)),
+            (ByteCount(100_000), ByteCount(65_536)),
+            "the socket must hold the send size until it connects, leaving the receive buffer unsized"
+        );
+    }
+
     #[test]
     fn exhausting_native_handles_refuses_allocation_until_a_resource_is_dropped() {
         let (mut resources, bindings) = resources(1);
@@ -539,6 +670,7 @@ struct Socket {
     family: AddressFamily,
     no_delay: Arc<AtomicBool>,
     keep_alive: Arc<Mutex<keep_alive::Settings>>,
+    buffer_sizes: Arc<Mutex<buffer_sizes::Settings>>,
     streams_taken: bool,
     state: Arc<Mutex<SocketState>>,
     task: Option<ReactorWork>,
@@ -762,6 +894,7 @@ impl Resources {
             Request::SocketAddress { .. } => "socket_address",
             Request::NoDelay { .. } => "no_delay",
             Request::KeepAlive { .. } => "keep_alive",
+            Request::BufferSize { .. } => "buffer_size",
             Request::Shutdown { .. } => "shutdown",
             Request::Subscribe(_) => "subscribe",
             Request::Timer(_) => "initialization retains a timer; dispose it before capture",
@@ -797,6 +930,13 @@ impl Resources {
             Request::KeepAlive { socket, change } => {
                 self.keep_alive(socket, change).map(Response::KeepAlive)
             }
+            Request::BufferSize {
+                socket,
+                buffer,
+                requested,
+            } => self
+                .buffer_size(socket, buffer, requested)
+                .map(Response::BufferSize),
             Request::Network => {
                 if let Some(handle) = self.network {
                     return Ok(Response::Handle(handle));
@@ -836,6 +976,7 @@ impl Resources {
                     family,
                     no_delay: Arc::new(AtomicBool::new(false)),
                     keep_alive: Arc::default(),
+                    buffer_sizes: Arc::default(),
                     streams_taken: false,
                     state: Arc::new(Mutex::new(SocketState::Created(family))),
                     task: None,
@@ -1153,6 +1294,29 @@ impl Resources {
         Ok(settings.effective())
     }
 
+    fn buffer_size(
+        &self,
+        handle: ResourceHandle,
+        buffer: SocketBuffer,
+        requested: Option<ByteCount>,
+    ) -> Result<ByteCount, Error> {
+        let socket = self.tcp(handle)?;
+        let state = socket.state.lock();
+        let mut settings = socket.buffer_sizes.lock();
+        if let Some(requested) = requested {
+            let changed = settings.with(buffer, requested)?;
+            match &*state {
+                SocketState::Connected(connection) => {
+                    changed.apply(&connection.stream).map_err(Error::from)?;
+                }
+                // No host socket exists; the connection takes the record when it completes.
+                SocketState::Created(_) | SocketState::Connecting | SocketState::Failed(_) => {}
+            }
+            *settings = changed;
+        }
+        Ok(settings.effective(buffer))
+    }
+
     fn has_resolved_address(&self, address: std::net::IpAddr) -> bool {
         if self.resolved.contains(&address) {
             return true;
@@ -1181,6 +1345,7 @@ impl Resources {
         let state = socket.state.clone();
         let no_delay = socket.no_delay.clone();
         let keep_alive = socket.keep_alive.clone();
+        let buffer_sizes = socket.buffer_sizes.clone();
         {
             let current = state.lock();
             match &*current {
@@ -1247,6 +1412,7 @@ impl Resources {
                         .stream
                         .set_nodelay(no_delay.load(Ordering::Relaxed))
                         .and_then(|()| keep_alive.lock().apply(&connection.stream))
+                        .and_then(|()| buffer_sizes.lock().apply(&connection.stream))
                     {
                         Ok(()) => SocketState::Connected(Arc::new(connection)),
                         Err(error) => SocketState::Failed(Error::from(error)),

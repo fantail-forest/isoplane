@@ -56,6 +56,8 @@ internal static class TcpClients
         client.ReceiveTimeout = 130;
         client.SendTimeout = 170;
         client.LingerState = new LingerOption(false, 0);
+        client.ReceiveBufferSize = 32768;
+        client.SendBufferSize = 16384;
         original.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
         if (mode == "cancelled")
         {
@@ -107,8 +109,9 @@ internal static class TcpClients
         if (!ReferenceEquals(original, client.Client)) return "changed client";
         if (exposed is not null && !ReferenceEquals(exposed, client.Client.SafeHandle)) return "changed exposed handle";
         bool keepAlive = (int)original.GetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive)! != 0;
-        if (!client.NoDelay || client.ReceiveTimeout != 130 || client.SendTimeout != 170 || client.LingerState.Enabled || !keepAlive)
-            return $"lost configuration: NoDelay={client.NoDelay}, receive={client.ReceiveTimeout}, send={client.SendTimeout}, linger={client.LingerState.Enabled}, keepAlive={keepAlive}";
+        if (!client.NoDelay || client.ReceiveTimeout != 130 || client.SendTimeout != 170 || client.LingerState.Enabled || !keepAlive
+            || client.ReceiveBufferSize != 32768 || client.SendBufferSize != 16384)
+            return $"lost configuration: NoDelay={client.NoDelay}, receive={client.ReceiveTimeout}, send={client.SendTimeout}, linger={client.LingerState.Enabled}, keepAlive={keepAlive}, buffers={client.ReceiveBufferSize}/{client.SendBufferSize}";
         if (original.LocalEndPoint is not IPEndPoint local || original.RemoteEndPoint is not IPEndPoint remote)
             return "connected socket endpoints missing";
         if (local.AddressFamily != original.AddressFamily || remote.AddressFamily != original.AddressFamily)

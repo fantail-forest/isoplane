@@ -41,9 +41,19 @@ pub enum ResourceKind {
     Pollable,
 }
 
-/// Bytes requested or admitted by one nonblocking stream operation.
+/// Bytes requested or admitted by one nonblocking stream operation, or held
+/// by a socket buffer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ByteCount(pub u64);
+
+/// One of the two kernel buffers behind a TCP socket.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SocketBuffer {
+    /// Bytes received and not yet read (SO_RCVBUF).
+    Receive,
+    /// Bytes written and not yet acknowledged by the peer (SO_SNDBUF).
+    Send,
+}
 
 /// A number of TCP keep-alive probes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,6 +103,17 @@ pub enum Request {
         socket: ResourceHandle,
         /// Setting to change, or None to read the current settings.
         change: Option<KeepAliveChange>,
+    },
+    /// Read the size of one of a socket's kernel buffers, after setting it
+    /// if a size is given. The host may clamp a requested size; a
+    /// pre-connect size applies when the socket connects.
+    BufferSize {
+        /// Instance-owned TCP socket.
+        socket: ResourceHandle,
+        /// The buffer to size.
+        buffer: SocketBuffer,
+        /// Size to set, or None to read the current size.
+        requested: Option<ByteCount>,
     },
     /// Acquire the instance's network capability handle.
     Network,
@@ -174,6 +195,8 @@ pub enum Response {
     NoDelay(bool),
     /// The socket's effective TCP keep-alive settings.
     KeepAlive(KeepAlive),
+    /// The effective size of the socket buffer the request named.
+    BufferSize(ByteCount),
     /// The operation completed without a value.
     Done,
     /// A newly allocated or subscribed resource.

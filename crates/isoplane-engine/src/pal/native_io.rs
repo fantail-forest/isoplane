@@ -81,6 +81,16 @@ pub fn call<T: PalSource>(
             socket: handle(0)?,
             change: Some(keep_alive_change(setting, scalar(1)?)?),
         },
+        Action::BufferSize(buffer) => Request::BufferSize {
+            socket: handle(0)?,
+            buffer,
+            requested: None,
+        },
+        Action::SetBufferSize(buffer) => Request::BufferSize {
+            socket: handle(0)?,
+            buffer,
+            requested: Some(ByteCount(scalar(1)?)),
+        },
         Action::Network => Request::Network,
         Action::Resolve => {
             let length = usize::try_from(scalar(2)?)?;
@@ -203,6 +213,19 @@ pub fn call<T: PalSource>(
             let mut record = [0; 16];
             let length = if let Action::KeepAlive(setting) = definition.action {
                 write_keep_alive_value(&mut record, setting, effective)
+            } else {
+                2
+            };
+            CallerMemory(caller).write(return_pointer(arguments)?, &record[..length])?;
+            Ok(0)
+        }
+        Ok(Response::BufferSize(size)) => {
+            // As for keep-alive: a setter's record is the ok discriminant and
+            // its padding; a getter's carries the size at its u64 alignment.
+            let mut record = [0; 16];
+            let length = if matches!(definition.action, Action::BufferSize(_)) {
+                record[BUFFER_SIZE_OFFSET..].copy_from_slice(&size.0.to_le_bytes());
+                record.len()
             } else {
                 2
             };
@@ -349,8 +372,12 @@ pub fn call<T: PalSource>(
                 | Action::Resolve
                 | Action::SocketAddress { .. } => 4,
                 Action::NextAddress => 2,
-                Action::Connect | Action::Shutdown | Action::SetKeepAlive(_) => 1,
+                Action::Connect
+                | Action::Shutdown
+                | Action::SetKeepAlive(_)
+                | Action::SetBufferSize(_) => 1,
                 Action::KeepAlive(setting) => keep_alive_value_offset(setting),
+                Action::BufferSize(_) => BUFFER_SIZE_OFFSET,
                 Action::Network
                 | Action::NoDelay
                 | Action::Subscribe
@@ -374,6 +401,10 @@ pub fn call<T: PalSource>(
         }
     }
 }
+
+/// Where a buffer-size getter's `result<u64, error-code>` holds its value
+/// or error code.
+const BUFFER_SIZE_OFFSET: usize = 8;
 
 fn keep_alive_change(setting: KeepAliveSetting, value: u64) -> Result<KeepAliveChange> {
     Ok(match setting {

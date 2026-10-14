@@ -28,9 +28,9 @@ public static class NetworkRefusalProbe
                     using (var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp))
                         socket.Listen(1);
                     break;
-                case "/receive-buffer":
+                case "/hop-limit":
                     using (var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp))
-                        return Task.FromResult(Response.Text(socket.ReceiveBufferSize.ToString()));
+                        return Task.FromResult(Response.Text(socket.Ttl.ToString()));
                 case "/udp-client":
                     using (var client = new UdpClient(0)) { }
                     break;
