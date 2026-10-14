@@ -19,9 +19,10 @@ synchronous method such as Entity Framework Core's
 covers it.
 
 Each entry says what fails and how to work around it today, with the size of
-that change. This list is meant to shrink. Where a later release is expected
-to remove a problem, or to make its workaround smaller, the entry says so under
-"Looking ahead". [Packages that work](#works) and
+that change. Where there is more than one way through, the entry says which we
+recommend and gives the other as an alternative. This list is meant to shrink:
+where a later release is expected to remove a problem, or to make its
+workaround smaller, the entry says so under "Looking ahead". [Packages that work](#works) and
 [packages not checked yet](#not-checked) are at the end.
 
 Everything here was run in the sandbox with SDK 0.1.0, unless its
@@ -33,19 +34,20 @@ entry says otherwise.
 | --- | --- | --- |
 | ASP.NET Core | [Session over a distributed cache, and TempData kept in it](#session) | Small change: add one middleware |
 | ASP.NET Core | [`Request.Form`](#request-form) | Small change: use `ReadFormAsync` |
-| ASP.NET Core | [File uploads over 64 KB](#uploads) | Moderate change: read the upload as a stream |
-| ASP.NET Core | [`Request.EnableBuffering()` over 30 KB](#enable-buffering) | Moderate change: read the body once, as a stream |
+| ASP.NET Core | [File uploads over 64 KB](#uploads) | Moderate change: read the upload as a stream. Or hold small uploads in memory |
+| ASP.NET Core | [`Request.EnableBuffering()` over 30 KB](#enable-buffering) | Moderate change: read the body once, as a stream. Or buffer up to a limit |
 | ASP.NET Core | [Synchronous reads and writes of the request and response body](#synchronous-body) | Small change: call the asynchronous method |
+| ASP.NET Core | [Minimal API handlers that use source-generated code](#generated-code-in-handlers) | Small change: register the JSON context and return objects. Or switch one generator off |
 | ASP.NET Core | [Data Protection key stores](#data-protection) | Small change: use the replacement Isoplane provides |
 | ASP.NET Core | [`Html.Partial` and `Html.RenderPartial`](#html-partial) | Small change: use `<partial>` |
-| ASP.NET Core | [XML formatters over 30 KB](#xml-formatters) | Moderate change: read and write XML with the asynchronous XML APIs |
+| ASP.NET Core | [XML formatters over 30 KB](#xml-formatters) | Moderate change: use the asynchronous XML APIs. Or buffer up to a limit |
 | ASP.NET Core | [Rate limiting middleware](#rate-limiting) | Large change: limit requests elsewhere |
 | ASP.NET Core | [Console logging: `AddConsole`, `AddJsonConsole` and `ClearProviders`](#console-logging) | Small change: delete the calls. A later release should not need it |
 | ASP.NET Core | [Validation attributes, localizers, token callbacks and service factories that do I/O](#synchronous-extension-points) | Moderate change: move the I/O elsewhere |
 | ASP.NET Core | [WebSockets, SignalR's WebSocket transport, Blazor Server](#connections-and-background-work) | Unsupported |
 | ASP.NET Core | [gRPC over HTTP/2](#connections-and-background-work) | Moderate change: use gRPC-Web |
 | ASP.NET Core | [`BackgroundService` and other work between requests](#connections-and-background-work) | Large change: do the work during a request |
-| Newtonsoft.Json for MVC | [Bodies over 30 KB](#newtonsoft-json) | Moderate change: use `System.Text.Json`, which streams |
+| Newtonsoft.Json for MVC | [Bodies over 30 KB](#newtonsoft-json) | Moderate to large change: move to `System.Text.Json`. Or keep Newtonsoft.Json and raise two limits |
 | Microsoft.Extensions.Configuration | [`IConfigurationProvider` implementations that load from a remote service, such as Azure Key Vault](#remote-configuration) | Moderate change: fetch them before `builder.Build()` |
 | Entity Framework Core | [Lazy loading](#lazy-loading) | Moderate change: load with `Include` |
 | Entity Framework Core | [`UseHiLo` keys with `Add`](#hilo) | Small change: use `AddAsync` |
@@ -87,6 +89,7 @@ read the stack trace to see which call failed.
 | The application refuses to start with `initialization retains a timer` | Something registered at startup started a timer. See [rate limiting](#rate-limiting) and [OpenTelemetry](#opentelemetry). |
 | The application refuses to start with `unhandled System.PlatformNotSupportedException` and no stack trace | A call made while the application starts failed. The known ones are [console logging](#console-logging) and [remote configuration](#remote-configuration). |
 | The application refuses to start, naming a service that was `Still running once the application had started` | A package registered a background service. See [MCP sessions](#mcp-sessions) and [background work](#connections-and-background-work). |
+| A minimal API endpoint answers 200 with an empty body, or the build fails with `CS9144: Cannot intercept method` | A handler names code that another source generator produces. See [generated code in handlers](#generated-code-in-handlers). |
 | No error, but session values or TempData are missing on the next request | The session was loaded synchronously. See [session](#session). |
 
 ## ASP.NET Core
@@ -116,28 +119,34 @@ app.MapPost("/cart/items", (HttpContext context, string item) =>
 session with MVC's
 [`AddSessionStateTempDataProvider`][AddSessionStateTempDataProvider].
 
-- **Used for:** sign-in flows, shopping carts, multi-step forms, and messages
-  shown after a redirect.
-- **Workaround:** load the session with
-  [`ISession.LoadAsync`][ISession.LoadAsync] before anything uses it, in a middleware
-  placed directly after [`UseSession`][UseSession]:
-
-  ```csharp
-  app.UseSession();
-  app.Use(async (context, next) =>
-  {
-      await context.Session.LoadAsync(context.RequestAborted);
-      await next();
-  });
-  ```
-
-- **Size of the change:** Small. One middleware, added once.
-- **Looking ahead:** the workaround should get smaller. Isoplane's ASP.NET Core adapter library, `Isoplane.AspNetCore`,
-  can provide this middleware, and report an unloaded session as an error in
-  place of losing data.
+Typically used for sign-in flows, shopping carts, multi-step forms, and messages
+shown after a redirect.
 
 We ran this with a PostgreSQL-backed cache. The Redis cache does not run at
 all; see [Redis](#redis).
+
+#### Workaround: load the session in a middleware
+
+Load the session with
+[`ISession.LoadAsync`][ISession.LoadAsync] before anything uses it, in a middleware
+placed directly after [`UseSession`][UseSession]:
+
+```csharp
+app.UseSession();
+app.Use(async (context, next) =>
+{
+    await context.Session.LoadAsync(context.RequestAborted);
+    await next();
+});
+```
+
+Size of the change: small. One middleware, added once.
+
+#### Looking ahead
+
+The workaround should get smaller. Isoplane's ASP.NET Core adapter library, `Isoplane.AspNetCore`,
+can provide this middleware, and report an unloaded session as an error in
+place of losing data.
 
 ### `Request.Form` {#request-form}
 
@@ -154,13 +163,17 @@ app.MapPost("/contact", (HttpContext context) =>
 });
 ```
 
-- **Used for:** reading posted fields and files directly from the request.
-- **Workaround:** read the form with
-  [`HttpRequest.ReadFormAsync`][HttpRequest.ReadFormAsync]:
-  `var form = await context.Request.ReadFormAsync();`. A minimal API handler
-  that takes a form value or an [`IFormFile`][IFormFile] as a parameter already
-  reads asynchronously.
-- **Size of the change:** Small.
+Typically used for reading posted fields and files directly from the request.
+
+#### Workaround: read the form asynchronously
+
+Read the form with
+[`HttpRequest.ReadFormAsync`][HttpRequest.ReadFormAsync]:
+`var form = await context.Request.ReadFormAsync();`. A minimal API handler
+that takes a form value or an [`IFormFile`][IFormFile] as a parameter already
+reads asynchronously.
+
+Size of the change: small.
 
 ### File uploads over 64 KB {#uploads}
 
@@ -182,49 +195,69 @@ app.MapPost("/documents", async (HttpContext context, DocumentStore store) =>
 });
 ```
 
-- **Used for:** any multipart upload: images, documents, imports.
-- **Workaround:** read each file as a stream while it arrives, with
-  [`MultipartReader`][MultipartReader]. Isoplane hands the request body to the
-  application as it reads, so a file of any size passes through in small pieces
-  and is never held in memory.
+Typically used for any multipart upload: images, documents, imports. Large
+fields of an ordinary URL-encoded form are not affected.
 
-  ```csharp
-  using Microsoft.AspNetCore.WebUtilities;
-  using Microsoft.Net.Http.Headers;
+#### Recommended: read each file as a stream
 
-  app.MapPost("/documents", async (HttpContext context, DocumentStore store) =>
-  {
-      var boundary = HeaderUtilities.RemoveQuotes(
-          MediaTypeHeaderValue.Parse(context.Request.ContentType).Boundary).Value!;
-      var reader = new MultipartReader(boundary, context.Request.Body);
+Read each file while it arrives, with [`MultipartReader`][MultipartReader].
+Isoplane hands the request body to the application as it reads, so a file of
+any size passes through in small pieces and is never held in memory.
 
-      while (await reader.ReadNextSectionAsync(context.RequestAborted) is { } section)
-      {
-          // FileStream yields the file as it arrives. Pass it straight on, for
-          // example as the content of an HttpClient request to object storage.
-          if (section.AsFileSection() is { } file)
-              await store.SaveAsync(file.FileName, file.FileStream!, context.RequestAborted);
-      }
-  });
-  ```
+```csharp
+using Microsoft.AspNetCore.WebUtilities;
+using Microsoft.Net.Http.Headers;
 
-  [`AsFileSection`][AsFileSection] returns null for a part that is not a file.
+app.MapPost("/documents", async (HttpContext context, DocumentStore store) =>
+{
+    var boundary = HeaderUtilities.RemoveQuotes(
+        MediaTypeHeaderValue.Parse(context.Request.ContentType).Boundary).Value!;
+    var reader = new MultipartReader(boundary, context.Request.Body);
 
-  Raising [`MemoryBufferThreshold`][FormOptions.MemoryBufferThreshold] in
-  [`FormOptions`][FormOptions] also gets `IFormFile` working, by holding each
-  upload in memory. We do not recommend it wherever the upload can be read as a
-  stream: every upload then counts toward the instance's
-  [memory limit](execution-limits.md#memory), and the largest file the
-  application can accept is whatever memory it has left. If you do use it, set
-  [`MultipartBodyLengthLimit`][FormOptions.MultipartBodyLengthLimit] to the
-  same size, so that a larger file is refused instead of buffered.
-- **Size of the change:** Moderate. The handler reads the multipart body
-  itself instead of taking an `IFormFile`.
-- **Looking ahead:** a later release is expected to let `IFormFile` work as
-  written for uploads that fit in memory. Reading a large upload as a stream
-  stays the better choice.
+    while (await reader.ReadNextSectionAsync(context.RequestAborted) is { } section)
+    {
+        // FileStream yields the file as it arrives. Pass it straight on, for
+        // example as the content of an HttpClient request to object storage.
+        if (section.AsFileSection() is { } file)
+            await store.SaveAsync(file.FileName, file.FileStream!, context.RequestAborted);
+    }
+});
+```
 
-Large fields of an ordinary URL-encoded form are not affected.
+[`AsFileSection`][AsFileSection] returns null for a part that is not a file.
+
+Size of the change: moderate. The handler reads the multipart body itself
+instead of taking an `IFormFile`.
+
+#### Alternative: keep `IFormFile` and hold uploads in memory
+
+Raising [`MemoryBufferThreshold`][FormOptions.MemoryBufferThreshold] in
+[`FormOptions`][FormOptions] gets `IFormFile` working as written, by holding
+each upload in memory. We do not recommend it wherever the upload can be read
+as a stream: every upload then counts toward the instance's [memory limit](execution-limits.md#memory), and the
+largest file the application can accept is whatever memory it has left. If you
+do use it, set
+[`MultipartBodyLengthLimit`][FormOptions.MultipartBodyLengthLimit] to the same
+size, so that a larger file is refused instead of buffered.
+
+```csharp
+using Microsoft.AspNetCore.Http.Features;
+
+const int LargestUpload = 4 * 1024 * 1024;
+
+builder.Services.Configure<FormOptions>(options =>
+{
+    options.MemoryBufferThreshold = LargestUpload;      // kept in memory up to this size
+    options.MultipartBodyLengthLimit = LargestUpload;   // a larger file is refused
+});
+```
+
+Size of the change: small.
+
+#### Looking ahead
+
+A later release is expected to let `IFormFile` work as written for uploads that
+fit in memory. Reading a large upload as a stream stays the better choice.
 
 ### `Request.EnableBuffering()` over 30 KB {#enable-buffering}
 
@@ -238,43 +271,57 @@ var payload = await new StreamReader(context.Request.Body).ReadToEndAsync();   /
 context.Request.Body.Position = 0;   // so that the body can be bound afterwards
 ```
 
-- **Used for:** verifying a webhook signature before binding the body, and
-  logging request bodies.
-- **Workaround:** read the body once, as a stream, and do both jobs in that
-  pass. For a signed webhook, wrap the body in a
-  [`CryptoStream`][CryptoStream] that computes the signature while the payload
-  is deserialized from it:
+Typically used for verifying a webhook signature before binding the body, and
+for logging request bodies.
 
-  ```csharp
-  using var hmac = new HMACSHA256(signingKey);
-  Order? order;
-  await using (var hashing = new CryptoStream(context.Request.Body, hmac, CryptoStreamMode.Read, leaveOpen: true))
-  {
-      order = await JsonSerializer.DeserializeAsync<Order>(hashing, cancellationToken: context.RequestAborted);
-      await hashing.CopyToAsync(Stream.Null, context.RequestAborted);   // read to the end, so the hash is complete
-  }
+#### Recommended: read the body once
 
-  var expected = Convert.FromHexString(context.Request.Headers["X-Signature"].ToString());
-  if (!CryptographicOperations.FixedTimeEquals(hmac.Hash!, expected))
-      return Results.Unauthorized();
+Read the body once, as a stream, and do both jobs in that pass. For a signed
+webhook, wrap the body in a [`CryptoStream`][CryptoStream] that computes the
+signature while the payload is deserialized from it:
 
-  // Only now act on the order.
-  ```
+```csharp
+using var hmac = new HMACSHA256(signingKey);
+Order? order;
+await using (var hashing = new CryptoStream(context.Request.Body, hmac, CryptoStreamMode.Read, leaveOpen: true))
+{
+    order = await JsonSerializer.DeserializeAsync<Order>(hashing, cancellationToken: context.RequestAborted);
+    await hashing.CopyToAsync(Stream.Null, context.RequestAborted);   // read to the end, so the hash is complete
+}
 
-  Nothing is held in memory but the object being built. The payload is parsed
-  before its signature is known, so do nothing with it until the comparison
-  has passed.
+var expected = Convert.FromHexString(context.Request.Headers["X-Signature"].ToString());
+if (!CryptographicOperations.FixedTimeEquals(hmac.Hash!, expected))
+    return Results.Unauthorized();
 
-  Buffering is also possible:
-  `EnableBuffering(bufferThreshold: LargestBody, bufferLimit: LargestBody)`
-  keeps a body up to the size you choose in memory and refuses a larger one.
-  That holds the whole body for the length of the request, counted toward the
-  instance's [memory limit](execution-limits.md#memory), so prefer the single pass where it fits.
-- **Size of the change:** Moderate to read the body once. Small to pass a size
-  limit.
-- **Looking ahead:** a later release is expected to let `EnableBuffering` work
-  as written for bodies that fit in memory. Reading the body once stays the
-  better choice.
+// Only now act on the order.
+```
+
+Nothing is held in memory but the object being built. The payload is parsed
+before its signature is known, so do nothing with it until the comparison has
+passed.
+
+Size of the change: moderate.
+
+#### Alternative: buffer up to a size you choose
+
+Pass the largest body you accept as both the threshold and the limit. A body
+up to that size stays in memory, and a larger one is refused.
+
+```csharp
+const int LargestBody = 1024 * 1024;
+
+context.Request.EnableBuffering(bufferThreshold: LargestBody, bufferLimit: LargestBody);
+```
+
+This holds the whole body for the length of the request, counted toward the
+instance's [memory limit](execution-limits.md#memory), so prefer the single pass where it fits.
+
+Size of the change: small.
+
+#### Looking ahead
+
+A later release is expected to let `EnableBuffering` work as written for bodies
+that fit in memory. Reading the body once stays the better choice.
 
 ### Synchronous reads and writes of the request and response body {#synchronous-body}
 
@@ -294,17 +341,70 @@ var serializer = new XmlSerializer(typeof(Report));
 serializer.Serialize(context.Response.Body, report);   // writes synchronously: throws
 ```
 
-- **Used for:** serializers and writers that take a stream and write to it
-  synchronously, such as [`XmlSerializer.Serialize`][XmlSerializer.Serialize].
-- **Workaround:** use [`Stream.ReadAsync`][Stream.ReadAsync] and
-  [`Stream.WriteAsync`][Stream.WriteAsync], or the library's asynchronous
-  method.
-  Prefer a library that can write asynchronously, since that streams. Where
-  one has no asynchronous method, it can write to a
-  [`MemoryStream`][MemoryStream] that you then copy to the response with
-  [`Stream.CopyToAsync`][Stream.CopyToAsync]; that holds the whole output in
-  memory, so keep it for small responses.
-- **Size of the change:** Small.
+Typically used for serializers and writers that take a stream and write to it
+synchronously, such as [`XmlSerializer.Serialize`][XmlSerializer.Serialize].
+
+#### Workaround: use the asynchronous methods
+
+Use [`Stream.ReadAsync`][Stream.ReadAsync] and
+[`Stream.WriteAsync`][Stream.WriteAsync], or the library's asynchronous
+method.
+Prefer a library that can write asynchronously, since that streams. Where
+one has no asynchronous method, it can write to a
+[`MemoryStream`][MemoryStream] that you then copy to the response with
+[`Stream.CopyToAsync`][Stream.CopyToAsync]; that holds the whole output in
+memory, so keep it for small responses.
+
+Size of the change: small.
+
+### Minimal API handlers that use source-generated code {#generated-code-in-handlers}
+
+Isoplane builds every application with ASP.NET Core's
+[request delegate generator][rdg] switched on, which writes the code for each
+minimal API endpoint when the application builds. One source generator cannot
+see what another produces, so a handler lambda that names generated members,
+such as the properties of a `System.Text.Json` serializer context, is misread.
+The endpoint below answers 200 with an empty body and reports no error. A
+handler of the same kind that returns nothing fails to build instead, with
+`CS9144: Cannot intercept method`.
+
+```csharp
+app.MapPost("/orders", async (HttpContext context) =>
+{
+    var order = await JsonSerializer.DeserializeAsync(context.Request.Body, AppJsonContext.Default.Order);
+    return Results.Json(new OrderSummary(order!), AppJsonContext.Default.OrderSummary);   // 200, empty body
+});
+```
+
+Typically seen in applications that use `System.Text.Json` source generation
+and pass its type information by hand. ASP.NET Core itself switches the
+generator on only for native AOT publishing, so this code works in an ordinary
+ASP.NET Core application.
+
+#### Recommended: register the context and let ASP.NET Core serialize
+
+Register the context once, with
+[`ConfigureHttpJsonOptions`][ConfigureHttpJsonOptions], and have handlers take
+and return objects. ASP.NET Core then uses the generated code without the
+handler naming it.
+
+```csharp
+builder.Services.ConfigureHttpJsonOptions(options =>
+    options.SerializerOptions.TypeInfoResolverChain.Insert(0, AppJsonContext.Default));
+
+app.MapPost("/orders", (Order order) => new OrderSummary(order));
+```
+
+Size of the change: small.
+
+#### Alternative: switch the generator off
+
+Set `<EnableRequestDelegateGenerator>false</EnableRequestDelegateGenerator>`
+in the project file. ASP.NET Core then works out each endpoint's code when the
+application starts, which on Isoplane happens once, during
+[initialization](application-lifecycle.md#initialization).
+
+Size of the change: small.
 
 ### Data Protection key stores {#data-protection}
 
@@ -322,26 +422,30 @@ and protecting data then throws
 builder.Services.AddDataProtection().PersistKeysToDbContext<AppDbContext>();
 ```
 
-- **Used for:** keeping authentication cookies and antiforgery tokens valid
-  after a new build.
-- **Workaround:** Isoplane's ASP.NET Core adapter library, `Isoplane.AspNetCore`,
-  which every Isoplane ASP.NET Core project already references, provides
-  replacements. They are described in
-  [Keep Data Protection keys across builds](dotnet-runtime-differences.md#keep-data-protection-keys-across-builds).
-  - `UseKeysFromDbContext` takes the place of `PersistKeysToDbContext` and uses
-    the same table. It is an extension method on
-    [`IDataProtectionBuilder`][IDataProtectionBuilder] in the
-    `Isoplane.AspNetCore` namespace, which the adapter library adds to an
-    application that references the
-    [`Microsoft.AspNetCore.DataProtection.EntityFrameworkCore`][nuget-dp-ef]
-    package. It has no reference page yet.
-  - [`UseConfiguredKeys`](reference/sdk/Isoplane.AspNetCore/Isoplane.AspNetCore/DataProtectionKeys/UseConfiguredKeys.md)
-    derives the keys from a secret in the application's settings.
-  - [`UseKeysFrom`](reference/sdk/Isoplane.AspNetCore/Isoplane.AspNetCore/DataProtectionKeys/UseKeysFrom.md)
-    serves any other store.
-- **Size of the change:** Small for Entity Framework Core, where one call
-  replaces another. Moderate for another store, where you supply the two
-  functions that read and add keys.
+Typically used for keeping authentication cookies and antiforgery tokens valid
+after a new build.
+
+#### Workaround: use the key stores Isoplane provides
+
+Isoplane's ASP.NET Core adapter library, `Isoplane.AspNetCore`,
+which every Isoplane ASP.NET Core project already references, provides
+replacements. They are described in
+[Keep Data Protection keys across builds](dotnet-runtime-differences.md#keep-data-protection-keys-across-builds).
+- `UseKeysFromDbContext` takes the place of `PersistKeysToDbContext` and uses
+  the same table. It is an extension method on
+  [`IDataProtectionBuilder`][IDataProtectionBuilder] in the
+  `Isoplane.AspNetCore` namespace, which the adapter library adds to an
+  application that references the
+  [`Microsoft.AspNetCore.DataProtection.EntityFrameworkCore`][nuget-dp-ef]
+  package. It has no reference page yet.
+- [`UseConfiguredKeys`](reference/sdk/Isoplane.AspNetCore/Isoplane.AspNetCore/DataProtectionKeys/UseConfiguredKeys.md)
+  derives the keys from a secret in the application's settings.
+- [`UseKeysFrom`](reference/sdk/Isoplane.AspNetCore/Isoplane.AspNetCore/DataProtectionKeys/UseKeysFrom.md)
+  serves any other store.
+
+Size of the change: small for Entity Framework Core, where one call
+replaces another. Moderate for another store, where you supply the two
+functions that read and add keys.
 
 ### `Html.Partial` and `Html.RenderPartial` {#html-partial}
 
@@ -364,14 +468,18 @@ partial awaits a query or a request.
 }
 ```
 
-- **Used for:** rendering a partial view from a Razor view or page.
-- **Workaround:** the [partial tag helper][PartialTagHelper],
-  `<partial name="_RecentOrders" />`, or
-  `@await Html.PartialAsync("_RecentOrders")`
-  ([`Html.PartialAsync`][Html.PartialAsync]). ASP.NET Core's own analyzer
-  already reports the synchronous forms when the application builds, as
-  warning [`MVC1000`][MVC1000].
-- **Size of the change:** Small.
+Typically used for rendering a partial view from a Razor view or page.
+
+#### Workaround: use the asynchronous forms
+
+The [partial tag helper][PartialTagHelper],
+`<partial name="_RecentOrders" />`, or
+`@await Html.PartialAsync("_RecentOrders")`
+([`Html.PartialAsync`][Html.PartialAsync]). ASP.NET Core's own analyzer
+already reports the synchronous forms when the application builds, as
+warning [`MVC1000`][MVC1000].
+
+Size of the change: small.
 
 ### XML formatters over 30 KB {#xml-formatters}
 
@@ -379,37 +487,58 @@ With [`AddXmlSerializerFormatters`][AddXmlSerializerFormatters], MVC moves an
 XML request or response larger than about 30 KB to a temporary file, which
 fails with `DirectoryNotFoundException: /tmp/`.
 
-- **Used for:** APIs that accept or return XML.
-- **Workaround:** read and write XML through the asynchronous XML APIs,
-  which stream the body instead of holding it. To read, use an
-  [`XmlReader`][XmlReader] created with
-  [`Async = true`][XmlReaderSettings.Async], or
-  [`XDocument.LoadAsync`][XDocument.LoadAsync]. To write, use an
-  [`XmlWriter`][XmlWriter] created the same way, or
-  [`XDocument.SaveAsync`][XDocument.SaveAsync].
+Typically used for APIs that accept or return XML. JSON through
+[`System.Text.Json`][System.Text.Json] has no such limit.
 
-  ```csharp
-  app.MapPost("/orders", async (HttpContext context) =>
-  {
-      using var reader = XmlReader.Create(context.Request.Body, new XmlReaderSettings { Async = true });
-      while (await reader.ReadAsync())
-      {
-          // Handle each node as it arrives.
-      }
-  });
-  ```
+#### Recommended: read and write XML with the asynchronous XML APIs
 
-  Buffering is also possible, for a body that has to be bound to a class with
-  [`XmlSerializer`][XmlSerializer], which reads synchronously: refuse a body
-  over a size you choose, copy it to a `MemoryStream` with `CopyToAsync`, and
-  deserialize from that. The whole body is then held in memory, counted toward
-  the instance's [memory limit](execution-limits.md#memory).
+These stream the body instead of holding it. To read, use an
+[`XmlReader`][XmlReader] created with
+[`Async = true`][XmlReaderSettings.Async], or
+[`XDocument.LoadAsync`][XDocument.LoadAsync]. To write, use an
+[`XmlWriter`][XmlWriter] created the same way, or
+[`XDocument.SaveAsync`][XDocument.SaveAsync].
 
-  JSON through [`System.Text.Json`][System.Text.Json] has no such limit.
-- **Size of the change:** Moderate. The handler reads and writes the XML
-  itself instead of leaving it to MVC.
-- **Looking ahead:** a later release is expected to make the XML formatters
-  work as written for bodies that fit in memory.
+```csharp
+app.MapPost("/orders", async (HttpContext context) =>
+{
+    using var reader = XmlReader.Create(context.Request.Body, new XmlReaderSettings { Async = true });
+    while (await reader.ReadAsync())
+    {
+        // Handle each node as it arrives.
+    }
+});
+```
+
+Size of the change: moderate. The handler reads and writes the XML itself
+instead of leaving it to MVC.
+
+#### Alternative: buffer a body that is bound with `XmlSerializer`
+
+[`XmlSerializer`][XmlSerializer] reads synchronously, so a body bound to a
+class with it has to be in memory first. Refuse a body over a size you choose,
+copy the rest into a `MemoryStream`, and deserialize from that:
+
+```csharp
+const int LargestBody = 1024 * 1024;
+
+if (context.Request.ContentLength is null or > LargestBody)
+    return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
+
+using var buffer = new MemoryStream();
+await context.Request.Body.CopyToAsync(buffer, context.RequestAborted);
+buffer.Position = 0;
+var order = (Order)new XmlSerializer(typeof(Order)).Deserialize(buffer)!;
+```
+
+The whole body is then held in memory, counted toward the instance's [memory limit](execution-limits.md#memory).
+
+Size of the change: small to moderate.
+
+#### Looking ahead
+
+A later release is expected to make the XML formatters work as written for
+bodies that fit in memory.
 
 ### Rate limiting middleware {#rate-limiting}
 
@@ -434,16 +563,22 @@ app.UseRateLimiter();   // the application refuses to start
 The policy above is registered with [`AddRateLimiter`][AddRateLimiter] and
 [`AddFixedWindowLimiter`][AddFixedWindowLimiter].
 
-- **Used for:** limiting how often a client may call an endpoint.
-- **Workaround:** none inside the application. Count requests in a store that
-  every instance shares, or limit them in front of the application.
-- **Size of the change:** Large. Limiting moves out of the application, or onto
-  a store the instances share.
-- **Looking ahead:** a change to Isoplane's ASP.NET Core adapter library, `Isoplane.AspNetCore`,
-  can let an application with this middleware start. Its limiter would still
-  count for one instance at a time, because its counters are in memory and
-  [memory belongs to one instance](dotnet-runtime-differences.md#instances-come-and-go),
-  so a shared store remains the place to count.
+Typically used for limiting how often a client may call an endpoint.
+
+#### Workaround: limit requests outside the application
+
+Count requests in a store that every instance shares, or limit them in front of the application.
+
+Size of the change: large. Limiting moves out of the application, or onto
+a store the instances share.
+
+#### Looking ahead
+
+A change to Isoplane's ASP.NET Core adapter library, `Isoplane.AspNetCore`,
+can let an application with this middleware start. Its limiter would still
+count for one instance at a time, because its counters are in memory and
+[memory belongs to one instance](dotnet-runtime-differences.md#instances-come-and-go),
+so a shared store remains the place to count.
 
 ### Console logging: `AddConsole`, `AddJsonConsole` and `ClearProviders` {#console-logging}
 
@@ -461,16 +596,22 @@ builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 ```
 
-- **Used for:** these lines are in many `Program.cs` files, often copied from a
-  template.
-- **Workaround:** delete them. Isoplane already sends `ILogger` output to
-  the terminal that runs the session, and the `Logging` section of
-  `appsettings.json` filters it as usual. Serilog's
-  [console sink][serilog-console] also works.
-- **Size of the change:** Small.
-- **Looking ahead:** a later release is expected to make these calls
-  harmless. Isoplane's ASP.NET Core adapter library, `Isoplane.AspNetCore`, can keep
-  its own provider registered and leave the console provider out.
+These lines are in many `Program.cs` files, often copied from a template.
+
+#### Workaround: delete the calls
+
+Delete them. Isoplane already sends `ILogger` output to
+the terminal that runs the session, and the `Logging` section of
+`appsettings.json` filters it as usual. Serilog's
+[console sink][serilog-console] also works.
+
+Size of the change: small.
+
+#### Looking ahead
+
+A later release is expected to make these calls
+harmless. Isoplane's ASP.NET Core adapter library, `Isoplane.AspNetCore`, can keep
+its own provider registered and leave the console provider out.
 
 ### Validation attributes, localizers, token callbacks and service factories that do I/O {#synchronous-extension-points}
 
@@ -502,29 +643,34 @@ public sealed class UniqueEmailAttribute : ValidationAttribute
 }
 ```
 
-Each has a different way out:
+#### Workaround: move the I/O to where it can be awaited
 
-- **Workaround:**
-  - **Validation.** Run the check in the handler, or with a validator that has
-    an asynchronous form. FluentValidation's
-    [`MustAsync`][fluentvalidation-async] rules run with
-    [`ValidateAsync`][fluentvalidation-async].
-  - **Localized strings and other lookup data.** Load them asynchronously in
-    an
-    [`Initialization.Initializing`](reference/sdk/Isoplane.Sdk/Isoplane/Initialization/Initializing.md)
-    callback and serve them from memory. What initialization leaves in memory
-    is copied into every instance.
-  - **Signing keys.** Set
-    [`JwtBearerOptions.Authority`][JwtBearerOptions.Authority] or
-    [`JwtBearerOptions.MetadataAddress`][JwtBearerOptions.MetadataAddress]. The handler then fetches and refreshes the keys asynchronously.
-  - **Services.** Construct the object without connecting, and connect
-    asynchronously the first time it is used.
-- **Size of the change:** Moderate. The I/O moves to a place that can await
-  it.
-- **Looking ahead:** these interfaces can only do I/O by
-  [blocking](dotnet-runtime-differences.md#never-blocks), so the I/O has to move. Where one is common enough,
-  Isoplane can provide a replacement that makes the change smaller, as it does
-  for [Data Protection keys](#data-protection).
+Each of the four has its own way out:
+
+- **Validation.** Run the check in the handler, or with a validator that has
+  an asynchronous form. FluentValidation's
+  [`MustAsync`][fluentvalidation-async] rules run with
+  [`ValidateAsync`][fluentvalidation-async].
+- **Localized strings and other lookup data.** Load them asynchronously in an
+  [`Initialization.Initializing`](reference/sdk/Isoplane.Sdk/Isoplane/Initialization/Initializing.md)
+  callback and serve them from memory. What initialization leaves in memory is
+  copied into every instance.
+- **Signing keys.** Set
+  [`JwtBearerOptions.Authority`][JwtBearerOptions.Authority] or
+  [`JwtBearerOptions.MetadataAddress`][JwtBearerOptions.MetadataAddress]. The
+  handler then fetches and refreshes the keys asynchronously.
+- **Services.** Construct the object without connecting, and connect
+  asynchronously the first time it is used.
+
+Size of the change: moderate. The I/O moves to a place that can await it.
+
+#### Looking ahead
+
+These interfaces can only do I/O by
+[blocking](dotnet-runtime-differences.md#never-blocks), so the I/O has to
+move. Where one is common enough, Isoplane can provide a replacement that
+makes the change smaller, as it does for
+[Data Protection keys](#data-protection).
 
 ### Connections and background work {#connections-and-background-work}
 
@@ -552,37 +698,72 @@ With [`AddNewtonsoftJson`][AddNewtonsoftJson], from the
 moves a JSON request or response larger than about 30 KB to a temporary file,
 which fails with `DirectoryNotFoundException: /tmp/`.
 
-- **Used for:** applications that keep Newtonsoft.Json for its converters or
-  for compatibility with existing clients.
-- **Workaround:** use MVC's default JSON formatters, which are built on
-  [`System.Text.Json`][System.Text.Json], by removing the call to
-  `AddNewtonsoftJson`. They read and write the body as a stream and keep no
-  copy of it, whatever its size.
+Typically used by applications that keep Newtonsoft.Json for its converters or
+for compatibility with existing clients. There are two ways through, and the
+second keeps Newtonsoft.Json.
 
-  If the application has to stay on Newtonsoft.Json, buffering is also
-  possible: on `MvcNewtonsoftJsonOptions`, raise
-  [`InputFormatterMemoryBufferThreshold`][InputFormatterMemoryBufferThreshold]
-  and
-  [`OutputFormatterMemoryBufferThreshold`][OutputFormatterMemoryBufferThreshold]
-  to the largest body you expect. A body up to that size is then held in
-  memory in full, counted toward the instance's [memory limit](execution-limits.md#memory), and a larger one fails
-  as before.
+#### Recommended: `System.Text.Json` with source generation
 
-  ```csharp
-  const int LargestBody = 1024 * 1024;
+Remove the call to `AddNewtonsoftJson`, so that MVC uses its default JSON
+formatters, which are built on [`System.Text.Json`][System.Text.Json]. They
+read and write the body as a stream and keep no copy of it, whatever its size.
 
-  builder.Services.AddControllers().AddNewtonsoftJson(options =>
-  {
-      options.InputFormatterMemoryBufferThreshold = LargestBody;
-      options.OutputFormatterMemoryBufferThreshold = LargestBody;
-  });
-  ```
+Then add a [source-generated context][stj-source-generation] for the types the
+API exchanges. The serialization code is written when the application builds,
+on your machine, so the running application does not work it out by
+reflection.
 
-- **Size of the change:** Moderate to move to `System.Text.Json`, and more for
-  an application with many Newtonsoft.Json converters or attributes. Small to
-  raise the two thresholds.
-- **Looking ahead:** a later release is expected to make the thresholds
-  unnecessary for bodies that fit in memory.
+```csharp
+[JsonSerializable(typeof(Order))]
+[JsonSerializable(typeof(OrderSummary))]
+internal sealed partial class AppJsonContext : JsonSerializerContext;
+
+// For controllers:
+builder.Services.AddControllers().AddJsonOptions(options =>
+    options.JsonSerializerOptions.TypeInfoResolverChain.Insert(0, AppJsonContext.Default));
+
+// For minimal APIs:
+builder.Services.ConfigureHttpJsonOptions(options =>
+    options.SerializerOptions.TypeInfoResolverChain.Insert(0, AppJsonContext.Default));
+```
+
+The two registrations are [`AddJsonOptions`][AddJsonOptions] and
+[`ConfigureHttpJsonOptions`][ConfigureHttpJsonOptions]. Let ASP.NET Core do the
+serializing from there: a minimal API handler that names the context's members
+itself runs into
+[another entry on this page](#generated-code-in-handlers).
+
+Size of the change: moderate, and large for an application with many
+Newtonsoft.Json converters or attributes, which have to be rewritten for
+`System.Text.Json`.
+
+#### Alternative: keep Newtonsoft.Json and raise its buffers
+
+On `MvcNewtonsoftJsonOptions`, raise
+[`InputFormatterMemoryBufferThreshold`][InputFormatterMemoryBufferThreshold]
+and
+[`OutputFormatterMemoryBufferThreshold`][OutputFormatterMemoryBufferThreshold]
+to the largest body you expect.
+
+```csharp
+const int LargestBody = 1024 * 1024;
+
+builder.Services.AddControllers().AddNewtonsoftJson(options =>
+{
+    options.InputFormatterMemoryBufferThreshold = LargestBody;
+    options.OutputFormatterMemoryBufferThreshold = LargestBody;
+});
+```
+
+A body up to that size is then held in memory in full, counted toward the
+instance's [memory limit](execution-limits.md#memory), and a larger one fails as before.
+
+Size of the change: small.
+
+#### Looking ahead
+
+A later release is expected to make the thresholds unnecessary for bodies that
+fit in memory.
 
 ## `Microsoft.Extensions.Configuration`
 
@@ -607,29 +788,36 @@ registered with `AddSystemsManager` from the
 load the same way and are expected to fail likewise. They have not been run in
 the sandbox.
 
-- **Used for:** taking secrets and settings from a vault.
-- **Workaround:** `Program.cs` may await before it builds the
-  application, so fetch the values asynchronously there and add them to the configuration with
-  [`AddInMemoryCollection`][AddInMemoryCollection]:
+Typically used for taking secrets and settings from a vault.
 
-  ```csharp
-  var builder = IsoplaneHosting.CreateBuilder(args);
+#### Workaround: fetch the settings before building the application
 
-  // FetchSettingsAsync is yours: an asynchronous call that returns names and values.
-  Dictionary<string, string?> settings = await FetchSettingsAsync(builder.Configuration);
-  builder.Configuration.AddInMemoryCollection(settings);
+`Program.cs` may await before it builds the
+application, so fetch the values asynchronously there and add them to the configuration with
+[`AddInMemoryCollection`][AddInMemoryCollection]:
 
-  var app = builder.Build();
-  ```
+```csharp
+var builder = IsoplaneHosting.CreateBuilder(args);
 
-  This runs during [initialization](application-lifecycle.md#initialization),
-  so the values are fetched once and every instance starts with them. For
-  local development, [User Secrets](local-settings.md#keep-credentials-in-user-secrets)
-  need none of this.
-- **Size of the change:** Moderate.
-- **Looking ahead:** the workaround should get smaller. An adapter library
-  from Isoplane can provide an asynchronous registration method for each
-  provider, which would make it one line.
+// FetchSettingsAsync is yours: an asynchronous call that returns names and values.
+Dictionary<string, string?> settings = await FetchSettingsAsync(builder.Configuration);
+builder.Configuration.AddInMemoryCollection(settings);
+
+var app = builder.Build();
+```
+
+This runs during [initialization](application-lifecycle.md#initialization),
+so the values are fetched once and every instance starts with them. For
+local development, [User Secrets](local-settings.md#keep-credentials-in-user-secrets)
+need none of this.
+
+Size of the change: moderate.
+
+#### Looking ahead
+
+The workaround should get smaller. An adapter library
+from Isoplane can provide an asynchronous registration method for each
+provider, which would make it one line.
 
 {/* TODO: say how settings and secrets reach a deployed application once that exists; it is expected to make this entry unnecessary for most applications. */}
 
@@ -653,21 +841,25 @@ var order = await db.Orders.FirstAsync(order => order.Id == id);
 return order.Customer.Name;   // reading Customer runs a query synchronously: throws
 ```
 
-- **Used for:** loading related entities when they are first touched.
-- **Workaround:** load what the request needs as part of the query, with
-  [`Include`][Include]:
+Typically used for loading related entities when they are first touched.
 
-  ```csharp
-  var order = await db.Orders.Include(order => order.Customer).FirstAsync(order => order.Id == id);
-  ```
+#### Workaround: load related data explicitly
 
-  Or load a navigation explicitly before reading it, with
-  [`LoadAsync`][ReferenceEntry.LoadAsync]:
-  `await db.Entry(order).Reference(order => order.Customer).LoadAsync();`.
-  This is the lasting approach: a property read can only load by
-  [blocking](dotnet-runtime-differences.md#never-blocks).
-- **Size of the change:** Moderate. Every place that relies on a navigation
-  being loaded on demand has to say what it needs.
+Load what the request needs as part of the query, with
+[`Include`][Include]:
+
+```csharp
+var order = await db.Orders.Include(order => order.Customer).FirstAsync(order => order.Id == id);
+```
+
+Or load a navigation explicitly before reading it, with
+[`LoadAsync`][ReferenceEntry.LoadAsync]:
+`await db.Entry(order).Reference(order => order.Customer).LoadAsync();`.
+This is the lasting approach: a property read can only load by
+[blocking](dotnet-runtime-differences.md#never-blocks).
+
+Size of the change: moderate. Every place that relies on a navigation
+being loaded on demand has to say what it needs.
 
 ### `UseHiLo` keys with `Add` {#hilo}
 
@@ -688,12 +880,16 @@ db.Orders.Add(order);          // throws whenever it needs a new block of keys
 await db.SaveChangesAsync();
 ```
 
-- **Used for:** assigning keys before saving, with fewer round trips than a
-  sequence.
-- **Workaround:** `await db.Orders.AddAsync(order)`
-  ([`AddAsync`][DbContext.AddAsync]), which fetches the block asynchronously.
-  Or use identity columns, the Npgsql provider's default, which need no fetch.
-- **Size of the change:** Small.
+Typically used for assigning keys before saving, with fewer round trips than a
+sequence.
+
+#### Workaround: use `AddAsync`, or identity columns
+
+`await db.Orders.AddAsync(order)`
+([`AddAsync`][DbContext.AddAsync]), which fetches the block asynchronously.
+Or use identity columns, the Npgsql provider's default, which need no fetch.
+
+Size of the change: small.
 
 ### `TransactionScope` {#transaction-scope}
 
@@ -712,22 +908,25 @@ using (var scope = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled)
 }   // leaving the block commits synchronously: throws
 ```
 
-- **Used for:** a transaction around several operations, without passing a
-  transaction object between them.
-- **Workaround:** use the database's own transaction, from
-  [`Database.BeginTransactionAsync`][BeginTransactionAsync] on the context,
-  and commit it with its [`CommitAsync`][CommitAsync].
+Typically used for a transaction around several operations, without passing a
+transaction object between them.
 
-  ```csharp
-  await using var transaction = await db.Database.BeginTransactionAsync();
-  db.Orders.Add(order);
-  await db.SaveChangesAsync();
-  await transaction.CommitAsync();
-  ```
+#### Workaround: use the database's own transaction
 
-- **Size of the change:** Small for one context. Moderate when the scope
-  spans several contexts or connections, which then have to share one
-  transaction explicitly.
+Use the database's own transaction, from
+[`Database.BeginTransactionAsync`][BeginTransactionAsync] on the context,
+and commit it with its [`CommitAsync`][CommitAsync].
+
+```csharp
+await using var transaction = await db.Database.BeginTransactionAsync();
+db.Orders.Add(order);
+await db.SaveChangesAsync();
+await transaction.CommitAsync();
+```
+
+Size of the change: small for one context. Moderate when the scope
+spans several contexts or connections, which then have to share one
+transaction explicitly.
 
 ## Database drivers
 
@@ -746,9 +945,13 @@ if (await reader.ReadAsync())
 Other synchronous disposal works: a connection, a transaction, including one
 that was never committed, and a reader that was read to the end.
 
-- **Used for:** `using var reader = ...` in code that stops reading early.
-- **Workaround:** `await using var reader = await command.ExecuteReaderAsync();`.
-- **Size of the change:** Small.
+Typically seen as `using var reader = ...` in code that stops reading early.
+
+#### Workaround: dispose with `await using`
+
+`await using var reader = await command.ExecuteReaderAsync();`.
+
+Size of the change: small.
 
 ### SQL Server {#sql-server}
 
@@ -759,14 +962,20 @@ Everything built on it fails with it, including
 [`Microsoft.EntityFrameworkCore.SqlServer`][nuget-ef-sqlserver] and its
 [`UseSqlServer`][UseSqlServer].
 
-- **Used for:** SQL Server and Azure SQL.
-- **Workaround:** none. PostgreSQL through Npgsql works; see
-  [Connect PostgreSQL](connect-postgresql.md).
-- **Size of the change:** Large: a different database.
-- **Looking ahead:** SQL Server will work when its driver can open a
-  connection without blocking, which is a change for the driver's maintainers.
-  We also ran the driver's Unix implementation in the sandbox: it signs in
-  synchronously inside [`SqlConnection.OpenAsync`][DbConnection.OpenAsync].
+Typically used for SQL Server and Azure SQL.
+
+#### Workaround: none for SQL Server itself
+
+PostgreSQL through Npgsql works; see [Connect PostgreSQL](connect-postgresql.md).
+
+Size of the change: large: a different database.
+
+#### Looking ahead
+
+SQL Server will work when its driver can open a
+connection without blocking, which is a change for the driver's maintainers.
+We also ran the driver's Unix implementation in the sandbox: it signs in
+synchronously inside [`SqlConnection.OpenAsync`][DbConnection.OpenAsync].
 
 ### MySQL {#mysql}
 
@@ -779,11 +988,17 @@ driver reports the refusal as an unreachable host. Providers built on
 [`Pomelo.EntityFrameworkCore.MySql`][Pomelo], are expected to fail the same way
 and have not been run.
 
-- **Used for:** MySQL and MariaDB.
-- **Workaround:** none.
-- **Looking ahead:** we expect to fix the cause we found, in Isoplane's
-  runtime, with no change to your code. Whether the driver then works in full
-  is not yet known.
+Typically used for MySQL and MariaDB.
+
+#### Workaround: none yet
+
+There is no way to use MySQL from an application today.
+
+#### Looking ahead
+
+We expect to fix the cause we found, in Isoplane's
+runtime, with no change to your code. Whether the driver then works in full
+is not yet known.
 
 ### SQLite {#sqlite}
 
@@ -801,15 +1016,20 @@ await using var connection = new SqliteConnection("Data Source=:memory:");   // 
 await connection.OpenAsync();
 ```
 
-- **Used for:** local development databases, tests and small applications.
-- **Workaround:** none. Use PostgreSQL in development as well. The
-  `isoplane-webapi` template includes a compose file for it; see the
-  [project templates](reference/project-templates.md).
-- **Size of the change:** Large: a different database, in development as
-  well as in production.
-- **Looking ahead:** no fix is possible. SQLite is native code, which would
-  run outside the sandbox, and
-  [nothing is allowed around it](dotnet-runtime-differences.md#nothing-around-the-sandbox).
+Typically used for local development databases, tests and small applications.
+
+#### Workaround: none for SQLite itself
+
+Use PostgreSQL in development as well. The `isoplane-webapi` template includes a compose file for it; see the [project templates](reference/project-templates.md).
+
+Size of the change: large: a different database, in development as
+well as in production.
+
+#### Looking ahead
+
+No fix is possible. SQLite is native code, which would
+run outside the sandbox, and
+[nothing is allowed around it](dotnet-runtime-differences.md#nothing-around-the-sandbox).
 
 ### MongoDB {#mongodb}
 
@@ -824,12 +1044,19 @@ var orders = client.GetDatabase("shop").GetCollection<Order>("orders");
 await orders.InsertOneAsync(order);   // the first operation: throws
 ```
 
-- **Used for:** MongoDB and compatible document databases.
-- **Workaround:** none.
-- **Size of the change:** Large: a different database.
-- **Looking ahead:** MongoDB will work when its driver can monitor its
-  servers without threads of its own, which is a change for the driver's
-  maintainers.
+Typically used for MongoDB and compatible document databases.
+
+#### Workaround: none
+
+There is no way to use MongoDB from an application today.
+
+Size of the change: large: a different database.
+
+#### Looking ahead
+
+MongoDB will work when its driver can monitor its
+servers without threads of its own, which is a change for the driver's
+maintainers.
 
 ## Caching
 
@@ -864,17 +1091,21 @@ cache store
 Data Protection's
 [`PersistKeysToStackExchangeRedis`][PersistKeysToStackExchangeRedis].
 
-- **Used for:** a cache shared between instances, session state, and
-  Data Protection keys.
-- **Workaround:** none with this client.
-  [`IDistributedCache`][IDistributedCache], session and
-  [`HybridCache`][HybridCache] work over a cache that reaches its store
-  through asynchronous calls; we ran them over PostgreSQL. For Data Protection
-  keys, see [Data Protection key stores](#data-protection).
-- **Size of the change:** Large: a different store for the cache.
-- **Looking ahead:** Redis will work when the client can run without
-  threads of its own, which is a change for its maintainers. Why its
-  thread-pool configuration stalls is not yet known.
+Typically used for a cache shared between instances, session state, and
+Data Protection keys.
+
+#### Workaround: none with this client
+
+For Data Protection
+keys, see [Data Protection key stores](#data-protection).
+
+Size of the change: large: a different store for the cache.
+
+#### Looking ahead
+
+Redis will work when the client can run without
+threads of its own, which is a change for its maintainers. Why its
+thread-pool configuration stalls is not yet known.
 
 ## Observability
 
@@ -899,12 +1130,18 @@ builder.Services.AddOpenTelemetry()
         .AddOtlpExporter());   // the application refuses to start
 ```
 
-- **Used for:** sending traces, metrics and logs to a collector.
-- **Workaround:** none that we have run.
-- **Looking ahead:** not yet known. Both timers belong to loops that expect to
-  keep running, and sending in batches after the response is
-  [work between requests](dotnet-runtime-differences.md#work-belongs-to-a-request),
-  so an exporter would have to send within the request instead.
+Typically used for sending traces, metrics and logs to a collector.
+
+#### Workaround: none yet
+
+We have not found one.
+
+#### Looking ahead
+
+Not yet known. Both timers belong to loops that expect to
+keep running, and sending in batches after the response is
+[work between requests](dotnet-runtime-differences.md#work-belongs-to-a-request),
+so an exporter would have to send within the request instead.
 
 ## Model Context Protocol
 
@@ -923,18 +1160,25 @@ builder.Services
     .WithTools<HandbookTools>();
 ```
 
-- **Used for:** servers that start exchanges of their own with a client:
-  sampling, elicitation and unsolicited notifications.
-- **Workaround:** leave [`Stateless`][mcp-http-options] set to `true` on the
-  HTTP transport options, which is its default in version 2.2.0. Every request
-  then stands alone: the server answers calls, and cannot start an exchange of
-  its own. The
-  [`isoplane-mcpserver`](reference/project-templates.md#isoplane-mcpserver)
-  template is a server set up this way.
-- **Size of the change:** Small for a server that only answers tool calls. A
-  server that depends on sampling or elicitation has no workaround.
-- **Looking ahead:** session tracking keeps each session in memory between
-  requests and tidies up from a background service. This session-tracking mode is not supported.
+Typically used for servers that start exchanges of their own with a client:
+sampling, elicitation and unsolicited notifications.
+
+#### Workaround: use stateless mode
+
+Leave [`Stateless`][mcp-http-options] set to `true` on the
+HTTP transport options, which is its default in version 2.2.0. Every request
+then stands alone: the server answers calls, and cannot start an exchange of
+its own. The
+[`isoplane-mcpserver`](reference/project-templates.md#isoplane-mcpserver)
+template is a server set up this way.
+
+Size of the change: small for a server that only answers tool calls. A
+server that depends on sampling or elicitation has no workaround.
+
+#### Looking ahead
+
+Session tracking keeps each session in memory between
+requests and tidies up from a background service. This session-tracking mode is not supported.
 
 ## Packages that work {#works}
 
@@ -1017,6 +1261,7 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [AddFixedWindowLimiter]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.ratelimiting.ratelimiteroptionsextensions.addfixedwindowlimiter
 [AddInMemoryCollection]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.configuration.memoryconfigurationbuilderextensions.addinmemorycollection
 [AddJsonConsole]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.logging.consoleloggerextensions.addjsonconsole
+[AddJsonOptions]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.dependencyinjection.mvccoremvcbuilderextensions.addjsonoptions
 [AddNewtonsoftJson]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.dependencyinjection.newtonsoftjsonmvcbuilderextensions.addnewtonsoftjson
 [AddRateLimiter]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.builder.ratelimiterservicecollectionextensions.addratelimiter
 [AddSession]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.dependencyinjection.sessionservicecollectionextensions.addsession
@@ -1032,6 +1277,7 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [BeginTransactionAsync]: https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.infrastructure.databasefacade.begintransactionasync
 [ClearProviders]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.logging.loggingbuilderextensions.clearproviders
 [CommitAsync]: https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.storage.idbcontexttransaction.commitasync
+[ConfigureHttpJsonOptions]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.dependencyinjection.httpjsonserviceextensions.configurehttpjsonoptions
 [Controller.TempData]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.mvc.controller.tempdata
 [CryptographicException]: https://learn.microsoft.com/dotnet/api/system.security.cryptography.cryptographicexception
 [CryptoStream]: https://learn.microsoft.com/dotnet/api/system.security.cryptography.cryptostream
@@ -1057,7 +1303,6 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [HttpRequest.Form]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.http.httprequest.form
 [HttpRequest.ReadFormAsync]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.http.httprequest.readformasync
 [HttpResponse.Body]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.http.httpresponse.body
-[HybridCache]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.caching.hybrid.hybridcache
 [HybridCache.GetOrCreateAsync]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.caching.hybrid.hybridcache.getorcreateasync
 [IConfigurationProvider.Load]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.configuration.iconfigurationprovider.load
 [IDataProtectionBuilder]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.dataprotection.idataprotectionbuilder
@@ -1103,6 +1348,7 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [PersistKeysToStackExchangeRedis]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.dataprotection.stackexchangeredisdataprotectionbuilderextensions.persistkeystostackexchangeredis
 [PlatformNotSupportedException]: https://learn.microsoft.com/dotnet/api/system.platformnotsupportedexception
 [Pomelo]: https://github.com/PomeloFoundation/Pomelo.EntityFrameworkCore.MySql
+[rdg]: https://learn.microsoft.com/aspnet/core/fundamentals/aot/request-delegate-generator/rdg
 [ReferenceEntry.LoadAsync]: https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.changetracking.referenceentry.loadasync
 [se-redis-basics]: https://stackexchange.github.io/StackExchange.Redis/Basics
 [se-redis-configuration]: https://stackexchange.github.io/StackExchange.Redis/Configuration
@@ -1113,6 +1359,7 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [SqlConnection]: https://learn.microsoft.com/dotnet/api/microsoft.data.sqlclient.sqlconnection
 [SqliteConnection]: https://learn.microsoft.com/dotnet/api/microsoft.data.sqlite.sqliteconnection
 [StackExchange.Redis]: https://stackexchange.github.io/StackExchange.Redis/
+[stj-source-generation]: https://learn.microsoft.com/dotnet/standard/serialization/system-text-json/source-generation
 [Stream.CopyToAsync]: https://learn.microsoft.com/dotnet/api/system.io.stream.copytoasync
 [Stream.Read]: https://learn.microsoft.com/dotnet/api/system.io.stream.read
 [Stream.ReadAsync]: https://learn.microsoft.com/dotnet/api/system.io.stream.readasync
