@@ -108,9 +108,10 @@ Activation.Activated += () =>
 **Isoplane**
 
 - Gives the instance its own copy of the template's memory.
-- Reseeds `Random.Shared`, every `Random` that was created without a seed, and
-  the generator behind `Activity` trace and span identifiers. Cryptographic
-  randomness needs no reseeding: every call draws fresh bytes.
+- Reseeds `Random.Shared`, every `Random` that was created without a seed, the
+  generator behind `Activity` trace and span identifiers, and the one behind
+  SQLite's `random()` and `randomblob()`. Cryptographic randomness needs no
+  reseeding: every call draws fresh bytes.
 - Awaits the `Activated` callbacks one at a time, in the order they subscribed.
   An exception from one fails the request the instance was started for.
 

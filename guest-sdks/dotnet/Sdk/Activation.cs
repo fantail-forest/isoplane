@@ -17,7 +17,8 @@ namespace Isoplane;
 /// </para>
 /// <para>
 /// Isoplane already reseeds, before the event is raised, every <c>Random</c> created without a seed,
-/// <c>Random.Shared</c>, and the generator behind <c>Activity</c> trace and span identifiers.
+/// <c>Random.Shared</c>, the generator behind <c>Activity</c> trace and span identifiers, and the one
+/// behind SQLite's <c>random()</c> and <c>randomblob()</c>.
 /// Cryptographic randomness needs nothing: each call draws fresh bytes. Three things are left to you:
 /// a <c>Random</c> constructed with a seed, even when that seed was itself random; a generator that
 /// is not a <c>System.Random</c>, such as one a library implements; and a value already drawn, such

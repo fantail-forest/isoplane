@@ -196,10 +196,10 @@ after any request. Successive requests can reach different instances.
   it has to be unique to each instance, as an identifier does, replace it when
   the instance activates, by subscribing to `Isoplane.Activation.Activated`.
 - **Random numbers are reseeded for you, with exceptions.** Each instance
-  reseeds `Random.Shared` and every `Random` created without a seed, and
-  cryptographic randomness is always drawn fresh. A `Random` you gave a seed, a
-  generator that is not a `System.Random`, and a value already drawn during
-  initialization are copied as they are.
+  reseeds `Random.Shared`, every `Random` created without a seed and SQLite's
+  `random()`, and cryptographic randomness is always drawn fresh. A `Random`
+  you gave a seed, another generator that is not a `System.Random`, and a value
+  already drawn during initialization are copied as they are.
 - **ASP.NET Core Data Protection keys are shared within a template.** Instances
   use the keys captured in that template. Fresh initialization may create a
   different key; reusing a template retains its key. [Keep the keys across
