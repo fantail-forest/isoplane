@@ -1,6 +1,6 @@
 //! Configure Wasmtime sandbox engines and pooling allocations.
 
-use std::hash::{Hash, Hasher};
+use std::hash::Hash;
 
 use anyhow::{bail, Context, Result};
 use wasmtime::{
@@ -155,9 +155,38 @@ pub(crate) fn assert_feature_set(engine: &Engine) -> Result<()> {
     Ok(())
 }
 
+/// Hashes engine compatibility inputs with BLAKE3.
+struct FingerprintHasher(blake3::Hasher);
+
+impl FingerprintHasher {
+    const CONTEXT: &str = "isoplane engine fingerprint v1";
+
+    fn new() -> Self {
+        Self(blake3::Hasher::new_derive_key(Self::CONTEXT))
+    }
+
+    /// The first 128 bits of the digest, in hexadecimal.
+    fn fingerprint(&self) -> String {
+        self.0.finalize().to_hex()[..32].to_string()
+    }
+}
+
+impl std::hash::Hasher for FingerprintHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        self.0.update(bytes);
+    }
+
+    fn finish(&self) -> u64 {
+        let digest = self.0.finalize();
+        let mut head = [0; 8];
+        head.copy_from_slice(&digest.as_bytes()[..8]);
+        u64::from_le_bytes(head)
+    }
+}
+
 /// Artifact-cache key derived from Wasmtime compatibility inputs and selected engine settings.
 pub(crate) fn engine_fingerprint(engine: &Engine, cfg: &EngineConfig) -> String {
-    let mut h = std::hash::DefaultHasher::new();
+    let mut h = FingerprintHasher::new();
     engine.precompile_compatibility_hash().hash(&mut h);
     cfg.spectre_mitigations.hash(&mut h);
     cfg.guard_size_bytes.hash(&mut h);
@@ -169,7 +198,7 @@ pub(crate) fn engine_fingerprint(engine: &Engine, cfg: &EngineConfig) -> String 
     cfg.table_elements.hash(&mut h);
     cfg.max_tables_per_module.hash(&mut h);
     dense_image_bytes(cfg).hash(&mut h);
-    format!("{:016x}", h.finish())
+    h.fingerprint()
 }
 
 #[cfg(test)]
@@ -314,6 +343,19 @@ mod resource_policy_tests {
             ),
             "a one-byte metadata budget must refuse the module"
         );
+    }
+
+    #[test]
+    fn a_fingerprint_is_a_blake3_digest_of_what_was_hashed() {
+        use std::hash::Hasher;
+        let mut hasher = FingerprintHasher::new();
+        hasher.write(b"pinned revision");
+        hasher.write_u8(7);
+        let expected = blake3::Hasher::new_derive_key(FingerprintHasher::CONTEXT)
+            .update(b"pinned revision")
+            .update(&[7])
+            .finalize();
+        assert_eq!(hasher.fingerprint(), expected.to_hex()[..32]);
     }
 
     #[test]
