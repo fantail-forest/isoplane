@@ -234,13 +234,27 @@ public sealed class TelemetryTests : IDisposable
         Assert.Equal(expected, CommandNames.Classify(args) is { } command ? CommandNames.Name(command) : null);
 
     [Fact]
-    public void A_distribution_is_reported_only_as_the_short_plain_words_the_schema_allows()
+    public void A_distribution_is_reported_as_os_release_states_it_when_it_fits_the_schema()
     {
         Assert.Equal(new LinuxDistribution("ubuntu", "24.04"),
             LinuxDistribution.Parse(["PRETTY_NAME=\"Ubuntu 24.04.1 LTS\"", "ID=ubuntu", "VERSION_ID=\"24.04\"", "HOME_URL=https://ubuntu.com/"]));
         Assert.Equal(new LinuxDistribution("arch", null), LinuxDistribution.Parse(["ID=arch", "BUILD_ID=rolling"]));
+        Assert.Equal(new LinuxDistribution("debian", "13~rc1"), LinuxDistribution.Parse(["ID=debian", "VERSION_ID=13~rc1"]));
+        Assert.Equal(new LinuxDistribution("linux", null), LinuxDistribution.Parse(["NAME=Custom"]));
         Assert.Equal(new LinuxDistribution(null, null), LinuxDistribution.Parse(["ID=\"Some Company's Linux\"", "VERSION_ID=1 (internal build)"]));
-        Assert.Equal(new LinuxDistribution(null, null), LinuxDistribution.Parse([]));
+    }
+
+    [Fact]
+    public void A_distribution_comes_from_the_second_os_release_file_only_when_the_first_is_missing()
+    {
+        var usr = Path.Combine(home.Path, "usr-os-release");
+        File.WriteAllLines(usr, ["ID=fedora", "VERSION_ID=42"]);
+        var missing = Path.Combine(home.Path, "missing-os-release");
+        Assert.Equal(new LinuxDistribution("fedora", "42"), LinuxDistribution.Read([missing, usr]));
+        var etc = Path.Combine(home.Path, "etc-os-release");
+        File.WriteAllLines(etc, ["ID=alpine", "VERSION_ID=3.22.1"]);
+        Assert.Equal(new LinuxDistribution("alpine", "3.22.1"), LinuxDistribution.Read([etc, usr]));
+        Assert.Equal(new LinuxDistribution(null, null), LinuxDistribution.Read([missing]));
     }
 
     [Fact]
@@ -275,8 +289,6 @@ public sealed class TelemetryTests : IDisposable
         Assert.Equal(Allowed("agent"), Names<CodingAgent>());
         Assert.Equal(Allowed("command"), Names<TelemetryCommand>());
         Assert.Equal(Allowed("outcome"), Names<CommandOutcome>());
-        Assert.Equal(Allowed("platform"), Names<TelemetryPlatform>());
-        Assert.Equal(Allowed("osArchitecture"), Names<MachineArchitecture>());
         Assert.Equal(Allowed("failure"), Names<CommandFailure>().Append(null).Order());
         Assert.Equal(CommandEvent.LongestDurationMs, properties.GetProperty("durationMs").GetProperty("maximum").GetInt64());
 
@@ -292,7 +304,7 @@ public sealed class TelemetryTests : IDisposable
     private string Queue(Guid id)
     {
         Host().Outbox.Add(id, new CommandEvent(id, CommandEvent.Timestamp(DateTimeOffset.UtcNow), null, false, CodingAgent.None, TelemetryCommand.Dev,
-            CommandOutcome.Succeeded, 0, null, 1, "0.1.0", TelemetryPlatform.LinuxX64, MachineArchitecture.X64, "6.8", null, null, "10.0.0", null).ToJson());
+            CommandOutcome.Succeeded, 0, null, 1, "0.1.0", "linux-x64", "x64", "6.8", null, null, "10.0.0", null).ToJson());
         return Path.Combine(home.Path, "pending", id + ".json");
     }
 

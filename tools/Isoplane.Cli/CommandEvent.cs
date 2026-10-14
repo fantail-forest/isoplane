@@ -15,21 +15,6 @@ internal enum CommandOutcome { Succeeded, Failed, Cancelled, Crashed }
 
 internal enum CommandFailure { Usage, InvalidData, InvalidOperation, FileSystem, Process, Unexpected }
 
-internal enum TelemetryPlatform
-{
-    [JsonStringEnumMemberName("linux-x64")] LinuxX64,
-    [JsonStringEnumMemberName("linux-arm64")] LinuxArm64,
-    [JsonStringEnumMemberName("linux-musl-x64")] LinuxMuslX64,
-    [JsonStringEnumMemberName("linux-musl-arm64")] LinuxMuslArm64,
-    [JsonStringEnumMemberName("osx-x64")] OsxX64,
-    [JsonStringEnumMemberName("osx-arm64")] OsxArm64,
-    [JsonStringEnumMemberName("win-x64")] WinX64,
-    [JsonStringEnumMemberName("win-arm64")] WinArm64,
-    Other
-}
-
-internal enum MachineArchitecture { X64, Arm64, Other }
-
 /// <summary>
 /// One run of a command, as <c>tools/TelemetryProtocol/command-event.schema.json</c> defines it. Every
 /// value is a number, a flag or a name from a fixed list, so nothing a user typed can be recorded.
@@ -37,7 +22,7 @@ internal enum MachineArchitecture { X64, Arm64, Other }
 internal sealed record CommandEvent(
     Guid Id, string OccurredAt, Guid? InstallId, bool Ci, CodingAgent Agent, TelemetryCommand Command,
     CommandOutcome Outcome, int? ExitCode, CommandFailure? Failure, long DurationMs, string CliVersion,
-    TelemetryPlatform Platform, MachineArchitecture OsArchitecture, string OsVersion, string? Distribution,
+    string Platform, string OsArchitecture, string OsVersion, string? Distribution,
     string? DistributionVersion, string RuntimeVersion, string? Locale)
 {
     internal const long LongestDurationMs = 2_592_000_000;
@@ -111,47 +96,48 @@ internal static class EventSchema
     }
 }
 
-/// <summary>A Linux distribution's identity, as <c>/etc/os-release</c> states it.</summary>
+/// <summary>A Linux distribution's identity, as its os-release file states it.</summary>
 internal sealed record LinuxDistribution(string? Id, string? Version)
 {
-    internal static LinuxDistribution OfThisMachine()
+    // The os-release specification's order: the second is read only when the first is missing.
+    private static readonly string[] Files = ["/etc/os-release", "/usr/lib/os-release"];
+
+    internal static LinuxDistribution OfThisMachine() => OperatingSystem.IsLinux() ? Read(Files) : new(null, null);
+
+    internal static LinuxDistribution Read(IEnumerable<string> files)
     {
-        if (!OperatingSystem.IsLinux()) return new(null, null);
-        try { return Parse(File.ReadLines("/etc/os-release")); }
-        // A system without the file, or one that hides it, has no distribution to report.
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return new(null, null); }
+        foreach (var file in files)
+        {
+            try { return Parse(File.ReadLines(file)); }
+            catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException) { }
+            // A file that is there and cannot be read leaves the distribution unknown.
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return new(null, null); }
+        }
+        return new(null, null);
     }
 
     internal static LinuxDistribution Parse(IEnumerable<string> lines)
     {
         var values = lines.Select(line => line.Split('=', 2)).Where(parts => parts.Length == 2)
             .GroupBy(parts => parts[0].Trim()).ToDictionary(group => group.Key, group => group.Last()[1].Trim().Trim('"', '\''));
-        return new(EventSchema.Fitting("distribution", values.GetValueOrDefault("ID")),
+        // The specification's default for a file that names no distribution.
+        return new(EventSchema.Fitting("distribution", values.GetValueOrDefault("ID", "linux")),
             EventSchema.Fitting("distributionVersion", values.GetValueOrDefault("VERSION_ID")));
     }
 }
 
 /// <summary>What a command event says about the machine and the caller.</summary>
 internal sealed record TelemetryContext(
-    bool Ci, CodingAgent Agent, string CliVersion, TelemetryPlatform Platform, MachineArchitecture OsArchitecture, string OsVersion,
+    bool Ci, CodingAgent Agent, string CliVersion, string Platform, string OsArchitecture, string OsVersion,
     LinuxDistribution Distribution, string RuntimeVersion, string? Locale)
 {
-    private static readonly Dictionary<string, TelemetryPlatform> Platforms =
-        Enum.GetValues<TelemetryPlatform>().ToDictionary(CommandNames.Name, StringComparer.Ordinal);
-
     internal static TelemetryContext Read(Func<string, string?> environment, string cliVersion) => new(
         TelemetryVariables.CiFlags.Any(name => TelemetryVariables.IsOn(environment(name)))
             || TelemetryVariables.CiMarkers.Any(name => environment(name) is { Length: > 0 }),
         TelemetryVariables.Agents.FirstOrDefault(agent => environment(agent.Variable) is { Length: > 0 }).Agent,
         cliVersion,
-        Platforms.GetValueOrDefault(CliPaths.PlatformIdentifier(), TelemetryPlatform.Other),
-        RuntimeInformation.OSArchitecture switch
-        {
-            Architecture.X64 => MachineArchitecture.X64,
-            Architecture.Arm64 => MachineArchitecture.Arm64,
-            // Every other architecture is one Isoplane has no build for.
-            _ => MachineArchitecture.Other
-        },
+        CliPaths.PlatformIdentifier(),
+        RuntimeInformation.OSArchitecture.ToString().ToLowerInvariant(),
         Environment.OSVersion.Version.ToString(),
         LinuxDistribution.OfThisMachine(),
         Environment.Version.ToString(),
