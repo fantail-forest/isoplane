@@ -36,12 +36,18 @@
         dotnet add src/Sample-WebApp package <name>
     -->
     <!--
-      Supplies the DataProtectionKeys table that Data/AppDbContext.cs declares.
-      Referencing it is also what makes UseKeysFromDbContext available in
-      Program.cs: Isoplane.AspNetCore adds that method to a project that
-      references this package.
+      Provides UseKeysFromDbContext, which Program.cs calls to keep the Data
+      Protection keys in the database. It brings in
+      Microsoft.AspNetCore.DataProtection.EntityFrameworkCore, which defines
+      the DataProtectionKeys table that Data/AppDbContext.cs declares.
+
+      Isoplane puts what it adds for one particular library in a package of
+      its own, named after that library, so that an application which does not
+      use Entity Framework Core never restores it: the Isoplane.AspNetCore SDK
+      above does not depend on it. Keep this version equal to the SDK version
+      in the <Project> line, and change both together when you update.
     -->
-    <PackageReference Include="Microsoft.AspNetCore.DataProtection.EntityFrameworkCore" Version="10.0.12" />
+    <PackageReference Include="Isoplane.AspNetCore.DataProtection.EntityFrameworkCore" Version="0.1.0-preview.4" />
     <!-- Used by `dotnet ef` on your machine only; PrivateAssets keeps it out of the application package. -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.12" PrivateAssets="all" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.12" />

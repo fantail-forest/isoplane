@@ -74,6 +74,7 @@ tasks:
     generates:
       - '{{.PUBLICATION}}/nuget/{{.VERSION}}/Isoplane.Sdk.{{.VERSION}}.nupkg'
       - '{{.PUBLICATION}}/nuget/{{.VERSION}}/Isoplane.AspNetCore.{{.VERSION}}.nupkg'
+      - '{{.PUBLICATION}}/nuget/{{.VERSION}}/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.{{.VERSION}}.nupkg'
       - '{{.PUBLICATION}}/nuget/{{.VERSION}}/Isoplane.Templates.{{.VERSION}}.nupkg'
       - '{{.PUBLICATION}}/nuget/{{.VERSION}}/Isoplane.Testing.{{.VERSION}}.nupkg'
       - '{{.PUBLICATION}}/nuget/{{.VERSION}}/Isoplane.Native.{{.VERSION}}.nupkg'
@@ -85,5 +86,5 @@ tasks:
       - 'mkdir -p "{{.PUBLICATION}}/nuget/{{.VERSION}}"'
       - for: [Isoplane.Native, Isoplane.Cli]
         cmd: '"{{.DOTNET}}" msbuild taskfiles/NativePackages/NativePackages.csproj -restore -t:Pack -p:NoBuild=true -p:Configuration=Release -p:ArtifactsPath="{{.ROOT_DIR}}/.build/{{.PLATFORM}}/publication/{{.ITEM}}" -p:PackageOutputPath="{{.PUBLICATION}}/nuget/{{.VERSION}}" -p:PackageId={{.ITEM}} -p:ManagedDirectory="{{.MANAGED}}" -p:IsoplaneNativeRoot="{{.RELEASE_NATIVE_ROOT}}" -p:NoticesDirectory="{{.NOTICES}}"'
-      - 'cp "{{.PACKAGES}}/Isoplane.Sdk.{{.VERSION}}.nupkg" "{{.PACKAGES}}/Isoplane.AspNetCore.{{.VERSION}}.nupkg" "{{.PACKAGES}}/Isoplane.Templates.{{.VERSION}}.nupkg" "{{.PACKAGES}}/Isoplane.Testing.{{.VERSION}}.nupkg" "{{.PUBLICATION}}/nuget/{{.VERSION}}/"'
+      - 'cp "{{.PACKAGES}}/Isoplane.Sdk.{{.VERSION}}.nupkg" "{{.PACKAGES}}/Isoplane.AspNetCore.{{.VERSION}}.nupkg" "{{.PACKAGES}}/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.{{.VERSION}}.nupkg" "{{.PACKAGES}}/Isoplane.Templates.{{.VERSION}}.nupkg" "{{.PACKAGES}}/Isoplane.Testing.{{.VERSION}}.nupkg" "{{.PUBLICATION}}/nuget/{{.VERSION}}/"'
       - '{{.PYTHON}} scripts/assemble-publication.py --releases "{{.RELEASES}}" --version {{.VERSION}} --output "{{.PUBLICATION}}"'

@@ -2,8 +2,6 @@ using System.Security.Cryptography;
 using System.Xml.Linq;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.DataProtection;
-using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration.Memory;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -111,28 +109,5 @@ public sealed class DataProtectionKeysTests
         var messages = new List<string>();
         for (var cause = error; cause is not null; cause = cause.InnerException) messages.Add(cause.Message);
         Assert.Contains(messages, message => message.Contains("LoadDataProtectionKeysAsync", StringComparison.Ordinal));
-    }
-
-    private sealed class KeyContext(DbContextOptions<KeyContext> options) : DbContext(options), IDataProtectionKeyContext
-    {
-        public DbSet<DataProtectionKey> DataProtectionKeys => Set<DataProtectionKey>();
-    }
-
-    [Fact]
-    public async Task builds_sharing_a_database_share_the_key_its_first_build_stored()
-    {
-        var database = Guid.NewGuid().ToString();
-        Task<WebApplication> Build() => BuildAsync(builder =>
-        {
-            builder.Services.AddDbContext<KeyContext>(options => options.UseInMemoryDatabase(database));
-            builder.Services.AddDataProtection().UseKeysFromDbContext<KeyContext>();
-        });
-        await using var earlier = await Build();
-        await earlier.LoadDataProtectionKeysAsync();
-        await using var later = await Build();
-        await later.LoadDataProtectionKeysAsync();
-        Assert.Equal("cookie", Protector(later).Unprotect(Protector(earlier).Protect("cookie")));
-        await using var scope = later.Services.CreateAsyncScope();
-        Assert.Equal(1, await scope.ServiceProvider.GetRequiredService<KeyContext>().DataProtectionKeys.CountAsync());
     }
 }

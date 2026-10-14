@@ -2,6 +2,7 @@
   <Project Path="tools/Isoplane.HotReload/Isoplane.HotReload.csproj" />
   <Project Path="guest-sdks/dotnet/Isoplane.Sdk.csproj" />
   <Project Path="guest-sdks/dotnet/AspNetCore/Isoplane.AspNetCore.csproj" />
+  <Project Path="guest-sdks/dotnet/AspNetCore.DataProtection.EntityFrameworkCore/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.csproj" />
   <Project Path="guest-sdks/dotnet/Templates/Isoplane.Templates.csproj" />
   <Project Path="tools/Isoplane.Cli/Isoplane.Cli.csproj" />
   <Project Path="tools/Isoplane.Native/Isoplane.Native.csproj" />
@@ -11,6 +12,7 @@
   <Project Path="tools/Isoplane.Testing.Tests/Isoplane.Testing.Tests.csproj" />
   <Project Path="guest-sdks/dotnet/Build.Tests/Build.Tests.csproj" />
   <Project Path="guest-sdks/dotnet/AspNetCore.Tests/Isoplane.AspNetCore.Tests.csproj" />
+  <Project Path="guest-sdks/dotnet/AspNetCore.DataProtection.EntityFrameworkCore.Tests/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.Tests.csproj" />
   <Project Path="guest-sdks/dotnet/Analyzers/Isoplane.Analyzers.csproj" />
   <Project Path="guest-sdks/dotnet/Analyzers.CodeFixes/Isoplane.Analyzers.CodeFixes.csproj" />
   <Project Path="guest-sdks/dotnet/Analyzers.Tests/Isoplane.Analyzers.Tests.csproj" />

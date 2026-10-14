@@ -81,6 +81,10 @@ dotnet test
   forms may be refused; reusing a template retains its captured key.
   `UseKeysFromDbContext` in `Program.cs` loads a shared key ring during initialization.
   ASP.NET Core's own `PersistKeysToDbContext` does not work in the sandbox.
+  `UseKeysFromDbContext` comes from the
+  `Isoplane.AspNetCore.DataProtection.EntityFrameworkCore` package. Isoplane
+  puts what it adds for one library in a package named after that library, so
+  an application that does not use Entity Framework Core never restores it.
 - **A request owns its work.** Nothing runs in an instance after its response.
   Page handlers await their database calls, and an application with a
   `BackgroundService` that keeps running after startup refuses to start, and

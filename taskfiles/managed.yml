@@ -29,6 +29,7 @@ tasks:
       - '{{.CLI}}'
       - '{{.MANAGED}}/bin/Isoplane.Sdk/release/Isoplane.Sdk.dll'
       - '{{.MANAGED}}/bin/Isoplane.AspNetCore/release/Isoplane.AspNetCore.dll'
+      - '{{.MANAGED}}/bin/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore/release/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.dll'
       - '{{.MANAGED}}/bin/Isoplane.Testing/release/Isoplane.Testing.dll'
       - '{{.MANAGED}}/publish/Isoplane.Cli/release/Isoplane.Cli.dll'
       - '{{.MANAGED}}/obj/Isoplane.Cli/release/DotnetToolSettings.xml'
@@ -58,6 +59,7 @@ tasks:
       - '{{.MANAGED}}/bin/Isoplane.Testing.Tests/release/Isoplane.Testing.Tests.dll'
       - '{{.MANAGED}}/bin/Build.Tests/release/Build.Tests.dll'
       - '{{.MANAGED}}/bin/Isoplane.AspNetCore.Tests/release/Isoplane.AspNetCore.Tests.dll'
+      - '{{.MANAGED}}/bin/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.Tests/release/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.Tests.dll'
       - '{{.MANAGED}}/bin/Isoplane.Analyzers.Tests/release/Isoplane.Analyzers.Tests.dll'
     cmds:
       - 'test "{{OS}}" = linux || { echo "Run task managed:tests on Linux first." >&2; exit 1; }'
@@ -77,12 +79,12 @@ tasks:
       - build
       - ':runtime'
     sources:
-      - '{{.MANAGED}}/bin/{Isoplane.Sdk,Isoplane.AspNetCore,Isoplane.Templates,Isoplane.Testing,Conformance}/release/*'
+      - '{{.MANAGED}}/bin/{Isoplane.Sdk,Isoplane.AspNetCore,Isoplane.AspNetCore.DataProtection.EntityFrameworkCore,Isoplane.Templates,Isoplane.Testing,Conformance}/release/*'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/Build/**/*'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/MSBuild/**/*'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/AspNetCore/{Sdk,buildTransitive}/**/*'
-      - '{{.ROOT_DIR}}/guest-sdks/dotnet/{Isoplane.Sdk,AspNetCore/Isoplane.AspNetCore,Templates/Isoplane.Templates}.csproj'
-      - '{{.ROOT_DIR}}/guest-sdks/dotnet/{PackageReadme.md,AspNetCore/README.md}'
+      - '{{.ROOT_DIR}}/guest-sdks/dotnet/{Isoplane.Sdk,AspNetCore/Isoplane.AspNetCore,AspNetCore.DataProtection.EntityFrameworkCore/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore,Templates/Isoplane.Templates}.csproj'
+      - '{{.ROOT_DIR}}/guest-sdks/dotnet/{PackageReadme.md,AspNetCore/README.md,AspNetCore.DataProtection.EntityFrameworkCore/PackageReadme.md}'
       - '{{.ROOT_DIR}}/tools/Isoplane.Testing/{Isoplane.Testing.csproj,README.md}'
       - '{{.ROOT_DIR}}/licenses/SdkPackage.props'
       - '{{.ROOT_DIR}}/licenses/Isoplane-SDK-LICENSE.txt'
@@ -95,6 +97,7 @@ tasks:
     generates:
       - '{{.PACKAGES}}/Isoplane.Sdk.*.nupkg'
       - '{{.PACKAGES}}/Isoplane.AspNetCore.*.nupkg'
+      - '{{.PACKAGES}}/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.*.nupkg'
       - '{{.PACKAGES}}/Isoplane.Templates.*.nupkg'
       - '{{.PACKAGES}}/Isoplane.Testing.*.nupkg'
     cmds:
@@ -107,6 +110,7 @@ tasks:
       - for:
           - guest-sdks/dotnet/Isoplane.Sdk.csproj
           - guest-sdks/dotnet/AspNetCore/Isoplane.AspNetCore.csproj
+          - guest-sdks/dotnet/AspNetCore.DataProtection.EntityFrameworkCore/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.csproj
           - guest-sdks/dotnet/Templates/Isoplane.Templates.csproj
           - tools/Isoplane.Testing/Isoplane.Testing.csproj
         task: pack

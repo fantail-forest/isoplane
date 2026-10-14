@@ -1,5 +1,6 @@
 using Isoplane;
 using Isoplane.AspNetCore;
+using Isoplane.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Sample_WebApp.Data;
@@ -50,9 +51,14 @@ builder.Services.AddAppDatabase(builder.Configuration);
 // This is Isoplane's counterpart of PersistKeysToDbContext, which cannot be
 // used here: it reads the database synchronously, and a sandboxed application
 // cannot block. The table is the same, and Data/AppDbContext.cs declares it.
+// UseKeysFromDbContext comes from the
+// Isoplane.AspNetCore.DataProtection.EntityFrameworkCore package, which
+// Sample-WebApp.csproj references; the project file explains why it is a
+// package of its own.
 //
-// Without a database, UseConfiguredKeys() takes the key from a secret setting
-// instead: https://isoplane.dev/docs/dotnet-runtime-differences#keep-data-protection-keys-across-builds
+// Without a database, UseConfiguredKeys() from Isoplane.AspNetCore takes the
+// key from a secret setting instead:
+// https://isoplane.dev/docs/dotnet-runtime-differences#keep-data-protection-keys-across-builds
 builder.Services.AddDataProtection().UseKeysFromDbContext<AppDbContext>();
 
 // Not here: a BackgroundService that keeps running. Isoplane suspends an

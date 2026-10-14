@@ -1,11 +1,4 @@
 <Project>
   <PropertyGroup><_IsoplaneAspNetCoreTargetsImported>true</_IsoplaneAspNetCoreTargetsImported></PropertyGroup>
   <Import Project="Isoplane.AspNetCore.Framework.targets" />
-  <!-- UseKeysFromDbContext needs Entity Framework Core types, so it is compiled into the applications that reference them. -->
-  <Target Name="IsoplaneIncludeDbContextKeyStore" BeforeTargets="CoreCompile" DependsOnTargets="ResolveAssemblyReferences" Condition="'$(Language)' == 'C#'">
-    <ItemGroup>
-      <_IsoplaneDataProtectionEntityFramework Include="@(ReferencePath)" Condition="'%(Filename)' == 'Microsoft.AspNetCore.DataProtection.EntityFrameworkCore'" />
-      <Compile Include="$(MSBuildThisFileDirectory)../source/DataProtectionDbContextKeys.cs" Condition="'@(_IsoplaneDataProtectionEntityFramework)' != ''" Visible="false" />
-    </ItemGroup>
-  </Target>
 </Project>

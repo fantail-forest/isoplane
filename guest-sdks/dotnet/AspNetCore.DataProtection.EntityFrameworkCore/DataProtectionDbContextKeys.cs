@@ -1,16 +1,16 @@
-// Compiled into an application that references Microsoft.AspNetCore.DataProtection.EntityFrameworkCore,
-// so that Isoplane.AspNetCore itself does not depend on Entity Framework Core.
-#nullable enable
-using System.Linq;
 using System.Xml.Linq;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace Isoplane.AspNetCore;
+namespace Isoplane.AspNetCore.DataProtection.EntityFrameworkCore;
 
-internal static class DataProtectionDbContextKeys
+/// <summary>
+/// Keeps ASP.NET Core Data Protection keys in an Entity Framework Core database, loading the shared
+/// key ring during initialization and capturing it in the prepared template.
+/// </summary>
+public static class DataProtectionDbContextKeys
 {
     /// <summary>
     /// Keeps the Data Protection keys in the <c>DataProtectionKeys</c> table of
@@ -18,10 +18,23 @@ internal static class DataProtectionDbContextKeys
     /// reaching the database asynchronously, which the sandbox requires. The table has the same
     /// shape, so the application can share its keys with one hosted elsewhere.
     /// </summary>
+    /// <typeparam name="TContext">The application's context, registered with <c>AddDbContext</c>.</typeparam>
+    /// <param name="builder">What <c>AddDataProtection</c> returned.</param>
+    /// <returns><paramref name="builder"/>.</returns>
     /// <remarks>
-    /// The keys load when initialization finishes; see <see cref="DataProtectionKeys.UseKeysFrom"/>
-    /// for when to load them earlier and how long a build keeps them.
+    /// This is <c>UseKeysFrom</c> from Isoplane.AspNetCore over the table, and behaves as it does.
+    /// The keys load when initialization finishes, so the table must exist by then. An
+    /// <c>Initialization.Initializing</c> callback that protects or unprotects data itself awaits
+    /// <c>app.LoadDataProtectionKeysAsync()</c> first. A prepared template retains the key ring it
+    /// loaded; reusing it reloads none. New initialization can load newer keys.
+    /// <see href="https://isoplane.dev/docs/dotnet-runtime-differences#keep-data-protection-keys-across-builds">Keep Data Protection keys across builds</see>
+    /// describes this in full.
     /// </remarks>
+    /// <example>
+    /// <code>
+    /// builder.Services.AddDataProtection().UseKeysFromDbContext&lt;AppDbContext&gt;();
+    /// </code>
+    /// </example>
     public static IDataProtectionBuilder UseKeysFromDbContext<TContext>(this IDataProtectionBuilder builder)
         where TContext : DbContext, IDataProtectionKeyContext =>
         builder.UseKeysFrom(
