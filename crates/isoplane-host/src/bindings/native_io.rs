@@ -903,7 +903,7 @@ impl Resources {
             Request::BufferSize { .. } => "buffer_size",
             Request::Shutdown { .. } => "shutdown",
             Request::Subscribe(_) => "subscribe",
-            Request::Timer(_) => "initialization retains a timer; dispose it before capture",
+            Request::Timer(_) => "timer",
             Request::Ready(_) => "ready",
             Request::Poll(_) => "poll",
             Request::Drop { .. } => "drop",
