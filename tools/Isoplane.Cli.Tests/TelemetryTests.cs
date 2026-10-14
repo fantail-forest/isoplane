@@ -324,6 +324,7 @@ public sealed class TelemetryTests : IDisposable
             .Append(TelemetryVariables.OtherCiService).Append(null).Order());
         Assert.Equal(Allowed("failure"), Names<CommandFailure>().Append(null).Order());
         Assert.Equal(CommandEvent.LongestDurationMs, properties.GetProperty("durationMs").GetProperty("maximum").GetInt64());
+        Assert.Equal(7, Guid.Parse(recorded.GetProperty("id").GetString()!).Version);
 
         IEnumerable<string?> Allowed(string name) => properties.GetProperty(name).GetProperty("enum").EnumerateArray().Select(value => value.GetString()).Order();
         static IEnumerable<string?> Names<T>() where T : struct, Enum => Enum.GetValues<T>().Select(value => (string?)CommandNames.Name(value)).Order();

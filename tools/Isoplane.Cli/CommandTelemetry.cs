@@ -131,7 +131,9 @@ internal sealed class CommandTelemetry
 
     private void Record(TelemetryHost host, TelemetryContext context, TelemetryCommand name, CommandOutcome outcome, int? exitCode, CommandFailure? failure)
     {
-        var entry = new CommandEvent(Guid.NewGuid(), CommandEvent.Timestamp(host.Time.GetUtcNow()),
+        var now = host.Time.GetUtcNow();
+        // Time-ordered, so that the service's index on (occurredAt, id) grows at its end.
+        var entry = new CommandEvent(Guid.CreateVersion7(now), CommandEvent.Timestamp(now),
             context.Ci ? null : debug ? host.State.Load()?.InstallId : InstallId(host), context.Ci, context.CiProvider, context.Agent,
             name, mode,
             outcome, exitCode is >= 0 and <= 255 ? exitCode : null, failure,
