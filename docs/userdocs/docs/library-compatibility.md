@@ -34,18 +34,18 @@ entry says otherwise.
 | ASP.NET Core | [Session over a distributed cache, and TempData kept in it](#session) | Small change: add one middleware |
 | ASP.NET Core | [`Request.Form`](#request-form) | Small change: use `ReadFormAsync` |
 | ASP.NET Core | [File uploads over 64 KB](#uploads) | Moderate change: read the upload as a stream |
-| ASP.NET Core | [`Request.EnableBuffering()` over 30 KB](#enable-buffering) | Small change: pass a size limit. A later release should not need it |
+| ASP.NET Core | [`Request.EnableBuffering()` over 30 KB](#enable-buffering) | Moderate change: read the body once, as a stream |
 | ASP.NET Core | [Synchronous reads and writes of the request and response body](#synchronous-body) | Small change: call the asynchronous method |
 | ASP.NET Core | [Data Protection key stores](#data-protection) | Small change: use the replacement Isoplane provides |
 | ASP.NET Core | [`Html.Partial` and `Html.RenderPartial`](#html-partial) | Small change: use `<partial>` |
-| ASP.NET Core | [XML formatters over 30 KB](#xml-formatters) | No workaround yet. A later release should fix it |
+| ASP.NET Core | [XML formatters over 30 KB](#xml-formatters) | Moderate change: read and write XML with the asynchronous XML APIs |
 | ASP.NET Core | [Rate limiting middleware](#rate-limiting) | Large change: limit requests elsewhere |
 | ASP.NET Core | [Console logging: `AddConsole`, `AddJsonConsole` and `ClearProviders`](#console-logging) | Small change: delete the calls. A later release should not need it |
 | ASP.NET Core | [Validation attributes, localizers, token callbacks and service factories that do I/O](#synchronous-extension-points) | Moderate change: move the I/O elsewhere |
 | ASP.NET Core | [WebSockets, SignalR's WebSocket transport, Blazor Server](#connections-and-background-work) | Unsupported |
 | ASP.NET Core | [gRPC over HTTP/2](#connections-and-background-work) | Moderate change: use gRPC-Web |
 | ASP.NET Core | [`BackgroundService` and other work between requests](#connections-and-background-work) | Large change: do the work during a request |
-| Newtonsoft.Json for MVC | [Bodies over 30 KB](#newtonsoft-json) | Small change: set two options. A later release should not need them |
+| Newtonsoft.Json for MVC | [Bodies over 30 KB](#newtonsoft-json) | Moderate change: use `System.Text.Json`, which streams |
 | Microsoft.Extensions.Configuration | [`IConfigurationProvider` implementations that load from a remote service, such as Azure Key Vault](#remote-configuration) | Moderate change: fetch them before `builder.Build()` |
 | Entity Framework Core | [Lazy loading](#lazy-loading) | Moderate change: load with `Include` |
 | Entity Framework Core | [`UseHiLo` keys with `Add`](#hilo) | Small change: use `AddAsync` |
@@ -240,21 +240,41 @@ context.Request.Body.Position = 0;   // so that the body can be bound afterwards
 
 - **Used for:** verifying a webhook signature before binding the body, and
   logging request bodies.
-- **Workaround:** pass the largest body you accept as both the threshold
-  and the limit. A body up to that size stays in memory, and a larger one is
-  refused.
+- **Workaround:** read the body once, as a stream, and do both jobs in that
+  pass. For a signed webhook, wrap the body in a
+  [`CryptoStream`][CryptoStream] that computes the signature while the payload
+  is deserialized from it:
 
   ```csharp
-  const int LargestBody = 1024 * 1024;
+  using var hmac = new HMACSHA256(signingKey);
+  Order? order;
+  await using (var hashing = new CryptoStream(context.Request.Body, hmac, CryptoStreamMode.Read, leaveOpen: true))
+  {
+      order = await JsonSerializer.DeserializeAsync<Order>(hashing, cancellationToken: context.RequestAborted);
+      await hashing.CopyToAsync(Stream.Null, context.RequestAborted);   // read to the end, so the hash is complete
+  }
 
-  context.Request.EnableBuffering(bufferThreshold: LargestBody, bufferLimit: LargestBody);
+  var expected = Convert.FromHexString(context.Request.Headers["X-Signature"].ToString());
+  if (!CryptographicOperations.FixedTimeEquals(hmac.Hash!, expected))
+      return Results.Unauthorized();
+
+  // Only now act on the order.
   ```
 
-  The buffered body counts toward the instance's
-  [memory limit](execution-limits.md#memory).
-- **Size of the change:** Small, and temporary. It is two arguments.
-- **Looking ahead:** a later release is expected to make the code above work
-  as written, by giving ASP.NET Core somewhere in memory to buffer.
+  Nothing is held in memory but the object being built. The payload is parsed
+  before its signature is known, so do nothing with it until the comparison
+  has passed.
+
+  Buffering is also possible:
+  `EnableBuffering(bufferThreshold: LargestBody, bufferLimit: LargestBody)`
+  keeps a body up to the size you choose in memory and refuses a larger one.
+  That holds the whole body for the length of the request, counted toward the
+  instance's [memory limit](execution-limits.md#memory), so prefer the single pass where it fits.
+- **Size of the change:** Moderate to read the body once. Small to pass a size
+  limit.
+- **Looking ahead:** a later release is expected to let `EnableBuffering` work
+  as written for bodies that fit in memory. Reading the body once stays the
+  better choice.
 
 ### Synchronous reads and writes of the request and response body {#synchronous-body}
 
@@ -279,9 +299,11 @@ serializer.Serialize(context.Response.Body, report);   // writes synchronously: 
 - **Workaround:** use [`Stream.ReadAsync`][Stream.ReadAsync] and
   [`Stream.WriteAsync`][Stream.WriteAsync], or the library's asynchronous
   method.
-  Where a library has none, have it write to a
-  [`MemoryStream`][MemoryStream] and copy that to the response with
-  [`Stream.CopyToAsync`][Stream.CopyToAsync].
+  Prefer a library that can write asynchronously, since that streams. Where
+  one has no asynchronous method, it can write to a
+  [`MemoryStream`][MemoryStream] that you then copy to the response with
+  [`Stream.CopyToAsync`][Stream.CopyToAsync]; that holds the whole output in
+  memory, so keep it for small responses.
 - **Size of the change:** Small.
 
 ### Data Protection key stores {#data-protection}
@@ -358,11 +380,36 @@ XML request or response larger than about 30 KB to a temporary file, which
 fails with `DirectoryNotFoundException: /tmp/`.
 
 - **Used for:** APIs that accept or return XML.
-- **Workaround:** none through a setting that we have found. JSON through
-  [`System.Text.Json`][System.Text.Json] has no such limit.
-- **Looking ahead:** a later release is expected to make large XML bodies
-  work with no change to your code, by giving ASP.NET Core somewhere in memory
-  to buffer.
+- **Workaround:** read and write XML through the asynchronous XML APIs,
+  which stream the body instead of holding it. To read, use an
+  [`XmlReader`][XmlReader] created with
+  [`Async = true`][XmlReaderSettings.Async], or
+  [`XDocument.LoadAsync`][XDocument.LoadAsync]. To write, use an
+  [`XmlWriter`][XmlWriter] created the same way, or
+  [`XDocument.SaveAsync`][XDocument.SaveAsync].
+
+  ```csharp
+  app.MapPost("/orders", async (HttpContext context) =>
+  {
+      using var reader = XmlReader.Create(context.Request.Body, new XmlReaderSettings { Async = true });
+      while (await reader.ReadAsync())
+      {
+          // Handle each node as it arrives.
+      }
+  });
+  ```
+
+  Buffering is also possible, for a body that has to be bound to a class with
+  [`XmlSerializer`][XmlSerializer], which reads synchronously: refuse a body
+  over a size you choose, copy it to a `MemoryStream` with `CopyToAsync`, and
+  deserialize from that. The whole body is then held in memory, counted toward
+  the instance's [memory limit](execution-limits.md#memory).
+
+  JSON through [`System.Text.Json`][System.Text.Json] has no such limit.
+- **Size of the change:** Moderate. The handler reads and writes the XML
+  itself instead of leaving it to MVC.
+- **Looking ahead:** a later release is expected to make the XML formatters
+  work as written for bodies that fit in memory.
 
 ### Rate limiting middleware {#rate-limiting}
 
@@ -507,12 +554,19 @@ which fails with `DirectoryNotFoundException: /tmp/`.
 
 - **Used for:** applications that keep Newtonsoft.Json for its converters or
   for compatibility with existing clients.
-- **Workaround:** on `MvcNewtonsoftJsonOptions`, raise
+- **Workaround:** use MVC's default JSON formatters, which are built on
+  [`System.Text.Json`][System.Text.Json], by removing the call to
+  `AddNewtonsoftJson`. They read and write the body as a stream and keep no
+  copy of it, whatever its size.
+
+  If the application has to stay on Newtonsoft.Json, buffering is also
+  possible: on `MvcNewtonsoftJsonOptions`, raise
   [`InputFormatterMemoryBufferThreshold`][InputFormatterMemoryBufferThreshold]
   and
   [`OutputFormatterMemoryBufferThreshold`][OutputFormatterMemoryBufferThreshold]
-  to the largest body you expect. Bodies up to that size stay in memory, and a
-  larger one fails as before.
+  to the largest body you expect. A body up to that size is then held in
+  memory in full, counted toward the instance's [memory limit](execution-limits.md#memory), and a larger one fails
+  as before.
 
   ```csharp
   const int LargestBody = 1024 * 1024;
@@ -524,9 +578,11 @@ which fails with `DirectoryNotFoundException: /tmp/`.
   });
   ```
 
-- **Size of the change:** Small, and temporary. It is two settings.
-- **Looking ahead:** a later release is expected to make these settings
-  unnecessary, by giving ASP.NET Core somewhere in memory to buffer.
+- **Size of the change:** Moderate to move to `System.Text.Json`, and more for
+  an application with many Newtonsoft.Json converters or attributes. Small to
+  raise the two thresholds.
+- **Looking ahead:** a later release is expected to make the thresholds
+  unnecessary for bodies that fit in memory.
 
 ## `Microsoft.Extensions.Configuration`
 
@@ -978,6 +1034,7 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [CommitAsync]: https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.storage.idbcontexttransaction.commitasync
 [Controller.TempData]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.mvc.controller.tempdata
 [CryptographicException]: https://learn.microsoft.com/dotnet/api/system.security.cryptography.cryptographicexception
+[CryptoStream]: https://learn.microsoft.com/dotnet/api/system.security.cryptography.cryptostream
 [dapper]: https://www.learndapper.com/
 [DbConnection.OpenAsync]: https://learn.microsoft.com/dotnet/api/system.data.common.dbconnection.openasync
 [DbContext.Add]: https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontext.add
@@ -1077,4 +1134,10 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [UseSqlite]: https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.sqlitedbcontextoptionsbuilderextensions.usesqlite
 [UseSqlServer]: https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.sqlserverdbcontextoptionsextensions.usesqlserver
 [ValidationAttribute.IsValid]: https://learn.microsoft.com/dotnet/api/system.componentmodel.dataannotations.validationattribute.isvalid
+[XDocument.LoadAsync]: https://learn.microsoft.com/dotnet/api/system.xml.linq.xdocument.loadasync
+[XDocument.SaveAsync]: https://learn.microsoft.com/dotnet/api/system.xml.linq.xdocument.saveasync
+[XmlReader]: https://learn.microsoft.com/dotnet/api/system.xml.xmlreader
+[XmlReaderSettings.Async]: https://learn.microsoft.com/dotnet/api/system.xml.xmlreadersettings.async
+[XmlSerializer]: https://learn.microsoft.com/dotnet/api/system.xml.serialization.xmlserializer
 [XmlSerializer.Serialize]: https://learn.microsoft.com/dotnet/api/system.xml.serialization.xmlserializer.serialize
+[XmlWriter]: https://learn.microsoft.com/dotnet/api/system.xml.xmlwriter
