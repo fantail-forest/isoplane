@@ -49,8 +49,8 @@
     -->
     <PackageReference Include="Isoplane.AspNetCore.DataProtection.EntityFrameworkCore" Version="0.1.0-preview.4" />
     <!-- Used by `dotnet ef` on your machine only; PrivateAssets keeps it out of the application package. -->
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.12" PrivateAssets="all" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.12" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.13" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.13" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
   </ItemGroup>
 
