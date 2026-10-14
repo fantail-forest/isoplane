@@ -53,7 +53,7 @@ entry says otherwise.
 | Entity Framework Core | [`UseHiLo` keys with `Add`](#hilo) | Small change: use `AddAsync` |
 | Entity Framework Core | [`TransactionScope`](#transaction-scope) | Small change: use a database transaction |
 | Npgsql | [Disposing a reader that has unread rows](#reader-dispose) | Small change: use `await using` |
-| SqlClient | [SQL Server, including its Entity Framework Core provider](#sql-server) | Not supported: use another database |
+| SqlClient | [SQL Server, including its Entity Framework Core provider](#sql-server) | Not supported yet: waits on work under way in the driver. PostgreSQL works today |
 | MySqlConnector | [MySQL](#mysql) | Not supported yet. A later release should fix the cause we found |
 | Sqlite | [SQLite, including its Entity Framework Core provider](#sqlite) | Cannot be supported: use another database |
 | MongoDB.Driver | [MongoDB](#mongodb) | Not supported: use another database |
@@ -86,7 +86,7 @@ read the stack trace to see which call failed.
 | `DirectoryNotFoundException: /tmp/` | ASP.NET Core tried to move a large request or response to a temporary file. See [uploads](#uploads), [request buffering](#enable-buffering), [Newtonsoft.Json](#newtonsoft-json) and [XML formatters](#xml-formatters). |
 | `IOException: Read-only file system` | Something tried to write a file. The [file system is read-only](dotnet-runtime-differences.md#the-machine-underneath). |
 | [`DllNotFoundException`][DllNotFoundException], sometimes inside a `TypeInitializationException` | A package called into a native library. See [SQLite](#sqlite). |
-| The application refuses to start with `initialization retains a timer` | Something registered at startup started a timer. See [rate limiting](#rate-limiting) and [OpenTelemetry](#opentelemetry). |
+| The application refuses to start with `initialization retains a timer` | Something registered at startup started a timer. The lines beneath the message name each timer and the method that runs or awaits it. See [rate limiting](#rate-limiting) and [OpenTelemetry](#opentelemetry). |
 | The application refuses to start with `unhandled System.PlatformNotSupportedException` and no stack trace | A call made while the application starts failed. The known ones are [console logging](#console-logging) and [remote configuration](#remote-configuration). |
 | The application refuses to start, naming a service that was `Still running once the application had started` | A package registered a background service. See [MCP sessions](#mcp-sessions) and [background work](#connections-and-background-work). |
 | A minimal API endpoint answers 200 with an empty body, or the build fails with `CS9144: Cannot intercept method` | A handler names code that another source generator produces. See [generated code in handlers](#generated-code-in-handlers). |
@@ -955,27 +955,47 @@ Size of the change: small.
 
 ### SQL Server {#sql-server}
 
-[`Microsoft.Data.SqlClient`][nuget-sqlclient] has no implementation for this
-platform: creating a [`SqlConnection`][SqlConnection] throws
+[`Microsoft.Data.SqlClient`][nuget-sqlclient] does not run on Isoplane yet.
+Creating a [`SqlConnection`][SqlConnection] throws
 `PlatformNotSupportedException: Microsoft.Data.SqlClient is not supported on this platform.`
-Everything built on it fails with it, including
+Everything built on the driver fails with it, including
 [`Microsoft.EntityFrameworkCore.SqlServer`][nuget-ef-sqlserver] and its
 [`UseSqlServer`][UseSqlServer].
 
+The driver is not short of anything native here: it has a fully managed
+implementation, which we ran in the sandbox. That implementation blocks. It
+signs in synchronously inside
+[`SqlConnection.OpenAsync`][DbConnection.OpenAsync], and it has no asynchronous
+commit, rollback or close of its own, so those fall back to their synchronous
+forms.
+
 Typically used for SQL Server and Azure SQL.
 
-#### Workaround: none for SQL Server itself
+#### Workaround: none for SQL Server itself, yet
 
-PostgreSQL through Npgsql works; see [Connect PostgreSQL](connect-postgresql.md).
+PostgreSQL through Npgsql works today; see
+[Connect PostgreSQL](connect-postgresql.md).
 
 Size of the change: large: a different database.
 
 #### Looking ahead
 
-SQL Server will work when its driver can open a
-connection without blocking, which is a change for the driver's maintainers.
-We also ran the driver's Unix implementation in the sandbox: it signs in
-synchronously inside [`SqlConnection.OpenAsync`][DbConnection.OpenAsync].
+What stands in the way is being worked on in the driver itself, so we expect
+this to change.
+
+- The driver's maintainers track the blocking sign-in as a known problem
+  ([dotnet/SqlClient#979][sqlclient-979]), under their work to
+  [improve the asynchronous paths of its connection APIs][sqlclient-3459].
+- In October 2026 they wrote that `OpenAsync` "is not yet fully asynchronous
+  down to each individual network call" and that
+  [future work will correct it][sqlclient-pool-v2]. They gave no date.
+- The missing asynchronous commit and rollback are
+  [known to them as well][sqlclient-2215].
+
+Once those paths no longer block, the rest is ours to do: Isoplane has to
+select the driver's managed implementation for its platform, which needs no
+change to your code. We will recheck SQL Server as the driver's releases
+arrive.
 
 ### MySQL {#mysql}
 
@@ -1120,8 +1140,8 @@ two timers were still running when initialization ended:
 - One belongs to the OpenTelemetry SDK's self-diagnostics, which look for a
   configuration file every ten seconds. It starts with the SDK, whichever
   exporter is used.
-- One fires every five seconds, which is the interval at which the batch
-  exporter sends what it has collected.
+- One belongs to the batch exporter, which wakes every five seconds to send
+  what it has collected.
 
 ```csharp
 builder.Services.AddOpenTelemetry()
@@ -1356,6 +1376,10 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [serilog-aspnetcore]: https://github.com/serilog/serilog-aspnetcore
 [serilog-console]: https://github.com/serilog/serilog-sinks-console
 [Socket]: https://learn.microsoft.com/dotnet/api/system.net.sockets.socket
+[sqlclient-2215]: https://github.com/dotnet/SqlClient/issues/2215
+[sqlclient-3459]: https://github.com/dotnet/SqlClient/issues/3459
+[sqlclient-979]: https://github.com/dotnet/SqlClient/issues/979
+[sqlclient-pool-v2]: https://devblogs.microsoft.com/azure-sql/try-sqlclients-new-connection-pool-for-faster-parallel-connections/
 [SqlConnection]: https://learn.microsoft.com/dotnet/api/microsoft.data.sqlclient.sqlconnection
 [SqliteConnection]: https://learn.microsoft.com/dotnet/api/microsoft.data.sqlite.sqliteconnection
 [StackExchange.Redis]: https://stackexchange.github.io/StackExchange.Redis/
