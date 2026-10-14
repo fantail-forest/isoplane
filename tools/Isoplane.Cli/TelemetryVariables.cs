@@ -1,6 +1,23 @@
 namespace Isoplane.Cli;
 
-internal enum CodingAgent { None, Claude, Copilot, Cursor, Gemini }
+internal enum CodingAgent
+{
+    None, Cowork, Claude, Cursor, Gemini, CopilotCli, CopilotApp, CopilotVscode, Codex, Aider, Plandex, Amp, Qwen, Droid,
+    Opencode, Zed, Kimi, Openhands, Goose, Cline, Roo, Windsurf, Replit, Augment, Antigravity, Pi, Other
+}
+
+/// <summary>
+/// Environment variables that name the coding agent running a process: any of <paramref name="Variables"/>
+/// set to anything, or set to <paramref name="Value"/> when one is given. Only the match is recorded.
+/// </summary>
+internal sealed record AgentRule(CodingAgent Agent, string[] Variables, string? Value = null)
+{
+    /// <summary>The name the agent is recorded under, as the event's JSON spells it.</summary>
+    internal string Name => System.Text.Json.JsonNamingPolicy.KebabCaseLower.ConvertName(Agent.ToString());
+
+    internal bool Matches(Func<string, string?> environment) => Variables.Any(variable => environment(variable) is { Length: > 0 } set
+        && (Value is null || string.Equals(set, Value, StringComparison.OrdinalIgnoreCase)));
+}
 
 /// <summary>
 /// A variable a continuous integration service sets, and the name its runs are recorded under. Some
@@ -60,11 +77,41 @@ internal static class TelemetryVariables
             ? OtherCiService : null;
     }
 
-    /// <summary>The variables the .NET CLI reads to name the agent running it.</summary>
-    internal static readonly (string Variable, CodingAgent Agent)[] Agents =
+    /// <summary>
+    /// The rules that name the coding agent running a command, checked in order; the first that matches
+    /// decides. They follow the Aspire CLI's detector
+    /// (https://github.com/dotnet/aspire/blob/main/src/Aspire.Cli/Telemetry/CodingAgentDetector.cs), which
+    /// is maintained as agents change their variables, with Pi added from its own documentation.
+    /// </summary>
+    internal static readonly AgentRule[] Agents =
     [
-        ("CLAUDECODE", CodingAgent.Claude), ("GITHUB_COPILOT_CLI_MODE", CodingAgent.Copilot),
-        ("CURSOR_EDITOR", CodingAgent.Cursor), ("GEMINI_CLI", CodingAgent.Gemini)
+        new(CodingAgent.Cowork, ["CLAUDE_CODE_IS_COWORK"]),
+        new(CodingAgent.Claude, ["CLAUDECODE", "CLAUDE_CODE", "CLAUDE_CODE_ENTRYPOINT"]),
+        new(CodingAgent.Cursor, ["CURSOR_EDITOR", "CURSOR_AI", "CURSOR_TRACE_ID", "CURSOR_AGENT"]),
+        new(CodingAgent.Gemini, ["GEMINI_CLI"]),
+        new(CodingAgent.CopilotCli, ["COPILOT_CLI", "GITHUB_COPILOT_CLI_MODE", "GH_COPILOT_WORKING_DIRECTORY", "COPILOT_MODEL", "COPILOT_ALLOW_ALL", "COPILOT_GITHUB_TOKEN"]),
+        new(CodingAgent.CopilotApp, ["AI_AGENT"], "github_copilot_app_agent"),
+        new(CodingAgent.CopilotVscode, ["AI_AGENT"], "github_copilot_vscode_agent"),
+        new(CodingAgent.CopilotVscode, ["COPILOT_AGENT"]),
+        new(CodingAgent.Codex, ["CODEX_CLI", "CODEX_SANDBOX", "CODEX_CI", "CODEX_THREAD_ID"]),
+        new(CodingAgent.Aider, ["OR_APP_NAME"], "Aider"),
+        new(CodingAgent.Plandex, ["OR_APP_NAME"], "plandex"),
+        new(CodingAgent.Amp, ["AMP_HOME"]),
+        new(CodingAgent.Qwen, ["QWEN_CODE"]),
+        new(CodingAgent.Droid, ["DROID_CLI"]),
+        new(CodingAgent.Opencode, ["OPENCODE_AI"]),
+        new(CodingAgent.Zed, ["ZED_ENVIRONMENT", "ZED_TERM"]),
+        new(CodingAgent.Kimi, ["KIMI_CLI"]),
+        new(CodingAgent.Openhands, ["OR_APP_NAME"], "OpenHands"),
+        new(CodingAgent.Goose, ["GOOSE_TERMINAL", "GOOSE_PROVIDER"]),
+        new(CodingAgent.Cline, ["CLINE_TASK_ID"]),
+        new(CodingAgent.Roo, ["ROO_CODE_TASK_ID"]),
+        new(CodingAgent.Windsurf, ["WINDSURF_SESSION"]),
+        new(CodingAgent.Replit, ["REPL_ID"]),
+        new(CodingAgent.Augment, ["AUGMENT_AGENT"]),
+        new(CodingAgent.Antigravity, ["ANTIGRAVITY_AGENT"]),
+        new(CodingAgent.Pi, ["PI_CODING_AGENT"]),
+        new(CodingAgent.Other, ["AGENT_CLI"]),
     ];
 
     internal static bool IsOn(string? value) => value is "1" || string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);

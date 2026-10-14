@@ -46,7 +46,7 @@ One event for each command. `--help`, `--version` and `isoplane telemetry` recor
 | `installId` | The random identifier of this installation, from telemetry/state.json in the Isoplane home directory. Absent on continuous integration machines. |  |
 | `ci` | Whether the command ran on a continuous integration machine. |  |
 | `ciProvider` | The continuous integration service the command ran on, or other for one the CLI does not recognise. Absent when it did not run on one. | `github-actions`, `azure-pipelines`, `gitlab`, `bitbucket`, `buildkite`, `circleci`, `travis`, `appveyor`, `drone`, `teamcity`, `jenkins`, `aws-codebuild`, `other` |
-| `agent` | The coding agent that ran the command, when its environment identifies one. | `none`, `claude`, `copilot`, `cursor`, `gemini` |
+| `agent` | The coding agent that ran the command, when its environment identifies one. | `none`, `cowork`, `claude`, `cursor`, `gemini`, `copilot-cli`, `copilot-app`, `copilot-vscode`, `codex`, `aider`, `plandex`, `amp`, `qwen`, `droid`, `opencode`, `zed`, `kimi`, `openhands`, `goose`, `cline`, `roo`, `windsurf`, `replit`, `augment`, `antigravity`, `pi`, `other` |
 | `command` | The command that ran. A name the CLI does not recognise is recorded as unknown, never as typed. | `dev`, `debug-adapter`, `setup`, `uninstall-sdk`, `doctor`, `doctor-module`, `cache`, `bundle`, `unknown` |
 | `mode` | Why the command ran: test when Isoplane.Testing started it, debug for a debugging session, and run otherwise. | `run`, `debug`, `test` |
 | `outcome` | How the command ended. | `succeeded`, `failed`, `cancelled`, `crashed` |
@@ -90,7 +90,39 @@ The service that receives an event adds the time it arrived and the country the 
 | `CODEBUILD_BUILD_ID` | `aws-codebuild` |
 | `CI`, unless empty, `false` or `0` | `other` |
 
-`agent` is read from these: `CLAUDECODE`, `GITHUB_COPILOT_CLI_MODE`, `CURSOR_EDITOR`, `GEMINI_CLI`. Only whether a variable is set, or whether it is `true`, is used; no variable's value is collected.
+`agent` names the coding agent from these variables, following the Aspire CLI's list. The first row that matches decides.
+
+| Variables | Recorded as |
+| --- | --- |
+| `CLAUDE_CODE_IS_COWORK` | `cowork` |
+| `CLAUDECODE`, `CLAUDE_CODE`, `CLAUDE_CODE_ENTRYPOINT` | `claude` |
+| `CURSOR_EDITOR`, `CURSOR_AI`, `CURSOR_TRACE_ID`, `CURSOR_AGENT` | `cursor` |
+| `GEMINI_CLI` | `gemini` |
+| `COPILOT_CLI`, `GITHUB_COPILOT_CLI_MODE`, `GH_COPILOT_WORKING_DIRECTORY`, `COPILOT_MODEL`, `COPILOT_ALLOW_ALL`, `COPILOT_GITHUB_TOKEN` | `copilot-cli` |
+| `AI_AGENT`, set to `github_copilot_app_agent` | `copilot-app` |
+| `AI_AGENT`, set to `github_copilot_vscode_agent` | `copilot-vscode` |
+| `COPILOT_AGENT` | `copilot-vscode` |
+| `CODEX_CLI`, `CODEX_SANDBOX`, `CODEX_CI`, `CODEX_THREAD_ID` | `codex` |
+| `OR_APP_NAME`, set to `Aider` | `aider` |
+| `OR_APP_NAME`, set to `plandex` | `plandex` |
+| `AMP_HOME` | `amp` |
+| `QWEN_CODE` | `qwen` |
+| `DROID_CLI` | `droid` |
+| `OPENCODE_AI` | `opencode` |
+| `ZED_ENVIRONMENT`, `ZED_TERM` | `zed` |
+| `KIMI_CLI` | `kimi` |
+| `OR_APP_NAME`, set to `OpenHands` | `openhands` |
+| `GOOSE_TERMINAL`, `GOOSE_PROVIDER` | `goose` |
+| `CLINE_TASK_ID` | `cline` |
+| `ROO_CODE_TASK_ID` | `roo` |
+| `WINDSURF_SESSION` | `windsurf` |
+| `REPL_ID` | `replit` |
+| `AUGMENT_AGENT` | `augment` |
+| `ANTIGRAVITY_AGENT` | `antigravity` |
+| `PI_CODING_AGENT` | `pi` |
+| `AGENT_CLI` | `other` |
+
+Only whether a variable is set, or whether it has the value shown, is used; no variable's value is collected.
 
 ## What is never collected
 

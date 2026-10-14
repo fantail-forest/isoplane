@@ -95,7 +95,8 @@ internal static class Reference
             .Replace("{ci}", "| Variable | Recorded as |\n| --- | --- |\n" + string.Join("\n", TelemetryVariables.CiServices.Select(service =>
                 $"| `{service.Variable}`{(service.AnyValue ? "" : ", when `true` or `1`")} | `{service.Name}` |"))
                 + $"\n| `CI`, unless empty, `false` or `0` | `{TelemetryVariables.OtherCiService}` |")
-            .Replace("{agents}", Names(TelemetryVariables.Agents.Select(agent => agent.Variable))));
+            .Replace("{agents}", "| Variables | Recorded as |\n| --- | --- |\n" + string.Join("\n", TelemetryVariables.Agents.Select(rule =>
+                $"| {Names(rule.Variables)}{(rule.Value is null ? "" : $", set to `{rule.Value}`")} | `{rule.Name}` |"))));
         output.Add("vscode-launch.md", DebugConfiguration.Replace("{launch}", DebugAttributes("launch")).Replace("{attach}", DebugAttributes("attach")));
         return output;
     }
@@ -378,7 +379,11 @@ The service that receives an event adds the time it arrived and the country the 
 
 {ci}
 
-`agent` is read from these: {agents}. Only whether a variable is set, or whether it is `true`, is used; no variable's value is collected.
+`agent` names the coding agent from these variables, following the Aspire CLI's list. The first row that matches decides.
+
+{agents}
+
+Only whether a variable is set, or whether it has the value shown, is used; no variable's value is collected.
 
 ## What is never collected
 

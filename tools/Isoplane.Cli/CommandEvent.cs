@@ -155,7 +155,7 @@ internal sealed record TelemetryContext(
 
     internal static TelemetryContext Read(Func<string, string?> environment, string cliVersion) => new(
         TelemetryVariables.CiService(environment),
-        TelemetryVariables.Agents.FirstOrDefault(agent => environment(agent.Variable) is { Length: > 0 }).Agent,
+        TelemetryVariables.Agents.FirstOrDefault(rule => rule.Matches(environment))?.Agent ?? CodingAgent.None,
         cliVersion,
         CliPaths.PlatformIdentifier(),
         RuntimeInformation.OSArchitecture.ToString().ToLowerInvariant(),

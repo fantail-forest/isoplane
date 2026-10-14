@@ -274,6 +274,33 @@ public sealed class TelemetryTests : IDisposable
     }
 
     [Theory]
+    [InlineData("claude", "CLAUDECODE", "1")]
+    [InlineData("pi", "PI_CODING_AGENT", "true")]
+    [InlineData("copilot-vscode", "AI_AGENT", "GitHub_Copilot_VSCode_Agent")]
+    [InlineData("none", "AI_AGENT", "some_other_agent")]
+    [InlineData("aider", "OR_APP_NAME", "Aider")]
+    [InlineData("none", "OR_APP_NAME", "my-app")]
+    [InlineData("other", "AGENT_CLI", "1")]
+    [InlineData("none", "CLAUDECODE", "")]
+    public void A_coding_agent_is_named_by_the_rules_it_matches(string expected, string variable, string value)
+    {
+        environment[variable] = value;
+        Assert.Equal(expected, CommandNames.Name(TelemetryContext.Read(name => environment.GetValueOrDefault(name), "0.1.0").Agent));
+    }
+
+    [Fact]
+    public void An_agent_rule_names_its_agent_as_the_event_does() =>
+        Assert.All(TelemetryVariables.Agents, rule => Assert.Equal(CommandNames.Name(rule.Agent), rule.Name));
+
+    [Fact]
+    public void The_first_matching_agent_rule_decides()
+    {
+        environment["PI_CODING_AGENT"] = "true";
+        environment["CLAUDECODE"] = "1";
+        Assert.Equal(CodingAgent.Claude, TelemetryContext.Read(name => environment.GetValueOrDefault(name), "0.1.0").Agent);
+    }
+
+    [Theory]
     [InlineData("run", false, "dev")]
     [InlineData("debug", false, "dev", "--debug")]
     [InlineData("debug", false, "debug-adapter")]
