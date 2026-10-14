@@ -37,15 +37,33 @@ tasks:
   runtime:
     desc: Compile the shared runtime once for the sessions the native tests start
     run: once
-    deps: [':initialize', ':fixtures:feed']
+    deps: [':initialize', 'runtime:inputs']
     vars:
       # The packaged CLI's files and release library, so that its runtime cache entries match the installed tool's.
       PACKAGED_CLI: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/test-runtimes/cli'
     env:
       ISOPLANE_CACHE_DIR: '{{.TEST_RUNTIME_CACHE}}'
+    preconditions:
+      - msg: Prepare the published CLI and runtime modules with task fixtures on Linux.
+        sh: 'test -f "{{.MANAGED}}/publish/Isoplane.Cli/release/Isoplane.Cli.dll" && test -f "{{.MODULES}}/runtime.json"'
     cmds:
       - '"{{.DOTNET}}" msbuild taskfiles/StageCli.proj -nologo -p:PublishedCli="{{.MANAGED}}/publish/Isoplane.Cli/release" -p:NativeLibrary="{{.RELEASE_NATIVE_LIBRARY}}" -p:CliDirectory="{{.PACKAGED_CLI}}" -p:Platform={{.PLATFORM}}'
       - '"{{.DOTNET}}" "{{.PACKAGED_CLI}}/Isoplane.Cli.dll" prepare-runtime --runtime "{{.MODULES}}"'
+
+  runtime:inputs:
+    internal: true
+    run: once
+    cmds:
+      # Other hosts consume the published CLI and runtime modules that task fixtures prepared on Linux.
+      - task: 'runtime:inputs:{{if eq OS "linux"}}shared{{else}}native{{end}}'
+
+  runtime:inputs:shared:
+    internal: true
+    deps: [':fixtures:feed']
+
+  runtime:inputs:native:
+    internal: true
+    deps: [':native:release']
 
   dotnet:
     deps:
