@@ -25,7 +25,7 @@ including a replacement method that Isoplane provides.
 [Packages that work](#works) and [packages not checked yet](#not-checked) are
 at the end.
 
-Everything here was run in the sandbox with SDK 0.1.0-preview.4, unless its
+Everything here was run in the sandbox with SDK 0.1.0, unless its
 entry says otherwise.
 
 ## At a glance {#summary}
@@ -58,6 +58,7 @@ entry says otherwise.
 | MongoDB.Driver | [MongoDB](#mongodb) | Large: use another database | Only in the driver |
 | StackExchange.Redis | [Redis, including the Redis distributed cache](#redis) | Large: use another cache store | Only in the client library |
 | OpenTelemetry | [Exporting telemetry over OTLP](#opentelemetry) | None yet | Not known yet |
+| ModelContextProtocol | [An MCP server that tracks sessions](#mcp-sessions) | Small: use stateless mode | Needs instances that stay running |
 
 The sections below give each package's full name.
 
@@ -88,6 +89,7 @@ read the stack trace to see which call failed.
 | [`DllNotFoundException`][DllNotFoundException], sometimes inside a `TypeInitializationException` | A package called into a native library. See [SQLite](#sqlite). |
 | The application refuses to start with `initialization retains a timer` | Something registered at startup started a timer. See [rate limiting](#rate-limiting) and [OpenTelemetry](#opentelemetry). |
 | The application refuses to start with `unhandled System.PlatformNotSupportedException` and no stack trace | A call made while the application starts failed. The known ones are [console logging](#console-logging) and [remote configuration](#remote-configuration). |
+| The application refuses to start, naming a service that was `Still running once the application had started` | A package registered a background service. See [MCP sessions](#mcp-sessions) and [background work](#connections-and-background-work). |
 | No error, but session values or TempData are missing on the next request | The session was loaded synchronously. See [session](#session). |
 
 ## ASP.NET Core
@@ -861,12 +863,44 @@ builder.Services.AddOpenTelemetry()
   [work between requests](dotnet-runtime-differences.md#work-belongs-to-a-request),
   so an exporter would have to send within the request instead.
 
+## Model Context Protocol
+
+### An MCP server that tracks sessions {#mcp-sessions}
+
+[`ModelContextProtocol.AspNetCore`][nuget-mcp] serves the Model Context
+Protocol over Streamable HTTP. In its [stateless mode][mcp-stateless] it works.
+With session tracking switched on, the package registers a background service,
+and the application refuses to start with an error that names
+`ModelContextProtocol.AspNetCore.IdleTrackingBackgroundService`.
+
+```csharp
+builder.Services
+    .AddMcpServer()
+    .WithHttpTransport(options => options.Stateless = false)   // the application refuses to start
+    .WithTools<HandbookTools>();
+```
+
+- **Used for:** servers that start exchanges of their own with a client:
+  sampling, elicitation and unsolicited notifications.
+- **Workaround:** leave [`Stateless`][mcp-http-options] set to `true` on the
+  HTTP transport options, which is its default in version 2.2.0. Every request
+  then stands alone: the server answers calls, and cannot start an exchange of
+  its own. The
+  [`isoplane-mcpserver`](reference/project-templates.md#isoplane-mcpserver)
+  template is a server set up this way.
+- **Size of the change:** Small for a server that only answers tool calls. A
+  server that depends on sampling or elicitation has no workaround.
+- **Can it be fixed?** It needs instances that stay running. Session tracking
+  keeps each session in memory between requests and tidies up from a
+  background service. This session-tracking mode is not supported.
+
 ## Packages that work {#works}
 
 These ran in the sandbox as they would anywhere else. Each entry says what we
 exercised, which is not everything the package does.
 
-- **ASP.NET Core 10.0.** Minimal APIs, MVC controllers and Razor views, JSON
+- **ASP.NET Core 10.0.** Minimal APIs, MVC controllers and Razor views, Razor
+  Pages with tag helpers, model validation and TempData kept in a cookie, JSON
   bodies of 100 KB in both directions, URL-encoded forms of several megabytes,
   antiforgery tokens, output caching, response compression and health checks.
 - **ASP.NET Core Identity** with
@@ -896,6 +930,8 @@ exercised, which is not everything the package does.
   asynchronous rules through [`ValidateAsync`][fluentvalidation-async].
 - **[`MediatR`][mediatr] 12.5.0.** `IMediator.Send` to a handler that queries a database.
 - **[`AutoMapper`][automapper] 14.0.0.** Mapping an entity to a record.
+- **[`ModelContextProtocol.AspNetCore`][nuget-mcp] 2.2.0.** Tools called
+  through the MCP client, over stateless Streamable HTTP.
 - **[`Swashbuckle.AspNetCore`][swashbuckle] 10.3.0.** Generating the OpenAPI document. The
   Swagger UI was not exercised.
 
@@ -992,6 +1028,8 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [IXmlRepository]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.dataprotection.repositories.ixmlrepository
 [JwtBearerOptions.Authority]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.authentication.jwtbearer.jwtbeareroptions.authority
 [JwtBearerOptions.MetadataAddress]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.authentication.jwtbearer.jwtbeareroptions.metadataaddress
+[mcp-http-options]: https://csharp.sdk.modelcontextprotocol.io/v2/api/ModelContextProtocol.AspNetCore.HttpServerTransportOptions.html
+[mcp-stateless]: https://csharp.sdk.modelcontextprotocol.io/v2/concepts/stateless/stateless.html
 [mediatr]: https://github.com/jbogard/MediatR
 [MemoryStream]: https://learn.microsoft.com/dotnet/api/system.io.memorystream
 [Microsoft.Data.Sqlite]: https://learn.microsoft.com/dotnet/api/microsoft.data.sqlite
@@ -1008,6 +1046,7 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [nuget-ef-proxies]: https://www.nuget.org/packages/Microsoft.EntityFrameworkCore.Proxies
 [nuget-ef-sqlite]: https://www.nuget.org/packages/Microsoft.EntityFrameworkCore.Sqlite
 [nuget-ef-sqlserver]: https://www.nuget.org/packages/Microsoft.EntityFrameworkCore.SqlServer
+[nuget-mcp]: https://www.nuget.org/packages/ModelContextProtocol.AspNetCore
 [nuget-newtonsoft]: https://www.nuget.org/packages/Microsoft.AspNetCore.Mvc.NewtonsoftJson
 [nuget-sqlclient]: https://www.nuget.org/packages/Microsoft.Data.SqlClient
 [otlp-exporter]: https://github.com/open-telemetry/opentelemetry-dotnet/blob/main/src/OpenTelemetry.Exporter.OpenTelemetryProtocol/README.md
