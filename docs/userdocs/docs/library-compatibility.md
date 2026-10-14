@@ -41,13 +41,13 @@ entry says otherwise.
 | ASP.NET Core | [Minimal API handlers that use source-generated code](#generated-code-in-handlers) | Small change: register the JSON context and return objects. Or switch one generator off |
 | ASP.NET Core | [Data Protection key stores](#data-protection) | Small change: use the replacement Isoplane provides |
 | ASP.NET Core | [XML formatters over 30 KB](#xml-formatters) | Moderate change: use the asynchronous XML APIs. Or buffer up to a limit |
+| ASP.NET Core | [Newtonsoft.Json formatters over 30 KB](#newtonsoft-json) | Moderate to large change: move to `System.Text.Json`. Or keep Newtonsoft.Json and raise two limits |
 | ASP.NET Core | [Rate limiting middleware](#rate-limiting) | Large change: limit requests elsewhere. Or a per-instance limiter topped up on each request |
 | ASP.NET Core | [Console logging: `AddConsole`, `AddJsonConsole` and `ClearProviders`](#console-logging) | Small change: delete the calls. A later release should not need it |
 | ASP.NET Core | [Validation attributes, localizers, token callbacks and service factories that do I/O](#synchronous-extension-points) | Moderate change: move the I/O elsewhere |
 | ASP.NET Core | [WebSockets, SignalR's WebSocket transport, Blazor Server](#connections-and-background-work) | Unsupported |
 | ASP.NET Core | [gRPC over HTTP/2](#connections-and-background-work) | Moderate change: use gRPC-Web |
 | ASP.NET Core | [`BackgroundService` and other work between requests](#connections-and-background-work) | Large change: do the work during a request |
-| Newtonsoft.Json for MVC | [Bodies over 30 KB](#newtonsoft-json) | Moderate to large change: move to `System.Text.Json`. Or keep Newtonsoft.Json and raise two limits |
 | Microsoft.Extensions.Configuration | [`IConfigurationProvider` implementations that load from a remote service, such as Azure Key Vault](#remote-configuration) | Moderate change: fetch them before `builder.Build()` |
 | Entity Framework Core | [Lazy loading](#lazy-loading) | Moderate change: load with `Include` |
 | Entity Framework Core | [`TransactionScope`](#transaction-scope) | Small change: use a database transaction |
@@ -92,7 +92,8 @@ read the stack trace to see which call failed.
 ## ASP.NET Core
 
 These ship with the Isoplane SDK as part of ASP.NET Core, so they need no
-package reference.
+package reference, except the Newtonsoft.Json formatters, which come from a
+package of their own.
 
 ### Session over a distributed cache {#session}
 
@@ -442,6 +443,80 @@ Size of the change: small to moderate.
 A later release is expected to make the XML formatters work as written for
 bodies that fit in memory.
 
+### Newtonsoft.Json formatters over 30 KB {#newtonsoft-json}
+
+With [`AddNewtonsoftJson`][AddNewtonsoftJson], from the
+[`Microsoft.AspNetCore.Mvc.NewtonsoftJson`][nuget-newtonsoft] package, MVC
+moves a JSON request or response larger than about 30 KB to a temporary file,
+which fails with `DirectoryNotFoundException: /tmp/`.
+
+Typically used by applications that keep Newtonsoft.Json for its converters or
+for compatibility with existing clients. There are two ways through, and the
+second keeps Newtonsoft.Json.
+
+#### Recommended workaround: `System.Text.Json` with source generation
+
+Remove the call to `AddNewtonsoftJson`, so that MVC uses its default JSON
+formatters, which are built on [`System.Text.Json`][System.Text.Json]. They
+read and write the body as a stream and keep no copy of it, whatever its size.
+
+Then add a [source-generated context][stj-source-generation] for the types the
+API exchanges. The serialization code is written when the application builds,
+on your machine, so the running application does not work it out by
+reflection.
+
+```csharp
+[JsonSerializable(typeof(Order))]
+[JsonSerializable(typeof(OrderSummary))]
+internal sealed partial class AppJsonContext : JsonSerializerContext;
+
+// For controllers:
+builder.Services.AddControllers().AddJsonOptions(options =>
+    options.JsonSerializerOptions.TypeInfoResolverChain.Insert(0, AppJsonContext.Default));
+
+// For minimal APIs:
+builder.Services.ConfigureHttpJsonOptions(options =>
+    options.SerializerOptions.TypeInfoResolverChain.Insert(0, AppJsonContext.Default));
+```
+
+The two registrations are [`AddJsonOptions`][AddJsonOptions] and
+[`ConfigureHttpJsonOptions`][ConfigureHttpJsonOptions]. Let ASP.NET Core do the
+serializing from there: a minimal API handler that names the context's members
+itself runs into
+[another entry on this page](#generated-code-in-handlers).
+
+Size of the change: moderate, and large for an application with many
+Newtonsoft.Json converters or attributes, which have to be rewritten for
+`System.Text.Json`.
+
+#### Alternative workaround: keep Newtonsoft.Json and raise its buffers
+
+On `MvcNewtonsoftJsonOptions`, raise
+[`InputFormatterMemoryBufferThreshold`][InputFormatterMemoryBufferThreshold]
+and
+[`OutputFormatterMemoryBufferThreshold`][OutputFormatterMemoryBufferThreshold]
+to the largest body you expect.
+
+```csharp
+const int LargestBody = 1024 * 1024;
+
+builder.Services.AddControllers().AddNewtonsoftJson(options =>
+{
+    options.InputFormatterMemoryBufferThreshold = LargestBody;
+    options.OutputFormatterMemoryBufferThreshold = LargestBody;
+});
+```
+
+A body up to that size is then held in memory in full, counted toward the
+instance's [memory limit](execution-limits.md#memory), and a larger one fails as before.
+
+Size of the change: small.
+
+#### Looking ahead
+
+A later release is expected to make the thresholds unnecessary for bodies that
+fit in memory.
+
 ### Rate limiting middleware {#rate-limiting}
 
 An application that calls [`UseRateLimiter`][UseRateLimiter] refuses to start:
@@ -644,82 +719,6 @@ complete.
   recurring timer or a queue consumer has nothing to run on between requests.
   Doing that work while a request is handled is a large change. See
   [Work belongs to a request](dotnet-runtime-differences.md#work-belongs-to-a-request).
-
-## `Microsoft.AspNetCore.Mvc.NewtonsoftJson`
-
-### Bodies over 30 KB {#newtonsoft-json}
-
-With [`AddNewtonsoftJson`][AddNewtonsoftJson], from the
-[`Microsoft.AspNetCore.Mvc.NewtonsoftJson`][nuget-newtonsoft] package, MVC
-moves a JSON request or response larger than about 30 KB to a temporary file,
-which fails with `DirectoryNotFoundException: /tmp/`.
-
-Typically used by applications that keep Newtonsoft.Json for its converters or
-for compatibility with existing clients. There are two ways through, and the
-second keeps Newtonsoft.Json.
-
-#### Recommended workaround: `System.Text.Json` with source generation
-
-Remove the call to `AddNewtonsoftJson`, so that MVC uses its default JSON
-formatters, which are built on [`System.Text.Json`][System.Text.Json]. They
-read and write the body as a stream and keep no copy of it, whatever its size.
-
-Then add a [source-generated context][stj-source-generation] for the types the
-API exchanges. The serialization code is written when the application builds,
-on your machine, so the running application does not work it out by
-reflection.
-
-```csharp
-[JsonSerializable(typeof(Order))]
-[JsonSerializable(typeof(OrderSummary))]
-internal sealed partial class AppJsonContext : JsonSerializerContext;
-
-// For controllers:
-builder.Services.AddControllers().AddJsonOptions(options =>
-    options.JsonSerializerOptions.TypeInfoResolverChain.Insert(0, AppJsonContext.Default));
-
-// For minimal APIs:
-builder.Services.ConfigureHttpJsonOptions(options =>
-    options.SerializerOptions.TypeInfoResolverChain.Insert(0, AppJsonContext.Default));
-```
-
-The two registrations are [`AddJsonOptions`][AddJsonOptions] and
-[`ConfigureHttpJsonOptions`][ConfigureHttpJsonOptions]. Let ASP.NET Core do the
-serializing from there: a minimal API handler that names the context's members
-itself runs into
-[another entry on this page](#generated-code-in-handlers).
-
-Size of the change: moderate, and large for an application with many
-Newtonsoft.Json converters or attributes, which have to be rewritten for
-`System.Text.Json`.
-
-#### Alternative workaround: keep Newtonsoft.Json and raise its buffers
-
-On `MvcNewtonsoftJsonOptions`, raise
-[`InputFormatterMemoryBufferThreshold`][InputFormatterMemoryBufferThreshold]
-and
-[`OutputFormatterMemoryBufferThreshold`][OutputFormatterMemoryBufferThreshold]
-to the largest body you expect.
-
-```csharp
-const int LargestBody = 1024 * 1024;
-
-builder.Services.AddControllers().AddNewtonsoftJson(options =>
-{
-    options.InputFormatterMemoryBufferThreshold = LargestBody;
-    options.OutputFormatterMemoryBufferThreshold = LargestBody;
-});
-```
-
-A body up to that size is then held in memory in full, counted toward the
-instance's [memory limit](execution-limits.md#memory), and a larger one fails as before.
-
-Size of the change: small.
-
-#### Looking ahead
-
-A later release is expected to make the thresholds unnecessary for bodies that
-fit in memory.
 
 ## `Microsoft.Extensions.Configuration`
 
