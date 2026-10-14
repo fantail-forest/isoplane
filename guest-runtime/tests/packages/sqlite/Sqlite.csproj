@@ -1,0 +1,15 @@
+<Project>
+  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
+  <!-- SQLite through unmodified Microsoft.Data.Sqlite and EF Core, served by
+       the runtime's e_sqlite3. -->
+  <Import Project="../Package.props" />
+  <PropertyGroup>
+    <AssemblyName>SqliteUse</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.13" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="$(IsoplaneSqlitePclRawVersion)" Condition="'$(IsoplaneSqlitePclRawVersion)' != ''" />
+  </ItemGroup>
+  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
+  <Import Project="../Package.targets" />
+</Project>

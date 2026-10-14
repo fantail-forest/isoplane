@@ -615,6 +615,78 @@ async fn a_package_delegate_marshalled_to_a_function_pointer_is_refused() {
     );
 }
 
+/// The `sqlite` package's answer for one use of SQLite, after a park and
+/// across a Store restoration.
+async fn sqlite_use(path: &str) -> String {
+    answer_across_restored_stores(package("sqlite"), path).await
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_in_memory_sqlite_database_runs_the_applications_function_and_collation() {
+    assert_eq!(
+        sqlite_use("/memory").await,
+        "cba;6",
+        "Microsoft.Data.Sqlite must read back what it wrote, ordering by the package's collation and calling its function"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_named_shared_cache_sqlite_database_is_shared_between_connections() {
+    assert_eq!(
+        sqlite_use("/shared").await,
+        "Auckland,Paris,Tokyo",
+        "a connection to a named in-memory database must see what another connection wrote to it"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_in_memory_sqlite_database_loaded_as_the_instance_starts_serves_its_requests() {
+    assert_eq!(
+        sqlite_use("/reference").await,
+        "France,New Zealand",
+        "a shared-cache database the package's activation filled must be there for a request's own connection"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn ef_core_over_sqlite_runs_its_registered_functions_collation_and_aggregate() {
+    assert_eq!(
+        sqlite_use("/catalog").await,
+        "saucer,cup,kettle;43.75",
+        "EF Core's decimal comparison, ordering and sum must run through the functions, collation and aggregate it registers with SQLite"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn ef_core_over_sqlite_runs_with_the_sqlitepclraw_release_the_application_chooses() {
+    assert_eq!(
+        answer_across_restored_stores(package("sqlite-pclraw3"), "/catalog").await,
+        "saucer,cup,kettle;43.75",
+        "the runtime's e_sqlite3 must serve SQLitePCLRaw 3's imports and callbacks as it serves the 2.x release EF Core selects"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_file_backed_sqlite_database_is_refused_naming_in_memory_instead() {
+    let answer = sqlite_use("/file").await;
+    assert!(
+        answer.starts_with("SqliteException: SQLite Error 14: 'file-backed databases are not available")
+            && answer.contains("Data Source=:memory:"),
+        "opening a database file must fail saying why and naming the in-memory alternative: {answer}"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_locked_sqlite_table_fails_the_command_instead_of_waiting() {
+    // Microsoft.Data.Sqlite retries a locked statement after Thread.Sleep,
+    // which throws in a guest rather than wait while the lock's holder cannot run.
+    assert_eq!(
+        sqlite_use("/locked").await,
+        "PlatformNotSupportedException: Arg_PlatformNotSupported",
+        "Microsoft.Data.Sqlite's retry on a locked table must fail the command, not wait inside the call"
+    );
+}
+
 /// The first dispatch of `path` on the prepared `diagnostics` package, and
 /// what the guest logged.
 async fn diagnose(path: &str) -> (isoplane_engine::DispatchOutcome, Vec<String>) {

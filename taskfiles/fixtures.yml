@@ -210,6 +210,8 @@ tasks:
       - task: package:beta
       - task: package:native
       - task: package:web
+      - task: package:sqlite
+      - task: package:sqlite-pclraw3
       - task: package:debugger
       - task: package:debugger-optimized
       - task: package:diagnostics
@@ -272,6 +274,21 @@ tasks:
       - task: package:build
         vars:
           NAME: web
+
+  package:sqlite:
+    deps: [':runtime']
+    cmds:
+      - task: package:build
+        vars:
+          NAME: sqlite
+
+  package:sqlite-pclraw3:
+    deps: [':runtime']
+    cmds:
+      - task: package:build
+        vars:
+          NAME: sqlite-pclraw3
+          SOURCE_NAME: sqlite
 
   package:debugger:
     deps: [':runtime', 'debugger:sources']

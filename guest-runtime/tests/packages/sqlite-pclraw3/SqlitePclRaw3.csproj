@@ -1,0 +1,12 @@
+<Project>
+  <!-- The sqlite package with the application choosing SQLitePCLRaw 3, which
+       the runtime's e_sqlite3 serves as it serves the 2.x release
+       Microsoft.Data.Sqlite selects. -->
+  <PropertyGroup>
+    <IsoplaneSqlitePclRawVersion>3.0.5</IsoplaneSqlitePclRawVersion>
+  </PropertyGroup>
+  <Import Project="../sqlite/Sqlite.csproj" />
+  <ItemGroup>
+    <Compile Include="../sqlite/*.cs" />
+  </ItemGroup>
+</Project>
