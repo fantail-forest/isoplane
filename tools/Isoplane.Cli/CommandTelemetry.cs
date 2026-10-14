@@ -150,6 +150,9 @@ internal sealed class CommandTelemetry
         if (state.InstallId is { } known) return known;
         var created = Guid.NewGuid();
         host.State.Save(state with { InstallId = created });
+        var now = host.Time.GetUtcNow();
+        var registration = new InstallationEvent(Guid.CreateVersion7(now), CommandEvent.Timestamp(now), created);
+        host.Outbox.Add(registration.Id, registration.ToJson());
         return created;
     }
 

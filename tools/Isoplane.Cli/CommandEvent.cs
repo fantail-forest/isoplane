@@ -42,6 +42,17 @@ internal sealed record CommandEvent(
     internal string ToJson() => JsonSerializer.Serialize(this, Json);
 }
 
+/// <summary>
+/// A new installation identifier, as <c>tools/TelemetryProtocol/installation-event.schema.json</c> defines
+/// it. The service counts an installation's command events once it has seen this.
+/// </summary>
+internal sealed record InstallationEvent(Guid Id, string OccurredAt, Guid InstallId)
+{
+    public string Event => "installation";
+
+    internal string ToJson() => JsonSerializer.Serialize(this, CommandEvent.Json);
+}
+
 internal static class CommandNames
 {
     private static readonly Dictionary<string, TelemetryCommand> Named = Enum.GetValues<TelemetryCommand>()

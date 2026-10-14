@@ -23,23 +23,24 @@ public sealed class TelemetryTests : IDisposable
     }
 
     [Fact]
-    public async Task The_first_run_shows_the_notice_and_sends_nothing_and_the_next_run_sends_its_event()
+    public async Task The_first_run_shows_the_notice_and_sends_nothing_and_the_next_run_sends_its_events()
     {
-        var first = CommandTelemetry.Begin(["dev"], Host());
+        var first = CommandTelemetry.Begin(["setup"], Host());
         first.Ended(0);
         await first.Upload;
         Assert.Contains(CommandTelemetry.Notice, error.ToString());
         Assert.Empty(service.Requests);
-        var recorded = Assert.Single(Pending());
+        var identifier = Host().State.Load()!.InstallId;
+        Assert.Equal(["command", "installation"], Pending().Select(Kind).Order());
 
-        var second = CommandTelemetry.Begin(["setup"], Host());
+        var second = CommandTelemetry.Begin(["dev"], Host());
         await second.Upload;
         second.Ended(0);
-        var sent = Assert.Single(JsonDocument.Parse(Assert.Single(service.Requests)).RootElement.GetProperty("events").EnumerateArray());
-        Assert.Equal(recorded, sent.GetProperty("id").GetString() + ".json");
-        Assert.Equal("dev", sent.GetProperty("command").GetString());
+        var sent = JsonDocument.Parse(Assert.Single(service.Requests)).RootElement.GetProperty("events").EnumerateArray().ToArray();
+        Assert.Equal(["command", "installation"], sent.Select(sentEvent => sentEvent.GetProperty("event").GetString()).Order());
+        Assert.All(sent, sentEvent => Assert.Equal(identifier?.ToString("D"), sentEvent.GetProperty("installId").GetString()));
         Assert.Equal(1, Regex.Count(error.ToString(), Regex.Escape(CommandTelemetry.Notice)));
-        Assert.Equal("setup", Command(Assert.Single(Pending())));
+        Assert.Equal("dev", Command(Assert.Single(Pending())));
     }
 
     [Theory]
@@ -81,7 +82,7 @@ public sealed class TelemetryTests : IDisposable
         Assert.Equal(0, TelemetryCommands.Run(["telemetry", "enable"], Host(), TextWriter.Null));
         CommandTelemetry.Begin(["dev"], Host()).Ended(0);
         Assert.NotEqual(identifier, Host().State.Load()!.InstallId);
-        Assert.Single(Pending());
+        Assert.Equal(["command", "installation"], Pending().Select(Kind).Order());
     }
 
     [Fact]
@@ -121,7 +122,7 @@ public sealed class TelemetryTests : IDisposable
 
         CommandTelemetry.Begin(["dev"], Host()).Ended(0);
         CommandTelemetry.Begin(["dev"], Host() with { ErrorRedirected = true }).Ended(0);
-        Assert.Equal(2, Pending().Length);
+        Assert.Equal(["command", "command", "installation"], Pending().Select(Kind).Order());
     }
 
     [Fact]
@@ -304,6 +305,21 @@ public sealed class TelemetryTests : IDisposable
     }
 
     [Fact]
+    public void A_recorded_installation_carries_exactly_what_its_schema_allows()
+    {
+        var schema = JsonDocument.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "TelemetryProtocol", "installation-event.schema.json"))).RootElement;
+        CommandTelemetry.Begin(["dev"], Host()).Ended(0);
+        var file = Assert.Single(Pending(), file => Kind(file) == "installation");
+        var recorded = JsonDocument.Parse(File.ReadAllText(Path.Combine(home.Path, "pending", file))).RootElement;
+
+        Assert.Equal(schema.GetProperty("properties").EnumerateObject().Select(property => property.Name).Order(),
+            recorded.EnumerateObject().Select(property => property.Name).Order());
+        foreach (var property in schema.GetProperty("properties").EnumerateObject().Where(property => property.Value.TryGetProperty("pattern", out _)))
+            Assert.Matches(property.Value.GetProperty("pattern").GetString()!, recorded.GetProperty(property.Name).GetString()!);
+        Assert.Equal(Host().State.Load()!.InstallId?.ToString("D"), recorded.GetProperty("installId").GetString());
+    }
+
+    [Fact]
     public void A_recorded_event_carries_exactly_what_the_event_schema_allows()
     {
         var schema = JsonDocument.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "TelemetryProtocol", "command-event.schema.json"))).RootElement;
@@ -333,7 +349,7 @@ public sealed class TelemetryTests : IDisposable
     private TelemetryHost Host() => new(Endpoint, "0.1.0-preview.4", home.Path, name => environment.GetValueOrDefault(name), TimeProvider.System,
         error, ErrorRedirected: false, () => new HttpClient(service, disposeHandler: false), _ => Task.CompletedTask);
 
-    private void Seen() => Host().State.Save(new(NoticeShown: true));
+    private void Seen() => Host().State.Save(new(NoticeShown: true, InstallId: Guid.NewGuid()));
 
     private string Queue(Guid id)
     {
@@ -344,6 +360,9 @@ public sealed class TelemetryTests : IDisposable
 
     private string[] Pending() => Directory.Exists(Path.Combine(home.Path, "pending"))
         ? Directory.GetFiles(Path.Combine(home.Path, "pending")).Select(path => Path.GetFileName(path)).ToArray() : [];
+
+    private string Kind(string file) =>
+        JsonDocument.Parse(File.ReadAllText(Path.Combine(home.Path, "pending", file))).RootElement.GetProperty("event").GetString()!;
 
     private string Command(string file) =>
         JsonDocument.Parse(File.ReadAllText(Path.Combine(home.Path, "pending", file))).RootElement.GetProperty("command").GetString()!;

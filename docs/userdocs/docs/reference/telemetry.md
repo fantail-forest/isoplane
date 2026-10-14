@@ -62,6 +62,14 @@ One event for each command. `--help`, `--version` and `isoplane telemetry` recor
 | `runtimeVersion` | The version of the .NET runtime the CLI ran on. |  |
 | `locale` | The language and region the CLI would display messages in, such as en-NZ. Absent when the machine sets none. |  |
 
+One more event when the CLI creates an installation identifier: the first time a command is recorded, usually `isoplane setup`, and again after `isoplane telemetry disable` and `enable`.
+
+| Field | What it records | Values |
+| --- | --- | --- |
+| `id` | A random identifier for this event, so that one sent twice is stored once. |  |
+| `occurredAt` | When the identifier was created, in UTC, by this machine's clock. |  |
+| `installId` | The new identifier, which the installation's command events carry from then on. |  |
+
 The service that receives an event adds the time it arrived and the country the request came from. It does not keep the address the request came from.
 
 `ci` is true, and `ciProvider` names the service, when one of these environment variables is set. The first in the table that is set decides.

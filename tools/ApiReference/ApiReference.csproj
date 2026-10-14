@@ -20,6 +20,7 @@
     <Compile Include="../BuildProtocol/BuildDiagnostics.cs" Link="BuildDiagnostics.cs" />
     <Compile Include="../Isoplane.Cli/TelemetryVariables.cs" Link="TelemetryVariables.cs" />
     <EmbeddedResource Include="../TelemetryProtocol/command-event.schema.json" LogicalName="command-event.schema.json" />
+    <EmbeddedResource Include="../TelemetryProtocol/installation-event.schema.json" LogicalName="installation-event.schema.json" />
     <EmbeddedResource Include="ErrorCodes.md" LogicalName="ErrorCodes.md" />
     <EmbeddedResource Include="../../guest-sdks/dotnet/Templates/content/**/.template.config/template.json" LogicalName="Templates/%(RecursiveDir)template.json" />
     <EmbeddedResource Include="../../guest-sdks/dotnet/Templates/content/**/.template.config/dotnetcli.host.json" LogicalName="TemplateOptions/%(RecursiveDir)template.json" />

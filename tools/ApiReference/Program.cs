@@ -91,6 +91,7 @@ internal static class Reference
         output.Add("telemetry.md", Telemetry
             .Replace("{variables}", "| Variable | Description |\n| --- | --- |\n" + string.Join("\n", TelemetryVariables.All.Select(variable => $"| `{variable.Name}` | {variable.Description} |")))
             .Replace("{fields}", EventFields("command-event.schema.json"))
+            .Replace("{installation}", EventFields("installation-event.schema.json"))
             .Replace("{ci}", "| Variable | Recorded as |\n| --- | --- |\n" + string.Join("\n", TelemetryVariables.CiServices.Select(service =>
                 $"| `{service.Variable}`{(service.AnyValue ? "" : ", when `true` or `1`")} | `{service.Name}` |"))
                 + $"\n| `CI`, unless empty, `false` or `0` | `{TelemetryVariables.OtherCiService}` |")
@@ -366,6 +367,10 @@ After that, each command writes one event to `telemetry/pending` in the Isoplane
 One event for each command. `--help`, `--version` and `isoplane telemetry` record nothing.
 
 {fields}
+
+One more event when the CLI creates an installation identifier: the first time a command is recorded, usually `isoplane setup`, and again after `isoplane telemetry disable` and `enable`.
+
+{installation}
 
 The service that receives an event adds the time it arrived and the country the request came from. It does not keep the address the request came from.
 

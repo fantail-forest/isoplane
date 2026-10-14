@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Installation event",
+  "description": "A new installation identifier, recorded when the CLI creates one: on the first recorded command, and again after telemetry is disabled and enabled.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["event", "id", "occurredAt", "installId"],
+  "properties": {
+    "event": {
+      "description": "The kind of event.",
+      "const": "installation"
+    },
+    "id": {
+      "description": "A random identifier for this event, so that one sent twice is stored once.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "occurredAt": {
+      "description": "When the identifier was created, in UTC, by this machine's clock.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    },
+    "installId": {
+      "description": "The new identifier, which the installation's command events carry from then on.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    }
+  }
+}
