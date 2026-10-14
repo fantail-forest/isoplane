@@ -126,7 +126,9 @@ requests it does not run at all.
   `_ = SendEmailAsync()`, may never finish. Isoplane also discards the instance
   when a request ends with something pending: the next request starts from a
   fresh copy of the template and pays for activation again, with nothing
-  reported. Dispose a timer, or cancel a delay, before the request ends.
+  reported. Dispose a timer, or cancel a delay, before the request ends. A
+  `new HttpClient()` kept from one request to the next leaves such a timer; a
+  client from `IHttpClientFactory` does not, as [Network](#network) explains.
 - **`finally` blocks and disposal are part of the request.** They run as the
   awaited code unwinds, as they do anywhere else, and that includes middleware
   code after `await next()` and the disposal of scoped services. Two cases
@@ -274,17 +276,31 @@ Outbound, an application can open TCP connections through the asynchronous
 APIs, which covers `HttpClient`, TLS and database drivers.
 
 - There is no UDP.
-- A client from `IHttpClientFactory` keeps one handler for as long as its
-  instance lives. Elsewhere the factory replaces a handler every two minutes,
-  on a timer, so that new connections pick up a DNS change. A timer does not
-  run between requests, so Isoplane switches that one off and gives each
-  pooled connection a lifetime of two minutes instead: a connection older than
-  that is closed and replaced the next time the client uses it.
-  `SetHandlerLifetime` with a finite value switches the timer back on, and a
-  route that creates that client then cannot be warmed up during
-  [initialization](application-lifecycle.md). A client you construct yourself
-  with `new HttpClient()` has no connection lifetime unless you set
-  `SocketsHttpHandler.PooledConnectionLifetime` on its handler.
+- A client from `IHttpClientFactory` opens a connection for each call and
+  closes it once the response has been read, so it keeps no connection between
+  calls. Elsewhere a client keeps idle connections for its next calls and
+  removes them on a timer, and the factory replaces each handler every two
+  minutes on another. A timer still pending when a request ends costs the
+  instance, as [Work belongs to a request](#work-belongs-to-a-request) says, and
+  one left by [initialization](application-lifecycle.md) stops the application
+  from starting, so Isoplane switches both off. The cost is a new connection,
+  and over HTTPS a new TLS handshake, for each call, including calls a request
+  makes one after another to the same host.
+- Either timer comes back if you ask for it: `SetHandlerLifetime` with a finite
+  value, any `PooledConnectionLifetime` but zero on the client's
+  `SocketsHttpHandler`, or a primary handler of your own from
+  `ConfigurePrimaryHttpMessageHandler`. Give a handler of your own
+  `PooledConnectionLifetime = TimeSpan.Zero`. A `PooledConnectionIdleTimeout`
+  of zero is no substitute: it starts no timer, but it leaves each connection
+  open, and calls fail once the application has used up its outbound
+  connections.
+- A client you construct yourself with `new HttpClient()` and keep for later
+  requests starts the timer that removes idle connections when it first calls a
+  host, so every request that uses it costs the instance. Take the client from
+  `IHttpClientFactory` instead, or construct it with
+  `new HttpClient(new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.Zero })`.
+  A client created and disposed within one request reuses its connection for
+  that request's calls and closes it when it is disposed.
 - TLS certificates are validated as usual. Switching validation off is not a fix
   for a connection that fails.
 

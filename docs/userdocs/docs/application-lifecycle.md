@@ -149,7 +149,8 @@ operation completes.
 - Enforces the [execution limits](execution-limits.md), and stops an instance
   whose request keeps running after its running time is used up.
 - Cancels any timer or outbound call still pending when the response is
-  complete.
+  complete, and then discards the instance, because the code waiting on that
+  work could never resume.
 
 **Your application**
 
@@ -159,6 +160,9 @@ operation completes.
   [how .NET differs on Isoplane](dotnet-runtime-differences.md#waiting-is-asynchronous).
 - Forwards the cancellation token to the asynchronous calls it makes.
 - Disposes what it opens. Do not leave cleanup to a finalizer.
+- Takes its `HttpClient` from `IHttpClientFactory`, whose clients leave nothing
+  pending, rather than keeping one it constructed itself; see
+  [Network](dotnet-runtime-differences.md#network).
 - Saves anything that must last to a database or another external service
   before it responds.
 
@@ -171,7 +175,7 @@ operation completes.
 | The client goes away | The request's token is cancelled |
 | The request uses up its running time | The token is cancelled. If the request has not finished shortly afterwards, Isoplane stops the instance and the request fails. |
 | The request has too many asynchronous operations pending at once | The request fails |
-| The response is complete while work is still pending | That work is cancelled and never finishes. No error is reported. |
+| The response is complete while work is still pending | That work is cancelled and never finishes, and the instance is discarded: the next request starts from the template and pays for activation. No error is reported. |
 
 ## Between requests
 
