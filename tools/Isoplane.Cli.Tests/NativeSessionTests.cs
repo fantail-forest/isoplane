@@ -154,7 +154,10 @@ public sealed class NativeSessionTests
         await ready.Task.WaitAsync(deadline.Token);
         Assert.True(Directory.GetFiles(directory.RuntimeCache, "*.cwasm", SearchOption.AllDirectories).Length > 0,
             "Session preparation must keep its compiled platform runtime in the runtime cache every project shares.");
-        Assert.Empty(Directory.GetFiles(directory.ProjectDirectory, "*.cwasm", SearchOption.AllDirectories));
+        // The project keeps its prepared application layer, whose native payload is empty:
+        // a layer runs the runtime's code.
+        Assert.DoesNotContain(Directory.GetFiles(directory.ProjectDirectory, "*.cwasm", SearchOption.AllDirectories),
+            file => new FileInfo(file).Length > 0);
         return await compiled.Task.WaitAsync(deadline.Token);
     }
 
