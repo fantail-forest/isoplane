@@ -141,6 +141,8 @@ public static class IsoplaneHosting
         builder.Logging.AddConfiguration(builder.Configuration.GetSection("Logging"));
         builder.Logging.AddProvider(new IsoplaneLoggerProvider());
         builder.Services.AddRouting();
+        // Outside the sandbox a synchronous load can succeed, so only here does a failed one mean UseLoadedSession is missing.
+        builder.Services.CheckSessionLoading();
         builder.WebHost.UseIsoplane();
         return builder;
     }

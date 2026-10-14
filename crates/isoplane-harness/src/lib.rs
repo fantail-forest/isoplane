@@ -30,6 +30,7 @@ use isoplane_host::fetcher::PinnedHttpFetcher;
 use isoplane_host::futures::FutureTable;
 use isoplane_host::meters::Meters;
 use isoplane_host::metrics::Metrics;
+use isoplane_host::response::Response;
 use isoplane_host::{InstanceId, ModuleId};
 
 /// How long a test waits on the reactor, a peer or a resolver before it is a hung test.
@@ -410,18 +411,16 @@ impl ReturnedGuest {
 
     /// Dispatches `GET path` on a fresh Store restored from the last return.
     pub fn start(&mut self, path: &str) -> DispatchOutcome {
+        self.start_request(request("GET", path, vec![]))
+    }
+
+    /// Dispatches `request` on a fresh Store restored from the last return.
+    pub fn start_request(&mut self, request: HttpRequest) -> DispatchOutcome {
         let mut instance = self.activate();
         let outcome = instance.dispatch(
             &DispatchRecord {
                 dispatch_id: self.context.dispatch_id(),
-                kind: DispatchKind::Http(HttpRequest {
-                    method: "GET".into(),
-                    url: format!("https://guest.test{path}"),
-                    path: path.into(),
-                    query: vec![],
-                    headers: vec![],
-                    body: vec![],
-                }),
+                kind: DispatchKind::Http(request),
                 trace: TraceContext::default(),
                 cancel_future: 0,
                 occupancy_budget_ms: self.context.limits.occupancy_ms_per_http_dispatch,
@@ -517,23 +516,29 @@ impl ReturnedGuest {
         self.text_of("the dispatch", outcome)
     }
 
+    /// The response a completed dispatch answered with, status and headers
+    /// included, failing on any other outcome; for a test that drives the
+    /// wakes itself.
+    pub fn response_of_outcome(&self, outcome: DispatchOutcome) -> Response {
+        self.response_of("the dispatch", outcome)
+    }
+
     fn text_of(&self, what: &str, outcome: DispatchOutcome) -> String {
+        String::from_utf8_lossy(&self.response_of(what, outcome).body()).into_owned()
+    }
+
+    fn response_of(&self, what: &str, outcome: DispatchOutcome) -> Response {
         let isoplane_abi::status::PollStatus::Done { response } = outcome.status else {
             panic!(
                 "{what} must complete: {outcome:?}; logs: {:?}",
                 self.context.emitted_logs()
             );
         };
-        String::from_utf8_lossy(
-            &self
-                .context
-                .responses
-                .lock()
-                .take(response)
-                .unwrap_or_else(|| panic!("{what} must produce a response"))
-                .body(),
-        )
-        .into_owned()
+        self.context
+            .responses
+            .lock()
+            .take(response)
+            .unwrap_or_else(|| panic!("{what} must produce a response"))
     }
 
     fn activate(&mut self) -> Instance {
@@ -575,6 +580,18 @@ impl ReturnedGuest {
         });
         self.snapshot = snapshot;
         outcome
+    }
+}
+
+/// A bodiless `method path` request to the guest's host, with `headers`.
+pub fn request(method: &str, path: &str, headers: Vec<(String, String)>) -> HttpRequest {
+    HttpRequest {
+        method: method.into(),
+        url: format!("https://guest.test{path}"),
+        path: path.into(),
+        query: vec![],
+        headers,
+        body: vec![],
     }
 }
 

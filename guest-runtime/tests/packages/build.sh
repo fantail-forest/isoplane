@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build an application package fixture with isoplane bundle.
-# Usage: guest-runtime/tests/packages/build.sh [--if-stale] --fixture alpha|beta|native|web|sqlite|sqlite-pclraw3|diagnostics|debugger|debugger-optimized
+# Usage: guest-runtime/tests/packages/build.sh [--if-stale] --fixture alpha|beta|native|web|session|sqlite|sqlite-pclraw3|diagnostics|debugger|debugger-optimized
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -8,7 +8,7 @@ ROOT="$(cd "$HERE/../../.." && pwd)"
 
 COMPILE=0
 FIXTURE=""
-FIXTURES=(alpha beta native web sqlite sqlite-pclraw3 diagnostics debugger debugger-optimized)
+FIXTURES=(alpha beta native web session sqlite sqlite-pclraw3 diagnostics debugger debugger-optimized)
 while [ $# -gt 0 ]; do
   case "$1" in
     --if-stale) shift ;;

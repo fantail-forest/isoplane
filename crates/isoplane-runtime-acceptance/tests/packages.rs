@@ -421,6 +421,203 @@ async fn an_aspnet_request_that_calls_out_through_a_factory_client_leaves_its_in
     );
 }
 
+/// One browser's visits to the `session` package, prepared with `settings`,
+/// on one instance: each visit sends the cookies earlier responses set.
+struct SessionVisitor {
+    guest: ReturnedGuest,
+    reactor: isoplane_harness::Reactor,
+    cookies: Vec<(String, String)>,
+    dispatch: u64,
+    now_ms: u64,
+}
+
+/// What one visit answered, and whether it left a timer or read pending,
+/// which would cost the instance in a cell.
+struct Visit {
+    status: u16,
+    location: Option<String>,
+    body: String,
+    left_work_pending: bool,
+}
+
+impl SessionVisitor {
+    async fn new(settings: serde_json::Value) -> Self {
+        let runtime = isoplane_fixtures::mono_runtime();
+        let preparation = LocalPreparation::with_cache(shared_cache()).expect("local preparation");
+        let mut request = request(&runtime, package("session"));
+        request.initialization.runtime_config =
+            serde_json::to_vec(&settings).expect("the settings serialize");
+        let product = preparation
+            .prepare(&runtime, &request, &CancellationToken::new())
+            .await
+            .unwrap_or_else(|error| panic!("the session package must prepare: {error}"));
+        let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
+        let guest = {
+            // SAFETY: The private decode helper receives only products from this test module's local preparation paths.
+            unsafe { ReturnedGuest::prepared(decode(&product, &request), &reactor) }
+        };
+        Self {
+            guest,
+            reactor,
+            cookies: Vec::new(),
+            dispatch: 0,
+            now_ms: 1,
+        }
+    }
+
+    /// Visits `path`, failing unless the dispatch completes.
+    async fn visit(&mut self, method: &str, path: &str) -> Visit {
+        let outcome = self.dispatch(method, path).await;
+        let response = self.guest.response_of_outcome(outcome);
+        let header = |wanted: &'static str| {
+            response
+                .head
+                .headers
+                .iter()
+                .filter(|(name, _)| name.eq_ignore_ascii_case(wanted))
+                .map(|(_, value)| value.clone())
+                .collect::<Vec<_>>()
+        };
+        for set in header("set-cookie") {
+            let pair = set.split(';').next().unwrap_or_default();
+            let (name, value) = pair
+                .split_once('=')
+                .expect("a cookie is a name and a value");
+            self.cookies.retain(|(kept, _)| kept != name);
+            self.cookies.push((name.to_owned(), value.to_owned()));
+        }
+        Visit {
+            status: response.head.status,
+            location: header("location").into_iter().next(),
+            body: String::from_utf8_lossy(&response.body()).into_owned(),
+            left_work_pending: self
+                .reactor
+                .futures
+                .end_dispatch(self.reactor.context.instance, self.dispatch),
+        }
+    }
+
+    /// Dispatches `method path` with the visitor's cookies until it stops parking.
+    async fn dispatch(&mut self, method: &str, path: &str) -> isoplane_engine::DispatchOutcome {
+        self.dispatch += 1;
+        self.reactor
+            .context
+            .begin_dispatch(self.now_ms, self.dispatch);
+        let cookie = self
+            .cookies
+            .iter()
+            .map(|(name, value)| format!("{name}={value}"))
+            .collect::<Vec<_>>()
+            .join("; ");
+        let headers = if cookie.is_empty() {
+            vec![]
+        } else {
+            vec![("Cookie".to_owned(), cookie)]
+        };
+        let mut outcome = self
+            .guest
+            .start_request(isoplane_harness::request(method, path, headers));
+        let mut wakes = 0;
+        while outcome.completion == Completion::Parked {
+            assert!(
+                wakes < 32,
+                "{method} {path} must finish within 32 wakes; logs: {:?}",
+                self.logs()
+            );
+            // Each park waits on one of the cache's one-millisecond timers,
+            // which falls due by the clock a cell sets as a slice begins.
+            tokio::time::advance(std::time::Duration::from_millis(1)).await;
+            self.now_ms += 1;
+            self.reactor.context.begin_slice(self.now_ms, self.dispatch);
+            outcome = self.guest.wake(&self.reactor).await;
+            wakes += 1;
+        }
+        outcome
+    }
+
+    fn logs(&self) -> Vec<String> {
+        isoplane_harness::LogCapture::global();
+        self.reactor
+            .context
+            .emitted_logs()
+            .into_iter()
+            .map(|record| record.fields)
+            .collect()
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_session_value_written_over_an_asynchronous_cache_is_read_by_the_next_request() {
+    let mut visitor = SessionVisitor::new(serde_json::json!({})).await;
+    for expected in ["1", "2", "3"] {
+        let visit = visitor.visit("GET", "/visits").await;
+        assert_eq!(
+            (visit.status, visit.body.as_str()),
+            (200, expected),
+            "each visit must read the count the one before it stored; logs: {:?}",
+            visitor.logs()
+        );
+        assert!(
+            !visit.left_work_pending,
+            "loading and saving the session must leave no timer or read pending"
+        );
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn tempdata_kept_in_a_session_over_an_asynchronous_cache_survives_a_redirect() {
+    let mut visitor = SessionVisitor::new(serde_json::json!({})).await;
+    let saved = visitor.visit("POST", "/notes").await;
+    assert_eq!(
+        (saved.status, saved.location.as_deref()),
+        (302, Some("/notes")),
+        "saving must redirect; logs: {:?}",
+        visitor.logs()
+    );
+    let shown = visitor.visit("GET", "/notes").await;
+    assert_eq!(
+        (shown.status, shown.body.as_str()),
+        (200, "note saved"),
+        "the page redirected to must show the message saving left; logs: {:?}",
+        visitor.logs()
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_session_over_the_in_memory_cache_works_without_loading_it_first() {
+    let mut visitor =
+        SessionVisitor::new(serde_json::json!({ "Cache": "memory", "Pipeline": "UseSession" }))
+            .await;
+    for expected in ["1", "2"] {
+        let visit = visitor.visit("GET", "/visits").await;
+        assert_eq!(
+            (visit.status, visit.body.as_str()),
+            (200, expected),
+            "the in-memory cache loads synchronously, so UseSession alone must keep the count; logs: {:?}",
+            visitor.logs()
+        );
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_session_that_could_not_be_loaded_fails_the_request_naming_use_loaded_session() {
+    let mut visitor = SessionVisitor::new(serde_json::json!({ "Pipeline": "UseSession" })).await;
+    let outcome = visitor.dispatch("GET", "/visits").await;
+    let logs = visitor.logs();
+    assert_eq!(
+        outcome.completion,
+        Completion::Trapped,
+        "using a session the asynchronous cache could not load synchronously must fail the request, \
+         not carry on with an empty one: {outcome:?}; logs: {logs:?}"
+    );
+    assert!(
+        logs.iter().any(|log| log.starts_with(
+            "unhandled System.InvalidOperationException: The session could not be loaded"
+        ) && log.contains("Call app.UseLoadedSession()")),
+        "the failure must say what to call; logs: {logs:?}"
+    );
+}
+
 #[tokio::test]
 async fn a_second_package_reuses_the_runtimes_native_compilation() {
     let runtime = isoplane_fixtures::mono_runtime();

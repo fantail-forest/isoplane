@@ -210,6 +210,7 @@ tasks:
       - task: package:beta
       - task: package:native
       - task: package:web
+      - task: package:session
       - task: package:sqlite
       - task: package:sqlite-pclraw3
       - task: package:debugger
@@ -274,6 +275,13 @@ tasks:
       - task: package:build
         vars:
           NAME: web
+
+  package:session:
+    deps: [':runtime']
+    cmds:
+      - task: package:build
+        vars:
+          NAME: session
 
   package:sqlite:
     deps: [':runtime']
