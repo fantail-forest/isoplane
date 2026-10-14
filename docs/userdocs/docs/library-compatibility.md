@@ -46,7 +46,7 @@ entry says otherwise.
 | ASP.NET Core | [gRPC over HTTP/2](#connections-and-background-work) | Moderate change: use gRPC-Web |
 | ASP.NET Core | [`BackgroundService` and other work between requests](#connections-and-background-work) | Large change: do the work during a request |
 | Newtonsoft.Json for MVC | [Bodies over 30 KB](#newtonsoft-json) | Small change: set two options. A later release should not need them |
-| Configuration providers | [Loading settings from Azure Key Vault and other remote services](#remote-configuration) | Moderate change: fetch them before `builder.Build()` |
+| Microsoft.Extensions.Configuration | [`IConfigurationProvider` implementations that load from a remote service, such as Azure Key Vault](#remote-configuration) | Moderate change: fetch them before `builder.Build()` |
 | Entity Framework Core | [Lazy loading](#lazy-loading) | Moderate change: load with `Include` |
 | Entity Framework Core | [`UseHiLo` keys with `Add`](#hilo) | Small change: use `AddAsync` |
 | Entity Framework Core | [`TransactionScope`](#transaction-scope) | Small change: use a database transaction |
@@ -56,7 +56,7 @@ entry says otherwise.
 | Sqlite | [SQLite, including its Entity Framework Core provider](#sqlite) | Cannot be supported: use another database |
 | MongoDB.Driver | [MongoDB](#mongodb) | Not supported: use another database |
 | StackExchange.Redis | [Redis, including the Redis distributed cache](#redis) | Not supported: use another cache store |
-| OpenTelemetry | [Exporting telemetry over OTLP](#opentelemetry) | No workaround yet |
+| OpenTelemetry | [OpenTelemetry tracing](#opentelemetry) | No workaround yet |
 | ModelContextProtocol | [An MCP server that tracks sessions](#mcp-sessions) | Small change: use stateless mode |
 
 The sections below give each package's full name.
@@ -368,8 +368,8 @@ fails with `DirectoryNotFoundException: /tmp/`.
 
 An application that calls [`UseRateLimiter`][UseRateLimiter] with a
 fixed-window policy refuses to start: `initialization retains a timer`. The
-limiter starts a timer when the application starts, and a timer cannot be
-carried from initialization into an instance. Other policies have not been
+limiter starts a timer that ticks every 100 ms when the application starts,
+and a timer cannot be carried from initialization into an instance. Other policies have not been
 checked.
 
 ```csharp
@@ -528,13 +528,13 @@ which fails with `DirectoryNotFoundException: /tmp/`.
 - **Looking ahead:** a later release is expected to make these settings
   unnecessary, by giving ASP.NET Core somewhere in memory to buffer.
 
-## Configuration providers for remote stores
+## `Microsoft.Extensions.Configuration`
 
-### Loading settings from a remote service {#remote-configuration}
+### Configuration providers that load from a remote service {#remote-configuration}
 
-A configuration provider loads through a synchronous method,
-[`IConfigurationProvider.Load`][IConfigurationProvider.Load], so one that
-calls a service has to block while the application starts. The application
+An implementation of `IConfigurationProvider` loads through a synchronous
+method, [`IConfigurationProvider.Load`][IConfigurationProvider.Load], so one
+that calls a service has to block while the application starts. The application
 then refuses to start, with
 `unhandled System.PlatformNotSupportedException: Arg_PlatformNotSupported`.
 
@@ -822,13 +822,19 @@ Data Protection's
 
 ## Observability
 
-### Exporting telemetry over OTLP {#opentelemetry}
+### OpenTelemetry tracing {#opentelemetry}
 
-An application that adds OpenTelemetry tracing with the OTLP exporter, from
-the
-[`OpenTelemetry.Exporter.OpenTelemetryProtocol`][otlp-exporter] package,
-refuses to start: `initialization retains a timer`. The exporter collects
-telemetry and sends it in batches from the background.
+An application that adds OpenTelemetry tracing refuses to start:
+`initialization retains a timer`. We ran it with ASP.NET Core instrumentation
+and the OTLP exporter, from the
+[`OpenTelemetry.Exporter.OpenTelemetryProtocol`][otlp-exporter] package, and
+two timers were still running when initialization ended:
+
+- One belongs to the OpenTelemetry SDK's self-diagnostics, which look for a
+  configuration file every ten seconds. It starts with the SDK, whichever
+  exporter is used.
+- One fires every five seconds, which is the interval at which the batch
+  exporter sends what it has collected.
 
 ```csharp
 builder.Services.AddOpenTelemetry()
@@ -839,7 +845,8 @@ builder.Services.AddOpenTelemetry()
 
 - **Used for:** sending traces, metrics and logs to a collector.
 - **Workaround:** none that we have run.
-- **Looking ahead:** not yet known. Sending in batches after the response is
+- **Looking ahead:** not yet known. Both timers belong to loops that expect to
+  keep running, and sending in batches after the response is
   [work between requests](dotnet-runtime-differences.md#work-belongs-to-a-request),
   so an exporter would have to send within the request instead.
 
@@ -934,8 +941,11 @@ general rules suggest what to expect, the entry says so.
 - **Job schedulers and message consumers**, such as Hangfire, Quartz.NET and
   MassTransit. They rely on
   [work between requests](dotnet-runtime-differences.md#work-belongs-to-a-request).
-- **Rate limiting policies other than fixed window**, and OpenTelemetry
-  exporters other than OTLP.
+- **Rate limiting policies other than fixed window.**
+- **OpenTelemetry metrics and logs, and exporters other than OTLP.** The
+  self-diagnostics timer described under
+  [OpenTelemetry tracing](#opentelemetry) starts with the SDK, so these are
+  expected to fail the same way.
 
 To look into a package yourself, build with
 [`IsoplaneAnalyzeDependencies`](reference/project-settings.md#isoplaneanalyzedependencies)
