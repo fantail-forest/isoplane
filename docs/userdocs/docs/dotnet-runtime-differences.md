@@ -35,8 +35,8 @@ runs between requests.
 Isoplane mediates every interaction an application has with the outside world,
 including the network, files, the clock and waiting. That is what keeps one
 application apart from the others on the same hardware. It is also why an
-application can do only what Isoplane provides, and why native code, which
-would run outside the sandbox, is not loaded.
+application can do only what Isoplane provides, and why a native library built
+for the machine's processor is not loaded: it would run outside the sandbox.
 
 ## One thread
 
@@ -304,11 +304,16 @@ APIs, which covers `HttpClient`, TLS and database drivers.
 - **Environment variables are empty.** Settings reach the application through
   configuration; see [local development settings](local-settings.md).
 - **There are no other processes.** An application cannot start one.
-- **Native libraries are not loaded.** A P/Invoke into a library the runtime does
-  not include fails when it is called, not when the application builds or
-  starts. A NuGet package that ships a native binary therefore still works as
-  long as the code you use stays in managed code, and fails only on a path that
-  reaches the native call. The build reports such declarations as
+- **Native libraries come from the runtime.** Isoplane's runtime includes the
+  native parts of .NET, such as compression, globalization and OpenSSL,
+  compiled to WebAssembly so that they run inside the sandbox. An
+  application's package carries managed code only, so it cannot add a native
+  library of its own, and the Linux, macOS and Windows binaries a NuGet package
+  ships are not loaded. A P/Invoke into a library the runtime does not include
+  fails when it is called, not when the application builds or starts. A NuGet
+  package that ships a native binary therefore still works as long as the code
+  you use stays in managed code, and fails only on a path that reaches the
+  native call. The build reports such declarations as
   [`ISOPLANE1001`](reference/error-codes.md#isoplane1001) when you set
   [`IsoplaneWarnOnNativeImports`](reference/project-settings.md#isoplanewarnonnativeimports).
 - **The process is 32-bit.** `Environment.Is64BitProcess` is `false`.

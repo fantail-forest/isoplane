@@ -52,7 +52,7 @@ entry says otherwise.
 | Entity Framework Core | [Lazy loading](#lazy-loading) | Moderate change: load with `Include` |
 | Entity Framework Core | [`TransactionScope`](#transaction-scope) | Small change: use a database transaction |
 | SqlClient | [SQL Server, including its Entity Framework Core provider](#sql-server) | Not supported yet: waits on work under way in the driver. PostgreSQL works today |
-| Sqlite | [SQLite, including its Entity Framework Core provider](#sqlite) | Cannot be supported: use another database |
+| Sqlite | [SQLite, including its Entity Framework Core provider](#sqlite) | Not supported yet: needs SQLite in Isoplane's runtime. PostgreSQL works today |
 | MongoDB.Driver | [MongoDB](#mongodb) | Not supported yet: needs changes in the driver and in Isoplane |
 | StackExchange.Redis | [Redis, including the Redis distributed cache](#redis) | Small change: reference the client's 4.0 prerelease and call it asynchronously |
 | OpenTelemetry | [OpenTelemetry SDK](#opentelemetry) | Large change, traces only: collect spans without the SDK and send them before the response completes |
@@ -902,8 +902,9 @@ arrive.
 
 ### SQLite {#sqlite}
 
-[`Microsoft.Data.Sqlite`][Microsoft.Data.Sqlite] calls a native SQLite
-library, which the sandbox does not load. Creating a
+[`Microsoft.Data.Sqlite`][Microsoft.Data.Sqlite] calls SQLite's native
+library, which it ships built for each operating system and processor and for
+browsers, but not for the sandbox. Creating a
 [`SqliteConnection`][SqliteConnection] throws `TypeInitializationException`,
 caused by `DllNotFoundException: e_sqlite3`. That includes in-memory
 databases, and
@@ -927,8 +928,12 @@ well as in production.
 
 #### Looking ahead
 
-No fix is possible. SQLite is native code, and
-[nothing runs outside the sandbox](dotnet-runtime-differences.md#nothing-outside-the-sandbox).
+SQLite can be supported. Native code compiled to WebAssembly runs inside the
+sandbox, as the native parts of .NET already do in Isoplane's runtime (see
+[the machine underneath](dotnet-runtime-differences.md#the-machine-underneath)).
+The runtime does not include SQLite yet. With it, in-memory databases could work
+unchanged. A database kept in a file would not: it needs storage that outlasts
+the instance, which Isoplane does not provide.
 
 ### MongoDB {#mongodb}
 
