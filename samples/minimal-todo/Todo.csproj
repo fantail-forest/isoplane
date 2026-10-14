@@ -1,9 +1,0 @@
-<Project Sdk="Isoplane.Sdk/0.1.0-preview.4">
-  <PropertyGroup>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-  </PropertyGroup>
-  <ItemGroup>
-    <PackageReference Include="Npgsql" Version="10.0.0" />
-  </ItemGroup>
-</Project>
