@@ -126,6 +126,7 @@ public sealed class AssemblyClosureTests : IDisposable
             && diagnostics[0].Contains("Portable.Library.Native.Read", StringComparison.Ordinal)
             && diagnostics[0].Contains("platform-only!native_value", StringComparison.Ordinal),
             "The opt-in diagnostic must identify a transitive native declaration without executing or rejecting the library.");
+        Assert.Empty(AssemblyClosure.Diagnostics(inputs.Values, warnOnNativeImports: true, new HashSet<string> { "platform-only!native_value" }));
     }
 
     [Fact]

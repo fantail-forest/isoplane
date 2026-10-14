@@ -43,7 +43,8 @@ If it comes from a package or a file reference, that file is damaged or is not a
 A method is declared with `DllImport`
 or `LibraryImport`. Declaring it is allowed. Calling it fails at run time unless
 the runtime includes that native function, because an application cannot load
-native libraries of its own.
+native libraries of its own. Imports of functions the runtime includes, such as
+SQLite's, are not reported.
 
 This warning is off by default, since a declaration alone does not show that the
 call will happen. To turn it on, set

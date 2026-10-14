@@ -10,9 +10,9 @@
     -->
     <IsoplaneAnalyzeDependencies Condition="'$(IsoplaneAnalyzeDependencies)' == ''">false</IsoplaneAnalyzeDependencies>
     <!--
-      Set to `true` to report each native import an inspected assembly declares, as ISOPLANE1001.
-      It is off by default because a declaration alone does not show that the native call will
-      be reached.
+      Set to `true` to report each native import an inspected assembly declares, as ISOPLANE1001,
+      except imports of functions the runtime provides, such as SQLite's. It is off by default
+      because a declaration alone does not show that the native call will be reached.
     -->
     <IsoplaneWarnOnNativeImports Condition="'$(IsoplaneWarnOnNativeImports)' == ''">false</IsoplaneWarnOnNativeImports>
   </PropertyGroup>
@@ -35,11 +35,15 @@
       <_IsoplaneSourceAnalyzed Include="@(IntermediateAssembly)"
           Condition="'@(_IsoplaneSourceAnalyzer)' != '' AND '$(Language)' == 'C#' AND '$(RunAnalyzers)' != 'false' AND '$(RunAnalyzersDuringBuild)' != 'false'" />
     </ItemGroup>
+    <PropertyGroup>
+      <_IsoplaneProvidedNativeImports Condition="'$(IsoplaneRuntimeDirectory)' != '' AND Exists('$(IsoplaneRuntimeDirectory)native-imports.txt')">$(IsoplaneRuntimeDirectory)native-imports.txt</_IsoplaneProvidedNativeImports>
+    </PropertyGroup>
     <Isoplane.Conformance.InspectManagedAssemblies Assemblies="@(_IsoplaneConformanceAssembly)"
         ApplicationAssemblies="@(_IsoplaneConformanceApplication)"
         EntryAssembly="@(IntermediateAssembly)"
         SourceAnalyzedAssemblies="@(_IsoplaneSourceAnalyzed)"
         AnalyzeDependencies="$(IsoplaneAnalyzeDependencies)" WarnOnNativeImports="$(IsoplaneWarnOnNativeImports)"
+        ProvidedNativeImportsFile="$(_IsoplaneProvidedNativeImports)"
         NoWarn="$(NoWarn)" WarningsAsErrors="$(WarningsAsErrors)"
         WarningsNotAsErrors="$(WarningsNotAsErrors)" TreatWarningsAsErrors="$([MSBuild]::ValueOrDefault('$(TreatWarningsAsErrors)', 'false'))" />
   </Target>

@@ -38,7 +38,7 @@ Set to `true` to inspect the assemblies of NuGet packages as well, and report th
 
 Default: `false`.
 
-Set to `true` to report each native import an inspected assembly declares, as [`ISOPLANE1001`](error-codes.md#isoplane1001). It is off by default because a declaration alone does not show that the native call will be reached.
+Set to `true` to report each native import an inspected assembly declares, as [`ISOPLANE1001`](error-codes.md#isoplane1001), except imports of functions the runtime provides, such as SQLite's. It is off by default because a declaration alone does not show that the native call will be reached.
 
 ## Standard .NET properties
 

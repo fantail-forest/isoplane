@@ -28,6 +28,12 @@ public sealed class InspectManagedAssemblies : Microsoft.Build.Utilities.Task
     /// <summary>Enables advisory diagnostics for native import declarations.</summary>
     public bool WarnOnNativeImports { get; set; }
 
+    /// <summary>
+    /// The runtime's list of the native functions it provides, one <c>library!entry</c> per line;
+    /// their imports are not reported.
+    /// </summary>
+    public string ProvidedNativeImportsFile { get; set; } = "";
+
     /// <summary>Warning codes suppressed by the project.</summary>
     public string[] NoWarn { get; set; } = [];
 
@@ -50,13 +56,15 @@ public sealed class InspectManagedAssemblies : Microsoft.Build.Utilities.Task
         var applicationPaths = ApplicationAssemblies.Select(item => item.GetMetadata("FullPath"))
             .ToHashSet(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
         var sourceAnalyzed = SourceAnalyzedAssemblies.Select(item => item.GetMetadata("FullPath")).ToHashSet(applicationPaths.Comparer);
+        var provided = ProvidedNativeImportsFile.Length == 0 ? [] : File.ReadAllLines(ProvidedNativeImportsFile)
+            .Where(line => line.Length != 0).ToHashSet(StringComparer.Ordinal);
         foreach (var path in Assemblies.Select(item => item.GetMetadata("FullPath")).Distinct(StringComparer.Ordinal))
         {
             try
             {
                 var assembly = AssemblyClosure.InspectFile(path);
                 if (!AnalyzeDependencies && !applicationPaths.Contains(path)) continue;
-                foreach (var diagnostic in AssemblyClosure.Diagnostics([assembly], WarnOnNativeImports))
+                foreach (var diagnostic in AssemblyClosure.Diagnostics([assembly], WarnOnNativeImports, provided))
                 {
                     if (ContainsCode(NoWarn, diagnostic.Code)) continue;
                     if (diagnostic.Code is "ISOPLANE1002" or "ISOPLANE1003" && sourceAnalyzed.Contains(path)) continue;

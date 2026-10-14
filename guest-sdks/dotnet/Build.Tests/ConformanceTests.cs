@@ -41,6 +41,18 @@ public sealed class ConformanceTests : MsbuildTests
     }
 
     [Fact]
+    public async Task a_native_import_the_runtime_provides_is_not_reported()
+    {
+        var runtime = Directory.CreateDirectory(Path.Combine(directory, "runtime")).FullName;
+        File.WriteAllText(Path.Combine(runtime, "native-imports.txt"), "platform-only!read\n");
+        var project = DiagnosticProject("application", new XElement("IsoplaneWarnOnNativeImports", true),
+            new XElement("IsoplaneRuntimeDirectory", runtime + Path.DirectorySeparatorChar));
+        var result = await Run(Msbuild(project, "-t:CoreCompile"));
+        Assert.True(result.Exit == 0 && !result.Output.Contains("ISOPLANE1001", StringComparison.Ordinal),
+            "An import of a function the runtime's native-imports.txt lists must not be reported: " + result.Output);
+    }
+
+    [Fact]
     public async Task dependency_opt_in_reports_native_imports_without_platform_runtime_noise()
     {
         var project = DiagnosticProject("package", new XElement("IsoplaneAnalyzeDependencies", true),

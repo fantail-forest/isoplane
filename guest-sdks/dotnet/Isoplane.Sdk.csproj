@@ -57,13 +57,14 @@
       <IsoplaneRuntimeModuleDirectory Condition="'$(IsoplaneRuntimeModuleDirectory)' == ''">$(ISOPLANE_RUNTIME_MODULE_DIRECTORY)</IsoplaneRuntimeModuleDirectory>
       <_IsoplaneRuntimeDirectory>$([MSBuild]::EnsureTrailingSlash('$(IsoplaneRuntimeModuleDirectory)'))</_IsoplaneRuntimeDirectory>
       <_IsoplaneRuntimeProvenance>$(_IsoplaneRuntimeDirectory)runtime.json</_IsoplaneRuntimeProvenance>
+      <_IsoplaneRuntimeNativeImports>$(_IsoplaneRuntimeDirectory)native-imports.txt</_IsoplaneRuntimeNativeImports>
     </PropertyGroup>
     <ItemGroup>
       <_IsoplaneRuntimeModule Include="@(_IsoplaneRuntimeModuleName->'$(_IsoplaneRuntimeDirectory)%(Identity).wasm')" />
       <_IsoplaneMissingRuntime Include="@(_IsoplaneRuntimeModule)" Condition="!Exists('%(Identity)')" />
     </ItemGroup>
-    <Error Condition="'$(IsoplaneRuntimeModuleDirectory)' == '' OR '@(_IsoplaneMissingRuntime)' != '' OR !Exists('$(_IsoplaneRuntimeProvenance)')"
-           Text="Pack the SDK with -p:IsoplaneRuntimeModuleDirectory naming the output of guest-sdks/dotnet/MonoRuntime/build.sh, which holds Isoplane.MonoRuntime.wasm, Isoplane.MonoRuntime.Debug.wasm, runtime.json; without its shared runtimes the SDK cannot run or debug interpreted applications." />
+    <Error Condition="'$(IsoplaneRuntimeModuleDirectory)' == '' OR '@(_IsoplaneMissingRuntime)' != '' OR !Exists('$(_IsoplaneRuntimeProvenance)') OR !Exists('$(_IsoplaneRuntimeNativeImports)')"
+           Text="Pack the SDK with -p:IsoplaneRuntimeModuleDirectory naming the output of guest-sdks/dotnet/MonoRuntime/build.sh, which holds Isoplane.MonoRuntime.wasm, Isoplane.MonoRuntime.Debug.wasm, runtime.json, native-imports.txt; without its shared runtimes the SDK cannot run or debug interpreted applications." />
     <ReadLinesFromFile File="$(_IsoplaneRuntimeProvenance)">
       <Output TaskParameter="Lines" PropertyName="_IsoplaneReceipt" />
     </ReadLinesFromFile>
@@ -84,7 +85,7 @@
     <Error Condition="!$(_IsoplaneReceipt.Contains('&quot;%(_IsoplaneHashedRuntime.Filename)%(_IsoplaneHashedRuntime.Extension)&quot;:{&quot;sha256&quot;:&quot;%(_IsoplaneHashedRuntime.Sha256)&quot;}'))"
            Text="%(_IsoplaneHashedRuntime.Filename)%(_IsoplaneHashedRuntime.Extension) is not the module runtime.json records; rebuild the shared runtimes." />
     <ItemGroup>
-      <None Include="@(_IsoplaneRuntimeModule);$(_IsoplaneRuntimeProvenance)" Pack="true" PackagePath="tools/runtime/" />
+      <None Include="@(_IsoplaneRuntimeModule);$(_IsoplaneRuntimeProvenance);$(_IsoplaneRuntimeNativeImports)" Pack="true" PackagePath="tools/runtime/" />
     </ItemGroup>
   </Target>
   <Target Name="StampCoreSdkVersion" BeforeTargets="_GetPackageFiles">
