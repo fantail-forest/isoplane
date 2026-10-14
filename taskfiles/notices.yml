@@ -12,7 +12,6 @@ tasks:
       - '{{.ROOT_DIR}}/about.toml'
       - '{{.MANAGED}}/obj/**/project.assets.json'
       - '{{.ROOT_DIR}}/taskfiles/notices.yml'
-      - '{{.ROOT_DIR}}/scripts/managed-license-texts.py'
       - '{{.ROOT_DIR}}/trust/NOTICE'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/MonoRuntime/sqlite/NOTICE'
       - '{{.ROOT_DIR}}/vendor/{dotnet-runtime,icu,openssl}/{LICENSE*,NOTICE*,COPYING*}'
@@ -22,8 +21,7 @@ tasks:
       - task: ':setup:licenses'
       - 'mkdir -p "{{.NOTICES}}"'
       - 'cargo about generate --locked --fail --manifest-path crates/isoplane-native/Cargo.toml --target x86_64-unknown-linux-gnu --target aarch64-apple-darwin --target x86_64-pc-windows-msvc --format json --output-file "{{.NOTICES}}/rust-dependencies.json"'
-      - '"{{.USER_HOME}}/.dotnet/tools/nuget-license" -i Isoplane.slnx --exclude-projects-matching "*.Tests*" -t -o JsonPretty -fo "{{.NOTICES}}/managed-dependencies.json"'
-      - '{{.PYTHON}} scripts/managed-license-texts.py --inventory "{{.NOTICES}}/managed-dependencies.json" --output "{{.NOTICES}}/managed" --cache "{{.ROOT_DIR}}/.build/clr-anycpu/license-downloads" --dotnet "{{.DOTNET}}"'
+      - cmd: '"{{.USER_HOME}}/.dotnet/tools/nuget-license" -i Isoplane.slnx --exclude-projects-matching "*.Tests*" -t -d "{{.NOTICES}}/managed" -o JsonPretty -fo "{{.NOTICES}}/managed-dependencies.json"'
       - |
         for component in dotnet-runtime icu openssl; do
           mkdir -p "{{.NOTICES}}/$component"
