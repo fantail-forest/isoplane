@@ -20,8 +20,18 @@ use isoplane_prepare::{
 };
 use tokio_util::sync::CancellationToken;
 
+#[path = "common/admitted.rs"]
+pub mod admitted;
 #[path = "common/debugger_transport.rs"]
 mod debugger_transport;
+#[path = "common/fixed_dns.rs"]
+mod fixed_dns;
+#[path = "common/http_peers.rs"]
+pub mod http_peers;
+#[path = "common/tls_chains.rs"]
+pub mod tls_chains;
+#[path = "common/tls_material.rs"]
+pub mod tls_material;
 
 /// Limits used when reading package fixtures.
 fn limits() -> PackageLimits {
@@ -325,6 +335,70 @@ async fn an_aspnet_package_warms_its_read_route_before_template_capture() {
     assert!(
         body.contains("; greetings=2;"),
         "the first real greeting must follow one completed initialization greeting: {body}"
+    );
+}
+
+/// The web package prepared with its `Peer` setting naming `peer`, which its
+/// initialization reaches as a local development session's does.
+fn calling_request(runtime: &[u8], peer: std::net::SocketAddr) -> BuildRequest {
+    let mut request = request(runtime, package("web"));
+    request.initialization.runtime_config =
+        serde_json::to_vec(&serde_json::json!({ "Peer": format!("http://{peer}") }))
+            .expect("the settings serialize");
+    if let Some(network) = request.initialization.network.as_mut() {
+        network.destinations = isoplane_prepare::InitializationDestinations::LocalDevelopment;
+    }
+    request
+}
+
+#[tokio::test]
+async fn an_aspnet_request_that_calls_out_through_a_factory_client_leaves_its_instance_reusable() {
+    let peer = http_peers::http_peer().await;
+    let runtime = isoplane_fixtures::mono_runtime();
+    let preparation = LocalPreparation::with_cache(shared_cache()).expect("local preparation");
+    let request = calling_request(&runtime, peer.address);
+    let product = preparation
+        .prepare(&runtime, &request, &CancellationToken::new())
+        .await
+        .unwrap_or_else(|error| {
+            panic!("a route that calls out through a factory client must warm up: {error}")
+        });
+    let warmed = peer.connections();
+    let reactor = isoplane_harness::Reactor::with_network(
+        isoplane_host::InstanceId::alloc(),
+        admitted::admitting(
+            vec![peer.address],
+            Box::new(fixed_dns::FixedDns(vec![peer.address.ip()])),
+        ),
+    );
+    let mut guest = {
+        // SAFETY: The private decode helper receives only products from this test module's local preparation paths.
+        unsafe { ReturnedGuest::prepared(decode(&product, &request), &reactor) }
+    };
+    for dispatch in 1..=2u64 {
+        reactor.context.begin_dispatch(1, dispatch);
+        let body = guest.answer(&reactor, "/outbound", 32).await;
+        assert_eq!(
+            body,
+            format!("hello from peer|hello from peer; calls={}", dispatch + 1),
+            "request {dispatch} must follow the warm-up on the same application state"
+        );
+        assert!(
+            !reactor
+                .futures
+                .end_dispatch(reactor.context.instance, dispatch),
+            "request {dispatch} must leave no timer or read pending, or the cell discards its instance"
+        );
+        assert_eq!(
+            reactor.runtime().services.egress.connections(),
+            0,
+            "request {dispatch} must close every connection its calls opened"
+        );
+    }
+    assert_eq!(
+        (warmed, peer.connections() - warmed),
+        (2, 4),
+        "every call must open its own connection rather than keep one idle"
     );
 }
 

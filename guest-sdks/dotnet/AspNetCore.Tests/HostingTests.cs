@@ -444,16 +444,16 @@ public sealed class HostingTests
     }
 
     [Fact]
-    public async Task a_client_from_the_factory_replaces_a_connection_past_its_lifetime()
+    public async Task a_client_from_the_factory_keeps_no_idle_connection()
     {
         var builder = Builder();
         builder.Services.AddHttpClient("webhook");
         await using var app = builder.Build();
         var handler = app.Services.GetRequiredService<IHttpMessageHandlerFactory>().CreateHandler("webhook");
         while (handler is DelegatingHandler outer) handler = outer.InnerHandler!;
-        // Without the factory's timer nothing else bounds how long a client keeps
-        // sending to an address its host name no longer resolves to.
-        Assert.Equal(TimeSpan.FromMinutes(2), Assert.IsType<SocketsHttpHandler>(handler).PooledConnectionLifetime);
+        // A handler that keeps idle connections scavenges them on a timer, which a
+        // request cannot leave pending without losing its instance.
+        Assert.Equal(TimeSpan.Zero, Assert.IsType<SocketsHttpHandler>(handler).PooledConnectionLifetime);
     }
 
     [Fact]

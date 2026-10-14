@@ -1,6 +1,7 @@
 using System;
 using System.Globalization;
 using System.IO;
+using System.Net.Http;
 using System.Threading.Tasks;
 using Isoplane;
 using Isoplane.AspNetCore;
@@ -10,7 +11,10 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Web;
 
-/// <summary>Minimal API routes over a singleton, a content file, a static web asset and a streamed upload.</summary>
+/// <summary>
+/// Minimal API routes over a singleton, a content file, a static web asset, a streamed upload and,
+/// when a <c>Peer</c> setting names one, a client from <c>IHttpClientFactory</c>.
+/// </summary>
 public static class Application
 {
     /// <summary>Builds the application, subscribes its warm-up and runs it.</summary>
@@ -18,6 +22,8 @@ public static class Application
     {
         var builder = IsoplaneHosting.CreateBuilder(args);
         builder.Services.AddSingleton<Greeter>();
+        string? peer = builder.Configuration["Peer"];
+        if (peer is not null) builder.Services.AddHttpClient("peer", client => client.BaseAddress = new Uri(peer));
         var app = builder.Build();
         app.MapGet("/hello/{name}", async (string name, Greeter greeter) =>
         {
@@ -42,10 +48,19 @@ public static class Application
                 total += read;
             return "received:" + total.ToString(CultureInfo.InvariantCulture);
         });
+        var calls = 0;
+        app.MapGet("/outbound", async (IHttpClientFactory clients) =>
+        {
+            var client = clients.CreateClient("peer");
+            string first = await client.GetStringAsync("/hello");
+            string second = await client.GetStringAsync("/hello");
+            return first + "|" + second + "; calls=" + (++calls).ToString(CultureInfo.InvariantCulture);
+        });
         Initialization.Initializing += async () =>
         {
             await app.WarmupAsync("/warm");
             await app.WarmupAsync("/hello/warmup");
+            if (peer is not null) await app.WarmupAsync("/outbound");
         };
         await app.RunAsync();
     }
