@@ -16,7 +16,7 @@ tasks:
   modules:
     desc: Build the shared production and debug WASM runtime modules on Linux
     run: once
-    deps: [compiler:selected, sqlite]
+    deps: [compiler:selected, sqlite, ':setup:workload']
     env:
       ISOPLANE_GUEST_RUNTIME_FEED: '{{.FEED}}'
       ISOPLANE_CLI_ASSEMBLY: '{{.CLI}}'

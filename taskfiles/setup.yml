@@ -45,6 +45,7 @@ tasks:
     platforms: [linux]
     status:
       - dotnet workload list | grep -q '^wasi-experimental '
+      - dotnet msbuild taskfiles/WasiWorkload/WasiWorkload.csproj -t:RequireWorkloadPacks -nologo -v:q
     cmds:
       - dotnet workload install wasi-experimental --skip-manifest-update
 
