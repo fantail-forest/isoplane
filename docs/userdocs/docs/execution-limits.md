@@ -44,15 +44,20 @@ request fans out over many items, start them in batches and await each batch.
 
 ## Outbound connections
 
-An instance can have six outbound connections being opened at once. A further
-connection does not fail: it waits, in order, until one of the six is
-established or fails, so it takes longer to open. A connection counts toward the
-six only while it is being opened. Connections that are already open, such as
-those a connection pool keeps, do not delay new ones.
+An instance can hold 32 outbound connections open at once. A connection beyond
+that fails with a socket error. A connection counts from when it starts to open
+until the application closes or disposes of it, including while the instance is
+idle between requests, so the connections a connection pool keeps open count
+too.
 
-The connections held open are also limited across every instance of every
-application in your team. A connection beyond that limit fails with a socket
-error.
+An instance can also have six outbound connections being opened at once. A
+further connection does not fail: it waits, in order, until one of the six is
+established or fails, so it takes longer to open. Connections that are already
+open do not delay new ones.
+
+These are the only limits on outbound connections. Other instances, including
+other instances of the same application, do not use up an instance's
+connections.
 
 ## Try smaller limits locally
 
