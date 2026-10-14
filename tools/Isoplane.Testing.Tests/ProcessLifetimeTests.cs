@@ -10,6 +10,13 @@ namespace Isoplane.Testing.Tests;
 public sealed class ProcessLifetimeTests
 {
     [Fact]
+    public void the_cli_is_told_that_a_test_started_its_session()
+    {
+        var start = IsoplaneApplication.StartInfo(Path.GetTempPath(), new ApplicationOptions());
+        Assert.Equal("1", start.Environment[Isoplane.Cli.TelemetryVariables.TestRun.Name]);
+    }
+
+    [Fact]
     public async Task open_stdin_allows_readiness_and_eof_releases_the_owned_session()
     {
         using var fixture = new SessionFixture();

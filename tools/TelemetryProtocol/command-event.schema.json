@@ -12,6 +12,7 @@
     "ci",
     "agent",
     "command",
+    "mode",
     "outcome",
     "exitCode",
     "failure",
@@ -74,6 +75,14 @@
         "cache",
         "bundle",
         "unknown"
+      ]
+    },
+    "mode": {
+      "description": "Why the command ran: test when Isoplane.Testing started it, debug for a debugging session, and run otherwise.",
+      "enum": [
+        "run",
+        "debug",
+        "test"
       ]
     },
     "outcome": {

@@ -11,6 +11,8 @@ internal enum TelemetryCommand
     Dev, DebugAdapter, Setup, UninstallSdk, Doctor, DoctorModule, Cache, Bundle, Unknown
 }
 
+internal enum CommandMode { Run, Debug, Test }
+
 internal enum CommandOutcome { Succeeded, Failed, Cancelled, Crashed }
 
 internal enum CommandFailure { Usage, InvalidData, InvalidOperation, FileSystem, Process, Unexpected }
@@ -20,7 +22,7 @@ internal enum CommandFailure { Usage, InvalidData, InvalidOperation, FileSystem,
 /// value is a number, a flag or a name from a fixed list, so nothing a user typed can be recorded.
 /// </summary>
 internal sealed record CommandEvent(
-    Guid Id, string OccurredAt, Guid? InstallId, bool Ci, CodingAgent Agent, TelemetryCommand Command,
+    Guid Id, string OccurredAt, Guid? InstallId, bool Ci, CodingAgent Agent, TelemetryCommand Command, CommandMode Mode,
     CommandOutcome Outcome, int? ExitCode, CommandFailure? Failure, long DurationMs, string CliVersion,
     string Platform, string OsArchitecture, string OsVersion, string? Distribution,
     string? DistributionVersion, string RuntimeVersion, string? Locale)
@@ -61,6 +63,13 @@ internal static class CommandNames
         if (AsksForHelp(args) || args is ["--version"] || args[0] == "telemetry") return null;
         if (args[0] == "doctor") return args.Length == 1 ? TelemetryCommand.Doctor : TelemetryCommand.DoctorModule;
         return Named.GetValueOrDefault(args[0], TelemetryCommand.Unknown);
+    }
+
+    internal static CommandMode Mode(string[] args, TelemetryCommand command, Func<string, string?> environment)
+    {
+        if (TelemetryVariables.IsOn(environment(TelemetryVariables.TestRun.Name))) return CommandMode.Test;
+        return command is TelemetryCommand.DebugAdapter || (command is TelemetryCommand.Dev && args.Contains("--debug"))
+            ? CommandMode.Debug : CommandMode.Run;
     }
 
     internal static CommandFailure Categorize(Exception error) => error switch

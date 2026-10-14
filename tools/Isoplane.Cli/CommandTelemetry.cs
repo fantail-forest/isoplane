@@ -51,6 +51,7 @@ internal sealed class CommandTelemetry
 
     private readonly TelemetryHost? host;
     private readonly TelemetryCommand? command;
+    private readonly CommandMode mode;
     private readonly TelemetryContext? context;
     private readonly bool debug;
     private readonly bool recording;
@@ -66,6 +67,7 @@ internal sealed class CommandTelemetry
     {
         this.host = host;
         command = CommandNames.Classify(args);
+        if (command is { } named) mode = CommandNames.Mode(args, named, host.Environment);
         context = TelemetryContext.Read(host.Environment, host.CliVersion);
         debug = TelemetryVariables.IsOn(host.Environment(TelemetryVariables.Debug.Name));
         var state = host.State.Load();
@@ -130,7 +132,7 @@ internal sealed class CommandTelemetry
     private void Record(TelemetryHost host, TelemetryContext context, TelemetryCommand name, CommandOutcome outcome, int? exitCode, CommandFailure? failure)
     {
         var entry = new CommandEvent(Guid.NewGuid(), CommandEvent.Timestamp(host.Time.GetUtcNow()),
-            context.Ci ? null : debug ? host.State.Load()?.InstallId : InstallId(host), context.Ci, context.Agent, name,
+            context.Ci ? null : debug ? host.State.Load()?.InstallId : InstallId(host), context.Ci, context.Agent, name, mode,
             outcome, exitCode is >= 0 and <= 255 ? exitCode : null, failure,
             Math.Min((long)Stopwatch.GetElapsedTime(started).TotalMilliseconds, CommandEvent.LongestDurationMs),
             context.CliVersion, context.Platform, context.OsArchitecture, context.OsVersion, context.Distribution.Id,

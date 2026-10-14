@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using Isoplane.Cli;
 using Isoplane.Processes;
 
 namespace Isoplane.Testing;
@@ -126,19 +127,7 @@ public sealed class IsoplaneApplication : IAsyncDisposable
         if (!Directory.Exists(directory))
             throw new ArgumentException($"Project directory does not exist: {directory}", nameof(projectDirectory));
         cancellationToken.ThrowIfCancellationRequested();
-        var start = new ProcessStartInfo(options.CliPath)
-        {
-            WorkingDirectory = directory,
-            UseShellExecute = false,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true
-        };
-        foreach (var argument in new[] { "dev", "--project", directory, "--configuration", options.Configuration, "--port", "0", "--no-watch", "--json", "--shutdown-on-stdin-close" })
-            start.ArgumentList.Add(argument);
-        // The CLI reads application settings from its environment, which keeps secrets off its command line.
-        foreach (var setting in options.Settings)
-            start.Environment["ISOPLANE_APP_" + setting.Key.Replace(":", "__", StringComparison.Ordinal)] = setting.Value;
+        var start = StartInfo(directory, options);
         OwnedProcess process;
         try
         {
@@ -273,5 +262,24 @@ public sealed class IsoplaneApplication : IAsyncDisposable
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(failures[0]);
         if (failures.Count > 1)
             throw new AggregateException("Owned CLI cleanup failed.", failures);
+    }
+
+    internal static ProcessStartInfo StartInfo(string directory, ApplicationOptions options)
+    {
+        var start = new ProcessStartInfo(options.CliPath)
+        {
+            WorkingDirectory = directory,
+            UseShellExecute = false,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+        foreach (var argument in new[] { "dev", "--project", directory, "--configuration", options.Configuration, "--port", "0", "--no-watch", "--json", "--shutdown-on-stdin-close" })
+            start.ArgumentList.Add(argument);
+        // The CLI reads application settings from its environment, which keeps secrets off its command line.
+        foreach (var setting in options.Settings)
+            start.Environment["ISOPLANE_APP_" + setting.Key.Replace(":", "__", StringComparison.Ordinal)] = setting.Value;
+        start.Environment[TelemetryVariables.TestRun.Name] = "1";
+        return start;
     }
 }

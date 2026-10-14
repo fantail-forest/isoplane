@@ -21,8 +21,11 @@ internal static class TelemetryVariables
         "Set to `1` or `true` to print each event to standard error when a command ends. While it is set, nothing is recorded or sent, " +
         "so it shows what a command would report without reporting it.");
 
+    internal static readonly TelemetryVariable TestRun = new("ISOPLANE_TELEMETRY_TEST_RUN",
+        "Isoplane.Testing sets this to `1` on the CLI it starts, so that a session a test starts is recorded as one.");
+
     internal static readonly TelemetryVariable[] OptOuts = [OptOut, DoNotTrack];
-    internal static readonly TelemetryVariable[] All = [OptOut, DoNotTrack, Debug];
+    internal static readonly TelemetryVariable[] All = [OptOut, DoNotTrack, Debug, TestRun];
 
     /// <summary>Set to <c>1</c> or <c>true</c> by continuous integration services.</summary>
     internal static readonly string[] CiFlags = ["CI", "TF_BUILD", "GITHUB_ACTIONS", "GITLAB_CI", "BUILDKITE", "CIRCLECI", "TRAVIS", "APPVEYOR"];

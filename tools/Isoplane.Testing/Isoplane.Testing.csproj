@@ -11,6 +11,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../Isoplane.Native/Isoplane.Native.csproj" />
+    <Compile Include="../Isoplane.Cli/TelemetryVariables.cs" Link="TelemetryVariables.cs" />
     <None Include="PackageReadme.md" Pack="true" PackagePath="/" />
   </ItemGroup>
   <ItemGroup>

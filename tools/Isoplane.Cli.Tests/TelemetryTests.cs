@@ -257,6 +257,21 @@ public sealed class TelemetryTests : IDisposable
         Assert.Equal(new LinuxDistribution(null, null), LinuxDistribution.Read([missing]));
     }
 
+    [Theory]
+    [InlineData("run", false, "dev")]
+    [InlineData("debug", false, "dev", "--debug")]
+    [InlineData("debug", false, "debug-adapter")]
+    [InlineData("run", false, "bundle", "--output", "--debug")]
+    [InlineData("test", true, "dev", "--json")]
+    public void A_run_records_whether_a_test_or_a_debugger_started_it(string expected, bool startedByTest, params string[] args)
+    {
+        if (startedByTest) environment[TelemetryVariables.TestRun.Name] = "1";
+        Seen();
+        CommandTelemetry.Begin(args, Host()).Ended(0);
+        var recorded = JsonDocument.Parse(File.ReadAllText(Path.Combine(home.Path, "pending", Assert.Single(Pending())))).RootElement;
+        Assert.Equal(expected, recorded.GetProperty("mode").GetString());
+    }
+
     [Fact]
     public async Task Every_command_the_help_describes_has_a_telemetry_name()
     {
@@ -289,6 +304,7 @@ public sealed class TelemetryTests : IDisposable
         Assert.Equal(Allowed("agent"), Names<CodingAgent>());
         Assert.Equal(Allowed("command"), Names<TelemetryCommand>());
         Assert.Equal(Allowed("outcome"), Names<CommandOutcome>());
+        Assert.Equal(Allowed("mode"), Names<CommandMode>());
         Assert.Equal(Allowed("failure"), Names<CommandFailure>().Append(null).Order());
         Assert.Equal(CommandEvent.LongestDurationMs, properties.GetProperty("durationMs").GetProperty("maximum").GetInt64());
 
@@ -304,7 +320,7 @@ public sealed class TelemetryTests : IDisposable
     private string Queue(Guid id)
     {
         Host().Outbox.Add(id, new CommandEvent(id, CommandEvent.Timestamp(DateTimeOffset.UtcNow), null, false, CodingAgent.None, TelemetryCommand.Dev,
-            CommandOutcome.Succeeded, 0, null, 1, "0.1.0", "linux-x64", "x64", "6.8", null, null, "10.0.0", null).ToJson());
+            CommandMode.Run, CommandOutcome.Succeeded, 0, null, 1, "0.1.0", "linux-x64", "x64", "6.8", null, null, "10.0.0", null).ToJson());
         return Path.Combine(home.Path, "pending", id + ".json");
     }
 

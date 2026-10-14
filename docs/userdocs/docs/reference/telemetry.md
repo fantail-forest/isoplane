@@ -27,6 +27,7 @@ These environment variables change it for one shell, container or pipeline:
 | `ISOPLANE_TELEMETRY_OPTOUT` | Set to `1` or `true` to turn telemetry off. Nothing is recorded or sent while it is set. |
 | `DO_NOT_TRACK` | Set to `1` or `true` to turn telemetry off, as it does for other tools that read this variable. |
 | `ISOPLANE_TELEMETRY_DEBUG` | Set to `1` or `true` to print each event to standard error when a command ends. While it is set, nothing is recorded or sent, so it shows what a command would report without reporting it. |
+| `ISOPLANE_TELEMETRY_TEST_RUN` | Isoplane.Testing sets this to `1` on the CLI it starts, so that a session a test starts is recorded as one. |
 
 ## When data is sent
 
@@ -46,6 +47,7 @@ One event for each command. `--help`, `--version` and `isoplane telemetry` recor
 | `ci` | Whether the command ran on a continuous integration machine. |  |
 | `agent` | The coding agent that ran the command, when its environment identifies one. | `none`, `claude`, `copilot`, `cursor`, `gemini` |
 | `command` | The command that ran. A name the CLI does not recognise is recorded as unknown, never as typed. | `dev`, `debug-adapter`, `setup`, `uninstall-sdk`, `doctor`, `doctor-module`, `cache`, `bundle`, `unknown` |
+| `mode` | Why the command ran: test when Isoplane.Testing started it, debug for a debugging session, and run otherwise. | `run`, `debug`, `test` |
 | `outcome` | How the command ended. | `succeeded`, `failed`, `cancelled`, `crashed` |
 | `exitCode` | The exit code the command returned. Absent when the command crashed. |  |
 | `failure` | The category of the error that ended the command, when one did. Error messages are never recorded. | `usage`, `invalid-data`, `invalid-operation`, `file-system`, `process`, `unexpected` |
