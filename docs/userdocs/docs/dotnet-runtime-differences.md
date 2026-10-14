@@ -123,7 +123,10 @@ requests it does not run at all.
 - **Await everything the request needs before it responds.** Once the response is
   complete the request is over. A timer or outbound call that is still pending is
   cancelled and never completes, so a task started and not awaited, such as
-  `_ = SendEmailAsync()`, may never finish.
+  `_ = SendEmailAsync()`, may never finish. Isoplane also discards the instance
+  when a request ends with something pending: the next request starts from a
+  fresh copy of the template and pays for activation again, with nothing
+  reported. Dispose a timer, or cancel a delay, before the request ends.
 - **`finally` blocks and disposal are part of the request.** They run as the
   awaited code unwinds, as they do anywhere else, and that includes middleware
   code after `await next()` and the disposal of scoped services. Two cases

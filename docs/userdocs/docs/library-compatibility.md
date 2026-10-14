@@ -38,7 +38,7 @@ entry says otherwise.
 | ASP.NET Core | [Minimal API handlers that use source-generated code](#generated-code-in-handlers) | Small change: register the JSON context and return objects. Or switch one generator off |
 | ASP.NET Core | [Data Protection key stores](#data-protection) | Small change: use the replacement Isoplane provides |
 | ASP.NET Core | [XML formatters over 30 KB](#xml-formatters) | Moderate change: use the asynchronous XML APIs. Or buffer up to a limit |
-| ASP.NET Core | [Rate limiting middleware](#rate-limiting) | Large change: limit requests elsewhere |
+| ASP.NET Core | [Rate limiting middleware](#rate-limiting) | Large change: limit requests elsewhere. Or a per-instance limiter topped up on each request |
 | ASP.NET Core | [Console logging: `AddConsole`, `AddJsonConsole` and `ClearProviders`](#console-logging) | Small change: delete the calls. A later release should not need it |
 | ASP.NET Core | [Validation attributes, localizers, token callbacks and service factories that do I/O](#synchronous-extension-points) | Moderate change: move the I/O elsewhere |
 | ASP.NET Core | [WebSockets, SignalR's WebSocket transport, Blazor Server](#connections-and-background-work) | Unsupported |
@@ -52,7 +52,7 @@ entry says otherwise.
 | Sqlite | [SQLite, including its Entity Framework Core provider](#sqlite) | Cannot be supported: use another database |
 | MongoDB.Driver | [MongoDB](#mongodb) | Not supported: use another database |
 | StackExchange.Redis | [Redis, including the Redis distributed cache](#redis) | Not supported: use another cache store |
-| OpenTelemetry | [OpenTelemetry tracing](#opentelemetry) | No workaround yet |
+| OpenTelemetry | [OpenTelemetry SDK](#opentelemetry) | Large change, traces only: collect spans without the SDK and send them before the response completes |
 | ModelContextProtocol | [An MCP server that tracks sessions](#mcp-sessions) | Small change: use stateless mode |
 
 The sections below give each package's full name.
@@ -441,11 +441,12 @@ bodies that fit in memory.
 
 ### Rate limiting middleware {#rate-limiting}
 
-An application that calls [`UseRateLimiter`][UseRateLimiter] with a
-fixed-window policy refuses to start: `initialization retains a timer`. The
-limiter starts a timer that ticks every 100 ms when the application starts,
-and a timer cannot be carried from initialization into an instance. Other policies have not been
-checked.
+An application that calls [`UseRateLimiter`][UseRateLimiter] refuses to start:
+`initialization retains a timer`. This is so with every built-in policy (fixed
+window, sliding window, token bucket and concurrency) and with no policy at
+all, because the timer is the middleware's own: it ticks every 100 ms to refill
+permits and tidy up, and a timer cannot be carried from initialization into an
+instance.
 
 ```csharp
 builder.Services.AddRateLimiter(options =>
@@ -464,20 +465,73 @@ The policy above is registered with [`AddRateLimiter`][AddRateLimiter] and
 
 Typically used for limiting how often a client may call an endpoint.
 
-#### Workaround: limit requests outside the application
+#### Recommended workaround: limit requests outside the application
 
-Count requests in a store that every instance shares, or limit them in front of the application.
+Count requests in a store that every instance shares, or limit them in front
+of the application. A limit kept in an application's memory holds for one
+instance only: Isoplane runs as many instances as the traffic needs, and
+[memory belongs to one instance](dotnet-runtime-differences.md#instances-come-and-go).
 
-Size of the change: large. Limiting moves out of the application, or onto
-a store the instances share.
+Size of the change: large. Limiting moves out of the application.
+
+#### Alternative workaround: a limiter topped up on each request
+
+.NET's limiters can be used without the middleware. Create a
+[`FixedWindowRateLimiter`][FixedWindowRateLimiter] or a
+[`TokenBucketRateLimiter`][TokenBucketRateLimiter] with its own timer switched
+off, and call [`TryReplenish`][TryReplenish] before asking for a permit. It
+works out what to add from the time that has passed, so permits come back
+after an idle spell although nothing ran in between.
+
+```csharp
+using System.Threading.RateLimiting;
+
+var limiters = new Dictionary<string, FixedWindowRateLimiter>();
+
+app.Use(async (context, next) =>
+{
+    // One limiter for each caller, identified here by an API key header.
+    var client = context.Request.Headers["X-Api-Key"].ToString();
+    if (!limiters.TryGetValue(client, out var limiter))
+        limiters[client] = limiter = new FixedWindowRateLimiter(new()
+        {
+            PermitLimit = 100,
+            Window = TimeSpan.FromMinutes(1),
+            AutoReplenishment = false,   // no timer; each request tops the limiter up
+        });
+
+    limiter.TryReplenish();
+    using var lease = limiter.AttemptAcquire();
+    if (!lease.IsAcquired)
+    {
+        context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+        return;
+    }
+    await next(context);
+});
+```
+
+Know its limits before relying on it:
+
+- It counts for one instance. With several instances, each allows the full
+  limit, and the counts are gone whenever an instance is replaced.
+- The sliding-window limiter does not work this way: it moves on by one
+  segment for each call, so it stays closed after an idle spell.
+- Leave queueing off. A queued request would wait for a refill that only the
+  next request brings.
+- `RequireRateLimiting` and `[EnableRateLimiting]` belong to the middleware and
+  have no effect here.
+- Nothing removes a caller's limiter once it is idle, so bound the number of
+  keys yourself if callers are many.
+
+Size of the change: small to moderate.
 
 #### Looking ahead
 
-A change to Isoplane's ASP.NET Core adapter library, `Isoplane.AspNetCore`,
-can let an application with this middleware start. Its limiter would still
-count for one instance at a time, because its counters are in memory and
-[memory belongs to one instance](dotnet-runtime-differences.md#instances-come-and-go),
-so a shared store remains the place to count.
+Isoplane's ASP.NET Core adapter library, `Isoplane.AspNetCore`, can provide a
+middleware that honours the policies an application already registers and
+refills them this way, so that `UseRateLimiter` has a one-line replacement.
+Counting across instances needs shared state, which no in-memory limiter has.
 
 ### Console logging: `AddConsole`, `AddJsonConsole` and `ClearProviders` {#console-logging}
 
@@ -952,19 +1006,12 @@ thread-pool configuration stalls is not yet known.
 
 ## Observability
 
-### OpenTelemetry tracing {#opentelemetry}
+### OpenTelemetry SDK {#opentelemetry}
 
-An application that adds OpenTelemetry tracing refuses to start:
-`initialization retains a timer`. We ran it with ASP.NET Core instrumentation
-and the OTLP exporter, from the
-[`OpenTelemetry.Exporter.OpenTelemetryProtocol`][otlp-exporter] package, and
-two timers were still running when initialization ended:
-
-- One belongs to the OpenTelemetry SDK's self-diagnostics, which look for a
-  configuration file every ten seconds. It starts with the SDK, whichever
-  exporter is used.
-- One belongs to the batch exporter, which wakes every five seconds to send
-  what it has collected.
+An application that sets up the OpenTelemetry SDK at start-up refuses to
+start: `initialization retains a timer`. Tracing, metrics and logging all fail
+this way, with any exporter, because one of the timers belongs to the SDK
+itself.
 
 ```csharp
 builder.Services.AddOpenTelemetry()
@@ -973,18 +1020,180 @@ builder.Services.AddOpenTelemetry()
         .AddOtlpExporter());   // the application refuses to start
 ```
 
-Typically used for sending traces, metrics and logs to a collector.
+The refusal names the timers. For the code above there are two:
 
-#### Workaround: none yet
+- A delay of 10 s awaited by the SDK's self-diagnostics, which look for a
+  configuration file. It starts with the SDK, and no setting switches it off.
+- A delay of 5 s awaited by the batch exporter. A metrics reader has one of
+  60 s in its place.
 
-We have not found one.
+Creating the SDK later, after initialization, does not get round this. The
+application then starts, but those timers are still pending when each request
+ends, which [costs the instance](dotnet-runtime-differences.md#work-belongs-to-a-request).
+And the OTLP exporter sends synchronously, over HTTP and over gRPC alike, so
+nothing arrives.
+
+Typically used for sending traces, metrics and logs to a collector. We ran
+OpenTelemetry 1.19.1.
+
+#### Workaround: trace without the SDK, and send spans before the response completes
+
+.NET's tracing does not need the OpenTelemetry SDK. ASP.NET Core starts an
+[`Activity`][Activity] for each request, your own code can start more from an
+`ActivitySource`, and an [`ActivityListener`][ActivityListener] is handed each
+one as it ends. A middleware can then send what was collected to a collector
+as [OTLP over HTTP][otlp-spec], in its JSON encoding, before the response
+completes. An incoming `traceparent` header is honoured as usual.
+
+```csharp
+using System.Diagnostics;
+using System.Text;
+using Microsoft.AspNetCore.Http.Features;
+
+var endpoint = builder.Configuration["Otlp:Endpoint"]!;   // for example http://collector:4318/v1/traces
+
+// Spans that have ended and not been sent yet.
+var finished = new List<Activity>();
+ActivitySource.AddActivityListener(new ActivityListener
+{
+    ShouldListenTo = source => source.Name is "Microsoft.AspNetCore" or "MyApp",
+    Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+    ActivityStopped = finished.Add,
+});
+
+var app = builder.Build();
+
+app.Use(async (context, next) =>
+{
+    try
+    {
+        await next(context);
+    }
+    finally
+    {
+        // ASP.NET Core ends the request's own span after the response is complete, which is too
+        // late to send it. End it here, with the name and attributes it would be given then.
+        if (context.Features.Get<IHttpActivityFeature>()?.Activity is { } server)
+        {
+            var route = (context.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText;
+            server.DisplayName = route is null ? context.Request.Method : $"{context.Request.Method} {route}";
+            server.SetTag("http.request.method", context.Request.Method);
+            server.SetTag("url.path", context.Request.Path.Value);
+            if (route is not null) server.SetTag("http.route", route);
+            server.SetTag("http.response.status_code", context.Response.StatusCode);
+            if (context.Response.StatusCode >= 500) server.SetStatus(ActivityStatusCode.Error);
+            server.Stop();
+        }
+
+        if (finished.Count > 0)
+        {
+            var spans = finished.ToArray();
+            finished.Clear();
+            try
+            {
+                // Created and disposed within the request, so that nothing is left pending when it ends.
+                using var client = new HttpClient();
+                using var content = new StringContent(OtlpJson.Encode(spans, "my-app"), Encoding.UTF8, "application/json");
+                using var response = await client.PostAsync(endpoint, content, context.RequestAborted);
+                response.EnsureSuccessStatusCode();
+            }
+            catch (Exception error)
+            {
+                app.Logger.LogWarning(error, "{Count} span(s) were not exported", spans.Length);
+            }
+        }
+    }
+});
+```
+
+<details>
+<summary>The <code>OtlpJson</code> encoder used above</summary>
+
+```csharp
+using System.Diagnostics;
+using System.Text.Json.Nodes;
+
+/// The OTLP/HTTP JSON encoding of a batch of spans.
+static class OtlpJson
+{
+    public static string Encode(IEnumerable<Activity> spans, string service)
+    {
+        var encoded = new JsonArray();
+        foreach (var activity in spans)
+        {
+            var attributes = new JsonArray();
+            foreach (var tag in activity.TagObjects) attributes.Add(Attribute(tag.Key, tag.Value));
+            var span = new JsonObject
+            {
+                ["traceId"] = activity.TraceId.ToHexString(),
+                ["spanId"] = activity.SpanId.ToHexString(),
+                ["name"] = activity.DisplayName,
+                ["kind"] = (int)activity.Kind + 1,
+                ["startTimeUnixNano"] = Nanos(activity.StartTimeUtc),
+                ["endTimeUnixNano"] = Nanos(activity.StartTimeUtc + activity.Duration),
+                ["attributes"] = attributes,
+                ["status"] = new JsonObject { ["code"] = (int)activity.Status },
+            };
+            if (activity.ParentSpanId != default) span["parentSpanId"] = activity.ParentSpanId.ToHexString();
+            encoded.Add(span);
+        }
+        return new JsonObject
+        {
+            ["resourceSpans"] = new JsonArray(new JsonObject
+            {
+                ["resource"] = new JsonObject { ["attributes"] = new JsonArray(Attribute("service.name", service)) },
+                ["scopeSpans"] = new JsonArray(new JsonObject { ["scope"] = new JsonObject { ["name"] = service }, ["spans"] = encoded }),
+            }),
+        }.ToJsonString();
+    }
+
+    static string Nanos(DateTime utc) => ((utc - DateTime.UnixEpoch).Ticks * 100).ToString();
+
+    static JsonNode Attribute(string key, object? value) => new JsonObject
+    {
+        ["key"] = key,
+        ["value"] = value switch
+        {
+            bool flag => new JsonObject { ["boolValue"] = flag },
+            int or long or short or byte => new JsonObject { ["intValue"] = Convert.ToInt64(value).ToString() },
+            float or double => new JsonObject { ["doubleValue"] = Convert.ToDouble(value) },
+            _ => new JsonObject { ["stringValue"] = value?.ToString() ?? "" },
+        },
+    };
+}
+```
+
+</details>
+
+What this gives up, compared with the SDK:
+
+- **Batching.** There is one export for each request, on a new connection.
+- **Retries.** If the collector refuses an export, the request still succeeds
+  and those spans are dropped, with a warning in the log.
+- **Response time.** The response does not complete until the export has. A
+  collector that takes a second to answer adds a second to every request.
+- **The SDK's features:** samplers, resource detectors, the instrumentation
+  packages, and the protobuf and gRPC encodings.
+- **Metrics and logs.** This covers traces only.
+
+We checked the output against a receiver that records what it is sent, not
+against a collector.
+
+Size of the change: large.
 
 #### Looking ahead
 
-Not yet known. Both timers belong to loops that expect to
-keep running, and sending in batches after the response is
-[work between requests](dotnet-runtime-differences.md#work-belongs-to-a-request),
-so an exporter would have to send within the request instead.
+The SDK is close. Its maintainers already support single-threaded WebAssembly
+in the browser: the batch exporter and the metrics reader have
+[task-based forms for it][otel-6379], and the OTLP exporter was
+[adjusted for it in 1.19.0][otel-7708]. Two things remain for Isoplane: a way
+to keep the self-diagnostics from starting a timer, and an export that does
+not send synchronously, which the maintainers have so far left out.
+
+Isoplane can also close the gap from its own side, with an exporter that
+collects spans and sends them before the response completes, or hands them to
+the host to send in batches outside the request. Which of these comes first is
+not yet known.
 
 ## Model Context Protocol
 
@@ -1090,11 +1299,6 @@ general rules suggest what to expect, the entry says so.
 - **Job schedulers and message consumers**, such as Hangfire, Quartz.NET and
   MassTransit. They rely on
   [work between requests](dotnet-runtime-differences.md#work-belongs-to-a-request).
-- **Rate limiting policies other than fixed window.**
-- **OpenTelemetry metrics and logs, and exporters other than OTLP.** The
-  self-diagnostics timer described under
-  [OpenTelemetry tracing](#opentelemetry) starts with the SDK, so these are
-  expected to fail the same way.
 
 To look into a package yourself, build with
 [`IsoplaneAnalyzeDependencies`](reference/project-settings.md#isoplaneanalyzedependencies)
@@ -1103,6 +1307,8 @@ starts a thread or waits synchronously. Treat the result as a list of things
 to try, not a verdict: it flags an assembly for a call anywhere inside it, and
 that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 
+[Activity]: https://learn.microsoft.com/dotnet/api/system.diagnostics.activity
+[ActivityListener]: https://learn.microsoft.com/dotnet/api/system.diagnostics.activitylistener
 [AddAzureAppConfiguration]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.configuration.azureappconfigurationextensions.addazureappconfiguration
 [AddAzureKeyVault]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.configuration.azurekeyvaultconfigurationextensions.addazurekeyvault
 [AddConsole]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.logging.consoleloggerextensions.addconsole
@@ -1134,6 +1340,7 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [DbContext.SaveChanges]: https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontext.savechanges
 [DllNotFoundException]: https://learn.microsoft.com/dotnet/api/system.dllnotfoundexception
 [EnableBuffering]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.http.httprequestrewindextensions.enablebuffering
+[FixedWindowRateLimiter]: https://learn.microsoft.com/dotnet/api/system.threading.ratelimiting.fixedwindowratelimiter
 [fluentvalidation]: https://docs.fluentvalidation.net/
 [fluentvalidation-async]: https://docs.fluentvalidation.net/en/latest/async.html
 [FormOptions]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.http.features.formoptions
@@ -1174,7 +1381,9 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [nuget-mcp]: https://www.nuget.org/packages/ModelContextProtocol.AspNetCore
 [nuget-newtonsoft]: https://www.nuget.org/packages/Microsoft.AspNetCore.Mvc.NewtonsoftJson
 [nuget-sqlclient]: https://www.nuget.org/packages/Microsoft.Data.SqlClient
-[otlp-exporter]: https://github.com/open-telemetry/opentelemetry-dotnet/blob/main/src/OpenTelemetry.Exporter.OpenTelemetryProtocol/README.md
+[otel-6379]: https://github.com/open-telemetry/opentelemetry-dotnet/pull/6379
+[otel-7708]: https://github.com/open-telemetry/opentelemetry-dotnet/issues/7708
+[otlp-spec]: https://opentelemetry.io/docs/specs/otlp/
 [OutputFormatterMemoryBufferThreshold]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.mvc.mvcnewtonsoftjsonoptions.outputformattermemorybufferthreshold
 [PersistKeysToDbContext]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.dataprotection.entityframeworkcoredataprotectionextensions.persistkeystodbcontext
 [PersistKeysToFileSystem]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.dataprotection.dataprotectionbuilderextensions.persistkeystofilesystem
@@ -1203,9 +1412,11 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [Task.Result]: https://learn.microsoft.com/dotnet/api/system.threading.tasks.task-1.result
 [Thread.Sleep]: https://learn.microsoft.com/dotnet/api/system.threading.thread.sleep
 [Thread.Start]: https://learn.microsoft.com/dotnet/api/system.threading.thread.start
+[TokenBucketRateLimiter]: https://learn.microsoft.com/dotnet/api/system.threading.ratelimiting.tokenbucketratelimiter
 [TokenValidationParameters]: https://learn.microsoft.com/dotnet/api/microsoft.identitymodel.tokens.tokenvalidationparameters
 [TransactionInDoubtException]: https://learn.microsoft.com/dotnet/api/system.transactions.transactionindoubtexception
 [TransactionScope]: https://learn.microsoft.com/dotnet/api/system.transactions.transactionscope
+[TryReplenish]: https://learn.microsoft.com/dotnet/api/system.threading.ratelimiting.replenishingratelimiter.tryreplenish
 [UseLazyLoadingProxies]: https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.proxiesextensions.uselazyloadingproxies
 [UseRateLimiter]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.builder.ratelimiterapplicationbuilderextensions.useratelimiter
 [UseSession]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.builder.sessionmiddlewareextensions.usesession
