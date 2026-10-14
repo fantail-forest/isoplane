@@ -353,6 +353,147 @@ async fn an_aspnet_package_warms_its_read_route_before_template_capture() {
     );
 }
 
+/// The application log the web package's `/log` route leaves on an instance,
+/// with its `ConsoleLogging` setting naming the logging calls its builder
+/// makes: the level and text of each record of the route's category.
+async fn logged_with(calls: &str) -> Vec<(u8, String)> {
+    isoplane_harness::LogCapture::global();
+    let runtime = isoplane_fixtures::mono_runtime();
+    let preparation = LocalPreparation::with_cache(shared_cache()).expect("local preparation");
+    let mut request = request(&runtime, package("web"));
+    request.initialization.runtime_config =
+        serde_json::to_vec(&serde_json::json!({ "ConsoleLogging": calls }))
+            .expect("the settings serialize");
+    let product = preparation
+        .prepare(&runtime, &request, &CancellationToken::new())
+        .await
+        .unwrap_or_else(|error| panic!("the web package calling {calls} must prepare: {error}"));
+    let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
+    reactor.context.begin_slice(1, 1);
+    let guest = {
+        // SAFETY: The private decode helper receives only products from this test module's local preparation paths.
+        unsafe { ReturnedGuest::prepared(decode(&product, &request), &reactor) }
+    };
+    let body = finish_across_restored_stores(guest, &reactor, "/log").await;
+    assert_eq!(
+        body,
+        "logged",
+        "the route must answer after logging; logs: {:?}",
+        reactor.context.emitted_logs()
+    );
+    reactor
+        .context
+        .emitted_logs()
+        .into_iter()
+        .filter(|record| record.fields.contains("Web.Orders"))
+        .map(|record| (record.level, record.fields))
+        .collect()
+}
+
+const INFORMATION: u8 = 2;
+const ERROR: u8 = 4;
+
+#[tokio::test(start_paused = true)]
+async fn an_aspnet_packages_console_logger_writes_each_entry_once_in_place_of_isoplanes_record() {
+    assert_eq!(
+        logged_with("AddConsole").await,
+        [(INFORMATION, "warn: Web.Orders[3]\n      late by 5".to_owned())],
+        "AddConsole must start without a thread and write each entry once, as the simple formatter formats it, to standard output"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_aspnet_package_that_clears_the_providers_and_adds_the_console_logger_logs_each_entry_once(
+) {
+    assert_eq!(
+        logged_with("ClearProviders AddConsole").await,
+        [(
+            INFORMATION,
+            "warn: Web.Orders[3]\n      late by 5".to_owned()
+        )],
+        "ClearProviders followed by AddConsole must leave the console logger as the only one"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_aspnet_package_that_only_clears_the_providers_logs_nothing() {
+    assert_eq!(
+        logged_with("ClearProviders").await,
+        [],
+        "ClearProviders must remove Isoplane's provider as it removes any other"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_aspnet_packages_json_console_logger_writes_with_its_formatter_options() {
+    let logged = logged_with("AddJsonConsole").await;
+    let [(level, fields)] = &logged[..] else {
+        panic!("AddJsonConsole must write the entry once: {logged:?}");
+    };
+    assert_eq!(*level, INFORMATION, "the entry goes to standard output");
+    assert!(
+        fields.starts_with("{\n  \"EventId\": 3,"),
+        "the formatter must write with the indented writer options: {fields}"
+    );
+    let entry: serde_json::Value = serde_json::from_str(fields)
+        .unwrap_or_else(|error| panic!("the entry is JSON: {error}: {fields}"));
+    assert_eq!(
+        (
+            &entry["Category"],
+            &entry["Message"],
+            &entry["Scopes"][0]["RequestPath"],
+            &entry["Scopes"][1]["Id"]
+        ),
+        (
+            &serde_json::json!("Web.Orders"),
+            &serde_json::json!("late by 5"),
+            &serde_json::json!("/log"),
+            &serde_json::json!(42)
+        ),
+        "the formatter must write the category, message, and the request's and route's scopes it was configured to include: {fields}"
+    );
+}
+
+/// `logged` as one record at `level` whose text is `prefix`, ASP.NET's
+/// request identifier, then `suffix`.
+fn assert_one_entry_around_the_request_id(
+    logged: &[(u8, String)],
+    level: u8,
+    prefix: &str,
+    suffix: &str,
+) {
+    let [(actual, fields)] = logged else {
+        panic!("the entry must be written once: {logged:?}");
+    };
+    assert_eq!(*actual, level, "the entry's log level: {fields}");
+    assert!(
+        fields.starts_with(prefix) && fields.ends_with(suffix),
+        "the entry must read {prefix}<request id>{suffix}: {fields}"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_aspnet_packages_simple_console_logger_writes_with_its_formatter_options() {
+    // Single-line, with scopes and a literal timestamp, and no colour in the sandbox.
+    assert_one_entry_around_the_request_id(
+        &logged_with("AddSimpleConsole").await,
+        INFORMATION,
+        "at warn: Web.Orders[3] => RequestPath:/log RequestId:",
+        " => order 42 late by 5",
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_aspnet_packages_systemd_console_logger_sends_entries_over_the_threshold_to_standard_error(
+) {
+    assert_one_entry_around_the_request_id(
+        &logged_with("AddSystemdConsole").await,
+        ERROR,
+        "<4>Web.Orders[3] => RequestPath:/log RequestId:",
+        " => order 42 late by 5",
+    );
+}
+
 /// The web package prepared with its `Peer` setting naming `peer`, which its
 /// initialization reaches as a local development session's does.
 fn calling_request(runtime: &[u8], peer: std::net::SocketAddr) -> BuildRequest {

@@ -70,6 +70,15 @@ public static class IsoplaneHosting
     /// without one. The <c>Logging</c> configuration section sets log levels.
     /// </para>
     /// <para>
+    /// <c>ILogger</c> output goes to the application's log, which local development shows in the
+    /// terminal running the application. The console logger works as written: after
+    /// <c>builder.Logging.AddConsole()</c>, <c>AddJsonConsole</c>, <c>AddSimpleConsole</c> or
+    /// <c>AddSystemdConsole</c>, each entry reaches the log as the chosen formatter writes it, in
+    /// place of Isoplane's own record, and an entry the console logger sends to standard error is
+    /// recorded at the log's error level. <c>ClearProviders</c> removes Isoplane's provider with the
+    /// others, so an application that adds none after it logs nothing.
+    /// </para>
+    /// <para>
     /// Isoplane runs <c>Program.cs</c> during template preparation, up to <c>RunAsync</c>, and saves the
     /// result as the template every instance starts from. The supplied settings are available while
     /// it runs, and they are the settings every instance has: when one changes, the application is
@@ -139,7 +148,11 @@ public static class IsoplaneHosting
         ((IConfigurationBuilder)builder.Configuration).Add(configuration);
         builder.Logging.ClearProviders();
         builder.Logging.AddConfiguration(builder.Configuration.GetSection("Logging"));
-        builder.Logging.AddProvider(new IsoplaneLoggerProvider());
+        var logs = new IsoplaneLoggerProvider();
+        builder.Logging.AddProvider(logs);
+        // The application adds its own providers after this returns, so the console logger is
+        // replaced once all of them are registered.
+        builder.Host.ConfigureContainer<object>((_, container) => ConsoleLogging.UseSynchronousConsole(container, logs));
         builder.Services.AddRouting();
         // Outside the sandbox a synchronous load can succeed, so only here does a failed one mean UseLoadedSession is missing.
         builder.Services.CheckSessionLoading();

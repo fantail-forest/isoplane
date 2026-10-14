@@ -20,6 +20,8 @@ namespace Isoplane;
 /// In an application written without ASP.NET, <c>Console.WriteLine</c> already writes to the same
 /// log. Create a provider there only when you want what <c>ILogger</c> adds: levels, categories and
 /// named values. A logger from a provider you create writes every level except <c>None</c>.
+/// Use it there in place of the console logger from <c>Microsoft.Extensions.Logging.Console</c>,
+/// which starts a thread when it is created and so fails outside an ASP.NET application.
 /// </para>
 /// <para>
 /// While developing, the log appears in the terminal running the application. A message logged at

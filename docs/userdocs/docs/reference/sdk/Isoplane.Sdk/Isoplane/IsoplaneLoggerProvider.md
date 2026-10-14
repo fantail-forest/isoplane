@@ -24,7 +24,7 @@ public sealed class IsoplaneLoggerProvider : ILoggerProvider, ISupportExternalSc
 
 An ASP.NET application does not create one. `IsoplaneHosting.CreateBuilder` registers it, so inject `ILogger<T>` or use `app.Logger` as in any ASP.NET application, and set log levels in the `Logging` configuration section.
 
-In an application written without ASP.NET, `Console.WriteLine` already writes to the same log. Create a provider there only when you want what `ILogger` adds: levels, categories and named values. A logger from a provider you create writes every level except `None`.
+In an application written without ASP.NET, `Console.WriteLine` already writes to the same log. Create a provider there only when you want what `ILogger` adds: levels, categories and named values. A logger from a provider you create writes every level except `None`. Use it there in place of the console logger from `Microsoft.Extensions.Logging.Console`, which starts a thread when it is created and so fails outside an ASP.NET application.
 
 While developing, the log appears in the terminal running the application. A message logged at `Critical` is recorded at the log's error level. Do not log credentials or connection strings.
 

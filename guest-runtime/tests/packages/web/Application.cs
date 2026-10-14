@@ -2,18 +2,22 @@ using System;
 using System.Globalization;
 using System.IO;
 using System.Net.Http;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Isoplane;
 using Isoplane.AspNetCore;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Console;
 
 namespace Web;
 
 /// <summary>
-/// Minimal API routes over a singleton, a content file, a static web asset, a streamed upload and,
-/// when a <c>Peer</c> setting names one, a client from <c>IHttpClientFactory</c>.
+/// Minimal API routes over a singleton, a content file, a static web asset, a streamed upload,
+/// a logged entry and, when a <c>Peer</c> setting names one, a client from <c>IHttpClientFactory</c>.
+/// A <c>ConsoleLogging</c> setting names the logging calls its builder makes.
 /// </summary>
 public static class Application
 {
@@ -24,6 +28,7 @@ public static class Application
         builder.Services.AddSingleton<Greeter>();
         string? peer = builder.Configuration["Peer"];
         if (peer is not null) builder.Services.AddHttpClient("peer", client => client.BaseAddress = new Uri(peer));
+        AddConsoleLogging(builder, builder.Configuration["ConsoleLogging"]);
         var app = builder.Build();
         app.MapGet("/hello/{name}", async (string name, Greeter greeter) =>
         {
@@ -48,6 +53,14 @@ public static class Application
                 total += read;
             return "received:" + total.ToString(CultureInfo.InvariantCulture);
         });
+        app.MapGet("/log", async (ILoggerFactory loggers) =>
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(50)).ConfigureAwait(false);
+            var logger = loggers.CreateLogger("Web.Orders");
+            using (logger.BeginScope("order {Id}", 42))
+                logger.LogWarning(new EventId(3, "Late"), "late by {Minutes}", 5);
+            return "logged";
+        });
         var calls = 0;
         app.MapGet("/outbound", async (IHttpClientFactory clients) =>
         {
@@ -63,6 +76,47 @@ public static class Application
             if (peer is not null) await app.WarmupAsync("/outbound");
         };
         await app.RunAsync();
+    }
+
+    /// <summary>Makes the logging calls <paramref name="calls"/> names, as an application's <c>Program.cs</c> would.</summary>
+    private static void AddConsoleLogging(WebApplicationBuilder builder, string? calls)
+    {
+        switch (calls)
+        {
+            case null:
+                break;
+            case "AddConsole":
+                builder.Logging.AddConsole();
+                break;
+            case "ClearProviders AddConsole":
+                builder.Logging.ClearProviders();
+                builder.Logging.AddConsole();
+                break;
+            case "ClearProviders":
+                builder.Logging.ClearProviders();
+                break;
+            case "AddJsonConsole":
+                builder.Logging.AddJsonConsole(options =>
+                {
+                    options.IncludeScopes = true;
+                    options.JsonWriterOptions = new JsonWriterOptions { Indented = true };
+                });
+                break;
+            case "AddSimpleConsole":
+                builder.Logging.AddSimpleConsole(options =>
+                {
+                    options.SingleLine = true;
+                    options.IncludeScopes = true;
+                    options.TimestampFormat = "'at' ";
+                });
+                break;
+            case "AddSystemdConsole":
+                builder.Logging.AddSystemdConsole(options => options.IncludeScopes = true);
+                builder.Services.Configure<ConsoleLoggerOptions>(options => options.LogToStandardErrorThreshold = LogLevel.Warning);
+                break;
+            default:
+                throw new ArgumentException($"No logging calls are named {calls}.", nameof(calls));
+        }
     }
 }
 
