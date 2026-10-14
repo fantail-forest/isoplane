@@ -198,7 +198,7 @@ app.MapPost("/documents", async (HttpContext context, DocumentStore store) =>
 Typically used for any multipart upload: images, documents, imports. Large
 fields of an ordinary URL-encoded form are not affected.
 
-#### Recommended: read each file as a stream
+#### Recommended workaround: read each file as a stream
 
 Read each file while it arrives, with [`MultipartReader`][MultipartReader].
 Isoplane hands the request body to the application as it reads, so a file of
@@ -229,7 +229,7 @@ app.MapPost("/documents", async (HttpContext context, DocumentStore store) =>
 Size of the change: moderate. The handler reads the multipart body itself
 instead of taking an `IFormFile`.
 
-#### Alternative: keep `IFormFile` and hold uploads in memory
+#### Alternative workaround: keep `IFormFile` and hold uploads in memory
 
 Raising [`MemoryBufferThreshold`][FormOptions.MemoryBufferThreshold] in
 [`FormOptions`][FormOptions] gets `IFormFile` working as written, by holding
@@ -274,7 +274,7 @@ context.Request.Body.Position = 0;   // so that the body can be bound afterwards
 Typically used for verifying a webhook signature before binding the body, and
 for logging request bodies.
 
-#### Recommended: read the body once
+#### Recommended workaround: read the body once
 
 Read the body once, as a stream, and do both jobs in that pass. For a signed
 webhook, wrap the body in a [`CryptoStream`][CryptoStream] that computes the
@@ -302,7 +302,7 @@ passed.
 
 Size of the change: moderate.
 
-#### Alternative: buffer up to a size you choose
+#### Alternative workaround: buffer up to a size you choose
 
 Pass the largest body you accept as both the threshold and the limit. A body
 up to that size stays in memory, and a larger one is refused.
@@ -381,7 +381,7 @@ and pass its type information by hand. ASP.NET Core itself switches the
 generator on only for native AOT publishing, so this code works in an ordinary
 ASP.NET Core application.
 
-#### Recommended: register the context and let ASP.NET Core serialize
+#### Recommended workaround: register the context and let ASP.NET Core serialize
 
 Register the context once, with
 [`ConfigureHttpJsonOptions`][ConfigureHttpJsonOptions], and have handlers take
@@ -397,7 +397,7 @@ app.MapPost("/orders", (Order order) => new OrderSummary(order));
 
 Size of the change: small.
 
-#### Alternative: switch the generator off
+#### Alternative workaround: switch the generator off
 
 Set `<EnableRequestDelegateGenerator>false</EnableRequestDelegateGenerator>`
 in the project file. ASP.NET Core then works out each endpoint's code when the
@@ -490,7 +490,7 @@ fails with `DirectoryNotFoundException: /tmp/`.
 Typically used for APIs that accept or return XML. JSON through
 [`System.Text.Json`][System.Text.Json] has no such limit.
 
-#### Recommended: read and write XML with the asynchronous XML APIs
+#### Recommended workaround: read and write XML with the asynchronous XML APIs
 
 These stream the body instead of holding it. To read, use an
 [`XmlReader`][XmlReader] created with
@@ -513,7 +513,7 @@ app.MapPost("/orders", async (HttpContext context) =>
 Size of the change: moderate. The handler reads and writes the XML itself
 instead of leaving it to MVC.
 
-#### Alternative: buffer a body that is bound with `XmlSerializer`
+#### Alternative workaround: buffer a body that is bound with `XmlSerializer`
 
 [`XmlSerializer`][XmlSerializer] reads synchronously, so a body bound to a
 class with it has to be in memory first. Refuse a body over a size you choose,
@@ -702,7 +702,7 @@ Typically used by applications that keep Newtonsoft.Json for its converters or
 for compatibility with existing clients. There are two ways through, and the
 second keeps Newtonsoft.Json.
 
-#### Recommended: `System.Text.Json` with source generation
+#### Recommended workaround: `System.Text.Json` with source generation
 
 Remove the call to `AddNewtonsoftJson`, so that MVC uses its default JSON
 formatters, which are built on [`System.Text.Json`][System.Text.Json]. They
@@ -737,7 +737,7 @@ Size of the change: moderate, and large for an application with many
 Newtonsoft.Json converters or attributes, which have to be rewritten for
 `System.Text.Json`.
 
-#### Alternative: keep Newtonsoft.Json and raise its buffers
+#### Alternative workaround: keep Newtonsoft.Json and raise its buffers
 
 On `MvcNewtonsoftJsonOptions`, raise
 [`InputFormatterMemoryBufferThreshold`][InputFormatterMemoryBufferThreshold]
