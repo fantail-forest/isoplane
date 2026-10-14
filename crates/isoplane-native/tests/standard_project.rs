@@ -6,19 +6,18 @@ pub mod common;
 use std::process::Command;
 
 #[test]
-fn solution_templates_build_under_a_name_that_is_not_an_identifier_and_repeats_a_folder() {
-    // The hyphen makes file names and namespaces differ. The first part names a
-    // namespace the template declares for one of its folders: C# resolves a
-    // root-qualified name written inside a namespace from the inside out, so
-    // such a reference finds the folder's namespace instead of the root.
-    for (template, name) in [
-        ("isoplane-handler", "Tests.Template-App"),
-        ("isoplane-mcpserver", "Tools.Template-App"),
-        ("isoplane-webapi", "Todos.Template-App"),
-        ("isoplane-webapp", "Notes.Template-App"),
+fn templates_build_under_names_that_are_not_identifiers() {
+    // Task generates each template under a name chosen to break namespace
+    // resolution; taskfiles/fixtures.yml says why.
+    for template in [
+        "isoplane-web",
+        "isoplane-handler",
+        "isoplane-mcpserver",
+        "isoplane-webapi",
+        "isoplane-webapp",
     ] {
-        let directory = tempfile::tempdir().expect("isolate the solution template journey");
-        let solution = isoplane_fixtures::template_project(directory.path(), template, name);
+        let directory = tempfile::tempdir().expect("isolate the template build");
+        let solution = isoplane_fixtures::template_project(directory.path(), template);
         let output = Command::new("dotnet")
             .arg("build")
             .current_dir(&solution)
@@ -26,7 +25,7 @@ fn solution_templates_build_under_a_name_that_is_not_an_identifier_and_repeats_a
             .expect("build the generated solution with the .NET SDK");
         assert!(
             output.status.success(),
-            "{template} must build as {name}, whose files carry the project's name and whose code has a namespace derived from it:\n{}{}",
+            "{template} must build under its prepared name, which its files carry and its namespaces derive from:\n{}{}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
@@ -36,7 +35,7 @@ fn solution_templates_build_under_a_name_that_is_not_an_identifier_and_repeats_a
 #[test]
 fn installed_sandbox_projects_do_not_advertise_clr_hot_reload() {
     let directory = tempfile::tempdir().expect("isolate installed SDK capability evaluation");
-    let app = isoplane_fixtures::aspnet_project(directory.path());
+    let app = isoplane_fixtures::handler_project(directory.path());
     for configuration in ["Debug", "Release"] {
         let output = Command::new("dotnet")
             .args(["msbuild", "-getItem:ProjectCapability"])
@@ -70,7 +69,7 @@ fn installed_sandbox_projects_do_not_advertise_clr_hot_reload() {
 #[tokio::test]
 async fn dotnet_run_executes_an_application_package_with_an_existing_library() {
     let directory = tempfile::tempdir().expect("isolate the installed project workflow");
-    let app = isoplane_fixtures::aspnet_project(directory.path());
+    let app = isoplane_fixtures::handler_project(directory.path());
     let library = directory.path().join("CustomerLibrary");
     std::fs::create_dir(&library).expect("create an ordinary existing class library");
     std::fs::write(
@@ -83,28 +82,33 @@ async fn dotnet_run_executes_an_application_package_with_an_existing_library() {
         "namespace CustomerLibrary; public static class Greeting { public static string Message => \"Hello from the existing library!\"; }",
     )
     .expect("write the ordinary customer application logic");
-    let project = app.join("Template-App.csproj");
-    let project_text = std::fs::read_to_string(&project).expect("read the generated project");
+    let project = app.join("HandlerFixture.csproj");
+    let project_text = std::fs::read_to_string(&project).expect("read the fixture project");
     std::fs::write(
         &project,
         project_text.replace(
             "</Project>",
-            r#"<PropertyGroup><RuntimeFrameworkVersion>10.0.12</RuntimeFrameworkVersion></PropertyGroup><ItemGroup><ProjectReference Include="../CustomerLibrary/CustomerLibrary.csproj" /></ItemGroup></Project>"#,
+            r#"<ItemGroup><ProjectReference Include="../CustomerLibrary/CustomerLibrary.csproj" /></ItemGroup></Project>"#,
         ),
     )
     .expect("onboard existing code through a standard project reference");
-    let source = app.join("Program.cs");
-    let code = std::fs::read_to_string(&source).expect("read the generated application");
-    let route = code.replace(
-        "() => \"Hello from Isoplane!\"",
-        "() => { app.Logger.LogInformation(\"guest-log-marker\"); return CustomerLibrary.Greeting.Message; }",
-    );
     std::fs::write(
-        &source,
-        format!("using Microsoft.Extensions.Logging;\n{route}"),
+        app.join("Handler.cs"),
+        r#"using Isoplane;
+
+public static class Handler
+{
+    [HttpHandler]
+    public static Task<Response> HandleAsync(Request request)
+    {
+        Console.WriteLine("guest-log-marker");
+        return Task.FromResult(Response.Text(CustomerLibrary.Greeting.Message));
+    }
+}
+"#,
     )
     .expect("exercise ordinary application logging inside the package");
-    let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
+    let cli = isoplane_fixtures::managed_cli();
     {
         let configuration = "Debug";
         let evaluated = Command::new("dotnet")
@@ -156,12 +160,12 @@ async fn dotnet_run_executes_an_application_package_with_an_existing_library() {
 #[tokio::test]
 async fn an_unchanged_interpreted_run_reuses_its_prepared_template() {
     let directory = tempfile::tempdir().expect("isolate the incremental installed project journey");
-    let app = isoplane_fixtures::aspnet_project(directory.path());
-    let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
+    let app = isoplane_fixtures::handler_project(directory.path());
+    let cli = isoplane_fixtures::managed_cli();
     let mut first = start_dotnet(&app, &cli, "Debug", false, false, &[]);
     first.stop();
     std::fs::write(
-        app.join("Program.cs"),
+        app.join("Handler.cs"),
         "invalid C# that must not be compiled",
     )
     .expect("change source after building the application");
@@ -297,10 +301,10 @@ fn start_dotnet(
 #[tokio::test]
 async fn dotnet_watch_rebuilds_the_guest_after_a_compilation_error_is_repaired() {
     let directory = tempfile::tempdir().expect("isolate the installed watch workflow");
-    let app = isoplane_fixtures::aspnet_project(directory.path());
-    let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
+    let app = isoplane_fixtures::handler_project(directory.path());
+    let cli = isoplane_fixtures::managed_cli();
     let mut running = start_dotnet(&app, &cli, "Debug", true, false, &[]);
-    let source = app.join("Program.cs");
+    let source = app.join("Handler.cs");
     let original = std::fs::read_to_string(&source).expect("read the generated application");
     std::fs::write(&source, "this is not valid C#").expect("introduce a compile failure");
     running.wait_for("error CS");

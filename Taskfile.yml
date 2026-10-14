@@ -23,6 +23,7 @@ vars:
   RELEASE_NATIVE_LIBRARY: '{{.RELEASE_NATIVE_ROOT}}/{{.PLATFORM}}/native/release/{{.NATIVE_LIBRARY}}'
   SCRATCH: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/tmp'
   TEST_RUNTIME_CACHE: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/test-runtimes/cache'
+  TEST_DOTNET: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/test-dotnet'
 
   MODULES: '{{.ISOPLANE_TEST_RUNTIME_MODULES | default (printf "%s/.build/wasm32/runtime-modules" .ROOT_DIR)}}'
   FEED: '{{.ISOPLANE_TEST_RUNTIME_FEED | default (printf "%s/.build/wasm32/runtime/feed" .ROOT_DIR)}}'
@@ -43,6 +44,7 @@ env:
   ISOPLANE_TEST_CLI_ASSEMBLY: '{{.CLI}}'
   ISOPLANE_TEST_PACKAGE_FEED: '{{.PACKAGES}}'
   ISOPLANE_TEST_RUNTIME_CACHE: '{{.TEST_RUNTIME_CACHE}}'
+  ISOPLANE_TEST_DOTNET: '{{.TEST_DOTNET}}'
   ISOPLANE_TEST_NATIVE_PACKAGE_FEED: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/packages'
   ISOPLANE_TEST_PYTHON: '{{.PYTHON}}'
   ISOPLANE_TEST_DEBUGGER_PYTHON: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/dap-python/{{if eq OS "windows"}}Scripts/python.exe{{else}}bin/python{{end}}'

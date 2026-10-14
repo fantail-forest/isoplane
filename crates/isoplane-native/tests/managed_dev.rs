@@ -7,9 +7,9 @@ use common::Dev;
 use std::path::{Path, PathBuf};
 
 fn project(destination: &Path) -> (PathBuf, PathBuf) {
-    let app = isoplane_fixtures::aspnet_project(destination);
+    let app = isoplane_fixtures::handler_project(destination);
     source(&app, "working publication", "");
-    let project = app.join("Template-App.csproj");
+    let project = app.join("HandlerFixture.csproj");
     let text = std::fs::read_to_string(&project).expect("generated project");
     std::fs::write(
         &project,
@@ -27,21 +27,27 @@ fn project(destination: &Path) -> (PathBuf, PathBuf) {
     std::fs::write(app.join("wait-build.sh"),
         "set -eu\nmkfifo .isoplane/publication-gate\nprintf 'publication-is-held\\n'\nexec cat .isoplane/publication-gate\n")
         .expect("fixture external build gate");
-    let cli = isoplane_fixtures::managed_cli(destination, &app);
+    let cli = isoplane_fixtures::managed_cli();
     (app, cli)
 }
 
 fn source(app: &Path, response: &str, log: &str) {
     let source = format!(
         r#"
-using Isoplane.AspNetCore;
+using Isoplane;
 
-var app = IsoplaneHosting.CreateBuilder(args).Build();
-app.MapGet("/", () => {{ System.Console.WriteLine("{log}"); return "{response}"; }});
-await app.RunAsync();
+public static class Handler
+{{
+    [HttpHandler]
+    public static Task<Response> HandleAsync(Request request)
+    {{
+        System.Console.WriteLine("{log}");
+        return Task.FromResult(Response.Text("{response}"));
+    }}
+}}
 "#
     );
-    std::fs::write(app.join("Program.cs"), source).expect("customer application source");
+    std::fs::write(app.join("Handler.cs"), source).expect("customer application source");
 }
 
 async fn body(dev: &Dev) -> String {

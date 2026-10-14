@@ -2,10 +2,11 @@
 //! This crate is for test dependencies and panics when required artifacts are absent.
 #![forbid(unsafe_code)]
 
-mod dotnet_template;
+mod dotnet_projects;
 
-pub use dotnet_template::{
-    aspnet_project, debugger_python, managed_cli, release_version, template_project,
+pub use dotnet_projects::{
+    handler_project, install_managed_cli, managed_cli, release_version,
+    template_project, testing_consumer, web_project,
 };
 
 use std::path::{Path, PathBuf};
@@ -17,6 +18,13 @@ pub(crate) fn repo_root() -> PathBuf {
         .and_then(Path::parent)
         .expect("crates/isoplane-fixtures has a grandparent")
         .to_path_buf()
+}
+
+/// The debugger test interpreter prepared by Task.
+pub fn debugger_python() -> PathBuf {
+    std::env::var_os("ISOPLANE_TEST_DEBUGGER_PYTHON")
+        .map(PathBuf::from)
+        .expect("run tests through Task to select the prepared debugger Python environment")
 }
 
 /// Cargo output selected by Task through `CARGO_TARGET_DIR`.

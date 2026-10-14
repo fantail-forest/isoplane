@@ -32,14 +32,14 @@ tasks:
 
   native:
     desc: Run SDK and CLI integration tests using prepared packages
-    deps: [':initialize', ':cli', ':fixtures:feed', ':fixtures:runtime', ':fixtures:package', ':managed:tests', ':test:debugger:environment', ':test:managed:host']
+    deps: [':initialize', ':cli', ':fixtures:feed', ':fixtures:runtime', ':fixtures:projects', ':fixtures:package', ':managed:tests', ':test:debugger:environment', ':test:managed:host']
     env: *test_env
     cmds:
       - '{{.DEVELOPMENT_COMMAND}}cargo test -p isoplane-native {{.CLI_ARGS}}'
 
   debugger:
     desc: Run selected native debugger integration tests
-    deps: [':initialize', ':cli', ':managed:tests', ':test:debugger:environment', ':fixtures:feed', ':fixtures:runtime', ':fixtures:package:debugger', ':fixtures:package:debugger-optimized', ':fixtures:debugger:hotreload:package', ':test:managed:host']
+    deps: [':initialize', ':cli', ':managed:tests', ':test:debugger:environment', ':fixtures:feed', ':fixtures:runtime', ':fixtures:projects', ':fixtures:package:debugger', ':fixtures:package:debugger-optimized', ':fixtures:debugger:hotreload:package', ':test:managed:host']
     env: *test_env
     cmds:
       - '{{.DEVELOPMENT_COMMAND}}cargo test -p isoplane-native --test installed_dev {{.CLI_ARGS}}'

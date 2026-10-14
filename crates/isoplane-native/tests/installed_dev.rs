@@ -7,10 +7,10 @@ mod debugger;
 use common::Dev;
 
 #[tokio::test]
-async fn an_installed_dotnet_tool_runs_and_reloads_the_aspnet_template() {
+async fn an_installed_dotnet_tool_runs_and_reloads_an_application() {
     let dir = tempfile::tempdir().unwrap();
-    let app = isoplane_fixtures::aspnet_project(dir.path());
-    let cli = isoplane_fixtures::managed_cli(dir.path(), &app);
+    let app = isoplane_fixtures::handler_project(dir.path());
+    let cli = isoplane_fixtures::managed_cli();
     let mut dev = Dev::start_managed(&app, &cli);
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
@@ -20,15 +20,15 @@ async fn an_installed_dotnet_tool_runs_and_reloads_the_aspnet_template() {
     assert_eq!(
         response.status(),
         200,
-        "the installed ASP.NET template must serve successfully through the local sandbox:\n{}",
+        "the installed CLI must serve the application through the local sandbox:\n{}",
         dev.diagnostics()
     );
     assert_eq!(
         response.text().await.unwrap(),
         "Hello from Isoplane!",
-        "the generated ASP.NET route must execute without copied interop boilerplate"
+        "the application's handler must execute without copied interop boilerplate"
     );
-    let source = app.join("Program.cs");
+    let source = app.join("Handler.cs");
     let original = std::fs::read_to_string(&source).unwrap();
     std::fs::write(
         &source,
@@ -68,8 +68,8 @@ async fn an_installed_dotnet_tool_runs_and_reloads_the_aspnet_template() {
 #[tokio::test]
 async fn an_installed_application_resumes_ordinary_timers() {
     let directory = tempfile::tempdir().unwrap();
-    let app = isoplane_fixtures::aspnet_project(directory.path());
-    let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
+    let app = isoplane_fixtures::handler_project(directory.path());
+    let cli = isoplane_fixtures::managed_cli();
     let mut dev = Dev::start_managed(&app, &cli);
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
@@ -79,17 +79,31 @@ async fn an_installed_application_resumes_ordinary_timers() {
     assert_eq!(
         response.status(),
         200,
-        "the shared runtime must serve the unchanged installed template:\n{}",
+        "the shared runtime must serve the unchanged application:\n{}",
         dev.diagnostics()
     );
     assert_eq!(
         response.text().await.unwrap(),
         "Hello from Isoplane!",
-        "Mono must invoke the generated ASP.NET exports through the actual sandbox"
+        "Mono must invoke the application's handler through the actual sandbox"
     );
-    let source = app.join("Program.cs");
-    let original = std::fs::read_to_string(&source).unwrap();
-    std::fs::write(&source, original.replace("await app.RunAsync();", "app.MapGet(\"/async\", async () => { await System.Threading.Tasks.Task.Delay(1); return \"async-ready\"; });\nawait app.RunAsync();")).unwrap();
+    std::fs::write(
+        app.join("Handler.cs"),
+        r#"using Isoplane;
+
+public static class Handler
+{
+    [HttpHandler]
+    public static async Task<Response> HandleAsync(Request request)
+    {
+        if (request.Path != "/async") return Response.Text("Hello from Isoplane!");
+        await Task.Delay(1);
+        return Response.Text("async-ready");
+    }
+}
+"#,
+    )
+    .unwrap();
     dev.wait_event("reloaded");
     let response = client
         .get(format!("{}/async", dev.url))
@@ -112,10 +126,10 @@ async fn an_installed_application_resumes_ordinary_timers() {
 #[tokio::test]
 async fn a_package_reload_prepares_only_its_layer_over_the_held_runtime_baseline() {
     let directory = tempfile::tempdir().unwrap();
-    let app = isoplane_fixtures::aspnet_project(directory.path());
-    let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
+    let app = isoplane_fixtures::handler_project(directory.path());
+    let cli = isoplane_fixtures::managed_cli();
     let mut dev = Dev::start_managed(&app, &cli);
-    let source = app.join("Program.cs");
+    let source = app.join("Handler.cs");
     let original = std::fs::read_to_string(&source).unwrap();
     std::fs::write(
         &source,
@@ -149,8 +163,8 @@ async fn a_package_reload_prepares_only_its_layer_over_the_held_runtime_baseline
 #[test]
 fn a_second_debug_session_reuses_the_compiled_debug_runtime() {
     let directory = tempfile::tempdir().unwrap();
-    let app = isoplane_fixtures::aspnet_project(directory.path());
-    let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
+    let app = isoplane_fixtures::handler_project(directory.path());
+    let cli = isoplane_fixtures::managed_cli();
     let cache = directory.path().join("cache");
     for compiled in [true, false] {
         let mut dev = Dev::start_managed_with_cache(&app, &cli, &["--debug", "--no-watch"], &cache);
@@ -175,8 +189,8 @@ fn a_second_debug_session_reuses_the_compiled_debug_runtime() {
 #[test]
 fn a_prepared_runtime_spares_the_first_sessions_its_compilation() {
     let directory = tempfile::tempdir().unwrap();
-    let app = isoplane_fixtures::aspnet_project(directory.path());
-    let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
+    let app = isoplane_fixtures::handler_project(directory.path());
+    let cli = isoplane_fixtures::managed_cli();
     let runtime = isoplane_fixtures::mono_runtime_module()
         .parent()
         .expect("the runtime module has a directory")
@@ -233,20 +247,29 @@ fn a_prepared_runtime_spares_the_first_sessions_its_compilation() {
 }
 
 #[tokio::test]
-async fn an_installed_template_streams_an_upload_through_the_shared_runtime() {
+async fn an_installed_application_streams_an_upload_through_the_shared_runtime() {
     let directory = tempfile::tempdir().unwrap();
-    let app = isoplane_fixtures::aspnet_project(directory.path());
-    let source = app.join("Program.cs");
-    let original = std::fs::read_to_string(&source).unwrap();
+    let app = isoplane_fixtures::handler_project(directory.path());
     std::fs::write(
-        &source,
-        original.replace(
-            "await app.RunAsync();",
-            "app.MapPost(\"/upload\", async (Microsoft.AspNetCore.Http.HttpRequest request) => { long total = 0; var buffer = new byte[4096]; int read; while ((read = await request.Body.ReadAsync(buffer)) != 0) total += read; return $\"received:{total}\"; });\nawait app.RunAsync();",
-        ),
+        app.join("Handler.cs"),
+        r#"using Isoplane;
+
+public static class Handler
+{
+    [HttpHandler]
+    public static async Task<Response> HandleAsync(StreamingRequest request)
+    {
+        long total = 0;
+        var buffer = new byte[4096];
+        int read;
+        while ((read = await request.Body.ReadAsync(buffer, request.Aborted)) != 0) total += read;
+        return Response.Text($"received:{total}");
+    }
+}
+"#,
     )
     .unwrap();
-    let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
+    let cli = isoplane_fixtures::managed_cli();
     let mut dev = Dev::start_managed(&app, &cli);
     let body = vec![b'x'; 3 * 1024 * 1024];
     let response = reqwest::Client::new()
@@ -258,13 +281,13 @@ async fn an_installed_template_streams_an_upload_through_the_shared_runtime() {
     assert_eq!(
         response.status(),
         200,
-        "the shared runtime must route an upload to the package's ASP.NET endpoint:\n{}",
+        "the shared runtime must stream an upload to the application's handler:\n{}",
         dev.diagnostics()
     );
     assert_eq!(
         response.text().await.unwrap(),
         "received:3145728",
-        "the package's endpoint must read the whole body the runtime streams to it"
+        "the handler must read the whole body the runtime streams to it"
     );
     dev.stop();
 }
@@ -374,14 +397,14 @@ fn start_debug_session(app: &std::path::Path, cli: &std::path::Path, mode: &str)
 fn installed_debug_acceptance(mode: &str) {
     let python = isoplane_fixtures::debugger_python();
     let directory = tempfile::tempdir().unwrap();
-    let app = isoplane_fixtures::aspnet_project(directory.path());
+    let app = isoplane_fixtures::web_project(directory.path());
     let source = write_debug_application(&app, mode);
     let debug_source = if mode == "library" {
         write_debug_library(directory.path(), &app)
     } else {
         source
     };
-    let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
+    let cli = isoplane_fixtures::managed_cli();
     let mut dev = (!matches!(
         mode,
         "launch" | "reload" | "terminal-launch" | "terminal-detach"

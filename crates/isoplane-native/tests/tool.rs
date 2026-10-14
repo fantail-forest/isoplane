@@ -27,7 +27,10 @@ fn the_installed_dotnet_tool_reports_its_package_version() {
         String::from_utf8_lossy(&configured.stdout),
         String::from_utf8_lossy(&configured.stderr)
     );
-    let cli = isoplane_fixtures::managed_cli(directory.path(), directory.path());
+    let cli = isoplane_fixtures::install_managed_cli(
+        directory.path(),
+        &directory.path().join("nuget.config"),
+    );
     let installed = Command::new("dotnet")
         .args(["tool", "list", "--tool-path"])
         .arg(directory.path().join("tools"))

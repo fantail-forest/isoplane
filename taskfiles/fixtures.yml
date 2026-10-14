@@ -3,7 +3,7 @@ version: '3'
 tasks:
   default:
     desc: Prepare shared fixtures before running tests
-    deps: [':node:runtimes', ':fixtures:rust', ':fixtures:dotnet', ':fixtures:acceptance', ':fixtures:package', ':cli', ':managed:tests', ':test:debugger:environment', ':fixtures:feed', ':fixtures:runtime', ':test:managed:host']
+    deps: [':node:runtimes', ':fixtures:rust', ':fixtures:dotnet', ':fixtures:acceptance', ':fixtures:package', ':cli', ':managed:tests', ':test:debugger:environment', ':fixtures:feed', ':fixtures:runtime', ':fixtures:projects', ':test:managed:host']
 
   rust:
     desc: Build portable Rust WASM fixtures
@@ -49,6 +49,104 @@ tasks:
     cmds:
       - '"{{.DOTNET}}" msbuild taskfiles/StageCli.proj -nologo -p:PublishedCli="{{.MANAGED}}/publish/Isoplane.Cli/release" -p:NativeLibrary="{{.RELEASE_NATIVE_LIBRARY}}" -p:CliDirectory="{{.PACKAGED_CLI}}" -p:Platform={{.PLATFORM}}'
       - '"{{.DOTNET}}" "{{.PACKAGED_CLI}}/Isoplane.Cli.dll" prepare-runtime --runtime "{{.MODULES}}"'
+
+  projects:
+    desc: Install the CLI and build the .NET projects the native tests copy
+    run: once
+    deps: [':initialize', 'runtime:inputs']
+    vars:
+      VERSION:
+        sh: '"{{.DOTNET}}" msbuild Directory.Build.props -nologo -getProperty:Version'
+      SDK_VERSION:
+        sh: '"{{.DOTNET}}" --version'
+      CLI_INSTALL: '{{if eq .PLATFORM "linux-x64"}}DOTNET_RUNTIME_ID=linux-x64 {{end}}"{{.DOTNET}}" tool install'
+    sources:
+      - '{{.PACKAGES}}/*.nupkg'
+      - '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/packages/*.nupkg'
+      - '{{.ROOT_DIR}}/crates/isoplane-native/tests/fixtures/**/*'
+      - '{{.ROOT_DIR}}/global.json'
+      - '{{.ROOT_DIR}}/Directory.Build.props'
+      - '{{.ROOT_DIR}}/taskfiles/fixtures.yml'
+      - exclude: 'crates/isoplane-native/tests/fixtures/**/{obj,bin,.isoplane}/**/*'
+    generates:
+      - '{{.TEST_DOTNET}}/prepared'
+    cmds:
+      # NuGet never extracts an id and version it already holds, and the local packages are
+      # rebuilt under one version, so their earlier contents are removed first.
+      - rm -rf "{{.TEST_DOTNET}}/tool" "{{.TEST_DOTNET}}/hive" "{{.TEST_DOTNET}}/fixtures" "{{.TEST_DOTNET}}/templates" "{{.TEST_DOTNET}}/prepared" "{{.TEST_DOTNET}}"/packages/isoplane.*
+      - mkdir -p "{{.TEST_DOTNET}}"
+      - |
+        cat > "{{.TEST_DOTNET}}/global.json" <<EOF
+        {
+          "sdk": { "version": "{{.SDK_VERSION}}", "rollForward": "disable" },
+          "msbuild-sdks": { "Isoplane.Sdk": "{{.VERSION}}", "Isoplane.AspNetCore": "{{.VERSION}}" }
+        }
+        EOF
+      # Isoplane packages come only from the local builds: nuget.org carries the same version.
+      - |
+        cat > "{{.TEST_DOTNET}}/nuget.config" <<EOF
+        <?xml version="1.0" encoding="utf-8"?>
+        <configuration>
+          <packageSources>
+            <clear />
+            <add key="nuget" value="https://api.nuget.org/v3/index.json" />
+            <add key="template-packages" value="{{.PACKAGES}}" />
+            <add key="native-packages" value="{{.ROOT_DIR}}/.build/{{.PLATFORM}}/packages" />
+          </packageSources>
+          <packageSourceMapping>
+            <packageSource key="native-packages"><package pattern="Isoplane.Native" /><package pattern="Isoplane.Cli" /></packageSource>
+            <packageSource key="template-packages"><package pattern="Isoplane.*" /></packageSource>
+            <packageSource key="nuget"><package pattern="*" /></packageSource>
+          </packageSourceMapping>
+          <config>
+            <add key="globalPackagesFolder" value="{{.TEST_DOTNET}}/packages" />
+          </config>
+        </configuration>
+        EOF
+      - |
+        cat > "{{.TEST_DOTNET}}/offline.config" <<EOF
+        <?xml version="1.0" encoding="utf-8"?>
+        <!--
+          No package sources, on purpose. Task restored everything this project needs into the
+          shared packages folder before the tests ran, so a restore here needs no source. A test
+          that references a package Task did not restore must fail its restore (NU1101) rather
+          than download it: add the package to the fixture so that Task restores it.
+        -->
+        <configuration>
+          <packageSources>
+            <clear />
+          </packageSources>
+          <config>
+            <add key="globalPackagesFolder" value="{{.TEST_DOTNET}}/packages" />
+          </config>
+        </configuration>
+        EOF
+      - '{{.CLI_INSTALL}} Isoplane.Cli --version {{.VERSION}} --tool-path "{{.TEST_DOTNET}}/tool" --configfile "{{.TEST_DOTNET}}/nuget.config"'
+      - cp -R crates/isoplane-native/tests/fixtures "{{.TEST_DOTNET}}/fixtures"
+      - for: [handler, web, testing]
+        task: projects:build
+        vars: { PROJECT: '{{.TEST_DOTNET}}/fixtures/{{.ITEM}}', VERSION: '{{.VERSION}}' }
+      - '"{{.DOTNET}}" new install "{{.PACKAGES}}/Isoplane.Templates.{{.VERSION}}.nupkg" --debug:custom-hive "{{.TEST_DOTNET}}/hive"'
+      # Each template is generated as TEMPLATE:NAME. The hyphen makes file names and namespaces
+      # differ. In a solution template the first part names a namespace the template declares
+      # for one of its folders: C# resolves a root-qualified name written inside a namespace
+      # from the inside out, so such a reference finds the folder's namespace instead of the root.
+      - for: ['isoplane-web:Template-App', 'isoplane-handler:Tests.Template-App', 'isoplane-mcpserver:Tools.Template-App', 'isoplane-webapi:Todos.Template-App', 'isoplane-webapp:Notes.Template-App']
+        cmd: '"{{.DOTNET}}" new {{index (splitList ":" .ITEM) 0}} --name {{index (splitList ":" .ITEM) 1}} --output "{{.TEST_DOTNET}}/templates/{{index (splitList ":" .ITEM) 0}}" --debug:custom-hive "{{.TEST_DOTNET}}/hive"'
+      - for: [isoplane-web, isoplane-handler, isoplane-mcpserver, isoplane-webapi, isoplane-webapp]
+        task: projects:build
+        vars: { PROJECT: '{{.TEST_DOTNET}}/templates/{{.ITEM}}', VERSION: '{{.VERSION}}' }
+      - echo "{{.VERSION}}" > "{{.TEST_DOTNET}}/prepared"
+
+  projects:build:
+    internal: true
+    label: 'projects:build:{{base .PROJECT}}'
+    env:
+      ISOPLANE_CLI: '{{.TEST_DOTNET}}/tool/isoplane{{if eq OS "windows"}}.exe{{end}}'
+    cmds:
+      - cp "{{.TEST_DOTNET}}/global.json" "{{.TEST_DOTNET}}/nuget.config" "{{.PROJECT}}/"
+      - '"{{.DOTNET}}" build "{{.PROJECT}}" --configuration Debug -nologo -p:IsoplaneReleaseVersion={{.VERSION}}'
+      - cp "{{.TEST_DOTNET}}/offline.config" "{{.PROJECT}}/nuget.config"
 
   runtime:inputs:
     internal: true

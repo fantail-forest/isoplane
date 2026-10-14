@@ -34,7 +34,13 @@ A test for a bug that isn't fixed yet may be committed if it's marked ignored, w
 
 ## Build static compiler outputs in advance
 
-Any static compiler outputs a test needs, such as packages, guest and runtime modules, and the compiled runtime, are built by a Task step before the tests run. They are kept in `.build/` and rebuilt only when their sources change. Tests don't modify them; copy one to a temporary folder to change it.
+Any static compiler outputs a test needs, such as packages, guest and runtime modules, the compiled runtime, installed tools and built fixture projects, are built by a Task step before the tests run. They are kept in `.build/` and rebuilt only when their sources change. Tests don't modify them; copy one to a temporary folder to change it. A test of a build starts from a fixture Task built and runs only the build step it checks.
+
+**This, not that:** a test copies a fixture project Task built and runs the CLI Task installed, not one that generates a project, installs the CLI and restores packages before the step it checks. An engine test loads the runtime Task compiled, not one that compiles the 66 MB runtime module itself.
+
+## Test with fixtures, not shipped templates
+
+Tests of the SDK and platform build fixture projects kept with the tests. Use a shipped template only in a test of that template.
 
 ## A missing input fails the test
 
