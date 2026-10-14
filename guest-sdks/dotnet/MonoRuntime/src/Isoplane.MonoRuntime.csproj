@@ -21,6 +21,29 @@
     <IsoplaneRouter>Isoplane.MonoRuntime.PackageRouter</IsoplaneRouter>
   </PropertyGroup>
 
+  <!-- The runtime's own assemblies need only blittable marshalling, so the
+       build would link the marshaller stub, which aborts the instance on an
+       application declaration that needs more, such as SQLitePCLRaw's out
+       parameters and safe handles. -->
+  <ItemGroup>
+    <_MonoComponent Include="marshal-ilgen" />
+  </ItemGroup>
+
+  <!-- SQLite, as the e_sqlite3 module SQLitePCLRaw imports, from
+       ../sqlite/build.sh, whose output directory build.sh passes. -->
+  <ItemGroup>
+    <NativeFileReference Include="$(IsoplaneSqliteDirectory)e_sqlite3.a" />
+    <IsoplanePInvokeModule Include="e_sqlite3" />
+    <NativeFileReference Include="../sqlite/sqlite_callbacks.c" />
+    <Compile Include="$(IsoplaneSqliteDirectory)SqliteImports.g.cs" />
+    <WasiAfterRuntimeLoadedDeclarations Include="void isoplane_install_sqlite_callbacks(void)%3B" />
+    <WasiAfterRuntimeLoadedCalls Include="isoplane_install_sqlite_callbacks()%3B" />
+  </ItemGroup>
+  <Target Name="IsoplaneRequireSqlite" BeforeTargets="CoreCompile">
+    <Error Condition="'$(IsoplaneSqliteDirectory)' == '' OR !Exists('$(IsoplaneSqliteDirectory)e_sqlite3.a') OR !Exists('$(IsoplaneSqliteDirectory)SqliteImports.g.cs')"
+           Text="isoplane: build the runtime with task runtime:modules, which builds SQLite and passes -p:IsoplaneSqliteDirectory." />
+  </Target>
+
   <ItemGroup>
     <ProjectReference Include="../../Isoplane.Sdk.csproj" />
     <ProjectReference Include="../../AspNetCore/Isoplane.AspNetCore.csproj" />

@@ -4,6 +4,7 @@
 # the SDK version, source revision and Mono pack they were built from.
 # Usage: guest-sdks/dotnet/MonoRuntime/build.sh --output DIRECTORY [--source-revision REVISION]
 # The revision defaults to the checkout's HEAD, marked +dirty when it has changes.
+# ISOPLANE_SQLITE_DIRECTORY names the output of sqlite/build.sh.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -24,13 +25,18 @@ command -v dotnet >/dev/null 2>&1 || { echo "FATAL: no .NET SDK on PATH, so the 
 
 mkdir -p "$OUTPUT"
 OUTPUT="$(cd "$OUTPUT" && pwd)"
+SQLITE="${ISOPLANE_SQLITE_DIRECTORY:?Run task runtime:modules, which builds SQLite first}"
+SQLITE="$(cd "$SQLITE" && pwd)/"
 # Symbols stay in the interpreter's module so a trap names its frames.
 ISOPLANE_OUT_DIR="$OUTPUT" ISOPLANE_OUT=Isoplane.MonoRuntime "$ROOT/guest-sdks/dotnet/build-guest.sh" "$HERE" \
-  -p:WasmNativeStrip=false --artifacts-path "$OUTPUT/intermediates/production"
+  -p:WasmNativeStrip=false "-p:IsoplaneSqliteDirectory=$SQLITE" --artifacts-path "$OUTPUT/intermediates/production"
 ISOPLANE_OUT_DIR="$OUTPUT" ISOPLANE_OUT=Isoplane.MonoRuntime.Debug "$ROOT/guest-sdks/dotnet/build-guest.sh" "$HERE" \
-  -p:WasmNativeStrip=false -p:IsoplaneLocalDebug=true --artifacts-path "$OUTPUT/intermediates/debug"
+  -p:WasmNativeStrip=false -p:IsoplaneLocalDebug=true "-p:IsoplaneSqliteDirectory=$SQLITE" --artifacts-path "$OUTPUT/intermediates/debug"
 for module in Isoplane.MonoRuntime Isoplane.MonoRuntime.Debug; do
   [ -f "$OUTPUT/$module.wasm.runtime" ] \
     || { echo "FATAL: the $module publish recorded no Mono pack identity" >&2; exit 1; }
 done
+# The native functions the runtime provides to application packages, for the
+# SDK's native-import diagnostic.
+cp "${SQLITE}native-imports.txt" "$OUTPUT/native-imports.txt"
 python3 "$HERE/manifest.py" "$OUTPUT" "$ROOT" ${REVISION:+"$REVISION"}

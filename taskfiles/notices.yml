@@ -13,6 +13,7 @@ tasks:
       - '{{.MANAGED}}/obj/**/project.assets.json'
       - '{{.ROOT_DIR}}/taskfiles/notices.yml'
       - '{{.ROOT_DIR}}/trust/NOTICE'
+      - '{{.ROOT_DIR}}/guest-sdks/dotnet/MonoRuntime/sqlite/NOTICE'
       - '{{.ROOT_DIR}}/vendor/{dotnet-runtime,icu,openssl}/{LICENSE*,NOTICE*,COPYING*}'
     generates: ['{{.NOTICES}}/rust-dependencies.json', '{{.NOTICES}}/managed-dependencies.json']
     cmds:
@@ -28,7 +29,8 @@ tasks:
             [ ! -f "$file" ] || cp "$file" "{{.NOTICES}}/$component/"
           done
         done
-        mkdir -p "{{.NOTICES}}/trust"
+        mkdir -p "{{.NOTICES}}/trust" "{{.NOTICES}}/sqlite"
         cp trust/NOTICE trust/ca-bundle.manifest.json "{{.NOTICES}}/trust/"
+        cp guest-sdks/dotnet/MonoRuntime/sqlite/NOTICE "{{.NOTICES}}/sqlite/"
     env:
       ArtifactsPath: '{{.MANAGED}}'

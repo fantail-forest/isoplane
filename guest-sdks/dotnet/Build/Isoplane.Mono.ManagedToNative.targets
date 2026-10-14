@@ -11,6 +11,7 @@
       <_WasmPInvokeModules Include="%(_WasmNativeFileForLinking.FileName)" Condition="'%(_WasmNativeFileForLinking.ScanForPInvokes)' != 'false'" />
       <_WasmPInvokeModules Include="libSystem.Native;libSystem.IO.Compression.Native;libSystem.Globalization.Native" />
       <_WasmPInvokeModules Include="libSystem.Security.Cryptography.Native.OpenSsl" Condition="Exists('$(MicrosoftNetCoreAppRuntimePackRidNativeDir)libSystem.Security.Cryptography.Native.OpenSsl.a')" />
+      <_WasmPInvokeModules Include="@(IsoplanePInvokeModule)" />
       <_IsoplaneMscorlib Include="@(_WasmAssembliesInternal)" Condition="'%(Filename)%(Extension)' == 'mscorlib.dll'" />
     </ItemGroup>
     <PropertyGroup>

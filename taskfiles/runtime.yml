@@ -3,6 +3,9 @@ version: '3'
 includes:
   toolchains: wasi-sdk.yml
 
+vars:
+  SQLITE: '{{.ROOT_DIR}}/.build/wasm32/runtime/sqlite'
+
 tasks:
   default:
     desc: Prepare the shared runtime, or use explicitly selected modules
@@ -13,13 +16,15 @@ tasks:
   modules:
     desc: Build the shared production and debug WASM runtime modules on Linux
     run: once
-    deps: [compiler:selected]
+    deps: [compiler:selected, sqlite]
     env:
       ISOPLANE_GUEST_RUNTIME_FEED: '{{.FEED}}'
       ISOPLANE_CLI_ASSEMBLY: '{{.CLI}}'
+      ISOPLANE_SQLITE_DIRECTORY: '{{.SQLITE}}'
     sources:
       - '{{.ROOT_DIR}}/tools/BuildProtocol/WasmMemory.props'
-      - '{{.ROOT_DIR}}/guest-sdks/dotnet/MonoRuntime/{src/**/*,build.sh,manifest.py}'
+      - '{{.ROOT_DIR}}/guest-sdks/dotnet/MonoRuntime/{src/**/*,sqlite/*,build.sh,manifest.py}'
+      - '{{.SQLITE}}/{e_sqlite3.a,SqliteImports.g.cs,native-imports.txt}'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/{Abi,Runtime,Sdk}/**/*.cs'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/AspNetCore/**/*.cs'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/{Isoplane.Sdk.csproj,Isoplane.Guest.props,Isoplane.Guest.targets}'
@@ -40,11 +45,26 @@ tasks:
       - '{{.ROOT_DIR}}/.build/wasm32/runtime-modules/Isoplane.MonoRuntime.wasm'
       - '{{.ROOT_DIR}}/.build/wasm32/runtime-modules/Isoplane.MonoRuntime.Debug.wasm'
       - '{{.MODULES}}/runtime.json'
+      - '{{.MODULES}}/native-imports.txt'
     cmds:
       - 'test "{{OS}}" = linux || { echo "Run task runtime:modules on Linux first." >&2; exit 1; }'
       - task: ':cli'
       - '"{{.PYTHON}}" guest-runtime/feed-identity.py verify-artifact "{{.FEED}}"'
       - 'bash guest-sdks/dotnet/MonoRuntime/build.sh --output "{{.MODULES}}"'
+
+  sqlite:
+    desc: Build SQLite and its runtime bindings for the shared runtime on Linux
+    run: once
+    deps: [compiler:selected]
+    sources:
+      - '{{.ROOT_DIR}}/guest-sdks/dotnet/MonoRuntime/sqlite/*'
+    generates:
+      - '{{.SQLITE}}/e_sqlite3.a'
+      - '{{.SQLITE}}/SqliteImports.g.cs'
+      - '{{.SQLITE}}/native-imports.txt'
+    cmds:
+      - 'test "{{OS}}" = linux || { echo "Run task runtime:sqlite on Linux first." >&2; exit 1; }'
+      - 'ISOPLANE_PYTHON="{{.PYTHON}}" bash guest-sdks/dotnet/MonoRuntime/sqlite/build.sh --output "{{.SQLITE}}"'
 
   compiler:selected:
     run: once
@@ -63,7 +83,7 @@ tasks:
     run: once
     preconditions:
       - msg: Prepare the shared runtime with task runtime:modules on Linux.
-        sh: 'test -f "{{.MODULES}}/runtime.json" && test -f "{{.MODULES}}/Isoplane.MonoRuntime.wasm" && test -f "{{.MODULES}}/Isoplane.MonoRuntime.Debug.wasm"'
+        sh: 'test -f "{{.MODULES}}/runtime.json" && test -f "{{.MODULES}}/native-imports.txt" && test -f "{{.MODULES}}/Isoplane.MonoRuntime.wasm" && test -f "{{.MODULES}}/Isoplane.MonoRuntime.Debug.wasm"'
     cmds: []
 
   compiler:
