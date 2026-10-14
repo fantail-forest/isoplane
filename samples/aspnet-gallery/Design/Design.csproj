@@ -22,7 +22,7 @@
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Tasks" Version="10.0.0" PrivateAssets="all" GeneratePathProperty="true" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.0" PrivateAssets="all" />
-    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.12" PrivateAssets="all" />
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.13" PrivateAssets="all" />
   </ItemGroup>
   <Target Name="ReadDatabaseGenerationState" BeforeTargets="BeforeBuild" Condition="'$(_EFGenerationStage)' == ''">
     <ReadLinesFromFile File="$(EFGeneratedSourcesPublishFile)" Condition="Exists('$(EFGeneratedSourcesPublishFile)')">
