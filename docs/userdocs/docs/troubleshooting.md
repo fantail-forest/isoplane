@@ -126,6 +126,9 @@ a request. Do not log credentials or connection strings.
 `Console.WriteLine` and `Console.Error.WriteLine` also write application logs.
 Use `ILogger` when you need structured fields and log levels; the ASP.NET
 integration registers its logging provider automatically.
+An application that adds the console logger, with `AddConsole` or one of its
+formatter methods such as `AddJsonConsole`, logs each message as that formatter
+writes it instead.
 
 Local development prints application messages in a compact level, message and
 category format. Runtime diagnostics stay out of that view. To capture the full

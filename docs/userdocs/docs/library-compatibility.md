@@ -43,12 +43,12 @@ entry says otherwise.
 | ASP.NET Core | [XML formatters over 30 KB](#xml-formatters) | Moderate change: use the asynchronous XML APIs. Or buffer up to a limit |
 | ASP.NET Core | [Newtonsoft.Json formatters over 30 KB](#newtonsoft-json) | Moderate to large change: move to `System.Text.Json`. Or keep Newtonsoft.Json and raise two limits |
 | ASP.NET Core | [Rate limiting middleware](#rate-limiting) | Large change: limit requests elsewhere. Or a per-instance limiter topped up on each request |
-| ASP.NET Core | [Console logging: `AddConsole`, `AddJsonConsole` and `ClearProviders`](#console-logging) | Small change: delete the calls. A later release should not need it |
 | ASP.NET Core | [Validation attributes, localizers, token callbacks and service factories that do I/O](#synchronous-extension-points) | Moderate change: move the I/O elsewhere |
 | ASP.NET Core | [WebSockets, SignalR's WebSocket transport, Blazor Server](#connections-and-background-work) | Unsupported |
 | ASP.NET Core | [gRPC over HTTP/2](#connections-and-background-work) | Moderate change: use gRPC-Web |
 | ASP.NET Core | [`BackgroundService` and other work between requests](#connections-and-background-work) | Large change: do the work during a request |
 | Microsoft.Extensions.Configuration | [`IConfigurationProvider` implementations that load from a remote service, such as Azure Key Vault](#remote-configuration) | Moderate change: fetch them before `builder.Build()` |
+| Microsoft.Extensions.Logging.Console | [The console logger in an application written without ASP.NET Core](#console-logging) | Small change: log through Isoplane's provider |
 | Entity Framework Core | [Lazy loading](#lazy-loading) | Moderate change: load with `Include` |
 | Entity Framework Core | [`TransactionScope`](#transaction-scope) | Small change: use a database transaction |
 | SqlClient | [SQL Server, including its Entity Framework Core provider](#sql-server) | Not supported yet: waits on work under way in the driver. PostgreSQL works today |
@@ -79,12 +79,12 @@ read the stack trace to see which call failed.
 | --- | --- |
 | `PlatformNotSupportedException: Arg_PlatformNotSupported`, with `Task.InternalWait` (internal to [`Task`][Task]), [`SemaphoreSlim.Wait`][SemaphoreSlim.Wait], [`Thread.Sleep`][Thread.Sleep], [`Socket`][Socket] or [`NetworkStream`][NetworkStream] near the top of the stack | Something waited synchronously. If the call is in your own code, see [Waiting is asynchronous](dotnet-runtime-differences.md#waiting-is-asynchronous). If it is inside a library, find the library in the table above. |
 | `PlatformNotSupportedException: net_wasi_sync_name_resolution` | The same, for a connection that was opened synchronously. |
-| `PlatformNotSupportedException: Arg_PlatformNotSupported`, with [`Thread.Start`][Thread.Start] near the top of the stack | A library started a thread. See [MongoDB](#mongodb) and [Redis](#redis). |
+| `PlatformNotSupportedException: Arg_PlatformNotSupported`, with [`Thread.Start`][Thread.Start] near the top of the stack | A library started a thread. See [MongoDB](#mongodb), [Redis](#redis) and [the console logger](#console-logging). |
 | `DirectoryNotFoundException: /tmp/` | ASP.NET Core tried to move a large request or response to a temporary file. See [uploads](#uploads), [request buffering](#enable-buffering), [Newtonsoft.Json](#newtonsoft-json) and [XML formatters](#xml-formatters). |
 | `IOException: Read-only file system` | Something tried to write a file. The [file system is read-only](dotnet-runtime-differences.md#the-machine-underneath). |
 | [`DllNotFoundException`][DllNotFoundException], sometimes inside a `TypeInitializationException` | A package called into a native library that the runtime does not include. An application cannot bring its own; see [the machine underneath](dotnet-runtime-differences.md#the-machine-underneath). |
 | The application refuses to start with `initialization retains a timer` | Something registered at startup started a timer. The lines beneath the message name each timer and the method that runs or awaits it. See [rate limiting](#rate-limiting) and [OpenTelemetry](#opentelemetry). |
-| The application refuses to start with `unhandled System.PlatformNotSupportedException` and no stack trace | A call made while the application starts failed. The known ones are [console logging](#console-logging) and [remote configuration](#remote-configuration). |
+| The application refuses to start with `unhandled System.PlatformNotSupportedException` and no stack trace | A call made while the application starts failed. The known ones are [remote configuration](#remote-configuration) and, in an application written without ASP.NET Core, [the console logger](#console-logging). |
 | The application refuses to start, naming a service that was `Still running once the application had started` | A package registered a background service. See [MCP sessions](#mcp-sessions) and [background work](#connections-and-background-work). |
 | A minimal API endpoint answers 200 with an empty body, or the build fails with `CS9144: Cannot intercept method` | A handler names code that another source generator produces. See [generated code in handlers](#generated-code-in-handlers). |
 | `InvalidOperationException: The session could not be loaded from its cache` | The session was used before it was loaded. See [session](#session). |
@@ -595,39 +595,6 @@ middleware that honours the policies an application already registers and
 refills them this way, so that `UseRateLimiter` has a one-line replacement.
 Counting across instances needs shared state, which no in-memory limiter has.
 
-### Console logging: `AddConsole`, `AddJsonConsole` and `ClearProviders` {#console-logging}
-
-An application that calls [`AddConsole`][AddConsole] or
-[`AddJsonConsole`][AddJsonConsole] on `builder.Logging` refuses to start, with
-`unhandled System.PlatformNotSupportedException: Arg_PlatformNotSupported` and
-no stack trace: the console logger starts a thread.
-
-[`ClearProviders`][ClearProviders] on its own lets the application start, but
-removes the provider Isoplane registers, and [`ILogger`][ILogger] output is no
-longer shown.
-
-```csharp
-builder.Logging.ClearProviders();
-builder.Logging.AddConsole();
-```
-
-These lines are in many `Program.cs` files, often copied from a template.
-
-#### Workaround: delete the calls
-
-Delete them. Isoplane already sends `ILogger` output to
-the terminal that runs the session, and the `Logging` section of
-`appsettings.json` filters it as usual. Serilog's
-[console sink][serilog-console] also works.
-
-Size of the change: small.
-
-#### Looking ahead
-
-A later release is expected to make these calls
-harmless. Isoplane's ASP.NET Core adapter library, `Isoplane.AspNetCore`, can keep
-its own provider registered and leave the console provider out.
-
 ### Validation attributes, localizers, token callbacks and service factories that do I/O {#synchronous-extension-points}
 
 Some extension points are synchronous by definition, so an implementation that
@@ -759,6 +726,39 @@ from Isoplane can provide an asynchronous registration method for each
 provider, which would make it one line.
 
 {/* TODO: say how settings and secrets reach a deployed application once that exists; it is expected to make this entry unnecessary for most applications. */}
+
+## `Microsoft.Extensions.Logging.Console`
+
+### The console logger outside ASP.NET Core {#console-logging}
+
+In an application written without ASP.NET Core, adding the console logger to a
+logger factory throws
+`PlatformNotSupportedException: Arg_PlatformNotSupported`, with
+[`Thread.Start`][Thread.Start] near the top of the stack: the console logger
+starts a thread to write the entries it queues.
+
+```csharp
+using var loggers = LoggerFactory.Create(logging => logging.AddConsole());
+```
+
+In an ASP.NET Core application the console logger works unchanged; see
+[Packages that work](#works). The failure above follows from how the console
+logger is built, and was confirmed in an ASP.NET Core application before
+Isoplane's ASP.NET Core adapter library, `Isoplane.AspNetCore`, replaced it
+there. It has not been run in an application without ASP.NET Core.
+
+#### Workaround: log through Isoplane's provider
+
+Add [`IsoplaneLoggerProvider`][IsoplaneLoggerProvider] in place of the console
+logger. Its messages reach the same terminal, with their level and category.
+
+```csharp
+using var loggers = LoggerFactory.Create(logging => logging.AddProvider(new IsoplaneLoggerProvider()));
+```
+
+`Console.WriteLine` also writes to the application's log.
+
+Size of the change: small.
 
 ## Entity Framework Core
 
@@ -1454,6 +1454,20 @@ exercised, which is not everything the package does.
   with and without a distributed second level.
 - **`Microsoft.Extensions.Http.Resilience` 10.10.0.** A request through
   [`AddStandardResilienceHandler`][AddStandardResilienceHandler].
+- **The console logger from `Microsoft.Extensions.Logging.Console`**, in an
+  ASP.NET Core application. [`AddConsole`][AddConsole],
+  [`AddJsonConsole`][AddJsonConsole], [`AddSimpleConsole`][AddSimpleConsole]
+  and [`AddSystemdConsole`][AddSystemdConsole], on their own or after
+  [`ClearProviders`][ClearProviders], with formatter options and
+  `LogToStandardErrorThreshold`. Each entry reaches the application's log once,
+  as the chosen formatter writes it, in place of the record Isoplane's own
+  provider writes, and an entry sent to standard error is recorded at the log's
+  error level. `ClearProviders` on its own leaves the application without
+  logging, as it does anywhere else. This was run with ASP.NET Core's own
+  service provider. A container set with `UseServiceProviderFactory`, such as
+  Autofac's, copies the registrations before Isoplane can replace the console
+  logger, which then fails as it does
+  [outside ASP.NET Core](#console-logging).
 - **[`Serilog.AspNetCore`][serilog-aspnetcore] 10.0.0.** `UseSerilog` with the
   [console sink][serilog-console].
 - **[`FluentValidation`][fluentvalidation] 12.2.0.** Synchronous and
@@ -1513,6 +1527,8 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [AddNewtonsoftJson]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.dependencyinjection.newtonsoftjsonmvcbuilderextensions.addnewtonsoftjson
 [AddRateLimiter]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.builder.ratelimiterservicecollectionextensions.addratelimiter
 [AddSession]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.dependencyinjection.sessionservicecollectionextensions.addsession
+[AddSimpleConsole]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.logging.consoleloggerextensions.addsimpleconsole
+[AddSystemdConsole]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.logging.consoleloggerextensions.addsystemdconsole
 [AddSessionStateTempDataProvider]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.dependencyinjection.mvcviewfeaturesmvcbuilderextensions.addsessionstatetempdataprovider
 [AddStackExchangeRedisCache]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.dependencyinjection.stackexchangerediscacheservicecollectionextensions.addstackexchangerediscache
 [AddStackExchangeRedisOutputCache]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.dependencyinjection.stackexchangeredisoutputcacheservicecollectionextensions.addstackexchangeredisoutputcache
@@ -1552,9 +1568,9 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [IDistributedCache]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.caching.distributed.idistributedcache
 [IFormFile]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.http.iformfile
 [ILazyLoader]: https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.infrastructure.ilazyloader
-[ILogger]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.logging.ilogger
 [Include]: https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.entityframeworkqueryableextensions.include
 [InputFormatterMemoryBufferThreshold]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.mvc.mvcnewtonsoftjsonoptions.inputformattermemorybufferthreshold
+[IsoplaneLoggerProvider]: reference/sdk/Isoplane.Sdk/Isoplane/IsoplaneLoggerProvider.md
 [IssuerSigningKeyResolver]: https://learn.microsoft.com/dotnet/api/microsoft.identitymodel.tokens.tokenvalidationparameters.issuersigningkeyresolver
 [IStringLocalizer]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.localization.istringlocalizer
 [IValidatableObject.Validate]: https://learn.microsoft.com/dotnet/api/system.componentmodel.dataannotations.ivalidatableobject.validate
