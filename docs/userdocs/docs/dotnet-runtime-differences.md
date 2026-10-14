@@ -87,6 +87,17 @@ The network behaves the same way. A synchronous socket call or name lookup that
 would have to wait fails rather than waiting, so use the asynchronous methods.
 A library's synchronous API usually blocks underneath: on an EF Core context,
 call `SaveChangesAsync` and `ToListAsync`, not `SaveChanges` and `ToList`.
+
+Some synchronous calls are easy to miss, because they do not look like I/O:
+
+| Call | Why it waits | Use instead |
+| --- | --- | --- |
+| ASP.NET Core's `Request.Form`, before the form has been read | It reads the request body | `await Request.ReadFormAsync()` |
+| `Read` on `Request.Body` and `Write` on `Response.Body` | They read and write the connection | `ReadAsync` and `WriteAsync` |
+| Razor's `Html.Partial` and `Html.RenderPartial` | They wait for the partial view, which fails if the partial awaits anything | `<partial name="..." />`, or `await Html.PartialAsync(...)` |
+| Entity Framework Core's `Add`, on an entity whose keys come from `UseHiLo` | It fetches a block of keys from the database, on the first call and whenever a block runs out, so it fails only now and then | `await AddAsync(...)` |
+| `using` on a data reader that still has unread rows | Disposing it reads the remaining rows | `await using` |
+
 Some libraries block inside a call that looks asynchronous, or behind an
 interface with no asynchronous form:
 [Library compatibility](library-compatibility.md) lists the ones we know of.

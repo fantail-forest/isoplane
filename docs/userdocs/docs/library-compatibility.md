@@ -33,13 +33,10 @@ entry says otherwise.
 | Package | API or feature | What to do |
 | --- | --- | --- |
 | ASP.NET Core | [Session over a distributed cache, and TempData kept in it](#session) | Small change: add one middleware |
-| ASP.NET Core | [`Request.Form`](#request-form) | Small change: use `ReadFormAsync` |
 | ASP.NET Core | [File uploads over 64 KB](#uploads) | Moderate change: read the upload as a stream. Or hold small uploads in memory |
 | ASP.NET Core | [`Request.EnableBuffering()` over 30 KB](#enable-buffering) | Moderate change: read the body once, as a stream. Or buffer up to a limit |
-| ASP.NET Core | [Synchronous reads and writes of the request and response body](#synchronous-body) | Small change: call the asynchronous method |
 | ASP.NET Core | [Minimal API handlers that use source-generated code](#generated-code-in-handlers) | Small change: register the JSON context and return objects. Or switch one generator off |
 | ASP.NET Core | [Data Protection key stores](#data-protection) | Small change: use the replacement Isoplane provides |
-| ASP.NET Core | [`Html.Partial` and `Html.RenderPartial`](#html-partial) | Small change: use `<partial>` |
 | ASP.NET Core | [XML formatters over 30 KB](#xml-formatters) | Moderate change: use the asynchronous XML APIs. Or buffer up to a limit |
 | ASP.NET Core | [Rate limiting middleware](#rate-limiting) | Large change: limit requests elsewhere |
 | ASP.NET Core | [Console logging: `AddConsole`, `AddJsonConsole` and `ClearProviders`](#console-logging) | Small change: delete the calls. A later release should not need it |
@@ -50,9 +47,7 @@ entry says otherwise.
 | Newtonsoft.Json for MVC | [Bodies over 30 KB](#newtonsoft-json) | Moderate to large change: move to `System.Text.Json`. Or keep Newtonsoft.Json and raise two limits |
 | Microsoft.Extensions.Configuration | [`IConfigurationProvider` implementations that load from a remote service, such as Azure Key Vault](#remote-configuration) | Moderate change: fetch them before `builder.Build()` |
 | Entity Framework Core | [Lazy loading](#lazy-loading) | Moderate change: load with `Include` |
-| Entity Framework Core | [`UseHiLo` keys with `Add`](#hilo) | Small change: use `AddAsync` |
 | Entity Framework Core | [`TransactionScope`](#transaction-scope) | Small change: use a database transaction |
-| Npgsql | [Disposing a reader that has unread rows](#reader-dispose) | Small change: use `await using` |
 | SqlClient | [SQL Server, including its Entity Framework Core provider](#sql-server) | Not supported yet: waits on work under way in the driver. PostgreSQL works today |
 | Sqlite | [SQLite, including its Entity Framework Core provider](#sqlite) | Cannot be supported: use another database |
 | MongoDB.Driver | [MongoDB](#mongodb) | Not supported: use another database |
@@ -146,33 +141,6 @@ Size of the change: small. One middleware, added once.
 The workaround should get smaller. Isoplane's ASP.NET Core adapter library, `Isoplane.AspNetCore`,
 can provide this middleware, and report an unloaded session as an error in
 place of losing data.
-
-### `Request.Form` {#request-form}
-
-Reading [`HttpRequest.Form`][HttpRequest.Form] before the form has been read
-asynchronously throws
-[`PlatformNotSupportedException`][PlatformNotSupportedException], whatever the
-size of the body.
-
-```csharp
-app.MapPost("/contact", (HttpContext context) =>
-{
-    var email = context.Request.Form["email"];   // throws
-    // ...
-});
-```
-
-Typically used for reading posted fields and files directly from the request.
-
-#### Workaround: read the form asynchronously
-
-Read the form with
-[`HttpRequest.ReadFormAsync`][HttpRequest.ReadFormAsync]:
-`var form = await context.Request.ReadFormAsync();`. A minimal API handler
-that takes a form value or an [`IFormFile`][IFormFile] as a parameter already
-reads asynchronously.
-
-Size of the change: small.
 
 ### File uploads over 64 KB {#uploads}
 
@@ -322,40 +290,6 @@ Size of the change: small.
 A later release is expected to let `EnableBuffering` work as written for bodies
 that fit in memory. Reading the body once stays the better choice.
 
-### Synchronous reads and writes of the request and response body {#synchronous-body}
-
-[`Request.Body`][HttpRequest.Body] and [`Response.Body`][HttpResponse.Body]
-are streams whose synchronous [`Stream.Read`][Stream.Read] and
-[`Stream.Write`][Stream.Write] throw
-[`NotSupportedException`][NotSupportedException], with a message that says to
-use the asynchronous form.
-
-Kestrel, ASP.NET Core's own server, refuses the same calls by default, for
-these two streams only, and an application can switch them back on with
-Kestrel's [`AllowSynchronousIO`][AllowSynchronousIO] option. Isoplane has no
-such switch.
-
-```csharp
-var serializer = new XmlSerializer(typeof(Report));
-serializer.Serialize(context.Response.Body, report);   // writes synchronously: throws
-```
-
-Typically used for serializers and writers that take a stream and write to it
-synchronously, such as [`XmlSerializer.Serialize`][XmlSerializer.Serialize].
-
-#### Workaround: use the asynchronous methods
-
-Use [`Stream.ReadAsync`][Stream.ReadAsync] and
-[`Stream.WriteAsync`][Stream.WriteAsync], or the library's asynchronous
-method.
-Prefer a library that can write asynchronously, since that streams. Where
-one has no asynchronous method, it can write to a
-[`MemoryStream`][MemoryStream] that you then copy to the response with
-[`Stream.CopyToAsync`][Stream.CopyToAsync]; that holds the whole output in
-memory, so keep it for small responses.
-
-Size of the change: small.
-
 ### Minimal API handlers that use source-generated code {#generated-code-in-handlers}
 
 Isoplane builds every application with ASP.NET Core's
@@ -445,40 +379,6 @@ replacements. They are described in
 Size of the change: small for Entity Framework Core, where one call
 replaces another. Moderate for another store, where you supply the two
 functions that read and add keys.
-
-### `Html.Partial` and `Html.RenderPartial` {#html-partial}
-
-The Razor helpers [`Html.Partial`][Html.Partial] and
-[`Html.RenderPartial`][Html.RenderPartial] wait synchronously for the partial
-view to render. They work when nothing in
-the partial waits, and throw
-[`PlatformNotSupportedException`][PlatformNotSupportedException] when the
-partial awaits a query or a request.
-
-```cshtml
-@* Orders.cshtml *@
-@Html.Partial("_RecentOrders")    @* throws, because the partial awaits *@
-
-@* _RecentOrders.cshtml *@
-@inject ShopDb Db
-@foreach (var order in await Db.Orders.Take(5).ToListAsync())
-{
-    <li>@order.Number</li>
-}
-```
-
-Typically used for rendering a partial view from a Razor view or page.
-
-#### Workaround: use the asynchronous forms
-
-The [partial tag helper][PartialTagHelper],
-`<partial name="_RecentOrders" />`, or
-`@await Html.PartialAsync("_RecentOrders")`
-([`Html.PartialAsync`][Html.PartialAsync]). ASP.NET Core's own analyzer
-already reports the synchronous forms when the application builds, as
-warning [`MVC1000`][MVC1000].
-
-Size of the change: small.
 
 ### XML formatters over 30 KB {#xml-formatters}
 
@@ -860,36 +760,6 @@ This is the lasting approach: a property read can only load by
 Size of the change: moderate. Every place that relies on a navigation
 being loaded on demand has to say what it needs.
 
-### `UseHiLo` keys with `Add` {#hilo}
-
-With the Npgsql provider's [`UseHiLo`][UseHiLo] key generation,
-[`DbContext.Add`][DbContext.Add] and
-[`DbSet.Add`][DbSet.Add] fetch a block of key values from the database
-synchronously when the current block runs out. The call throws
-[`PlatformNotSupportedException`][PlatformNotSupportedException] on the first
-`Add`, and again each time a block is used up, which is every tenth entity by
-default. Between those points `Add` works, so the failure looks intermittent.
-
-```csharp
-// In OnModelCreating:
-modelBuilder.Entity<Order>().Property(order => order.Id).UseHiLo();
-
-// In a request:
-db.Orders.Add(order);          // throws whenever it needs a new block of keys
-await db.SaveChangesAsync();
-```
-
-Typically used for assigning keys before saving, with fewer round trips than a
-sequence.
-
-#### Workaround: use `AddAsync`, or identity columns
-
-`await db.Orders.AddAsync(order)`
-([`AddAsync`][DbContext.AddAsync]), which fetches the block asynchronously.
-Or use identity columns, the Npgsql provider's default, which need no fetch.
-
-Size of the change: small.
-
 ### `TransactionScope` {#transaction-scope}
 
 A [`TransactionScope`][TransactionScope], from `System.Transactions`, commits
@@ -928,29 +798,6 @@ spans several contexts or connections, which then have to share one
 transaction explicitly.
 
 ## Database drivers
-
-### Disposing a reader that has unread rows {#reader-dispose}
-
-Disposing an [`NpgsqlDataReader`][NpgsqlDataReader] synchronously while rows
-remain unread makes the driver read the rest synchronously, which throws
-[`PlatformNotSupportedException`][PlatformNotSupportedException].
-
-```csharp
-using var reader = await command.ExecuteReaderAsync();
-if (await reader.ReadAsync())
-    return reader.GetString(0);   // rows remain unread, so disposing the reader throws
-```
-
-Other synchronous disposal works: a connection, a transaction, including one
-that was never committed, and a reader that was read to the end.
-
-Typically seen as `using var reader = ...` in code that stops reading early.
-
-#### Workaround: dispose with `await using`
-
-`await using var reader = await command.ExecuteReaderAsync();`.
-
-Size of the change: small.
 
 ### SQL Server {#sql-server}
 
@@ -1272,7 +1119,6 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [AddStackExchangeRedisOutputCache]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.dependencyinjection.stackexchangeredisoutputcacheservicecollectionextensions.addstackexchangeredisoutputcache
 [AddStandardResilienceHandler]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.dependencyinjection.resiliencehttpclientbuilderextensions.addstandardresiliencehandler
 [AddXmlSerializerFormatters]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.dependencyinjection.mvcxmlmvcbuilderextensions.addxmlserializerformatters
-[AllowSynchronousIO]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.server.kestrel.core.kestrelserveroptions.allowsynchronousio
 [AsFileSection]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.webutilities.multipartsectionconverterextensions.asfilesection
 [automapper]: https://docs.automapper.io/
 [BackgroundService]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.hosting.backgroundservice
@@ -1285,10 +1131,7 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [CryptoStream]: https://learn.microsoft.com/dotnet/api/system.security.cryptography.cryptostream
 [dapper]: https://www.learndapper.com/
 [DbConnection.OpenAsync]: https://learn.microsoft.com/dotnet/api/system.data.common.dbconnection.openasync
-[DbContext.Add]: https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontext.add
-[DbContext.AddAsync]: https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontext.addasync
 [DbContext.SaveChanges]: https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontext.savechanges
-[DbSet.Add]: https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbset-1.add
 [DllNotFoundException]: https://learn.microsoft.com/dotnet/api/system.dllnotfoundexception
 [EnableBuffering]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.http.httprequestrewindextensions.enablebuffering
 [fluentvalidation]: https://docs.fluentvalidation.net/
@@ -1296,15 +1139,9 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [FormOptions]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.http.features.formoptions
 [FormOptions.MemoryBufferThreshold]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.http.features.formoptions.memorybufferthreshold
 [FormOptions.MultipartBodyLengthLimit]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.http.features.formoptions.multipartbodylengthlimit
-[Html.Partial]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.mvc.rendering.htmlhelperpartialextensions.partial
-[Html.PartialAsync]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.mvc.rendering.htmlhelperpartialextensions.partialasync
-[Html.RenderPartial]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.mvc.rendering.htmlhelperpartialextensions.renderpartial
 [HttpClient]: https://learn.microsoft.com/dotnet/api/system.net.http.httpclient
 [HttpContext.Session]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.http.httpcontext.session
-[HttpRequest.Body]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.http.httprequest.body
-[HttpRequest.Form]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.http.httprequest.form
 [HttpRequest.ReadFormAsync]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.http.httprequest.readformasync
-[HttpResponse.Body]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.http.httpresponse.body
 [HybridCache.GetOrCreateAsync]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.caching.hybrid.hybridcache.getorcreateasync
 [IConfigurationProvider.Load]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.configuration.iconfigurationprovider.load
 [IDataProtectionBuilder]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.dataprotection.idataprotectionbuilder
@@ -1324,15 +1161,11 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [mcp-http-options]: https://csharp.sdk.modelcontextprotocol.io/v2/api/ModelContextProtocol.AspNetCore.HttpServerTransportOptions.html
 [mcp-stateless]: https://csharp.sdk.modelcontextprotocol.io/v2/concepts/stateless/stateless.html
 [mediatr]: https://github.com/jbogard/MediatR
-[MemoryStream]: https://learn.microsoft.com/dotnet/api/system.io.memorystream
 [Microsoft.Data.Sqlite]: https://learn.microsoft.com/dotnet/api/microsoft.data.sqlite
 [MongoDB.Driver]: https://www.mongodb.com/docs/drivers/csharp/current/
 [MultipartReader]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.webutilities.multipartreader
-[MVC1000]: https://learn.microsoft.com/aspnet/core/diagnostics/mvc1000
 [MySqlConnector]: https://mysqlconnector.net/
 [NetworkStream]: https://learn.microsoft.com/dotnet/api/system.net.sockets.networkstream
-[NotSupportedException]: https://learn.microsoft.com/dotnet/api/system.notsupportedexception
-[NpgsqlDataReader]: https://www.npgsql.org/doc/api/Npgsql.NpgsqlDataReader.html
 [nuget-aws-ssm]: https://www.nuget.org/packages/Amazon.Extensions.Configuration.SystemsManager
 [nuget-dp-ef]: https://www.nuget.org/packages/Microsoft.AspNetCore.DataProtection.EntityFrameworkCore
 [nuget-ef-proxies]: https://www.nuget.org/packages/Microsoft.EntityFrameworkCore.Proxies
@@ -1343,7 +1176,6 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [nuget-sqlclient]: https://www.nuget.org/packages/Microsoft.Data.SqlClient
 [otlp-exporter]: https://github.com/open-telemetry/opentelemetry-dotnet/blob/main/src/OpenTelemetry.Exporter.OpenTelemetryProtocol/README.md
 [OutputFormatterMemoryBufferThreshold]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.mvc.mvcnewtonsoftjsonoptions.outputformattermemorybufferthreshold
-[PartialTagHelper]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.mvc.taghelpers.partialtaghelper
 [PersistKeysToDbContext]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.dataprotection.entityframeworkcoredataprotectionextensions.persistkeystodbcontext
 [PersistKeysToFileSystem]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.dataprotection.dataprotectionbuilderextensions.persistkeystofilesystem
 [PersistKeysToStackExchangeRedis]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.dataprotection.stackexchangeredisdataprotectionbuilderextensions.persistkeystostackexchangeredis
@@ -1365,11 +1197,6 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [SqliteConnection]: https://learn.microsoft.com/dotnet/api/microsoft.data.sqlite.sqliteconnection
 [StackExchange.Redis]: https://stackexchange.github.io/StackExchange.Redis/
 [stj-source-generation]: https://learn.microsoft.com/dotnet/standard/serialization/system-text-json/source-generation
-[Stream.CopyToAsync]: https://learn.microsoft.com/dotnet/api/system.io.stream.copytoasync
-[Stream.Read]: https://learn.microsoft.com/dotnet/api/system.io.stream.read
-[Stream.ReadAsync]: https://learn.microsoft.com/dotnet/api/system.io.stream.readasync
-[Stream.Write]: https://learn.microsoft.com/dotnet/api/system.io.stream.write
-[Stream.WriteAsync]: https://learn.microsoft.com/dotnet/api/system.io.stream.writeasync
 [swashbuckle]: https://github.com/domaindrivendev/Swashbuckle.AspNetCore
 [System.Text.Json]: https://learn.microsoft.com/dotnet/api/system.text.json
 [Task]: https://learn.microsoft.com/dotnet/api/system.threading.tasks.task
@@ -1379,7 +1206,6 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [TokenValidationParameters]: https://learn.microsoft.com/dotnet/api/microsoft.identitymodel.tokens.tokenvalidationparameters
 [TransactionInDoubtException]: https://learn.microsoft.com/dotnet/api/system.transactions.transactionindoubtexception
 [TransactionScope]: https://learn.microsoft.com/dotnet/api/system.transactions.transactionscope
-[UseHiLo]: https://www.npgsql.org/efcore/api/Microsoft.EntityFrameworkCore.NpgsqlPropertyBuilderExtensions.html
 [UseLazyLoadingProxies]: https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.proxiesextensions.uselazyloadingproxies
 [UseRateLimiter]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.builder.ratelimiterapplicationbuilderextensions.useratelimiter
 [UseSession]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.builder.sessionmiddlewareextensions.usesession
@@ -1391,5 +1217,4 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [XmlReader]: https://learn.microsoft.com/dotnet/api/system.xml.xmlreader
 [XmlReaderSettings.Async]: https://learn.microsoft.com/dotnet/api/system.xml.xmlreadersettings.async
 [XmlSerializer]: https://learn.microsoft.com/dotnet/api/system.xml.serialization.xmlserializer
-[XmlSerializer.Serialize]: https://learn.microsoft.com/dotnet/api/system.xml.serialization.xmlserializer.serialize
 [XmlWriter]: https://learn.microsoft.com/dotnet/api/system.xml.xmlwriter
