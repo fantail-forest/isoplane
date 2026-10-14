@@ -55,7 +55,7 @@ entry says otherwise.
 | Sqlite | [SQLite, including its Entity Framework Core provider](#sqlite) | Not supported yet: needs SQLite in Isoplane's runtime. PostgreSQL works today |
 | MongoDB.Driver | [MongoDB](#mongodb) | Not supported yet for most deployments: waits on the driver. A load-balanced deployment works with two settings |
 | StackExchange.Redis | [Redis, including the Redis distributed cache](#redis) | Small change: reference the client's 4.0 prerelease and call it asynchronously |
-| OpenTelemetry | [OpenTelemetry SDK](#opentelemetry) | Large change, traces only: collect spans without the SDK and send them before the response completes |
+| OpenTelemetry | [OpenTelemetry SDK](#opentelemetry) | Large change, traces only: collect spans with .NET's tracing API and send them before each request ends |
 | ModelContextProtocol | [An MCP server that tracks sessions](#mcp-sessions) | Small change: use stateless mode |
 
 The sections below give each package's full name.
@@ -1101,78 +1101,80 @@ nothing arrives.
 Typically used for sending traces, metrics and logs to a collector. We ran
 OpenTelemetry 1.19.1.
 
-#### Workaround: trace without the SDK, and send spans before the response completes
+#### Workaround: collect spans with .NET's tracing API, and send them before the request ends
 
-.NET's tracing does not need the OpenTelemetry SDK. ASP.NET Core starts an
-[`Activity`][Activity] for each request, your own code can start more from an
-`ActivitySource`, and an [`ActivityListener`][ActivityListener] is handed each
-one as it ends. A middleware can then send what was collected to a collector
-as [OTLP over HTTP][otlp-spec], in its JSON encoding, before the response
-completes. An incoming `traceparent` header is honoured as usual.
+The OpenTelemetry SDK is built on tracing types that are part of .NET, and
+those work in the sandbox. An [`ActivitySource`][ActivitySource] starts spans,
+an [`ActivityListener`][ActivityListener] is handed each one as it ends, and
+libraries with an activity source of their own, such as `HttpClient`, Npgsql,
+MySqlConnector and MongoDB.Driver, produce spans with no SDK installed.
+Collecting those spans yourself and sending them before each request ends gets
+traces to a collector.
+
+That replaces only part of the SDK. Without it, you write the rest yourself or
+go without:
+
+- **Exporting.** The code below sends each request's spans in one export, on a
+  new connection, and the response waits for it: a collector that takes a
+  second to answer adds a second to every request. An export that fails drops
+  its spans, with a message in the log. It sends OTLP's JSON encoding, which
+  the [specification][otlp-spec] asks receivers to accept but does not
+  require: the OpenTelemetry Collector accepts it, and a backend may not. There
+  is no protobuf or gRPC encoding, and no vendor exporter or distribution, such
+  as Azure Monitor's, since those are built on the SDK.
+- **Instrumentation packages.** Their spans carry the attributes, error status
+  and exception events that tracing backends expect, and for some libraries
+  they are the only source of spans: Entity Framework Core and
+  StackExchange.Redis have no activity source, and their packages build spans
+  from EF Core's diagnostic events and the Redis client's profiling hooks.
+  Without them, you set attributes yourself, as the code below does for the
+  request's own span.
+- **Sampling, resource detection and configuration.** Every span is kept, and
+  the service is named by the string you pass. The SDK's samplers, resource
+  detectors and `OTEL_*` settings have no equivalent here. Trace context needs
+  no SDK: an incoming `traceparent` header is honoured.
+- **Metrics and logs.** This covers traces only.
+
+The collecting and sending are the same in any application:
 
 ```csharp
 using System.Diagnostics;
 using System.Text;
-using Microsoft.AspNetCore.Http.Features;
 
-var endpoint = builder.Configuration["Otlp:Endpoint"]!;   // for example http://collector:4318/v1/traces
-
-// Spans that have ended and not been sent yet.
-var finished = new List<Activity>();
-ActivitySource.AddActivityListener(new ActivityListener
+/// Keeps each span as it ends, and sends the spans it has kept to a collector.
+static class Spans
 {
-    ShouldListenTo = source => source.Name is "Microsoft.AspNetCore" or "MyApp",
-    Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
-    ActivityStopped = finished.Add,
-});
+    // Spans that have ended and not been sent yet.
+    static readonly List<Activity> finished = [];
 
-var app = builder.Build();
-
-app.Use(async (context, next) =>
-{
-    try
-    {
-        await next(context);
-    }
-    finally
-    {
-        // ASP.NET Core ends the request's own span after the response is complete, which is too
-        // late to send it. End it here, with the name and attributes it would be given then.
-        if (context.Features.Get<IHttpActivityFeature>()?.Activity is { } server)
+    /// Starts keeping the spans of the named activity sources.
+    public static void Collect(params string[] sources) =>
+        ActivitySource.AddActivityListener(new ActivityListener
         {
-            var route = (context.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText;
-            server.DisplayName = route is null ? context.Request.Method : $"{context.Request.Method} {route}";
-            server.SetTag("http.request.method", context.Request.Method);
-            server.SetTag("url.path", context.Request.Path.Value);
-            if (route is not null) server.SetTag("http.route", route);
-            server.SetTag("http.response.status_code", context.Response.StatusCode);
-            if (context.Response.StatusCode >= 500) server.SetStatus(ActivityStatusCode.Error);
-            server.Stop();
-        }
+            ShouldListenTo = source => sources.Contains(source.Name),
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = finished.Add,
+        });
 
-        if (finished.Count > 0)
-        {
-            var spans = finished.ToArray();
-            finished.Clear();
-            try
-            {
-                // Created and disposed within the request, so that nothing is left pending when it ends.
-                using var client = new HttpClient();
-                using var content = new StringContent(OtlpJson.Encode(spans, "my-app"), Encoding.UTF8, "application/json");
-                using var response = await client.PostAsync(endpoint, content, context.RequestAborted);
-                response.EnsureSuccessStatusCode();
-            }
-            catch (Exception error)
-            {
-                app.Logger.LogWarning(error, "{Count} span(s) were not exported", spans.Length);
-            }
-        }
+    /// Sends the kept spans as OTLP over HTTP in its JSON encoding, to an endpoint such as
+    /// http://collector:4318/v1/traces. Spans that fail to send are not kept for another try.
+    public static async Task SendAsync(string endpoint, string service, CancellationToken cancellation)
+    {
+        if (finished.Count == 0) return;
+        var spans = finished.ToArray();
+        finished.Clear();
+
+        // Created and disposed within the request, so that nothing is left pending when it ends.
+        using var client = new HttpClient();
+        using var content = new StringContent(OtlpJson.Encode(spans, service), Encoding.UTF8, "application/json");
+        using var response = await client.PostAsync(endpoint, content, cancellation);
+        response.EnsureSuccessStatusCode();
     }
-});
+}
 ```
 
 <details>
-<summary>The <code>OtlpJson</code> encoder used above</summary>
+<summary>The <code>OtlpJson</code> encoder used by <code>Spans</code></summary>
 
 ```csharp
 using System.Diagnostics;
@@ -1230,19 +1232,124 @@ static class OtlpJson
 
 </details>
 
-What this gives up, compared with the SDK:
+Where a request ends depends on how the application handles requests.
 
-- **Batching.** There is one export for each request, on a new connection.
-- **Retries.** If the collector refuses an export, the request still succeeds
-  and those spans are dropped, with a warning in the log.
-- **Response time.** The response does not complete until the export has. A
-  collector that takes a second to answer adds a second to every request.
-- **The SDK's features:** samplers, resource detectors, the instrumentation
-  packages, and the protobuf and gRPC encodings.
-- **Metrics and logs.** This covers traces only.
+##### In an ASP.NET Core application
 
-We checked the output against a receiver that records what it is sent, not
-against a collector.
+ASP.NET Core starts an [`Activity`][Activity] for each request and reads its
+`traceparent` header. A middleware ends that activity and sends the spans:
+
+```csharp
+using System.Diagnostics;
+using Microsoft.AspNetCore.Http.Features;
+
+var endpoint = builder.Configuration["Otlp:Endpoint"]!;   // for example http://collector:4318/v1/traces
+Spans.Collect("Microsoft.AspNetCore", "MyApp");
+
+var app = builder.Build();
+
+app.Use(async (context, next) =>
+{
+    try
+    {
+        await next(context);
+    }
+    finally
+    {
+        // ASP.NET Core ends the request's own span after the response is complete, which is too
+        // late to send it. End it here, with the name and attributes it would be given then.
+        if (context.Features.Get<IHttpActivityFeature>()?.Activity is { } server)
+        {
+            var route = (context.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText;
+            server.DisplayName = route is null ? context.Request.Method : $"{context.Request.Method} {route}";
+            server.SetTag("http.request.method", context.Request.Method);
+            server.SetTag("url.path", context.Request.Path.Value);
+            if (route is not null) server.SetTag("http.route", route);
+            server.SetTag("http.response.status_code", context.Response.StatusCode);
+            if (context.Response.StatusCode >= 500) server.SetStatus(ActivityStatusCode.Error);
+            server.Stop();
+        }
+
+        try
+        {
+            await Spans.SendAsync(endpoint, "my-app", context.RequestAborted);
+        }
+        catch (Exception error)
+        {
+            app.Logger.LogWarning(error, "Spans were not exported");
+        }
+    }
+});
+```
+
+##### In an application without ASP.NET Core
+
+An application that [handles requests without ASP.NET](handle-requests-without-aspnet.md)
+starts the request's span itself, continuing the caller's trace with
+[`ActivityContext.TryParse`][ActivityContext.TryParse]:
+
+```csharp
+using System.Diagnostics;
+using Isoplane;
+
+public static class Handler
+{
+    static readonly ActivitySource source = new("MyApp");
+    static string endpoint = "";
+
+    [Initializer]
+    public static Task InitializeAsync()
+    {
+        endpoint = RuntimeConfiguration.ReadValues()["Otlp:Endpoint"];   // for example http://collector:4318/v1/traces
+        Spans.Collect("MyApp");
+        return Task.CompletedTask;
+    }
+
+    [HttpHandler]
+    public static async Task<Response> HandleAsync(Request request)
+    {
+        // Continue the caller's trace, if it sent one.
+        ActivityContext.TryParse(Header(request, "traceparent"), Header(request, "tracestate"), out var caller);
+        Response response;
+        using (var server = source.StartActivity(request.Method, ActivityKind.Server, caller))
+        {
+            server?.SetTag("http.request.method", request.Method);
+            server?.SetTag("url.path", request.Path);
+            try
+            {
+                response = await RouteAsync(request);
+            }
+            catch (Exception error)
+            {
+                server?.SetStatus(ActivityStatusCode.Error, error.Message);
+                throw;
+            }
+            finally
+            {
+                // The span ends here, so that it is among the spans sent below.
+                server?.Stop();
+                try
+                {
+                    await Spans.SendAsync(endpoint, "my-app", request.Aborted);
+                }
+                catch (Exception error)
+                {
+                    Console.WriteLine($"Spans were not exported: {error.Message}");
+                }
+            }
+        }
+        return response;
+    }
+
+    static string? Header(Request request, string name) =>
+        request.Headers.FirstOrDefault(header => string.Equals(header.Key, name, StringComparison.OrdinalIgnoreCase)).Value;
+
+    // RouteAsync is the application's own request handling.
+}
+```
+
+We ran both against a receiver that records what it is sent, not against a
+collector.
 
 Size of the change: large.
 
@@ -1373,7 +1480,9 @@ to try, not a verdict: it flags an assembly for a call anywhere inside it, and
 that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 
 [Activity]: https://learn.microsoft.com/dotnet/api/system.diagnostics.activity
+[ActivityContext.TryParse]: https://learn.microsoft.com/dotnet/api/system.diagnostics.activitycontext.tryparse
 [ActivityListener]: https://learn.microsoft.com/dotnet/api/system.diagnostics.activitylistener
+[ActivitySource]: https://learn.microsoft.com/dotnet/api/system.diagnostics.activitysource
 [AddAzureAppConfiguration]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.configuration.azureappconfigurationextensions.addazureappconfiguration
 [AddAzureKeyVault]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.configuration.azurekeyvaultconfigurationextensions.addazurekeyvault
 [AddConsole]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.logging.consoleloggerextensions.addconsole
