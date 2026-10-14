@@ -34,6 +34,7 @@ public sealed class AcceptanceHandler
             string answer = parts[0] switch
             {
                 "loop" => await _eventLoop.RunAsync(rest).ConfigureAwait(false),
+                "sync" => Synchronization.Run(rest),
                 "sockets" => await _sockets.RunAsync(rest).ConfigureAwait(false),
                 "dns" => await _names.RunAsync(rest).ConfigureAwait(false),
                 "crypto" => await _cryptography.RunAsync(rest).ConfigureAwait(false),
