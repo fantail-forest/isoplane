@@ -234,6 +234,16 @@ public sealed class TelemetryTests : IDisposable
         Assert.Equal(expected, CommandNames.Classify(args) is { } command ? CommandNames.Name(command) : null);
 
     [Fact]
+    public void A_distribution_is_reported_only_as_the_short_plain_words_the_schema_allows()
+    {
+        Assert.Equal(new LinuxDistribution("ubuntu", "24.04"),
+            LinuxDistribution.Parse(["PRETTY_NAME=\"Ubuntu 24.04.1 LTS\"", "ID=ubuntu", "VERSION_ID=\"24.04\"", "HOME_URL=https://ubuntu.com/"]));
+        Assert.Equal(new LinuxDistribution("arch", null), LinuxDistribution.Parse(["ID=arch", "BUILD_ID=rolling"]));
+        Assert.Equal(new LinuxDistribution(null, null), LinuxDistribution.Parse(["ID=\"Some Company's Linux\"", "VERSION_ID=1 (internal build)"]));
+        Assert.Equal(new LinuxDistribution(null, null), LinuxDistribution.Parse([]));
+    }
+
+    [Fact]
     public async Task Every_command_the_help_describes_has_a_telemetry_name()
     {
         var start = new ProcessStartInfo("dotnet") { UseShellExecute = false, RedirectStandardOutput = true };
@@ -266,6 +276,7 @@ public sealed class TelemetryTests : IDisposable
         Assert.Equal(Allowed("command"), Names<TelemetryCommand>());
         Assert.Equal(Allowed("outcome"), Names<CommandOutcome>());
         Assert.Equal(Allowed("platform"), Names<TelemetryPlatform>());
+        Assert.Equal(Allowed("osArchitecture"), Names<MachineArchitecture>());
         Assert.Equal(Allowed("failure"), Names<CommandFailure>().Append(null).Order());
         Assert.Equal(CommandEvent.LongestDurationMs, properties.GetProperty("durationMs").GetProperty("maximum").GetInt64());
 
@@ -281,7 +292,7 @@ public sealed class TelemetryTests : IDisposable
     private string Queue(Guid id)
     {
         Host().Outbox.Add(id, new CommandEvent(id, CommandEvent.Timestamp(DateTimeOffset.UtcNow), null, false, CodingAgent.None, TelemetryCommand.Dev,
-            CommandOutcome.Succeeded, 0, null, 1, "0.1.0", TelemetryPlatform.LinuxX64, "6.8", "10.0.0", null).ToJson());
+            CommandOutcome.Succeeded, 0, null, 1, "0.1.0", TelemetryPlatform.LinuxX64, MachineArchitecture.X64, "6.8", null, null, "10.0.0", null).ToJson());
         return Path.Combine(home.Path, "pending", id + ".json");
     }
 

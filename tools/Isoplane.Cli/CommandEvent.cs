@@ -1,6 +1,8 @@
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 
 namespace Isoplane.Cli;
 
@@ -26,6 +28,8 @@ internal enum TelemetryPlatform
     Other
 }
 
+internal enum MachineArchitecture { X64, Arm64, Other }
+
 /// <summary>
 /// One run of a command, as <c>tools/TelemetryProtocol/command-event.schema.json</c> defines it. Every
 /// value is a number, a flag or a name from a fixed list, so nothing a user typed can be recorded.
@@ -33,7 +37,8 @@ internal enum TelemetryPlatform
 internal sealed record CommandEvent(
     Guid Id, string OccurredAt, Guid? InstallId, bool Ci, CodingAgent Agent, TelemetryCommand Command,
     CommandOutcome Outcome, int? ExitCode, CommandFailure? Failure, long DurationMs, string CliVersion,
-    TelemetryPlatform Platform, string OsVersion, string RuntimeVersion, string? Locale)
+    TelemetryPlatform Platform, MachineArchitecture OsArchitecture, string OsVersion, string? Distribution,
+    string? DistributionVersion, string RuntimeVersion, string? Locale)
 {
     internal const long LongestDurationMs = 2_592_000_000;
 
@@ -84,9 +89,52 @@ internal static class CommandNames
     };
 }
 
+/// <summary>
+/// The patterns the event schema gives its text fields. The service drops an event with one field that
+/// does not fit, so a value the machine reports is left out when it does not.
+/// </summary>
+internal static class EventSchema
+{
+    private static readonly Dictionary<string, Regex> Patterns = Load();
+
+    internal static string? Fitting(string property, string? value) =>
+        value is not null && !value.Contains('\n') && Patterns[property].IsMatch(value) ? value : null;
+
+    private static Dictionary<string, Regex> Load()
+    {
+        using var resource = typeof(EventSchema).Assembly.GetManifestResourceStream("command-event.schema.json")
+            ?? throw new InvalidOperationException("The CLI package is missing its event schema; reinstall a complete package.");
+        using var schema = JsonDocument.Parse(resource);
+        return schema.RootElement.GetProperty("properties").EnumerateObject()
+            .Where(property => property.Value.TryGetProperty("pattern", out _))
+            .ToDictionary(property => property.Name, property => new Regex(property.Value.GetProperty("pattern").GetString()!, RegexOptions.CultureInvariant));
+    }
+}
+
+/// <summary>A Linux distribution's identity, as <c>/etc/os-release</c> states it.</summary>
+internal sealed record LinuxDistribution(string? Id, string? Version)
+{
+    internal static LinuxDistribution OfThisMachine()
+    {
+        if (!OperatingSystem.IsLinux()) return new(null, null);
+        try { return Parse(File.ReadLines("/etc/os-release")); }
+        // A system without the file, or one that hides it, has no distribution to report.
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return new(null, null); }
+    }
+
+    internal static LinuxDistribution Parse(IEnumerable<string> lines)
+    {
+        var values = lines.Select(line => line.Split('=', 2)).Where(parts => parts.Length == 2)
+            .GroupBy(parts => parts[0].Trim()).ToDictionary(group => group.Key, group => group.Last()[1].Trim().Trim('"', '\''));
+        return new(EventSchema.Fitting("distribution", values.GetValueOrDefault("ID")),
+            EventSchema.Fitting("distributionVersion", values.GetValueOrDefault("VERSION_ID")));
+    }
+}
+
 /// <summary>What a command event says about the machine and the caller.</summary>
 internal sealed record TelemetryContext(
-    bool Ci, CodingAgent Agent, string CliVersion, TelemetryPlatform Platform, string OsVersion, string RuntimeVersion, string? Locale)
+    bool Ci, CodingAgent Agent, string CliVersion, TelemetryPlatform Platform, MachineArchitecture OsArchitecture, string OsVersion,
+    LinuxDistribution Distribution, string RuntimeVersion, string? Locale)
 {
     private static readonly Dictionary<string, TelemetryPlatform> Platforms =
         Enum.GetValues<TelemetryPlatform>().ToDictionary(CommandNames.Name, StringComparer.Ordinal);
@@ -97,7 +145,15 @@ internal sealed record TelemetryContext(
         TelemetryVariables.Agents.FirstOrDefault(agent => environment(agent.Variable) is { Length: > 0 }).Agent,
         cliVersion,
         Platforms.GetValueOrDefault(CliPaths.PlatformIdentifier(), TelemetryPlatform.Other),
+        RuntimeInformation.OSArchitecture switch
+        {
+            Architecture.X64 => MachineArchitecture.X64,
+            Architecture.Arm64 => MachineArchitecture.Arm64,
+            // Every other architecture is one Isoplane has no build for.
+            _ => MachineArchitecture.Other
+        },
         Environment.OSVersion.Version.ToString(),
+        LinuxDistribution.OfThisMachine(),
         Environment.Version.ToString(),
-        CultureInfo.CurrentUICulture.Name is { Length: > 0 } culture ? culture : null);
+        EventSchema.Fitting("locale", CultureInfo.CurrentUICulture.Name));
 }

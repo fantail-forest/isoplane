@@ -133,7 +133,8 @@ internal sealed class CommandTelemetry
             context.Ci ? null : debug ? host.State.Load()?.InstallId : InstallId(host), context.Ci, context.Agent, name,
             outcome, exitCode is >= 0 and <= 255 ? exitCode : null, failure,
             Math.Min((long)Stopwatch.GetElapsedTime(started).TotalMilliseconds, CommandEvent.LongestDurationMs),
-            context.CliVersion, context.Platform, context.OsVersion, context.RuntimeVersion, context.Locale);
+            context.CliVersion, context.Platform, context.OsArchitecture, context.OsVersion, context.Distribution.Id,
+            context.Distribution.Version, context.RuntimeVersion, context.Locale);
         if (debug) host.Error.WriteLine("isoplane telemetry (not sent): " + entry.ToJson());
         else host.Outbox.Add(entry.Id, entry.ToJson());
     }

@@ -51,8 +51,11 @@ One event for each command. `--help`, `--version` and `isoplane telemetry` recor
 | `failure` | The category of the error that ended the command, when one did. Error messages are never recorded. | `usage`, `invalid-data`, `invalid-operation`, `file-system`, `process`, `unexpected` |
 | `durationMs` | How long the command ran, in milliseconds. |  |
 | `cliVersion` | The version of the isoplane CLI. |  |
-| `platform` | The operating system family and processor architecture. | `linux-x64`, `linux-arm64`, `linux-musl-x64`, `linux-musl-arm64`, `osx-x64`, `osx-arm64`, `win-x64`, `win-arm64`, `other` |
+| `platform` | The operating system family and the processor architecture the CLI runs as. | `linux-x64`, `linux-arm64`, `linux-musl-x64`, `linux-musl-arm64`, `osx-x64`, `osx-arm64`, `win-x64`, `win-arm64`, `other` |
+| `osArchitecture` | The machine's processor architecture. It differs from the platform's when the CLI runs under emulation, as an x64 .NET does on Windows on Arm. | `x64`, `arm64`, `other` |
 | `osVersion` | The operating system's version number; on Linux, the kernel's. |  |
+| `distribution` | The Linux distribution's identifier from /etc/os-release, such as ubuntu. Absent on other systems, and when the identifier is not a short plain word. |  |
+| `distributionVersion` | The Linux distribution's version from /etc/os-release, such as 24.04. Absent on other systems and on distributions without one. |  |
 | `runtimeVersion` | The version of the .NET runtime the CLI ran on. |  |
 | `locale` | The language and region the CLI would display messages in, such as en-NZ. Absent when the machine sets none. |  |
 
