@@ -34,7 +34,7 @@ representations from the host contract, or drift-test them against it.
 
 ## Prepare shared runtime fixtures before tests
 
-Follow the [preparation boundary](../workflow/tooling.md#prepare-test-prerequisites-in-the-build-graph).
+Follow the [testing opinions](../testing.md#build-static-compiler-outputs-in-advance).
 Declare runtime and application fixture dependencies in Task, leaving native build
 coordination to the build tools. Test helpers load the prepared artifacts; missing
 toolchains fail preparation and missing artifacts fail selected tests with an

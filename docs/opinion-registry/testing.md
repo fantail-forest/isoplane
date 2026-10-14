@@ -1,0 +1,65 @@
+# Testing
+
+## Keep the suite fast
+
+Give a change the one test that would catch its regression most cheaply, not a test at every level. Test logic you can call directly with a unit test. Use an integration test when the bug would be in how real components work together. Add an end-to-end test, through `isoplaned` or the `isoplane` command, only when nothing cheaper exercises the behaviour, and extend an existing one before adding another. Don't rebuild what has already been built, and let independent tests run in parallel.
+
+## Go deep where failure is costly
+
+Cover critical behaviour thoroughly: the sandbox boundary, budget enforcement, fencing, hibernation and wake, tenant isolation. Don't write tests that are unlikely ever to fail.
+
+## Any test can run on its own
+
+Tests should reuse each other's work rather than repeating it, but a test must pass when run by itself, without another test having run first. A test of starting from nothing leaves out only what it checks.
+
+## Failures point at the cause
+
+Use assertions that show expected and actual values. When a test checks several steps, a failure says which step.
+
+## Tests are deterministic
+
+Use a clock the test controls instead of the wall clock. Enforce ordering with explicit synchronization, such as holding one task while checking another proceeds, instead of timing. Leave performance to [benchmarks](measurement/benchmarking.md). Asserting fixed quantities such as sizes, counts and configured limits is fine.
+
+## Check that a new test can fail
+
+Before relying on a regression test, see it fail against the bug, or with the guard it covers disabled.
+
+## Known failures are marked ignored
+
+A test for a bug that isn't fixed yet may be committed if it's marked ignored, with the reason. Don't commit a test that fails in a normal run, and don't write one that asserts the buggy behaviour.
+
+## Build static compiler outputs in advance
+
+Any static compiler outputs a test needs, such as packages, guest and runtime modules, and the compiled runtime, are built by a Task step before the tests run. They are kept in `.build/` and rebuilt only when their sources change. Tests don't modify them; copy one to a temporary folder to change it.
+
+## A missing input fails the test
+
+When something a test needs hasn't been built, the test fails and names the command that builds it. Only tests marked ignored are skipped.
+
+## Keep hostile guests
+
+For every way a guest could try to escape or abuse the sandbox, keep a guest that tries it. That includes forbidden imports and features, exhausting a limit, and misusing host calls. Give limits that involve time short values in these tests, so they finish quickly. Run them on every change to the engine, validator or host interface.
+
+## Pack fixture apps
+
+One fixture app can cover several behaviours. Split it only when those behaviours would interfere with each other, or to stay within a size limit. Don't add test-only behaviour to samples customers copy from.
+
+## Don't test third-party services
+
+When our code talks to a third-party service, test our side against a stand-in for it, not the service itself.
+
+## Clean up outside the work tree
+
+Tests may write temporary files wherever keeps them fast, including local disk outside the work tree. Anything outside the work tree is removed as soon as nothing needs it, by the end of the test run at the latest. Output in `.build/` may stay when later runs are likely to use it.
+
+## Ask the owner for acceptance criteria
+
+Ask before inventing product behaviour or performance targets for a test to check.
+
+## Run on a developer machine
+
+The suite runs on a developer machine with the toolchain installed. It may start containers to test against, but must not need to run inside one.
+
+## Put tests where they belong
+
+Unit tests go in the module, integration tests in `crates/<crate>/tests/`, end-to-end scenarios in `scenario-tests/`, and shared setup in each crate's `tests/common`. Name a test as a sentence stating its behaviour.

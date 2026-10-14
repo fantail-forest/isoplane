@@ -109,11 +109,7 @@ timeout expires or a failure notification arrives, inspect enough to diagnose
 the problem and choose a concrete recovery action or a revised, justified
 wait; do not fall back to repeated progress polling.
 
-**IMPORTANT**: Prepare guest fixtures, runtimes and packages through Task before starting the test runner. Shared fixture helpers resolve and load prepared artifacts; they do not schedule builds, decide freshness or coordinate build writers. Keep preparation dependencies and reuse policy in the build tools. Missing prerequisites fail the selected test with an actionable preparation command; never silently skip. See the [tooling opinion](docs/opinion-registry/workflow/tooling.md#prepare-test-prerequisites-in-the-build-graph).
-
-Release-installation and package-artifact checks consume explicitly prepared artifacts; they do not build releases, create source worktrees or change versions as incidental setup. Tests of a build or installation workflow may invoke that workflow with isolated inputs. Check alternate host build configurations in explicit build tasks with reusable outputs, rather than recursively running Cargo test suites inside a test.
-
-Reuse valid build outputs and completed checks, and let the build tools and test runners schedule independent work in parallel. Follow the [reuse and concurrency guidance](docs/opinion-registry/workflow/tooling.md#reuse-valid-work); keep invalidation and serialization scoped to the work that requires them.
+**IMPORTANT**: Build what the tests need through Task before running them. See [testing](docs/opinion-registry/testing.md) and [tooling](docs/opinion-registry/workflow/tooling.md).
 
 **IMPORTANT**: `scripts/dev --container` runs you as your own uid and only ever removes
 containers it created. Don't drive Docker directly to work around it, and don't
@@ -146,7 +142,7 @@ These rules are **non-negotiable**. If you can't satisfy a requirement without b
 | **No `unsafe`** except for operations that are unsafe by nature (FFI, memory mapping, deserialising native code)                                | Give every such block a `// SAFETY:` comment naming the invariant and where the caller enforces it. Put `#![forbid(unsafe_code)]` in every crate with no such operation. |
 | **No C# `DllImport` or `unsafe`** outside the SDK's one interop layer | None. |
 | **No test that cannot fail** (prints a figure and asserts nothing; asserts a constant against itself; downgrades a miss to a pass by default)   | None.                                                                                                                                                              |
-| **No test that is known to fail** committed without the fix that makes it pass | None. Ignoring a known failure or asserting the defect is prohibited. |
+| **No test that fails in a normal run** | A test for an unfixed bug may be committed marked ignored, with the reason. Never assert the buggy behaviour. |
 
 ### Types
 
@@ -201,31 +197,9 @@ Use the type system so that misuse is a compile error.
 - **The original project spec is history.** It is not authoritative. Decisions are visible in maintained opinions, code and the commits that made them.
 - **Shell scripts and `--help` text are not essays.** Keep a header to what the script does and how to invoke it.
 
-## Testing Standards
+## Testing
 
-Behavior changes need coverage that detects their absence or regression. Extend or reuse existing tests when they cover the contract; add a separate test when it contributes distinct failure detection. Judge that contribution against build, execution, and maintenance cost.
-
-Validate repository build, setup, cleanup and release scripts by running the real commands; do not maintain tests of build-script machinery.
-
-### Principles
-
-1. **A feature is proven at the level that proves it, in a suite that stays fast.** Validate critical integrations (the SDK against the host, wasmtime, pre-initialisation, the execution engine) with integration tests through their real interfaces. Validate behaviour a customer sees end to end through `isoplaned`'s listener or the `isoplane` command when that runs in reasonable time, with a small number of such tests rather than one per change. A fast suite is a feature of the codebase: replace a slow end-to-end test whenever an integration test could cover it. Code reachable only from fakes or benchmarks is still not a feature.
-2. **Tests are deterministic.** No elapsed-time assertions, no ratios of timings, no "A finished before B". Assert order with explicit sequencing; make time a clock the test controls.
-3. **Exercise critical rejection paths.** Every sandbox rejection rule and engine limit needs a test that trips it through the real boundary. Cover other guards according to the correctness, security, or contract failure they prevent. Existing tests may exercise several checks; a conditional does not automatically require its own test.
-4. **Tests assert logic; benchmarks measure.** Tests may assert deterministic quantities and configured limits, including byte sizes, resource accounting, and deadlines advanced with a controlled clock. Machine-dependent performance thresholds belong in benchmarks outside `cargo test`. Performance regression gates follow the [benchmarking opinion](docs/opinion-registry/measurement/benchmarking.md), including owner-approved thresholds, comparable baselines and explicit noise handling.
-5. **Doubles isolate; they don't cover.** Stubs, fakes, and mocks are welcome in unit tests, and in integration tests that would otherwise reach a third-party service, a slow service, or one that takes more than a simple container to run. A test that exercises a double adds no coverage to the component it replaces; give that component its own tests, especially over the behaviour its consumers depend on.
-6. **Acceptance criteria come from the owner.** Ask before inventing product behaviour or performance targets. Derive boundary cases and regression tests from approved requirements, established contracts, and the invariants here without further approval. The original project spec and benchmark results do not establish requirements.
-7. **The suite must not require a container to run within.** It runs on a developer machine with the required toolchain. It is fine for the suite to provision temporary infrastructure as containers to test against. Follow the shared fixture build rules under Common Operations.
-
-### Structure
-
-- Put unit tests in the module (`#[cfg(test)] mod tests`), integration tests in `crates/<crate>/tests/`, and scenario tests in a top-level directory named for what they are, `scenario-tests/`, driving a real `isoplaned`. A directory called `tests/` at the root says nothing about what kind of test it holds.
-- Give each test a coherent behavior or journey and make failures identify the failed step. Related transitions and assertions can share a scenario; split independent cases when it improves diagnosis or isolation. Separate cases do not require separate binaries or guest builds: share immutable artifacts and setup while isolating mutable state.
-- Prefer assertions that report useful actual and expected values. Add a message when the test name and assertion leave the failure unclear; routine comparisons need no extra prose. Do not replace an equality or collection assertion with a boolean comparison just to attach a message.
-- Name tests like a spec: `a_websocket_survives_its_instance_hibernating`.
-- Give each test that writes files its own uniquely created temporary directory, not a pid-based or shared path. Prepared fixture artifacts may be shared read-only under the rules in Common Operations.
-- Keep shared harness code in one `tests/common/` per crate, not copied into each file.
-- Make every scenario check an assertion. Prose explaining what a check would mean is not a check.
+Read [testing](docs/opinion-registry/testing.md) before writing or changing tests.
 
 ## Git & Commit Conventions
 
@@ -279,7 +253,6 @@ Keep the host interface to one definition. Generate every other representation o
 
 - `guest-sdks/rust` is internal guest-test support, with no customer SDK compatibility or feature-parity commitment. Retain helpers where they simplify current fixtures, including hostile guests, and evolve them with those tests.
 - Keep a guest's purpose clear. Samples show what a customer would write and may also provide regression coverage without accumulating test-only complexity. Dedicated fixtures stay as small as the behavior under test allows; related probes may share a module or runtime when their state and outcomes remain distinguishable.
-- Give every rejection rule in the validator and every limit in the engine a hostile module that trips it, and run that corpus on every change to either.
 - Automate project setup for a C# guest in ways that feel native to the .NET ecosystem: a `dotnet new` template, MSBuild targets and code generation in the SDK package, source generators for the exports a guest must provide. A customer should not have to copy boilerplate from a README into their project.
 
 ## Environment & Configuration

@@ -6,7 +6,7 @@ Build production execution and local development/testing on the same core: sandb
 
 **Not this:** A native .NET simulator that becomes the only integration-test host while production scheduling, capability enforcement and suspension execute elsewhere.
 
-**Exception:** Ordinary application unit tests can run natively, and doubles can isolate dependencies under the [testing strategy](../testing/strategy.md). Neither establishes coverage of the execution implementation it replaces.
+**Exception:** Ordinary application unit tests can run natively, and doubles can isolate dependencies under the [testing opinions](../testing.md). Neither establishes coverage of the execution implementation it replaces.
 
 ## Keep the execution core small independently of what is public
 
