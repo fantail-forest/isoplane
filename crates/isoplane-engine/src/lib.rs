@@ -56,7 +56,7 @@ pub type Result<T> = anyhow::Result<T>;
 
 /// Engine-wide configuration.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct EngineConfig {
     /// Emit Linux perf jitdump records in this process's working directory.
     /// Disabled by default and excluded from serialized preparation settings.

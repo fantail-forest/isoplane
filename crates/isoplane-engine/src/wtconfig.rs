@@ -93,8 +93,7 @@ pub(crate) fn build_engine(cfg: &EngineConfig) -> Result<Engine> {
     if cfg.pooling {
         c.allocation_strategy(InstanceAllocationStrategy::Pooling(pooling(cfg)));
     }
-
-    Engine::new(&c)
+    let engine = Engine::new(&c)
         .map_err(anyhow::Error::from)
         .with_context(|| {
             format!(
@@ -105,7 +104,8 @@ pub(crate) fn build_engine(cfg: &EngineConfig) -> Result<Engine> {
                 cfg.max_memory_bytes >> 20,
                 cfg.guard_size_bytes >> 20,
             )
-        })
+        })?;
+    Ok(engine)
 }
 
 fn pooling(cfg: &EngineConfig) -> PoolingAllocationConfig {
@@ -342,6 +342,30 @@ mod resource_policy_tests {
                 "(module (func))"
             ),
             "a one-byte metadata budget must refuse the module"
+        );
+    }
+
+    fn splat() -> Vec<u8> {
+        wat::parse_str(
+            r#"(module (func (export "splat") (param i32) (result v128) local.get 0 i32x4.splat))"#,
+        )
+        .expect("the splat fixture must assemble")
+    }
+
+    #[test]
+    fn an_engine_compiles_and_runs_simd_for_its_host_processor() {
+        let engine = build_engine(&small()).expect("valid engine configuration");
+        let module = wasmtime::Module::new(&engine, splat()).expect("host code compiles");
+        let mut store = wasmtime::Store::new(&engine, ());
+        // The engine interrupts at every epoch deadline, and no watchdog advances the epoch here.
+        store.set_epoch_deadline(u64::MAX);
+        let instance = wasmtime::Instance::new(&mut store, &module, &[]).expect("instantiate");
+        let splat = instance
+            .get_typed_func::<i32, wasmtime::V128>(&mut store, "splat")
+            .expect("export");
+        assert_eq!(
+            splat.call(&mut store, 7).expect("run").as_u128(),
+            0x00000007_00000007_00000007_00000007
         );
     }
 
