@@ -244,6 +244,12 @@ impl RuntimeBaseline {
     pub fn engine(&self) -> &Arc<IsoplaneEngine> {
         &self.0.engine
     }
+
+    /// The baseline as a template, which an application layer prepared over
+    /// it is loaded over.
+    pub fn template(&self) -> &Template {
+        &self.0.template
+    }
 }
 
 fn layer_identity(

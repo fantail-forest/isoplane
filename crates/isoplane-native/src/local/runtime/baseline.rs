@@ -1,6 +1,8 @@
 //! A runtime baseline, prepared once per runtime, engine and limits into the
 //! user's runtime cache, and reused by every preparation of an application
-//! package on it, whichever project the package comes from.
+//! package on it, whichever project the package comes from. The application
+//! is prepared as a layer over it into the project's own cache, and reused
+//! while its identity holds.
 
 use super::Project;
 
@@ -39,7 +41,7 @@ impl Baselines {
         version: &str,
         admit: impl FnOnce() -> anyhow::Result<()>,
     ) -> anyhow::Result<super::Prepared> {
-        let request = request(project, wasm, settings)?;
+        let request = request(project, wasm, settings, version)?;
         let wanted = request.baseline();
         let identity = wanted.identity()?;
         let mut current = self.current.lock();
@@ -52,25 +54,17 @@ impl Baselines {
             }
         };
         drop(current);
-        // One entry for every package of the project: Linux maps a layer from files it
-        // unlinks at once, and no other platform writes one, so nothing here outlives a
-        // preparation.
-        let cache = super::compilation_cache(project, b"application layers")?;
-        let mut application = baseline
-            .prepare_application_in(&request, cache.lease.directory())
-            .map_err(isoplane_prepare::PrepareError::Rejected)?;
-        application.template.retain_storage(cache.lease);
-        application
-            .template
-            .retain_storage(std::sync::Arc::new(baseline.clone()));
+        let (mut template, reused) = application(project, &baseline, &request)?;
+        template.retain_storage(std::sync::Arc::new(baseline.clone()));
         tracing::info!(
             compiled,
+            reused,
             "local preparation over the runtime baseline ready"
         );
         let module = isoplane_host::ModuleId::new(&project.manifest.name, version);
         let activator = std::sync::Arc::new(isoplane_host::EngineActivator::new(
             std::sync::Arc::clone(baseline.engine()),
-            application.template,
+            template,
             module,
         ));
         Ok(super::Prepared {
@@ -82,10 +76,132 @@ impl Baselines {
     }
 }
 
+/// The project's application, loaded over `baseline` from the layer a
+/// previous preparation published for the same identity, or prepared now and
+/// published for the next one. Returns whether it was reused. Every other
+/// layer of the project is removed: one with another identity holds an
+/// application, or settings, the project no longer has.
+fn application(
+    project: &Project,
+    baseline: &isoplane_prepare::RuntimeBaseline,
+    request: &isoplane_prepare::BuildRequest,
+) -> anyhow::Result<(isoplane_engine::Template, bool)> {
+    let layers = application_layers(project)?;
+    let identity = request.identity()?;
+    let name = identity_name(&identity);
+    let directory = layers.directory().join(&name);
+    let engine = baseline.engine();
+    // SAFETY: the directory lies in the project's private cache, under a lease this
+    // preparation holds. Only `publish_application` writes locally compiled native output there, publishing each layer
+    // atomically as files that nothing rewrites while a template maps them.
+    let loaded =
+        unsafe { engine.load_prepared_over(baseline.template(), &directory, identity, &[]) };
+    let (mut template, reused) = match loaded {
+        Ok(template) => {
+            tracing::info!(path = %directory.display(), "reusing the prepared application");
+            (template, true)
+        }
+        Err(error) => {
+            if directory.exists() {
+                tracing::warn!(path = %directory.display(), %error, "preparing the application again");
+                std::fs::remove_dir_all(&directory)?;
+            }
+            let application = baseline
+                .prepare_application_in(request, layers.directory())
+                .map_err(isoplane_prepare::PrepareError::Rejected)?;
+            publish_application(
+                engine,
+                baseline.template(),
+                &application,
+                identity,
+                &directory,
+            );
+            (application.template, false)
+        }
+    };
+    remove_other_layers(layers.directory(), &name);
+    template.retain_storage(layers);
+    Ok((template, reused))
+}
+
+/// Publishes a freshly prepared layer for the next preparation. A failure
+/// costs only that reuse, so it is reported and the session goes on.
+fn publish_application(
+    engine: &isoplane_engine::IsoplaneEngine,
+    base: &isoplane_engine::Template,
+    application: &isoplane_prepare::PreparedApplication,
+    identity: isoplane_engine::prepared::PreparedIdentity,
+    directory: &std::path::Path,
+) {
+    // SAFETY: `prepare_application_in` produced these bytes in this process.
+    let published = unsafe {
+        engine.decode_builder_output_over(base, application.product.prepared_bytes(), identity)
+    }
+    .and_then(|product| product.publish(directory));
+    match published {
+        Ok(_) => {}
+        // Another session of the project published the same layer first.
+        Err(_) if directory.exists() => {}
+        Err(error) => {
+            tracing::warn!(path = %directory.display(), %error, "the prepared application is not kept for the next session");
+        }
+    }
+}
+
+/// Removes the layers published for other identities. One still mapped by a
+/// running session cannot be removed on Windows; the next preparation tries again.
+fn remove_other_layers(layers: &std::path::Path, current: &str) {
+    let Ok(entries) = std::fs::read_dir(layers) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if name == current || !is_identity_name(name) {
+            continue;
+        }
+        if let Err(error) = std::fs::remove_dir_all(entry.path()) {
+            tracing::warn!(path = %entry.path().display(), %error, "an earlier prepared application is not removed yet");
+        }
+    }
+}
+
+/// The project's cache entry for its prepared application layers. Its key
+/// does not depend on the runtime or engine, so the layers every version
+/// published stay in one place to be checked; a layer that no longer matches
+/// is refused when it loads.
+fn application_layers(project: &Project) -> anyhow::Result<std::sync::Arc<isoplane_cache::Lease>> {
+    let storage = isoplane_cache::Cache::new(
+        project.compilation_directory.clone(),
+        isoplane_cache::PROJECT_CACHE_BYTES,
+    )?;
+    let key = blake3::derive_key("isoplane local application layers v1", &[]);
+    Ok(std::sync::Arc::new(
+        storage.lease(isoplane_cache::CacheKey(key))?,
+    ))
+}
+
+fn identity_name(identity: &isoplane_engine::prepared::PreparedIdentity) -> String {
+    let mut name = blake3::Hasher::new();
+    for part in [
+        &identity.input_hash,
+        &identity.runtime_profile,
+        &identity.initialization_hash,
+    ] {
+        name.update(part);
+    }
+    name.finalize().to_hex().to_string()
+}
+
+fn is_identity_name(name: &str) -> bool {
+    name.len() == 64 && name.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
 fn request(
     project: &Project,
     wasm: &[u8],
     settings: &[u8],
+    version: &str,
 ) -> anyhow::Result<isoplane_prepare::BuildRequest> {
     let manifest = &project.manifest;
     Ok(isoplane_prepare::BuildRequest {
