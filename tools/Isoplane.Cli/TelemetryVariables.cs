@@ -81,13 +81,14 @@ internal static class TelemetryVariables
     /// The rules that name the coding agent running a command, checked in order; the first that matches
     /// decides. They follow the Aspire CLI's detector
     /// (https://github.com/dotnet/aspire/blob/main/src/Aspire.Cli/Telemetry/CodingAgentDetector.cs), which
-    /// is maintained as agents change their variables, with Pi added from its own documentation.
+    /// is maintained as agents change their variables, with Pi added from its own documentation. Aspire also
+    /// counts <c>CURSOR_EDITOR</c>, which is left out: it can be set in Cursor's terminal when a person types.
     /// </summary>
     internal static readonly AgentRule[] Agents =
     [
         new(CodingAgent.Cowork, ["CLAUDE_CODE_IS_COWORK"]),
         new(CodingAgent.Claude, ["CLAUDECODE", "CLAUDE_CODE", "CLAUDE_CODE_ENTRYPOINT"]),
-        new(CodingAgent.Cursor, ["CURSOR_EDITOR", "CURSOR_AI", "CURSOR_TRACE_ID", "CURSOR_AGENT"]),
+        new(CodingAgent.Cursor, ["CURSOR_AI", "CURSOR_TRACE_ID", "CURSOR_AGENT"]),
         new(CodingAgent.Gemini, ["GEMINI_CLI"]),
         new(CodingAgent.CopilotCli, ["COPILOT_CLI", "GITHUB_COPILOT_CLI_MODE", "GH_COPILOT_WORKING_DIRECTORY", "COPILOT_MODEL", "COPILOT_ALLOW_ALL", "COPILOT_GITHUB_TOKEN"]),
         new(CodingAgent.CopilotApp, ["AI_AGENT"], "github_copilot_app_agent"),

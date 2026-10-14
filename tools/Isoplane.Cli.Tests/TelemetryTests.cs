@@ -282,6 +282,8 @@ public sealed class TelemetryTests : IDisposable
     [InlineData("none", "OR_APP_NAME", "my-app")]
     [InlineData("other", "AGENT_CLI", "1")]
     [InlineData("none", "CLAUDECODE", "")]
+    [InlineData("cursor", "CURSOR_AGENT", "1")]
+    [InlineData("none", "CURSOR_EDITOR", "vscode")]
     public void A_coding_agent_is_named_by_the_rules_it_matches(string expected, string variable, string value)
     {
         environment[variable] = value;

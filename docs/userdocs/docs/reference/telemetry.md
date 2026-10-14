@@ -96,7 +96,7 @@ The service that receives an event adds the time it arrived and the country the 
 | --- | --- |
 | `CLAUDE_CODE_IS_COWORK` | `cowork` |
 | `CLAUDECODE`, `CLAUDE_CODE`, `CLAUDE_CODE_ENTRYPOINT` | `claude` |
-| `CURSOR_EDITOR`, `CURSOR_AI`, `CURSOR_TRACE_ID`, `CURSOR_AGENT` | `cursor` |
+| `CURSOR_AI`, `CURSOR_TRACE_ID`, `CURSOR_AGENT` | `cursor` |
 | `GEMINI_CLI` | `gemini` |
 | `COPILOT_CLI`, `GITHUB_COPILOT_CLI_MODE`, `GH_COPILOT_WORKING_DIRECTORY`, `COPILOT_MODEL`, `COPILOT_ALLOW_ALL`, `COPILOT_GITHUB_TOKEN` | `copilot-cli` |
 | `AI_AGENT`, set to `github_copilot_app_agent` | `copilot-app` |
