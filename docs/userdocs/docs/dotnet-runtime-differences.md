@@ -318,6 +318,18 @@ Outbound, an application can open TCP connections through the asynchronous
 APIs, which covers `HttpClient`, TLS and database drivers.
 
 - There is no UDP.
+- **Socket options apply within limits Isoplane sets.** `NoDelay`, keep-alive
+  and the receive and send buffer sizes work as elsewhere, but a value outside
+  the supported range is clamped to it, and reading an option back returns the
+  value in force:
+  - **Buffer sizes:** 4,096 to 212,992 bytes. An unset buffer size reads back
+    as 65,536.
+  - **Keep-alive idle time:** 10 to 32,767 seconds.
+  - **Keep-alive interval:** 1 to 32,767 seconds.
+  - **Keep-alive probe count:** 1 to 127.
+
+  Setting or reading the hop limit (`Socket.Ttl`) throws `SocketException`
+  with `OperationNotSupported`.
 - A client from `IHttpClientFactory` opens a connection for each call and
   closes it once the response has been read, so it keeps no connection between
   calls. Elsewhere a client keeps idle connections for its next calls and
