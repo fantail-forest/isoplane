@@ -52,7 +52,7 @@ entry says otherwise.
 | Entity Framework Core | [Lazy loading](#lazy-loading) | Moderate change: load with `Include` |
 | Entity Framework Core | [`TransactionScope`](#transaction-scope) | Small change: use a database transaction |
 | SqlClient | [SQL Server, including its Entity Framework Core provider](#sql-server) | Not supported yet: waits on work under way in the driver. PostgreSQL works today |
-| Sqlite | [SQLite, including its Entity Framework Core provider](#sqlite) | Not supported yet: needs SQLite in Isoplane's runtime. PostgreSQL works today |
+| Sqlite | [SQLite, including its Entity Framework Core provider](#sqlite) | In-memory databases work. Small change: create connections once the application has started. A database file needs a different database, such as PostgreSQL |
 | MongoDB.Driver | [MongoDB](#mongodb) | Not supported yet for most deployments: waits on the driver. A load-balanced deployment works with two settings |
 | StackExchange.Redis | [Redis, including the Redis distributed cache](#redis) | Small change: reference the stable 3.x client and call it asynchronously |
 | OpenTelemetry | [OpenTelemetry SDK](#opentelemetry) | Large change, traces only: collect spans with .NET's tracing API and send them before each request ends |
@@ -82,7 +82,7 @@ read the stack trace to see which call failed.
 | `PlatformNotSupportedException: Arg_PlatformNotSupported`, with [`Thread.Start`][Thread.Start] near the top of the stack | A library started a thread. See [MongoDB](#mongodb) and [Redis](#redis). |
 | `DirectoryNotFoundException: /tmp/` | ASP.NET Core tried to move a large request or response to a temporary file. See [uploads](#uploads), [request buffering](#enable-buffering), [Newtonsoft.Json](#newtonsoft-json) and [XML formatters](#xml-formatters). |
 | `IOException: Read-only file system` | Something tried to write a file. The [file system is read-only](dotnet-runtime-differences.md#the-machine-underneath). |
-| [`DllNotFoundException`][DllNotFoundException], sometimes inside a `TypeInitializationException` | A package called into a native library. See [SQLite](#sqlite). |
+| [`DllNotFoundException`][DllNotFoundException], sometimes inside a `TypeInitializationException` | A package called into a native library that the runtime does not include. An application cannot bring its own; see [the machine underneath](dotnet-runtime-differences.md#the-machine-underneath). |
 | The application refuses to start with `initialization retains a timer` | Something registered at startup started a timer. The lines beneath the message name each timer and the method that runs or awaits it. See [rate limiting](#rate-limiting) and [OpenTelemetry](#opentelemetry). |
 | The application refuses to start with `unhandled System.PlatformNotSupportedException` and no stack trace | A call made while the application starts failed. The known ones are [console logging](#console-logging) and [remote configuration](#remote-configuration). |
 | The application refuses to start, naming a service that was `Still running once the application had started` | A package registered a background service. See [MCP sessions](#mcp-sessions) and [background work](#connections-and-background-work). |
@@ -901,38 +901,74 @@ arrive.
 
 ### SQLite {#sqlite}
 
-[`Microsoft.Data.Sqlite`][Microsoft.Data.Sqlite] calls SQLite's native
-library, which it ships built for each operating system and processor and for
-browsers, but not for the sandbox. Creating a
-[`SqliteConnection`][SqliteConnection] throws `TypeInitializationException`,
-caused by `DllNotFoundException: e_sqlite3`. That includes in-memory
-databases, and
+Isoplane's runtime includes SQLite 3.54, so
+[`Microsoft.Data.Sqlite`][Microsoft.Data.Sqlite] and
 [`Microsoft.EntityFrameworkCore.Sqlite`][nuget-ef-sqlite] with its
-[`UseSqlite`][UseSqlite], which is built on it.
+[`UseSqlite`][UseSqlite] work unchanged for databases held in memory. That
+covers the functions, aggregates and collations an application registers, and
+the ones Entity Framework Core registers for decimals. Two common uses do not
+work:
 
-```csharp
-// A common set-up for tests and prototypes:
-await using var connection = new SqliteConnection("Data Source=:memory:");   // throws
-await connection.OpenAsync();
-```
+- **A database kept in a file.** Opening one throws
+  [`SqliteException`][SqliteException] with
+  `SQLite Error 14: 'file-backed databases are not available, ...'`. No
+  storage outlasts an instance, so the file's data would vanish with it, and
+  Isoplane refuses the file rather than lose the data without telling you.
+- **Creating a connection while the application starts.** The first
+  [`SqliteConnection`][SqliteConnection] starts a timer that
+  `Microsoft.Data.Sqlite` uses to tidy its connection pool, and the application
+  then refuses to start with `initialization retains a timer`, naming
+  `SqliteConnectionFactory.PruneCallback`. That includes Entity Framework Core
+  work in `Program.cs` before `await app.RunAsync()`, such as creating the
+  database.
 
 Typically used for local development databases, tests and small applications.
 
-#### Workaround: none for SQLite itself
+#### Workaround: keep the database in memory, and fill it as each instance starts
 
-Use PostgreSQL in development as well. The `isoplane-webapi` template includes a compose file for it; see the [project templates](reference/project-templates.md).
+An in-memory database lasts while a connection to it is open, and belongs to
+one instance. Each instance has its own, which ends when Isoplane
+[discards the instance](application-lifecycle.md#between-requests).
 
-Size of the change: large: a different database, in development as
-well as in production.
+- `Data Source=:memory:` is private to its connection. Keep that connection open
+  for as long as you need the data, and hand the open connection to
+  [`UseSqlite`][UseSqlite].
+- `Data Source=name;Mode=Memory;Cache=Shared` is shared by every connection
+  that names it, and lasts while at least one of them is open.
 
-#### Looking ahead
+To load reference data, do it when an instance starts, in
+[`Activation.Activated`][Activation.Activated], and keep one connection open.
+Create that connection there too, not while the application starts:
 
-SQLite can be supported. Native code compiled to WebAssembly runs inside the
-sandbox, as the native parts of .NET already do in Isoplane's runtime (see
-[the machine underneath](dotnet-runtime-differences.md#the-machine-underneath)).
-The runtime does not include SQLite yet. With it, in-memory databases could work
-unchanged. A database kept in a file would not: it needs storage that outlasts
-the instance, which Isoplane does not provide.
+```csharp
+const string Reference = "Data Source=reference;Mode=Memory;Cache=Shared";
+SqliteConnection? keepAlive = null;
+
+Activation.Activated += async () =>
+{
+    keepAlive = new SqliteConnection(Reference);
+    await keepAlive.OpenAsync();
+    // Create the tables and insert the data here.
+};
+
+// Requests open their own connections to the same database.
+builder.Services.AddDbContext<CatalogContext>(options => options.UseSqlite(Reference));
+```
+
+Finish or roll back a transaction before another connection uses the same
+tables. A command that finds them locked fails with
+`PlatformNotSupportedException` instead of waiting, because
+`Microsoft.Data.Sqlite` retries after [`Thread.Sleep`][Thread.Sleep].
+
+Extension loading, including SpatiaLite, is not available. The runtime's SQLite
+serves the `SQLitePCLRaw` provider that `Microsoft.Data.Sqlite` uses by default,
+`e_sqlite3`, from `SQLitePCLRaw` 2.1 or 3.0.
+
+For data that must last, use PostgreSQL; see
+[Connect PostgreSQL](connect-postgresql.md).
+
+Size of the change: small for in-memory data loaded as the instance starts.
+Large for a database file: a different database.
 
 ### MongoDB {#mongodb}
 
@@ -1466,6 +1502,7 @@ starts a thread or waits synchronously. Treat the result as a list of things
 to try, not a verdict: it flags an assembly for a call anywhere inside it, and
 that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 
+[Activation.Activated]: reference/sdk/Isoplane.Sdk/Isoplane/Activation/Activated.md
 [Activity]: https://learn.microsoft.com/dotnet/api/system.diagnostics.activity
 [ActivityContext.TryParse]: https://learn.microsoft.com/dotnet/api/system.diagnostics.activitycontext.tryparse
 [ActivityListener]: https://learn.microsoft.com/dotnet/api/system.diagnostics.activitylistener
@@ -1569,6 +1606,7 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [sqlclient-pool-v2]: https://devblogs.microsoft.com/azure-sql/try-sqlclients-new-connection-pool-for-faster-parallel-connections/
 [SqlConnection]: https://learn.microsoft.com/dotnet/api/microsoft.data.sqlclient.sqlconnection
 [SqliteConnection]: https://learn.microsoft.com/dotnet/api/microsoft.data.sqlite.sqliteconnection
+[SqliteException]: https://learn.microsoft.com/dotnet/api/microsoft.data.sqlite.sqliteexception
 [StackExchange.Redis]: https://stackexchange.github.io/StackExchange.Redis/
 [stj-source-generation]: https://learn.microsoft.com/dotnet/standard/serialization/system-text-json/source-generation
 [swashbuckle]: https://github.com/domaindrivendev/Swashbuckle.AspNetCore

@@ -350,7 +350,8 @@ APIs, which covers `HttpClient`, TLS and database drivers.
   configuration; see [local development settings](local-settings.md).
 - **There are no other processes.** An application cannot start one.
 - **Native libraries come from the runtime.** Isoplane's runtime includes the
-  native parts of .NET, such as compression, globalization and OpenSSL,
+  native parts of .NET, such as compression, globalization and OpenSSL, and
+  [SQLite](library-compatibility.md#sqlite) for in-memory databases, all
   compiled to WebAssembly so that they run inside the sandbox. An
   application's package carries managed code only, so it cannot add a native
   library of its own, and the Linux, macOS and Windows binaries a NuGet package
