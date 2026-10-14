@@ -6,7 +6,7 @@ namespace Isoplane.Cli;
 /// <summary>What telemetry reads from the process and the build it runs in.</summary>
 internal sealed record TelemetryHost(
     Uri? Endpoint, string CliVersion, string Directory, Func<string, string?> Environment, TimeProvider Time,
-    TextWriter Error, bool ErrorRedirected, Func<HttpClient> CreateClient, Func<CancellationToken, Task> BeforeUpload)
+    TextWriter Error, bool ErrorRedirected, Func<HttpClient> CreateClient, TimeSpan UploadGrace)
 {
     internal const string EndpointMetadata = "IsoplaneTelemetryEndpoint";
 
@@ -25,8 +25,9 @@ internal sealed record TelemetryHost(
         var endpoint = Uri.TryCreate(configured, UriKind.Absolute, out var parsed) && parsed.Scheme is "https" or "http" ? parsed : null;
         return new(endpoint, version, Path.Combine(CliPaths.Home, "telemetry"), System.Environment.GetEnvironmentVariable, TimeProvider.System,
             Console.Error, Console.IsErrorRedirected, () => NewClient(version),
-            // A command that ends sooner sends nothing, so a quick one never opens a connection it would abandon.
-            cancellation => Task.Delay(TimeSpan.FromSeconds(2), cancellation));
+            // Long enough for most uploads still under way to finish, short enough to go unnoticed at the end
+            // of a command. What one leaves unsent goes with a later command.
+            TimeSpan.FromMilliseconds(250));
     }
 
     private static HttpClient NewClient(string version)
@@ -39,7 +40,8 @@ internal sealed record TelemetryHost(
 
 /// <summary>
 /// Records one command run. Events recorded by earlier runs are sent while this one works, and its own
-/// event waits for a later run, so a command never waits on the network before it exits.
+/// event waits for a later run. A command waits on the network only when it ends with an upload still
+/// under way, and then for at most <see cref="TelemetryHost.UploadGrace"/>.
 /// </summary>
 internal sealed class CommandTelemetry
 {
@@ -119,14 +121,25 @@ internal sealed class CommandTelemetry
 
     private int Complete(CommandOutcome outcome, int? exitCode, CommandFailure? failure)
     {
-        uploading.Cancel();
         if (host is not null && context is not null && command is { } name && (debug || recording))
         {
             try { Record(host, context, name, outcome, exitCode, failure); }
             // Telemetry is never a reason for a command to fail; an event that cannot be saved is lost.
             catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
         }
+        FinishUpload();
         return exitCode ?? 0;
+    }
+
+    private void FinishUpload()
+    {
+        if (host is not null && !Upload.IsCompleted)
+        {
+            try { Upload.Wait(host.UploadGrace); }
+            // An upload's failure is never shown: what it did not send stays queued for a later command.
+            catch (AggregateException) { }
+        }
+        uploading.Cancel();
     }
 
     private void Record(TelemetryHost host, TelemetryContext context, TelemetryCommand name, CommandOutcome outcome, int? exitCode, CommandFailure? failure)
@@ -160,7 +173,6 @@ internal sealed class CommandTelemetry
     {
         try
         {
-            await host.BeforeUpload(cancellation);
             using var client = host.CreateClient();
             await host.Outbox.SendAsync(client, endpoint, cancellation);
         }

@@ -25,6 +25,7 @@ public sealed class TelemetryTests : IDisposable
     [Fact]
     public async Task The_first_run_shows_the_notice_and_sends_nothing_and_the_next_run_sends_its_events()
     {
+        service.Answer = HttpStatusCode.Accepted;
         var first = CommandTelemetry.Begin(["setup"], Host());
         first.Ended(0);
         await first.Upload;
@@ -156,14 +157,16 @@ public sealed class TelemetryTests : IDisposable
     }
 
     [Fact]
-    public async Task A_command_that_ends_before_sending_starts_sends_nothing()
+    public async Task An_upload_still_under_way_when_the_command_ends_is_left_for_a_later_command_after_the_grace_period()
     {
         Seen();
         Queue(Guid.NewGuid());
-        var run = CommandTelemetry.Begin(["--version"], Host() with { BeforeUpload = cancellation => Task.Delay(Timeout.Infinite, cancellation) });
-        run.Ended(0);
-        await run.Upload;
-        Assert.Empty(service.Requests);
+        service.Hold = cancellation => Task.Delay(Timeout.Infinite, cancellation);
+        var run = CommandTelemetry.Begin(["--version"], Host() with { UploadGrace = TimeSpan.Zero });
+        await service.Started.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.Equal(0, run.Ended(0));
+        await run.Upload.WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.True(service.Cancelled, "The upload must be abandoned once the grace period is over.");
         Assert.Single(Pending());
     }
 
@@ -376,7 +379,7 @@ public sealed class TelemetryTests : IDisposable
     }
 
     private TelemetryHost Host() => new(Endpoint, "0.1.0-preview.4", home.Path, name => environment.GetValueOrDefault(name), TimeProvider.System,
-        error, ErrorRedirected: false, () => new HttpClient(service, disposeHandler: false), _ => Task.CompletedTask);
+        error, ErrorRedirected: false, () => new HttpClient(service, disposeHandler: false), UploadGrace: TimeSpan.FromSeconds(30));
 
     private void Seen() => Host().State.Save(new(NoticeShown: true, InstallId: Guid.NewGuid()));
 
@@ -405,12 +408,25 @@ public sealed class TelemetryTests : IDisposable
 
     private sealed class Service : HttpMessageHandler
     {
-        internal HttpStatusCode Answer { get; set; } = HttpStatusCode.Accepted;
+        // Refusing by default keeps every event queued, so that a test of what a command records is not
+        // changed by an upload that started with it; tests of sending choose another answer.
+        internal HttpStatusCode Answer { get; set; } = HttpStatusCode.ServiceUnavailable;
         internal List<string> Requests { get; } = [];
+        /// <summary>Holds each request until it completes; a held request is one still under way.</summary>
+        internal Func<CancellationToken, Task> Hold { get; set; } = _ => Task.CompletedTask;
+        internal TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal bool Cancelled { get; private set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellation)
         {
             Requests.Add(await request.Content!.ReadAsStringAsync(cancellation));
+            Started.TrySetResult();
+            try { await Hold(cancellation); }
+            catch (OperationCanceledException)
+            {
+                Cancelled = true;
+                throw;
+            }
             return new HttpResponseMessage(Answer);
         }
     }

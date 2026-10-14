@@ -361,7 +361,7 @@ These environment variables change it for one shell, container or pipeline:
 
 The first command you run prints a notice and sends nothing, so you can opt out before any data leaves the machine. Where nobody would see the notice, nothing is recorded until a run that can show it. That is any run whose error output is redirected, unless it is on a continuous integration machine, where the notice goes to the log.
 
-After that, each command writes one event to `telemetry/pending` in the Isoplane directory when it ends. That directory is `.isoplane` in your home directory unless `ISOPLANE_HOME` names another. A later command that runs for more than two seconds sends the waiting events while it works, and no command waits for that before it exits. An event that could not be sent is deleted after 30 days, and at most 1,000 are kept.
+After that, each command writes one event to `telemetry/pending` in the Isoplane directory when it ends. That directory is `.isoplane` in your home directory unless `ISOPLANE_HOME` names another. Each later command sends the waiting events while it works. If it finishes while they are still being sent, it waits at most a quarter of a second, then leaves them for the next command. An event that could not be sent is deleted after 30 days, and at most 1,000 are kept.
 
 ## What is collected
 
