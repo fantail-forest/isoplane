@@ -42,6 +42,18 @@ Each request can have only so many asynchronous operations waiting at once, such
 as outbound calls and timers. A request that goes over that number fails. When a
 request fans out over many items, start them in batches and await each batch.
 
+## Outbound connections
+
+An instance can have six outbound connections being opened at once. A further
+connection does not fail: it waits, in order, until one of the six is
+established or fails, so it takes longer to open. A connection counts toward the
+six only while it is being opened. Connections that are already open, such as
+those a connection pool keeps, do not delay new ones.
+
+The connections held open are also limited across every instance of every
+application in your team. A connection beyond that limit fails with a socket
+error.
+
 ## Try smaller limits locally
 
 A local session runs with the largest limits the platform offers. To see how an
