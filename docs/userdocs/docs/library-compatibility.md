@@ -53,7 +53,7 @@ entry says otherwise.
 | Entity Framework Core | [`TransactionScope`](#transaction-scope) | Small change: use a database transaction |
 | SqlClient | [SQL Server, including its Entity Framework Core provider](#sql-server) | Not supported yet: waits on work under way in the driver. PostgreSQL works today |
 | Sqlite | [SQLite, including its Entity Framework Core provider](#sqlite) | Not supported yet: needs SQLite in Isoplane's runtime. PostgreSQL works today |
-| MongoDB.Driver | [MongoDB](#mongodb) | Not supported yet: needs changes in the driver and in Isoplane |
+| MongoDB.Driver | [MongoDB](#mongodb) | Not supported yet for most deployments: waits on the driver. A load-balanced deployment works with two settings |
 | StackExchange.Redis | [Redis, including the Redis distributed cache](#redis) | Small change: reference the client's 4.0 prerelease and call it asynchronously |
 | OpenTelemetry | [OpenTelemetry SDK](#opentelemetry) | Large change, traces only: collect spans without the SDK and send them before the response completes |
 | ModelContextProtocol | [An MCP server that tracks sessions](#mcp-sessions) | Small change: use stateless mode |
@@ -937,8 +937,9 @@ the instance, which Isoplane does not provide.
 
 ### MongoDB {#mongodb}
 
-[`MongoDB.Driver`][MongoDB.Driver] does not run on Isoplane yet. It starts a
-thread for each server it monitors, so creating a `MongoClient` throws
+[`MongoDB.Driver`][MongoDB.Driver] starts a thread for each server it
+monitors, so in an ordinary deployment, such as a replica set, creating a
+`MongoClient` throws
 [`PlatformNotSupportedException`][PlatformNotSupportedException] from
 [`Thread.Start`][Thread.Start].
 
@@ -950,38 +951,41 @@ await orders.InsertOneAsync(order);
 
 Typically used for MongoDB and compatible document databases.
 
-#### Workaround: none with the driver, yet
+#### Workaround: connect in load-balanced mode, where the deployment allows it
 
-No setting gets past this for an ordinary deployment. A direct connection, the
-polling monitoring mode and the heartbeat settings all still start the monitor
-thread, and releases from before the driver used threads fail for another
-reason. Every other .NET client for MongoDB that we found is built on this
-driver.
+A load-balanced deployment works, using only the driver's public settings. In
+that arrangement the application connects through a load balancer to MongoDB
+routers (`mongos`) of a sharded cluster, and the driver monitors no servers, so
+it starts no threads. Connect with `loadBalanced=true` and switch off the
+connection pool's background maintenance:
 
-What remains today is to reach MongoDB through an HTTP service placed in front
-of it, called with `HttpClient`. We have not run one.
+```csharp
+var settings = MongoClientSettings.FromConnectionString(
+    "mongodb://mongodb-lb.internal:27017/?loadBalanced=true");
+settings.ClusterConfigurator = cluster =>
+    cluster.ConfigureConnectionPool(pool => pool.With(maintenanceInterval: Timeout.InfiniteTimeSpan));
+var client = new MongoClient(settings);
+```
 
-Size of the change: large.
+We ran this against a router behind HAProxy, creating the client within the
+request: inserts, queries and updates worked.
+
+Few deployments can offer this. The routers have to be started with a
+dedicated load-balancer port, behind a load balancer that sends the PROXY
+protocol. In 2024 a MongoDB product manager described that arrangement as
+[experimental for self-managed deployments][mongodb-load-balancer], not an
+officially supported configuration, and Atlas does not offer it for sharded
+clusters.
+
+Size of the change: small in code, but for most applications it also means a
+different deployment, one MongoDB does not support for production.
 
 #### Looking ahead
 
-Two things stand in the way, and one of them is ours.
-
-- **The driver's threads.** Its maintainers moved monitoring onto dedicated
-  threads [on purpose][csharp-3761], and in 2023
-  [declined a request to use fewer][csharp-4661]. Nobody has yet asked them
-  to support a runtime without threads, so there is no work under way to
-  cite.
-- **Two socket options that Isoplane refuses.** The driver sets the receive
-  and send buffer sizes on every connection. Accepting them is a change on our
-  side.
-
-With the second in place, one kind of deployment would work using only the
-driver's public settings: a load-balanced one (`loadBalanced=true`), which has
-no server monitor, with the connection pool's maintenance switched off. We ran
-that arrangement in the sandbox, with the buffer-size calls bypassed, against
-a MongoDB router: inserts, queries and updates worked, and the client
-reconnected by itself after the server restarted.
+Every other deployment waits on the driver's threads. Its maintainers moved
+monitoring onto dedicated threads [on purpose][csharp-3761], and in 2023
+[declined a request to use fewer][csharp-4661]. Nobody has yet asked them to
+support a runtime without threads, so there is no work under way to cite.
 
 ## Caching
 
@@ -1435,6 +1439,7 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [mediatr]: https://github.com/jbogard/MediatR
 [Microsoft.Data.Sqlite]: https://learn.microsoft.com/dotnet/api/microsoft.data.sqlite
 [MongoDB.Driver]: https://www.mongodb.com/docs/drivers/csharp/current/
+[mongodb-load-balancer]: https://dev.to/alexbevi/mongodb-and-load-balancer-support-1p28
 [MultipartReader]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.webutilities.multipartreader
 [MySqlConnector]: https://mysqlconnector.net/
 [NetworkStream]: https://learn.microsoft.com/dotnet/api/system.net.sockets.networkstream
