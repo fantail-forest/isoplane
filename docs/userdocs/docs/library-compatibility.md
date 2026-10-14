@@ -6,15 +6,8 @@ Most NuGet packages run on Isoplane unchanged. The ones that do not fail for a
 handful of reasons, all of which follow from
 [how .NET differs on Isoplane](dotnet-runtime-differences.md): something waits
 synchronously, starts a thread or a timer, writes a file, or loads a native
-library.
-
-Each of those limits buys something. An application that never blocks holds no
-thread while it waits, which is what lets Isoplane isolate every instance in a
-sandbox of its own without dedicating a thread, a process or a machine to it.
-And a sandbox that nothing goes around is what keeps one application apart
-from the others on the same hardware. A few incompatibilities are the price of
-those two choices, and [will stay](#trade-offs). Most are not: they have a
-simple replacement today, or can be fixed.
+library. That page also explains
+[what those limits are the price of](dotnet-runtime-differences.md#why-the-sandbox-works-this-way).
 
 This page lists the specific incompatibilities we know of, by package: APIs,
 packages and framework features that fail even though your own code is
@@ -48,19 +41,19 @@ entry says otherwise.
 | ASP.NET Core | [XML formatters over 30 KB](#xml-formatters) | None yet | Yes, with no code change |
 | ASP.NET Core | [Rate limiting middleware](#rate-limiting) | Large: limit requests elsewhere | Partly |
 | ASP.NET Core | [`AddConsole`, `AddJsonConsole` and `ClearProviders`](#console-logging) | Small: delete the calls | Yes, with no code change |
-| ASP.NET Core | [Validation attributes, localizers, token callbacks and service factories that do I/O](#synchronous-extension-points) | Moderate: move the I/O elsewhere | No: it can only work by [blocking](#trade-offs) |
+| ASP.NET Core | [Validation attributes, localizers, token callbacks and service factories that do I/O](#synchronous-extension-points) | Moderate: move the I/O elsewhere | No: it can only work by [blocking](dotnet-runtime-differences.md#never-blocks) |
 | ASP.NET Core | [WebSockets, SignalR's WebSocket transport, Blazor Server](#connections-and-background-work) | None yet | Needs instances that stay connected |
 | ASP.NET Core | [gRPC over HTTP/2](#connections-and-background-work) | Moderate: use gRPC-Web | Not known yet |
 | ASP.NET Core | [`BackgroundService` and other work between requests](#connections-and-background-work) | Large: do the work during a request | Needs instances that stay running |
 | Newtonsoft.Json for MVC | [Bodies over 30 KB](#newtonsoft-json) | Small: set two options | Yes, with no code change |
-| Configuration providers | [Loading settings from Azure Key Vault and other remote services](#remote-configuration) | Moderate: fetch them before `Build()` | No: it can only work by [blocking](#trade-offs) |
-| Entity Framework Core | [Lazy loading](#lazy-loading) | Moderate: load with `Include` | No: it can only work by [blocking](#trade-offs) |
+| Configuration providers | [Loading settings from Azure Key Vault and other remote services](#remote-configuration) | Moderate: fetch them before `Build()` | No: it can only work by [blocking](dotnet-runtime-differences.md#never-blocks) |
+| Entity Framework Core | [Lazy loading](#lazy-loading) | Moderate: load with `Include` | No: it can only work by [blocking](dotnet-runtime-differences.md#never-blocks) |
 | Entity Framework Core | [`UseHiLo` keys with `Add`](#hilo) | Small: use `AddAsync` | No: use the asynchronous form |
 | Entity Framework Core | [`TransactionScope`](#transaction-scope) | Small: use a database transaction | Only in .NET itself |
 | Npgsql | [Disposing a reader that has unread rows](#reader-dispose) | Small: use `await using` | No: use the asynchronous form |
 | SqlClient | [SQL Server, including its Entity Framework Core provider](#sql-server) | Large: use another database | Only in the driver |
 | MySqlConnector | [MySQL](#mysql) | None yet | Probably, with no code change |
-| Sqlite | [SQLite, including its Entity Framework Core provider](#sqlite) | Large: use another database | No: it depends on [native code](#trade-offs) |
+| Sqlite | [SQLite, including its Entity Framework Core provider](#sqlite) | Large: use another database | No: it depends on [native code](dotnet-runtime-differences.md#nothing-around-the-sandbox) |
 | MongoDB.Driver | [MongoDB](#mongodb) | Large: use another database | Only in the driver |
 | StackExchange.Redis | [Redis, including the Redis distributed cache](#redis) | Large: use another cache store | Only in the client library |
 | OpenTelemetry | [Exporting telemetry over OTLP](#opentelemetry) | None yet | Not known yet |
@@ -170,7 +163,7 @@ app.MapPost("/contact", (HttpContext context) =>
   reads asynchronously.
 - **Size of the change:** Small.
 - **Can it be fixed?** No. Reading the form synchronously can only work by
-  [blocking](#trade-offs), so the asynchronous call is the lasting answer.
+  [blocking](dotnet-runtime-differences.md#never-blocks), so the asynchronous call is the lasting answer.
 
 ### File uploads over 64 KB {#uploads}
 
@@ -327,7 +320,7 @@ builder.Services.AddDataProtection().PersistKeysToDbContext<AppDbContext>();
   replaces another. Moderate for another store, where you supply the two
   functions that read and add keys.
 - **Can it be fixed?** No. The stores ASP.NET Core ships can only reach
-  their store by [blocking](#trade-offs). The replacements above are the
+  their store by [blocking](dotnet-runtime-differences.md#never-blocks). The replacements above are the
   lasting answer. They come with Isoplane's ASP.NET Core adapter library, `Isoplane.AspNetCore`,
   which every Isoplane ASP.NET Core project already references.
 
@@ -359,7 +352,7 @@ partial awaits a query or a request.
   synchronous forms as [`MVC1000`][MVC1000].
 - **Size of the change:** Small.
 - **Can it be fixed?** No. Both can only render a partial that awaits by
-  [blocking](#trade-offs), so the asynchronous forms are the lasting answer.
+  [blocking](dotnet-runtime-differences.md#never-blocks), so the asynchronous forms are the lasting answer.
 
 ### XML formatters over 30 KB {#xml-formatters}
 
@@ -485,7 +478,7 @@ Each has a different way out:
 - **Size of the change:** Moderate. The I/O moves to a place that can await
   it.
 - **Can it be fixed?** No. These interfaces can only do I/O by
-  blocking, and [blocking is ruled out](#trade-offs). For one that is common
+  blocking, and [blocking is ruled out](dotnet-runtime-differences.md#never-blocks). For one that is common
   enough, Isoplane can provide a replacement to call in its place, as it does
   for [Data Protection keys](#data-protection). That makes the workaround
   smaller; your code still changes.
@@ -583,7 +576,7 @@ the sandbox.
   need none of this.
 - **Size of the change:** Moderate.
 - **Can it be fixed?** No. A provider as it is can only load by
-  [blocking](#trade-offs). An adapter library from Isoplane could provide an
+  [blocking](dotnet-runtime-differences.md#never-blocks). An adapter library from Isoplane could provide an
   asynchronous registration method for each provider, which would make the
   workaround one line.
 
@@ -623,7 +616,7 @@ return order.Customer.Name;   // reading Customer runs a query synchronously: th
 - **Size of the change:** Moderate. Every place that relies on a navigation
   being loaded on demand has to say what it needs.
 - **Can it be fixed?** No. A property read cannot await, so the query would
-  have to block, and [blocking is ruled out](#trade-offs).
+  have to block, and [blocking is ruled out](dotnet-runtime-differences.md#never-blocks).
 
 ### `UseHiLo` keys with `Add` {#hilo}
 
@@ -649,7 +642,7 @@ await db.SaveChangesAsync();
   ([`AddAsync`][DbContext.AddAsync]), which fetches the block asynchronously.
   Or use identity columns, the Npgsql provider's default, which need no fetch.
 - **Size of the change:** Small.
-- **Can it be fixed?** No. `Add` can only fetch its keys by [blocking](#trade-offs), so
+- **Can it be fixed?** No. `Add` can only fetch its keys by [blocking](dotnet-runtime-differences.md#never-blocks), so
   `AddAsync` is the lasting answer.
 
 ### `TransactionScope` {#transaction-scope}
@@ -708,7 +701,7 @@ that was never committed, and a reader that was read to the end.
 - **Workaround:** `await using var reader = await command.ExecuteReaderAsync();`.
 - **Size of the change:** Small.
 - **Can it be fixed?** No. A synchronous dispose can only read the remaining
-  rows by [blocking](#trade-offs), so `await using` is the lasting answer.
+  rows by [blocking](dotnet-runtime-differences.md#never-blocks), so `await using` is the lasting answer.
 
 ### SQL Server {#sql-server}
 
@@ -769,7 +762,7 @@ await connection.OpenAsync();
 - **Size of the change:** Large: a different database, in development as
   well as in production.
 - **Can it be fixed?** No. Native code would run outside the sandbox, and
-  [nothing is allowed around it](#trade-offs).
+  [nothing is allowed around it](dotnet-runtime-differences.md#nothing-around-the-sandbox).
 
 ### MongoDB {#mongodb}
 
@@ -856,29 +849,6 @@ builder.Services.AddOpenTelemetry()
 - **Can it be fixed?** Not known yet. Sending in batches after the response is
   [work between requests](dotnet-runtime-differences.md#work-belongs-to-a-request),
   so an exporter would have to send within the request instead.
-
-## Why some of these will stay {#trade-offs}
-
-Isoplane isolates every instance of every application in its own sandbox. Two
-choices make that both strong and cheap, and a few of the incompatibilities
-above are what they cost.
-
-**Nothing blocks.** While an application waits for a database or another
-service, Isoplane sets it aside and runs another on the same worker thread,
-then brings it back when the answer arrives. An isolated instance therefore
-holds no thread while it waits, however many are waiting. A call that blocks
-cannot be set aside: it would hold a worker, which other applications share,
-for as long as it waited. That is why synchronous I/O fails, and why an API
-that can only work by blocking, such as lazy loading, cannot be made to work.
-
-**Nothing goes around the sandbox.** Everything an application does to the
-outside world passes through Isoplane, and that is what keeps it apart from
-the other applications on the same hardware. Native code would run outside
-that boundary, which is why a package that depends on a native library, such
-as SQLite, cannot run.
-
-[Why the sandbox works this way](dotnet-runtime-differences.md#why-the-sandbox-works-this-way)
-describes both in more depth.
 
 ## Packages that work {#works}
 

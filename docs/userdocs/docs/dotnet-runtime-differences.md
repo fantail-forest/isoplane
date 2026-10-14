@@ -12,16 +12,31 @@ see [execution limits](execution-limits.md).
 
 ## Why the sandbox works this way
 
-Isoplane runs many applications on a small number of worker threads. Whenever an
-application is idle, because it is waiting on an asynchronous operation or has
-no requests to process, Isoplane sets that instance aside and gives the worker
-to another one.
+Isoplane isolates every instance of every application in a sandbox of its own.
+Two choices make that isolation both strong and cheap, and the rules on this
+page are what they cost.
 
-Most of the rules below follow from this: waits are asynchronous, the
-application has no threads of its own, and nothing runs between requests. The
-rest follow from the sandbox itself: Isoplane mediates every interaction an
-application has with the outside world, including the network, files, the clock
-and waiting, so an application can do only what Isoplane provides.
+### An application never blocks {#never-blocks}
+
+Isoplane runs many applications on a small number of worker threads. Whenever
+an application is idle, because it is waiting on an asynchronous operation or
+has no request to process, Isoplane sets that instance aside and gives the
+worker to another one. An instance therefore holds no thread while it waits,
+which is what lets Isoplane give each one a sandbox of its own without
+dedicating a thread, a process or a machine to it.
+
+A call that blocks cannot be set aside. It would hold a worker, which other
+applications share, for as long as it waited. That is why waits are
+asynchronous, why the application has no threads of its own, and why nothing
+runs between requests.
+
+### Nothing goes around the sandbox {#nothing-around-the-sandbox}
+
+Isoplane mediates every interaction an application has with the outside world,
+including the network, files, the clock and waiting. That is what keeps one
+application apart from the others on the same hardware. It is also why an
+application can do only what Isoplane provides, and why native code, which
+would run outside the sandbox, is not loaded.
 
 ## One thread
 
