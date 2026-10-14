@@ -21,7 +21,7 @@ use isoplane_engine::Completion;
 use isoplane_harness::EmittedGuestLogs as _;
 use peers::{
     fnv1a, gated_peer, pattern, peer, peer_with_receive_buffer, reactor_for_peers,
-    reactor_for_peers_with_send_buffer, slow_drain_peer, Peer,
+    reactor_for_peers_with_send_buffer, reactor_observing_host_sockets, slow_drain_peer, Peer,
 };
 
 struct RefusedConnections;
@@ -623,9 +623,69 @@ in_mono_runtime! {
 }
 
 in_mono_runtime! {
-    /// Buffer sizes and keep-alive reach the host and are refused: they
-    /// neither round-trip in the guest nor change the host socket. The
-    /// refusal leaves NoDelay, real host state, in place and the socket usable.
+    /// Keep-alive is real host state. What the guest sets before connecting
+    /// is on the host's socket once it connects, what it sets afterwards
+    /// lands at once, and each timing is clamped by the host and read back
+    /// as clamped. The settings stay with the host's socket across guest
+    /// store restoration.
+    #[tokio::test]
+    async fn keep_alive_reaches_the_host_socket_with_clamped_timings(runtime: GuestRuntime) {
+        for (owner, configured, unconnected) in [
+            (34, "before", "True/10/5/127"),
+            (35, "after", "False/7200/75/9"),
+        ] {
+            let echo = peer(Peer::Echo).await;
+            let (reactor, host_sockets) = reactor_observing_host_sockets(owner, vec![echo]);
+            reactor.context.begin_slice(1, 1);
+            let mut guest = guest(&reactor, runtime);
+            let outcome = guest.start(&format!(
+                "/sockets/keep-alive/{}/{}/{configured}",
+                echo.ip(),
+                echo.port()
+            ));
+            assert_eq!(
+                outcome.completion,
+                Completion::Parked,
+                "the connect parks: {outcome:?}; logs: {:?}",
+                reactor.context.emitted_logs()
+            );
+            let answer = guest.finish(&reactor, 8).await;
+            assert_eq!(
+                answer,
+                format!("unconnected={unconnected} connected=True/10/5/127 zero=InvalidArgument after=True/10/5/127 echo=77697370"),
+                "configured {configured} connecting, the guest must read back the clamped settings, a zero idle time must be refused without changing them, and the connection must still echo"
+            );
+            let host_sockets = host_sockets.opened();
+            let [host] = host_sockets.as_slice() else {
+                panic!("the guest opens one connection, not {}", host_sockets.len())
+            };
+            assert!(
+                host.keepalive().expect("the host socket reports SO_KEEPALIVE"),
+                "keep-alive enabled {configured} connecting must be on the host's socket"
+            );
+            // socket2 reads a socket's timings back on Unix only.
+            #[cfg(unix)]
+            assert_eq!(
+                (
+                    host.tcp_keepalive_time().expect("the host socket reports its idle time"),
+                    host.tcp_keepalive_interval().expect("the host socket reports its probe interval"),
+                ),
+                (std::time::Duration::from_secs(10), std::time::Duration::from_secs(5)),
+                "the idle time set {configured} connecting must reach the host's socket clamped to the floor, and the interval as set"
+            );
+            assert_eq!(
+                host.tcp_keepalive_retries().expect("the host socket reports its probe count"),
+                127,
+                "a probe count set {configured} connecting must reach the host's socket clamped to the ceiling"
+            );
+        }
+    }
+}
+
+in_mono_runtime! {
+    /// Buffer sizes reach the host and are refused: they neither round-trip
+    /// in the guest nor change the host socket. The refusal leaves NoDelay,
+    /// real host state, in place and the socket usable.
     #[tokio::test]
     async fn an_unsupported_option_is_refused_and_leaves_the_socket_usable_with_its_state(runtime: GuestRuntime) {
         let echo = peer(Peer::Echo).await;
@@ -641,8 +701,8 @@ in_mono_runtime! {
             .await;
         assert_eq!(
             answer,
-            "OperationNotSupported OperationNotSupported OperationNotSupported nodelay=True echo=77697370",
-            "setting the receive buffer, reading the send buffer and enabling keep-alive must each be refused as unsupported without disturbing NoDelay or the connection"
+            "OperationNotSupported OperationNotSupported nodelay=True echo=77697370",
+            "setting the receive buffer and reading the send buffer must each be refused as unsupported without disturbing NoDelay or the connection"
         );
     }
 }

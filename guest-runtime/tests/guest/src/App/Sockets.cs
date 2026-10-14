@@ -237,14 +237,38 @@ internal sealed class Sockets
                     + " connected=" + socket.Connected
                     + " echo=" + await EchoThroughSocketAsync(socket, new byte[] { 0x77, 0x69, 0x73, 0x70 }).ConfigureAwait(false);
             }
+            case "keep-alive":
+            {
+                // Configured either before the host has a socket or once it
+                // does. The idle time is below what the host allows and the
+                // probe count above it, so both read back clamped.
+                using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+                void Configure()
+                {
+                    socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
+                    socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveTime, 1);
+                    socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveInterval, 5);
+                    socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveRetryCount, 1000);
+                }
+                bool beforeConnecting = path[3] == "before";
+                if (beforeConnecting) Configure();
+                string unconnected = KeepAlive(socket);
+                await socket.ConnectAsync(Endpoint(path[1], path[2])).ConfigureAwait(false);
+                if (!beforeConnecting) Configure();
+                string connected = KeepAlive(socket);
+                // The refused value marks the managed Socket disconnected, as
+                // in the invalid-value case, so the echo uses the socket calls.
+                string zero = Attempt(() => socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveTime, 0));
+                return "unconnected=" + unconnected + " connected=" + connected + " zero=" + zero + " after=" + KeepAlive(socket)
+                    + " echo=" + await EchoThroughSocketAsync(socket, new byte[] { 0x77, 0x69, 0x73, 0x70 }).ConfigureAwait(false);
+            }
             case "unsupported-option":
             {
                 using var socket = await ConnectAsync(path[1], path[2]).ConfigureAwait(false);
                 socket.NoDelay = true;
                 string setReceiveBuffer = Attempt(() => socket.ReceiveBufferSize = 65536);
                 string getSendBuffer = Attempt(() => socket.SendBufferSize.ToString(CultureInfo.InvariantCulture));
-                string keepAlive = Attempt(() => socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true));
-                return setReceiveBuffer + " " + getSendBuffer + " " + keepAlive
+                return setReceiveBuffer + " " + getSendBuffer
                     + " nodelay=" + socket.NoDelay
                     + " echo=" + await EchoAsync(socket, new byte[] { 0x77, 0x69, 0x73, 0x70 }).ConfigureAwait(false);
             }
@@ -339,6 +363,16 @@ internal sealed class Sockets
             return error.GetType().Name;
         }
     }
+
+    /// <summary>
+    /// The socket's keep-alive state, idle seconds, interval seconds and
+    /// probe count as the platform reports them.
+    /// </summary>
+    private static string KeepAlive(Socket socket) => string.Join('/',
+        (int)socket.GetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive)! != 0,
+        socket.GetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveTime),
+        socket.GetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveInterval),
+        socket.GetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveRetryCount));
 
     private static IPEndPoint Endpoint(string address, string port) =>
         new(IPAddress.Parse(address), int.Parse(port, CultureInfo.InvariantCulture));

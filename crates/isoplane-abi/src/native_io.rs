@@ -45,6 +45,36 @@ pub enum ResourceKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ByteCount(pub u64);
 
+/// A number of TCP keep-alive probes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProbeCount(pub u32);
+
+/// The TCP keep-alive settings in effect on a socket.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeepAlive {
+    /// Whether the host probes the connection while it is idle.
+    pub enabled: bool,
+    /// How long the connection is idle before the first probe.
+    pub idle_time: DurationNanos,
+    /// How long the host waits between probes that go unanswered.
+    pub interval: DurationNanos,
+    /// How many unanswered probes end the connection.
+    pub count: ProbeCount,
+}
+
+/// One TCP keep-alive setting with the value a guest asks for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeepAliveChange {
+    /// Start or stop probing the idle connection.
+    Enabled(bool),
+    /// Requested idle time before the first probe.
+    IdleTime(DurationNanos),
+    /// Requested time between unanswered probes.
+    Interval(DurationNanos),
+    /// Requested number of unanswered probes that end the connection.
+    Count(ProbeCount),
+}
+
 /// A nonblocking operation on resources owned by the current guest instance.
 #[derive(Debug)]
 pub enum Request {
@@ -54,6 +84,15 @@ pub enum Request {
         socket: ResourceHandle,
         /// New setting, or None to read the current setting.
         enabled: Option<bool>,
+    },
+    /// Read TCP keep-alive, after making one change if given. The host may
+    /// clamp a requested timing; a pre-connect setting applies when the
+    /// socket connects.
+    KeepAlive {
+        /// Instance-owned TCP socket.
+        socket: ResourceHandle,
+        /// Setting to change, or None to read the current settings.
+        change: Option<KeepAliveChange>,
     },
     /// Acquire the instance's network capability handle.
     Network,
@@ -133,6 +172,8 @@ pub enum Request {
 pub enum Response {
     /// The socket's effective TCP_NODELAY setting.
     NoDelay(bool),
+    /// The socket's effective TCP keep-alive settings.
+    KeepAlive(KeepAlive),
     /// The operation completed without a value.
     Done,
     /// A newly allocated or subscribed resource.
@@ -179,6 +220,9 @@ pub enum Error {
     /// The operation is incompatible with the resource's current state.
     #[error("invalid outbound resource state: {0}")]
     InvalidState(&'static str),
+    /// The supplied value is outside what the operation accepts.
+    #[error("invalid outbound argument: {0}")]
+    InvalidArgument(&'static str),
     /// An asynchronous operation has not completed.
     #[error("outbound operation is still pending")]
     WouldBlock,
@@ -221,7 +265,9 @@ impl Error {
         match self {
             Error::Denied(_) => NetworkErrorCode::AccessDenied,
             Error::Unsupported(_) => NetworkErrorCode::NotSupported,
-            Error::InvalidHandle(_) => NetworkErrorCode::InvalidArgument,
+            Error::InvalidHandle(_) | Error::InvalidArgument(_) => {
+                NetworkErrorCode::InvalidArgument
+            }
             Error::InvalidState(_) => NetworkErrorCode::InvalidState,
             Error::WouldBlock => NetworkErrorCode::WouldBlock,
             Error::ResourceLimit => NetworkErrorCode::NewSocketLimit,

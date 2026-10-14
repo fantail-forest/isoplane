@@ -28,14 +28,6 @@ public static class NetworkRefusalProbe
                     using (var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp))
                         socket.Listen(1);
                     break;
-                case "/keepalive":
-                    using (var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp))
-                        socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
-                    break;
-                case "/keepalive-count":
-                    using (var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp))
-                        socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveRetryCount, 3);
-                    break;
                 case "/receive-buffer":
                     using (var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp))
                         return Task.FromResult(Response.Text(socket.ReceiveBufferSize.ToString()));

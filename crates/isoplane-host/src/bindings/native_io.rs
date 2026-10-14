@@ -1,6 +1,7 @@
 //! Instance-owned native networking resources, independent of the Wasmtime Store.
 
 mod addresses;
+mod keep_alive;
 mod streams;
 
 use addresses::Addresses;
@@ -11,7 +12,8 @@ use std::sync::Arc;
 use streams::{Input, Output};
 
 use isoplane_abi::native_io::{
-    AddressFamily, Error, Request, ResourceHandle, ResourceKind, Response,
+    AddressFamily, Error, KeepAlive, KeepAliveChange, Request, ResourceHandle, ResourceKind,
+    Response,
 };
 use isoplane_abi::result::ResultRecord;
 use parking_lot::Mutex;
@@ -119,13 +121,25 @@ mod tests {
         }
     }
 
-    async fn connected_endpoints(family: AddressFamily) {
+    /// An instance's socket connected to an owned peer, with the host's
+    /// stream beneath it.
+    struct Connected {
+        resources: Resources,
+        bindings: CellBindings,
+        socket: ResourceHandle,
+        stream: Arc<TcpStream>,
+        remote: std::net::SocketAddr,
+        local: std::net::SocketAddr,
+        _accepted: TcpStream,
+    }
+
+    async fn connected(family: AddressFamily) -> Connected {
         let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
             .await
             .unwrap();
         let remote = listener.local_addr().unwrap();
-        let stream = TcpStream::connect(remote).await.unwrap();
-        let (_accepted, local) = listener.accept().await.unwrap();
+        let stream = Arc::new(TcpStream::connect(remote).await.unwrap());
+        let (accepted, local) = listener.accept().await.unwrap();
         let policy = Arc::new(
             crate::egress::HostEgressPolicy::system(1)
                 .unwrap()
@@ -139,14 +153,36 @@ mod tests {
             .insert(Resource::Socket(Socket {
                 family,
                 no_delay: Arc::new(AtomicBool::new(false)),
+                keep_alive: Arc::default(),
                 streams_taken: false,
                 state: Arc::new(Mutex::new(SocketState::Connected(Arc::new(Connection {
-                    stream: Arc::new(stream),
+                    stream: stream.clone(),
                     _permit: permit,
                 })))),
                 task: None,
             }))
             .unwrap();
+        Connected {
+            resources,
+            bindings,
+            socket,
+            stream,
+            remote,
+            local,
+            _accepted: accepted,
+        }
+    }
+
+    async fn connected_endpoints(family: AddressFamily) {
+        let Connected {
+            mut resources,
+            bindings,
+            socket,
+            remote,
+            local,
+            _accepted,
+            ..
+        } = connected(family).await;
         for (peer, native) in [(true, remote), (false, local)] {
             let result = resources
                 .call(Request::SocketAddress { socket, peer }, &bindings)
@@ -178,6 +214,142 @@ mod tests {
     #[tokio::test]
     async fn ipv4_guest_endpoints_preserve_native_addresses() {
         connected_endpoints(AddressFamily::V4).await;
+    }
+
+    fn keep_alive(
+        resources: &mut Resources,
+        bindings: &CellBindings,
+        socket: ResourceHandle,
+        change: Option<KeepAliveChange>,
+    ) -> Result<KeepAlive, Error> {
+        match resources.call(Request::KeepAlive { socket, change }, bindings)? {
+            Response::KeepAlive(effective) => Ok(effective),
+            response => panic!("a keep-alive request returned {response:?}"),
+        }
+    }
+
+    const NANOS_PER_SEC: u64 = 1_000_000_000;
+
+    #[tokio::test]
+    async fn keep_alive_requested_on_a_connected_socket_reaches_the_host_socket_clamped() {
+        use isoplane_abi::native_io::{DurationNanos, ProbeCount};
+        let Connected {
+            mut resources,
+            bindings,
+            socket,
+            stream,
+            _accepted,
+            ..
+        } = connected(AddressFamily::V4).await;
+        let host = socket2::SockRef::from(stream.as_ref());
+        assert!(
+            !host.keepalive().unwrap(),
+            "the host socket must start without keep-alive"
+        );
+        for change in [
+            KeepAliveChange::IdleTime(DurationNanos(NANOS_PER_SEC)),
+            KeepAliveChange::Interval(DurationNanos(5 * NANOS_PER_SEC)),
+            KeepAliveChange::Count(ProbeCount(1_000)),
+        ] {
+            keep_alive(&mut resources, &bindings, socket, Some(change))
+                .expect("a nonzero timing must be accepted");
+        }
+        assert!(
+            !host.keepalive().unwrap(),
+            "timings alone must not start probing"
+        );
+        let effective = keep_alive(
+            &mut resources,
+            &bindings,
+            socket,
+            Some(KeepAliveChange::Enabled(true)),
+        )
+        .expect("enabling keep-alive must succeed");
+        assert_eq!(
+            effective,
+            KeepAlive {
+                enabled: true,
+                idle_time: DurationNanos(10 * NANOS_PER_SEC),
+                interval: DurationNanos(5 * NANOS_PER_SEC),
+                count: ProbeCount(127),
+            },
+            "the guest must read back the clamped settings"
+        );
+        assert!(host.keepalive().unwrap(), "the host socket must probe");
+        // socket2 reads a socket's timings back on Unix only.
+        #[cfg(unix)]
+        assert_eq!(
+            (
+                host.tcp_keepalive_time().unwrap(),
+                host.tcp_keepalive_interval().unwrap()
+            ),
+            (
+                std::time::Duration::from_secs(10),
+                std::time::Duration::from_secs(5)
+            )
+        );
+        assert_eq!(host.tcp_keepalive_retries().unwrap(), 127);
+
+        assert!(
+            matches!(
+                keep_alive(
+                    &mut resources,
+                    &bindings,
+                    socket,
+                    Some(KeepAliveChange::Count(ProbeCount(0)))
+                ),
+                Err(Error::InvalidArgument(_))
+            ),
+            "a zero probe count must be refused"
+        );
+        assert_eq!(
+            host.tcp_keepalive_retries().unwrap(),
+            127,
+            "a refused change must leave the host socket as it was"
+        );
+        assert_eq!(
+            keep_alive(&mut resources, &bindings, socket, None).unwrap(),
+            effective,
+            "a refused change must leave the settings the guest reads as they were"
+        );
+
+        keep_alive(
+            &mut resources,
+            &bindings,
+            socket,
+            Some(KeepAliveChange::Enabled(false)),
+        )
+        .expect("disabling keep-alive must succeed");
+        assert!(
+            !host.keepalive().unwrap(),
+            "disabling must stop the host socket probing"
+        );
+    }
+
+    #[test]
+    fn keep_alive_requested_before_connecting_is_held_for_the_connection() {
+        use isoplane_abi::native_io::DurationNanos;
+        let (mut resources, bindings) = resources(1);
+        let socket = created(&mut resources, &bindings);
+        let initial = keep_alive(&mut resources, &bindings, socket, None)
+            .expect("an unconnected socket must report its settings");
+        assert!(!initial.enabled, "keep-alive must start disabled");
+        for change in [
+            KeepAliveChange::Enabled(true),
+            KeepAliveChange::IdleTime(DurationNanos(NANOS_PER_SEC)),
+        ] {
+            keep_alive(&mut resources, &bindings, socket, Some(change))
+                .expect("an unconnected socket must accept keep-alive settings");
+        }
+        assert_eq!(
+            keep_alive(&mut resources, &bindings, socket, None).unwrap(),
+            KeepAlive {
+                enabled: true,
+                idle_time: DurationNanos(10 * NANOS_PER_SEC),
+                ..initial
+            },
+            "the socket must hold the clamped settings until it connects"
+        );
     }
 
     #[test]
@@ -366,6 +538,7 @@ enum SocketState {
 struct Socket {
     family: AddressFamily,
     no_delay: Arc<AtomicBool>,
+    keep_alive: Arc<Mutex<keep_alive::Settings>>,
     streams_taken: bool,
     state: Arc<Mutex<SocketState>>,
     task: Option<ReactorWork>,
@@ -588,6 +761,7 @@ impl Resources {
             Request::ErrorCode(_) => "error_code",
             Request::SocketAddress { .. } => "socket_address",
             Request::NoDelay { .. } => "no_delay",
+            Request::KeepAlive { .. } => "keep_alive",
             Request::Shutdown { .. } => "shutdown",
             Request::Subscribe(_) => "subscribe",
             Request::Timer(_) => "initialization retains a timer; dispose it before capture",
@@ -619,6 +793,9 @@ impl Resources {
         match request {
             Request::NoDelay { socket, enabled } => {
                 self.no_delay(socket, enabled).map(Response::NoDelay)
+            }
+            Request::KeepAlive { socket, change } => {
+                self.keep_alive(socket, change).map(Response::KeepAlive)
             }
             Request::Network => {
                 if let Some(handle) = self.network {
@@ -658,6 +835,7 @@ impl Resources {
                 .insert(Resource::Socket(Socket {
                     family,
                     no_delay: Arc::new(AtomicBool::new(false)),
+                    keep_alive: Arc::default(),
                     streams_taken: false,
                     state: Arc::new(Mutex::new(SocketState::Created(family))),
                     task: None,
@@ -953,6 +1131,28 @@ impl Resources {
         }
     }
 
+    fn keep_alive(
+        &self,
+        handle: ResourceHandle,
+        change: Option<KeepAliveChange>,
+    ) -> Result<KeepAlive, Error> {
+        let socket = self.tcp(handle)?;
+        let state = socket.state.lock();
+        let mut settings = socket.keep_alive.lock();
+        if let Some(change) = change {
+            let changed = settings.with(change)?;
+            match &*state {
+                SocketState::Connected(connection) => {
+                    changed.apply(&connection.stream).map_err(Error::from)?;
+                }
+                // No host socket exists; the connection takes the record when it completes.
+                SocketState::Created(_) | SocketState::Connecting | SocketState::Failed(_) => {}
+            }
+            *settings = changed;
+        }
+        Ok(settings.effective())
+    }
+
     fn has_resolved_address(&self, address: std::net::IpAddr) -> bool {
         if self.resolved.contains(&address) {
             return true;
@@ -980,6 +1180,7 @@ impl Resources {
         let socket = self.tcp(handle)?;
         let state = socket.state.clone();
         let no_delay = socket.no_delay.clone();
+        let keep_alive = socket.keep_alive.clone();
         {
             let current = state.lock();
             match &*current {
@@ -1045,6 +1246,7 @@ impl Resources {
                     Ok(connection) => match connection
                         .stream
                         .set_nodelay(no_delay.load(Ordering::Relaxed))
+                        .and_then(|()| keep_alive.lock().apply(&connection.stream))
                     {
                         Ok(()) => SocketState::Connected(Arc::new(connection)),
                         Err(error) => SocketState::Failed(Error::from(error)),

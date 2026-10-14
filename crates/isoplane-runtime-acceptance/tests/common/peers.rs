@@ -51,6 +51,54 @@ impl ConnectionFactory for SmallSendBuffer {
     }
 }
 
+/// As [`reactor_for_peers`], also returning the host's side of every
+/// outbound connection it opens.
+pub fn reactor_observing_host_sockets(
+    owner: u64,
+    peers: Vec<SocketAddr>,
+) -> (Reactor, Arc<HostSockets>) {
+    let host_sockets = Arc::new(HostSockets::default());
+    let reactor = Reactor::with_network(
+        InstanceId(owner),
+        admitting(peers, Box::new(NoDns)).with_connections(host_sockets.clone()),
+    );
+    (reactor, host_sockets)
+}
+
+/// Opens outbound connections and keeps a duplicate handle to each, through
+/// which a test reads the options on the socket the host holds for a guest.
+#[derive(Default)]
+pub struct HostSockets(std::sync::Mutex<Vec<socket2::Socket>>);
+
+impl HostSockets {
+    /// A handle to each connection opened so far, in order. A handle outlives
+    /// the guest's disposal of its socket and keeps the connection open.
+    pub fn opened(&self) -> Vec<socket2::Socket> {
+        std::mem::take(
+            &mut *self
+                .0
+                .lock()
+                .expect("no holder of the host socket list panics"),
+        )
+    }
+}
+
+#[async_trait::async_trait]
+impl ConnectionFactory for HostSockets {
+    async fn connect(
+        &self,
+        _: &ConnectionOwner,
+        destination: SocketAddr,
+    ) -> std::io::Result<TcpStream> {
+        let stream = TcpStream::connect(destination).await?;
+        self.0
+            .lock()
+            .expect("no holder of the host socket list panics")
+            .push(socket2::SockRef::from(&stream).try_clone()?);
+        Ok(stream)
+    }
+}
+
 /// The deterministic byte pattern a large transfer carries; the guest's
 /// `Sockets.Pattern` produces the same bytes.
 pub fn pattern(length: usize) -> Vec<u8> {

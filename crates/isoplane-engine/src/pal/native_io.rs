@@ -1,9 +1,12 @@
 //! Canonical scalar and memory conversion for host-owned native resources.
 
 use anyhow::{bail, ensure, Context, Result};
-use isoplane_abi::native_io::canonical::{Action, Definition, DEFINITIONS, MAX_ARGUMENTS};
+use isoplane_abi::native_io::canonical::{
+    Action, Definition, KeepAliveSetting, DEFINITIONS, MAX_ARGUMENTS,
+};
 use isoplane_abi::native_io::{
-    AddressFamily, ByteCount, DurationNanos, Error, Request, ResourceHandle, Response,
+    AddressFamily, ByteCount, DurationNanos, Error, KeepAlive, KeepAliveChange, ProbeCount,
+    Request, ResourceHandle, Response,
 };
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6};
 
@@ -69,6 +72,14 @@ pub fn call<T: PalSource>(
                 value if value == u64::from(u32::MAX) => None,
                 _ => bail!("invalid TCP_NODELAY setting"),
             },
+        },
+        Action::KeepAlive(_) => Request::KeepAlive {
+            socket: handle(0)?,
+            change: None,
+        },
+        Action::SetKeepAlive(setting) => Request::KeepAlive {
+            socket: handle(0)?,
+            change: Some(keep_alive_change(setting, scalar(1)?)?),
         },
         Action::Network => Request::Network,
         Action::Resolve => {
@@ -186,6 +197,18 @@ pub fn call<T: PalSource>(
     let result = caller.data_mut().native_io(request);
     match result {
         Ok(Response::NoDelay(enabled)) => Ok(u64::from(enabled)),
+        Ok(Response::KeepAlive(effective)) => {
+            // A setter's `result<_, error-code>` is the ok discriminant and
+            // its padding; a getter's carries the value it read.
+            let mut record = [0; 16];
+            let length = if let Action::KeepAlive(setting) = definition.action {
+                write_keep_alive_value(&mut record, setting, effective)
+            } else {
+                2
+            };
+            CallerMemory(caller).write(return_pointer(arguments)?, &record[..length])?;
+            Ok(0)
+        }
         Ok(Response::Done) => {
             if matches!(definition.action, Action::Connect | Action::Shutdown) {
                 CallerMemory(caller).write(return_pointer(arguments)?, &[0, 0])?;
@@ -326,7 +349,8 @@ pub fn call<T: PalSource>(
                 | Action::Resolve
                 | Action::SocketAddress { .. } => 4,
                 Action::NextAddress => 2,
-                Action::Connect | Action::Shutdown => 1,
+                Action::Connect | Action::Shutdown | Action::SetKeepAlive(_) => 1,
+                Action::KeepAlive(setting) => keep_alive_value_offset(setting),
                 Action::Network
                 | Action::NoDelay
                 | Action::Subscribe
@@ -348,6 +372,44 @@ pub fn call<T: PalSource>(
             write_error(&mut CallerMemory(caller), arguments, offset, code as u8)?;
             Ok(0)
         }
+    }
+}
+
+fn keep_alive_change(setting: KeepAliveSetting, value: u64) -> Result<KeepAliveChange> {
+    Ok(match setting {
+        KeepAliveSetting::Enabled => KeepAliveChange::Enabled(value != 0),
+        KeepAliveSetting::IdleTime => KeepAliveChange::IdleTime(DurationNanos(value)),
+        KeepAliveSetting::Interval => KeepAliveChange::Interval(DurationNanos(value)),
+        KeepAliveSetting::Count => KeepAliveChange::Count(ProbeCount(u32::try_from(value)?)),
+    })
+}
+
+/// Where a keep-alive getter's `result<T, error-code>` holds its value or
+/// error code: after the discriminant, at the value's canonical alignment.
+fn keep_alive_value_offset(setting: KeepAliveSetting) -> usize {
+    match setting {
+        KeepAliveSetting::Enabled => 1,
+        KeepAliveSetting::IdleTime | KeepAliveSetting::Interval => 8,
+        KeepAliveSetting::Count => 4,
+    }
+}
+
+/// Writes a getter's ok record into `record`, returning its length.
+fn write_keep_alive_value(
+    record: &mut [u8; 16],
+    setting: KeepAliveSetting,
+    effective: KeepAlive,
+) -> usize {
+    let offset = keep_alive_value_offset(setting);
+    let mut put = |value: &[u8]| {
+        record[offset..offset + value.len()].copy_from_slice(value);
+        offset + value.len()
+    };
+    match setting {
+        KeepAliveSetting::Enabled => put(&[u8::from(effective.enabled)]),
+        KeepAliveSetting::IdleTime => put(&effective.idle_time.0.to_le_bytes()),
+        KeepAliveSetting::Interval => put(&effective.interval.0.to_le_bytes()),
+        KeepAliveSetting::Count => put(&effective.count.0.to_le_bytes()),
     }
 }
 

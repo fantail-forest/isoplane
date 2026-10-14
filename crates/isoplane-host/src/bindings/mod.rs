@@ -172,6 +172,7 @@ impl HostBindings for CellBindings {
             | isoplane_abi::native_io::Request::ErrorCode(_)
             | isoplane_abi::native_io::Request::SocketAddress { .. }
             | isoplane_abi::native_io::Request::NoDelay { .. }
+            | isoplane_abi::native_io::Request::KeepAlive { .. }
             | isoplane_abi::native_io::Request::Shutdown { .. }
             | isoplane_abi::native_io::Request::Poll(_)
             | isoplane_abi::native_io::Request::Drop { .. } => false,

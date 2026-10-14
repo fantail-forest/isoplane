@@ -15,11 +15,28 @@ pub const POLL_IMPORT: &str = "poll_call";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OperationId(pub u32);
 
+/// One of a socket's TCP keep-alive settings, as `wasi:sockets/tcp` divides them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeepAliveSetting {
+    /// Whether keep-alive is enabled (SO_KEEPALIVE).
+    Enabled,
+    /// Idle time before the first probe (TCP_KEEPIDLE).
+    IdleTime,
+    /// Time between unanswered probes (TCP_KEEPINTVL).
+    Interval,
+    /// Unanswered probes that end the connection (TCP_KEEPCNT).
+    Count,
+}
+
 /// The host operation or explicit refusal implemented for a canonical entry.
 #[derive(Debug, Clone, Copy)]
 pub enum Action {
     /// Read or set the host socket's TCP_NODELAY option.
     NoDelay,
+    /// Read one of the host socket's TCP keep-alive settings.
+    KeepAlive(KeepAliveSetting),
+    /// Change one of the host socket's TCP keep-alive settings.
+    SetKeepAlive(KeepAliveSetting),
     /// Obtain the instance network capability.
     Network,
     /// Begin a host-owned DNS lookup.
@@ -701,10 +718,7 @@ pub const DEFINITIONS: &[Definition] = &[
             params: &[Ty::I32, Ty::I32],
             results: &[],
         },
-        Action::Reject {
-            error_offset: 1,
-            code: 2,
-        },
+        Action::KeepAlive(KeepAliveSetting::Enabled),
     ),
     definition(
         39,
@@ -716,10 +730,7 @@ pub const DEFINITIONS: &[Definition] = &[
             params: &[Ty::I32, Ty::I32, Ty::I32],
             results: &[],
         },
-        Action::Reject {
-            error_offset: 1,
-            code: 2,
-        },
+        Action::SetKeepAlive(KeepAliveSetting::Enabled),
     ),
     definition(
         40,
@@ -731,10 +742,7 @@ pub const DEFINITIONS: &[Definition] = &[
             params: &[Ty::I32, Ty::I32],
             results: &[],
         },
-        Action::Reject {
-            error_offset: 8,
-            code: 2,
-        },
+        Action::KeepAlive(KeepAliveSetting::IdleTime),
     ),
     definition(
         41,
@@ -746,10 +754,7 @@ pub const DEFINITIONS: &[Definition] = &[
             params: &[Ty::I32, Ty::I64, Ty::I32],
             results: &[],
         },
-        Action::Reject {
-            error_offset: 1,
-            code: 2,
-        },
+        Action::SetKeepAlive(KeepAliveSetting::IdleTime),
     ),
     definition(
         42,
@@ -761,10 +766,7 @@ pub const DEFINITIONS: &[Definition] = &[
             params: &[Ty::I32, Ty::I32],
             results: &[],
         },
-        Action::Reject {
-            error_offset: 8,
-            code: 2,
-        },
+        Action::KeepAlive(KeepAliveSetting::Interval),
     ),
     definition(
         43,
@@ -776,10 +778,7 @@ pub const DEFINITIONS: &[Definition] = &[
             params: &[Ty::I32, Ty::I64, Ty::I32],
             results: &[],
         },
-        Action::Reject {
-            error_offset: 1,
-            code: 2,
-        },
+        Action::SetKeepAlive(KeepAliveSetting::Interval),
     ),
     definition(
         44,
@@ -791,10 +790,7 @@ pub const DEFINITIONS: &[Definition] = &[
             params: &[Ty::I32, Ty::I32],
             results: &[],
         },
-        Action::Reject {
-            error_offset: 4,
-            code: 2,
-        },
+        Action::KeepAlive(KeepAliveSetting::Count),
     ),
     definition(
         45,
@@ -806,10 +802,7 @@ pub const DEFINITIONS: &[Definition] = &[
             params: &[Ty::I32, Ty::I32, Ty::I32],
             results: &[],
         },
-        Action::Reject {
-            error_offset: 1,
-            code: 2,
-        },
+        Action::SetKeepAlive(KeepAliveSetting::Count),
     ),
     definition(
         46,

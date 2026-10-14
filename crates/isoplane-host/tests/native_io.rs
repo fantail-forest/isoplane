@@ -725,14 +725,6 @@ async fn assert_stream_failure(
 
 in_mono_runtime! {
     #[tokio::test]
-    async fn an_unsupported_managed_keepalive_option_receives_operation_not_supported(runtime: GuestRuntime) {
-        managed_network_refusal(runtime, "/keepalive", b"OperationNotSupported");
-    }
-    #[tokio::test]
-    async fn an_unsupported_managed_keepalive_count_receives_operation_not_supported(runtime: GuestRuntime) {
-        managed_network_refusal(runtime, "/keepalive-count", b"OperationNotSupported");
-    }
-    #[tokio::test]
     async fn an_unsupported_managed_buffer_option_receives_operation_not_supported(runtime: GuestRuntime) {
         managed_network_refusal(runtime, "/receive-buffer", b"OperationNotSupported");
     }
