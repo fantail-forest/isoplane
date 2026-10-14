@@ -91,7 +91,9 @@ internal static class Reference
         output.Add("telemetry.md", Telemetry
             .Replace("{variables}", "| Variable | Description |\n| --- | --- |\n" + string.Join("\n", TelemetryVariables.All.Select(variable => $"| `{variable.Name}` | {variable.Description} |")))
             .Replace("{fields}", EventFields("command-event.schema.json"))
-            .Replace("{ci}", Names(TelemetryVariables.CiFlags.Concat(TelemetryVariables.CiMarkers)))
+            .Replace("{ci}", "| Variable | Recorded as |\n| --- | --- |\n" + string.Join("\n", TelemetryVariables.CiServices.Select(service =>
+                $"| `{service.Variable}`{(service.AnyValue ? "" : ", when `true` or `1`")} | `{service.Name}` |"))
+                + $"\n| `CI`, unless empty, `false` or `0` | `{TelemetryVariables.OtherCiService}` |")
             .Replace("{agents}", Names(TelemetryVariables.Agents.Select(agent => agent.Variable))));
         output.Add("vscode-launch.md", DebugConfiguration.Replace("{launch}", DebugAttributes("launch")).Replace("{attach}", DebugAttributes("attach")));
         return output;
@@ -367,7 +369,11 @@ One event for each command. `--help`, `--version` and `isoplane telemetry` recor
 
 The service that receives an event adds the time it arrived and the country the request came from. It does not keep the address the request came from.
 
-`ci` is true when one of these environment variables is set: {ci}. `agent` is read from these: {agents}. Only whether a variable is set is used; its value is not collected.
+`ci` is true, and `ciProvider` names the service, when one of these environment variables is set. The first in the table that is set decides.
+
+{ci}
+
+`agent` is read from these: {agents}. Only whether a variable is set, or whether it is `true`, is used; no variable's value is collected.
 
 ## What is never collected
 

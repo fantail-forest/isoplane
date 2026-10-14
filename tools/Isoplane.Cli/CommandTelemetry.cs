@@ -132,7 +132,8 @@ internal sealed class CommandTelemetry
     private void Record(TelemetryHost host, TelemetryContext context, TelemetryCommand name, CommandOutcome outcome, int? exitCode, CommandFailure? failure)
     {
         var entry = new CommandEvent(Guid.NewGuid(), CommandEvent.Timestamp(host.Time.GetUtcNow()),
-            context.Ci ? null : debug ? host.State.Load()?.InstallId : InstallId(host), context.Ci, context.Agent, name, mode,
+            context.Ci ? null : debug ? host.State.Load()?.InstallId : InstallId(host), context.Ci, context.CiProvider, context.Agent,
+            name, mode,
             outcome, exitCode is >= 0 and <= 255 ? exitCode : null, failure,
             Math.Min((long)Stopwatch.GetElapsedTime(started).TotalMilliseconds, CommandEvent.LongestDurationMs),
             context.CliVersion, context.Platform, context.OsArchitecture, context.OsVersion, context.Distribution.Id,

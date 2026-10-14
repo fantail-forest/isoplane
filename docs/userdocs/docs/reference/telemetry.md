@@ -45,6 +45,7 @@ One event for each command. `--help`, `--version` and `isoplane telemetry` recor
 | `occurredAt` | When the command ended, in UTC, by this machine's clock. |  |
 | `installId` | The random identifier of this installation, from telemetry/state.json in the Isoplane home directory. Absent on continuous integration machines. |  |
 | `ci` | Whether the command ran on a continuous integration machine. |  |
+| `ciProvider` | The continuous integration service the command ran on, or other for one the CLI does not recognise. Absent when it did not run on one. | `github-actions`, `azure-pipelines`, `gitlab`, `bitbucket`, `buildkite`, `circleci`, `travis`, `appveyor`, `drone`, `teamcity`, `jenkins`, `aws-codebuild`, `other` |
 | `agent` | The coding agent that ran the command, when its environment identifies one. | `none`, `claude`, `copilot`, `cursor`, `gemini` |
 | `command` | The command that ran. A name the CLI does not recognise is recorded as unknown, never as typed. | `dev`, `debug-adapter`, `setup`, `uninstall-sdk`, `doctor`, `doctor-module`, `cache`, `bundle`, `unknown` |
 | `mode` | Why the command ran: test when Isoplane.Testing started it, debug for a debugging session, and run otherwise. | `run`, `debug`, `test` |
@@ -63,7 +64,25 @@ One event for each command. `--help`, `--version` and `isoplane telemetry` recor
 
 The service that receives an event adds the time it arrived and the country the request came from. It does not keep the address the request came from.
 
-`ci` is true when one of these environment variables is set: `CI`, `TF_BUILD`, `GITHUB_ACTIONS`, `GITLAB_CI`, `BUILDKITE`, `CIRCLECI`, `TRAVIS`, `APPVEYOR`, `TEAMCITY_VERSION`, `JENKINS_URL`, `CODEBUILD_BUILD_ID`. `agent` is read from these: `CLAUDECODE`, `GITHUB_COPILOT_CLI_MODE`, `CURSOR_EDITOR`, `GEMINI_CLI`. Only whether a variable is set is used; its value is not collected.
+`ci` is true, and `ciProvider` names the service, when one of these environment variables is set. The first in the table that is set decides.
+
+| Variable | Recorded as |
+| --- | --- |
+| `GITHUB_ACTIONS`, when `true` or `1` | `github-actions` |
+| `TF_BUILD`, when `true` or `1` | `azure-pipelines` |
+| `GITLAB_CI`, when `true` or `1` | `gitlab` |
+| `BITBUCKET_BUILD_NUMBER` | `bitbucket` |
+| `BUILDKITE`, when `true` or `1` | `buildkite` |
+| `CIRCLECI`, when `true` or `1` | `circleci` |
+| `TRAVIS`, when `true` or `1` | `travis` |
+| `APPVEYOR`, when `true` or `1` | `appveyor` |
+| `DRONE`, when `true` or `1` | `drone` |
+| `TEAMCITY_VERSION` | `teamcity` |
+| `JENKINS_URL` | `jenkins` |
+| `CODEBUILD_BUILD_ID` | `aws-codebuild` |
+| `CI`, unless empty, `false` or `0` | `other` |
+
+`agent` is read from these: `CLAUDECODE`, `GITHUB_COPILOT_CLI_MODE`, `CURSOR_EDITOR`, `GEMINI_CLI`. Only whether a variable is set, or whether it is `true`, is used; no variable's value is collected.
 
 ## What is never collected
 

@@ -132,6 +132,7 @@ public sealed class TelemetryTests : IDisposable
         Assert.Contains(CommandTelemetry.Notice, error.ToString());
         var recorded = JsonDocument.Parse(File.ReadAllText(Path.Combine(home.Path, "pending", Assert.Single(Pending())))).RootElement;
         Assert.True(recorded.GetProperty("ci").GetBoolean());
+        Assert.Equal("github-actions", recorded.GetProperty("ciProvider").GetString());
         Assert.Equal(JsonValueKind.Null, recorded.GetProperty("installId").ValueKind);
         Assert.Null(Host().State.Load()!.InstallId);
     }
@@ -258,6 +259,20 @@ public sealed class TelemetryTests : IDisposable
     }
 
     [Theory]
+    [InlineData("github-actions", "GITHUB_ACTIONS", "true")]
+    [InlineData("azure-pipelines", "TF_BUILD", "True")]
+    [InlineData("jenkins", "JENKINS_URL", "https://jenkins.example.test/")]
+    [InlineData("other", "CI", "woodpecker")]
+    [InlineData(null, "CI", "false")]
+    [InlineData(null, "GITHUB_ACTIONS", "false")]
+    [InlineData(null, "HOME", "/home/someone")]
+    public void A_continuous_integration_service_is_named_by_the_variable_it_sets(string? expected, string variable, string value)
+    {
+        environment[variable] = value;
+        Assert.Equal(expected, TelemetryContext.Read(name => environment.GetValueOrDefault(name), "0.1.0").CiProvider);
+    }
+
+    [Theory]
     [InlineData("run", false, "dev")]
     [InlineData("debug", false, "dev", "--debug")]
     [InlineData("debug", false, "debug-adapter")]
@@ -305,6 +320,8 @@ public sealed class TelemetryTests : IDisposable
         Assert.Equal(Allowed("command"), Names<TelemetryCommand>());
         Assert.Equal(Allowed("outcome"), Names<CommandOutcome>());
         Assert.Equal(Allowed("mode"), Names<CommandMode>());
+        Assert.Equal(Allowed("ciProvider"), TelemetryVariables.CiServices.Select(service => (string?)service.Name)
+            .Append(TelemetryVariables.OtherCiService).Append(null).Order());
         Assert.Equal(Allowed("failure"), Names<CommandFailure>().Append(null).Order());
         Assert.Equal(CommandEvent.LongestDurationMs, properties.GetProperty("durationMs").GetProperty("maximum").GetInt64());
 
@@ -319,7 +336,7 @@ public sealed class TelemetryTests : IDisposable
 
     private string Queue(Guid id)
     {
-        Host().Outbox.Add(id, new CommandEvent(id, CommandEvent.Timestamp(DateTimeOffset.UtcNow), null, false, CodingAgent.None, TelemetryCommand.Dev,
+        Host().Outbox.Add(id, new CommandEvent(id, CommandEvent.Timestamp(DateTimeOffset.UtcNow), null, false, null, CodingAgent.None, TelemetryCommand.Dev,
             CommandMode.Run, CommandOutcome.Succeeded, 0, null, 1, "0.1.0", "linux-x64", "x64", "6.8", null, null, "10.0.0", null).ToJson());
         return Path.Combine(home.Path, "pending", id + ".json");
     }

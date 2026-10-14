@@ -22,7 +22,7 @@ internal enum CommandFailure { Usage, InvalidData, InvalidOperation, FileSystem,
 /// value is a number, a flag or a name from a fixed list, so nothing a user typed can be recorded.
 /// </summary>
 internal sealed record CommandEvent(
-    Guid Id, string OccurredAt, Guid? InstallId, bool Ci, CodingAgent Agent, TelemetryCommand Command, CommandMode Mode,
+    Guid Id, string OccurredAt, Guid? InstallId, bool Ci, string? CiProvider, CodingAgent Agent, TelemetryCommand Command, CommandMode Mode,
     CommandOutcome Outcome, int? ExitCode, CommandFailure? Failure, long DurationMs, string CliVersion,
     string Platform, string OsArchitecture, string OsVersion, string? Distribution,
     string? DistributionVersion, string RuntimeVersion, string? Locale)
@@ -137,12 +137,13 @@ internal sealed record LinuxDistribution(string? Id, string? Version)
 
 /// <summary>What a command event says about the machine and the caller.</summary>
 internal sealed record TelemetryContext(
-    bool Ci, CodingAgent Agent, string CliVersion, string Platform, string OsArchitecture, string OsVersion,
+    string? CiProvider, CodingAgent Agent, string CliVersion, string Platform, string OsArchitecture, string OsVersion,
     LinuxDistribution Distribution, string RuntimeVersion, string? Locale)
 {
+    internal bool Ci => CiProvider is not null;
+
     internal static TelemetryContext Read(Func<string, string?> environment, string cliVersion) => new(
-        TelemetryVariables.CiFlags.Any(name => TelemetryVariables.IsOn(environment(name)))
-            || TelemetryVariables.CiMarkers.Any(name => environment(name) is { Length: > 0 }),
+        TelemetryVariables.CiService(environment),
         TelemetryVariables.Agents.FirstOrDefault(agent => environment(agent.Variable) is { Length: > 0 }).Agent,
         cliVersion,
         CliPaths.PlatformIdentifier(),

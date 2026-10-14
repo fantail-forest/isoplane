@@ -10,6 +10,7 @@
     "occurredAt",
     "installId",
     "ci",
+    "ciProvider",
     "agent",
     "command",
     "mode",
@@ -52,6 +53,25 @@
     "ci": {
       "description": "Whether the command ran on a continuous integration machine.",
       "type": "boolean"
+    },
+    "ciProvider": {
+      "description": "The continuous integration service the command ran on, or other for one the CLI does not recognise. Absent when it did not run on one.",
+      "enum": [
+        null,
+        "github-actions",
+        "azure-pipelines",
+        "gitlab",
+        "bitbucket",
+        "buildkite",
+        "circleci",
+        "travis",
+        "appveyor",
+        "drone",
+        "teamcity",
+        "jenkins",
+        "aws-codebuild",
+        "other"
+      ]
     },
     "agent": {
       "description": "The coding agent that ran the command, when its environment identifies one.",
