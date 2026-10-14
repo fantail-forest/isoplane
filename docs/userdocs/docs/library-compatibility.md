@@ -54,7 +54,7 @@ entry says otherwise.
 | SqlClient | [SQL Server, including its Entity Framework Core provider](#sql-server) | Not supported yet: waits on work under way in the driver. PostgreSQL works today |
 | Sqlite | [SQLite, including its Entity Framework Core provider](#sqlite) | Not supported yet: needs SQLite in Isoplane's runtime. PostgreSQL works today |
 | MongoDB.Driver | [MongoDB](#mongodb) | Not supported yet for most deployments: waits on the driver. A load-balanced deployment works with two settings |
-| StackExchange.Redis | [Redis, including the Redis distributed cache](#redis) | Small change: reference the client's 4.0 prerelease and call it asynchronously |
+| StackExchange.Redis | [Redis, including the Redis distributed cache](#redis) | Small change: reference the stable 3.x client and call it asynchronously |
 | OpenTelemetry | [OpenTelemetry SDK](#opentelemetry) | Large change, traces only: collect spans with .NET's tracing API and send them before each request ends |
 | ModelContextProtocol | [An MCP server that tracks sessions](#mcp-sessions) | Small change: use stateless mode |
 
@@ -120,8 +120,8 @@ session with MVC's
 Typically used for sign-in flows, shopping carts, multi-step forms, and messages
 shown after a redirect.
 
-We ran this with a PostgreSQL-backed cache. The Redis cache does not run at
-all; see [Redis](#redis).
+We ran this with a PostgreSQL-backed cache. The Redis cache works too, with
+the client version given under [Redis](#redis).
 
 #### Workaround: load the session in a middleware
 
@@ -990,19 +990,12 @@ support a runtime without threads, so there is no work under way to cite.
 
 ### Redis {#redis}
 
-[`StackExchange.Redis`][StackExchange.Redis] does not work in its stable
-releases yet, for a different reason in each line of them:
-
-- **2.x**, which is what
-  [`AddStackExchangeRedisCache`][AddStackExchangeRedisCache] from
-  `Microsoft.Extensions.Caching.StackExchangeRedis` brings in, starts threads
-  for its connections. `ConnectionMultiplexer.ConnectAsync` throws
-  [`PlatformNotSupportedException`][PlatformNotSupportedException] from
-  [`Thread.Start`][Thread.Start].
-- **3.x**, the current stable line, [rewrote its I/O][se-redis-3] and starts
-  no threads on its normal path. It fails on one call instead: it tests a
-  free lock with `SemaphoreSlim.Wait(0)`, which
-  [throws on Isoplane even when nothing would wait](dotnet-runtime-differences.md#one-thread).
+[`AddStackExchangeRedisCache`][AddStackExchangeRedisCache], from
+`Microsoft.Extensions.Caching.StackExchangeRedis`, brings in version 2.x of
+[`StackExchange.Redis`][StackExchange.Redis], which starts threads for its
+connections. Connecting throws
+[`PlatformNotSupportedException`][PlatformNotSupportedException] from
+[`Thread.Start`][Thread.Start], so the cache fails when it is first used:
 
 ```csharp
 builder.Services.AddStackExchangeRedisCache(options =>
@@ -1012,21 +1005,20 @@ builder.Services.AddStackExchangeRedisCache(options =>
 Typically used for a cache shared between instances, session state, and Data
 Protection keys.
 
-#### Workaround: the client's 4.0 prerelease, through its asynchronous API
+#### Workaround: reference the stable 3.x client, and call it asynchronously
 
-Version [4.0 of the client][se-redis-4], which is in alpha, works. Add a direct
-reference to it, which replaces the 2.x that the Microsoft package would bring
-in, and leave the rest of the application as it is:
+The current stable line, 3.x, [rewrote its I/O][se-redis-3] and starts no
+threads. Add a direct reference to it, which replaces the 2.x that the
+Microsoft package would bring in, and leave the rest of the application as it
+is:
 
 ```xml
-<PackageReference Include="StackExchange.Redis" Version="4.0.127-alpha" />
+<PackageReference Include="StackExchange.Redis" Version="3.4.5" />
 <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="10.0.13" />
 ```
 
-With that in place these ran as they do elsewhere:
-[`IDistributedCache`][IDistributedCache] through `AddStackExchangeRedisCache`,
-[`HybridCache`][HybridCache] with Redis as its second level, session state
-(with the [middleware that loads it](#session)), and the client used directly:
+With 3.4.5 we ran [`IDistributedCache`][IDistributedCache] through
+`AddStackExchangeRedisCache`, and the client used directly:
 
 ```csharp
 await using var redis = await ConnectionMultiplexer.ConnectAsync(connectionString);
@@ -1035,39 +1027,34 @@ await db.StringSetAsync("greeting", "kia ora", TimeSpan.FromSeconds(30));
 var greeting = (string?)await db.StringGetAsync("greeting");
 ```
 
+[`HybridCache`][HybridCache] with Redis as its second level, and session state
+with the [middleware that loads it](#session), use the same cache, and ran in
+an earlier check of this client.
+
 What to know before relying on it:
 
-- **It is a prerelease.** Its maintainers describe the 4.0 work as not ready
-  to merge.
-- **Use the asynchronous methods only.** `ConnectionMultiplexer.Connect`
-  throws. A synchronous command such as `db.StringGet(...)` does not throw: it
-  never returns, and the request runs until its
-  [time limit](execution-limits.md#running-time).
-- **Connect inside a request, not during initialization.** The prerelease
-  leaves a timer running even after it is disposed, which initialization
-  refuses.
-- **Each request reconnects.** The client leaves work pending when a request
-  ends, including that timer, and a request that ends with work pending is
-  [followed by a fresh instance](dotnet-runtime-differences.md#work-belongs-to-a-request).
-  An idle open connection on its own would not cost the instance.
+- **Use the asynchronous methods only.** `ConnectionMultiplexer.Connect`, the
+  synchronous `IDistributedCache` methods and synchronous commands such as
+  `db.StringGet(...)` throw `PlatformNotSupportedException`.
+- **A client kept between requests costs the instance.** The client runs a
+  heartbeat timer every second while it is connected, and a request that ends
+  with a timer running is
+  [followed by a fresh instance](dotnet-runtime-differences.md#work-belongs-to-a-request),
+  which adds about a third of a second to the next request here. The cache
+  keeps its client, so every request that uses the cache costs its instance.
+  Connecting and disposing the client within the request, as above, keeps the
+  instance, at the cost of a connection for each request.
+- **Connect inside a request, not during initialization.** A connected client
+  holds a socket and its heartbeat timer, and initialization refuses both.
 - **The Redis output cache store does not start**
   ([`AddStackExchangeRedisOutputCache`][AddStackExchangeRedisOutputCache]): it
-  runs a clean-up loop on a timer from start-up, whichever client is used.
+  runs a clean-up loop on a timer from start-up.
 
 We ran this against Redis 7 without TLS or authentication. Clusters, sentinel
 and [`PersistKeysToStackExchangeRedis`][PersistKeysToStackExchangeRedis] were
 not run.
 
-Size of the change: small, with a prerelease dependency to carry.
-
-#### Looking ahead
-
-The stable 3.x client is one call away from working, and that call is in
-Isoplane's runtime, not in the client. We ran 3.4.5 built in a way that avoids
-`SemaphoreSlim.Wait(0)`, and everything above passed, including connecting
-during initialization. When the runtime lets a free semaphore be taken without
-throwing, as .NET itself is [being asked to][runtime-134972], the stable
-client is expected to work with no change to your code.
+Size of the change: small.
 
 ## Observability
 
@@ -1571,9 +1558,7 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [Pomelo]: https://github.com/PomeloFoundation/Pomelo.EntityFrameworkCore.MySql
 [rdg]: https://learn.microsoft.com/aspnet/core/fundamentals/aot/request-delegate-generator/rdg
 [ReferenceEntry.LoadAsync]: https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.changetracking.referenceentry.loadasync
-[runtime-134972]: https://github.com/dotnet/runtime/issues/134972
 [se-redis-3]: https://github.com/StackExchange/StackExchange.Redis/releases/tag/3.0.0
-[se-redis-4]: https://github.com/StackExchange/StackExchange.Redis/pull/3262
 [SemaphoreSlim.Wait]: https://learn.microsoft.com/dotnet/api/system.threading.semaphoreslim.wait
 [serilog-aspnetcore]: https://github.com/serilog/serilog-aspnetcore
 [serilog-console]: https://github.com/serilog/serilog-sinks-console
