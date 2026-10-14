@@ -90,17 +90,16 @@ internal sealed class CommandTelemetry
         }
     }
 
-    internal static CommandTelemetry Begin(string[] args)
-    {
-        try { return Begin(args, TelemetryHost.OfRunningCli()); }
-        // Telemetry is never a reason for a command to fail.
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
-        {
-            return new();
-        }
-    }
+    internal static CommandTelemetry Begin(string[] args) => Begin(args, TelemetryHost.OfRunningCli);
 
-    internal static CommandTelemetry Begin(string[] args, TelemetryHost host) => new(args, host);
+    internal static CommandTelemetry Begin(string[] args, TelemetryHost host) => Begin(args, () => host);
+
+    private static CommandTelemetry Begin(string[] args, Func<TelemetryHost> host)
+    {
+        try { return new(args, host()); }
+        // Telemetry never fails a command or speaks up about itself; a run whose recording cannot start goes unrecorded.
+        catch (Exception) { return new(); }
+    }
 
     internal int Ended(int exitCode) =>
         Complete(exitCode == 0 ? CommandOutcome.Succeeded : CommandOutcome.Failed, exitCode, failure: null);
@@ -124,8 +123,8 @@ internal sealed class CommandTelemetry
         if (host is not null && context is not null && command is { } name && (debug || recording))
         {
             try { Record(host, context, name, outcome, exitCode, failure); }
-            // Telemetry is never a reason for a command to fail; an event that cannot be saved is lost.
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
+            // Telemetry never fails a command or speaks up about itself; an event that cannot be recorded is lost.
+            catch (Exception) { }
         }
         FinishUpload();
         return exitCode ?? 0;
@@ -133,13 +132,13 @@ internal sealed class CommandTelemetry
 
     private void FinishUpload()
     {
-        if (host is not null && !Upload.IsCompleted)
+        try
         {
-            try { Upload.Wait(host.UploadGrace); }
-            // An upload's failure is never shown: what it did not send stays queued for a later command.
-            catch (AggregateException) { }
+            if (host is not null && !Upload.IsCompleted) Upload.Wait(host.UploadGrace);
+            uploading.Cancel();
         }
-        uploading.Cancel();
+        // An upload's failure is never shown: what it did not send stays queued for a later command.
+        catch (Exception) { }
     }
 
     private void Record(TelemetryHost host, TelemetryContext context, TelemetryCommand name, CommandOutcome outcome, int? exitCode, CommandFailure? failure)
@@ -176,7 +175,7 @@ internal sealed class CommandTelemetry
             using var client = host.CreateClient();
             await host.Outbox.SendAsync(client, endpoint, cancellation);
         }
-        // Sending is best effort: what the service did not take stays queued for a later run.
-        catch (Exception error) when (error is OperationCanceledException or HttpRequestException or IOException or UnauthorizedAccessException) { }
+        // Sending is best effort and silent: what the service did not take stays queued for a later run.
+        catch (Exception) { }
     }
 }

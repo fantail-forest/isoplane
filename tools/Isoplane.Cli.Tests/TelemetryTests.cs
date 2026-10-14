@@ -216,6 +216,28 @@ public sealed class TelemetryTests : IDisposable
     }
 
     [Fact]
+    public void A_failure_to_start_recording_leaves_the_command_and_its_output_alone()
+    {
+        var run = CommandTelemetry.Begin(["dev"], Host() with { Environment = _ => throw new InvalidOperationException("broken environment") });
+        Assert.Equal(3, run.Ended(3));
+        Assert.Empty(error.ToString());
+        Assert.Empty(Pending());
+    }
+
+    [Fact]
+    public async Task A_failure_while_recording_or_sending_leaves_the_command_and_its_output_alone()
+    {
+        Seen();
+        Queue(Guid.NewGuid());
+        var run = CommandTelemetry.Begin(["dev"], Host() with { Time = new BrokenClock() });
+        await run.Upload.WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.Equal(0, run.Ended(0));
+        Assert.Equal(1, run.Failed(new InvalidOperationException(), 1));
+        Assert.Empty(error.ToString());
+        Assert.Single(Pending());
+    }
+
+    [Fact]
     public void A_full_queue_stops_recording()
     {
         Seen();
@@ -404,6 +426,11 @@ public sealed class TelemetryTests : IDisposable
         var output = new StringWriter();
         TelemetryCommands.Run(["telemetry", "status"], host ?? Host(), output);
         return output.ToString().TrimEnd();
+    }
+
+    private sealed class BrokenClock : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => throw new InvalidOperationException("broken clock");
     }
 
     private sealed class Service : HttpMessageHandler
