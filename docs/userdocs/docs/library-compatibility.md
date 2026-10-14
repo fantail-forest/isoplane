@@ -83,7 +83,7 @@ read the stack trace to see which call failed.
 | `DirectoryNotFoundException: /tmp/` | ASP.NET Core tried to move a large request or response to a temporary file. See [uploads](#uploads), [request buffering](#enable-buffering), [Newtonsoft.Json](#newtonsoft-json) and [XML formatters](#xml-formatters). |
 | `IOException: Read-only file system` | Something tried to write a file. The [file system is read-only](dotnet-runtime-differences.md#the-machine-underneath). |
 | [`DllNotFoundException`][DllNotFoundException], sometimes inside a `TypeInitializationException` | A package called into a native library that the runtime does not include. An application cannot bring its own; see [the machine underneath](dotnet-runtime-differences.md#the-machine-underneath). |
-| The application refuses to start with `initialization retains a timer` | Something registered at startup started a timer. The lines beneath the message name each timer and the method that runs or awaits it. See [rate limiting](#rate-limiting) and [OpenTelemetry](#opentelemetry). |
+| The application refuses to start with `initialization retains a timer` | Something registered at startup started a timer. The lines beneath the message name each timer and the method that runs or awaits it. See [rate limiting](#rate-limiting), [OpenTelemetry](#opentelemetry) and [SQLite](#sqlite). |
 | The application refuses to start with `unhandled System.PlatformNotSupportedException` and no stack trace | A call made while the application starts failed. The known ones are [remote configuration](#remote-configuration) and, in an application written without ASP.NET Core, [the console logger](#console-logging). |
 | The application refuses to start, naming a service that was `Still running once the application had started` | A package registered a background service. See [MCP sessions](#mcp-sessions) and [background work](#connections-and-background-work). |
 | A minimal API endpoint answers 200 with an empty body, or the build fails with `CS9144: Cannot intercept method` | A handler names code that another source generator produces. See [generated code in handlers](#generated-code-in-handlers). |
@@ -1375,9 +1375,12 @@ Size of the change: large.
 The SDK is close. Its maintainers already support single-threaded WebAssembly
 in the browser: the batch exporter and the metrics reader have
 [task-based forms for it][otel-6379], and the OTLP exporter was
-[adjusted for it in 1.19.0][otel-7708]. Two things remain for Isoplane: a way
-to keep the self-diagnostics from starting a timer, and an export that does
-not send synchronously, which the maintainers have so far left out.
+[adjusted for it in 1.19.0][otel-7708]. The SDK picks those forms whenever the
+thread pool has only one thread, so it already uses them on Isoplane; their waits
+are the 5 s and 60 s delays above. What remains is a way to keep the
+self-diagnostics from starting a timer, an export that does not send
+synchronously, which the maintainers have so far left out, and somewhere for
+those delays to run once a request has ended.
 
 Isoplane can also close the gap from its own side, with an exporter that
 collects spans and sends them before the response completes, or hands them to
