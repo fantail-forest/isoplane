@@ -267,9 +267,12 @@ context.Request.Body.Position = 0;   // so that the body can be bound afterwards
 are streams whose synchronous [`Stream.Read`][Stream.Read] and
 [`Stream.Write`][Stream.Write] throw
 [`NotSupportedException`][NotSupportedException], with a message that says to
-use the asynchronous form. Kestrel, ASP.NET Core's own server, refuses these
-calls as well unless its [`AllowSynchronousIO`][AllowSynchronousIO] option is
-set.
+use the asynchronous form.
+
+Kestrel, ASP.NET Core's own server, refuses the same calls by default, for
+these two streams only, and an application can switch them back on with
+Kestrel's [`AllowSynchronousIO`][AllowSynchronousIO] option. Isoplane has no
+such switch.
 
 ```csharp
 var serializer = new XmlSerializer(typeof(Report));
