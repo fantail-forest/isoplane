@@ -184,7 +184,7 @@ pub(super) mod cell_tests {
         Arc::new(Services {
             egress: Arc::new(crate::egress::HostEgressPolicy::new(
                 Box::new(NoResolver),
-                64,
+                crate::egress::ConnectionLimits::uniform(64).expect("connection limits"),
             )),
             fetcher: Arc::new(FakeFetcher::default()),
             hibernation: Arc::new(FakeHibernationStore::default()),

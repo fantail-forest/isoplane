@@ -39,7 +39,7 @@ fn rig(cfg: CellConfig) -> Rig {
     let svc = Arc::new(Services {
         egress: Arc::new(HostEgressPolicy::new(
             Box::new(Fixed(vec!["93.184.216.34:80".parse().unwrap()])),
-            1024,
+            isoplane_host::egress::ConnectionLimits::uniform(1024).expect("connection limits"),
         )),
         fetcher: fetcher.clone(),
     });

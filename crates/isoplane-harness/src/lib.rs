@@ -48,16 +48,27 @@ pub const GUEST_LIMITS: Limits = Limits {
 /// Controlled network dependencies with production budgets, which tests cannot override.
 ///
 /// ```compile_fail
-/// let policy = isoplane_host::egress::HostEgressPolicy::system(1).unwrap();
+/// let limits = isoplane_host::egress::ConnectionLimits::uniform(1).unwrap();
+/// let policy = isoplane_host::egress::HostEgressPolicy::system(limits).unwrap();
 /// let network = isoplane_harness::Network(policy);
 /// ```
 pub struct Network(HostEgressPolicy);
 
+/// The node's default outbound connection limits, which [`Network`] enforces.
+pub fn production_connection_limits() -> isoplane_host::egress::ConnectionLimits {
+    let limits = isoplane_runtime::network::NetworkLimits::default();
+    isoplane_host::egress::ConnectionLimits::new(isoplane_host::egress::ConnectionCeilings {
+        node: limits.connections,
+        tenant: limits.tenant_connections,
+        instance_pending: limits.instance_pending_connections,
+    })
+    .expect("the production connection limits must be valid")
+}
+
 impl Default for Network {
     fn default() -> Self {
-        let limits = isoplane_runtime::network::NetworkLimits::default();
         Self(
-            HostEgressPolicy::system(limits.connections)
+            HostEgressPolicy::system(production_connection_limits())
                 .expect("the production egress policy must initialize"),
         )
     }
@@ -66,8 +77,10 @@ impl Default for Network {
 impl Network {
     /// Uses a controlled resolver while retaining the production network budgets.
     pub fn with_resolver(resolver: Box<dyn isoplane_host::Resolver>) -> Self {
-        let limits = isoplane_runtime::network::NetworkLimits::default();
-        Self(HostEgressPolicy::new(resolver, limits.connections))
+        Self(HostEgressPolicy::new(
+            resolver,
+            production_connection_limits(),
+        ))
     }
 
     /// Restricts destinations to test peers or exercises a destination-policy refusal.

@@ -285,7 +285,10 @@ fn growing_to_the_memory_ceiling_preserves_the_final_page_through_local_reclamat
     let rig = Rig::new(
         &wasm,
         2 * isoplane_abi::WASM_PAGE_SIZE as u64,
-        Arc::new(HostEgressPolicy::new(Box::new(NoDns), 1)),
+        Arc::new(HostEgressPolicy::new(
+            Box::new(NoDns),
+            isoplane_host::egress::ConnectionLimits::uniform(1).expect("connection limits"),
+        )),
     );
     let first = rig
         .submit("/")
@@ -354,9 +357,12 @@ fn managed_stream_snapshot(runtime: GuestRuntime) {
         release: tokio::sync::Notify::new(),
     });
     let policy = Arc::new(
-        HostEgressPolicy::new(Box::new(NoDns), 1)
-            .with_connections(connections.clone())
-            .with_destinations(Arc::new(ExactPeer(peer))),
+        HostEgressPolicy::new(
+            Box::new(NoDns),
+            isoplane_host::egress::ConnectionLimits::uniform(1).expect("connection limits"),
+        )
+        .with_connections(connections.clone())
+        .with_destinations(Arc::new(ExactPeer(peer))),
     );
     let rig = Rig::with_files(
         &wasm,

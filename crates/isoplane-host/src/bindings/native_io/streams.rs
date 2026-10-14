@@ -216,11 +216,19 @@ mod tests {
             .expect("the test must control its socket's send capacity");
         let (client, peer) = tokio::join!(socket.connect(address), listener.accept());
         let policy = Arc::new(
-            HostEgressPolicy::new(Box::new(NoDns), 1)
-                .with_destinations(Arc::new(OwnedPeer(address))),
+            HostEgressPolicy::new(
+                Box::new(NoDns),
+                crate::egress::ConnectionLimits::uniform(1).expect("connection limits"),
+            )
+            .with_destinations(Arc::new(OwnedPeer(address))),
         );
         let permit = policy
-            .check_socket(address, crate::egress::Reach::default())
+            .check_socket(
+                address,
+                &crate::egress::ConnectionOwner::new("tenant".into(), InstanceId(83))
+                    .expect("fixture owner"),
+                crate::egress::Reach::default(),
+            )
             .expect("the exact owned peer must acquire quota");
         let wake = Arc::new(Wake(tokio::sync::Notify::new()));
         let mut context =

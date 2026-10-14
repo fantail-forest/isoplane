@@ -293,14 +293,22 @@ mod tests {
     #[tokio::test]
     async fn closing_a_scope_keeps_an_inflight_fetch_charged_until_it_is_dropped() {
         let scope = HttpScope::new();
-        let policy = Arc::new(HostEgressPolicy::new(Box::new(PublicEndpoint), 1));
+        let policy = Arc::new(HostEgressPolicy::new(
+            Box::new(PublicEndpoint),
+            crate::egress::ConnectionLimits::uniform(1).expect("connection limits"),
+        ));
         let mut operation = scope
             .begin_fetch()
             .expect("the dispatch must register its fetch");
         operation
             .retain_permit(
                 policy
-                    .check_owned("http://upstream.test/", crate::egress::Reach::default())
+                    .check_owned(
+                        "http://upstream.test/",
+                        &crate::egress::ConnectionOwner::new("tenant".into(), crate::InstanceId(1))
+                            .expect("fixture owner"),
+                        crate::egress::Reach::default(),
+                    )
                     .await
                     .expect("the destination must pass policy"),
             )
@@ -342,14 +350,22 @@ mod tests {
     #[tokio::test]
     async fn a_read_completing_after_scope_closure_cannot_restore_its_body() {
         let scope = HttpScope::new();
-        let policy = Arc::new(HostEgressPolicy::new(Box::new(PublicEndpoint), 1));
+        let policy = Arc::new(HostEgressPolicy::new(
+            Box::new(PublicEndpoint),
+            crate::egress::ConnectionLimits::uniform(1).expect("connection limits"),
+        ));
         let mut fetch = scope
             .begin_fetch()
             .expect("the dispatch must register a fetch");
         fetch
             .retain_permit(
                 policy
-                    .check_owned("http://upstream.test/", crate::egress::Reach::default())
+                    .check_owned(
+                        "http://upstream.test/",
+                        &crate::egress::ConnectionOwner::new("tenant".into(), crate::InstanceId(1))
+                            .expect("fixture owner"),
+                        crate::egress::Reach::default(),
+                    )
                     .await
                     .expect("the destination must pass policy"),
             )

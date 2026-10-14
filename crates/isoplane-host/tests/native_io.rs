@@ -1011,6 +1011,101 @@ async fn dropping_a_socket_cancels_its_pending_connection_provider_and_releases_
     );
 }
 
+/// Announces each connection the provider starts and never completes it.
+struct HeldConnections(tokio::sync::mpsc::UnboundedSender<()>);
+
+#[async_trait::async_trait]
+impl isoplane_host::egress::ConnectionFactory for HeldConnections {
+    async fn connect(
+        &self,
+        _: &isoplane_host::egress::ConnectionOwner,
+        _: std::net::SocketAddr,
+    ) -> std::io::Result<tokio::net::TcpStream> {
+        self.0.send(()).map_err(std::io::Error::other)?;
+        std::future::pending().await
+    }
+}
+
+#[tokio::test]
+async fn connects_beyond_the_instances_pending_limit_wait_instead_of_failing() {
+    use isoplane_abi::native_io::{AddressFamily, Request, ResourceKind, Response};
+    use isoplane_engine::HostBindings;
+    let pending_limit = isoplane_harness::production_connection_limits()
+        .ceilings()
+        .instance_pending;
+    let (starts, mut started) = tokio::sync::mpsc::unbounded_channel();
+    let policy = isoplane_harness::Network::with_resolver(Box::new(NoDns))
+        .with_connections(Arc::new(HeldConnections(starts)));
+    let owner = InstanceId::alloc();
+    let reactor = Reactor::with_network(owner, policy);
+    reactor.context.begin_slice(1, 1);
+    let mut bindings = CellBindings::new(reactor.context.clone());
+    let handle = |bindings: &mut CellBindings, request| match bindings
+        .native_io(request)
+        .expect("the owned native resource must allocate")
+    {
+        Response::Handle(handle) => handle,
+        other => panic!("native allocation must return a handle: {other:?}"),
+    };
+    let network = handle(&mut bindings, Request::Network);
+    let attempts = pending_limit + 2;
+    let sockets: Vec<_> = (0..attempts)
+        .map(|_| handle(&mut bindings, Request::CreateTcp(AddressFamily::V4)))
+        .collect();
+    for &socket in &sockets {
+        bindings
+            .native_io(Request::Connect {
+                socket,
+                network,
+                destination: std::net::SocketAddr::from(([93, 184, 216, 34], 443)),
+            })
+            .expect("a connect beyond the pending limit must start, not fail");
+    }
+    for _ in 0..pending_limit {
+        tokio::time::timeout(WAKE_DEADLINE, started.recv())
+            .await
+            .expect("the attempts within the limit must start before the test deadline")
+            .expect("the provider announces each start");
+    }
+    assert_eq!(
+        reactor.futures.pending_total(owner),
+        attempts as usize,
+        "every attempt, queued or in progress, is one pending wake"
+    );
+    let drop_socket = |bindings: &mut CellBindings, handle| {
+        bindings
+            .native_io(Request::Drop {
+                handle,
+                kind: ResourceKind::Tcp,
+            })
+            .expect("dropping a connecting socket must succeed");
+    };
+    drop_socket(&mut bindings, sockets[0]);
+    tokio::time::timeout(WAKE_DEADLINE, started.recv())
+        .await
+        .expect("a finished attempt must let the next queued one start")
+        .expect("the provider announces the start");
+    let queued = sockets[sockets.len() - 1];
+    drop_socket(&mut bindings, queued);
+    let open = attempts - 2;
+    tokio::time::timeout(WAKE_DEADLINE, async {
+        while reactor.runtime().services.egress.connections() != open {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the dropped sockets must release their permits before the test deadline");
+    assert_eq!(
+        reactor.futures.pending_total(owner),
+        open as usize,
+        "a dropped queued attempt removes its wake"
+    );
+    assert!(
+        started.try_recv().is_err(),
+        "a cancelled queued attempt must never reach the provider"
+    );
+}
+
 struct RefusedConnections;
 
 #[async_trait::async_trait]

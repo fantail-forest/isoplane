@@ -39,7 +39,10 @@ fn misbehaver_wasm() -> Vec<u8> {
 
 fn services() -> Arc<Services> {
     Arc::new(Services {
-        egress: Arc::new(HostEgressPolicy::new(Box::new(NoDns), 1024)),
+        egress: Arc::new(HostEgressPolicy::new(
+            Box::new(NoDns),
+            isoplane_host::egress::ConnectionLimits::uniform(1024).expect("connection limits"),
+        )),
         fetcher: Arc::new(FakeFetcher::default()),
     })
 }

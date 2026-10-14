@@ -170,9 +170,11 @@ mod tests {
         } else {
             resolved
         };
-        let policy = HostEgressPolicy::system(1)
-            .unwrap()
-            .with_destinations(std::sync::Arc::new(OwnedPeer(address)));
+        let policy = HostEgressPolicy::system(
+            crate::egress::ConnectionLimits::uniform(1).expect("connection limits"),
+        )
+        .unwrap()
+        .with_destinations(std::sync::Arc::new(OwnedPeer(address)));
         let owner =
             ConnectionOwner::new("ipv4-qualification".into(), crate::InstanceId(1)).unwrap();
         let mut stream = policy.connect(&owner, destination).await.unwrap();
@@ -211,7 +213,10 @@ mod tests {
             .await
             .unwrap();
         let peer = listener.local_addr().unwrap();
-        let policy = crate::egress::HostEgressPolicy::system(2).unwrap();
+        let policy = crate::egress::HostEgressPolicy::system(
+            crate::egress::ConnectionLimits::uniform(2).expect("connection limits"),
+        )
+        .unwrap();
         let stranger = ConnectionOwner::new("stranger".into(), crate::InstanceId(1)).unwrap();
         assert!(
             matches!(

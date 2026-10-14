@@ -6,15 +6,23 @@
 //! the check and the connect.
 
 mod additional_destinations;
+mod attempts;
 mod connection;
 mod dns;
+mod quota;
 pub use additional_destinations::AdditionalDestinations;
 pub use connection::{ConnectionError, ConnectionFactory, ConnectionOwner, LocalConnections};
 pub use dns::{DnsError, Resolver, SystemResolver};
+pub use quota::{
+    ConnectionCeilings, ConnectionLevel, ConnectionLimit, ConnectionLimitProblem, ConnectionLimits,
+    ConnectionLimitsError,
+};
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+
+use tracing::Instrument;
 
 use isoplane_abi::host::PinnedTarget;
 
@@ -85,8 +93,15 @@ pub enum DenyReason {
     PrivateAddress(IpAddr),
     /// An allowlist is configured and this host is not on it.
     NotAllowlisted(String),
-    /// Per-tenant connection quota.
+    /// The owner's tenant, or the node, already holds its limit of open connections.
     ConnectionQuota {
+        /// The level that is full.
+        level: ConnectionLevel,
+        /// Tenant of the refused connection.
+        tenant: String,
+        /// Instance that attempted the refused connection.
+        instance: crate::InstanceId,
+        /// The full level's limit.
         limit: u64,
     },
 }
@@ -104,9 +119,26 @@ impl std::fmt::Display for DenyReason {
             DenyReason::NotAllowlisted(h) => {
                 write!(f, "host `{h}` is not on the app's fetch allowlist")
             }
-            DenyReason::ConnectionQuota { limit } => {
-                write!(f, "per-tenant connection quota of {limit} exhausted")
-            }
+            DenyReason::ConnectionQuota {
+                level: ConnectionLevel::Tenant,
+                tenant,
+                instance,
+                limit,
+            } => write!(
+                f,
+                "tenant `{tenant}` already holds its limit of {limit} open outbound connections; \
+                 instance {instance} was refused another"
+            ),
+            DenyReason::ConnectionQuota {
+                level: ConnectionLevel::Node,
+                tenant,
+                instance,
+                limit,
+            } => write!(
+                f,
+                "the node already holds its limit of {limit} open outbound connections; \
+                 instance {instance} of tenant `{tenant}` was refused another"
+            ),
         }
     }
 }
@@ -229,24 +261,27 @@ pub struct HostEgressPolicy {
     connections_factory: Arc<dyn ConnectionFactory>,
     resolver: Box<dyn Resolver>,
     destinations: Arc<dyn DestinationPolicy>,
-    max_connections: u64,
-    connections: AtomicU64,
+    open: quota::OpenConnections,
+    pending: Arc<attempts::PendingConnections>,
     resolutions: AtomicU64,
 }
 
-/// Holds connection quota until the corresponding host socket is released.
-pub(crate) struct ConnectionPermit(Arc<HostEgressPolicy>);
+/// Holds an open connection's tenant and node permits until the host socket is released.
+pub(crate) struct ConnectionPermit {
+    policy: Arc<HostEgressPolicy>,
+    holding: quota::Holding,
+}
 
 impl Drop for ConnectionPermit {
     fn drop(&mut self) {
-        self.0.release_connection();
+        self.policy.open.release(&self.holding);
     }
 }
 
-/// A checked destination whose connection quota is released on cancellation too.
+/// A checked destination whose permits are released on cancellation too.
 pub(crate) struct CheckedConnection {
     target: PinnedTarget,
-    policy: Arc<HostEgressPolicy>,
+    _permit: ConnectionPermit,
 }
 
 impl CheckedConnection {
@@ -256,9 +291,21 @@ impl CheckedConnection {
     }
 }
 
-impl Drop for CheckedConnection {
-    fn drop(&mut self) {
-        self.policy.release_connection();
+/// A connection in progress for one owner. Dropping it, once the connection is
+/// established or has failed, lets the instance's next queued attempt start.
+pub(crate) struct ConnectAttempt {
+    policy: Arc<HostEgressPolicy>,
+    owner: ConnectionOwner,
+    _slot: attempts::Attempt,
+}
+
+impl ConnectAttempt {
+    /// Opens host-owned TCP to an authorized destination.
+    pub(crate) async fn connect(
+        &self,
+        destination: SocketAddr,
+    ) -> Result<tokio::net::TcpStream, ConnectionError> {
+        self.policy.connect(&self.owner, destination).await
     }
 }
 
@@ -295,7 +342,26 @@ impl HostEgressPolicy {
         self
     }
 
-    pub(crate) async fn connect(
+    /// Waits, first in, first out, until the owner's instance has fewer than its
+    /// limit of connections in progress.
+    pub(crate) async fn begin_connect(
+        self: &Arc<Self>,
+        owner: ConnectionOwner,
+    ) -> Result<ConnectAttempt, ConnectionError> {
+        let slot = self
+            .pending
+            .begin(owner.instance())
+            .instrument(tracing::info_span!("connection_queue"))
+            .await
+            .map_err(std::io::Error::other)?;
+        Ok(ConnectAttempt {
+            policy: self.clone(),
+            owner,
+            _slot: slot,
+        })
+    }
+
+    async fn connect(
         &self,
         owner: &ConnectionOwner,
         destination: SocketAddr,
@@ -329,10 +395,12 @@ impl HostEgressPolicy {
         }
     }
 
-    /// Reserve quota for a checked numeric socket destination, without performing DNS.
+    /// Takes `owner`'s tenant and node permits for a checked numeric socket
+    /// destination, without performing DNS.
     pub(crate) fn check_socket(
         self: &Arc<Self>,
         address: SocketAddr,
+        owner: &ConnectionOwner,
         reach: Reach<'_>,
     ) -> Result<ConnectionPermit, DenyReason> {
         self.authorize(address, reach.exceptions)?;
@@ -340,59 +408,62 @@ impl HostEgressPolicy {
         if !Self::allowlisted(&host, reach.allowlist) {
             return Err(DenyReason::NotAllowlisted(host));
         }
-        self.connections
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
-                (value < self.max_connections).then_some(value + 1)
-            })
-            .map_err(|_| DenyReason::ConnectionQuota {
-                limit: self.max_connections,
-            })?;
-        Ok(ConnectionPermit(self.clone()))
+        self.permit(owner)
     }
 
-    /// Acquires a checked destination and releases its quota when ownership ends.
+    /// Checks a URL's destination and takes `owner`'s tenant and node permits,
+    /// which are released when the returned connection is dropped.
     pub(crate) async fn check_owned(
         self: &Arc<Self>,
         url: &str,
+        owner: &ConnectionOwner,
         reach: Reach<'_>,
     ) -> Result<CheckedConnection, EgressError> {
-        self.check_typed(url, reach)
-            .await
-            .map(|target| CheckedConnection {
-                target,
-                policy: self.clone(),
-            })
+        let target = self.check_url(url, reach).await?;
+        Ok(CheckedConnection {
+            target,
+            _permit: self.permit(owner)?,
+        })
     }
 
-    /// Creates an egress policy with a concurrent connection limit.
-    pub fn new(resolver: Box<dyn Resolver>, max_connections: u64) -> Self {
+    fn permit(self: &Arc<Self>, owner: &ConnectionOwner) -> Result<ConnectionPermit, DenyReason> {
+        Ok(ConnectionPermit {
+            holding: self.open.acquire(owner)?,
+            policy: self.clone(),
+        })
+    }
+
+    /// Creates an egress policy enforcing `limits`.
+    pub fn new(resolver: Box<dyn Resolver>, limits: ConnectionLimits) -> Self {
         Self {
             connections_factory: Arc::new(LocalConnections),
             resolver,
             destinations: Arc::new(PublicDestinations),
-            max_connections,
-            connections: AtomicU64::new(0),
+            open: quota::OpenConnections::new(limits),
+            pending: Arc::new(attempts::PendingConnections::new(
+                limits.ceilings().instance_pending,
+            )),
             resolutions: AtomicU64::new(0),
         }
     }
 
     /// Creates an egress policy using the system DNS resolver.
-    pub fn system(max_connections: u64) -> Result<Self, DnsError> {
-        Ok(Self::new(Box::new(SystemResolver::new()?), max_connections))
+    pub fn system(limits: ConnectionLimits) -> Result<Self, DnsError> {
+        Ok(Self::new(Box::new(SystemResolver::new()?), limits))
     }
 
     pub fn resolutions(&self) -> u64 {
         self.resolutions.load(Ordering::Relaxed)
     }
+
+    /// Open outbound connections on the node.
     pub fn connections(&self) -> u64 {
-        self.connections.load(Ordering::Relaxed)
+        self.open.node()
     }
-    pub fn release_connection(&self) {
-        self.connections
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
-                Some(v.saturating_sub(1))
-            })
-            .expect("the update closure in this function always returns Some");
+
+    /// Open outbound connections of `tenant`'s instances together.
+    pub fn tenant_connections(&self, tenant: &str) -> u64 {
+        self.open.tenant(tenant)
     }
 
     fn allowlisted(host: &str, allowlist: Option<&[String]>) -> bool {
@@ -409,11 +480,7 @@ impl HostEgressPolicy {
         })
     }
 
-    pub async fn check_typed(
-        &self,
-        url: &str,
-        reach: Reach<'_>,
-    ) -> Result<PinnedTarget, EgressError> {
+    async fn check_url(&self, url: &str, reach: Reach<'_>) -> Result<PinnedTarget, EgressError> {
         let parsed = parse_url(url)?;
         if !Self::allowlisted(&parsed.host, reach.allowlist) {
             return Err(DenyReason::NotAllowlisted(parsed.host).into());
@@ -428,18 +495,6 @@ impl HostEgressPolicy {
         for address in &addrs {
             self.authorize(*address, reach.exceptions)?;
         }
-        let taken = self
-            .connections
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
-                (v < self.max_connections).then_some(v + 1)
-            });
-        if taken.is_err() {
-            return Err(DenyReason::ConnectionQuota {
-                limit: self.max_connections,
-            }
-            .into());
-        }
-
         Ok(PinnedTarget {
             url: url.to_string(),
             addr: addrs[0],
@@ -504,7 +559,10 @@ mod tests {
     }
 
     fn policy(r: impl Resolver) -> HostEgressPolicy {
-        HostEgressPolicy::new(Box::new(r), 100)
+        HostEgressPolicy::new(
+            Box::new(r),
+            crate::egress::ConnectionLimits::uniform(100).expect("connection limits"),
+        )
     }
 
     struct CountingFailure(Arc<AtomicU64>);
@@ -584,7 +642,7 @@ mod tests {
         ] {
             let p = policy(Fixed(vec![sa(ip, 80)]));
             let err = p
-                .check_typed("http://target.example/", Reach::default())
+                .check_url("http://target.example/", Reach::default())
                 .await
                 .expect_err("a private address must be refused");
             assert!(
@@ -594,7 +652,7 @@ mod tests {
         }
         let p = policy(Fixed(vec![sa([93, 184, 216, 34], 80)]));
         assert!(
-            p.check_typed("http://example.com/", Reach::default())
+            p.check_url("http://example.com/", Reach::default())
                 .await
                 .is_ok(),
             "a public address is dialable"
@@ -607,7 +665,7 @@ mod tests {
             let ip: IpAddr = lit.trim_matches(['[', ']']).parse().expect("literal");
             let p = policy(Fixed(vec![SocketAddr::new(ip, 80)]));
             let err = p
-                .check_typed(&format!("http://{lit}/"), Reach::default())
+                .check_url(&format!("http://{lit}/"), Reach::default())
                 .await
                 .expect_err("a private v6 address must be refused");
             assert!(
@@ -624,7 +682,7 @@ mod tests {
             vec![sa([127, 0, 0, 1], 443)],
         ]));
         let pinned = p
-            .check_typed("https://rebind.example/", Reach::default())
+            .check_url("https://rebind.example/", Reach::default())
             .await
             .expect("the first answer is public");
         assert_eq!(
@@ -647,7 +705,7 @@ mod tests {
             sa([192, 168, 0, 5], 80),
         ]));
         let err = p
-            .check_typed("http://mixed.example/", Reach::default())
+            .check_url("http://mixed.example/", Reach::default())
             .await
             .expect_err("an answer with a private address must be refused");
         assert!(
@@ -662,7 +720,7 @@ mod tests {
         for url in ["file:///etc/passwd", "gopher://x/", "ftp://x/"] {
             assert!(
                 matches!(
-                    p.check_typed(url, Reach::default()).await,
+                    p.check_url(url, Reach::default()).await,
                     Err(EgressError::Denied(DenyReason::Scheme(_)))
                 ),
                 "{url} is not dialable"
@@ -670,7 +728,7 @@ mod tests {
         }
         assert!(
             matches!(
-                p.check_typed("http://user:pw@example.com/", Reach::default())
+                p.check_url("http://user:pw@example.com/", Reach::default())
                     .await,
                 Err(EgressError::Denied(DenyReason::Malformed(_)))
             ),
@@ -686,7 +744,7 @@ mod tests {
             ("::ffff:93.184.216.34", "93.184.216.34"),
         ] {
             let address = SocketAddr::new(destination.parse().expect("fixture IP"), 443);
-            let permit = policy.check_socket(address, only(&[allowed.to_owned()]));
+            let permit = policy.check_socket(address, &owner("a", 1), only(&[allowed.to_owned()]));
             assert!(permit.is_ok(), "numeric allowlist must admit its exact IPv4/mapped equivalent: {allowed} -> {destination}");
             drop(permit);
         }
@@ -697,7 +755,7 @@ mod tests {
             "64:ff9b::5db8:d822",
         ] {
             let address = SocketAddr::new(destination.parse().expect("fixture IP"), 443);
-            assert!(matches!(policy.check_socket(address, only(&["93.184.216.34".to_owned()])), Err(DenyReason::NotAllowlisted(_))),
+            assert!(matches!(policy.check_socket(address, &owner("a", 1), only(&["93.184.216.34".to_owned()])), Err(DenyReason::NotAllowlisted(_))),
                 "numeric equivalence must not authorize a different or merely embedded address: {destination}");
         }
         assert_eq!(
@@ -715,7 +773,7 @@ mod tests {
             .expect("fixture socket address");
         assert!(
             matches!(
-                policy.check_socket(destination, only(&["127.0.0.1".to_owned()])),
+                policy.check_socket(destination, &owner("a", 1), only(&["127.0.0.1".to_owned()])),
                 Err(DenyReason::PrivateAddress(_))
             ),
             "an equivalent numeric allowlist must not bypass the private destination policy"
@@ -732,25 +790,25 @@ mod tests {
         let p = policy(Fixed(vec![sa([93, 184, 216, 34], 443)]));
         let list = vec!["api.example.com".to_string(), "*.cdn.example".to_string()];
         assert!(
-            p.check_typed("https://api.example.com/x", only(&list))
+            p.check_url("https://api.example.com/x", only(&list))
                 .await
                 .is_ok(),
             "an exact entry matches"
         );
         assert!(
-            p.check_typed("https://a.cdn.example/x", only(&list))
+            p.check_url("https://a.cdn.example/x", only(&list))
                 .await
                 .is_ok(),
             "a wildcard matches a subdomain"
         );
         assert!(
-            p.check_typed("https://cdn.example/x", only(&list))
+            p.check_url("https://cdn.example/x", only(&list))
                 .await
                 .is_ok(),
             "a wildcard matches its bare suffix"
         );
         let err = p
-            .check_typed("https://evil.example/x", only(&list))
+            .check_url("https://evil.example/x", only(&list))
             .await
             .expect_err("a host off the list is refused");
         assert!(
@@ -758,51 +816,147 @@ mod tests {
             "the refusal names the host"
         );
         assert!(
-            p.check_typed("https://notcdn.example/x", only(&list))
+            p.check_url("https://notcdn.example/x", only(&list))
                 .await
                 .is_err(),
             "`*.cdn.example` is not a raw suffix match"
         );
     }
 
+    fn owner(tenant: &str, instance: u64) -> ConnectionOwner {
+        ConnectionOwner::new(tenant.into(), crate::InstanceId(instance)).expect("fixture owner")
+    }
+
+    fn limited(resolver: impl Resolver, node: u64, tenant: u64, pending: u64) -> HostEgressPolicy {
+        HostEgressPolicy::new(
+            Box::new(resolver),
+            ConnectionLimits::new(ConnectionCeilings {
+                node,
+                tenant,
+                instance_pending: pending,
+            })
+            .expect("fixture limits"),
+        )
+    }
+
+    fn refused(level: ConnectionLevel, tenant: &str, instance: u64, limit: u64) -> DenyReason {
+        DenyReason::ConnectionQuota {
+            level,
+            tenant: tenant.into(),
+            instance: crate::InstanceId(instance),
+            limit,
+        }
+    }
+
+    #[test]
+    fn one_tenant_at_its_limit_does_not_stop_another_until_the_node_is_full() {
+        let policy = Arc::new(limited(Fixed(vec![]), 3, 2, 1));
+        let peer = sa([93, 184, 216, 34], 443);
+        let first = policy
+            .check_socket(peer, &owner("a", 1), Reach::default())
+            .expect("the tenant's first connection");
+        let second = policy
+            .check_socket(peer, &owner("a", 2), Reach::default())
+            .expect("another instance of the tenant shares its limit");
+        assert_eq!(
+            policy
+                .check_socket(peer, &owner("a", 3), Reach::default())
+                .err(),
+            Some(refused(ConnectionLevel::Tenant, "a", 3, 2)),
+            "the tenant's third connection is over its limit"
+        );
+        assert_eq!(
+            (policy.connections(), policy.tenant_connections("a")),
+            (2, 2),
+            "a tenant refusal takes no node permit"
+        );
+        let other = policy
+            .check_socket(peer, &owner("b", 4), Reach::default())
+            .expect("a full tenant must not stop another tenant connecting");
+        assert_eq!(
+            policy
+                .check_socket(peer, &owner("c", 5), Reach::default())
+                .err(),
+            Some(refused(ConnectionLevel::Node, "c", 5, 3)),
+            "the node's limit still applies across tenants"
+        );
+        assert_eq!(
+            (policy.connections(), policy.tenant_connections("c")),
+            (3, 0),
+            "a node refusal takes no tenant permit"
+        );
+        drop(first);
+        assert_eq!(
+            (policy.connections(), policy.tenant_connections("a")),
+            (2, 1),
+            "releasing a socket returns its permit at every level"
+        );
+        let again = policy
+            .check_socket(peer, &owner("a", 3), Reach::default())
+            .expect("a released permit admits the tenant again");
+        drop((second, other, again));
+        assert_eq!(
+            (
+                policy.connections(),
+                policy.tenant_connections("a"),
+                policy.tenant_connections("b")
+            ),
+            (0, 0, 0),
+            "every permit is returned"
+        );
+    }
+
     #[tokio::test]
-    async fn connection_quota_is_per_tenant_and_released() {
-        let p = HostEgressPolicy::new(Box::new(Fixed(vec![sa([93, 184, 216, 34], 80)])), 2);
-        assert!(
-            p.check_typed("http://a.example/", Reach::default())
-                .await
-                .is_ok(),
-            "the first connection"
-        );
-        assert!(
-            p.check_typed("http://a.example/", Reach::default())
-                .await
-                .is_ok(),
-            "the second connection"
-        );
+    async fn checked_urls_take_and_return_permits_at_every_level() {
+        let policy = Arc::new(limited(Fixed(vec![sa([93, 184, 216, 34], 80)]), 2, 1, 1));
+        let held = policy
+            .check_owned("http://a.example/", &owner("a", 1), Reach::default())
+            .await
+            .expect("the first connection");
         assert!(
             matches!(
-                p.check_typed("http://a.example/", Reach::default()).await,
-                Err(EgressError::Denied(DenyReason::ConnectionQuota {
-                    limit: 2
-                }))
+                policy.check_owned("http://a.example/", &owner("a", 1), Reach::default()).await,
+                Err(EgressError::Denied(reason)) if reason == refused(ConnectionLevel::Tenant, "a", 1, 1)
             ),
-            "the third is over the quota"
+            "the tenant's second connection is over its limit"
         );
-        p.release_connection();
+        let other = policy
+            .check_owned("http://a.example/", &owner("b", 2), Reach::default())
+            .await
+            .expect("another tenant connects");
         assert!(
-            p.check_typed("http://a.example/", Reach::default())
-                .await
-                .is_ok(),
-            "a released connection frees the slot"
+            matches!(
+                policy.check_owned("http://a.example/", &owner("c", 3), Reach::default()).await,
+                Err(EgressError::Denied(reason)) if reason == refused(ConnectionLevel::Node, "c", 3, 2)
+            ),
+            "the node is full"
+        );
+        drop((held, other));
+        assert_eq!(
+            policy.connections(),
+            0,
+            "dropped connections return their permits"
+        );
+        assert_eq!(policy.tenant_connections("a"), 0);
+    }
+
+    #[test]
+    fn refusals_name_their_level_tenant_instance_and_limit() {
+        assert_eq!(
+            refused(ConnectionLevel::Tenant, "acme", 7, 2).to_string(),
+            "tenant `acme` already holds its limit of 2 open outbound connections; instance i7 was refused another"
+        );
+        assert_eq!(
+            refused(ConnectionLevel::Node, "acme", 7, 64).to_string(),
+            "the node already holds its limit of 64 open outbound connections; instance i7 of tenant `acme` was refused another"
         );
     }
 
     #[tokio::test]
     async fn a_denied_target_does_not_burn_quota() {
-        let p = HostEgressPolicy::new(Box::new(Fixed(vec![sa([10, 0, 0, 1], 80)])), 1);
+        let p = Arc::new(limited(Fixed(vec![sa([10, 0, 0, 1], 80)]), 1, 1, 1));
         assert!(
-            p.check_typed("http://internal/", Reach::default())
+            p.check_owned("http://internal/", &owner("a", 1), Reach::default())
                 .await
                 .is_err(),
             "the target is private"
@@ -812,12 +966,9 @@ mod tests {
 
     #[tokio::test]
     async fn cancelling_a_checked_connection_releases_its_quota() {
-        let policy = Arc::new(HostEgressPolicy::new(
-            Box::new(Fixed(vec![sa([93, 184, 216, 34], 80)])),
-            1,
-        ));
+        let policy = Arc::new(limited(Fixed(vec![sa([93, 184, 216, 34], 80)]), 1, 1, 1));
         let connection = policy
-            .check_owned("http://example.test/", Reach::default())
+            .check_owned("http://example.test/", &owner("a", 1), Reach::default())
             .await
             .expect("the public destination must acquire connection quota");
         let (started, running) = tokio::sync::oneshot::channel();
@@ -830,8 +981,8 @@ mod tests {
         });
         running.await.expect("the connection task must start");
         assert_eq!(
-            policy.connections(),
-            1,
+            (policy.connections(), policy.tenant_connections("a")),
+            (1, 1),
             "the live connection must hold its quota"
         );
         task.abort();
@@ -841,9 +992,101 @@ mod tests {
             "connection cancellation must not panic"
         );
         assert_eq!(
-            policy.connections(),
-            0,
-            "cancellation must release the connection quota"
+            (policy.connections(), policy.tenant_connections("a")),
+            (0, 0),
+            "cancellation must release the connection quota at every level"
+        );
+    }
+
+    /// Holds each connect until the test opens its gate, announcing it in arrival order.
+    struct Gated(tokio::sync::mpsc::UnboundedSender<tokio::sync::oneshot::Sender<()>>);
+
+    #[async_trait::async_trait]
+    impl ConnectionFactory for Gated {
+        async fn connect(
+            &self,
+            _: &ConnectionOwner,
+            destination: SocketAddr,
+        ) -> std::io::Result<tokio::net::TcpStream> {
+            let (open, gate) = tokio::sync::oneshot::channel();
+            self.0.send(open).map_err(std::io::Error::other)?;
+            gate.await.map_err(std::io::Error::other)?;
+            tokio::net::TcpStream::connect(destination).await
+        }
+    }
+
+    fn poll_once<F: std::future::Future>(
+        future: std::pin::Pin<&mut F>,
+    ) -> std::task::Poll<F::Output> {
+        future.poll(&mut std::task::Context::from_waker(std::task::Waker::noop()))
+    }
+
+    async fn open(
+        policy: Arc<HostEgressPolicy>,
+        owner: ConnectionOwner,
+        destination: SocketAddr,
+    ) -> Result<tokio::net::TcpStream, ConnectionError> {
+        let attempt = policy.begin_connect(owner).await?;
+        attempt.connect(destination).await
+    }
+
+    #[tokio::test]
+    async fn an_attempt_beyond_the_pending_limit_waits_for_one_to_finish() {
+        let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("loopback peer");
+        let peer = listener.local_addr().expect("peer address");
+        let (arrivals, mut arrived) = tokio::sync::mpsc::unbounded_channel();
+        let policy = Arc::new(
+            limited(Fixed(vec![]), 16, 16, 6)
+                .with_connections(Arc::new(Gated(arrivals)))
+                .with_destinations(Arc::new(LocalDevelopmentDestinations)),
+        );
+        let mut attempts: Vec<_> = (0..7)
+            .map(|_| Box::pin(open(policy.clone(), owner("a", 1), peer)))
+            .collect();
+        for attempt in &mut attempts {
+            assert!(poll_once(attempt.as_mut()).is_pending());
+        }
+        let mut gates: Vec<_> = (0..6)
+            .map(|index| {
+                arrived
+                    .try_recv()
+                    .unwrap_or_else(|_| panic!("attempt {index} is in progress"))
+            })
+            .collect();
+        assert!(
+            arrived.try_recv().is_err(),
+            "the seventh attempt waits instead of connecting"
+        );
+        let mut other = Box::pin(open(policy.clone(), owner("a", 2), peer));
+        assert!(poll_once(other.as_mut()).is_pending());
+        let other_gate = arrived
+            .try_recv()
+            .expect("another instance's attempt is not queued behind this one's");
+        gates
+            .remove(0)
+            .send(())
+            .expect("the first attempt waits at its gate");
+        let first = attempts.remove(0);
+        let first = first.await.expect("the first attempt connects");
+        assert!(poll_once(attempts[5].as_mut()).is_pending());
+        let seventh_gate = arrived
+            .try_recv()
+            .expect("a finished attempt lets the seventh start");
+        let mut established = vec![first];
+        for gate in gates.into_iter().chain([seventh_gate, other_gate]) {
+            gate.send(()).expect("an attempt waits at its gate");
+        }
+        for attempt in attempts.into_iter().chain([other]) {
+            established.push(attempt.await.expect("every queued attempt connects"));
+        }
+        let mut next = Box::pin(open(policy.clone(), owner("a", 1), peer));
+        assert!(poll_once(next.as_mut()).is_pending());
+        assert!(
+            arrived.try_recv().is_ok(),
+            "established connections stop counting, so {} of them do not delay a new attempt",
+            established.len()
         );
     }
 

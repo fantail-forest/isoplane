@@ -287,6 +287,9 @@ pub enum ConfigError {
     ZeroResponseQueue,
     #[error("invalid host settings: {0}")]
     InvalidHost(String),
+    #[cfg(feature = "real-backends")]
+    #[error("invalid [network] connection limits: {0}")]
+    InvalidNetwork(isoplane_host::egress::ConnectionLimitsError),
     #[error(transparent)]
     Trust(#[from] crate::trust::TrustError),
 }
@@ -366,6 +369,19 @@ impl NodeConfig {
         self.trust_bundle().map(drop)
     }
 
+    /// The `[network]` connection limits the node's egress policy enforces.
+    #[cfg(feature = "real-backends")]
+    pub fn connection_limits(
+        &self,
+    ) -> Result<isoplane_host::egress::ConnectionLimits, ConfigError> {
+        isoplane_host::egress::ConnectionLimits::new(isoplane_host::egress::ConnectionCeilings {
+            node: self.network.connections,
+            tenant: self.network.tenant_connections,
+            instance_pending: self.network.instance_pending_connections,
+        })
+        .map_err(ConfigError::InvalidNetwork)
+    }
+
     /// The verified root bundle this node serves to guests.
     pub fn trust_bundle(&self) -> Result<crate::trust::TrustBundle, ConfigError> {
         Ok(crate::trust::TrustBundle::load(&self.trust)?)
@@ -376,6 +392,8 @@ impl NodeConfig {
         self.host
             .validate()
             .map_err(|error| ConfigError::InvalidHost(error.to_string()))?;
+        #[cfg(feature = "real-backends")]
+        self.connection_limits()?;
         if self.cells.is_empty() {
             return Err(ConfigError::NoCells);
         }
@@ -446,7 +464,9 @@ name = "cell-1"
         config.host.guest_resources.native_handles = 2;
         config.host.guest_resources.log_bytes_per_dispatch = 7;
         config.host.queue_depth_per_worker = 3;
-        config.network.connections = 2;
+        config.network.connections = 4;
+        config.network.tenant_connections = 3;
+        config.network.instance_pending_connections = 2;
         config.host.wall_ms_cap = 60_000;
         let encoded = toml::to_string(&config).expect("the node prints its merged configuration");
         let restored = NodeConfig::from_toml(&encoded).expect("the printed configuration loads");
@@ -463,13 +483,55 @@ name = "cell-1"
             "the printed configuration must preserve queue budget"
         );
         assert_eq!(
-            restored.network.connections, 2,
-            "the printed configuration must preserve connection budget"
+            (
+                restored.network.connections,
+                restored.network.tenant_connections,
+                restored.network.instance_pending_connections
+            ),
+            (4, 3, 2),
+            "the printed configuration must preserve connection budgets"
         );
         assert_eq!(
             restored.host.wall_ms_cap, 60_000,
             "the printed configuration must preserve the dispatch wall limit"
         );
+    }
+
+    #[cfg(feature = "real-backends")]
+    #[test]
+    fn network_connection_limits_are_validated_before_startup() {
+        use isoplane_host::egress::{ConnectionLimit, ConnectionLimitProblem};
+        let mut config = NodeConfig::dev_default();
+        config.network = toml::from_str(
+            "connections = 8\ntenant_connections = 9\ninstance_pending_connections = 0",
+        )
+        .expect("the limits parse");
+        let Err(ConfigError::InvalidNetwork(error)) = config.validate_placement() else {
+            panic!("out-of-range connection limits must fail startup validation");
+        };
+        assert_eq!(
+            error.problems,
+            vec![
+                ConnectionLimitProblem::AboveContainer {
+                    limit: ConnectionLimit::Tenant,
+                    value: 9,
+                    container: ConnectionLimit::Node,
+                    maximum: 8
+                },
+                ConnectionLimitProblem::Zero {
+                    limit: ConnectionLimit::InstancePending
+                },
+            ],
+            "every out-of-range limit is reported together"
+        );
+        config.network.tenant_connections = 8;
+        config.network.instance_pending_connections = 8;
+        config
+            .validate_placement()
+            .expect("limits at the edges of their range are accepted");
+        NodeConfig::dev_default()
+            .validate_placement()
+            .expect("the default limits are valid");
     }
 
     #[cfg(feature = "real-backends")]

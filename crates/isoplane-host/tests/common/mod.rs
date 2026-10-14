@@ -34,7 +34,7 @@ pub fn services_resolving(addr: &str) -> (Arc<Services>, Arc<FakeFetcher>) {
     let fetcher = Arc::new(FakeFetcher::default());
     let egress = Arc::new(HostEgressPolicy::new(
         Box::new(Fixed(vec![addr.parse().expect("a literal address")])),
-        1024,
+        isoplane_host::egress::ConnectionLimits::uniform(1024).expect("connection limits"),
     ));
     let svc = Arc::new(Services {
         egress,

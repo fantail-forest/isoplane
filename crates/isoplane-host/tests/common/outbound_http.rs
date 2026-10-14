@@ -106,8 +106,11 @@ impl Server {
 
 pub fn services(address: SocketAddr) -> Arc<Services> {
     let policy = Arc::new(
-        HostEgressPolicy::new(Box::new(Endpoint(address)), 1)
-            .with_destinations(Arc::new(Endpoint(address))),
+        HostEgressPolicy::new(
+            Box::new(Endpoint(address)),
+            isoplane_host::egress::ConnectionLimits::uniform(1).expect("connection limits"),
+        )
+        .with_destinations(Arc::new(Endpoint(address))),
     );
     Arc::new(Services {
         fetcher: Arc::new(PinnedHttpFetcher::new(policy.clone(), 0)),

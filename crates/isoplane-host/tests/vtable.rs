@@ -54,7 +54,10 @@ fn vtable_with_resolver(
     allowlist: Option<Vec<String>>,
 ) -> Vt {
     let fetcher = Arc::new(FakeFetcher::default());
-    let egress = Arc::new(HostEgressPolicy::new(resolver, 1024));
+    let egress = Arc::new(HostEgressPolicy::new(
+        resolver,
+        isoplane_host::egress::ConnectionLimits::uniform(1024).expect("connection limits"),
+    ));
     let services = Arc::new(Services {
         egress,
         fetcher: fetcher.clone(),

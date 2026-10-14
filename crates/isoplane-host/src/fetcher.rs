@@ -45,19 +45,22 @@ impl PinnedHttpFetcher {
         addr: SocketAddr,
         req: Request<Full<Bytes>>,
     ) -> Result<(Response<Incoming>, ConnectionTask), FutureError> {
-        let stream = self
+        let connect_failure = |error| match error {
+            crate::egress::ConnectionError::Denied(reason) => {
+                FutureError::Denied(reason.to_string())
+            }
+            failure @ (crate::egress::ConnectionError::Io(_)
+            | crate::egress::ConnectionError::PeerMismatch { .. }) => {
+                FutureError::Io(format!("connect {addr}: {failure}"))
+            }
+        };
+        // In progress until the response headers arrive, which is when this returns.
+        let attempt = self
             .egress
-            .connect(owner, addr)
+            .begin_connect(owner.clone())
             .await
-            .map_err(|error| match error {
-                crate::egress::ConnectionError::Denied(reason) => {
-                    FutureError::Denied(reason.to_string())
-                }
-                failure @ (crate::egress::ConnectionError::Io(_)
-                | crate::egress::ConnectionError::PeerMismatch { .. }) => {
-                    FutureError::Io(format!("connect {addr}: {failure}"))
-                }
-            })?;
+            .map_err(connect_failure)?;
+        let stream = attempt.connect(addr).await.map_err(connect_failure)?;
         let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
             .await
             .map_err(|e| FutureError::Io(format!("handshake: {e}")))?;
@@ -196,6 +199,7 @@ impl ResponseBody for IncomingBody {
 mod tests {
     use super::*;
     use crate::egress::{ConnectionFactory, DnsError, Resolver};
+    use std::future::Future;
 
     struct NoNetwork;
 
@@ -219,8 +223,11 @@ mod tests {
 
     #[tokio::test]
     async fn legacy_https_fetch_is_refused_before_any_host_tls_or_connection() {
-        let egress =
-            HostEgressPolicy::new(Box::new(NoNetwork), 8).with_connections(Arc::new(NoNetwork));
+        let egress = HostEgressPolicy::new(
+            Box::new(NoNetwork),
+            crate::egress::ConnectionLimits::uniform(8).expect("connection limits"),
+        )
+        .with_connections(Arc::new(NoNetwork));
         let fetcher = PinnedHttpFetcher::new(Arc::new(egress), INLINE_BODY_LIMIT);
         let url = "https://public.example/".to_string();
         let result = fetcher
@@ -295,8 +302,11 @@ mod tests {
                 .await
                 .expect("the peer HTTP exchange");
         });
-        let egress = HostEgressPolicy::new(Box::new(NoNetwork), 8)
-            .with_destinations(Arc::new(OnlyPeer(address)));
+        let egress = HostEgressPolicy::new(
+            Box::new(NoNetwork),
+            crate::egress::ConnectionLimits::uniform(8).expect("connection limits"),
+        )
+        .with_destinations(Arc::new(OnlyPeer(address)));
         let fetcher = PinnedHttpFetcher::new(Arc::new(egress), INLINE_BODY_LIMIT);
         let url = format!("http://pinned.example:{}/echo?x=1", address.port());
         let response = fetcher
@@ -322,5 +332,106 @@ mod tests {
             "the small response must be returned intact"
         );
         peer.await.expect("the peer task completes cleanly");
+    }
+
+    /// A response body that never ends, so its connection stays open.
+    struct Endless;
+
+    impl hyper::body::Body for Endless {
+        type Data = Bytes;
+        type Error = std::convert::Infallible;
+
+        fn poll_frame(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Option<Result<hyper::body::Frame<Bytes>, Self::Error>>> {
+            std::task::Poll::Pending
+        }
+    }
+
+    #[tokio::test]
+    async fn a_fetch_is_in_progress_until_its_response_headers_arrive() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("local peer");
+        let address = listener.local_addr().expect("the peer endpoint");
+        let (received, request_arrived) = tokio::sync::oneshot::channel();
+        let (respond, respond_gate) = tokio::sync::oneshot::channel::<()>();
+        let peer = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("the pinned connection");
+            let signals = std::sync::Mutex::new(Some((received, respond_gate)));
+            let service = hyper::service::service_fn(move |_: Request<Incoming>| {
+                let signals = signals.lock().expect("signals").take();
+                async move {
+                    let (received, respond_gate) = signals.expect("one request");
+                    received.send(()).expect("the test awaits the request");
+                    respond_gate.await.expect("the test releases the headers");
+                    Ok::<_, std::convert::Infallible>(Response::new(Endless))
+                }
+            });
+            hyper::server::conn::http1::Builder::new()
+                .serve_connection(TokioIo::new(stream), service)
+                .await
+        });
+        let egress = Arc::new(
+            HostEgressPolicy::new(
+                Box::new(NoNetwork),
+                crate::egress::ConnectionLimits::new(crate::egress::ConnectionCeilings {
+                    node: 8,
+                    tenant: 8,
+                    instance_pending: 1,
+                })
+                .expect("connection limits"),
+            )
+            .with_destinations(Arc::new(OnlyPeer(address))),
+        );
+        let fetcher = Arc::new(PinnedHttpFetcher::new(egress.clone(), INLINE_BODY_LIMIT));
+        let owner = ConnectionOwner::new("tenant".into(), crate::InstanceId(1)).expect("owner");
+        let url = format!("http://pinned.example:{}/", address.port());
+        let fetch = tokio::spawn({
+            let (fetcher, owner) = (fetcher.clone(), owner.clone());
+            async move {
+                fetcher
+                    .fetch(
+                        owner,
+                        PinnedTarget {
+                            url: url.clone(),
+                            addr: address,
+                        },
+                        FetchRequest {
+                            method: "GET".into(),
+                            url,
+                            headers: vec![],
+                            body: vec![],
+                        },
+                    )
+                    .await
+            }
+        });
+        request_arrived.await.expect("the request reaches the peer");
+        let mut waiting = Box::pin(egress.begin_connect(owner.clone()));
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        assert!(
+            waiting.as_mut().poll(&mut context).is_pending(),
+            "a fetch awaiting its response headers holds the instance's only slot"
+        );
+        respond.send(()).expect("the peer awaits the release");
+        let response = fetch
+            .await
+            .expect("the fetch task")
+            .expect("the fetch returns once headers arrive");
+        assert!(
+            matches!(response.body, OutboundBody::Stream(_)),
+            "the response body is still open"
+        );
+        assert!(
+            matches!(
+                waiting.as_mut().poll(&mut context),
+                std::task::Poll::Ready(Ok(_))
+            ),
+            "the attempt ends at the headers, while its connection stays open"
+        );
+        drop(response);
+        peer.abort();
     }
 }

@@ -74,9 +74,12 @@ async fn http_uses_the_injected_connection_provider_with_dispatch_identity() {
     });
     let connections = Arc::new(RecordingConnections::default());
     let policy = Arc::new(
-        HostEgressPolicy::new(Box::new(NoDns), 1)
-            .with_destinations(Arc::new(ExactPeer(address)))
-            .with_connections(connections.clone()),
+        HostEgressPolicy::new(
+            Box::new(NoDns),
+            isoplane_host::egress::ConnectionLimits::uniform(1).expect("connection limits"),
+        )
+        .with_destinations(Arc::new(ExactPeer(address)))
+        .with_connections(connections.clone()),
     );
     let fetcher = PinnedHttpFetcher::new(policy, 1024);
     let response = tokio::time::timeout(
@@ -115,7 +118,13 @@ async fn http_refuses_a_connection_provider_that_returns_a_different_peer() {
         substitute: Some(wrong),
         ..Default::default()
     });
-    let policy = Arc::new(HostEgressPolicy::new(Box::new(NoDns), 1).with_connections(connections));
+    let policy = Arc::new(
+        HostEgressPolicy::new(
+            Box::new(NoDns),
+            isoplane_host::egress::ConnectionLimits::uniform(1).expect("connection limits"),
+        )
+        .with_connections(connections),
+    );
     let fetcher = PinnedHttpFetcher::new(policy, 1024);
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(60),
@@ -144,8 +153,13 @@ async fn http_refuses_a_connection_provider_that_returns_a_different_peer() {
 #[tokio::test]
 async fn http_denies_a_private_destination_before_invoking_the_connection_provider() {
     let connections = Arc::new(RecordingConnections::default());
-    let policy =
-        Arc::new(HostEgressPolicy::new(Box::new(NoDns), 1).with_connections(connections.clone()));
+    let policy = Arc::new(
+        HostEgressPolicy::new(
+            Box::new(NoDns),
+            isoplane_host::egress::ConnectionLimits::uniform(1).expect("connection limits"),
+        )
+        .with_connections(connections.clone()),
+    );
     let fetcher = PinnedHttpFetcher::new(policy, 1024);
     let result = fetcher
         .fetch(
@@ -203,7 +217,11 @@ async fn streamed_response(
             .expect("the response server must complete");
     });
     let policy = Arc::new(
-        HostEgressPolicy::new(Box::new(NoDns), 1).with_destinations(Arc::new(ExactPeer(address))),
+        HostEgressPolicy::new(
+            Box::new(NoDns),
+            isoplane_host::egress::ConnectionLimits::uniform(1).expect("connection limits"),
+        )
+        .with_destinations(Arc::new(ExactPeer(address))),
     );
     let fetcher = PinnedHttpFetcher::new(policy, 0);
     let mut req = request();

@@ -142,12 +142,18 @@ mod tests {
         let stream = Arc::new(TcpStream::connect(remote).await.unwrap());
         let (accepted, local) = listener.accept().await.unwrap();
         let policy = Arc::new(
-            crate::egress::HostEgressPolicy::system(1)
-                .unwrap()
-                .with_destinations(Arc::new(EndpointPeer(remote))),
+            crate::egress::HostEgressPolicy::system(
+                crate::egress::ConnectionLimits::uniform(1).expect("connection limits"),
+            )
+            .unwrap()
+            .with_destinations(Arc::new(EndpointPeer(remote))),
         );
         let permit = policy
-            .check_socket(remote, crate::egress::Reach::default())
+            .check_socket(
+                remote,
+                &crate::egress::ConnectionOwner::new("tenant".into(), InstanceId(1)).unwrap(),
+                crate::egress::Reach::default(),
+            )
             .unwrap();
         let (mut resources, bindings) = resources(1);
         let socket = resources
@@ -1375,6 +1381,7 @@ impl Resources {
         let permit = policy
             .check_socket(
                 destination,
+                &owner,
                 crate::egress::Reach {
                     allowlist: if self.has_resolved_address(destination.ip()) {
                         None
@@ -1395,7 +1402,10 @@ impl Resources {
         let instance = bindings.instance();
         let task = runtime.spawn(async move {
             let result = async {
-                let stream = policy.connect(&owner, destination).await.map_err(Error::from)?;
+                // In progress, behind the instance's earlier attempts, until the
+                // connection is established or fails.
+                let attempt = policy.begin_connect(owner).await.map_err(Error::from)?;
+                let stream = attempt.connect(destination).await.map_err(Error::from)?;
                 Ok(Connection {
                     stream: Arc::new(stream),
                     _permit: permit,

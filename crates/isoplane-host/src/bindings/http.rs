@@ -113,6 +113,7 @@ impl CellBindings {
                 .egress
                 .check_owned(
                     &req.url,
+                    &owner,
                     crate::egress::Reach {
                         allowlist: allowlist.as_deref(),
                         exceptions: &exceptions,

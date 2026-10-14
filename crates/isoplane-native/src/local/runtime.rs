@@ -329,7 +329,14 @@ impl LocalApp {
         configuration: isoplane_host::bindings::RuntimeConfiguration,
     ) -> anyhow::Result<Arc<Self>> {
         let network = isoplane_runtime::network::NetworkLimits::default();
-        let egress = isoplane_host::HostEgressPolicy::system(network.connections)?;
+        let limits = isoplane_host::egress::ConnectionLimits::new(
+            isoplane_host::egress::ConnectionCeilings {
+                node: network.connections,
+                tenant: network.tenant_connections,
+                instance_pending: network.instance_pending_connections,
+            },
+        )?;
+        let egress = isoplane_host::HostEgressPolicy::system(limits)?;
         let egress = egress.with_destinations(Arc::new(
             isoplane_host::egress::LocalDevelopmentDestinations,
         ));

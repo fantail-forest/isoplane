@@ -2,8 +2,8 @@
 
 use isoplane_host::bindings::{PreparationIo, PreparationIoConfig};
 use isoplane_host::egress::{
-    AdditionalDestinations, ConnectionOwner, DestinationPolicy, HostEgressPolicy,
-    LocalDevelopmentDestinations, PublicDestinations,
+    AdditionalDestinations, ConnectionCeilings, ConnectionLimits, ConnectionOwner,
+    DestinationPolicy, HostEgressPolicy, LocalDevelopmentDestinations, PublicDestinations,
 };
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
@@ -54,7 +54,13 @@ impl InitializationNetwork {
     ) -> Result<PreparationIo, crate::PrepareError> {
         let owner = ConnectionOwner::new(self.tenant.clone(), isoplane_host::InstanceId(1))
             .map_err(|error| crate::PrepareError::State(error.into()))?;
-        let egress = HostEgressPolicy::system(self.limits.connections)
+        let limits = ConnectionLimits::new(ConnectionCeilings {
+            node: self.limits.connections,
+            tenant: self.limits.tenant_connections,
+            instance_pending: self.limits.instance_pending_connections,
+        })
+        .map_err(|error| crate::PrepareError::State(error.into()))?;
+        let egress = HostEgressPolicy::system(limits)
             .map_err(|error| crate::PrepareError::State(error.into()))?
             .with_destinations(self.destinations.policy());
         Ok(PreparationIo::new(
