@@ -17,7 +17,8 @@ use isoplane_hibernate::snapshot::{
 };
 use isoplane_host::cell::{Cell, CellConfig, DispatchResult, ReclaimKind, Services, Target};
 use isoplane_host::egress::{
-    ConnectionFactory, ConnectionOwner, DestinationPolicy, HostEgressPolicy, LocalConnections,
+    ConnectAttempt, ConnectionError, ConnectionFactory, ConnectionOwner, DenyReason,
+    DestinationPolicy, HostEgressPolicy, LocalConnections,
 };
 use isoplane_host::fakes::FakeFetcher;
 use isoplane_host::{EngineActivator, InstanceId, LifecycleTier, ModuleId, Resolver};
@@ -342,6 +343,22 @@ fn growing_to_the_memory_ceiling_preserves_the_final_page_through_local_reclamat
     );
 }
 
+/// Begins a connection for `instance`, which must be admitted or refused without waiting.
+fn begin_now(
+    policy: &Arc<HostEgressPolicy>,
+    instance: InstanceId,
+) -> Result<ConnectAttempt, ConnectionError> {
+    let owner = ConnectionOwner::new("snapshot-test".into(), instance).expect("fixture owner");
+    let mut attempt = std::pin::pin!(policy.begin_connect(owner));
+    match std::future::Future::poll(
+        attempt.as_mut(),
+        &mut std::task::Context::from_waker(std::task::Waker::noop()),
+    ) {
+        std::task::Poll::Ready(result) => result,
+        std::task::Poll::Pending => panic!("instance {instance} has no connection in progress"),
+    }
+}
+
 fn managed_stream_snapshot(runtime: GuestRuntime) {
     isoplane_harness::LogCapture::global();
     let GuestRuntime::Mono = runtime;
@@ -402,9 +419,9 @@ fn managed_stream_snapshot(runtime: GuestRuntime) {
     );
     let read_futures = rig.cell.futures().live_guest_future_ids();
     assert_eq!(
-        policy.connections(),
+        policy.instance_connections(instance),
         1,
-        "pending read must retain its real socket quota"
+        "pending read must retain its real socket's open permit"
     );
     rig.reclaim(instance, ReclaimKind::Active);
     assert_eq!(
@@ -413,9 +430,27 @@ fn managed_stream_snapshot(runtime: GuestRuntime) {
         "local capture must retain the pending native read in its original host table"
     );
     assert_eq!(
-        policy.connections(),
+        policy.instance_connections(instance),
         1,
-        "destroying the Store must retain its host-owned socket"
+        "the hibernated instance's host-owned socket must stay open and keep counting"
+    );
+    assert!(
+        matches!(
+            begin_now(&policy, instance),
+            Err(ConnectionError::Denied(DenyReason::OpenConnectionLimit { instance: refused, limit: 1, .. }))
+                if refused == instance
+        ),
+        "the hibernated instance is still at its open connection limit"
+    );
+    let other = InstanceId::alloc();
+    assert!(
+        begin_now(&policy, other).is_ok(),
+        "another instance is not limited by the hibernated instance's connections"
+    );
+    assert_eq!(
+        policy.instance_connections(other),
+        0,
+        "the other instance's dropped attempt returns its permit"
     );
     server
         .write_all(b"ping")
@@ -451,7 +486,10 @@ fn managed_stream_snapshot(runtime: GuestRuntime) {
         "managed socket disposal must close the retained host descriptor"
     );
     wait_until(
-        || policy.connections() == 0 && rig.cell.futures().live_guest_future_ids().is_empty(),
+        || {
+            policy.instance_connections(instance) == 0
+                && rig.cell.futures().live_guest_future_ids().is_empty()
+        },
         "terminal completion must release native connection quota and pending work",
     );
     assert_eq!(

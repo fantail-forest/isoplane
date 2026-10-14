@@ -5,7 +5,8 @@ mod connection_factory;
 use connection_factory::RecordingConnections;
 use isoplane_host::bindings::{Fetcher, OutboundBody, ResponseBody};
 use isoplane_host::egress::{
-    ConnectionOwner, DenyReason, DestinationPolicy, DnsError, HostEgressPolicy, Resolver,
+    ConnectAttempt, ConnectionOwner, DenyReason, DestinationPolicy, DnsError, HostEgressPolicy,
+    Resolver,
 };
 use isoplane_host::{InstanceId, PinnedHttpFetcher};
 use std::net::SocketAddr;
@@ -46,6 +47,12 @@ fn owner() -> ConnectionOwner {
     ConnectionOwner::new("factory-tenant".into(), InstanceId(91))
         .expect("the test has an explicit tenant")
 }
+async fn attempt(policy: &Arc<HostEgressPolicy>) -> ConnectAttempt {
+    policy
+        .begin_connect(owner())
+        .await
+        .expect("the instance may start a connection")
+}
 
 #[tokio::test]
 async fn http_uses_the_injected_connection_provider_with_dispatch_identity() {
@@ -81,10 +88,10 @@ async fn http_uses_the_injected_connection_provider_with_dispatch_identity() {
         .with_destinations(Arc::new(ExactPeer(address)))
         .with_connections(connections.clone()),
     );
-    let fetcher = PinnedHttpFetcher::new(policy, 1024);
+    let fetcher = PinnedHttpFetcher::new(1024);
     let response = tokio::time::timeout(
         std::time::Duration::from_secs(60),
-        fetcher.fetch(owner(), target(address), request()),
+        fetcher.fetch(attempt(&policy).await, target(address), request()),
     )
     .await
     .expect("the owned HTTP request must finish before its test deadline")
@@ -125,10 +132,10 @@ async fn http_refuses_a_connection_provider_that_returns_a_different_peer() {
         )
         .with_connections(connections),
     );
-    let fetcher = PinnedHttpFetcher::new(policy, 1024);
+    let fetcher = PinnedHttpFetcher::new(1024);
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(60),
-        fetcher.fetch(owner(), target(expected), request()),
+        fetcher.fetch(attempt(&policy).await, target(expected), request()),
     )
     .await
     .expect("a substituted connection must be refused before the test deadline");
@@ -160,10 +167,10 @@ async fn http_denies_a_private_destination_before_invoking_the_connection_provid
         )
         .with_connections(connections.clone()),
     );
-    let fetcher = PinnedHttpFetcher::new(policy, 1024);
+    let fetcher = PinnedHttpFetcher::new(1024);
     let result = fetcher
         .fetch(
-            owner(),
+            attempt(&policy).await,
             target(SocketAddr::from(([127, 0, 0, 1], 1))),
             request(),
         )
@@ -223,11 +230,11 @@ async fn streamed_response(
         )
         .with_destinations(Arc::new(ExactPeer(address))),
     );
-    let fetcher = PinnedHttpFetcher::new(policy, 0);
+    let fetcher = PinnedHttpFetcher::new(0);
     let mut req = request();
     req.headers.push(("te".into(), "trailers".into()));
     let response = fetcher
-        .fetch(owner(), target(address), req)
+        .fetch(attempt(&policy).await, target(address), req)
         .await
         .expect("the response must start");
     let OutboundBody::Stream(body) = response.body else {

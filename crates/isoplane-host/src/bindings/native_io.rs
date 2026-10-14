@@ -139,8 +139,6 @@ mod tests {
             .await
             .unwrap();
         let remote = listener.local_addr().unwrap();
-        let stream = Arc::new(TcpStream::connect(remote).await.unwrap());
-        let (accepted, local) = listener.accept().await.unwrap();
         let policy = Arc::new(
             crate::egress::HostEgressPolicy::system(
                 crate::egress::ConnectionLimits::uniform(1).expect("connection limits"),
@@ -148,13 +146,15 @@ mod tests {
             .unwrap()
             .with_destinations(Arc::new(EndpointPeer(remote))),
         );
-        let permit = policy
-            .check_socket(
-                remote,
-                &crate::egress::ConnectionOwner::new("tenant".into(), InstanceId(1)).unwrap(),
-                crate::egress::Reach::default(),
+        let attempt = policy
+            .begin_connect(
+                crate::egress::ConnectionOwner::new("tenant".into(), InstanceId(1)).unwrap(),
             )
+            .await
             .unwrap();
+        let stream = Arc::new(attempt.connect(remote).await.unwrap());
+        let permit = attempt.established();
+        let (accepted, local) = listener.accept().await.unwrap();
         let (mut resources, bindings) = resources(1);
         let socket = resources
             .insert(Resource::Socket(Socket {
@@ -1378,10 +1378,9 @@ impl Resources {
         let policy = runtime.egress.clone();
         let owner = bindings.connection_owner().map_err(Error::from)?;
         let reach = bindings.reach();
-        let permit = policy
+        policy
             .check_socket(
                 destination,
-                &owner,
                 crate::egress::Reach {
                     allowlist: if self.has_resolved_address(destination.ip()) {
                         None
@@ -1408,7 +1407,7 @@ impl Resources {
                 let stream = attempt.connect(destination).await.map_err(Error::from)?;
                 Ok(Connection {
                     stream: Arc::new(stream),
-                    _permit: permit,
+                    _permit: attempt.established(),
                 })
             }
             .await;

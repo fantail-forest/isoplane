@@ -469,7 +469,7 @@ in_mono_runtime! {
             "cancelled DNS must leave no late guest wake"
         );
         assert_eq!(
-            reactor.runtime().services.egress.connections(),
+            reactor.runtime().services.egress.instance_connections(reactor.context.instance),
             0,
             "cancelled name resolution must retain no connection quota"
         );
@@ -517,7 +517,11 @@ fn managed_network_refusal(runtime: GuestRuntime, path: &str, expected: &[u8]) {
         "a refused listener must retain no reactor work"
     );
     assert_eq!(
-        reactor.runtime().services.egress.connections(),
+        reactor
+            .runtime()
+            .services
+            .egress
+            .instance_connections(reactor.context.instance),
         0,
         "a refused listener must acquire no host connection quota"
     );
@@ -582,7 +586,7 @@ in_mono_runtime! {
             "a refused connection must retain no wake"
         );
         assert_eq!(
-            reactor.runtime().services.egress.connections(),
+            reactor.runtime().services.egress.instance_connections(reactor.context.instance),
             0,
             "a refused connection must release its reserved quota"
         );
@@ -710,14 +714,24 @@ async fn assert_stream_failure(
         "a terminal stream operation must release every pending wake"
     );
     tokio::time::timeout(WAKE_DEADLINE, async {
-        while reactor.runtime().services.egress.connections() != 0 {
+        while reactor
+            .runtime()
+            .services
+            .egress
+            .instance_connections(reactor.context.instance)
+            != 0
+        {
             tokio::task::yield_now().await;
         }
     })
     .await
     .expect("aborted stream work must release its connection before the deadline");
     assert_eq!(
-        reactor.runtime().services.egress.connections(),
+        reactor
+            .runtime()
+            .services
+            .egress
+            .instance_connections(reactor.context.instance),
         0,
         "a terminal stream operation must release its connection quota"
     );
@@ -792,7 +806,11 @@ async fn managed_dns_error(
         "only a destination policy refusal must increment denial accounting"
     );
     assert_eq!(
-        reactor.runtime().services.egress.connections(),
+        reactor
+            .runtime()
+            .services
+            .egress
+            .instance_connections(reactor.context.instance),
         0,
         "a failed or denied DNS answer must acquire no outbound connection"
     );
@@ -910,7 +928,7 @@ async fn a_native_tcp_policy_refusal_counts_once_without_starting_owned_work() {
         "a refused native connection must record one denial"
     );
     assert_eq!(
-        runtime.services.egress.connections(),
+        runtime.services.egress.instance_connections(owner),
         0,
         "a denied native destination must acquire no connection quota"
     );
@@ -1005,7 +1023,11 @@ async fn dropping_a_socket_cancels_its_pending_connection_provider_and_releases_
         .await
         .expect("socket disposal must cancel the provider before the test deadline");
     assert_eq!(
-        reactor.runtime().services.egress.connections(),
+        reactor
+            .runtime()
+            .services
+            .egress
+            .instance_connections(reactor.context.instance),
         0,
         "cancelling a pending connect must release its connection permit"
     );
@@ -1032,7 +1054,7 @@ async fn connects_beyond_the_instances_pending_limit_wait_instead_of_failing() {
     use isoplane_engine::HostBindings;
     let pending_limit = isoplane_harness::production_connection_limits()
         .ceilings()
-        .instance_pending;
+        .in_progress;
     let (starts, mut started) = tokio::sync::mpsc::unbounded_channel();
     let policy = isoplane_harness::Network::with_resolver(Box::new(NoDns))
         .with_connections(Arc::new(HeldConnections(starts)));
@@ -1072,6 +1094,15 @@ async fn connects_beyond_the_instances_pending_limit_wait_instead_of_failing() {
         attempts as usize,
         "every attempt, queued or in progress, is one pending wake"
     );
+    assert_eq!(
+        reactor
+            .runtime()
+            .services
+            .egress
+            .instance_connections(owner),
+        pending_limit,
+        "only attempts in progress hold open permits; queued ones hold none"
+    );
     let drop_socket = |bindings: &mut CellBindings, handle| {
         bindings
             .native_io(Request::Drop {
@@ -1089,7 +1120,13 @@ async fn connects_beyond_the_instances_pending_limit_wait_instead_of_failing() {
     drop_socket(&mut bindings, queued);
     let open = attempts - 2;
     tokio::time::timeout(WAKE_DEADLINE, async {
-        while reactor.runtime().services.egress.connections() != open {
+        while reactor
+            .runtime()
+            .services
+            .egress
+            .instance_connections(reactor.context.instance)
+            != open
+        {
             tokio::task::yield_now().await;
         }
     })
@@ -1104,6 +1141,158 @@ async fn connects_beyond_the_instances_pending_limit_wait_instead_of_failing() {
         started.try_recv().is_err(),
         "a cancelled queued attempt must never reach the provider"
     );
+}
+
+/// One instance's native sockets, driven through the host binding as a guest drives them.
+struct NativeSockets {
+    bindings: CellBindings,
+    network: isoplane_abi::native_io::ResourceHandle,
+}
+
+impl NativeSockets {
+    fn new(reactor: &Reactor) -> Self {
+        use isoplane_abi::native_io::{Request, Response};
+        use isoplane_engine::HostBindings;
+        reactor.context.begin_slice(1, 1);
+        let mut bindings = CellBindings::new(reactor.context.clone());
+        let Ok(Response::Handle(network)) = bindings.native_io(Request::Network) else {
+            panic!("the instance network must exist")
+        };
+        Self { bindings, network }
+    }
+
+    /// Connects a new socket to `destination`, returning the socket and how its connect settled.
+    async fn connect(
+        &mut self,
+        destination: std::net::SocketAddr,
+    ) -> (
+        isoplane_abi::native_io::ResourceHandle,
+        Result<isoplane_abi::native_io::Response, isoplane_abi::native_io::Error>,
+    ) {
+        use isoplane_abi::native_io::{AddressFamily, Error, Request, Response};
+        use isoplane_engine::HostBindings;
+        let Ok(Response::Handle(socket)) = self
+            .bindings
+            .native_io(Request::CreateTcp(AddressFamily::V4))
+        else {
+            panic!("socket creation must return its handle")
+        };
+        self.bindings
+            .native_io(Request::Connect {
+                socket,
+                network: self.network,
+                destination,
+            })
+            .expect("an allowed destination must start its connect");
+        let settled = tokio::time::timeout(WAKE_DEADLINE, async {
+            loop {
+                match self.bindings.native_io(Request::FinishConnect(socket)) {
+                    Err(Error::WouldBlock) => tokio::task::yield_now().await,
+                    settled => break settled,
+                }
+            }
+        })
+        .await
+        .expect("the connect must settle before the test deadline");
+        (socket, settled)
+    }
+
+    fn drop_handle(
+        &mut self,
+        handle: isoplane_abi::native_io::ResourceHandle,
+        kind: isoplane_abi::native_io::ResourceKind,
+    ) {
+        use isoplane_engine::HostBindings;
+        self.bindings
+            .native_io(isoplane_abi::native_io::Request::Drop { handle, kind })
+            .expect("an owned handle must be disposable");
+    }
+}
+
+#[tokio::test]
+async fn an_instance_at_its_open_connection_limit_is_refused_and_another_instance_is_not() {
+    use isoplane_abi::native_io::{Error, ResourceKind, Response};
+    let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("the owned peer must bind");
+    let peer = listener.local_addr().expect("the owned peer's endpoint");
+    let limit = isoplane_harness::production_connection_limits()
+        .ceilings()
+        .open;
+    let owner = InstanceId::alloc();
+    let reactor = Reactor::with_network(
+        owner,
+        isoplane_harness::Network::with_resolver(Box::new(NoDns))
+            .with_destinations(Arc::new(ExactPeer(peer))),
+    );
+    let egress = reactor.runtime().services.egress.clone();
+    let denials = || {
+        reactor
+            .runtime()
+            .metrics
+            .egress_denials
+            .load(std::sync::atomic::Ordering::Relaxed)
+    };
+    let mut sockets = NativeSockets::new(&reactor);
+    let mut open = Vec::new();
+    for index in 0..limit {
+        let (socket, settled) = sockets.connect(peer).await;
+        let Ok(Response::Streams { input, output }) = settled else {
+            panic!("connection {index} is within the instance's limit: {settled:?}")
+        };
+        open.push((socket, input, output));
+    }
+    assert_eq!(egress.instance_connections(owner), limit);
+
+    let (refused, settled) = sockets.connect(peer).await;
+    assert!(
+        matches!(&settled, Err(Error::Denied(reason))
+            if reason.contains(&owner.to_string()) && reason.contains(&format!("limit of {limit} open"))),
+        "the connection beyond the limit is refused, naming the instance and the limit: {settled:?}"
+    );
+    assert_eq!(denials(), 1, "the refusal is counted as one egress denial");
+    assert_eq!(
+        egress.instance_connections(owner),
+        limit,
+        "a refusal takes no open permit"
+    );
+    assert_eq!(
+        reactor.futures.pending_total(owner),
+        0,
+        "a refusal leaves no reactor work behind"
+    );
+    sockets.drop_handle(refused, ResourceKind::Tcp);
+
+    let sibling = InstanceId::alloc();
+    let sibling_reactor = reactor.sibling(sibling);
+    let mut other = NativeSockets::new(&sibling_reactor);
+    let (_, settled) = other.connect(peer).await;
+    assert!(
+        matches!(settled, Ok(Response::Streams { .. })),
+        "another instance of the same application has its own limit: {settled:?}"
+    );
+    assert_eq!(egress.instance_connections(sibling), 1);
+
+    let (socket, input, output) = open.pop().expect("the instance holds open connections");
+    sockets.drop_handle(input, ResourceKind::Input);
+    sockets.drop_handle(output, ResourceKind::Output);
+    assert_eq!(
+        egress.instance_connections(owner),
+        limit,
+        "the socket handle still holds the connection"
+    );
+    sockets.drop_handle(socket, ResourceKind::Tcp);
+    assert_eq!(
+        egress.instance_connections(owner),
+        limit - 1,
+        "closing the socket and its streams returns its permit"
+    );
+    let (_, settled) = sockets.connect(peer).await;
+    assert!(
+        matches!(settled, Ok(Response::Streams { .. })),
+        "a returned permit admits the instance again: {settled:?}"
+    );
+    assert_eq!(denials(), 1);
 }
 
 struct RefusedConnections;

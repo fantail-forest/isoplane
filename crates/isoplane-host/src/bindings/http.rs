@@ -98,7 +98,7 @@ impl CellBindings {
                 }
             };
         let scope = self.ctx.http.lock().clone();
-        let mut operation = match scope.begin_fetch() {
+        let operation = match scope.begin_fetch() {
             Ok(operation) => operation,
             Err(error) => return self.settle_now(id, ResultRecord::Err(error)),
         };
@@ -109,11 +109,15 @@ impl CellBindings {
         let rt2 = rt.clone();
         let task = self.ctx.spawn(&rt.reactor, async move {
             let svc = rt2.services.clone();
+            let denied = |deny: crate::egress::DenyReason| {
+                tracing::warn!(tenant = %tenant, reason = %deny, "egress denied");
+                rt2.metrics.egress_denials.fetch_add(1, Ordering::Relaxed);
+                ResultRecord::Err(FutureError::Denied(deny.to_string()))
+            };
             let checked = svc
                 .egress
-                .check_owned(
+                .check_url(
                     &req.url,
-                    &owner,
                     crate::egress::Reach {
                         allowlist: allowlist.as_deref(),
                         exceptions: &exceptions,
@@ -121,23 +125,20 @@ impl CellBindings {
                 )
                 .await;
             let res = match checked {
-                Ok(pinned) => {
-                    let target = pinned.target();
-                    let out = match operation.retain_permit(pinned) {
-                        Ok(()) => svc
-                            .fetcher
-                            .fetch(owner, target, req)
+                Ok(target) => match svc.egress.begin_connect(owner).await {
+                    Ok(attempt) => from_typed(
+                        svc.fetcher
+                            .fetch(attempt, target, req)
                             .await
                             .and_then(|response| operation.response(response)),
-                        Err(error) => Err(error),
-                    };
-                    from_typed(out)
-                }
-                Err(crate::egress::EgressError::Denied(deny)) => {
-                    tracing::warn!(tenant = %tenant, reason = %deny, "egress denied");
-                    rt2.metrics.egress_denials.fetch_add(1, Ordering::Relaxed);
-                    ResultRecord::Err(FutureError::Denied(deny.to_string()))
-                }
+                    ),
+                    Err(crate::egress::ConnectionError::Denied(deny)) => denied(deny),
+                    Err(
+                        error @ (crate::egress::ConnectionError::Io(_)
+                        | crate::egress::ConnectionError::PeerMismatch { .. }),
+                    ) => ResultRecord::Err(FutureError::Io(error.to_string())),
+                },
+                Err(crate::egress::EgressError::Denied(deny)) => denied(deny),
                 Err(crate::egress::EgressError::Dns(error)) => {
                     tracing::warn!(tenant = %tenant, %error, "outbound HTTP DNS failed");
                     ResultRecord::Err(FutureError::Io(error.to_string()))

@@ -331,9 +331,8 @@ impl LocalApp {
         let network = isoplane_runtime::network::NetworkLimits::default();
         let limits = isoplane_host::egress::ConnectionLimits::new(
             isoplane_host::egress::ConnectionCeilings {
-                node: network.connections,
-                tenant: network.tenant_connections,
-                instance_pending: network.instance_pending_connections,
+                in_progress: network.instance_pending_connections,
+                open: network.instance_open_connections,
             },
         )?;
         let egress = isoplane_host::HostEgressPolicy::system(limits)?;
@@ -348,7 +347,6 @@ impl LocalApp {
         let services = Arc::new(isoplane_host::cell::Services {
             egress: egress.clone(),
             fetcher: Arc::new(isoplane_host::PinnedHttpFetcher::new(
-                egress.clone(),
                 network.inline_response_bytes,
             )),
         });

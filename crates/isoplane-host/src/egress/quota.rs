@@ -1,104 +1,72 @@
-//! Open outbound connections, counted per tenant and per node, so that one
-//! tenant cannot exhaust every other tenant's ability to connect out.
+//! Open outbound connections, counted per instance, so that one instance
+//! cannot hold more host sockets than its limit, whether it is running,
+//! parked or hibernated.
 
 use std::collections::HashMap;
 
 use parking_lot::Mutex;
 
 use super::{ConnectionOwner, DenyReason};
+use crate::InstanceId;
 
-/// A level at which open outbound connections are counted and refused.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConnectionLevel {
-    /// The connections of every instance of one tenant.
-    Tenant,
-    /// Every connection on the node.
-    Node,
-}
-
-impl std::fmt::Display for ConnectionLevel {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::Tenant => "tenant",
-            Self::Node => "node",
-        })
-    }
-}
-
-/// Requested outbound connection limits.
+/// Requested per-instance outbound connection limits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ConnectionCeilings {
-    /// Open connections on the node.
-    pub node: u64,
-    /// Open connections of one tenant's instances together.
-    pub tenant: u64,
-    /// Connections one instance may have in progress before further attempts queue.
-    pub instance_pending: u64,
+    /// Connections one instance may have in progress before further attempts wait.
+    pub in_progress: u64,
+    /// Connections one instance may hold open before further connections are refused.
+    pub open: u64,
 }
 
 /// One of the limits in [`ConnectionCeilings`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionLimit {
-    /// [`ConnectionCeilings::node`].
-    Node,
-    /// [`ConnectionCeilings::tenant`].
-    Tenant,
-    /// [`ConnectionCeilings::instance_pending`].
-    InstancePending,
+    /// [`ConnectionCeilings::in_progress`].
+    InProgress,
+    /// [`ConnectionCeilings::open`].
+    Open,
 }
 
 impl std::fmt::Display for ConnectionLimit {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            Self::Node => "node open connection limit",
-            Self::Tenant => "tenant open connection limit",
-            Self::InstancePending => "instance pending connection limit",
+            Self::InProgress => "instance in-progress connection limit",
+            Self::Open => "instance open connection limit",
         })
     }
 }
 
-/// Limits that are each at least one and none above the level that contains it.
+/// Per-instance limits that are each at least one, with no more connections
+/// in progress than may be open.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ConnectionLimits(ConnectionCeilings);
 
 impl ConnectionLimits {
     /// Validates `ceilings`, reporting every limit that is out of range.
     ///
-    /// A connection in progress already holds its tenant's and the node's open
-    /// permits, so a pending limit above the tenant's could never be reached.
+    /// A connection in progress already holds its open permit, so an
+    /// in-progress limit above the open limit could never be reached.
     pub fn new(ceilings: ConnectionCeilings) -> Result<Self, ConnectionLimitsError> {
         let mut problems = Vec::new();
-        for (limit, value, maximum) in [
-            (ConnectionLimit::Node, ceilings.node, None),
-            (
-                ConnectionLimit::Tenant,
-                ceilings.tenant,
-                Some((ConnectionLimit::Node, ceilings.node)),
-            ),
-            (
-                ConnectionLimit::InstancePending,
-                ceilings.instance_pending,
-                Some((ConnectionLimit::Tenant, ceilings.tenant)),
-            ),
+        for (limit, value) in [
+            (ConnectionLimit::InProgress, ceilings.in_progress),
+            (ConnectionLimit::Open, ceilings.open),
         ] {
-            match maximum {
-                _ if value == 0 => problems.push(ConnectionLimitProblem::Zero { limit }),
-                Some((container, maximum)) if value > maximum => {
-                    problems.push(ConnectionLimitProblem::AboveContainer {
-                        limit,
-                        value,
-                        container,
-                        maximum,
-                    })
-                }
-                Some(_) | None => {}
+            if value == 0 {
+                problems.push(ConnectionLimitProblem::Zero { limit });
             }
         }
+        if ceilings.in_progress > ceilings.open {
+            problems.push(ConnectionLimitProblem::InProgressAboveOpen {
+                in_progress: ceilings.in_progress,
+                open: ceilings.open,
+            });
+        }
         let queue_maximum = super::attempts::MAX_PENDING;
-        if ceilings.instance_pending > queue_maximum {
+        if ceilings.in_progress > queue_maximum {
             problems.push(ConnectionLimitProblem::AboveMaximum {
-                limit: ConnectionLimit::InstancePending,
-                value: ceilings.instance_pending,
+                limit: ConnectionLimit::InProgress,
+                value: ceilings.in_progress,
                 maximum: queue_maximum,
             });
         }
@@ -109,12 +77,12 @@ impl ConnectionLimits {
         }
     }
 
-    /// The same value for every limit, so that only the node's open count refuses.
+    /// The same value for both limits, so that attempts never wait before the
+    /// open limit refuses them.
     pub fn uniform(connections: u64) -> Result<Self, ConnectionLimitsError> {
         Self::new(ConnectionCeilings {
-            node: connections,
-            tenant: connections,
-            instance_pending: connections,
+            in_progress: connections,
+            open: connections,
         })
     }
 
@@ -127,7 +95,7 @@ impl ConnectionLimits {
 /// Connection limits that cannot be enforced as given.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectionLimitsError {
-    /// Every out-of-range limit, in node, tenant, instance order.
+    /// Every out-of-range limit.
     pub problems: Vec<ConnectionLimitProblem>,
 }
 
@@ -151,14 +119,13 @@ pub enum ConnectionLimitProblem {
     /// Zero would refuse or stall every outbound connection.
     #[error("the {limit} must be at least 1")]
     Zero { limit: ConnectionLimit },
-    /// A limit the containing level would always reach first.
-    #[error("the {limit} of {value} exceeds the {container} of {maximum}")]
-    AboveContainer {
-        limit: ConnectionLimit,
-        value: u64,
-        container: ConnectionLimit,
-        maximum: u64,
-    },
+    /// An in-progress limit the open limit would always reach first.
+    #[error(
+        "the {} of {in_progress} exceeds the {} of {open}",
+        ConnectionLimit::InProgress,
+        ConnectionLimit::Open
+    )]
+    InProgressAboveOpen { in_progress: u64, open: u64 },
     /// A limit larger than the queue can represent.
     #[error("the {limit} of {value} exceeds the supported maximum of {maximum}")]
     AboveMaximum {
@@ -168,194 +135,145 @@ pub enum ConnectionLimitProblem {
     },
 }
 
-/// Open connections at each level, under one lock so that taking a permit at
-/// every level, or at none, is one step.
+/// Open connections of each instance that holds at least one.
 pub(super) struct OpenConnections {
-    node_limit: u64,
-    tenant_limit: u64,
-    held: Mutex<Held>,
+    limit: u64,
+    instances: Mutex<HashMap<InstanceId, u64>>,
 }
 
-#[derive(Default)]
-struct Held {
-    node: u64,
-    tenants: HashMap<String, u64>,
-}
-
-/// The tenant one open connection is counted against.
+/// The instance one open connection is counted against.
 pub(super) struct Holding {
-    tenant: String,
+    instance: InstanceId,
 }
 
 impl OpenConnections {
     pub(super) fn new(limits: ConnectionLimits) -> Self {
-        let ceilings = limits.ceilings();
         Self {
-            node_limit: ceilings.node,
-            tenant_limit: ceilings.tenant,
-            held: Mutex::new(Held::default()),
+            limit: limits.ceilings().open,
+            instances: Mutex::new(HashMap::new()),
         }
     }
 
     pub(super) fn acquire(&self, owner: &ConnectionOwner) -> Result<Holding, DenyReason> {
-        let mut held = self.held.lock();
-        let tenant = held.tenants.get(owner.tenant()).copied().unwrap_or(0);
-        let full = if tenant >= self.tenant_limit {
-            Some((ConnectionLevel::Tenant, self.tenant_limit))
-        } else if held.node >= self.node_limit {
-            Some((ConnectionLevel::Node, self.node_limit))
-        } else {
-            None
-        };
-        if let Some((level, limit)) = full {
-            return Err(DenyReason::ConnectionQuota {
-                level,
+        let mut instances = self.instances.lock();
+        let open = instances.get(&owner.instance()).copied().unwrap_or(0);
+        if open >= self.limit {
+            return Err(DenyReason::OpenConnectionLimit {
                 tenant: owner.tenant().to_owned(),
                 instance: owner.instance(),
-                limit,
+                limit: self.limit,
             });
         }
-        held.node += 1;
-        *held.tenants.entry(owner.tenant().to_owned()).or_default() += 1;
+        instances.insert(owner.instance(), open + 1);
         Ok(Holding {
-            tenant: owner.tenant().to_owned(),
+            instance: owner.instance(),
         })
     }
 
     pub(super) fn release(&self, holding: &Holding) {
-        let mut held = self.held.lock();
-        held.node = held.node.saturating_sub(1);
-        // Dropping the entry at zero keeps the map to tenants with a live connection.
-        if let Some(count) = held.tenants.get_mut(&holding.tenant) {
+        let mut instances = self.instances.lock();
+        // Dropping the entry at zero keeps the map to instances with an open connection.
+        if let Some(count) = instances.get_mut(&holding.instance) {
             *count = count.saturating_sub(1);
             if *count == 0 {
-                held.tenants.remove(&holding.tenant);
+                instances.remove(&holding.instance);
             }
         }
     }
 
-    pub(super) fn node(&self) -> u64 {
-        self.held.lock().node
+    pub(super) fn instance(&self, instance: InstanceId) -> u64 {
+        self.instances.lock().get(&instance).copied().unwrap_or(0)
     }
 
-    pub(super) fn tenant(&self, tenant: &str) -> u64 {
-        self.held.lock().tenants.get(tenant).copied().unwrap_or(0)
+    #[cfg(test)]
+    pub(super) fn tracked(&self) -> usize {
+        self.instances.lock().len()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::InstanceId;
 
-    fn owner(tenant: &str, instance: u64) -> ConnectionOwner {
-        ConnectionOwner::new(tenant.into(), InstanceId(instance)).expect("fixture tenant")
+    fn owner(instance: u64) -> ConnectionOwner {
+        ConnectionOwner::new("tenant".into(), InstanceId(instance)).expect("fixture owner")
     }
 
-    fn open(node: u64, tenant: u64) -> OpenConnections {
-        OpenConnections::new(
-            ConnectionLimits::new(ConnectionCeilings {
-                node,
-                tenant,
-                instance_pending: 1,
-            })
-            .expect("fixture limits"),
-        )
+    fn open(limit: u64) -> OpenConnections {
+        OpenConnections::new(ConnectionLimits::uniform(limit).expect("fixture limits"))
     }
 
     #[test]
-    fn a_tenants_entry_is_removed_when_its_last_connection_is_released() {
-        let open = open(4, 2);
-        let first = open.acquire(&owner("a", 1)).expect("first connection");
-        let second = open.acquire(&owner("a", 2)).expect("second connection");
-        assert_eq!(open.held.lock().tenants.get("a"), Some(&2));
+    fn an_instances_entry_is_removed_when_its_last_connection_is_released() {
+        let open = open(2);
+        let first = open.acquire(&owner(1)).expect("first connection");
+        let second = open.acquire(&owner(1)).expect("second connection");
+        assert_eq!(open.instances.lock().get(&InstanceId(1)), Some(&2));
         open.release(&first);
         assert_eq!(
-            open.held.lock().tenants.get("a"),
+            open.instances.lock().get(&InstanceId(1)),
             Some(&1),
-            "a tenant with a live connection keeps its count"
+            "an instance with an open connection keeps its count"
         );
         open.release(&second);
-        let held = open.held.lock();
+        let instances = open.instances.lock();
         assert!(
-            held.tenants.is_empty(),
-            "a tenant with no connection must not retain an entry: {:?}",
-            held.tenants
+            instances.is_empty(),
+            "an instance with no connection must not retain an entry: {instances:?}"
         );
-        assert_eq!(held.node, 0);
     }
 
     #[test]
     fn limits_outside_their_range_are_all_reported() {
-        let error = ConnectionLimits::new(ConnectionCeilings {
-            node: 4,
-            tenant: 5,
-            instance_pending: 0,
-        })
-        .expect_err("a tenant limit above the node's and a zero pending limit are refused");
         assert_eq!(
-            error.problems,
+            ConnectionLimits::new(ConnectionCeilings {
+                in_progress: 0,
+                open: 0
+            })
+            .expect_err("zero limits are refused")
+            .problems,
             vec![
-                ConnectionLimitProblem::AboveContainer {
-                    limit: ConnectionLimit::Tenant,
-                    value: 5,
-                    container: ConnectionLimit::Node,
-                    maximum: 4
+                ConnectionLimitProblem::Zero {
+                    limit: ConnectionLimit::InProgress
                 },
                 ConnectionLimitProblem::Zero {
-                    limit: ConnectionLimit::InstancePending
+                    limit: ConnectionLimit::Open
                 },
             ]
         );
         assert_eq!(
             ConnectionLimits::new(ConnectionCeilings {
-                node: 8,
-                tenant: 4,
-                instance_pending: 5
+                in_progress: 5,
+                open: 4
             })
-            .expect_err("a pending limit above the tenant's is refused")
+            .expect_err("an in-progress limit above the open limit is refused")
             .problems,
-            vec![ConnectionLimitProblem::AboveContainer {
-                limit: ConnectionLimit::InstancePending,
-                value: 5,
-                container: ConnectionLimit::Tenant,
-                maximum: 4
+            vec![ConnectionLimitProblem::InProgressAboveOpen {
+                in_progress: 5,
+                open: 4
             }]
-        );
-        assert_eq!(
-            ConnectionLimits::uniform(0)
-                .expect_err("zero limits are refused")
-                .problems,
-            vec![
-                ConnectionLimitProblem::Zero {
-                    limit: ConnectionLimit::Node
-                },
-                ConnectionLimitProblem::Zero {
-                    limit: ConnectionLimit::Tenant
-                },
-                ConnectionLimitProblem::Zero {
-                    limit: ConnectionLimit::InstancePending
-                },
-            ]
         );
         let huge = super::super::attempts::MAX_PENDING + 1;
         assert_eq!(
             ConnectionLimits::uniform(huge)
-                .expect_err("a pending limit the queue cannot represent is refused")
+                .expect_err("an in-progress limit the queue cannot represent is refused")
                 .problems,
             vec![ConnectionLimitProblem::AboveMaximum {
-                limit: ConnectionLimit::InstancePending,
+                limit: ConnectionLimit::InProgress,
                 value: huge,
                 maximum: huge - 1
             }]
         );
-        assert!(
+        assert_eq!(
             ConnectionLimits::new(ConnectionCeilings {
-                node: 4,
-                tenant: 4,
-                instance_pending: 1
+                in_progress: 4,
+                open: 4
             })
-            .is_ok(),
+            .map(|limits| limits.ceilings()),
+            Ok(ConnectionCeilings {
+                in_progress: 4,
+                open: 4
+            }),
             "limits at the edges of their range are accepted"
         );
     }

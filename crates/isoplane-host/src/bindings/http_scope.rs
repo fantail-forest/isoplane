@@ -7,8 +7,6 @@ use std::sync::Arc;
 use isoplane_abi::result::{BodyChunk, FetchResponse, FutureError};
 use parking_lot::Mutex;
 
-use crate::egress::CheckedConnection;
-
 /// An outbound HTTP response before its body is assigned a guest handle.
 pub struct OutboundResponse {
     /// The upstream response status.
@@ -23,7 +21,8 @@ pub struct OutboundResponse {
 pub enum OutboundBody {
     /// A fully collected response.
     Inline(Vec<u8>),
-    /// A response whose transport is released when this object is dropped.
+    /// A response whose transport, and its open connection permit, is released
+    /// when this object is dropped.
     Stream(Box<dyn ResponseBody>),
 }
 
@@ -45,7 +44,6 @@ static NEXT_HANDLE: AtomicU32 = AtomicU32::new(1);
 #[derive(Default)]
 struct Resource {
     body: Option<Box<dyn ResponseBody>>,
-    permit: Option<Arc<CheckedConnection>>,
     task: Option<tokio::task::AbortHandle>,
 }
 
@@ -88,7 +86,6 @@ impl HttpScope {
             scope: self.clone(),
             handle,
             retained: false,
-            permit: None,
         })
     }
 
@@ -103,13 +100,11 @@ impl HttpScope {
             .and_then(|resources| resources.get_mut(&handle))
             .ok_or(FutureError::NotFound)?;
         let body = resource.body.take().ok_or(FutureError::NotFound)?;
-        let permit = resource.permit.clone();
         Ok((
             Operation {
                 scope: self.clone(),
                 handle,
                 retained: false,
-                permit,
             },
             body,
         ))
@@ -134,24 +129,11 @@ pub(super) struct Operation {
     scope: Arc<HttpScope>,
     handle: BodyHandle,
     retained: bool,
-    permit: Option<Arc<CheckedConnection>>,
 }
 
 impl Operation {
     pub(super) fn handle(&self) -> BodyHandle {
         self.handle
-    }
-
-    pub(super) fn retain_permit(&mut self, permit: CheckedConnection) -> Result<(), FutureError> {
-        let mut state = self.scope.resources.lock();
-        let resource = state
-            .as_mut()
-            .and_then(|resources| resources.get_mut(&self.handle))
-            .ok_or(FutureError::Cancelled)?;
-        let permit = Arc::new(permit);
-        resource.permit = Some(permit.clone());
-        self.permit = Some(permit);
-        Ok(())
     }
 
     pub(super) fn response(
@@ -161,10 +143,6 @@ impl Operation {
         let (body_handle, body_inline) = match response.body {
             OutboundBody::Inline(bytes) => (0, Some(bytes)),
             OutboundBody::Stream(body) => {
-                let body = Box::new(LeasedBody {
-                    body,
-                    _permit: self.permit.clone(),
-                });
                 self.retain(body)?;
                 (self.handle.0, None)
             }
@@ -223,31 +201,10 @@ fn allocate_handle(next: &AtomicU32) -> Result<BodyHandle, FutureError> {
     .map_err(|_| FutureError::Io("outbound HTTP body handle space exhausted".into()))
 }
 
-struct LeasedBody {
-    body: Box<dyn ResponseBody>,
-    _permit: Option<Arc<CheckedConnection>>,
-}
-
-#[async_trait::async_trait]
-impl ResponseBody for LeasedBody {
-    async fn read(&mut self, max_len: usize) -> Result<BodyChunk, FutureError> {
-        self.body.read(max_len).await
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::egress::{DnsError, HostEgressPolicy, Resolver};
     use std::sync::atomic::AtomicBool;
-
-    struct PublicEndpoint;
-    #[async_trait::async_trait]
-    impl Resolver for PublicEndpoint {
-        async fn resolve(&self, _: &str, _: u16) -> Result<Vec<std::net::SocketAddr>, DnsError> {
-            Ok(vec![std::net::SocketAddr::from(([93, 184, 216, 34], 80))])
-        }
-    }
 
     struct GatedBody {
         gate: Arc<tokio::sync::Notify>,
@@ -291,34 +248,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn closing_a_scope_keeps_an_inflight_fetch_charged_until_it_is_dropped() {
+    async fn a_fetch_completing_after_its_scope_closed_drops_its_response() {
         let scope = HttpScope::new();
-        let policy = Arc::new(HostEgressPolicy::new(
-            Box::new(PublicEndpoint),
-            crate::egress::ConnectionLimits::uniform(1).expect("connection limits"),
-        ));
-        let mut operation = scope
+        let operation = scope
             .begin_fetch()
             .expect("the dispatch must register its fetch");
-        operation
-            .retain_permit(
-                policy
-                    .check_owned(
-                        "http://upstream.test/",
-                        &crate::egress::ConnectionOwner::new("tenant".into(), crate::InstanceId(1))
-                            .expect("fixture owner"),
-                        crate::egress::Reach::default(),
-                    )
-                    .await
-                    .expect("the destination must pass policy"),
-            )
-            .expect("the live scope must retain admission");
         scope.close();
-        assert_eq!(
-            policy.connections(),
-            1,
-            "closing the registry cannot release a fetch still owned by reactor work"
-        );
         let dropped = Arc::new(AtomicBool::new(false));
         let result = operation.response(OutboundResponse {
             status: 200,
@@ -334,12 +269,7 @@ mod tests {
         );
         assert!(
             dropped.load(Ordering::Acquire),
-            "the refused late response must drop its body"
-        );
-        assert_eq!(
-            policy.connections(),
-            0,
-            "dropping the final in-flight owner must release admission"
+            "the refused late response must drop its body, and its connection with it"
         );
         assert!(
             !scope.is_active(),
@@ -350,26 +280,9 @@ mod tests {
     #[tokio::test]
     async fn a_read_completing_after_scope_closure_cannot_restore_its_body() {
         let scope = HttpScope::new();
-        let policy = Arc::new(HostEgressPolicy::new(
-            Box::new(PublicEndpoint),
-            crate::egress::ConnectionLimits::uniform(1).expect("connection limits"),
-        ));
-        let mut fetch = scope
+        let fetch = scope
             .begin_fetch()
             .expect("the dispatch must register a fetch");
-        fetch
-            .retain_permit(
-                policy
-                    .check_owned(
-                        "http://upstream.test/",
-                        &crate::egress::ConnectionOwner::new("tenant".into(), crate::InstanceId(1))
-                            .expect("fixture owner"),
-                        crate::egress::Reach::default(),
-                    )
-                    .await
-                    .expect("the destination must pass policy"),
-            )
-            .expect("the scope must retain admission");
         let gate = Arc::new(tokio::sync::Notify::new());
         let dropped = Arc::new(AtomicBool::new(false));
         let response = fetch
@@ -396,11 +309,6 @@ mod tests {
             "an in-flight read must remain visible to capture"
         );
         scope.close();
-        assert_eq!(
-            policy.connections(),
-            1,
-            "an in-flight body must retain admission until reactor disposal"
-        );
         assert!(
             !dropped.load(Ordering::Acquire),
             "scope invalidation must not pretend an in-flight body is already disposed"
@@ -413,11 +321,6 @@ mod tests {
         assert!(
             dropped.load(Ordering::Acquire),
             "the late body must be disposed"
-        );
-        assert_eq!(
-            policy.connections(),
-            0,
-            "body disposal must release its final permit"
         );
         assert!(
             !scope.is_active(),

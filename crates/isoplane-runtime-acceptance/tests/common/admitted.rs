@@ -62,7 +62,13 @@ pub fn admitting(
 /// past the deadline.
 pub async fn released(reactor: &Reactor) {
     tokio::time::timeout(isoplane_harness::WAKE_DEADLINE, async {
-        while reactor.runtime().services.egress.connections() != 0 {
+        while reactor
+            .runtime()
+            .services
+            .egress
+            .instance_connections(reactor.context.instance)
+            != 0
+        {
             tokio::task::yield_now().await;
         }
     })

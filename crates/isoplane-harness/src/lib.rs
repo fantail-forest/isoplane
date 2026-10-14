@@ -58,9 +58,8 @@ pub struct Network(HostEgressPolicy);
 pub fn production_connection_limits() -> isoplane_host::egress::ConnectionLimits {
     let limits = isoplane_runtime::network::NetworkLimits::default();
     isoplane_host::egress::ConnectionLimits::new(isoplane_host::egress::ConnectionCeilings {
-        node: limits.connections,
-        tenant: limits.tenant_connections,
-        instance_pending: limits.instance_pending_connections,
+        in_progress: limits.instance_pending_connections,
+        open: limits.instance_open_connections,
     })
     .expect("the production connection limits must be valid")
 }
@@ -137,10 +136,8 @@ impl Reactor {
     /// As [`Self::with_network`], with `files` served read-only through the guest's
     /// PAL filesystem.
     pub fn with_platform_files(owner: InstanceId, network: Network, files: PlatformFiles) -> Self {
-        LogCapture::global();
         let egress = Arc::new(network.0);
         let fetcher = PinnedHttpFetcher::new(
-            egress.clone(),
             isoplane_runtime::network::NetworkLimits::default().inline_response_bytes,
         );
         let futures = Arc::new(FutureTable::new());
@@ -156,24 +153,28 @@ impl Reactor {
             wake: wake.clone(),
             reactor: tokio::runtime::Handle::current(),
         });
-        let context = Arc::new(InstanceCtx::new(
-            owner,
-            Tenancy {
-                module: ModuleId::new("returned-guest", "v1"),
-                tenant: "returned-guest-test".into(),
-                limits: GUEST_LIMITS,
-
-                lifecycle: HandlerLifecycle::Reuse,
-                allowlist: None,
-            },
-            Arc::new(Meters::new()),
-            Some(runtime),
-        ));
         Self {
-            context,
+            context: context(owner, runtime),
             futures,
             wake,
             platform_files: files,
+        }
+    }
+
+    /// Another instance of the same application on this reactor's runtime,
+    /// sharing its outbound policy, limits and future table, as instances of
+    /// one cell do.
+    pub fn sibling(&self, owner: InstanceId) -> Self {
+        let runtime = self
+            .context
+            .rt
+            .clone()
+            .expect("the test reactor always carries a runtime");
+        Self {
+            context: context(owner, runtime),
+            futures: self.futures.clone(),
+            wake: self.wake.clone(),
+            platform_files: self.platform_files.clone(),
         }
     }
 
@@ -199,6 +200,23 @@ impl Reactor {
     pub fn response_text(&self, index: u32) -> String {
         String::from_utf8_lossy(&self.response_body(index)).into_owned()
     }
+}
+
+fn context(owner: InstanceId, runtime: Arc<CellRuntime>) -> Arc<InstanceCtx> {
+    LogCapture::global();
+    Arc::new(InstanceCtx::new(
+        owner,
+        Tenancy {
+            module: ModuleId::new("returned-guest", "v1"),
+            tenant: "returned-guest-test".into(),
+            limits: GUEST_LIMITS,
+
+            lifecycle: HandlerLifecycle::Reuse,
+            allowlist: None,
+        },
+        Arc::new(Meters::new()),
+        Some(runtime),
+    ))
 }
 
 /// What a guest's template is loaded from on each engine that serves it.

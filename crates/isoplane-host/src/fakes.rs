@@ -585,7 +585,7 @@ pub struct FakeFetcher {
 impl crate::bindings::Fetcher for FakeFetcher {
     async fn fetch(
         &self,
-        _owner: crate::egress::ConnectionOwner,
+        _attempt: crate::egress::ConnectAttempt,
         target: PinnedTarget,
         _req: FetchRequest,
     ) -> Result<crate::bindings::OutboundResponse, FutureError> {

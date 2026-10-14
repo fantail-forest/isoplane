@@ -260,7 +260,7 @@ in_mono_runtime! {
             "a refused connection must reach the client as HttpRequestException over the socket error: {text}; logs: {:?}",
             reactor.context.emitted_logs()
         );
-        assert_eq!(reactor.runtime().services.egress.connections(), 0, "a failed request holds no permit");
+        assert_eq!(reactor.runtime().services.egress.instance_connections(reactor.context.instance), 0, "a failed request holds no permit");
     }
 
     #[tokio::test]
@@ -276,7 +276,7 @@ in_mono_runtime! {
             reactor.context.emitted_logs()
         );
         assert_eq!(peer.connections(), 0, "a denied request must never reach the peer");
-        assert_eq!(reactor.runtime().services.egress.connections(), 0, "a denied request holds no permit");
+        assert_eq!(reactor.runtime().services.egress.instance_connections(reactor.context.instance), 0, "a denied request holds no permit");
     }
 
     #[tokio::test]
@@ -374,7 +374,7 @@ in_mono_runtime! {
             "a TLS request must complete against the root the application supplied, with the host holding no anchor; logs: {:?}",
             reactor.context.emitted_logs()
         );
-        assert_eq!(reactor.runtime().services.egress.connections(), 0, "the TLS connection is released with the client");
+        assert_eq!(reactor.runtime().services.egress.instance_connections(reactor.context.instance), 0, "the TLS connection is released with the client");
     }
 
     #[tokio::test]

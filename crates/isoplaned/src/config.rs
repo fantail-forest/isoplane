@@ -32,7 +32,7 @@ pub struct NodeConfig {
     #[cfg(feature = "real-backends")]
     #[serde(default)]
     pub host: isoplane_host::CellConfig,
-    /// Shared outbound connection and byte budgets for this node.
+    /// Per-instance outbound connection limits and response byte budgets.
     #[cfg(feature = "real-backends")]
     #[serde(default)]
     pub network: isoplane_runtime::network::NetworkLimits,
@@ -375,9 +375,8 @@ impl NodeConfig {
         &self,
     ) -> Result<isoplane_host::egress::ConnectionLimits, ConfigError> {
         isoplane_host::egress::ConnectionLimits::new(isoplane_host::egress::ConnectionCeilings {
-            node: self.network.connections,
-            tenant: self.network.tenant_connections,
-            instance_pending: self.network.instance_pending_connections,
+            in_progress: self.network.instance_pending_connections,
+            open: self.network.instance_open_connections,
         })
         .map_err(ConfigError::InvalidNetwork)
     }
@@ -464,9 +463,8 @@ name = "cell-1"
         config.host.guest_resources.native_handles = 2;
         config.host.guest_resources.log_bytes_per_dispatch = 7;
         config.host.queue_depth_per_worker = 3;
-        config.network.connections = 4;
-        config.network.tenant_connections = 3;
         config.network.instance_pending_connections = 2;
+        config.network.instance_open_connections = 3;
         config.host.wall_ms_cap = 60_000;
         let encoded = toml::to_string(&config).expect("the node prints its merged configuration");
         let restored = NodeConfig::from_toml(&encoded).expect("the printed configuration loads");
@@ -484,11 +482,10 @@ name = "cell-1"
         );
         assert_eq!(
             (
-                restored.network.connections,
-                restored.network.tenant_connections,
-                restored.network.instance_pending_connections
+                restored.network.instance_pending_connections,
+                restored.network.instance_open_connections
             ),
-            (4, 3, 2),
+            (2, 3),
             "the printed configuration must preserve connection budgets"
         );
         assert_eq!(
@@ -502,30 +499,26 @@ name = "cell-1"
     fn network_connection_limits_are_validated_before_startup() {
         use isoplane_host::egress::{ConnectionLimit, ConnectionLimitProblem};
         let mut config = NodeConfig::dev_default();
-        config.network = toml::from_str(
-            "connections = 8\ntenant_connections = 9\ninstance_pending_connections = 0",
-        )
-        .expect("the limits parse");
+        config.network =
+            toml::from_str("instance_pending_connections = 9\ninstance_open_connections = 0")
+                .expect("the limits parse");
         let Err(ConfigError::InvalidNetwork(error)) = config.validate_placement() else {
             panic!("out-of-range connection limits must fail startup validation");
         };
         assert_eq!(
             error.problems,
             vec![
-                ConnectionLimitProblem::AboveContainer {
-                    limit: ConnectionLimit::Tenant,
-                    value: 9,
-                    container: ConnectionLimit::Node,
-                    maximum: 8
-                },
                 ConnectionLimitProblem::Zero {
-                    limit: ConnectionLimit::InstancePending
+                    limit: ConnectionLimit::Open
+                },
+                ConnectionLimitProblem::InProgressAboveOpen {
+                    in_progress: 9,
+                    open: 0
                 },
             ],
             "every out-of-range limit is reported together"
         );
-        config.network.tenant_connections = 8;
-        config.network.instance_pending_connections = 8;
+        config.network.instance_open_connections = 9;
         config
             .validate_placement()
             .expect("limits at the edges of their range are accepted");

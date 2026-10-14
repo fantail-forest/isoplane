@@ -70,7 +70,7 @@ in_mono_runtime! {
             "the connected socket must report real local and remote endpoints: {answer}"
         );
         assert_eq!(
-            reactor.runtime().services.egress.connections(),
+            reactor.runtime().services.egress.instance_connections(reactor.context.instance),
             0,
             "disposing the socket must release its host connection"
         );
@@ -184,7 +184,7 @@ in_mono_runtime! {
             "libc reports a failed connect as immediately ready with no pollable; it must reach SocketException"
         );
         assert_eq!(
-            reactor.runtime().services.egress.connections(),
+            reactor.runtime().services.egress.instance_connections(reactor.context.instance),
             0,
             "a refused connection must release its quota"
         );

@@ -64,13 +64,14 @@ async fn http_exchange(runtime: GuestRuntime, mode: &str) -> String {
     .await;
     if mode == "request-cancel" {
         let egress = reactor.runtime().services.egress.clone();
+        let instance = reactor.context.instance;
         assert!(
             reactor.futures.end_dispatch(reactor.context.instance, 1),
             "ending the dispatch must identify the send that upstream GET Abort leaves behind"
         );
         drop(reactor);
         tokio::time::timeout(isoplane_harness::WAKE_DEADLINE, async {
-            while egress.connections() != 0 {
+            while egress.instance_connections(instance) != 0 {
                 tokio::task::yield_now().await;
             }
         })

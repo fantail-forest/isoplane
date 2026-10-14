@@ -222,14 +222,16 @@ mod tests {
             )
             .with_destinations(Arc::new(OwnedPeer(address))),
         );
+        // The test opens the socket itself to control its send buffer, so the
+        // attempt only supplies the permit.
         let permit = policy
-            .check_socket(
-                address,
-                &crate::egress::ConnectionOwner::new("tenant".into(), InstanceId(83))
+            .begin_connect(
+                crate::egress::ConnectionOwner::new("tenant".into(), InstanceId(83))
                     .expect("fixture owner"),
-                crate::egress::Reach::default(),
             )
-            .expect("the exact owned peer must acquire quota");
+            .await
+            .expect("the instance must acquire its open permit")
+            .established();
         let wake = Arc::new(Wake(tokio::sync::Notify::new()));
         let mut context =
             InstanceCtx::for_test(InstanceId(83), HandlerLifecycle::Reuse, Limits::default());
@@ -453,8 +455,12 @@ mod tests {
         }).await.expect("the output rearm regression must not hang");
     }
 
-    #[tokio::test]
-    async fn resetting_a_slot_closes_its_real_socket_and_cancels_pending_input() {
+    /// Releases a slot's host resources without guest disposal and checks that
+    /// its real socket closes, its pending input is cancelled and its open
+    /// permit is returned.
+    async fn host_cleanup_closes_the_socket_and_returns_its_permit(
+        cleanup: impl FnOnce(&crate::slot::Slot),
+    ) {
         use crate::Activator;
         use isoplane_engine::HostBindings;
         let (state, mut peer, mut bindings, _) = connected().await;
@@ -477,36 +483,54 @@ mod tests {
             .activate(CellBindings::boxed(bindings.ctx.clone()))
             .expect("the slot fixture must activate");
         let slot = crate::slot::Slot::new(bindings.ctx.instance, bindings.ctx.clone(), instance);
-        slot.reset()
-            .expect("reset must return an idle slot to its template");
         let runtime = bindings
             .rt()
             .expect("the pending input requires its reactor")
             .clone();
         assert_eq!(
+            runtime.services.egress.instance_connections(slot.id),
+            1,
+            "the connected socket holds its instance's open permit"
+        );
+        cleanup(&slot);
+        assert_eq!(
             runtime.futures.pending_total(slot.id),
             0,
-            "reset must remove native wake ownership before the reactor observes cancellation"
+            "cleanup must remove native wake ownership before the reactor observes cancellation"
         );
         assert!(
             matches!(bindings.native_io(Request::Read { stream: input, length: ByteCount(1) }), Err(Error::InvalidHandle(handle)) if handle == input),
-            "reset must invalidate every guest reference to the old input"
+            "cleanup must invalidate every guest reference to the old input"
         );
         tokio::time::timeout(std::time::Duration::from_secs(60), async {
-            while runtime.services.egress.connections() != 0 {
+            while runtime.services.egress.instance_connections(slot.id) != 0 {
                 tokio::task::yield_now().await;
             }
             let mut byte = [0];
             assert_eq!(
                 peer.read(&mut byte)
                     .await
-                    .expect("the peer must observe reset cleanup"),
+                    .expect("the peer must observe cleanup"),
                 0,
-                "reset must close the actual host socket without running guest disposal"
+                "cleanup must close the actual host socket without running guest disposal"
             );
         })
         .await
-        .expect("reset cleanup must finish before the test deadline");
+        .expect("cleanup must finish before the test deadline");
+    }
+
+    #[tokio::test]
+    async fn resetting_a_slot_closes_its_real_socket_and_cancels_pending_input() {
+        host_cleanup_closes_the_socket_and_returns_its_permit(|slot| {
+            slot.reset()
+                .expect("reset must return an idle slot to its template")
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn evicting_a_slot_closes_its_real_socket_and_returns_its_permit() {
+        host_cleanup_closes_the_socket_and_returns_its_permit(crate::slot::Slot::discard).await;
     }
 
     #[tokio::test]
@@ -552,7 +576,7 @@ mod tests {
             "late peer data must not recreate a dropped input wake"
         );
         assert_eq!(
-            runtime.services.egress.connections(),
+            runtime.services.egress.instance_connections(InstanceId(83)),
             0,
             "host cleanup must release the connection without managed disposal"
         );
@@ -590,7 +614,7 @@ mod tests {
         );
         drop(input);
         assert_eq!(
-            runtime.services.egress.connections(),
+            runtime.services.egress.instance_connections(InstanceId(83)),
             0,
             "the reset connection must release quota when its last owner drops"
         );

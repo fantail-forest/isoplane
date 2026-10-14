@@ -939,7 +939,11 @@ in_mono_runtime! {
             reactor.context.emitted_logs()
         );
         assert_eq!(
-            reactor.runtime().services.egress.connections(),
+            reactor
+                .runtime()
+                .services
+                .egress
+                .instance_connections(reactor.context.instance),
             0,
             "a failed handshake releases its connection"
         );
@@ -1105,7 +1109,11 @@ in_mono_runtime! {
             reactor.context.emitted_logs()
         );
         assert_eq!(
-            reactor.runtime().services.egress.connections(),
+            reactor
+                .runtime()
+                .services
+                .egress
+                .instance_connections(reactor.context.instance),
             0,
             "the refused session releases its connection"
         );
@@ -1238,7 +1246,11 @@ in_mono_runtime! {
             reactor.context.emitted_logs()
         );
         assert_eq!(
-            reactor.runtime().services.egress.connections(),
+            reactor
+                .runtime()
+                .services
+                .egress
+                .instance_connections(reactor.context.instance),
             0,
             "the connection is released"
         );

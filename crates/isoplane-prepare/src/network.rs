@@ -55,9 +55,8 @@ impl InitializationNetwork {
         let owner = ConnectionOwner::new(self.tenant.clone(), isoplane_host::InstanceId(1))
             .map_err(|error| crate::PrepareError::State(error.into()))?;
         let limits = ConnectionLimits::new(ConnectionCeilings {
-            node: self.limits.connections,
-            tenant: self.limits.tenant_connections,
-            instance_pending: self.limits.instance_pending_connections,
+            in_progress: self.limits.instance_pending_connections,
+            open: self.limits.instance_open_connections,
         })
         .map_err(|error| crate::PrepareError::State(error.into()))?;
         let egress = HostEgressPolicy::system(limits)

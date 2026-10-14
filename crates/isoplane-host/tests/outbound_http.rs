@@ -26,7 +26,7 @@ async fn an_unread_response_holds_its_connection_permit_until_eof() {
             .expect("the fetch must await its headers");
         let response = rig.response(fetch).await;
         assert_eq!(
-            svc.egress.connections(),
+            svc.egress.instance_connections(InstanceId(1)),
             1,
             "headers must not release a streaming response's permit"
         );
@@ -61,7 +61,7 @@ async fn an_unread_response_holds_its_connection_permit_until_eof() {
             "small reads must preserve the entire response"
         );
         assert_eq!(
-            svc.egress.connections(),
+            svc.egress.instance_connections(InstanceId(1)),
             0,
             "EOF must release the connection permit"
         );
@@ -145,7 +145,7 @@ async fn reusing_a_context_releases_bodies_without_reassigning_their_handles() {
         let old = rig.response(fetch).await.body_handle;
         rig.ctx.begin_dispatch(0, 1);
         assert_eq!(
-            svc.egress.connections(),
+            svc.egress.instance_connections(InstanceId(1)),
             0,
             "reusing the context must synchronously release the previous scope's permit"
         );
@@ -203,7 +203,7 @@ async fn a_body_transport_error_releases_its_connection_permit() {
             "a response transport failure must reach the reader"
         );
         assert_eq!(
-            svc.egress.connections(),
+            svc.egress.instance_connections(InstanceId(1)),
             0,
             "a failed body must release its admission permit"
         );
@@ -242,7 +242,7 @@ async fn completing_a_cell_dispatch_releases_its_unread_outbound_body() {
             .await
             .expect("dispatch finalization must release capture-blocking outbound ownership");
         assert_eq!(
-            svc.egress.connections(),
+            svc.egress.instance_connections(result.instance),
             0,
             "dispatch completion must release an unread response's permit"
         );
@@ -332,7 +332,7 @@ async fn capture_refuses_pending_fetches_retained_bodies_and_inflight_reads() {
             .await
             .expect("ending outbound ownership must make the idle instance capturable");
         assert_eq!(
-            svc.egress.connections(),
+            svc.egress.instance_connections(instance),
             0,
             "completed ownership must release admission"
         );
@@ -414,7 +414,7 @@ async fn a_tombstoned_slot_releases_its_body_while_its_context_remains_reachable
             .expect("the body owner must be resident");
         slot.tombstone();
         assert_eq!(
-            svc.egress.connections(),
+            svc.egress.instance_connections(instance),
             0,
             "a tombstone cannot retain the outbound transport in its surviving context"
         );

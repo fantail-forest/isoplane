@@ -417,7 +417,7 @@ async fn an_http_dns_failure_is_io_and_does_not_count_as_a_policy_denial() {
         "a missing DNS name must not inflate destination policy denials"
     );
     assert_eq!(
-        runtime.services.egress.connections(),
+        runtime.services.egress.instance_connections(v.ctx.instance),
         0,
         "a failed DNS lookup must hold no connection permit"
     );

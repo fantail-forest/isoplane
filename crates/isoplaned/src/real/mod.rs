@@ -211,9 +211,8 @@ mod engine_policy_tests {
     #[test]
     fn preparation_uses_the_application_owner_and_execution_network_budgets() {
         let mut config = crate::config::NodeConfig::dev_default();
-        config.network.connections = 3;
-        config.network.tenant_connections = 2;
         config.network.instance_pending_connections = 1;
+        config.network.instance_open_connections = 2;
         config.host.guest_resources.native_handles = 7;
         let manifest: isoplane_abi::config::AppManifest = toml::from_str(
             "name='app'\n[bindings]\nfetch_allowlist=['db.example:5432']\n[resource_limits]\npending_futures_per_dispatch=2",
@@ -243,11 +242,10 @@ mod engine_policy_tests {
         );
         assert_eq!(
             (
-                policy.limits.connections,
-                policy.limits.tenant_connections,
-                policy.limits.instance_pending_connections
+                policy.limits.instance_pending_connections,
+                policy.limits.instance_open_connections
             ),
-            (3, 2, 1),
+            (1, 2),
             "initialization must obey the host connection limits"
         );
         assert_eq!(

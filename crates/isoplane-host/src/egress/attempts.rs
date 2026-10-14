@@ -71,7 +71,7 @@ impl PendingConnections {
     }
 
     #[cfg(test)]
-    fn tracked(&self) -> usize {
+    pub(super) fn tracked(&self) -> usize {
         self.instances.lock().len()
     }
 }

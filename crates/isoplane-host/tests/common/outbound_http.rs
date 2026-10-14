@@ -113,7 +113,7 @@ pub fn services(address: SocketAddr) -> Arc<Services> {
         .with_destinations(Arc::new(Endpoint(address))),
     );
     Arc::new(Services {
-        fetcher: Arc::new(PinnedHttpFetcher::new(policy.clone(), 0)),
+        fetcher: Arc::new(PinnedHttpFetcher::new(0)),
         egress: policy,
     })
 }

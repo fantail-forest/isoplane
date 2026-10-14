@@ -22,10 +22,11 @@ pub trait WakeSink: Send + Sync + 'static {
 pub trait Fetcher: Send + Sync + 'static {
     /// `target.addr` is the pinned address from the egress check; an
     /// implementation that re-resolves `target.url` has thrown the rebinding
-    /// control away.
+    /// control away. `attempt` is the instance's connection in progress: it
+    /// opens the connection, and its open permit stays with the transport.
     async fn fetch(
         &self,
-        owner: crate::egress::ConnectionOwner,
+        attempt: crate::egress::ConnectAttempt,
         target: isoplane_abi::host::PinnedTarget,
         req: FetchRequest,
     ) -> Result<super::http_scope::OutboundResponse, FutureError>;

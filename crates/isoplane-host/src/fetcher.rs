@@ -4,9 +4,8 @@
 //! impossible after the check. This legacy capability supports plain HTTP only;
 //! HTTPS belongs to the guest socket/TLS implementation.
 
-use crate::egress::{ConnectionOwner, HostEgressPolicy};
+use crate::egress::{ConnectAttempt, ConnectionPermit};
 use std::net::SocketAddr;
-use std::sync::Arc;
 
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
@@ -24,28 +23,24 @@ use crate::bindings::{Fetcher, OutboundBody, OutboundResponse, ResponseBody};
 /// before the fetch completes.
 pub const INLINE_BODY_LIMIT: usize = 256 * 1024;
 
-/// Sends HTTP through the same connection provider as managed TCP.
+/// Sends HTTP over the connection the instance's attempt opens.
 pub struct PinnedHttpFetcher {
-    egress: Arc<HostEgressPolicy>,
     inline_limit: usize,
 }
 
 impl PinnedHttpFetcher {
-    /// Use the node's egress provider and inline response threshold.
-    pub fn new(egress: Arc<HostEgressPolicy>, inline_limit: usize) -> Self {
-        Self {
-            egress,
-            inline_limit,
-        }
+    /// Use the node's inline response threshold.
+    pub fn new(inline_limit: usize) -> Self {
+        Self { inline_limit }
     }
 
     async fn send(
         &self,
-        owner: &ConnectionOwner,
+        attempt: ConnectAttempt,
         addr: SocketAddr,
         req: Request<Full<Bytes>>,
     ) -> Result<(Response<Incoming>, ConnectionTask), FutureError> {
-        let connect_failure = |error| match error {
+        let stream = attempt.connect(addr).await.map_err(|error| match error {
             crate::egress::ConnectionError::Denied(reason) => {
                 FutureError::Denied(reason.to_string())
             }
@@ -53,14 +48,7 @@ impl PinnedHttpFetcher {
             | crate::egress::ConnectionError::PeerMismatch { .. }) => {
                 FutureError::Io(format!("connect {addr}: {failure}"))
             }
-        };
-        // In progress until the response headers arrive, which is when this returns.
-        let attempt = self
-            .egress
-            .begin_connect(owner.clone())
-            .await
-            .map_err(connect_failure)?;
-        let stream = attempt.connect(addr).await.map_err(connect_failure)?;
+        })?;
         let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
             .await
             .map_err(|e| FutureError::Io(format!("handshake: {e}")))?;
@@ -69,12 +57,19 @@ impl PinnedHttpFetcher {
                 tracing::debug!(error = %e, "egress connection closed");
             }
         }));
-        let connection = ConnectionTask(task.abort_handle());
+        let abort = task.abort_handle();
         let response = sender
             .send_request(req)
             .await
             .map_err(|e| FutureError::Io(format!("request: {e}")))?;
-        Ok((response, connection))
+        // In progress until the response headers arrive, which is now.
+        Ok((
+            response,
+            ConnectionTask {
+                abort,
+                _permit: attempt.established(),
+            },
+        ))
     }
 }
 
@@ -82,7 +77,7 @@ impl PinnedHttpFetcher {
 impl Fetcher for PinnedHttpFetcher {
     async fn fetch(
         &self,
-        owner: ConnectionOwner,
+        attempt: ConnectAttempt,
         target: PinnedTarget,
         req: FetchRequest,
     ) -> Result<OutboundResponse, FutureError> {
@@ -109,7 +104,7 @@ impl Fetcher for PinnedHttpFetcher {
             .body(Full::new(Bytes::from(req.body)))
             .map_err(|e| FutureError::Denied(format!("bad request: {e}")))?;
 
-        let (resp, connection) = self.send(&owner, target.addr, request).await?;
+        let (resp, connection) = self.send(attempt, target.addr, request).await?;
         let status = resp.status().as_u16();
         let headers: Vec<(String, String)> = resp
             .headers()
@@ -154,11 +149,15 @@ impl Fetcher for PinnedHttpFetcher {
     }
 }
 
-struct ConnectionTask(tokio::task::AbortHandle);
+/// The connection's driver and the open permit it holds until the driver is stopped.
+struct ConnectionTask {
+    abort: tokio::task::AbortHandle,
+    _permit: ConnectionPermit,
+}
 
 impl Drop for ConnectionTask {
     fn drop(&mut self) {
-        self.0.abort();
+        self.abort.abort();
     }
 }
 
@@ -198,8 +197,20 @@ impl ResponseBody for IncomingBody {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::egress::{ConnectionFactory, DnsError, Resolver};
+    use crate::egress::{ConnectionFactory, ConnectionOwner, DnsError, HostEgressPolicy, Resolver};
     use std::future::Future;
+    use std::sync::Arc;
+
+    fn owner() -> ConnectionOwner {
+        ConnectionOwner::new("tenant".into(), crate::InstanceId(1)).expect("identified owner")
+    }
+
+    async fn attempt(egress: &Arc<HostEgressPolicy>) -> ConnectAttempt {
+        egress
+            .begin_connect(owner())
+            .await
+            .expect("the instance may start a connection")
+    }
 
     struct NoNetwork;
 
@@ -223,17 +234,18 @@ mod tests {
 
     #[tokio::test]
     async fn legacy_https_fetch_is_refused_before_any_host_tls_or_connection() {
-        let egress = HostEgressPolicy::new(
-            Box::new(NoNetwork),
-            crate::egress::ConnectionLimits::uniform(8).expect("connection limits"),
-        )
-        .with_connections(Arc::new(NoNetwork));
-        let fetcher = PinnedHttpFetcher::new(Arc::new(egress), INLINE_BODY_LIMIT);
+        let egress = Arc::new(
+            HostEgressPolicy::new(
+                Box::new(NoNetwork),
+                crate::egress::ConnectionLimits::uniform(8).expect("connection limits"),
+            )
+            .with_connections(Arc::new(NoNetwork)),
+        );
+        let fetcher = PinnedHttpFetcher::new(INLINE_BODY_LIMIT);
         let url = "https://public.example/".to_string();
         let result = fetcher
             .fetch(
-                ConnectionOwner::new("tenant".into(), crate::InstanceId(1))
-                    .expect("identified owner"),
+                attempt(&egress).await,
                 PinnedTarget {
                     url: url.clone(),
                     addr: "8.8.8.8:443".parse().expect("public endpoint"),
@@ -302,17 +314,18 @@ mod tests {
                 .await
                 .expect("the peer HTTP exchange");
         });
-        let egress = HostEgressPolicy::new(
-            Box::new(NoNetwork),
-            crate::egress::ConnectionLimits::uniform(8).expect("connection limits"),
-        )
-        .with_destinations(Arc::new(OnlyPeer(address)));
-        let fetcher = PinnedHttpFetcher::new(Arc::new(egress), INLINE_BODY_LIMIT);
+        let egress = Arc::new(
+            HostEgressPolicy::new(
+                Box::new(NoNetwork),
+                crate::egress::ConnectionLimits::uniform(8).expect("connection limits"),
+            )
+            .with_destinations(Arc::new(OnlyPeer(address))),
+        );
+        let fetcher = PinnedHttpFetcher::new(INLINE_BODY_LIMIT);
         let url = format!("http://pinned.example:{}/echo?x=1", address.port());
         let response = fetcher
             .fetch(
-                ConnectionOwner::new("tenant".into(), crate::InstanceId(1))
-                    .expect("identified owner"),
+                attempt(&egress).await,
                 PinnedTarget {
                     url: url.clone(),
                     addr: address,
@@ -330,6 +343,11 @@ mod tests {
         assert!(
             matches!(response.body, OutboundBody::Inline(ref body) if body == b"ok"),
             "the small response must be returned intact"
+        );
+        assert_eq!(
+            egress.instance_connections(crate::InstanceId(1)),
+            0,
+            "an inline response releases its connection before the fetch returns"
         );
         peer.await.expect("the peer task completes cleanly");
     }
@@ -377,39 +395,35 @@ mod tests {
             HostEgressPolicy::new(
                 Box::new(NoNetwork),
                 crate::egress::ConnectionLimits::new(crate::egress::ConnectionCeilings {
-                    node: 8,
-                    tenant: 8,
-                    instance_pending: 1,
+                    in_progress: 1,
+                    open: 8,
                 })
                 .expect("connection limits"),
             )
             .with_destinations(Arc::new(OnlyPeer(address))),
         );
-        let fetcher = Arc::new(PinnedHttpFetcher::new(egress.clone(), INLINE_BODY_LIMIT));
-        let owner = ConnectionOwner::new("tenant".into(), crate::InstanceId(1)).expect("owner");
+        let fetcher = PinnedHttpFetcher::new(INLINE_BODY_LIMIT);
         let url = format!("http://pinned.example:{}/", address.port());
-        let fetch = tokio::spawn({
-            let (fetcher, owner) = (fetcher.clone(), owner.clone());
-            async move {
-                fetcher
-                    .fetch(
-                        owner,
-                        PinnedTarget {
-                            url: url.clone(),
-                            addr: address,
-                        },
-                        FetchRequest {
-                            method: "GET".into(),
-                            url,
-                            headers: vec![],
-                            body: vec![],
-                        },
-                    )
-                    .await
-            }
+        let first = attempt(&egress).await;
+        let fetch = tokio::spawn(async move {
+            fetcher
+                .fetch(
+                    first,
+                    PinnedTarget {
+                        url: url.clone(),
+                        addr: address,
+                    },
+                    FetchRequest {
+                        method: "GET".into(),
+                        url,
+                        headers: vec![],
+                        body: vec![],
+                    },
+                )
+                .await
         });
         request_arrived.await.expect("the request reaches the peer");
-        let mut waiting = Box::pin(egress.begin_connect(owner.clone()));
+        let mut waiting = Box::pin(egress.begin_connect(owner()));
         let mut context = std::task::Context::from_waker(std::task::Waker::noop());
         assert!(
             waiting.as_mut().poll(&mut context).is_pending(),
@@ -424,14 +438,21 @@ mod tests {
             matches!(response.body, OutboundBody::Stream(_)),
             "the response body is still open"
         );
-        assert!(
-            matches!(
-                waiting.as_mut().poll(&mut context),
-                std::task::Poll::Ready(Ok(_))
-            ),
-            "the attempt ends at the headers, while its connection stays open"
+        let std::task::Poll::Ready(Ok(next)) = waiting.as_mut().poll(&mut context) else {
+            panic!("the attempt ends at the headers, so the next one starts");
+        };
+        assert_eq!(
+            egress.instance_connections(crate::InstanceId(1)),
+            2,
+            "the open response body keeps its connection's permit beside the new attempt's"
         );
         drop(response);
+        assert_eq!(
+            egress.instance_connections(crate::InstanceId(1)),
+            1,
+            "dropping the body releases its connection's permit"
+        );
+        drop(next);
         peer.abort();
     }
 }

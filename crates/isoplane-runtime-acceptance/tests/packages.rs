@@ -405,7 +405,11 @@ async fn an_aspnet_request_that_calls_out_through_a_factory_client_leaves_its_in
             "request {dispatch} must leave no timer or read pending, or the cell discards its instance"
         );
         assert_eq!(
-            reactor.runtime().services.egress.connections(),
+            reactor
+                .runtime()
+                .services
+                .egress
+                .instance_connections(reactor.context.instance),
             0,
             "request {dispatch} must close every connection its calls opened"
         );
