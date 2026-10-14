@@ -79,6 +79,7 @@ win32job = "2.0.3"
 zstd        = "0.13"
 blake3      = { version = "1", features = ["rayon"] }
 hex         = "0.4"
+httpdate    = "1"
 rand        = "0.9"
 scc            = "3.8"    # the future table's maps, on the wake path
 rusqlite    = { version = "0.37", features = ["bundled"] }

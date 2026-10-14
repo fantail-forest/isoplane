@@ -157,8 +157,11 @@ pub enum TrustError {
          form YYYY-MM-DDTHH:MM:SSZ"
     )]
     IngestedAtMalformed { path: String, value: String },
-    #[error("trust manifest {path} has bundle_date `{value}`, which is not a date of the form YYYY-MM-DD")]
-    BundleDateMalformed { path: String, value: String },
+    #[error(
+        "trust manifest {path} has mozilla_as_of `{value}`, which is not a timestamp of the form \
+         `Thu Aug 13 03:12:01 2026 GMT`"
+    )]
+    MozillaAsOfMalformed { path: String, value: String },
 }
 
 /// The facts a node reports about the bundle it serves.
@@ -236,7 +239,7 @@ pub struct TrustBundle {
     source: TrustSource,
     manifest: Option<Manifest>,
     last_check_unix_secs: Option<u64>,
-    /// Midnight UTC on the manifest's `bundle_date`.
+    /// The manifest's `mozilla_as_of`.
     published_unix_secs: Option<u64>,
     warn_after_days: u32,
 }
@@ -374,14 +377,13 @@ impl TrustBundle {
                         bundle: certificate_count,
                     });
                 }
-                published_unix_secs = Some(
-                    parse_utc(&format!("{}T00:00:00Z", manifest.bundle_date)).ok_or_else(|| {
-                        TrustError::BundleDateMalformed {
+                published_unix_secs =
+                    Some(parse_header_time(&manifest.mozilla_as_of).ok_or_else(|| {
+                        TrustError::MozillaAsOfMalformed {
                             path: path.clone(),
-                            value: manifest.bundle_date.clone(),
+                            value: manifest.mozilla_as_of.clone(),
                         }
-                    })?,
-                );
+                    })?);
                 last_check_unix_secs = Some(parse_utc(&manifest.ingested_at).ok_or_else(|| {
                     TrustError::IngestedAtMalformed {
                         path,
@@ -424,10 +426,11 @@ impl TrustBundle {
     /// The modification time guests see on the file, in nanoseconds since
     /// the Unix epoch.
     ///
-    /// A bundle with a manifest reports when it was published: midnight UTC
-    /// on [`Manifest::bundle_date`]. A bundle without one, such as local
-    /// development's, which joins a machine's roots to the shipped ones, has
-    /// no such date, and reports a time derived from its content instead:
+    /// A bundle with a manifest reports when it was generated, to the second:
+    /// [`Manifest::mozilla_as_of`], the moment its certificate data was taken
+    /// from Mozilla. A bundle without one, such as local development's, which
+    /// joins a machine's roots to the shipped ones, has no such time, and
+    /// reports one derived from its content instead:
     /// [`MODIFIED_EPOCH_UNIX_SECS`] plus the first eight bytes of the
     /// SHA-256, read big-endian, as seconds modulo [`MODIFIED_SPAN_SECS`].
     /// That time is not a date. Either way two nodes serving the same bundle
@@ -511,6 +514,13 @@ fn validate_certificates(pem: &[u8], source: &TrustSource) -> Result<usize, Trus
             })?;
     }
     Ok(roots.len())
+}
+
+/// The timestamp a bundle's header carries, `Thu Aug 13 03:12:01 2026 GMT`,
+/// to seconds since the Unix epoch.
+fn parse_header_time(text: &str) -> Option<u64> {
+    let time = httpdate::parse_http_date(text.strip_suffix(" GMT")?).ok()?;
+    Some(time.duration_since(UNIX_EPOCH).ok()?.as_secs())
 }
 
 /// `YYYY-MM-DDTHH:MM:SSZ` to seconds since the Unix epoch.
@@ -956,23 +966,34 @@ mod tests {
     }
 
     #[test]
-    fn a_bundle_with_a_manifest_reports_the_date_it_was_published() {
+    fn a_bundle_with_a_manifest_reports_the_second_its_data_was_taken() {
         let mut manifest = shipped_manifest();
-        manifest.bundle_date = "2025-01-02".into();
+        manifest.mozilla_as_of = "Thu Jan  2 03:04:05 2025 GMT".into();
         let (_dir, path) = operator_dir(SHIPPED_PEM, Some(&manifest));
         let bundle = TrustBundle::load(&operator_config(&path, &manifest.bundle_sha256))
             .expect("an operator bundle with a manifest loads");
-        assert_eq!(bundle.modified_ns(), 1_735_776_000 * 1_000_000_000);
+        assert_eq!(bundle.modified_ns(), 1_735_787_045 * 1_000_000_000);
     }
 
     #[test]
-    fn a_manifest_whose_bundle_date_is_not_a_date_is_refused() {
+    fn the_shipped_manifest_records_a_time_the_bundle_can_report() {
+        let shipped = TrustBundle::load(&TrustConfig::default()).expect("the shipped bundle loads");
+        let day = parse_utc(&format!("{}T00:00:00Z", shipped_manifest().bundle_date))
+            .expect("the shipped bundle_date is a date");
+        assert!(
+            (day..day + SECS_PER_DAY).contains(&(shipped.modified_ns() / 1_000_000_000)),
+            "the data was taken on the day curl published the bundle"
+        );
+    }
+
+    #[test]
+    fn a_manifest_whose_mozilla_timestamp_cannot_be_read_is_refused() {
         let mut manifest = shipped_manifest();
-        manifest.bundle_date = "last Tuesday".into();
+        manifest.mozilla_as_of = "last Tuesday".into();
         let (_dir, path) = operator_dir(SHIPPED_PEM, Some(&manifest));
         assert!(matches!(
             TrustBundle::load(&operator_config(&path, &manifest.bundle_sha256)),
-            Err(TrustError::BundleDateMalformed { value, .. }) if value == "last Tuesday"
+            Err(TrustError::MozillaAsOfMalformed { value, .. }) if value == "last Tuesday"
         ));
     }
 

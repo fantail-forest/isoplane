@@ -1803,6 +1803,7 @@ name = "isoplane-trust"
 version = "0.1.0"
 dependencies = [
  "hex",
+ "httpdate",
  "rustls",
  "rustls-pki-types",
  "serde",
