@@ -1046,9 +1046,10 @@ What to know before relying on it:
 - **Connect inside a request, not during initialization.** The prerelease
   leaves a timer running even after it is disposed, which initialization
   refuses.
-- **Each request reconnects.** The client keeps its connection open, and a
-  request that ends with a connection open is
+- **Each request reconnects.** The client leaves work pending when a request
+  ends, including that timer, and a request that ends with work pending is
   [followed by a fresh instance](dotnet-runtime-differences.md#work-belongs-to-a-request).
+  An idle open connection on its own would not cost the instance.
 - **The Redis output cache store does not start**
   ([`AddStackExchangeRedisOutputCache`][AddStackExchangeRedisOutputCache]): it
   runs a clean-up loop on a timer from start-up, whichever client is used.
