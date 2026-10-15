@@ -110,6 +110,8 @@ tasks:
       - '{{.ROOT_DIR}}/global.json'
       - '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/development/runtime-work/toolchain-identity'
       - exclude: 'vendor/dotnet-runtime/**/__pycache__/**/*'
+      - exclude: 'vendor/openssl/.git'
+      - exclude: 'vendor/icu/.git'
     generates:
       - '{{.ROOT_DIR}}/.build/wasm32/runtime/feed/Isoplane.GuestRuntime.props'
       - '{{.ROOT_DIR}}/.build/wasm32/runtime/feed/Microsoft.NETCore.App.Runtime.Mono.wasi-wasm.*.nupkg'
@@ -157,6 +159,7 @@ tasks:
       - '{{.ROOT_DIR}}/guest-runtime/build.sh'
       - '{{.ROOT_DIR}}/guest-runtime/manifest.env'
       - '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/development/runtime-work/toolchain-identity'
+      - exclude: 'vendor/openssl/.git'
     generates:
       - '{{.ROOT_DIR}}/.build/wasm32/runtime/openssl/lib/libcrypto.a'
       - '{{.ROOT_DIR}}/.build/wasm32/runtime/openssl/lib/libssl.a'
@@ -170,6 +173,7 @@ tasks:
       - '{{.ROOT_DIR}}/vendor/icu/**/*'
       - '{{.ROOT_DIR}}/guest-runtime/build.sh'
       - '{{.ROOT_DIR}}/guest-runtime/manifest.env'
+      - exclude: 'vendor/icu/.git'
     generates:
       - '{{.ROOT_DIR}}/.build/wasm32/runtime/icu/mono/runtimes/wasi-wasm/native/lib/icudt.dat'
     cmds:
