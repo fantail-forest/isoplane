@@ -5,8 +5,8 @@ title: Library compatibility
 Most NuGet packages run on Isoplane unchanged. The ones that do not fail for a
 handful of reasons, all of which follow from
 [how .NET differs on Isoplane](dotnet-runtime-differences.md): something waits
-synchronously, starts a thread or a timer, writes a file, or loads a native
-library. That page also explains
+synchronously, starts a thread, relies on a timer firing between requests,
+writes a file, or loads a native library. That page also explains
 [what those limits are the price of](dotnet-runtime-differences.md#why-the-sandbox-works-this-way).
 
 This page lists the specific incompatibilities we know of, by package: APIs,
@@ -42,7 +42,7 @@ entry says otherwise.
 | ASP.NET Core | [Data Protection key stores](#data-protection) | Small change: use the replacement Isoplane provides |
 | ASP.NET Core | [XML formatters over 30 KB](#xml-formatters) | Moderate change: use the asynchronous XML APIs. Or buffer up to a limit |
 | ASP.NET Core | [Newtonsoft.Json formatters over 30 KB](#newtonsoft-json) | Moderate to large change: move to `System.Text.Json`. Or keep Newtonsoft.Json and raise two limits |
-| ASP.NET Core | [Rate limiting middleware](#rate-limiting) | Large change: limit requests elsewhere. Or a per-instance limiter topped up on each request |
+| ASP.NET Core | [Rate limiting middleware](#rate-limiting) | Works, counting per instance. A sliding window refills late after an idle spell |
 | ASP.NET Core | [Validation attributes, localizers, token callbacks and service factories that do I/O](#synchronous-extension-points) | Moderate change: move the I/O elsewhere |
 | ASP.NET Core | [WebSockets, SignalR's WebSocket transport, Blazor Server](#connections-and-background-work) | Unsupported |
 | ASP.NET Core | [gRPC over HTTP/2](#connections-and-background-work) | Moderate change: use gRPC-Web |
@@ -83,7 +83,6 @@ read the stack trace to see which call failed.
 | `DirectoryNotFoundException: /tmp/` | ASP.NET Core tried to move a large request or response to a temporary file. See [uploads](#uploads), [request buffering](#enable-buffering), [Newtonsoft.Json](#newtonsoft-json) and [XML formatters](#xml-formatters). |
 | `IOException: Read-only file system` | Something tried to write a file. The [file system is read-only](dotnet-runtime-differences.md#the-machine-underneath). |
 | [`DllNotFoundException`][DllNotFoundException], sometimes inside a `TypeInitializationException` | A package called into a native library that the runtime does not include. An application cannot bring its own; see [the machine underneath](dotnet-runtime-differences.md#the-machine-underneath). |
-| The application refuses to start with `initialization retains a timer` | Something registered at startup started a timer. The lines beneath the message name each timer and the method that runs or awaits it. See [rate limiting](#rate-limiting), [OpenTelemetry](#opentelemetry) and [SQLite](#sqlite). |
 | The application refuses to start with `unhandled System.PlatformNotSupportedException` and no stack trace | A call made while the application starts failed. The known ones are [remote configuration](#remote-configuration) and, in an application written without ASP.NET Core, [the console logger](#console-logging). |
 | The application refuses to start, naming a service that was `Still running once the application had started` | A package registered a background service. See [MCP sessions](#mcp-sessions) and [background work](#connections-and-background-work). |
 | A minimal API endpoint answers 200 with an empty body, or the build fails with `CS9144: Cannot intercept method` | A handler names code that another source generator produces. See [generated code in handlers](#generated-code-in-handlers). |
@@ -503,12 +502,10 @@ Size of the change: small.
 
 ### Rate limiting middleware {#rate-limiting}
 
-An application that calls [`UseRateLimiter`][UseRateLimiter] refuses to start:
-`initialization retains a timer`. This is so with every built-in policy (fixed
-window, sliding window, token bucket and concurrency) and with no policy at
-all, because the timer is the middleware's own: it ticks every 100 ms to refill
-permits and tidy up, and a timer cannot be carried from initialization into an
-instance.
+[`UseRateLimiter`][UseRateLimiter] works, and its limits hold for one
+instance. The middleware's timer, which ticks every 100 ms to refill permits
+and tidy up, runs only while the instance handles a request; see
+[Work belongs to a request](dotnet-runtime-differences.md#work-belongs-to-a-request).
 
 ```csharp
 builder.Services.AddRateLimiter(options =>
@@ -519,81 +516,31 @@ builder.Services.AddRateLimiter(options =>
     }));
 
 var app = builder.Build();
-app.UseRateLimiter();   // the application refuses to start
+app.UseRateLimiter();
 ```
 
 The policy above is registered with [`AddRateLimiter`][AddRateLimiter] and
 [`AddFixedWindowLimiter`][AddFixedWindowLimiter].
 
+What to know before relying on it:
+
+- **Limits count per instance.** Isoplane runs as many instances as the
+  traffic needs, each with its own count, and
+  [memory belongs to one instance](dotnet-runtime-differences.md#instances-come-and-go).
+  For a limit across instances, count requests in a store that every instance
+  shares, or limit them in front of the application.
+- **A sliding window refills late after an idle spell.**
+  [`FixedWindowRateLimiter`][FixedWindowRateLimiter] and
+  [`TokenBucketRateLimiter`][TokenBucketRateLimiter] work out what to refill
+  from the time that has passed, so their permits come back after an idle
+  spell. A sliding-window limiter moves on by one segment for each tick, and
+  ticks only run during requests, so after an idle spell it can stay closed for
+  up to one window longer than configured.
+
 Typically used for limiting how often a client may call an endpoint.
 
-#### Recommended workaround: limit requests outside the application
-
-Count requests in a store that every instance shares, or limit them in front
-of the application. A limit kept in an application's memory holds for one
-instance only: Isoplane runs as many instances as the traffic needs, and
-[memory belongs to one instance](dotnet-runtime-differences.md#instances-come-and-go).
-
-Size of the change: large. Limiting moves out of the application.
-
-#### Alternative workaround: a limiter topped up on each request
-
-.NET's limiters can be used without the middleware. Create a
-[`FixedWindowRateLimiter`][FixedWindowRateLimiter] or a
-[`TokenBucketRateLimiter`][TokenBucketRateLimiter] with its own timer switched
-off, and call [`TryReplenish`][TryReplenish] before asking for a permit. It
-works out what to add from the time that has passed, so permits come back
-after an idle spell although nothing ran in between.
-
-```csharp
-using System.Threading.RateLimiting;
-
-var limiters = new Dictionary<string, FixedWindowRateLimiter>();
-
-app.Use(async (context, next) =>
-{
-    // One limiter for each caller, identified here by an API key header.
-    var client = context.Request.Headers["X-Api-Key"].ToString();
-    if (!limiters.TryGetValue(client, out var limiter))
-        limiters[client] = limiter = new FixedWindowRateLimiter(new()
-        {
-            PermitLimit = 100,
-            Window = TimeSpan.FromMinutes(1),
-            AutoReplenishment = false,   // no timer; each request tops the limiter up
-        });
-
-    limiter.TryReplenish();
-    using var lease = limiter.AttemptAcquire();
-    if (!lease.IsAcquired)
-    {
-        context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
-        return;
-    }
-    await next(context);
-});
-```
-
-Know its limits before relying on it:
-
-- It counts for one instance. With several instances, each allows the full
-  limit, and the counts are gone whenever an instance is replaced.
-- The sliding-window limiter does not work this way: it moves on by one
-  segment for each call, so it stays closed after an idle spell.
-- Leave queueing off. A queued request would wait for a refill that only the
-  next request brings.
-- `RequireRateLimiting` and `[EnableRateLimiting]` belong to the middleware and
-  have no effect here.
-- Nothing removes a caller's limiter once it is idle, so bound the number of
-  keys yourself if callers are many.
-
-Size of the change: small to moderate.
-
-#### Looking ahead
-
-Isoplane's ASP.NET Core adapter library, `Isoplane.AspNetCore`, can provide a
-middleware that honours the policies an application already registers and
-refills them this way, so that `UseRateLimiter` has a one-line replacement.
-Counting across instances needs shared state, which no in-memory limiter has.
+Size of the change: none for a limit per instance. Large for a limit across
+instances: limiting moves out of the application.
 
 ### Validation attributes, localizers, token callbacks and service factories that do I/O {#synchronous-extension-points}
 
@@ -898,13 +845,6 @@ work:
   `SQLite Error 14: 'file-backed databases are not available, ...'`. No
   storage outlasts an instance, so the file's data would vanish with it, and
   Isoplane refuses the file rather than lose the data without telling you.
-- **Creating a connection while the application starts.** The first
-  [`SqliteConnection`][SqliteConnection] starts a timer that
-  `Microsoft.Data.Sqlite` uses to tidy its connection pool, and the application
-  then refuses to start with `initialization retains a timer`, naming
-  `SqliteConnectionFactory.PruneCallback`. That includes Entity Framework Core
-  work in `Program.cs` before `await app.RunAsync()`, such as creating the
-  database.
 
 Typically used for local development databases, tests and small applications.
 
@@ -1085,30 +1025,24 @@ Size of the change: small.
 
 ### OpenTelemetry SDK {#opentelemetry}
 
-An application that sets up the OpenTelemetry SDK at start-up refuses to
-start: `initialization retains a timer`. Tracing, metrics and logging all fail
-this way, with any exporter, because one of the timers belongs to the SDK
-itself.
+An application that sends traces, metrics or logs with the OpenTelemetry SDK's
+OTLP exporter delivers nothing to its collector: the exporter sends
+synchronously, over HTTP and over gRPC alike.
 
 ```csharp
 builder.Services.AddOpenTelemetry()
     .WithTracing(tracing => tracing
         .AddAspNetCoreInstrumentation()
-        .AddOtlpExporter());   // the application refuses to start
+        .AddOtlpExporter());   // nothing arrives at the collector
 ```
 
-The refusal names the timers. For the code above there are two:
+The SDK starts two delays of its own for the code above, and like any timer
+they [run only during requests](dotnet-runtime-differences.md#work-belongs-to-a-request):
 
 - A delay of 10 s awaited by the SDK's self-diagnostics, which look for a
-  configuration file. It starts with the SDK, and no setting switches it off.
+  configuration file.
 - A delay of 5 s awaited by the batch exporter. A metrics reader has one of
   60 s in its place.
-
-Creating the SDK later, after initialization, does not get round this. The
-application then starts, and those timers
-[run during later requests](dotnet-runtime-differences.md#work-belongs-to-a-request),
-but the OTLP exporter sends synchronously, over HTTP and over gRPC alike, so
-nothing arrives.
 
 Typically used for sending traces, metrics and logs to a collector. We ran
 OpenTelemetry 1.19.1.
@@ -1372,10 +1306,9 @@ in the browser: the batch exporter and the metrics reader have
 [task-based forms for it][otel-6379], and the OTLP exporter was
 [adjusted for it in 1.19.0][otel-7708]. The SDK picks those forms whenever the
 thread pool has only one thread, so it already uses them on Isoplane; their waits
-are the 5 s and 60 s delays above. What remains is a way to keep the
-self-diagnostics from starting a timer, an export that does not send
-synchronously, which the maintainers have so far left out, and somewhere for
-those delays to run between requests.
+are the 5 s and 60 s delays above. What remains is an export that does not
+send synchronously, which the maintainers have so far left out, and somewhere
+for those delays to run between requests.
 
 Isoplane can also close the gap from its own side, with an exporter that
 collects spans and sends them before the response completes, or hands them to
@@ -1613,7 +1546,6 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [sqlclient-979]: https://github.com/dotnet/SqlClient/issues/979
 [sqlclient-pool-v2]: https://devblogs.microsoft.com/azure-sql/try-sqlclients-new-connection-pool-for-faster-parallel-connections/
 [SqlConnection]: https://learn.microsoft.com/dotnet/api/microsoft.data.sqlclient.sqlconnection
-[SqliteConnection]: https://learn.microsoft.com/dotnet/api/microsoft.data.sqlite.sqliteconnection
 [SqliteException]: https://learn.microsoft.com/dotnet/api/microsoft.data.sqlite.sqliteexception
 [StackExchange.Redis]: https://stackexchange.github.io/StackExchange.Redis/
 [stj-source-generation]: https://learn.microsoft.com/dotnet/standard/serialization/system-text-json/source-generation
@@ -1627,7 +1559,6 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [TokenValidationParameters]: https://learn.microsoft.com/dotnet/api/microsoft.identitymodel.tokens.tokenvalidationparameters
 [TransactionInDoubtException]: https://learn.microsoft.com/dotnet/api/system.transactions.transactionindoubtexception
 [TransactionScope]: https://learn.microsoft.com/dotnet/api/system.transactions.transactionscope
-[TryReplenish]: https://learn.microsoft.com/dotnet/api/system.threading.ratelimiting.replenishingratelimiter.tryreplenish
 [UseLazyLoadingProxies]: https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.proxiesextensions.uselazyloadingproxies
 [UseLoadedSession]: reference/sdk/Isoplane.AspNetCore/Isoplane.AspNetCore/SessionLoading/UseLoadedSession.md
 [UseRateLimiter]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.builder.ratelimiterapplicationbuilderextensions.useratelimiter
