@@ -167,7 +167,7 @@ fn dispatch(cell: &Arc<Cell>, module: &ModuleId, id: u64) -> Receiver<DispatchRe
         stream: None,
         upload: None,
         module: module.clone(),
-        target: Target::Handler { route: "/".into() },
+        target: Target::Handler { route: "/".into() }.into(),
         completion: cell
             .completion_owner(module, &rec)
             .expect("registered completion owner"),

@@ -343,6 +343,10 @@ pub struct PreparedResources {
     /// Timers still pending when initialization ended, each restored with its
     /// deadline counted from activation.
     pub pending_timers: Vec<PreparedTimer>,
+    /// The least time between wakes of an idle instance to run its due
+    /// timers, when initialization opted in; otherwise timers run only during
+    /// requests.
+    pub timers_between_requests_ms: Option<u64>,
 }
 
 /// A timer initialization left pending.
@@ -360,6 +364,7 @@ impl Default for PreparedResources {
             network: None,
             ready_pollables: Vec::new(),
             pending_timers: Vec::new(),
+            timers_between_requests_ms: None,
         }
     }
 }

@@ -88,6 +88,8 @@ pub(super) fn ends_in_tombstone(out: &DispatchOutcome, slot: &Arc<Slot>) -> bool
 pub(super) enum Responder {
     Blocking(std::sync::mpsc::SyncSender<DispatchResult>),
     Async(Arc<Mutex<Option<tokio::sync::oneshot::Sender<DispatchResult>>>>),
+    /// The host started the dispatch itself and waits for no result.
+    Nobody,
 }
 
 impl From<std::sync::mpsc::SyncSender<DispatchResult>> for Responder {
@@ -106,6 +108,7 @@ pub(super) fn answer(tx: &Responder, result: DispatchResult) {
             Some(tx) => tx.send(result).is_err(),
             None => return,
         },
+        Responder::Nobody => return,
     };
     if disconnected {
         tracing::debug!(
@@ -228,7 +231,7 @@ impl Cell {
         }
         let job = Box::new(DispatchJob {
             module: module.clone(),
-            target,
+            target: target.into(),
             rec,
             responder,
             stream,
@@ -318,7 +321,7 @@ impl Cell {
         }
         let job = Box::new(DispatchJob {
             module: module.clone(),
-            target,
+            target: target.into(),
             rec,
             responder,
             stream: None,

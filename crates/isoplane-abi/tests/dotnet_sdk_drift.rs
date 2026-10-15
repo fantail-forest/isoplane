@@ -168,6 +168,7 @@ fn dispatch_kind_in_records_cs_mirrors_the_rust_enum() {
                     body: vec![],
                 }),
             ),
+            ("Timers", DispatchKind::Timers),
         ],
     );
 }
@@ -315,6 +316,23 @@ fn managed_entropy_chunks_match_the_host_out_buffer_limit() {
         value,
         imports::MAX_OUT_BUFFER_BYTES,
         "managed entropy must chunk at the canonical host buffer limit"
+    );
+}
+
+#[test]
+fn the_sdk_refuses_timer_intervals_below_the_host_minimum() {
+    let source = sdk_file("../Sdk/Initialization.cs");
+    let value = source
+        .split("MinimumTimerIntervalMs = ")
+        .nth(1)
+        .and_then(|value| value.split(';').next())
+        .expect("the SDK must declare the least timer interval it accepts")
+        .parse::<u64>()
+        .expect("the least timer interval must be an integer");
+    assert_eq!(
+        value,
+        imports::MIN_TIMERS_BETWEEN_REQUESTS_MS,
+        "the SDK must refuse exactly the intervals the host refuses"
     );
 }
 

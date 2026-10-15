@@ -180,6 +180,25 @@ fn an_invalid_seed_buffer_traps_instead_of_baking_zero_entropy() {
 }
 
 #[test]
+fn preparation_accepts_a_timer_interval_of_a_second_and_refuses_a_shorter_one() {
+    let opting_in = |minimum_interval_ms: u64| {
+        guest(
+            r#"(import "isoplane" "timers_between_requests" (func $timers (param i64) (result i64)))"#,
+            &format!("(drop (call $timers (i64.const {minimum_interval_ms})))"),
+        )
+    };
+    assert!(
+        matches!(
+            initialize(&engine(), &opting_in(999), &request()),
+            Err(PrepareError::Initialization { .. })
+        ),
+        "an interval under a second must fail preparation"
+    );
+    initialize(&engine(), &opting_in(1_000), &request())
+        .expect("an interval of a second must be accepted");
+}
+
+#[test]
 fn wasm_start_code_cannot_execute_before_the_initializer_budget_is_armed() {
     let wasm = wat::parse_str("(module (memory (export \"memory\") 1) (func $start (loop $forever (br $forever))) (start $start))").expect("the start fixture must assemble");
     assert!(

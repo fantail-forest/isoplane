@@ -188,18 +188,25 @@ operation completes.
 
 ## Between requests
 
-An instance with no request does not run at all. Isoplane may keep it for the
-next request, or discard it. Successive requests can reach different instances.
+An instance with no request does not run at all, unless the application asked
+for its timers to run between requests. Isoplane may keep it for the next
+request, or discard it. Successive requests can reach different instances.
 
 **Isoplane**
 
 - Decides how many instances run and which one gets a request.
 - Discards an instance whenever it chooses, without notice. No shutdown event is
   raised and no cleanup code runs.
+- Wakes an idle instance to run the timers that have come due, if the
+  application called
+  [`Initialization.RunTimersBetweenRequests`](reference/sdk/Isoplane.Sdk/Isoplane/Initialization/RunTimersBetweenRequests.md)
+  during initialization. An instance that has had no request for five minutes
+  is stopped instead.
 
 **Your application**
 
-- Relies on no timer, loop or queue consumer to run in the background.
+- Relies on no loop or queue consumer to run in the background, and on no
+  timer to run on time.
 - Treats memory as a cache. Static fields and `IMemoryCache` belong to one
   instance and vanish with it.
 - Expects a connection kept from an earlier request to be stale, and opens

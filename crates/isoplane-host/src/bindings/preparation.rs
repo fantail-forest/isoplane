@@ -312,6 +312,7 @@ mod tests {
                 network: Some(ResourceHandle(1)),
                 ready_pollables,
                 pending_timers: Vec::new(),
+                timers_between_requests_ms: None,
             };
             assert!(io.restore_resources(&prepared).is_err(), "ready pollable metadata must contain only distinct in-range handles separate from network authority");
         }
@@ -333,6 +334,7 @@ mod tests {
             network: Some(ResourceHandle(1)),
             ready_pollables: vec![ResourceHandle(2)],
             pending_timers: Vec::new(),
+            timers_between_requests_ms: None,
         };
         assert!(
             matches!(io.restore_resources(&prepared), Err(Error::ResourceLimit)),
@@ -435,18 +437,21 @@ mod tests {
             PreparedResources {
                 ready_pollables: Vec::new(),
                 pending_timers: Vec::new(),
+                timers_between_requests_ms: None,
                 next_handle: 0,
                 network: None,
             },
             PreparedResources {
                 ready_pollables: Vec::new(),
                 pending_timers: Vec::new(),
+                timers_between_requests_ms: None,
                 next_handle: 2,
                 network: Some(ResourceHandle(0)),
             },
             PreparedResources {
                 ready_pollables: Vec::new(),
                 pending_timers: Vec::new(),
+                timers_between_requests_ms: None,
                 next_handle: 2,
                 network: Some(ResourceHandle(2)),
             },
@@ -487,6 +492,7 @@ mod tests {
         io.restore_resources(&PreparedResources {
             ready_pollables: Vec::new(),
             pending_timers: Vec::new(),
+            timers_between_requests_ms: None,
             next_handle: 2,
             network: Some(ResourceHandle(1)),
         })
@@ -513,6 +519,7 @@ mod tests {
                 io.restore_resources(&PreparedResources {
                     ready_pollables: Vec::new(),
                     pending_timers: Vec::new(),
+                    timers_between_requests_ms: None,
                     next_handle: 2,
                     network: Some(ResourceHandle(1))
                 }),

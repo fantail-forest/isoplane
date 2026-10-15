@@ -771,7 +771,32 @@ pub(crate) struct Resources {
     resolved: BTreeSet<std::net::IpAddr>,
 }
 
+/// What an idle instance that opted in to running timers between requests is
+/// waiting for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct IdleTimers {
+    pub(crate) minimum_interval: std::time::Duration,
+    /// The earliest deadline of a timer still pending, if one is.
+    pub(crate) earliest_deadline: Option<tokio::time::Instant>,
+}
+
 impl Resources {
+    pub(crate) fn idle_timers(&self) -> Option<IdleTimers> {
+        let minimum_interval_ms = self.prepared.as_ref()?.timers_between_requests_ms?;
+        let earliest_deadline = self
+            .entries
+            .values()
+            .filter_map(|resource| match resource {
+                Resource::Timer(timer) if !timer.ready.load(Ordering::Acquire) => timer.deadline,
+                _ => None,
+            })
+            .min();
+        Some(IdleTimers {
+            minimum_interval: std::time::Duration::from_millis(minimum_interval_ms),
+            earliest_deadline,
+        })
+    }
+
     pub(crate) fn clear(&mut self) {
         self.entries.clear();
         self.next = 1;
@@ -854,6 +879,7 @@ impl Resources {
             network: self.network,
             ready_pollables,
             pending_timers,
+            timers_between_requests_ms: None,
         })
     }
 

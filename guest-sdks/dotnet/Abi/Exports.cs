@@ -20,6 +20,7 @@ public static unsafe class Exports<TRouter>
     private static bool _runtimeBooted;
     private static TRouter? _router;
     private static Task<Response>? _root;
+    private static bool _runningTimers;
     private static Task? _initialization;
 
     /// <summary>Ensures guest scheduling and application state are initialized. Captured state may already contain initialized objects.</summary>
@@ -119,6 +120,9 @@ public static unsafe class Exports<TRouter>
             // the state they bring up to date.
             ManagedWork.Drain();
 
+            _runningTimers = d.Kind == DispatchKind.Timers;
+            if (_runningTimers) return SettleTimers();
+
             _root = RequestDispatch.RouteAsync(_router!, d);
 
             return Settle();
@@ -164,7 +168,8 @@ public static unsafe class Exports<TRouter>
 
             FutureTable.Complete(future, r);
 
-            return _initialization is not null ? SettleInitialization() : Settle();
+            if (_initialization is not null) return SettleInitialization();
+            return _runningTimers ? SettleTimers() : Settle();
         }
         catch (TooManyFuturesException)
         {
@@ -247,6 +252,16 @@ public static unsafe class Exports<TRouter>
         Log(1, "done: status=" + resp.Status.ToString());
 
         return PollStatus.Done((uint)handle);
+    }
+
+    /// <summary>
+    /// A wake to run due timers has no result of its own to wait for. The host
+    /// ends it once nothing but timers is pending.
+    /// </summary>
+    private static long SettleTimers()
+    {
+        ManagedWork.Drain();
+        return PollStatus.Pending();
     }
 
     private static long SettleInitialization()

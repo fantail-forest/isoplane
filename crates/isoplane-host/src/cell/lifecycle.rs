@@ -15,7 +15,8 @@ impl Cell {
 
         let t0 = Instant::now();
         let acquired = tracing::info_span!("acquire").in_scope(|| match &job.target {
-            Target::Handler { .. } => self.acquire_handler(&entry),
+            Delivery::Handler { .. } => self.acquire_handler(&entry),
+            Delivery::IdleTimers { slot, .. } => Ok((slot.clone(), AcquireSource::WarmParked)),
         });
         let (slot, src) = match acquired {
             Ok(v) => v,
@@ -65,6 +66,10 @@ impl Cell {
                 lifecycle: entry.manifest.handlers.lifecycle,
                 module: job.module.clone(),
                 route: job.target.route(),
+                idle_stop_at: match &job.target {
+                    Delivery::Handler { .. } => None,
+                    Delivery::IdleTimers { stop_at, .. } => Some(*stop_at),
+                },
                 responder: Some(job.responder),
                 completion: job.completion.clone(),
             },
@@ -334,18 +339,34 @@ impl Cell {
             completion
         };
 
-        let (lifecycle, module, route) = self
+        let (lifecycle, module, route, runs_idle_timers) = self
             .active
             .with_mut(&slot.id, |req| {
-                (req.lifecycle, req.module.clone(), req.route.clone())
+                (
+                    req.lifecycle,
+                    req.module.clone(),
+                    req.route.clone(),
+                    req.idle_stop_at.is_some(),
+                )
             })
             .unwrap_or_else(|| {
                 (
                     entry.manifest.handlers.lifecycle,
                     entry.activator.module().clone(),
                     String::new(),
+                    false,
                 )
             });
+        // Running timers has no result to wait for: it is done once the guest
+        // waits on nothing but more timers.
+        let completion = if completion == Completion::Parked
+            && runs_idle_timers
+            && !self.rt.futures.holds_guest_work(slot.id)
+        {
+            Completion::Done
+        } else {
+            completion
+        };
         let breaker_key = BreakerKey { module, route };
         if self.end_stream_at_boundary(slot, entry, Some(completion)) {
             return true;
@@ -616,6 +637,7 @@ impl Cell {
         let _completion = completion.as_ref().map(|owner| owner.settlement());
         slot.ctx.end_http_dispatch();
         let req = self.active.remove(&slot.id);
+        let generation = slot.ctx.dispatch_generation();
         let mut abandoned_guest_work = false;
         if let Some(r) = &req {
             abandoned_guest_work = self.rt.futures.end_dispatch(slot.id, r.dispatch_id);
@@ -633,9 +655,17 @@ impl Cell {
             self.forget(slot);
         }
         self.rt.futures.release_instance(slot.id);
+        let warm = d.is_warm();
         entry.pool.release(slot.clone(), d);
         if slot.state() == LifecycleTier::Discarded {
             self.forget(slot);
+        } else if warm {
+            self.watch_idle_timers(
+                slot,
+                entry,
+                generation,
+                req.and_then(|request| request.idle_stop_at),
+            );
         }
     }
 }

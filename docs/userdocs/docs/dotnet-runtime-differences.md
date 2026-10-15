@@ -142,7 +142,7 @@ The `app.Run()` error is described in
 ## Work belongs to a request
 
 An application runs while it starts up and while it handles a request. Between
-requests it does not run at all.
+requests it does not run at all, unless it asks for its timers to.
 
 - **No background work.** A loop in a `BackgroundService`, a recurring timer or a
   queue consumer has nothing to run on. An application whose `BackgroundService`
@@ -162,6 +162,22 @@ requests it does not run at all.
   awaits. A timer never runs if its instance is discarded first, and an idle
   instance can be discarded at any time. So a task started and not awaited,
   such as `_ = SendEmailAsync()`, may finish during a later request, or never.
+- **Timers can run between requests, at the cost of a request each time.**
+  Call [`Initialization.RunTimersBetweenRequests`](reference/sdk/Isoplane.Sdk/Isoplane/Initialization/RunTimersBetweenRequests.md)
+  during initialization, and Isoplane also wakes an idle instance to run the
+  timers that have come due, no sooner than the minimum interval you give, of
+  at least a second, after its last request or wake ended:
+
+  ```csharp
+  Initialization.RunTimersBetweenRequests(minimumInterval: TimeSpan.FromMinutes(1));
+  ```
+
+  An instance
+  that has had no request for five minutes is stopped rather than woken again,
+  and an instance Isoplane has set aside to save memory runs its timers only
+  when its next request arrives. Use it for upkeep, such as sending telemetry
+  that would otherwise wait for the next request, and not for work that has to
+  happen on schedule.
 - **`finally` blocks and disposal are part of the request.** They run as the
   awaited code unwinds, as they do anywhere else, and that includes middleware
   code after `await next()` and the disposal of scoped services. Two cases
@@ -419,7 +435,8 @@ What follows from that:
 - A timeout only fires while the application is waiting. `Task.Delay`,
   `CancellationTokenSource.CancelAfter` and `Timer` callbacks are delivered when
   it next waits, not in the middle of a computation, or at the start of the
-  next request if they came due between requests.
+  next request if they came due between requests, unless the application
+  [runs timers between requests](#work-belongs-to-a-request).
 
 ## How code runs
 

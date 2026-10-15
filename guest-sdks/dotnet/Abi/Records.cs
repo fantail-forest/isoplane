@@ -41,6 +41,8 @@ public sealed class DispatchRecord
                 d.Headers = r.StringPairs();
                 d.Body = r.Bytes().ToArray();
                 break;
+            case DispatchKind.Timers:
+                break;
             default:
                 throw new PostcardException();
         }
@@ -66,6 +68,8 @@ public enum DispatchKind : uint
     /// </summary>
     Http = 0,
 
+    /// <summary>Runs the timers that came due while the instance was idle, and nothing else.</summary>
+    Timers = 1,
 }
 
 /// <summary>

@@ -15,7 +15,7 @@ use crate::response::ResponseTable;
 use crate::{InstanceId, ModuleId};
 
 /// A slot-local request generation, independent of caller-supplied dispatch IDs.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct DispatchGeneration(u64);
 
 /// Established ownership and numeric budgets for an instance.
@@ -107,6 +107,11 @@ impl InstanceCtx {
                 handles: super::native_io::ResourceCount(limits.native_handles),
             },
         ));
+    }
+
+    /// The timers an idle instance is woken for, when its template opted in.
+    pub(crate) fn idle_timers(&self) -> Option<super::native_io::IdleTimers> {
+        self.native_io.lock().idle_timers()
     }
 
     pub(crate) fn release_native_resources(&self) {

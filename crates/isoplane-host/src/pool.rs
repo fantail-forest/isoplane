@@ -198,6 +198,21 @@ impl InstancePool {
         None
     }
 
+    /// Takes this warm instance for a dispatch, if it is still idle and
+    /// `eligible`; [`InstancePool::release`] returns it.
+    pub(crate) fn take_idle(
+        &self,
+        id: InstanceId,
+        eligible: impl Fn(&Slot) -> bool,
+    ) -> Option<Arc<Slot>> {
+        let mut warm = self.warm.lock();
+        let index = warm
+            .slots
+            .iter()
+            .position(|slot| slot.id == id && eligible(slot))?;
+        Some(warm.slots.swap_remove(index))
+    }
+
     /// Reuse a warm instance, reset a candidate for this acquisition, or activate.
     /// Fresh handlers never consult the warm list.
     pub fn acquire<F>(&self, make_ctx: F) -> anyhow::Result<(Arc<Slot>, AcquireSource)>

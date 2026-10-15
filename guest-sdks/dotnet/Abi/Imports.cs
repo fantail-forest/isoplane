@@ -22,6 +22,10 @@ internal static unsafe partial class H
     internal static extern int RuntimeConfigGet(byte* ptr, int len);
 
     [WasmImportLinkage]
+    [DllImport("isoplane", EntryPoint = "timers_between_requests")]
+    internal static extern long TimersBetweenRequests(long minimumIntervalMs);
+
+    [WasmImportLinkage]
     [DllImport("isoplane", EntryPoint = "abort")]
     internal static extern void Abort(byte* ptr, int len);
 

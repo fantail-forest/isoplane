@@ -30,9 +30,38 @@ pub(crate) struct HttpDispatch {
     pub(crate) upload: Option<Arc<crate::bindings::request_body::RequestBodyScope>>,
 }
 
+/// Where a dispatch goes.
+pub(super) enum Delivery {
+    /// Any instance of the module.
+    Handler { route: String },
+    /// This instance, taken idle from its pool, to run its due timers. It
+    /// stops at `stop_at` unless a request arrives first.
+    IdleTimers {
+        slot: Arc<Slot>,
+        stop_at: tokio::time::Instant,
+    },
+}
+
+impl Delivery {
+    pub(super) fn route(&self) -> String {
+        match self {
+            Delivery::Handler { route } => route.clone(),
+            Delivery::IdleTimers { .. } => String::new(),
+        }
+    }
+}
+
+impl From<Target> for Delivery {
+    fn from(target: Target) -> Self {
+        match target {
+            Target::Handler { route } => Delivery::Handler { route },
+        }
+    }
+}
+
 pub(super) struct DispatchJob {
     pub(super) module: ModuleId,
-    pub(super) target: Target,
+    pub(super) target: Delivery,
     pub(super) rec: DispatchRecord,
     pub(super) responder: super::dispatch_api::Responder,
     pub(super) stream: Option<Arc<crate::response_transport::ResponseTransport>>,
@@ -316,7 +345,7 @@ mod queue_tests {
             stream: None,
             upload: None,
             module: ModuleId::new("t", "v1"),
-            target: Target::Handler { route: "/".into() },
+            target: Target::Handler { route: "/".into() }.into(),
             rec,
             responder: responder.into(),
             completion,

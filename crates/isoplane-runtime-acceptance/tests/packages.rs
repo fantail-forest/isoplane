@@ -964,6 +964,168 @@ async fn timers_initialization_leaves_running_count_from_activation() {
     );
 }
 
+/// `alpha` prepared with `initializer` in place of its own.
+async fn alpha_initialized_by(initializer: &str) -> (BuildProduct, BuildRequest) {
+    let files = package("alpha");
+    let manifest = String::from_utf8(package_file(&files, "application.json"))
+        .expect("the manifest is UTF-8")
+        .replace("\"InitializeAsync\"", &format!("\"{initializer}\""));
+    assert!(
+        manifest.contains(initializer),
+        "the manifest must name its initializer for this test to replace: {manifest}"
+    );
+    prepare_on_the_shared_runtime(with_package_file(
+        files,
+        "application.json",
+        manifest.as_bytes(),
+    ))
+    .await
+}
+
+/// A cell serving `product` as module `module`, whose instances stop after
+/// `timer_wake_idle_limit_ms` without a request.
+fn serving_cell(
+    product: &BuildProduct,
+    request: &BuildRequest,
+    module: &isoplane_host::ModuleId,
+    timer_wake_idle_limit_ms: u64,
+) -> Arc<isoplane_host::cell::Cell> {
+    let engine = Arc::new(
+        IsoplaneEngine::new(engine_configuration(PlatformFiles::default()))
+            .expect("the serving engine must initialize"),
+    );
+    let template = {
+        // SAFETY: The private decode helper receives only products from this test module's local preparation paths.
+        unsafe { engine.load_prepared_product(&decode(product, request)) }
+    }
+    .expect("the prepared template must load");
+    let services = Arc::new(isoplane_host::cell::Services {
+        fetcher: Arc::new(isoplane_host::fakes::FakeFetcher::default()),
+        hibernation: Arc::new(isoplane_host::fakes::FakeHibernationStore::default()),
+        egress: Arc::new(isoplane_host::egress::HostEgressPolicy::new(
+            Box::new(fixed_dns::FixedDns(vec![])),
+            isoplane_host::egress::ConnectionLimits::uniform(8).expect("connection limits"),
+        )),
+    });
+    let cell = isoplane_host::cell::Cell::new(
+        isoplane_host::CellConfig {
+            timer_wake_idle_limit_ms,
+            ..isoplane_host::CellConfig::for_test("timer-wakes")
+        },
+        services,
+        Arc::new(isoplane_host::fakes::FakeHibernator),
+    )
+    .expect("the cell must start");
+    cell.register_module(
+        "tenant",
+        Arc::new(isoplane_host::activator::EngineActivator::new(
+            engine,
+            template,
+            module.clone(),
+        )),
+        isoplane_abi::config::AppManifest {
+            guest_memory_bytes: None,
+            resource_limits: Default::default(),
+            validation_limits: Default::default(),
+            name: module.app.clone(),
+            handlers: isoplane_abi::config::HandlerConfig {
+                lifecycle: isoplane_abi::config::HandlerLifecycle::Reuse,
+            },
+            bindings: Default::default(),
+            limits: isoplane_harness::GUEST_LIMITS,
+            init_visible_vars: vec![],
+        },
+    )
+    .expect("the module must register");
+    cell
+}
+
+/// Asks `module` for `/beats`, answered by whichever instance the cell picks.
+async fn ask_for_beats(
+    cell: &Arc<isoplane_host::cell::Cell>,
+    module: &isoplane_host::ModuleId,
+) -> isoplane_host::DispatchResult {
+    let request = isoplane_abi::dispatch::HttpRequest {
+        method: "GET".into(),
+        url: "https://alpha.test/beats".into(),
+        path: "/beats".into(),
+        query: vec![],
+        headers: vec![],
+        body: vec![],
+    };
+    let result = cell
+        .dispatch(
+            module,
+            isoplane_host::cell::Target::Handler {
+                route: "/beats".into(),
+            },
+            cell.http_record(module, request),
+            std::time::Duration::from_secs(60),
+        )
+        .await
+        .expect("the request must be answered");
+    assert_eq!(result.status, 200, "the request must succeed: {result:?}");
+    result
+}
+
+async fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
+    tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        while !done() {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("{what}"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_idle_instance_that_opted_in_runs_its_timers_until_it_goes_too_long_without_a_request() {
+    isoplane_harness::LogCapture::global();
+    let (product, request) = alpha_initialized_by("RunTimersBetweenRequestsAsync").await;
+    let module = isoplane_host::ModuleId::new("alpha", "v1");
+    let cell = serving_cell(&product, &request, &module, 5_000);
+    let meters = cell.meters(&module).expect("the module has meters");
+
+    let first = ask_for_beats(&cell, &module).await;
+    wait_until(
+        "step 1: the idle instance must be woken for its timers without a request",
+        || meters.dispatches() >= 3,
+    )
+    .await;
+    let instance = cell
+        .slot(first.instance)
+        .expect("step 2: the woken instance must still be resident");
+    let mut woken_by: Vec<u64> = instance
+        .ctx
+        .emitted_logs()
+        .into_iter()
+        .filter(|log| log.fields.contains("heartbeat") && log.dispatch != first.dispatch_id)
+        .map(|log| log.dispatch)
+        .collect();
+    woken_by.dedup();
+    assert!(
+        woken_by.len() >= 2,
+        "step 2: each wake must run the timer that was due, but heartbeats came from {woken_by:?}"
+    );
+
+    wait_until(
+        "step 3: the instance must stop once it has gone 5 s without a request",
+        || cell.idle_instances(&module) == Some((0, 0)),
+    )
+    .await;
+    let wakes = meters.dispatches() - 1;
+    assert!(
+        wakes <= 4,
+        "step 4: wakes at least 1 s apart fit at most 4 times in 5 s, not {wakes}"
+    );
+    let after = ask_for_beats(&cell, &module).await;
+    assert_ne!(
+        after.instance, first.instance,
+        "step 5: a request after the stop must start a new instance"
+    );
+    cell.shutdown();
+}
+
 /// The `native` package's outcome for one transition, before and after a
 /// Store restoration.
 async fn native_use(path: &str) -> String {

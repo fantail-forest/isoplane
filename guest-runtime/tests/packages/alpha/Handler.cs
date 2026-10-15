@@ -55,7 +55,24 @@ public static class Handler
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// A method of the right shape to be recorded as the initializer, which opts in to running
+    /// timers between requests and leaves a frequent periodic timer running.
+    /// </summary>
+    public static Task RunTimersBetweenRequestsAsync()
+    {
+        Initialization.RunTimersBetweenRequests(minimumInterval: TimeSpan.FromSeconds(1));
+        heartbeat = new Timer(LoggedBeat, null, TimeSpan.FromMilliseconds(20), TimeSpan.FromMilliseconds(20));
+        return Task.CompletedTask;
+    }
+
     private static void Beat(object? state) => beats++;
+
+    private static void LoggedBeat(object? state)
+    {
+        beats++;
+        Console.WriteLine("heartbeat");
+    }
 
     private static async Task PollAsync() => await Task.Delay(TimeSpan.FromSeconds(45));
 }

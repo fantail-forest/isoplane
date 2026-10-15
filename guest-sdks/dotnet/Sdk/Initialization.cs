@@ -65,6 +65,52 @@ public static class Initialization
     /// </example>
     public static event Func<Task>? Initializing;
 
+    private const long MinimumTimerIntervalMs = 1000;
+
+    /// <summary>
+    /// Wakes the application's idle instances to run timers that have come due, at most once per
+    /// <paramref name="minimumInterval"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Without this call, a timer that comes due while an instance has no request to handle runs at
+    /// the start of the instance's next request. With it, an idle instance is also woken to run its
+    /// due timers, no sooner than <paramref name="minimumInterval"/> after its last request or wake
+    /// ended; a timer due earlier waits until then. Timers that come due during a request run on time
+    /// either way.
+    /// </para>
+    /// <para>
+    /// Wakes are best effort: an instance that has had no request for five
+    /// minutes is stopped instead of woken, and an instance Isoplane has set aside to save memory runs
+    /// its timers only when its next request arrives. Use a timer between requests for upkeep such as flushing telemetry, not for work that
+    /// has to happen on schedule.
+    /// </para>
+    /// <para>
+    /// The setting applies to every instance, so call this during initialization: from an
+    /// <see cref="Initializing"/> callback, or from the method marked with
+    /// <see cref="InitializerAttribute"/>. A later call replaces the interval an earlier one set.
+    /// </para>
+    /// </remarks>
+    /// <param name="minimumInterval">
+    /// The least time between the end of one request or wake and the next wake: at least one second.
+    /// </param>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="minimumInterval"/> is less than one second.</exception>
+    /// <exception cref="InvalidOperationException">Initialization has finished.</exception>
+    /// <example>
+    /// <code>
+    /// Initialization.RunTimersBetweenRequests(minimumInterval: TimeSpan.FromMinutes(1));
+    /// </code>
+    /// </example>
+    public static void RunTimersBetweenRequests(TimeSpan minimumInterval)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(minimumInterval, TimeSpan.FromMilliseconds(MinimumTimerIntervalMs));
+        // Only a guest has a host to ask; tooling and tests run the SDK on a desktop runtime.
+        if (!OperatingSystem.IsWasi()) return;
+        var minimumIntervalMs = (long)Math.Ceiling(minimumInterval.TotalMilliseconds);
+        if (Isoplane.Abi.H.TimersBetweenRequests(minimumIntervalMs) != 0)
+            throw new InvalidOperationException("Call RunTimersBetweenRequests during initialization: the setting is saved with the application's template.");
+    }
+
     internal static event Func<Task>? Starting;
 
     /// <summary>Raised after every <see cref="Initializing"/> subscriber has finished, before the template is captured.</summary>

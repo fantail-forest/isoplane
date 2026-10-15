@@ -13,7 +13,9 @@ mod runtime;
 mod runtime_configuration;
 
 pub use http_scope::{OutboundBody, OutboundResponse, ResponseBody};
+pub(crate) use instance::DispatchGeneration;
 pub use instance::{GuestResourceLimits, InstanceCtx, Tenancy};
+pub(crate) use native_io::IdleTimers;
 pub use preparation::{PreparationIo, PreparationIoConfig};
 pub use runtime::{CellRuntime, Fetcher, Services, WakeSink};
 pub use runtime_configuration::{
@@ -40,6 +42,7 @@ pub const SCALARS: &[(&str, &[&str])] = &[
     ("log_emit", &["level"]),
     ("trace_span_end", &["span"]),
     ("clock_deadline_in", &["ms"]),
+    ("timers_between_requests", &["minimum_interval_ms"]),
     ("resp_write", &["response_handle"]),
     ("resp_finish", &["response_handle"]),
     ("http_body_read", &["body_handle", "max_len"]),
@@ -291,6 +294,8 @@ impl HostBindings for CellBindings {
             "trace_span_end" => self.trace_span_end(call.scalars),
 
             "clock_now_coarse" => ctx.slice_clock_ms() as i64,
+            // The choice belongs to the template, so it is made once, before capture.
+            "timers_between_requests" => -1,
 
             // Out-buffer imports belong to `call_fill`; here there is nowhere
             // to put the bytes, and a zero-filled buffer would be a constant
@@ -481,6 +486,21 @@ mod tests {
             b.call_sync(call("clock_now_coarse", &[], [0; 3])),
             1_007,
             "the clock advances at the slice boundary and only there"
+        );
+    }
+
+    #[test]
+    fn an_instance_cannot_opt_in_to_timer_wakes_after_initialization() {
+        let mut b = CellBindings::new(ctx());
+        assert_eq!(
+            b.call_sync(call("timers_between_requests", &[], [60_000, 0, 0])),
+            -1,
+            "the setting belongs to the template, so a running instance is refused"
+        );
+        assert_eq!(
+            b.ctx.idle_timers(),
+            None,
+            "and the refused call must not opt the instance in"
         );
     }
 

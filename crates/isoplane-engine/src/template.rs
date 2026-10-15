@@ -391,7 +391,7 @@ pub(crate) struct ArtifactMeta {
 }
 
 pub(crate) const ARTIFACT_MAGIC: [u8; 8] = *b"ISOPTMPL";
-pub(crate) const ARTIFACT_FORMAT: u32 = 3;
+pub(crate) const ARTIFACT_FORMAT: u32 = 4;
 
 pub(crate) fn read_prepared_resources(
     wasm: &[u8],

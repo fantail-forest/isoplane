@@ -39,6 +39,7 @@ pub(crate) use queue::HttpDispatch;
 mod reclamation;
 mod registry;
 pub use reclamation::{ReclaimCandidate, ReclaimKind};
+mod timer_wakes;
 mod tombstone;
 mod wake;
 
@@ -49,7 +50,7 @@ use dispatch_api::{answer, ends_in_tombstone};
 use crate::{InstanceId, ModuleId};
 use completion::{DispatchCompletion, TerminalReason};
 use pool::IN_FLIGHT;
-use queue::{DispatchJob, Job, WakeItem, WorkQueue};
+use queue::{Delivery, DispatchJob, Job, WakeItem, WorkQueue};
 use registry::{ActiveRequest, ModuleEntry, Resident};
 use wake::CellWake;
 
@@ -78,6 +79,9 @@ pub struct CellConfig {
     pub hibernate: HibernateConfig,
     pub breaker: BreakerConfig,
     pub sweep_interval_ms: u64,
+    /// How long an instance whose application runs timers between requests
+    /// may go without a request before it is stopped rather than woken again.
+    pub timer_wake_idle_limit_ms: u64,
 }
 
 impl Default for CellConfig {
@@ -95,6 +99,7 @@ impl Default for CellConfig {
             hibernate: HibernateConfig::default(),
             breaker: BreakerConfig::default(),
             sweep_interval_ms: 250,
+            timer_wake_idle_limit_ms: 5 * 60 * 1000,
         }
     }
 }
@@ -122,6 +127,10 @@ impl CellConfig {
         anyhow::ensure!(
             self.sweep_interval_ms > 0,
             "sweep_interval_ms must be positive"
+        );
+        anyhow::ensure!(
+            self.timer_wake_idle_limit_ms > 0,
+            "timer_wake_idle_limit_ms must be positive"
         );
         Ok(())
     }

@@ -16,6 +16,7 @@ public static class Initialization
 | name | description |
 | --- | --- |
 | static event [Initializing](Initialization/Initializing.md) | Raised after the application has started and before its template is saved. |
+| static [RunTimersBetweenRequests](Initialization/RunTimersBetweenRequests.md)(…) | Wakes the application's idle instances to run timers that have come due, at most once per *minimumInterval*. |
 
 ## Remarks
 

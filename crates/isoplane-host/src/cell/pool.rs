@@ -358,7 +358,7 @@ pub(super) mod cell_tests {
                 stream: None,
                 upload,
                 module: module.clone(),
-                target: Target::Handler { route: "/".into() },
+                target: Target::Handler { route: "/".into() }.into(),
                 rec: http(id),
                 responder: responder.into(),
                 completion: cell
@@ -428,7 +428,8 @@ pub(super) mod cell_tests {
                 module: module.clone(),
                 target: Target::Handler {
                     route: "/go".into(),
-                },
+                }
+                .into(),
                 rec: http(id),
                 responder: responder.into(),
                 completion: cell
@@ -573,7 +574,7 @@ pub(super) mod cell_tests {
             stream: None,
             upload: None,
             module: module.clone(),
-            target: Target::Handler { route: "/".into() },
+            target: Target::Handler { route: "/".into() }.into(),
             rec: http(1),
             responder: responder.into(),
             completion: cell

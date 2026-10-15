@@ -24,6 +24,9 @@ pub(super) struct ActiveRequest {
     pub(super) lifecycle: HandlerLifecycle,
     pub(super) module: ModuleId,
     pub(super) route: String,
+    /// For a dispatch that runs an idle instance's timers, when the instance
+    /// stops unless a request arrives first.
+    pub(super) idle_stop_at: Option<tokio::time::Instant>,
     pub(super) responder: Option<super::dispatch_api::Responder>,
     pub(super) completion: Arc<DispatchCompletion>,
 }

@@ -92,6 +92,12 @@ impl Drop for PendingWait {
 }
 
 impl Entry {
+    /// Work the guest is waiting on. A dispatch's cancellation belongs to the
+    /// host, and a re-armable wake's condition outlives it.
+    fn is_guest_work(&self) -> bool {
+        self.import != "ctx_cancel" && !self.rearmable
+    }
+
     fn finish_wait(&mut self, outcome: &'static str) {
         if let Some(mut waiting) = self.waiting.take() {
             waiting.outcome = outcome;
@@ -377,8 +383,8 @@ impl FutureTable {
             .is_some_and(|a| !a.inner.lock().ready.is_empty())
     }
 
-    /// Whether the owner has a pending or undelivered future other than a
-    /// re-armable wake, whose condition outlives it.
+    /// Whether the owner has a pending or undelivered future the guest is
+    /// waiting on.
     pub fn holds_guest_work(&self, owner: InstanceId) -> bool {
         let Some(arc) = self.existing(owner) else {
             return false;
@@ -386,7 +392,7 @@ impl FutureTable {
         let o = arc.inner.lock();
         o.pending.iter().chain(o.ready.iter()).any(|id| {
             self.entries
-                .read_sync(id, |_, entry| !entry.rearmable)
+                .read_sync(id, |_, entry| entry.is_guest_work())
                 .unwrap_or(false)
         })
     }
@@ -426,7 +432,7 @@ impl FutureTable {
         let mut abandoned_guest_work = false;
         for id in doomed {
             if let Some((_, mut entry)) = self.entries.remove_sync(&id) {
-                abandoned_guest_work |= entry.import != "ctx_cancel" && !entry.rearmable;
+                abandoned_guest_work |= entry.is_guest_work();
                 entry.cancel_task();
             }
             o.pending.remove(&id);

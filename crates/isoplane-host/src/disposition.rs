@@ -76,6 +76,12 @@ pub fn evict() -> Disposition {
     Disposition(DispositionKind::Discard)
 }
 
+/// An idle instance returned unchanged, such as one taken for a dispatch that
+/// never ran.
+pub fn warm() -> Disposition {
+    Disposition(DispositionKind::Warm)
+}
+
 /// A reset requested by policy rather than by the end of a request.
 pub fn policy_reset() -> Disposition {
     Disposition(DispositionKind::Reset)
