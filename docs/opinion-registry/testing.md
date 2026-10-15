@@ -58,6 +58,8 @@ One fixture app can cover several behaviours. Split it only when those behaviour
 
 When our code talks to a third-party service, test our side against a stand-in for it, not the service itself.
 
+**This, not that:** a test that runs a library such as Npgsql inside the sandbox against a local PostgreSQL container tests Isoplane, so keep it; don't delete it as a test of third-party code.
+
 ## Clean up outside the work tree
 
 Tests may write temporary files wherever keeps them fast, including local disk outside the work tree. Anything outside the work tree is removed as soon as nothing needs it, by the end of the test run at the latest. Output in `.build/` may stay when later runs are likely to use it.
