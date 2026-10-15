@@ -56,7 +56,10 @@ tasks:
   managed:standard:
     desc: Run managed tests; pass -- --filter <expression> to select tests
     deps: [managed:prepare]
-    env: *test_env
+    env:
+      ISOPLANE_TEST_SKIP_PUBLICATION_FLUSH: '1'
+      # Packages the tests restore stay in this worktree, not the user's NuGet cache.
+      NUGET_PACKAGES: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/test-nuget-packages'
     cmds:
       - |
         "{{.DOTNET}}" test "{{.MANAGED}}"/bin/*/release/*.Tests.dll --parallel {{.CLI_ARGS}}

@@ -13,7 +13,8 @@ public sealed class ManagedBundleTests : MsbuildTests
     public async Task managed_bundle_target_separates_application_dependencies_from_framework_and_build_inputs(bool symbols, bool packageReference)
     {
         var dependency = Directory.CreateDirectory(Path.Combine(directory, "dependency"));
-        var packageId = "Isoplane.Bundle.Test." + Guid.NewGuid().ToString("N");
+        // The packed dependency is the same in every case and every run, so one id serves.
+        const string packageId = "Isoplane.Bundle.Test.Dependency";
         new XDocument(new XElement("Project", new XAttribute("Sdk", "Microsoft.NET.Sdk"),
             new XElement("PropertyGroup", new XElement("TargetFramework", "net10.0"), new XElement("PackageId", packageId))))
             .Save(Path.Combine(dependency.FullName, "Dependency.csproj"));
