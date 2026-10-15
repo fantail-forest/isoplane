@@ -9,6 +9,7 @@ description = "WebAssembly initialization and prepared application production"
 
 [dependencies]
 rand = { workspace = true }
+serde_bytes = { workspace = true }
 fs4.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true

@@ -17,7 +17,9 @@ pub struct BuildProduct {
     pub preinit_ms: f64,
     /// Prepared-state encoding and, for portable output, final native compilation wall time.
     pub compile_ms: f64,
+    #[serde(with = "serde_bytes")]
     prepared: Vec<u8>,
+    #[serde(with = "serde_bytes")]
     portable: Option<Vec<u8>>,
 }
 

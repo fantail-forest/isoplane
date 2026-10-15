@@ -79,7 +79,38 @@ struct Manifest {
 #[derive(Serialize, Deserialize)]
 pub struct PreparedTemplate {
     manifest: Manifest,
+    #[serde(with = "byte_payloads")]
     payloads: [Vec<u8>; 3],
+}
+
+/// The payloads as byte strings, which postcard copies whole instead of element by element;
+/// the encoding is the same as three sequences of bytes.
+mod byte_payloads {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub(super) fn serialize<S: Serializer>(
+        payloads: &[Vec<u8>; 3],
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        let [native, image, state] = payloads;
+        (
+            serde_bytes::Bytes::new(native),
+            serde_bytes::Bytes::new(image),
+            serde_bytes::Bytes::new(state),
+        )
+            .serialize(serializer)
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<[Vec<u8>; 3], D::Error> {
+        let (native, image, state) = <(
+            serde_bytes::ByteBuf,
+            serde_bytes::ByteBuf,
+            serde_bytes::ByteBuf,
+        )>::deserialize(deserializer)?;
+        Ok([native.into_vec(), image.into_vec(), state.into_vec()])
+    }
 }
 
 impl IsoplaneEngine {
@@ -619,6 +650,23 @@ fn matching_base<'a>(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn payloads_encode_as_three_sequences_of_bytes() {
+        #[derive(serde::Serialize)]
+        struct AsBytes(#[serde(with = "super::byte_payloads")] [Vec<u8>; 3]);
+        let payloads = [vec![1, 2, 3], Vec::new(), vec![0xff; 300]];
+        let encoded = postcard::to_allocvec(&AsBytes(payloads.clone())).expect("encode");
+        assert_eq!(
+            encoded,
+            postcard::to_allocvec(&payloads).expect("encode plainly"),
+            "prepared templates published before must still decode"
+        );
+        #[derive(serde::Deserialize)]
+        struct Decoded(#[serde(with = "super::byte_payloads")] [Vec<u8>; 3]);
+        let Decoded(decoded) = postcard::from_bytes(&encoded).expect("decode");
+        assert_eq!(decoded, payloads);
+    }
+
     use super::*;
 
     fn prepared() -> (IsoplaneEngine, PreparedTemplate, PreparedIdentity) {
