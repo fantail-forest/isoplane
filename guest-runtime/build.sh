@@ -76,19 +76,40 @@ stage_acquire() {
   fetch "$ICU_MONO_TRANSPORT_URL" "$ICU_MONO_TRANSPORT_SHA256" "$DOWNLOADS/icu-mono-$ICU_MONO_TRANSPORT_VERSION.nupkg"
 }
 
+# The toolchain a build directory is configured with. CMake and Configure record
+# resolved tool paths, so its real location identifies it as well as its version.
+toolchain_identity() {
+  realpath "$WASI_SDK"
+  cat "$WASI_SDK/VERSION"
+}
+
+# Discards build directories configured with another toolchain, which an
+# incremental build would otherwise keep compiling and archiving with. The
+# first directory holds the record of the toolchain they were configured with.
+reset_for_toolchain() {
+  local stamp="$1/.isoplane-toolchain" directory
+  if [ "$(cat "$stamp" 2>/dev/null)" != "$(toolchain_identity)" ]; then
+    for directory in "$@"; do rm -rf "$directory"; done
+  fi
+  mkdir -p "$1"
+  toolchain_identity > "$stamp"
+}
+
 stage_toolchain() {
   echo "==> toolchain"
   # The marker is what the runtime build checks before provisioning its own copy.
   if [ -f "$WASI_SDK/VERSION" ] && [ "$(head -n 1 "$WASI_SDK/VERSION" | tr -d '\r')" = "$WASI_SDK_VERSION" ]; then
     echo "    wasi-sdk $WASI_SDK_VERSION already unpacked"
-    return
+  else
+    verify_archive "$WASI_SDK_SHA256" "$DOWNLOADS/wasi-sdk-$WASI_SDK_VERSION-x86_64-$BUILD_HOST.tar.gz"
+    rm -rf "$WASI_SDK"
+    mkdir -p "$WASI_SDK"
+    tar --strip-components=1 -xzf - -C "$WASI_SDK" < "$DOWNLOADS/wasi-sdk-$WASI_SDK_VERSION-x86_64-$BUILD_HOST.tar.gz"
+    echo "$WASI_SDK_VERSION" > "$WASI_SDK/wasi-sdk-version.txt"
+    touch "$WASI_SDK/WASI-SDK-VERSION-$WASI_SDK_VERSION"
   fi
-  verify_archive "$WASI_SDK_SHA256" "$DOWNLOADS/wasi-sdk-$WASI_SDK_VERSION-x86_64-$BUILD_HOST.tar.gz"
-  rm -rf "$WASI_SDK"
-  mkdir -p "$WASI_SDK"
-  tar --strip-components=1 -xzf - -C "$WASI_SDK" < "$DOWNLOADS/wasi-sdk-$WASI_SDK_VERSION-x86_64-$BUILD_HOST.tar.gz"
-  echo "$WASI_SDK_VERSION" > "$WASI_SDK/wasi-sdk-version.txt"
-  touch "$WASI_SDK/WASI-SDK-VERSION-$WASI_SDK_VERSION"
+  # Task compares this file to decide whether builds made with the toolchain are current.
+  toolchain_identity > "$WORK/toolchain-identity"
 }
 
 stage_openssl() {
@@ -97,7 +118,7 @@ stage_openssl() {
   # OPENSSLDIR is a guest path: the compiled-in default certificate file and
   # directory are then /etc/ssl/cert.pem and /etc/ssl/certs inside the
   # guest, not the builder's output directory.
-  mkdir -p "$OPENSSL_BUILD"
+  reset_for_toolchain "$OPENSSL_BUILD"
   (
     cd "$OPENSSL_BUILD"
       CC="$WASI_SDK/bin/clang" AR="$WASI_SDK/bin/llvm-ar" RANLIB="$WASI_SDK/bin/llvm-ranlib" \
@@ -188,6 +209,7 @@ stage_runtime() {
   echo "==> runtime (log: $LOGS/runtime-build.log)"
   require_build_inputs
   stamp_pack_version "$runtime_version_file"
+  reset_for_toolchain "$WORK/runtime-artifacts/obj" "$WORK/runtime-artifacts/bin"
   # Official versioning keeps the upstream assembly versions instead of dev versions.
   (
     mkdir -p "$WORK/runtime-artifacts"

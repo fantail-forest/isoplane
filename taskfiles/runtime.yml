@@ -108,11 +108,13 @@ tasks:
       - '{{.ROOT_DIR}}/guest-runtime/*.sh'
       - '{{.ROOT_DIR}}/guest-runtime/manifest.env'
       - '{{.ROOT_DIR}}/global.json'
+      - '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/development/runtime-work/toolchain-identity'
       - exclude: 'vendor/dotnet-runtime/**/__pycache__/**/*'
     generates:
       - '{{.ROOT_DIR}}/.build/wasm32/runtime/feed/Isoplane.GuestRuntime.props'
       - '{{.ROOT_DIR}}/.build/wasm32/runtime/feed/Microsoft.NETCore.App.Runtime.Mono.wasi-wasm.*.nupkg'
       - '{{.ROOT_DIR}}/.build/wasm32/runtime/feed/Microsoft.NET.Runtime.WebAssembly.Wasi.Sdk.*.nupkg'
+      - '{{.ROOT_DIR}}/.build/wasm32/runtime/packs/wasi-sdk/Sdk/Sdk.targets'
     cmds:
       - 'test "{{OS}}" = linux || { echo "Run task runtime:compiler on Linux first." >&2; exit 1; }'
       - task: toolchain
@@ -142,6 +144,7 @@ tasks:
       - '{{.ROOT_DIR}}/guest-runtime/build.sh'
     generates:
       - '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/development/runtime-work/wasi-sdk/VERSION'
+      - '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/development/runtime-work/toolchain-identity'
     cmds:
       - task: acquire
       - 'bash guest-runtime/build.sh --compile toolchain'
@@ -153,6 +156,7 @@ tasks:
       - '{{.ROOT_DIR}}/vendor/openssl/**/*'
       - '{{.ROOT_DIR}}/guest-runtime/build.sh'
       - '{{.ROOT_DIR}}/guest-runtime/manifest.env'
+      - '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/development/runtime-work/toolchain-identity'
     generates:
       - '{{.ROOT_DIR}}/.build/wasm32/runtime/openssl/lib/libcrypto.a'
       - '{{.ROOT_DIR}}/.build/wasm32/runtime/openssl/lib/libssl.a'
