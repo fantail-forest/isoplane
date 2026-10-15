@@ -2,6 +2,7 @@ version: '3'
 
 vars:
   SCENARIOS: '{{.ROOT_DIR}}/.build/clr-anycpu/scenarios'
+
 env:
   ISOPLANE_RUNTIME_DIRECTORY: '{{.MODULES}}'
   ISOPLANE_MANAGED_ARTIFACTS: '{{.MANAGED}}'
@@ -38,4 +39,3 @@ tasks:
       - 'mkdir -p "{{.DIRECTORY}}"'
       - 'rsync -a --delete --exclude bin --exclude obj --exclude .isoplane scenario-tests/developer-experience/fixtures/postgres/ "{{.DIRECTORY}}/"'
       - '"{{.DOTNET}}" build "{{.DIRECTORY}}" --configuration Release'
-

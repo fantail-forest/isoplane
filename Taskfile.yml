@@ -48,7 +48,6 @@ env:
   ISOPLANE_TEST_DOTNET: '{{.TEST_DOTNET}}'
   ISOPLANE_TEST_NODE_ARTIFACTS: '{{.TEST_NODE}}/artifacts'
   ISOPLANE_TEST_NATIVE_PACKAGE_FEED: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/packages'
-  ISOPLANE_TEST_PYTHON: '{{.PYTHON}}'
   ISOPLANE_TEST_DEBUGGER_PYTHON: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/dap-python/{{if eq OS "windows"}}Scripts/python.exe{{else}}bin/python{{end}}'
   ISOPLANE_TEST_HOT_RELOAD_ARTIFACTS: '{{.HOT_RELOAD_ARTIFACTS}}'
   ISOPLANE_TEST_MANAGED_BUNDLE: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/managed-bundle-fixture'
