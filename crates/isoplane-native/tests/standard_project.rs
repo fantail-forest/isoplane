@@ -70,44 +70,6 @@ fn installed_sandbox_projects_do_not_advertise_clr_hot_reload() {
 async fn dotnet_run_executes_an_application_package_with_an_existing_library() {
     let directory = tempfile::tempdir().expect("isolate the installed project workflow");
     let app = isoplane_fixtures::handler_project(directory.path());
-    let library = directory.path().join("CustomerLibrary");
-    std::fs::create_dir(&library).expect("create an ordinary existing class library");
-    std::fs::write(
-        library.join("CustomerLibrary.csproj"),
-        r#"<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>"#,
-    )
-    .expect("write the existing library without Isoplane SDK dependencies");
-    std::fs::write(
-        library.join("Greeting.cs"),
-        "namespace CustomerLibrary; public static class Greeting { public static string Message => \"Hello from the existing library!\"; }",
-    )
-    .expect("write the ordinary customer application logic");
-    let project = app.join("HandlerFixture.csproj");
-    let project_text = std::fs::read_to_string(&project).expect("read the fixture project");
-    std::fs::write(
-        &project,
-        project_text.replace(
-            "</Project>",
-            r#"<ItemGroup><ProjectReference Include="../CustomerLibrary/CustomerLibrary.csproj" /></ItemGroup></Project>"#,
-        ),
-    )
-    .expect("onboard existing code through a standard project reference");
-    std::fs::write(
-        app.join("Handler.cs"),
-        r#"using Isoplane;
-
-public static class Handler
-{
-    [HttpHandler]
-    public static Task<Response> HandleAsync(Request request)
-    {
-        Console.WriteLine("guest-log-marker");
-        return Task.FromResult(Response.Text(CustomerLibrary.Greeting.Message));
-    }
-}
-"#,
-    )
-    .expect("exercise ordinary application logging inside the package");
     let cli = isoplane_fixtures::managed_cli();
     {
         let configuration = "Debug";
@@ -140,7 +102,7 @@ public static class Handler
             "an application package must resolve dependencies for the guest runtime"
         );
         let mut running = start_dotnet(&app, &cli, configuration, false, false, &[]);
-        let response = reqwest::get(&running.url)
+        let response = reqwest::get(format!("{}/greeting", running.url))
             .await
             .expect("the published sandbox must accept HTTP");
         assert!(

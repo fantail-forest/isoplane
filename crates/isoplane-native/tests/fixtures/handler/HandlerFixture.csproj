@@ -1,7 +1,11 @@
-<!-- The smallest application the installed SDK builds: one handler, no ASP.NET. The SDK version comes from the global.json Task writes beside it. -->
+<!-- The application the installed SDK builds for the native tests: one handler, no ASP.NET, and an
+     ordinary referenced library. The SDK version comes from the global.json Task writes beside it. -->
 <Project Sdk="Isoplane.Sdk">
   <PropertyGroup>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../library/Library.csproj" />
+  </ItemGroup>
 </Project>

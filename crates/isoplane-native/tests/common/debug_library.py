@@ -17,7 +17,7 @@ def exercise(source, send, response, until):
     names = [frame['name'] for frame in frames]
     machinery = ('Isoplane.MonoRuntime.', 'Isoplane.Abi.', 'Isoplane.Runtime.', 'IsoplaneGeneratedExports')
     assert not [name for name in names if name.startswith(machinery)], f'runtime machinery frames must not appear in the stack: {names}'
-    handler = next((index for index, name in enumerate(names) if name.endswith('.Application.Handle')), None)
+    handler = next((index for index, name in enumerate(names) if name.endswith('.Application.Library')), None)
     assert handler is not None, f'the stack must retain the customer caller of a referenced library: {names}'
     assert any(name.startswith('System.') for name in names[1:handler]), f'the framework method the handler calls the library through must appear between them: {names}'
     assert len(names) - 1 > handler and names[-1].startswith('Isoplane.'), f'the stack must end at the SDK frame that dispatches to the handler, without the runtime frames that invoke it: {names}'

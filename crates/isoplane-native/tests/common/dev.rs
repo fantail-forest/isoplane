@@ -23,7 +23,7 @@ struct Terminal {
     _master: Box<dyn portable_pty::MasterPty + Send>,
 }
 
-fn managed_command(
+pub fn managed_command(
     project: &std::path::Path,
     executable: &std::path::Path,
     args: &[&str],

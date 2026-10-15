@@ -122,9 +122,18 @@ tasks:
         EOF
       - '{{.CLI_INSTALL}} Isoplane.Cli --version {{.VERSION}} --tool-path "{{.TEST_DOTNET}}/tool" --configfile "{{.TEST_DOTNET}}/nuget.config"'
       - cp -R crates/isoplane-native/tests/fixtures "{{.TEST_DOTNET}}/fixtures"
+      - |
+        "{{.PYTHON}}" - "{{.TEST_DOTNET}}/fixtures/library/payload.bin" <<'EOF'
+        import sys
+        with open(sys.argv[1], "wb") as payload:
+            payload.truncate(8 << 20)
+        EOF
       - for: [handler, gated, testing]
         task: projects:build
         vars: { PROJECT: '{{.TEST_DOTNET}}/fixtures/{{.ITEM}}', VERSION: '{{.VERSION}}' }
+      # The handler's build also built the library it references; a copy restores both offline.
+      - cp "{{.TEST_DOTNET}}/global.json" "{{.TEST_DOTNET}}/fixtures/library/"
+      - cp "{{.TEST_DOTNET}}/offline.config" "{{.TEST_DOTNET}}/fixtures/library/nuget.config"
       - '"{{.DOTNET}}" new install "{{.PACKAGES}}/Isoplane.Templates.{{.VERSION}}.nupkg" --debug:custom-hive "{{.TEST_DOTNET}}/hive"'
       # Each template is generated as TEMPLATE:NAME. The hyphen makes file names and namespaces
       # differ. In a solution template the first part names a namespace the template declares

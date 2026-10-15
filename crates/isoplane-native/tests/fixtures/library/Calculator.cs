@@ -1,4 +1,4 @@
-namespace DebugLibrary;
+namespace FixtureLibrary;
 
 public static class Calculator
 {

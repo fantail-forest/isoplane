@@ -1,0 +1,12 @@
+<!-- An ordinary class library with no Isoplane dependency. Task writes payload.bin, 8 MiB, so the
+     debugger's metadata replies carry a large assembly image through socket backpressure. -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <DebugType>portable</DebugType>
+    <Optimize>false</Optimize>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="payload.bin" />
+  </ItemGroup>
+</Project>

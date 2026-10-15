@@ -43,6 +43,9 @@ import debug_watchpoint_steps
 from debug_sources import same_source
 
 launcher, endpoint, url, source, owner, mode, module = sys.argv[1:]
+# The fixture route whose code this mode pauses in, appended to whichever address serves it.
+route = os.environ.get("ISOPLANE_DEBUG_ROUTE", "")
+url = url.rstrip("/") + route
 owner = int(owner)
 terminal_mode = mode.startswith("terminal-")
 launched = mode in ("launch", "reload") or terminal_mode
@@ -217,7 +220,7 @@ try:
     if launched:
         response(attached)
         ready = until(lambda item: item.get("event") == "output" and re.search(r"ready .+ at (http://\S+)", item["body"]["output"]))
-        url = re.search(r"ready .+ at (http://\S+)", ready["body"]["output"]).group(1)
+        url = re.search(r"ready .+ at (http://\S+)", ready["body"]["output"]).group(1).rstrip("/") + route
         owned = [terminal.pid] + children(terminal.pid, process_tree()) if terminal_mode else children(adapter.pid, process_tree())
         assert owned, "launch must own the local application process"
     http_endpoint = urllib.parse.urlsplit(url)

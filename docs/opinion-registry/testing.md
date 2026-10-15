@@ -38,6 +38,8 @@ Any static compiler outputs a test needs, such as packages, guest and runtime mo
 
 **This, not that:** a test copies a fixture project Task built and runs the CLI Task installed, not one that generates a project, installs the CLI and restores packages before the step it checks. An engine test loads the runtime Task compiled, configuring its engine with the test configuration that compile was made for, not one that compiles the 66 MB runtime module itself.
 
+**This, not that:** a test that needs different application code selects it by route or setting in a fixture Task built, not by rewriting the copied fixture's source, which makes every run compile it again. Edit the copy's source only when how a build or reload reacts to the edit is what the test checks.
+
 ## Test with fixtures, not shipped templates
 
 Tests of the SDK and platform build fixture projects kept with the tests. Use a shipped template only in a test of that template.

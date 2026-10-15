@@ -232,25 +232,6 @@ fn a_prepared_runtime_spares_the_first_sessions_its_compilation() {
 async fn an_installed_application_streams_an_upload_through_the_shared_runtime() {
     let directory = tempfile::tempdir().unwrap();
     let app = isoplane_fixtures::handler_project(directory.path());
-    std::fs::write(
-        app.join("Handler.cs"),
-        r#"using Isoplane;
-
-public static class Handler
-{
-    [HttpHandler]
-    public static async Task<Response> HandleAsync(StreamingRequest request)
-    {
-        long total = 0;
-        var buffer = new byte[4096];
-        int read;
-        while ((read = await request.Body.ReadAsync(buffer, request.Aborted)) != 0) total += read;
-        return Response.Text($"received:{total}");
-    }
-}
-"#,
-    )
-    .unwrap();
     let cli = isoplane_fixtures::managed_cli();
     let mut dev = Dev::start_managed(&app, &cli);
     let body = vec![b'x'; 3 * 1024 * 1024];
@@ -272,80 +253,6 @@ public static class Handler
         "the handler must read the whole body the runtime streams to it"
     );
     dev.stop();
-}
-
-fn write_debug_application(app: &std::path::Path, mode: &str) -> std::path::PathBuf {
-    let source = app.join("Handler.cs");
-    let initializer = if mode == "detach-failure" {
-        r#"
-    [Initializer]
-    public static Task InitializeAsync()
-    {
-        if (!System.Diagnostics.Debugger.IsAttached) throw new InvalidOperationException("ordinary runtime preparation rejected");
-        return Task.CompletedTask;
-    }
-"#
-    } else {
-        ""
-    };
-    let handler = if mode == "library" {
-        "    internal static Task<string> Handle() => Task.FromResult(Array.ConvertAll(new[] { 41 }, DebugLibrary.Calculator.Work)[0].ToString());\n"
-    } else {
-        r#"
-    internal static async Task<string> Handle()
-    {
-        int answer = 42;
-        Task delay = Task.Delay(100);
-        if (delay.IsCompleted) throw new InvalidOperationException("host timer must be incomplete before awaiting");
-        await delay;
-        bool resumed = true;
-        return resumed ? answer.ToString() : throw new InvalidOperationException("continuation did not run");
-    }
-"#
-    };
-    let detached;
-    let handler = if matches!(mode, "detach" | "terminal-detach") {
-        detached = handler.replace(
-            "return resumed ?",
-            "return resumed && !System.Diagnostics.Debugger.IsAttached ?",
-        );
-        detached.as_str()
-    } else {
-        handler
-    };
-    std::fs::write(
-        &source,
-        format!(
-            "using Isoplane;\n\npublic static class Handler\n{{\n{initializer}\n    [HttpHandler]\n    public static async Task<Response> HandleAsync(Request request) => Response.Text(await DebugFixture.Application.Handle());\n}}\n\nnamespace DebugFixture\n{{\n    internal static class Application\n    {{\n{handler}    }}\n}}\n"
-        ),
-    )
-    .unwrap();
-    source
-}
-
-fn write_debug_library(directory: &std::path::Path, app: &std::path::Path) -> std::path::PathBuf {
-    let library = directory.join("library");
-    std::fs::create_dir(&library).unwrap();
-    std::fs::copy(app.join("nuget.config"), library.join("nuget.config"))
-        .expect("share the application package sources with its referenced project");
-    std::fs::write(library.join("Library.csproj"),
-        "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework><DebugType>portable</DebugType><Optimize>false</Optimize></PropertyGroup><ItemGroup><EmbeddedResource Include=\"payload.bin\" /></ItemGroup></Project>").unwrap();
-    // Metadata replies include the assembly image and must survive socket backpressure.
-    std::fs::write(library.join("payload.bin"), vec![0_u8; 8 * 1024 * 1024]).unwrap();
-    let library_source = library.join("Calculator.cs");
-    std::fs::write(&library_source, include_str!("common/debug_library.cs")).unwrap();
-    let project = std::fs::read_dir(app)
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .find(|path| {
-            path.extension()
-                .is_some_and(|extension| extension == "csproj")
-        })
-        .unwrap();
-    let xml = std::fs::read_to_string(&project).unwrap().replace("</Project>",
-        "<ItemGroup><ProjectReference Include=\"../library/Library.csproj\" /></ItemGroup></Project>");
-    std::fs::write(project, xml).unwrap();
-    library_source
 }
 
 fn start_debug_session(app: &std::path::Path, cli: &std::path::Path, mode: &str) -> Dev {
@@ -372,7 +279,15 @@ fn start_debug_session(app: &std::path::Path, cli: &std::path::Path, mode: &str)
             .env("ISOPLANE_CLI", cli)
             .env("PATH", std::env::join_paths(paths).unwrap());
         Dev::spawn(&mut command, std::time::Duration::from_secs(600), false)
-    } else if matches!(mode, "detach" | "detach-failure") {
+    } else if mode == "detach-failure" {
+        // The fixture's initializer then refuses to prepare the ordinary runtime, so detaching fails.
+        Dev::spawn(
+            common::managed_command(app, cli, &["--debug"])
+                .env("ISOPLANE_APP_RequireDebugger", "true"),
+            std::time::Duration::from_secs(600),
+            true,
+        )
+    } else if mode == "detach" {
         Dev::start_managed_with_args(app, cli, &["--debug"])
     } else {
         Dev::start_managed_with_args(app, cli, &["--debug", "--no-watch"])
@@ -383,11 +298,15 @@ fn installed_debug_acceptance(mode: &str) {
     let python = isoplane_fixtures::debugger_python();
     let directory = tempfile::tempdir().unwrap();
     let app = isoplane_fixtures::handler_project(directory.path());
-    let source = write_debug_application(&app, mode);
     let debug_source = if mode == "library" {
-        write_debug_library(directory.path(), &app)
+        directory.path().join("library/Calculator.cs")
     } else {
-        source
+        app.join("Handler.cs")
+    };
+    let route = match mode {
+        "library" => "/library",
+        "detach" | "terminal-detach" => "/detach",
+        _ => "/debug",
     };
     let cli = isoplane_fixtures::managed_cli();
     let mut dev = (!matches!(
@@ -401,7 +320,8 @@ fn installed_debug_acceptance(mode: &str) {
     command
         .arg(driver)
         .arg(&cli)
-        .env("ISOPLANE_CACHE_DIR", isoplane_fixtures::runtime_cache());
+        .env("ISOPLANE_CACHE_DIR", isoplane_fixtures::runtime_cache())
+        .env("ISOPLANE_DEBUG_ROUTE", route);
     if let Some(dev) = &dev {
         let metadata = dev
             .debugger
