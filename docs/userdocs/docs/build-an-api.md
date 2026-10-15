@@ -7,6 +7,11 @@ the sandbox against PostgreSQL, and see where its state lives. Then you will add
 a feature of your own, a due date, with a database migration, a new endpoint and
 a test.
 
+For a new project with a few simple tables, consider the lighter option first:
+[Connect to PostgreSQL](connect-postgresql.md) builds a service without ASP.NET
+that uses the Npgsql driver directly, so there is less code to load into every
+instance.
+
 Before starting, [install the tools](install.md). You also need Docker, which
 runs the database, and `curl`; the commands are written for bash or zsh. Allow
 about twenty minutes.

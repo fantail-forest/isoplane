@@ -62,8 +62,8 @@ await app.RunAsync();
 - Awaits all I/O, and closes every connection, stream and timer before the
   callbacks return. An open connection cannot be saved in the template, so
   Isoplane refuses to start an application that leaves one. A database driver's
-  connection pool keeps connections open after use, so initialize with pooling
-  off, as the [PostgreSQL sample](connect-postgresql.md) does.
+  connection pool keeps connections open after use, so turn pooling off, as
+  [Connect to PostgreSQL](connect-postgresql.md) does.
 - Creates nothing that should be unique to an instance. Whatever initialization leaves
   in memory, including a random value or an identifier in a static field, is the
   same in every instance.

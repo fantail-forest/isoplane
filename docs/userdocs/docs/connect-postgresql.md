@@ -2,133 +2,217 @@
 title: Connect to PostgreSQL
 ---
 
-The `samples/aspnet-todo` application uses ASP.NET, Entity Framework Core, and
-Npgsql against a real PostgreSQL database. It comes with a release supplied as a
-directory (see [installation](install.md)); an installation from NuGet does not
-include it. It requires verified TLS and
-turns connection pooling off. Debug and Release builds use the shared Mono runtime.
+This guide connects a small service to PostgreSQL through the Npgsql driver. You
+will create a service from the `isoplane-handler` template, start a local
+database in Docker, keep the connection string in User Secrets, and add two
+routes that read and write a table.
 
-To start a new application with a database, the
-[`isoplane-webapi`](reference/project-templates.md#isoplane-webapi) and
-[`isoplane-webapp`](reference/project-templates.md#isoplane-webapp) templates
-each create one with EF Core migrations, a local database in `compose.yaml`,
-and tests. This guide walks through the sample, which adds verified TLS and a
-compiled EF model.
+For a new project with a few simple tables, start here: SQL through the driver
+is less code to build and to load into every instance than ASP.NET Core and
+Entity Framework Core. When you want those, [Build a small API](build-an-api.md)
+uses them with PostgreSQL.
 
-## Use an existing development database
+Before starting, [install the tools](install.md). You also need Docker and
+`curl`; the commands are written for bash or zsh.
 
-Use an empty development database at your PostgreSQL provider. Obtain its TLS
-hostname, port, database name, username and password. Keep the hostname supplied
-by the provider: it must match the server certificate.
+## 1. Create the project
 
-Run the sample's `schema.sql` using your provider's SQL console or an ordinary
-PostgreSQL client. This creates the `Todos` table. Schema administration runs
-outside the guest; the application does not run migrations on startup.
+```bash
+dotnet new isoplane-handler --name NotesService
+cd NotesService
+dotnet add src/NotesService package Npgsql
+```
 
-A local session trusts the certificate authorities your machine trusts. For a
-database using a private CA, see [local private trust](#local-private-trust) below.
+The [`isoplane-handler`](reference/project-templates.md#isoplane-handler)
+template creates a service without ASP.NET; its `README.md` describes each file.
+[Build a small lightweight web service](build-a-web-service.md) walks through it.
 
-## Configure the sample
+## 2. Start a local database
 
-Copy `samples/aspnet-todo` from the release into a fresh working directory, then
-change into that copy. Set `ConnectionStrings:Todo` using [local development settings](local-settings.md).
-For example, replace the values in this connection string with your development
-database's values:
+```bash
+docker run --name notes-db --detach --publish 127.0.0.1:5432:5432 \
+  --env POSTGRES_PASSWORD=development postgres:17
+```
+
+This runs the official PostgreSQL image, reachable only from your machine. The
+password is for this disposable database alone. If something already listens on
+port 5432, publish another port, such as `127.0.0.1:5433:5432`, and use that
+port in the connection string below.
+
+Wait for the database to accept connections, then create the table:
+
+```bash
+until docker exec notes-db pg_isready --host 127.0.0.1 --quiet; do sleep 1; done
+docker exec notes-db psql -U postgres \
+  -c 'CREATE TABLE notes (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, text text NOT NULL)'
+```
+
+The service only reads and writes rows. You create and change tables yourself,
+with `psql`, your provider's SQL console or a migration tool.
+
+## 3. Set the connection string
+
+```bash
+dotnet user-secrets set "ConnectionStrings:Notes" \
+  "Host=127.0.0.1;Port=5432;Username=postgres;Password=development" \
+  --project src/NotesService
+```
+
+[User Secrets](local-settings.md#keep-credentials-in-user-secrets) keep the
+password outside the project, and a local session passes them to the
+application. The template's project file already has the `UserSecretsId` they
+need. `ConnectionStrings:Notes` is the name the code in the next step reads;
+[Npgsql's connection string parameters](https://www.npgsql.org/doc/connection-string-parameters.html)
+define `Host`, `Port` and the other keys.
+
+The local database serves plain connections. Traffic to it does not leave your
+machine, so it needs no TLS.
+
+## 4. Read and write the table
+
+Create `src/NotesService/NoteStore.cs`:
+
+```csharp
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using Isoplane;
+using Npgsql;
+
+namespace NotesService;
+
+public sealed record Note(int Id, string Text);
+
+public sealed record NewNote(string Text);
+
+/// <summary>Reads and writes the notes table, with one connection for each request.</summary>
+public static class NoteStore
+{
+    public static async Task<Response> ListAsync(Request request)
+    {
+        // "await using" closes the connection, command and reader before the
+        // response is returned. Nothing is left open between requests.
+        await using var connection = await OpenAsync(request.Aborted);
+        await using var command = new NpgsqlCommand("SELECT id, text FROM notes ORDER BY id", connection);
+        await using var reader = await command.ExecuteReaderAsync(request.Aborted);
+        var notes = new List<Note>();
+        while (await reader.ReadAsync(request.Aborted))
+        {
+            notes.Add(new Note(reader.GetInt32(0), reader.GetString(1)));
+        }
+        return Response.Json(JsonSerializer.Serialize(notes, NotesJson.Default.ListNote));
+    }
+
+    public static async Task<Response> AddAsync(Request request)
+    {
+        NewNote? note;
+        try { note = JsonSerializer.Deserialize(request.Body.Span, NotesJson.Default.NewNote); }
+        catch (JsonException) { note = null; }
+        if (string.IsNullOrWhiteSpace(note?.Text))
+        {
+            return Response.Text("Send a JSON note: {\"text\":\"...\"}", 400);
+        }
+
+        await using var connection = await OpenAsync(request.Aborted);
+        // $1 is a parameter: the note's text is sent apart from the SQL, never pasted into it.
+        await using var command = new NpgsqlCommand("INSERT INTO notes (text) VALUES ($1) RETURNING id", connection);
+        command.Parameters.Add(new NpgsqlParameter { Value = note.Text });
+        var id = (int)(await command.ExecuteScalarAsync(request.Aborted))!;
+        return Response.Json(JsonSerializer.Serialize(new Note(id, note.Text), NotesJson.Default.Note), 201);
+    }
+
+    private static async Task<NpgsqlConnection> OpenAsync(CancellationToken cancellation)
+    {
+        // Read the connection string while handling the request, not in the initializer.
+        // What the initializer keeps is saved in the template every instance starts
+        // from, and the connection string holds the password.
+        var configured = RuntimeConfiguration.ReadValues().GetValueOrDefault("ConnectionStrings:Notes")
+            ?? throw new InvalidOperationException("Set ConnectionStrings:Notes in User Secrets.");
+        var settings = new NpgsqlConnectionStringBuilder(configured)
+        {
+            // Isoplane decides how many instances run and may discard any of them
+            // between requests, so a pool inside one instance neither limits the
+            // connections the application opens nor keeps them for long. Pool in
+            // front of the database instead.
+            Pooling = false
+        };
+        var connection = new NpgsqlConnection(settings.ConnectionString);
+        await connection.OpenAsync(cancellation);
+        return connection;
+    }
+}
+
+// Source-generated JSON serialization, as in the template's Greeter.cs: list each
+// type the service sends or receives.
+[JsonSerializable(typeof(Note))]
+[JsonSerializable(typeof(List<Note>))]
+[JsonSerializable(typeof(NewNote))]
+[JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
+public sealed partial class NotesJson : JsonSerializerContext;
+```
+
+Then route requests to it. Open `src/NotesService/Handler.cs` and add two lines
+at the top of the switch in `HandleAsync`:
+
+```csharp
+    public static Task<Response> HandleAsync(Request request) => (request.Method, request.Path) switch
+    {
+        ("GET", "/notes") => NoteStore.ListAsync(request),
+        ("POST", "/notes") => NoteStore.AddAsync(request),
+```
+
+Two choices in this code are particular to Isoplane:
+
+- **A connection for each request, with the driver's pooling off.** Isoplane
+  runs as many instances as the load needs, so a pool in each one does not cap
+  the connections the service opens.
+  [Pool database connections outside the application](dotnet-runtime-differences.md#pool-database-connections-outside-the-application)
+  explains what to use instead.
+- **The connection string is read during the request.** Settings are also
+  available in the `[Initializer]` method, but what it keeps in memory is saved
+  in the template that every instance starts from.
+  [The application lifecycle](application-lifecycle.md) describes the template.
+
+## 5. Run it and call it
+
+```bash
+dotnet run --project src/NotesService
+```
+
+When the service is ready, the command prints its address:
 
 ```text
-Host=YOUR_TLS_HOSTNAME;Port=5432;Database=todo;Username=YOUR_USER;Password=YOUR_PASSWORD
+  ready NotesService at http://127.0.0.1:5236 (local guest execution)
 ```
 
-The sample enforces `SslMode=VerifyFull` and `Pooling=false` when constructing
-its connection string. It reads configuration when creating each request's
-DbContext. Its initialization hook warms the read-only `/todos` endpoint, so the
-database must be reachable during application preparation. `Program.cs` also sets
-EF's `Microsoft.EntityFrameworkCore.Issue31751` switch through `AppContext` so the
-compiled model initializes without starting an operating-system thread.
-
-A local session can reach a database on your own machine as well as a public
-endpoint; no extra setting permits either.
-
-## Optional: start a disposable local database
-
-If you do not have a development database, the copied sample includes a local
-setup helper. It requires Python 3, OpenSSL, Docker with a running daemon you can
-access, and the installed .NET tooling from the [installation guide](install.md).
-Docker downloads the `postgres:16` image if needed.
-
-From the copied sample directory:
+Your port will differ. In a second terminal, add a note and list the notes:
 
 ```bash
-python3 local-postgres.py start
+curl --json '{"text":"Buy milk"}' http://127.0.0.1:5236/notes
+curl http://127.0.0.1:5236/notes
 ```
 
-This starts PostgreSQL bound only to a randomly allocated loopback port, creates
-the schema, and sets `ConnectionStrings:Todo` in the project's User Secrets. It
-uses a random password and a private development CA; the password is not printed.
-Plaintext database connections are refused. The certificates expire after seven
-days; stop and recreate the database to renew them.
+```json
+{"id":1,"text":"Buy milk"}
+[{"id":1,"text":"Buy milk"}]
+```
 
-The helper prints the path of its generated CA certificate. Start the application
-with that path in `SSL_CERT_FILE`, as the helper shows, so the session trusts the
-database's certificate:
+The row is in the database, not in the service. Check it there:
 
 ```bash
-SSL_CERT_FILE=/path/printed/by/the/helper/ca.crt dotnet run -c Debug
+docker exec notes-db psql -U postgres -c 'SELECT * FROM notes'
 ```
 
-Do not also follow the external-provider connection-string instructions for
-this option.
-
-The database is disposable: stopping it deletes all its rows. After stopping
-the application, clean up from the same sample directory:
-
-```bash
-python3 local-postgres.py stop
-dotnet user-secrets remove ConnectionStrings:Todo
-```
-
-The helper removes only its recorded container and temporary
-certificate directory. Its ignored `.local-postgres.json` file records that
-ownership; keep it until cleanup. Other User Secrets are left untouched.
-
-## Run and exercise the API
-
-```bash
-dotnet run -c Debug
-```
-
-Use the URL printed by the command. The following examples use `curl`; another
-HTTP client works too. Set `app_url` to the printed address:
-
-```bash
-app_url="http://127.0.0.1:PORT_FROM_TERMINAL"
-curl "$app_url/todos"
-curl --json '{"title":"My first task","done":false}' "$app_url/todos"
-```
-
-The first response should be `[]` for an empty database. The second returns the
-created TODO with its `id`. Use that ID to update and delete it:
-
-```bash
-todo_id=ID_FROM_RESPONSE
-curl --request PUT --json '{"title":"Completed task","done":true}' \
-  "$app_url/todos/$todo_id"
-curl --request DELETE "$app_url/todos/$todo_id"
-curl "$app_url/todos"
-```
-
-Check the table independently in your database's SQL console. Restart the app
-after creating a row to confirm persistence comes from the database.
-
-Stop the application, run `dotnet run -c Release`, and repeat the
-same operations. The sample generates its EF model and queries at build time in both configurations.
+Then stop the service with Ctrl+C, start it again with the same `dotnet run`
+command, and list the notes: the note is still there.
 
 ## Local private trust
 
 A local session trusts the certificate authorities your machine trusts, as any
 .NET program does. For a local database with a private CA, obtain the CA
 certificate from whoever created that database, then either install it in your
-operating system's trust store or name its PEM file for one run:
+operating system's trust store or name its PEM file in
+[`SSL_CERT_FILE`](local-settings.md#reach-local-services-and-private-certificate-authorities)
+for one run:
 
 ```bash
 SSL_CERT_FILE=/path/to/local-ca.pem dotnet run
@@ -139,5 +223,11 @@ valid chain. Trusting its CA does not disable those checks. Keep its private key
 on the database server, not in the application. Restart the development session
 after changing which authorities are trusted.
 
-See [pool database connections outside the application](dotnet-runtime-differences.md#pool-database-connections-outside-the-application)
-before enabling pooling in your own application.
+## Clean up
+
+Stop the service, then remove the database, its data and the connection string:
+
+```bash
+docker rm --force notes-db
+dotnet user-secrets remove "ConnectionStrings:Notes" --project src/NotesService
+```

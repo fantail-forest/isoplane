@@ -299,9 +299,9 @@ Put the pool in front of the database instead. Use your database provider's
 pooler, such as PgBouncer or a provider's pooled connection endpoint, and point
 the application's connection string at it. The pooler caps the total and keeps
 connecting cheap, and the application can open a connection for each request
-and dispose it when the request is done. The
-[PostgreSQL sample](connect-postgresql.md) runs with the driver's own pooling
-off.
+and dispose it when the request is done.
+[Connect to PostgreSQL](connect-postgresql.md) shows a service that does this,
+with the driver's own pooling off.
 
 ## Network
 
