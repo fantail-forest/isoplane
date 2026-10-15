@@ -17,8 +17,8 @@ tasks:
       - '{{.DEVELOPMENT_COMMAND}}cargo test --lib {{.CLI_ARGS}}'
 
   rust:
-    desc: Prepare Rust WASM fixtures and run selected Rust tests
-    deps: [':initialize', ':fixtures:rust', ':fixtures:node']
+    desc: Prepare the guest fixtures Rust tests load and run selected Rust tests
+    deps: [':initialize', ':fixtures:rust', ':fixtures:dotnet', ':fixtures:acceptance', ':fixtures:package', ':fixtures:node']
     env: *test_env
     cmds:
       - '{{.DEVELOPMENT_COMMAND}}cargo test {{.CLI_ARGS}}'
