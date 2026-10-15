@@ -52,7 +52,7 @@ entry says otherwise.
 | Entity Framework Core | [Lazy loading](#lazy-loading) | Moderate change: load with `Include` |
 | Entity Framework Core | [`TransactionScope`](#transaction-scope) | Small change: use a database transaction |
 | SqlClient | [SQL Server, including its Entity Framework Core provider](#sql-server) | Not supported yet: waits on work under way in the driver. PostgreSQL works today |
-| Sqlite | [SQLite, including its Entity Framework Core provider](#sqlite) | In-memory databases work, created once the application has started, but every request then starts a fresh instance. A database file needs a different database, such as PostgreSQL |
+| Sqlite | [SQLite, including its Entity Framework Core provider](#sqlite) | In-memory databases work, created once the application has started. A database file needs a different database, such as PostgreSQL |
 | MongoDB.Driver | [MongoDB](#mongodb) | Not supported yet for most deployments: waits on the driver. A load-balanced deployment works with two settings |
 | StackExchange.Redis | [Redis, including the Redis distributed cache](#redis) | Small change: reference the stable 3.x client and call it asynchronously |
 | OpenTelemetry | [OpenTelemetry SDK](#opentelemetry) | Large change, traces only: collect spans with .NET's tracing API and send them before each request ends |
@@ -939,14 +939,10 @@ Activation.Activated += async () =>
 builder.Services.AddDbContext<CatalogContext>(options => options.UseSqlite(Reference));
 ```
 
-Every request then starts a fresh instance. `Microsoft.Data.Sqlite`'s timer
-is still running when each request ends, and a request that ends with a timer
-running is
-[followed by a fresh instance](dotnet-runtime-differences.md#work-belongs-to-a-request),
-which runs `Activated` again and reloads the data. That applies to every
-request once a connection has been created, including requests that do not use
-SQLite. In our check each request took about 0.38 s, against well under 0.01 s
-for an instance that is kept.
+`Activated` runs once for each instance, so each instance loads the data once.
+`Microsoft.Data.Sqlite` keeps a timer that tidies its connection pool, and
+like any timer it [stays with the instance](dotnet-runtime-differences.md#work-belongs-to-a-request)
+between requests.
 
 Finish or roll back a transaction before another connection uses the same
 tables. A command that finds them locked fails with
@@ -960,9 +956,8 @@ serves the `SQLitePCLRaw` provider that `Microsoft.Data.Sqlite` uses by default,
 For data that must last, use PostgreSQL; see
 [Connect PostgreSQL](connect-postgresql.md).
 
-Size of the change: small for in-memory data loaded as the instance starts,
-with a fresh instance for every request. Large for a database file: a
-different database.
+Size of the change: small for in-memory data loaded as the instance starts.
+Large for a database file: a different database.
 
 ### MongoDB {#mongodb}
 
@@ -1110,9 +1105,9 @@ The refusal names the timers. For the code above there are two:
   60 s in its place.
 
 Creating the SDK later, after initialization, does not get round this. The
-application then starts, but those timers are still pending when each request
-ends, which [costs the instance](dotnet-runtime-differences.md#work-belongs-to-a-request).
-And the OTLP exporter sends synchronously, over HTTP and over gRPC alike, so
+application then starts, and those timers
+[run during later requests](dotnet-runtime-differences.md#work-belongs-to-a-request),
+but the OTLP exporter sends synchronously, over HTTP and over gRPC alike, so
 nothing arrives.
 
 Typically used for sending traces, metrics and logs to a collector. We ran
@@ -1380,7 +1375,7 @@ thread pool has only one thread, so it already uses them on Isoplane; their wait
 are the 5 s and 60 s delays above. What remains is a way to keep the
 self-diagnostics from starting a timer, an export that does not send
 synchronously, which the maintainers have so far left out, and somewhere for
-those delays to run once a request has ended.
+those delays to run between requests.
 
 Isoplane can also close the gap from its own side, with an exporter that
 collects spans and sends them before the response completes, or hands them to
