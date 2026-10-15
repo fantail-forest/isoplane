@@ -81,12 +81,9 @@ running once the host has started is refused by name, because work cannot
 continue between requests. An entry point that returns without awaiting
 `RunAsync` cannot serve requests. An initialization callback that throws, such as
 a warm-up request to a database that is not running, fails preparation. So does
-initialization that leaves a connection, stream or timer open: the message names
-the kind, for example `initialization retains a TCP socket`, and the fix is to
-dispose it before the callback returns. For `initialization retains a timer`,
-the lines beneath the message list each timer that was still running: for a
-delay, the method awaiting it, and for a `Timer`, the method it calls, which is
-often inside a library the application registered at startup. See
+initialization that leaves a connection or stream open: the message names the
+kind, for example `initialization retains a TCP socket`, and the fix is to
+dispose it before the callback returns. See
 [initialization](application-lifecycle.md#initialization).
 
 ## Breakpoints stay grey

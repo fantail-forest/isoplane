@@ -699,9 +699,7 @@ impl Timer {
         let Some(deadline) = self.deadline else {
             return Ok(());
         };
-        if self.ready.load(Ordering::Acquire)
-            || self.wake.as_ref().is_some_and(ReactorWork::is_pending)
-        {
+        if self.ready.load(Ordering::Acquire) {
             return Ok(());
         }
         let runtime = bindings
@@ -709,15 +707,14 @@ impl Timer {
             .ok_or(Error::Unsupported("native timer without reactor"))?;
         if reactor_now(&runtime) >= deadline {
             self.ready.store(true, Ordering::Release);
-            self.wake = None;
-        } else {
+        } else if !self.wake.as_ref().is_some_and(ReactorWork::is_pending) {
             self.wake = Some(arm_timer(&self.ready, deadline, &runtime, bindings)?);
         }
         Ok(())
     }
 }
 
-fn reactor_now(runtime: &Runtime) -> tokio::time::Instant {
+pub(crate) fn reactor_now(runtime: &Runtime) -> tokio::time::Instant {
     let _reactor = runtime.reactor.enter();
     tokio::time::Instant::now()
 }
@@ -794,16 +791,34 @@ impl Resources {
         }
     }
 
-    pub(crate) fn prepared(&self) -> Result<isoplane_abi::native_io::PreparedResources, Error> {
+    /// The resources initialization leaves for the template, at `now` on the
+    /// reactor's clock.
+    pub(crate) fn prepared(
+        &self,
+        now: tokio::time::Instant,
+    ) -> Result<isoplane_abi::native_io::PreparedResources, Error> {
         let mut retained = BTreeMap::<&'static str, usize>::new();
         let mut ready_pollables = Vec::new();
+        let mut pending_timers = Vec::new();
         for (&handle, resource) in &self.entries {
             let kind = match resource {
                 Resource::Network => continue,
-                Resource::Timer(timer)
-                    if timer.wake.is_none() && timer.ready.load(Ordering::Acquire) =>
-                {
-                    ready_pollables.push(handle);
+                Resource::Timer(timer) => {
+                    match timer
+                        .deadline
+                        .filter(|&deadline| !timer.ready.load(Ordering::Acquire) && deadline > now)
+                    {
+                        Some(deadline) => {
+                            pending_timers.push(isoplane_abi::native_io::PreparedTimer {
+                                handle,
+                                remaining_ms: u64::try_from(
+                                    (deadline - now).as_nanos().div_ceil(1_000_000),
+                                )
+                                .unwrap_or(u64::MAX),
+                            })
+                        }
+                        None => ready_pollables.push(handle),
+                    }
                     continue;
                 }
                 Resource::Addresses(_) => {
@@ -824,7 +839,6 @@ impl Resources {
                 Resource::Subscription(_) => {
                     "initialization retains a readiness subscription; dispose it before capture"
                 }
-                Resource::Timer(_) => "initialization retains a timer; dispose it before capture",
             };
             *retained.entry(kind).or_default() += 1;
         }
@@ -839,12 +853,16 @@ impl Resources {
             next_handle: self.next,
             network: self.network,
             ready_pollables,
+            pending_timers,
         })
     }
 
+    /// Restores the template's resources in an instance activated at `now` on
+    /// the reactor's clock.
     pub(crate) fn restore_prepared(
         &mut self,
         prepared: &isoplane_abi::native_io::PreparedResources,
+        now: tokio::time::Instant,
     ) -> Result<(), Error> {
         if let Some(previous) = &self.prepared {
             return if previous == prepared {
@@ -864,9 +882,12 @@ impl Resources {
             .network
             .iter()
             .chain(&prepared.ready_pollables)
+            .chain(prepared.pending_timers.iter().map(|timer| &timer.handle))
             .copied()
             .collect();
-        let count = prepared.ready_pollables.len() + usize::from(prepared.network.is_some());
+        let count = prepared.ready_pollables.len()
+            + prepared.pending_timers.len()
+            + usize::from(prepared.network.is_some());
         if prepared.next_handle == 0
             || handles.len() != count
             || handles
@@ -887,6 +908,16 @@ impl Resources {
                 Resource::Timer(Timer {
                     ready: Arc::new(AtomicBool::new(true)),
                     deadline: None,
+                    wake: None,
+                }),
+            );
+        }
+        for timer in &prepared.pending_timers {
+            self.entries.insert(
+                timer.handle,
+                Resource::Timer(Timer {
+                    ready: Arc::new(AtomicBool::new(false)),
+                    deadline: Some(now + std::time::Duration::from_millis(timer.remaining_ms)),
                     wake: None,
                 }),
             );

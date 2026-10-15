@@ -12,6 +12,7 @@ public static class Handler
 {
     private static bool libraryLoadedDuringInitialization;
     private static Timer? heartbeat;
+    private static int beats;
 
     /// <summary>Warms the response path before template capture.</summary>
     [Initializer]
@@ -34,6 +35,7 @@ public static class Handler
             return Response.Text($"initialized={libraryLoadedDuringInitialization};loaded={library.GetName().Name}");
         }
         await Task.Delay(TimeSpan.FromMilliseconds(50)).ConfigureAwait(false);
+        if (req.Path == "/beats") return Response.Text($"beats={beats}");
         return Answer(req.Path);
     }
 
@@ -53,7 +55,7 @@ public static class Handler
         return Task.CompletedTask;
     }
 
-    private static void Beat(object? state) => GC.KeepAlive(heartbeat);
+    private static void Beat(object? state) => beats++;
 
     private static async Task PollAsync() => await Task.Delay(TimeSpan.FromSeconds(45));
 }

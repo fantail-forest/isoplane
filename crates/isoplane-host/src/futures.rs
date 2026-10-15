@@ -377,6 +377,20 @@ impl FutureTable {
             .is_some_and(|a| !a.inner.lock().ready.is_empty())
     }
 
+    /// Whether the owner has a pending or undelivered future other than a
+    /// re-armable wake, whose condition outlives it.
+    pub fn holds_guest_work(&self, owner: InstanceId) -> bool {
+        let Some(arc) = self.existing(owner) else {
+            return false;
+        };
+        let o = arc.inner.lock();
+        o.pending.iter().chain(o.ready.iter()).any(|id| {
+            self.entries
+                .read_sync(id, |_, entry| !entry.rearmable)
+                .unwrap_or(false)
+        })
+    }
+
     pub fn pending_total(&self, owner: InstanceId) -> usize {
         self.existing(owner)
             .map_or(0, |a| a.inner.lock().pending.len())

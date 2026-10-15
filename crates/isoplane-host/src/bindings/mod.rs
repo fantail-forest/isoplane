@@ -150,7 +150,11 @@ impl HostBindings for CellBindings {
         &mut self,
         prepared: &isoplane_abi::native_io::PreparedResources,
     ) -> Result<(), isoplane_engine::bindings::BindingError> {
-        self.ctx.native_io.lock().restore_prepared(prepared).map_err(|error| {
+        let now = native_io::Context::runtime(self)
+            .map_or_else(tokio::time::Instant::now, |runtime| {
+                native_io::reactor_now(&runtime)
+            });
+        self.ctx.native_io.lock().restore_prepared(prepared, now).map_err(|error| {
             tracing::warn!(tenant = %self.ctx.tenant, instance = %self.ctx.instance, %error, "prepared native resources refused");
             isoplane_engine::bindings::BindingError::InvalidRequest("invalid prepared native resources")
         })

@@ -338,8 +338,7 @@ APIs, which covers `HttpClient`, TLS and database drivers.
   closes it once the response has been read, so it keeps no connection between
   calls. Elsewhere a client keeps idle connections for its next calls and
   removes them on a timer, and the factory replaces each handler every two
-  minutes on another. A timer left by [initialization](application-lifecycle.md)
-  stops the application from starting, so Isoplane switches both off. The cost is a new connection,
+  minutes on another. Isoplane switches both off. The cost is a new connection,
   and over HTTPS a new TLS handshake, for each call, including calls a request
   makes one after another to the same host.
 - Either timer comes back if you ask for it: `SetHandlerLifetime` with a finite

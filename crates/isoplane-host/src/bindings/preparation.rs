@@ -100,8 +100,8 @@ impl PreparationIo {
     /// Capture handle identity after all live I/O resources have been disposed.
     pub fn finish(&self) -> Result<PreparedResources, Error> {
         let resources = self.resources.lock();
-        let prepared = resources.prepared()?;
-        if self.pending_count() != 0 || self.runtime.futures.has_ready(self.instance()) {
+        let prepared = resources.prepared(super::native_io::reactor_now(&self.runtime))?;
+        if self.runtime.futures.holds_guest_work(self.instance()) {
             return Err(Error::InvalidState(
                 "initialization has undelivered native completions",
             ));
@@ -111,7 +111,9 @@ impl PreparationIo {
 
     /// Restore captured handle identities before issuing native operations.
     pub fn restore_resources(&self, prepared: &PreparedResources) -> Result<(), Error> {
-        self.resources.lock().restore_prepared(prepared)
+        self.resources
+            .lock()
+            .restore_prepared(prepared, super::native_io::reactor_now(&self.runtime))
     }
 }
 
@@ -198,43 +200,48 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn preparation_timers_wake_on_the_host_clock_and_must_be_disposed_before_capture() {
-        let io = preparation(
+    async fn a_pending_initialization_timer_is_captured_and_counts_from_activation() {
+        let policy = || {
             HostEgressPolicy::system(
                 crate::egress::ConnectionLimits::uniform(4).expect("connection limits"),
             )
-            .unwrap(),
-        );
+            .unwrap()
+        };
+        let io = preparation(policy());
         let timer = handle(&io, Request::Timer(DurationNanos(1_000_000_000)));
-        assert_eq!(
-            io.pending_count(),
-            1,
-            "a sleeping initialization must have a host wake source"
-        );
-        let error = io
+        tokio::time::advance(std::time::Duration::from_millis(400)).await;
+        let prepared = io
             .finish()
-            .expect_err("capture must reject a retained timer");
-        assert!(
-            error.to_string().contains("timer"),
-            "capture refusal must name the retained resource kind without exposing guest data"
+            .expect("step 1: capture must accept a pending timer");
+        assert_eq!(
+            prepared.pending_timers,
+            vec![isoplane_abi::native_io::PreparedTimer {
+                handle: timer,
+                remaining_ms: 600,
+            }],
+            "step 1: capture must record the time the timer still has to run"
         );
-        tokio::time::advance(std::time::Duration::from_secs(1)).await;
+
+        tokio::time::advance(std::time::Duration::from_secs(10)).await;
+        let restored = preparation(policy());
+        restored.restore_resources(&prepared).unwrap();
+        let ready = |io: &PreparationIo| match io.call(Request::Ready(timer)) {
+            Ok(Response::Ready(ready)) => ready,
+            other => panic!("a readiness check returned {other:?}"),
+        };
         assert!(
-            io.next_completion().await.is_some(),
-            "the host timer must deliver its completion"
+            !ready(&restored),
+            "step 2: time before activation must not count toward the timer"
         );
+        tokio::time::advance(std::time::Duration::from_millis(599)).await;
         assert!(
-            matches!(io.call(Request::Ready(timer)), Ok(Response::Ready(true))),
-            "the native timer must become ready"
+            !ready(&restored),
+            "step 3: the timer is not due before 600 ms"
         );
+        tokio::time::advance(std::time::Duration::from_millis(1)).await;
         assert!(
-            io.finish().is_err(),
-            "a completed timer still requires guest disposal"
-        );
-        dispose(&io, timer, ResourceKind::Pollable);
-        assert!(
-            io.finish().is_ok(),
-            "disposing the timer must permit capture"
+            ready(&restored),
+            "step 3: the timer is due 600 ms after activation"
         );
     }
 
@@ -304,6 +311,7 @@ mod tests {
                 next_handle: 3,
                 network: Some(ResourceHandle(1)),
                 ready_pollables,
+                pending_timers: Vec::new(),
             };
             assert!(io.restore_resources(&prepared).is_err(), "ready pollable metadata must contain only distinct in-range handles separate from network authority");
         }
@@ -324,6 +332,7 @@ mod tests {
             next_handle: 3,
             network: Some(ResourceHandle(1)),
             ready_pollables: vec![ResourceHandle(2)],
+            pending_timers: Vec::new(),
         };
         assert!(
             matches!(io.restore_resources(&prepared), Err(Error::ResourceLimit)),
@@ -425,16 +434,19 @@ mod tests {
         for prepared in [
             PreparedResources {
                 ready_pollables: Vec::new(),
+                pending_timers: Vec::new(),
                 next_handle: 0,
                 network: None,
             },
             PreparedResources {
                 ready_pollables: Vec::new(),
+                pending_timers: Vec::new(),
                 next_handle: 2,
                 network: Some(ResourceHandle(0)),
             },
             PreparedResources {
                 ready_pollables: Vec::new(),
+                pending_timers: Vec::new(),
                 next_handle: 2,
                 network: Some(ResourceHandle(2)),
             },
@@ -474,6 +486,7 @@ mod tests {
         );
         io.restore_resources(&PreparedResources {
             ready_pollables: Vec::new(),
+            pending_timers: Vec::new(),
             next_handle: 2,
             network: Some(ResourceHandle(1)),
         })
@@ -499,6 +512,7 @@ mod tests {
             matches!(
                 io.restore_resources(&PreparedResources {
                     ready_pollables: Vec::new(),
+                    pending_timers: Vec::new(),
                     next_handle: 2,
                     network: Some(ResourceHandle(1))
                 }),

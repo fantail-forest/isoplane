@@ -8,6 +8,7 @@ using Isoplane;
 using Isoplane.AspNetCore;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Console;
@@ -25,10 +26,30 @@ public static class Application
     {
         var builder = IsoplaneHosting.CreateBuilder(args);
         builder.Services.AddSingleton<Greeter>();
+        builder.Services.AddRateLimiter(options =>
+        {
+            options.AddFixedWindowLimiter("limited", limiter =>
+            {
+                limiter.PermitLimit = 1;
+                limiter.Window = TimeSpan.FromMinutes(1);
+            });
+            options.OnRejected = (rejected, _) =>
+            {
+                rejected.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+                return new ValueTask(rejected.HttpContext.Response.WriteAsync("rejected"));
+            };
+        });
         string? peer = builder.Configuration["Peer"];
         if (peer is not null) builder.Services.AddHttpClient("peer", client => client.BaseAddress = new Uri(peer));
         AddConsoleLogging(builder, builder.Configuration["ConsoleLogging"]);
         var app = builder.Build();
+        // The middleware starts a timer that ticks every 100 ms, which initialization leaves running.
+        app.UseRateLimiter();
+        app.MapGet("/limited", async () =>
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(50)).ConfigureAwait(false);
+            return "allowed";
+        }).RequireRateLimiting("limited");
         app.MapGet("/hello/{name}", async (string name, Greeter greeter) =>
         {
             await Task.Delay(TimeSpan.FromMilliseconds(50)).ConfigureAwait(false);

@@ -429,6 +429,7 @@ mod tests {
     ) {
         let prepared = isoplane_abi::native_io::PreparedResources {
             ready_pollables: vec![isoplane_abi::native_io::ResourceHandle(4)],
+            pending_timers: Vec::new(),
             network: Some(isoplane_abi::native_io::ResourceHandle(3)),
             next_handle: 5,
         };

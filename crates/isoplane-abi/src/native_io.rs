@@ -340,6 +340,17 @@ pub struct PreparedResources {
     pub network: Option<ResourceHandle>,
     /// Immediately ready pollables with no timer task or wake authority.
     pub ready_pollables: Vec<ResourceHandle>,
+    /// Timers still pending when initialization ended, each restored with its
+    /// deadline counted from activation.
+    pub pending_timers: Vec<PreparedTimer>,
+}
+
+/// A timer initialization left pending.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PreparedTimer {
+    pub handle: ResourceHandle,
+    /// Milliseconds it still had to run when initialization ended.
+    pub remaining_ms: u64,
 }
 
 impl Default for PreparedResources {
@@ -348,6 +359,7 @@ impl Default for PreparedResources {
             next_handle: 1,
             network: None,
             ready_pollables: Vec::new(),
+            pending_timers: Vec::new(),
         }
     }
 }

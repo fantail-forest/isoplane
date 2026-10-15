@@ -8,7 +8,7 @@ what is left to your application.
 
 | Stage | When | Isoplane | Your application |
 | --- | --- | --- | --- |
-| [Initialization](#initialization) | When creating a template, before requests | Runs `Program.cs` and saves the application's memory as a template | Prepares shared state, and closes every connection and timer it opened |
+| [Initialization](#initialization) | When creating a template, before requests | Runs `Program.cs` and saves the application's memory as a template | Prepares shared state, and closes every connection it opened |
 | [Activation](#activation) | Each time an instance starts | Copies the template and reseeds random generators | Replaces copied state that has to be unique to each instance, such as an identifier |
 | [Handling a request](#handling-a-request) | Each request | Delivers the request, suspends the instance while it waits, enforces limits | Awaits its work, and forwards the request's cancellation token to the asynchronous calls it makes |
 | [Between requests](#between-requests) | Whenever an instance has no request | Keeps the instance for later, or discards it | Expects nothing to run and nothing to survive |
@@ -47,7 +47,9 @@ await app.RunAsync();
 - Saves everything left in memory, and starts every instance from it.
 - Refuses to start the application if initialization throws, if a
   `BackgroundService` is still running once the host has started, or if a
-  connection, stream or timer is still open when the callbacks have finished.
+  connection or stream is still open when the callbacks have finished.
+- Saves a timer still running when the callbacks have finished with the
+  template. In each instance it counts from when that instance starts.
 
 **Your application**
 
@@ -59,14 +61,18 @@ await app.RunAsync();
   and a body, for a route such as a search that takes a `POST`. Preparation attempts
   can serve these requests again, so send requests safe to repeat. Reusing a
   prepared template sends none.
-- Awaits all I/O, and closes every connection, stream and timer before the
-  callbacks return. An open connection cannot be saved in the template, so
+- Awaits all I/O, and closes every connection and stream before the callbacks
+  return. An open connection cannot be saved in the template, so
   Isoplane refuses to start an application that leaves one. A database driver's
   connection pool keeps connections open after use, so turn pooling off, as
   [Connect to PostgreSQL](connect-postgresql.md) does.
 - Creates nothing that should be unique to an instance. Whatever initialization leaves
   in memory, including a random value or an identifier in a static field, is the
   same in every instance.
+- May leave timers running. A timer with 30 s left when initialization ends
+  first fires 30 s after an instance starts, at the start of a request, as
+  [Work belongs to a request](dotnet-runtime-differences.md#work-belongs-to-a-request)
+  describes.
 - Starts no background work.
 
 **What can go wrong**
@@ -77,7 +83,7 @@ In each case the application does not start, and the terminal shows the reason.
 | --- | --- |
 | `Program.cs` or an `Initializing` callback throws | The exception that was thrown |
 | A `BackgroundService` is still running once the host has started | An error that names the service |
-| A connection, stream, DNS result or timer is still open when the callbacks finish | A message that names the kind, such as `initialization retains a TCP socket; dispose it before capture` |
+| A connection, stream or DNS result is still open when the callbacks finish | A message that names the kind, such as `initialization retains a TCP socket; dispose it before capture` |
 | Code waits synchronously or starts a thread | `PlatformNotSupportedException`, unless the code catches it |
 | Initialization runs longer than Isoplane allows | Initialization is stopped |
 | The entry point calls `Run`, or does not await `RunAsync` | A build error, [`ISOPLANE1020`](reference/error-codes.md#isoplane1020) or [`ISOPLANE1021`](reference/error-codes.md#isoplane1021), before anything runs |

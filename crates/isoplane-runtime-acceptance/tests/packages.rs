@@ -536,15 +536,18 @@ async fn an_aspnet_request_that_calls_out_through_a_factory_client_leaves_its_in
                 .end_dispatch(reactor.context.instance, dispatch),
             "request {dispatch} must leave no read pending, or the cell discards its instance"
         );
-        assert_eq!(
-            reactor
-                .runtime()
-                .services
-                .egress
-                .instance_connections(reactor.context.instance),
-            0,
-            "request {dispatch} must close every connection its calls opened"
-        );
+        // Closing a socket aborts the reactor tasks waiting on it, which let
+        // go of the connection when the reactor next runs.
+        let egress = reactor.runtime().services.egress.clone();
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while egress.instance_connections(reactor.context.instance) != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| {
+            panic!("request {dispatch} must close every connection its calls opened")
+        });
     }
     assert_eq!(
         (warmed, peer.connections() - warmed),
@@ -871,8 +874,55 @@ async fn a_recorded_handler_the_assembly_lacks_is_refused() {
     );
 }
 
-#[tokio::test]
-async fn initialization_that_leaves_timers_running_is_refused_naming_each() {
+/// Answers `path` on `guest` at `at_ms` on its clock, across a park on a
+/// handler's own 50 ms delay if it takes one, and ends the request as the cell
+/// does.
+async fn answer_at(
+    guest: &mut ReturnedGuest,
+    reactor: &isoplane_harness::Reactor,
+    path: &str,
+    at_ms: u64,
+    dispatch: u64,
+) -> String {
+    reactor.context.begin_slice(at_ms, dispatch);
+    let started = guest.start(path);
+    let body = if started.completion == Completion::Parked {
+        tokio::task::yield_now().await;
+        tokio::time::advance(std::time::Duration::from_millis(60)).await;
+        reactor.context.begin_slice(at_ms + 61, dispatch);
+        guest.finish(reactor, 8).await
+    } else {
+        guest.text_of_outcome(started)
+    };
+    reactor
+        .futures
+        .end_dispatch(reactor.context.instance, dispatch);
+    body
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_rate_limiter_middleware_starts_and_limits_an_instances_requests() {
+    let prepared = prepared_package("web").await;
+    let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
+    reactor.context.begin_slice(1, 1);
+    let mut guest = {
+        // SAFETY: The private decode helper receives only products from this test module's local preparation paths.
+        unsafe { ReturnedGuest::prepared(decode(&prepared.0, &prepared.1), &reactor) }
+    };
+    assert_eq!(
+        answer_at(&mut guest, &reactor, "/limited", 1, 1).await,
+        "allowed",
+        "the window's one permit must admit the first request"
+    );
+    assert_eq!(
+        answer_at(&mut guest, &reactor, "/limited", 200, 2).await,
+        "rejected",
+        "a second request in the same window must be rejected"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn timers_initialization_leaves_running_count_from_activation() {
     let files = package("alpha");
     let manifest = String::from_utf8(package_file(&files, "application.json"))
         .expect("the manifest is UTF-8")
@@ -881,26 +931,37 @@ async fn initialization_that_leaves_timers_running_is_refused_naming_each() {
         manifest.contains("\"LeaveTimersRunningAsync\""),
         "the manifest must name its initializer for this test to replace: {manifest}"
     );
-    let detail = refusal(with_package_file(
+    let (product, request) = prepare_on_the_shared_runtime(with_package_file(
         files,
         "application.json",
         manifest.as_bytes(),
     ))
     .await;
-    assert!(
-        detail.contains("initialization retains a timer"),
-        "the host must be what refuses to capture a running timer: {detail}"
+
+    // Hours after the template was captured, on the wall clock the guest reads.
+    let activated_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("the clock is after the epoch")
+        .as_millis() as u64
+        + 5 * 60 * 60 * 1000;
+    let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
+    reactor.context.begin_slice(activated_ms, 1);
+    let mut guest = {
+        // SAFETY: The private decode helper receives only products from this test module's local preparation paths.
+        unsafe { ReturnedGuest::prepared(decode(&product, &request), &reactor) }
+    };
+    assert_eq!(
+        answer_at(&mut guest, &reactor, "/beats", activated_ms, 1).await,
+        "beats=0",
+        "step 1: a 30 s timer set during initialization must not be due on activation"
     );
-    for timer in [
-        "initialization left 2 timers running:",
-        "a timer every 30 s calling Alpha.Handler.Beat",
-        "a delay of 45 s awaited by Alpha.Handler.PollAsync",
-    ] {
-        assert!(
-            detail.contains(timer),
-            "the refusal must name each timer the runtime's one host timer stands for: {detail}"
-        );
-    }
+
+    tokio::time::advance(std::time::Duration::from_secs(30)).await;
+    assert_eq!(
+        answer_at(&mut guest, &reactor, "/beats", activated_ms + 30_100, 2).await,
+        "beats=1",
+        "step 2: the timer must fire once 30 s after activation"
+    );
 }
 
 /// The `native` package's outcome for one transition, before and after a
