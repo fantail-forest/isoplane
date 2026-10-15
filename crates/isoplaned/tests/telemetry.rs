@@ -375,13 +375,10 @@ async fn an_actual_http_guest_completion_crosses_the_otlp_boundary() {
         );
     }
     for stage in [
-        "delta_capture",
         "delta_diff",
-        "delta_compress",
-        "delta_store_write",
+        "delta_write",
         "delta_store_load",
         "restore_activate",
-        "delta_restore",
         "delta_apply",
     ] {
         assert!(

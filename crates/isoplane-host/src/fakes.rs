@@ -78,7 +78,6 @@ pub struct FakeBehaviour {
     /// sets it if unset, and reports the value it observed in the body, so a
     /// test can see whether the instance carried residue.
     pub lazy_init_probe: bool,
-    /// Initial scripted memory bytes; zero selects one WebAssembly page.
     pub memory_bytes: usize,
     /// Prescribed occupancy for each ordinary slice in accounting tests.
     pub slice_occupancy: Option<std::time::Duration>,
@@ -91,7 +90,7 @@ impl FakeBehaviour {
         Self {
             program: vec![],
             lazy_init_probe: false,
-            memory_bytes: isoplane_abi::WASM_PAGE_SIZE,
+            memory_bytes: 4 * PAGE_SIZE,
             slice_occupancy: None,
             response_streaming: false,
         }
@@ -100,7 +99,7 @@ impl FakeBehaviour {
         Self {
             program: steps.into_iter().collect(),
             lazy_init_probe: false,
-            memory_bytes: isoplane_abi::WASM_PAGE_SIZE,
+            memory_bytes: 4 * PAGE_SIZE,
             slice_occupancy: None,
             response_streaming: false,
         }
@@ -459,20 +458,6 @@ impl InstanceOps for FakeInstance {
         })
     }
     fn restore_mutable_state(&mut self, img: &InstanceImage) -> anyhow::Result<()> {
-        let memory_bytes = (img.memory_pages as usize)
-            .checked_mul(isoplane_abi::WASM_PAGE_SIZE)
-            .ok_or_else(|| anyhow::anyhow!("scripted snapshot memory size overflow"))?;
-        anyhow::ensure!(
-            memory_bytes >= self.template.len(),
-            "snapshot memory is smaller than the template"
-        );
-        if let Some(limit_bytes) = self.bindings.memory_limit_bytes() {
-            anyhow::ensure!(
-                memory_bytes as u64 <= limit_bytes,
-                "snapshot memory exceeds the instance limit"
-            );
-        }
-        self.memory.resize(memory_bytes, 0);
         self.image = img.clone();
         Ok(())
     }
@@ -496,7 +481,7 @@ impl FakeActivator {
     }
     pub fn named(module: ModuleId, behaviour: FakeBehaviour) -> Self {
         let bytes = if behaviour.memory_bytes == 0 {
-            isoplane_abi::WASM_PAGE_SIZE
+            4 * PAGE_SIZE
         } else {
             behaviour.memory_bytes
         };
@@ -539,12 +524,10 @@ impl Activator for FakeActivator {
         Arc::new(isoplane_engine::MemoryImage::from_dense(&self.template))
     }
     fn snapshot_size_bound(&self, _max_memory_bytes: u64) -> anyhow::Result<u64> {
-        Ok(crate::hibernate_capture::snapshot_size_bound(
-            crate::hibernate_capture::SnapshotShape {
-                max_memory_bytes: self.behaviour.memory_bytes as u64,
-                mutable_globals: 0,
-            },
-        )?)
+        isoplane_hibernate::local::size_bound(isoplane_hibernate::local::SnapshotShape {
+            max_memory_bytes: self.behaviour.memory_bytes as u64,
+            mutable_globals: 0,
+        })
     }
     fn activate(
         &self,

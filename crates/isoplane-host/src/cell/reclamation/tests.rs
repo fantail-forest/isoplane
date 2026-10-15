@@ -69,7 +69,7 @@ impl SnapshotReservation for Reservation {
     fn reserved_bytes(&self) -> SnapshotBytes {
         self.capacity
     }
-    fn save(&mut self, bytes: &[u8]) -> Result<(), SnapshotError> {
+    fn save(&mut self, parts: &[std::io::IoSlice<'_>]) -> Result<(), SnapshotError> {
         if self.state.fail_save.load(Ordering::Relaxed) {
             return Err(SnapshotError::Io {
                 operation: "save",
@@ -77,11 +77,26 @@ impl SnapshotReservation for Reservation {
                 source: std::io::ErrorKind::StorageFull.into(),
             });
         }
-        self.saved = Some(bytes.to_vec());
+        self.saved = Some(parts.iter().flat_map(|part| part.iter().copied()).collect());
         Ok(())
     }
-    fn load(&mut self) -> Result<Vec<u8>, SnapshotError> {
-        self.saved.clone().ok_or(SnapshotError::Empty)
+    fn read_exact_at(
+        &mut self,
+        offset: u64,
+        parts: &mut [std::io::IoSliceMut<'_>],
+    ) -> Result<(), SnapshotError> {
+        let saved = self.saved.as_ref().ok_or(SnapshotError::Empty)?;
+        let mut at = offset as usize;
+        for part in parts {
+            let end = at + part.len();
+            let bytes = saved.get(at..end).ok_or(SnapshotError::BeyondSnapshot {
+                end: end as u64,
+                saved: saved.len() as u64,
+            })?;
+            part.copy_from_slice(bytes);
+            at = end;
+        }
+        Ok(())
     }
 }
 

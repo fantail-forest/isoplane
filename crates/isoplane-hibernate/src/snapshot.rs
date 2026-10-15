@@ -2,7 +2,7 @@
 //! the expiring or regional spool and remain allocated until their owner drops.
 
 use std::fs::File;
-use std::io::{self, Read, Seek, Write};
+use std::io::{self, IoSlice, IoSliceMut, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use fs4::FileExt;
@@ -46,6 +46,14 @@ pub enum SnapshotError {
     /// No complete snapshot has been saved, or a write failed.
     #[error("snapshot reservation has no complete saved snapshot")]
     Empty,
+    /// A read reached past the end of the saved snapshot.
+    #[error("snapshot read ends at byte {end}, past the {saved} saved bytes")]
+    BeyondSnapshot {
+        /// Offset one past the last byte requested.
+        end: u64,
+        /// Length of the saved snapshot.
+        saved: u64,
+    },
 }
 
 impl SnapshotError {
@@ -70,13 +78,19 @@ pub trait SnapshotReservation: Send {
     /// Capacity available for an encoded snapshot.
     fn reserved_bytes(&self) -> SnapshotBytes;
 
-    /// Replace the snapshot within the reservation without temporary files.
-    /// An I/O failure invalidates the saved snapshot; its resident source must
-    /// remain owned until this succeeds. An oversized save preserves prior data.
-    fn save(&mut self, bytes: &[u8]) -> Result<(), SnapshotError>;
+    /// Replace the snapshot within the reservation with `parts`, in order,
+    /// without temporary files. An I/O failure invalidates the saved snapshot;
+    /// its resident source must remain owned until this succeeds. An oversized
+    /// save preserves prior data.
+    fn save(&mut self, parts: &[IoSlice<'_>]) -> Result<(), SnapshotError>;
 
-    /// Read the last complete snapshot without releasing storage capacity.
-    fn load(&mut self) -> Result<Vec<u8>, SnapshotError>;
+    /// Fill `parts`, in order, from the last complete snapshot starting at
+    /// `offset`, without releasing storage capacity.
+    fn read_exact_at(
+        &mut self,
+        offset: u64,
+        parts: &mut [IoSliceMut<'_>],
+    ) -> Result<(), SnapshotError>;
 }
 
 /// Private, preallocated files, reclaimed on drop or process termination.
@@ -244,7 +258,7 @@ struct LocalSnapshotReservation {
     file: File,
     root: PathBuf,
     capacity: SnapshotBytes,
-    saved_bytes: Option<usize>,
+    saved_bytes: Option<u64>,
 }
 
 impl LocalSnapshotReservation {
@@ -262,39 +276,85 @@ impl SnapshotReservation for LocalSnapshotReservation {
         self.capacity
     }
 
-    #[tracing::instrument(name = "snapshot_save", skip_all, fields(bytes = bytes.len()))]
-    fn save(&mut self, bytes: &[u8]) -> Result<(), SnapshotError> {
-        if bytes.len() as u64 > self.capacity.0 {
+    fn save(&mut self, parts: &[IoSlice<'_>]) -> Result<(), SnapshotError> {
+        let bytes = parts.iter().map(|part| part.len() as u64).sum::<u64>();
+        let _span = tracing::info_span!("snapshot_save", bytes).entered();
+        if bytes > self.capacity.0 {
             return Err(SnapshotError::TooLarge {
-                required: SnapshotBytes(bytes.len() as u64),
+                required: SnapshotBytes(bytes),
                 reserved: self.capacity,
             });
         }
         self.saved_bytes = None;
         self.file
             .rewind()
-            .and_then(|()| self.file.write_all(bytes))
+            .and_then(|()| write_all_vectored(&mut self.file, parts))
             .and_then(|()| flush_snapshot(&self.file))
             .map_err(|source| self.io_error("save", source))?;
-        self.saved_bytes = Some(bytes.len());
+        self.saved_bytes = Some(bytes);
         Ok(())
     }
 
-    #[tracing::instrument(name = "snapshot_load", skip_all)]
-    fn load(&mut self) -> Result<Vec<u8>, SnapshotError> {
-        let saved_bytes = self.saved_bytes.ok_or(SnapshotError::Empty)?;
-        let mut bytes = vec![0; saved_bytes];
+    fn read_exact_at(
+        &mut self,
+        offset: u64,
+        parts: &mut [IoSliceMut<'_>],
+    ) -> Result<(), SnapshotError> {
+        let saved = self.saved_bytes.ok_or(SnapshotError::Empty)?;
+        let bytes = parts.iter().map(|part| part.len() as u64).sum::<u64>();
+        let _span = tracing::info_span!("snapshot_read", bytes).entered();
+        let end = offset.saturating_add(bytes);
+        if end > saved {
+            return Err(SnapshotError::BeyondSnapshot { end, saved });
+        }
         self.file
-            .rewind()
-            .and_then(|()| self.file.read_exact(&mut bytes))
-            .map_err(|source| self.io_error("load", source))?;
-        Ok(bytes)
+            .seek(SeekFrom::Start(offset))
+            .and_then(|_| read_exact_vectored(&mut self.file, parts))
+            .map_err(|source| self.io_error("load", source))
     }
+}
+
+fn write_all_vectored(file: &mut File, parts: &[IoSlice<'_>]) -> io::Result<()> {
+    let mut parts = parts.to_vec();
+    let mut rest = &mut parts[..];
+    IoSlice::advance_slices(&mut rest, 0);
+    while !rest.is_empty() {
+        match file.write_vectored(rest) {
+            Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
+            Ok(written) => IoSlice::advance_slices(&mut rest, written),
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
+fn read_exact_vectored(file: &mut File, mut rest: &mut [IoSliceMut<'_>]) -> io::Result<()> {
+    IoSliceMut::advance_slices(&mut rest, 0);
+    while !rest.is_empty() {
+        match file.read_vectored(rest) {
+            Ok(0) => return Err(io::ErrorKind::UnexpectedEof.into()),
+            Ok(read) => IoSliceMut::advance_slices(&mut rest, read),
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn save(reservation: &mut dyn SnapshotReservation, bytes: &[u8]) -> Result<(), SnapshotError> {
+        reservation.save(&[IoSlice::new(bytes)])
+    }
+
+    fn load(reservation: &mut LocalSnapshotReservation) -> Result<Vec<u8>, SnapshotError> {
+        let mut bytes = vec![0; reservation.saved_bytes.unwrap_or(0) as usize];
+        reservation.read_exact_at(0, &mut [IoSliceMut::new(&mut bytes)])?;
+        Ok(bytes)
+    }
 
     fn assert_reclaimed(root: &std::path::Path) {
         let retained = std::fs::read_dir(root)
@@ -316,9 +376,9 @@ mod tests {
             .reserve_with(capacity, materialize_snapshot)
             .expect("materialized capacity must pass physical block verification");
         assert_eq!(reservation.reserved_bytes(), capacity);
-        reservation.save(b"saved snapshot").expect("save snapshot");
+        save(&mut reservation, b"saved snapshot").expect("save snapshot");
         assert_eq!(
-            reservation.load().expect("load snapshot"),
+            load(&mut reservation).expect("load snapshot"),
             b"saved snapshot"
         );
         assert!(reservation.file.allocated_size().expect("allocated blocks") >= capacity.0);
@@ -429,9 +489,9 @@ mod tests {
             "admission must own physical blocks covering its maximum snapshot"
         );
         for bytes in [vec![1; 8192], vec![2; 1], vec![], vec![3; 8192]] {
-            reservation.save(&bytes).expect("save within reservation");
+            save(&mut reservation, &bytes).expect("save within reservation");
             assert_eq!(
-                reservation.load().expect("load snapshot"),
+                load(&mut reservation).expect("load snapshot"),
                 bytes,
                 "wake must restore exactly the latest snapshot without trailing old data"
             );
@@ -482,17 +542,19 @@ mod tests {
     fn an_oversized_save_preserves_the_last_complete_snapshot() {
         let root = tempfile::tempdir().expect("create owned snapshot directory");
         let storage = LocalSnapshotStorage::new(root.path()).expect("open snapshot storage");
-        let mut reservation = storage.reserve(SnapshotBytes(8)).expect("reserve snapshot");
-        reservation.save(b"old").expect("save original snapshot");
+        let mut reservation = storage
+            .reserve_with(SnapshotBytes(8), allocate_snapshot)
+            .expect("reserve snapshot");
+        save(&mut reservation, b"old").expect("save original snapshot");
         assert!(
             matches!(
-                reservation.save(b"too large"),
+                save(&mut reservation, b"too large"),
                 Err(SnapshotError::TooLarge { .. })
             ),
             "a snapshot must never write beyond the capacity admitted for its instance"
         );
         assert_eq!(
-            reservation.load().expect("read original snapshot"),
+            load(&mut reservation).expect("read original snapshot"),
             b"old",
             "rejecting an oversized snapshot must preserve the complete previous snapshot"
         );
@@ -502,10 +564,48 @@ mod tests {
     fn a_reservation_cannot_load_before_a_complete_save() {
         let root = tempfile::tempdir().expect("create owned snapshot directory");
         let storage = LocalSnapshotStorage::new(root.path()).expect("open snapshot storage");
-        let mut reservation = storage.reserve(SnapshotBytes(8)).expect("reserve snapshot");
+        let mut reservation = storage
+            .reserve_with(SnapshotBytes(8), allocate_snapshot)
+            .expect("reserve snapshot");
         assert!(
-            matches!(reservation.load(), Err(SnapshotError::Empty)),
+            matches!(load(&mut reservation), Err(SnapshotError::Empty)),
             "preallocated zeroes must never be returned as a saved snapshot"
+        );
+    }
+
+    #[test]
+    fn parts_are_saved_in_order_and_read_back_from_any_offset_into_several_buffers() {
+        let root = tempfile::tempdir().expect("create owned snapshot directory");
+        let storage = LocalSnapshotStorage::new(root.path()).expect("open snapshot storage");
+        let mut reservation = storage
+            .reserve_with(SnapshotBytes(64), allocate_snapshot)
+            .expect("reserve snapshot");
+        reservation
+            .save(&[
+                IoSlice::new(b"head"),
+                IoSlice::new(b""),
+                IoSlice::new(b"-middle-"),
+                IoSlice::new(b"tail"),
+            ])
+            .expect("save several parts");
+        let (mut first, mut second) = ([0; 3], [0; 6]);
+        reservation
+            .read_exact_at(
+                5,
+                &mut [IoSliceMut::new(&mut first), IoSliceMut::new(&mut second)],
+            )
+            .expect("read a saved range into two buffers");
+        assert_eq!(
+            (&first[..], &second[..]),
+            (&b"mid"[..], &b"dle-ta"[..]),
+            "a read must continue across buffers from its offset"
+        );
+        assert!(
+            matches!(
+                reservation.read_exact_at(14, &mut [IoSliceMut::new(&mut [0; 3])]),
+                Err(SnapshotError::BeyondSnapshot { end: 17, saved: 16 })
+            ),
+            "preallocated bytes past the saved snapshot must never be read as part of it"
         );
     }
 
@@ -551,16 +651,19 @@ mod tests {
         let mut reservation = storage
             .reserve_with(SnapshotBytes(4096), allocate_snapshot)
             .expect("reserve snapshot blocks");
-        reservation.save(b"old").expect("save original snapshot");
+        save(&mut reservation, b"old").expect("save original snapshot");
         let path = root.path().join("read-only");
         std::fs::write(&path, b"old").expect("prepare read-only file");
         reservation.file = File::open(path).expect("open file without write access");
         assert!(
-            matches!(reservation.save(b"new"), Err(SnapshotError::Io { .. })),
+            matches!(
+                save(&mut reservation, b"new"),
+                Err(SnapshotError::Io { .. })
+            ),
             "a failed write must be returned to the owner retaining the resident instance"
         );
         assert!(
-            matches!(reservation.load(), Err(SnapshotError::Empty)),
+            matches!(load(&mut reservation), Err(SnapshotError::Empty)),
             "a failed overwrite must never leave stale snapshot metadata readable"
         );
     }

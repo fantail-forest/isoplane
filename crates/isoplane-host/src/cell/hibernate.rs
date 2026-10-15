@@ -25,7 +25,7 @@ impl Cell {
         }
     }
 
-    /// Captures into locally owned storage before releasing resident pages.
+    /// The capture sequence, then the store write.
     pub(super) fn hibernate_now(
         self: &Arc<Self>,
         slot: &Arc<Slot>,
@@ -73,14 +73,17 @@ impl Cell {
         let capture =
             crate::hibernate_capture::capture_in_context(slot, self.capture_env(entry, slot));
         let res = match capture {
-            Ok(result) => result,
-            Err(hibernate_policy::CaptureRefused::SnapshotWrite(error)) => {
+            Ok(r) => r,
+            Err(hibernate_policy::CaptureRefused::SnapshotWrite(e)) => {
                 self.metrics
                     .capture_write_failures
                     .fetch_add(1, Ordering::Relaxed);
-                tracing::warn!(tenant = %entry.tenant, instance = %slot.id, error = %error,
-                    "local snapshot publication failed; the instance remains resident");
-                return Err(hibernate_policy::CaptureRefused::SnapshotWrite(error));
+                tracing::warn!(
+                    tenant = %entry.tenant, instance = %slot.id, error = %e,
+                    "hibernation snapshot write failed; the instance stays Parked and no capture is \
+                     counted"
+                );
+                return Err(hibernate_policy::CaptureRefused::SnapshotWrite(e));
             }
             Err(e) => {
                 // A tombstone raised inside the gc hint is nowhere near the
@@ -105,15 +108,19 @@ impl Cell {
                 return Err(e);
             }
         };
-        let bytes = res.bytes;
+
+        let bytes = res.saved.bytes;
         slot.hibernate()
-            .map_err(|error| hibernate_policy::CaptureRefused::Failed(format!("{error:?}")))?;
+            .map_err(|e| hibernate_policy::CaptureRefused::Failed(format!("{e:?}")))?;
+
         entry.meters.record_capture(bytes);
         self.metrics.captures.fetch_add(1, Ordering::Relaxed);
         self.metrics.delta_bytes.fetch_add(bytes, Ordering::Relaxed);
         self.metrics.capture_us.record(res.capture_us);
         self.metrics.gc_hint_us.record(res.gc_hint_us);
-        self.metrics.dirty_pages.record(res.changed_pages as u64);
+        self.metrics
+            .dirty_pages
+            .record(res.saved.changed_pages as u64);
         tracing::info!(target: "isoplane_host::cell::transition",
             event = "instance_transition", tenant = %entry.tenant,
             app = %entry.activator.module().app, version = %entry.activator.module().version,
@@ -122,13 +129,14 @@ impl Cell {
         if bytes > self.cfg.hibernate.delta_advisory_bytes {
             tracing::warn!(
                 tenant = %entry.tenant, instance = %slot.id, delta_bytes = bytes,
-                "snapshot above the advisory threshold"
+                "delta above the advisory threshold"
             );
         }
         Ok(bytes)
     }
 
-    /// Activates from the template and restores sandbox state in its original host context.
+    /// Activates from the template, applies the delta, rebinds the manifest's
+    /// handles, and delivers the losses the capture promised.
     #[tracing::instrument(name = "restore", skip_all, fields(tenant = %entry.tenant,
         app = %entry.activator.module().app, version = %entry.activator.module().version,
         instance = %slot.id))]
@@ -138,36 +146,60 @@ impl Cell {
         entry: &Arc<ModuleEntry>,
     ) -> crate::Result<()> {
         if slot.state() != LifecycleTier::Hibernated {
-            anyhow::bail!("instance {} is not hibernated", slot.id);
+            anyhow::bail!("instance {} is not hibernated", slot.id)
         }
-        let snapshot = crate::hibernate_capture::read_in_context(slot, &entry.activator);
-        let mut instance = tracing::info_span!("restore_activate").in_scope(|| {
-            entry
-                .activator
-                .activate(crate::bindings::CellBindings::boxed(slot.ctx.clone()))
+        let expect = isoplane_hibernate::Binding::new(
+            entry.activator.module_hash(),
+            entry.activator.abi_rev(),
+        );
+        let snapshot = tracing::info_span!("delta_store_load", tier = "reserved").in_scope(|| {
+            match slot.ctx.snapshot.lock().as_mut() {
+                Some(reservation) => {
+                    isoplane_hibernate::local::Snapshot::open(reservation.as_mut(), expect)
+                }
+                None => Err(anyhow::anyhow!(
+                    "instance {} has no snapshot reservation",
+                    slot.id
+                )),
+            }
+        });
+        let dormant = slot.take_dormant();
+        let mut inst = tracing::info_span!("restore_activate").in_scope(|| {
+            let bindings = crate::bindings::CellBindings::boxed(slot.ctx.clone());
+            match (dormant, snapshot.is_ok()) {
+                (Some(mapped), true) => mapped.activate(bindings),
+                (Some(mapped), false) => {
+                    drop(mapped);
+                    entry.pool.activate(bindings)
+                }
+                (None, _) => entry.pool.activate(bindings),
+            }
         })?;
         let mut fell_back = false;
         match snapshot {
             Ok(snapshot) => {
-                instance.restore_mutable_state(snapshot.image())?;
-                tracing::info_span!("delta_apply")
-                    .in_scope(|| snapshot.apply(instance.memory()))?;
+                inst.restore_mutable_state(snapshot.image())?;
+                tracing::info_span!("delta_apply").in_scope(|| {
+                    let mut reservation = slot.ctx.snapshot.lock();
+                    let reservation = reservation.as_mut().ok_or_else(|| {
+                        anyhow::anyhow!("instance {} lost its snapshot reservation", slot.id)
+                    })?;
+                    snapshot.apply(reservation.as_mut(), inst.memory())
+                })?;
             }
-            Err(error) => {
+            Err(e) => {
                 if self.active.contains_key(&slot.id) {
-                    return Err(
-                        error.context("a pending dispatch requires its captured continuation")
-                    );
+                    return Err(e.context("a pending dispatch requires its captured continuation"));
                 }
-                tracing::warn!(instance = %slot.id, error = %error, "local snapshot unusable; falling back to template");
+                tracing::warn!(instance = %slot.id, error = %e, "delta unusable; falling back to template");
                 fell_back = true;
             }
         }
         if fell_back {
             self.metrics.delta_fallbacks.fetch_add(1, Ordering::Relaxed);
         }
-        slot.rehydrate(instance);
 
+        slot.rehydrate(inst);
         tracing::info!(target: "isoplane_host::cell::transition",
             event = "instance_transition", tenant = %entry.tenant,
             app = %entry.activator.module().app, version = %entry.activator.module().version,
@@ -177,7 +209,8 @@ impl Cell {
     }
 
     /// Captures now, bypassing the idle trajectory's timing and none of its
-    /// eligibility rules. Writes the local snapshot on the calling execution thread.
+    /// eligibility rules. Blocks on the cell's reactor for the delta write,
+    /// so it is called from a blocking task, never a reactor thread.
     pub fn force_hibernate(
         self: &Arc<Self>,
         id: InstanceId,
@@ -199,7 +232,8 @@ impl Cell {
         self.hibernate_now(&slot, &entry)
     }
 
-    /// Restores local sandbox state and queues results that came due while asleep.
+    /// Wakes from a delta and queues any results that came due while asleep.
+    /// Blocks on the reactor like [`Cell::force_hibernate`].
     pub fn force_wake(self: &Arc<Self>, id: InstanceId) -> crate::Result<()> {
         let (slot, module) = {
             let g = self.residents.lock();

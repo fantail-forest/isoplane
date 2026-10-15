@@ -142,13 +142,10 @@ impl Activator for EngineActivator {
         self.template.read().memory_image_arc()
     }
     fn snapshot_size_bound(&self, max_memory_bytes: u64) -> anyhow::Result<u64> {
-        Ok(crate::hibernate_capture::snapshot_size_bound(
-            crate::hibernate_capture::SnapshotShape {
-                max_memory_bytes: max_memory_bytes
-                    .min(self.engine.configuration().max_memory_bytes),
-                mutable_globals: self.template.read().mutable_global_count(),
-            },
-        )?)
+        isoplane_hibernate::local::size_bound(isoplane_hibernate::local::SnapshotShape {
+            max_memory_bytes: max_memory_bytes.min(self.engine.configuration().max_memory_bytes),
+            mutable_globals: self.template.read().mutable_global_count(),
+        })
     }
     fn activate(
         &self,
@@ -186,13 +183,12 @@ mod tests {
         .expect("guest must parse");
         let activator = EngineActivator::load(engine, ModuleId::new("bound", "v1"), &module)
             .expect("guest must load");
-        let expected = crate::hibernate_capture::snapshot_size_bound(
-            crate::hibernate_capture::SnapshotShape {
+        let expected =
+            isoplane_hibernate::local::size_bound(isoplane_hibernate::local::SnapshotShape {
                 max_memory_bytes: 2 << 20,
                 mutable_globals: 1,
-            },
-        )
-        .expect("engine-limited snapshot must fit");
+            })
+            .expect("engine-limited snapshot must fit");
         assert_eq!(
             activator
                 .snapshot_size_bound(4 << 20)

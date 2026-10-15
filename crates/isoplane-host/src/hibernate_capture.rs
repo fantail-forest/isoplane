@@ -1,4 +1,4 @@
-//! Captures same-process sandbox state while its original host context owns live resources.
+//! Saves local snapshots while the instance retains its original host context.
 
 use std::sync::Arc;
 
@@ -27,28 +27,18 @@ pub enum CaptureRefused {
     GcHintDidNotComplete(Completion),
     /// The hint completed but the instance is not at a serializable point.
     StackNotEmptyAfterHint,
-    /// The live instance retains state that the current delta format cannot preserve.
+    /// The live instance retains state that the local snapshot format cannot preserve.
     UnrepresentableState(isoplane_engine::snapshot::SnapshotError),
     /// Capture read the instance's memory or its template's baseline from
-    /// storage that had failed, so the delta is wrong. The instance has been
+    /// storage that had failed, so the snapshot is invalid. The instance has been
     /// destroyed.
     StorageFailed,
-    Failed(String),
-    /// Local publication failed; the resident instance remains owned.
+    /// Writing the snapshot to the instance's reservation failed. The
+    /// instance stays resident.
     SnapshotWrite(String),
+    Failed(String),
 }
 
-/// Published local state and measured capture work.
-pub(crate) struct LocalCapture {
-    /// Bytes fully published to the local owner.
-    pub bytes: u64,
-    /// Pages that differ from the template.
-    pub changed_pages: u32,
-    /// Local encoding and publication elapsed microseconds.
-    pub capture_us: u64,
-    /// Guest GC hint elapsed microseconds.
-    pub gc_hint_us: u64,
-}
 
 /// Observes guest work invoked by capture on behalf of an unfinished dispatch.
 pub trait CaptureObserver: Send + Sync {
@@ -67,53 +57,52 @@ pub struct CaptureEnv<'a> {
     pub activator: &'a Arc<dyn Activator>,
 }
 
-/// Captures sandbox state into storage owned by the original host context.
+
+
+/// What an in-process capture saved.
+pub struct LocalCapture {
+    pub saved: isoplane_hibernate::local::Saved,
+    pub capture_us: u64,
+    pub gc_hint_us: u64,
+}
+
+/// Captures into the slot's own reservation while its original context keeps
+/// every live future, so the snapshot is usable only with that context.
 pub(crate) fn capture_in_context(
     slot: &Arc<Slot>,
     env: CaptureEnv<'_>,
 ) -> Result<LocalCapture, CaptureRefused> {
     let template = env.activator.template_image();
+    let binding =
+        isoplane_hibernate::Binding::new(env.activator.module_hash(), env.activator.abi_rev());
     let (captured, gc_hint_us) = capture_with(slot, &env, &template, |instance, image| {
         let started = std::time::Instant::now();
-        let identity = local_snapshot::Identity {
-            module: env.activator.module_hash(),
-            abi_rev: env.activator.abi_rev(),
-            instance: slot.id,
-        };
+        let changed = instance.changed_ranges();
         let mut reservation = slot.ctx.snapshot.lock();
         let reservation = reservation
             .as_mut()
             .ok_or_else(|| CaptureRefused::Failed("instance has no snapshot reservation".into()))?;
-        let storage_bytes = reservation.reserved_bytes().0;
-        let encoded = local_snapshot::encode(
-            identity,
-            local_snapshot::Bounds {
-                memory_bytes: slot.ctx.limits.instance_memory_max,
-                storage_bytes,
-            },
+        let saved = isoplane_hibernate::local::save(
+            reservation.as_mut(),
+            binding,
             image,
             instance.memory(),
             &template,
+            changed.as_deref(),
         )
-        .map_err(|error| CaptureRefused::Failed(error.to_string()))?;
-        let bytes = encoded.bytes.len() as u64;
-        reservation
-            .save(&encoded.bytes)
-            .map_err(|error| CaptureRefused::SnapshotWrite(error.to_string()))?;
-        Ok((
-            bytes,
-            encoded.changed_pages,
-            started.elapsed().as_micros() as u64,
-        ))
+        .map_err(|e| CaptureRefused::SnapshotWrite(format!("{e:#}")))?;
+        Ok((saved, started.elapsed().as_micros() as u64))
     })?;
     Ok(LocalCapture {
-        bytes: captured.0,
-        changed_pages: captured.1,
-        capture_us: captured.2,
+        saved: captured.0,
+        capture_us: captured.1,
         gc_hint_us,
     })
 }
 
+/// Everything before the memory is read: eligibility, the gc hint for an
+/// active dispatch, and globals and tables. `finish` reads the memory; a
+/// capture that read failed storage destroys the instance.
 fn capture_with<T>(
     slot: &Arc<Slot>,
     env: &CaptureEnv<'_>,
@@ -204,8 +193,11 @@ fn capture_with<T>(
     Ok((finished, gc_hint_us))
 }
 
+
+
 #[cfg(test)]
 mod tests {
+    use crate::futures::FutureTable;
     use super::*;
     use crate::pool::InstancePool;
 
@@ -299,10 +291,7 @@ mod tests {
         }
         fn capture_mutable_state(&mut self) -> anyhow::Result<isoplane_engine::InstanceImage> {
             anyhow::ensure!(!self.tombstoned, "tombstoned");
-            Ok(isoplane_engine::InstanceImage {
-                memory_pages: (self.memory.len() / isoplane_abi::WASM_PAGE_SIZE) as u32,
-                ..Default::default()
-            })
+            Ok(Default::default())
         }
         fn restore_mutable_state(
             &mut self,
@@ -324,7 +313,7 @@ mod tests {
             Self {
                 how,
                 module: crate::ModuleId::new("hint", "v1"),
-                template: Arc::new(vec![0u8; isoplane_abi::WASM_PAGE_SIZE]),
+                template: Arc::new(vec![0u8; isoplane_abi::PAGE_SIZE]),
                 upload_capable: false,
             }
         }
@@ -349,10 +338,10 @@ mod tests {
             Arc::new(isoplane_engine::MemoryImage::from_dense(&self.template))
         }
         fn snapshot_size_bound(&self, _max_memory_bytes: u64) -> anyhow::Result<u64> {
-            Ok(snapshot_size_bound(SnapshotShape {
+            isoplane_hibernate::local::size_bound(isoplane_hibernate::local::SnapshotShape {
                 max_memory_bytes: self.template.len() as u64,
                 mutable_globals: 0,
-            })?)
+            })
         }
         fn activate(
             &self,
@@ -369,69 +358,29 @@ mod tests {
         }
     }
 
-    struct NoWake;
-    impl crate::bindings::WakeSink for NoWake {
-        fn signal(&self, _owner: crate::InstanceId) {}
-    }
-
-    fn local_context(
-        id: crate::InstanceId,
-        lifecycle: isoplane_abi::config::HandlerLifecycle,
-        limits: isoplane_abi::config::Limits,
-    ) -> crate::bindings::InstanceCtx {
-        static REACTOR: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
-        let reactor = REACTOR.get_or_init(|| {
-            tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("local fixture reactor")
-        });
-        let _entered = reactor.enter();
-        let mut context = crate::bindings::InstanceCtx::for_test(id, lifecycle, limits);
-        context.rt = Some(Arc::new(crate::bindings::CellRuntime {
-            runtime_configuration: Default::default(),
-            services: Arc::new(crate::bindings::Services {
-                egress: Arc::new(
-                    crate::egress::HostEgressPolicy::system(0).expect("fixture resolver"),
-                ),
-                fetcher: Arc::new(crate::fakes::FakeFetcher::default()),
-            }),
-            futures: Arc::new(crate::futures::FutureTable::new()),
-            metrics: Arc::new(crate::metrics::Metrics::default()),
-            wake: Arc::new(NoWake),
-            reactor: reactor.handle().clone(),
-        }));
-        context
-    }
-
     fn parked_slot(how: Completion) -> (Arc<Slot>, Arc<dyn Activator>) {
         use isoplane_abi::config::{HandlerLifecycle, Limits};
+        use isoplane_hibernate::snapshot::SnapshotStorage;
         let act: Arc<dyn Activator> = Arc::new(HintActivator::new(how));
         let pool = InstancePool::new(act.clone(), HandlerLifecycle::Reuse, 4);
         let (slot, _) = pool
             .acquire(|id| {
-                Arc::new(local_context(
+                Arc::new(crate::bindings::InstanceCtx::for_test(
                     id,
                     HandlerLifecycle::Reuse,
                     Limits::default(),
                 ))
             })
             .expect("a slot");
-        let storage = tempfile::tempdir().expect("owned local fixture storage");
-        let storage = isoplane_hibernate::snapshot::LocalSnapshotStorage::new(storage.path())
-            .expect("open real reservation storage");
-        let bytes = snapshot_size_bound(SnapshotShape {
-            max_memory_bytes: isoplane_abi::PAGE_SIZE as u64,
-            mutable_globals: 0,
-        })
-        .expect("bound the fixture's actual sandbox");
-        *slot.ctx.snapshot.lock() = Some(
-            isoplane_hibernate::snapshot::SnapshotStorage::reserve(
-                &storage,
-                isoplane_hibernate::snapshot::SnapshotBytes(bytes),
-            )
-            .expect("reserve fixture capacity"),
-        );
+        let storage = tempfile::tempdir().expect("snapshot directory");
+        let reservation = isoplane_hibernate::snapshot::LocalSnapshotStorage::new(storage.path())
+            .expect("snapshot storage")
+            .reserve(isoplane_hibernate::snapshot::SnapshotBytes(
+                act.snapshot_size_bound(isoplane_abi::PAGE_SIZE as u64)
+                    .expect("bound the fixture's snapshot"),
+            ))
+            .expect("reserve the fixture's snapshot");
+        *slot.ctx.snapshot.lock() = Some(reservation);
         slot.park(0);
         assert!(
             slot.is_capture_eligible(),
@@ -458,13 +407,7 @@ mod tests {
     fn in_process_capture_preserves_pending_host_work() {
         use isoplane_abi::result::ResultRecord;
         let (slot, act) = parked_slot(Completion::Done);
-        let futures = slot
-            .ctx
-            .rt
-            .as_ref()
-            .expect("the local fixture owns a runtime")
-            .futures
-            .clone();
+        let futures = Arc::new(FutureTable::new());
         let id = futures
             .alloc(slot.id, 1, "http_body_read", 8)
             .expect("the request must own a pending future");
@@ -479,7 +422,7 @@ mod tests {
         .expect("capture must retain the original host context");
         assert!(
             futures.take_ready(slot.id).is_none(),
-            "local capture keeps pending I/O pending"
+            "local capture must keep pending I/O pending"
         );
         futures.complete(id, ResultRecord::Ok(b"completed while asleep".to_vec()));
         assert!(
@@ -492,13 +435,7 @@ mod tests {
     fn in_process_capture_retains_ready_results() {
         use isoplane_abi::result::ResultRecord;
         let (slot, act) = parked_slot(Completion::Done);
-        let futures = slot
-            .ctx
-            .rt
-            .as_ref()
-            .expect("the local fixture owns a runtime")
-            .futures
-            .clone();
+        let futures = Arc::new(FutureTable::new());
         let id = futures
             .alloc(slot.id, 1, "clock_deadline_in", 8)
             .expect("the request must own its result");
@@ -514,7 +451,7 @@ mod tests {
         .expect("a host-resident result must not prevent local capture");
         assert!(
             matches!(futures.take_ready(slot.id), Some((ready, ResultRecord::Ok(bytes))) if ready == id && bytes == vec![42; 32]),
-            "local capture preserves the exact ready result"
+            "local capture must preserve the exact ready result"
         );
     }
 
@@ -566,7 +503,7 @@ mod tests {
             Box::new(HintEndsIn {
                 how: Completion::Done,
                 tombstoned: false,
-                memory: vec![0; isoplane_abi::WASM_PAGE_SIZE],
+                memory: vec![0; isoplane_abi::PAGE_SIZE],
                 gc_upload: None,
                 pending_upload: None,
                 storage_failed: true,
@@ -576,7 +513,7 @@ mod tests {
         assert_eq!(
             try_capture(&slot, &act).err(),
             Some(CaptureRefused::StorageFailed),
-            "a delta computed from failed storage must never be kept"
+            "a snapshot read from failed storage must never be kept"
         );
         assert!(
             slot.is_tombstoned(),
@@ -608,13 +545,7 @@ mod tests {
         let (slot, act) = parked_slot(Completion::Done);
         let source = RequestBodyScope::new(None, true);
         *slot.ctx.request_body.lock() = Some(source.clone());
-        let futures = slot
-            .ctx
-            .rt
-            .as_ref()
-            .expect("the local fixture owns a runtime")
-            .futures
-            .clone();
+        let futures = Arc::new(FutureTable::new());
         let id = futures
             .alloc(slot.id, 1, "req_body_read", 8)
             .expect("allocate EOF read");
@@ -671,7 +602,7 @@ mod tests {
             Box::new(HintEndsIn {
                 how: Completion::Done,
                 tombstoned: false,
-                memory: vec![0; isoplane_abi::WASM_PAGE_SIZE],
+                memory: vec![0; isoplane_abi::PAGE_SIZE],
                 gc_upload: Some(source),
                 pending_upload: None,
                 storage_failed: false,
@@ -683,379 +614,5 @@ mod tests {
             Some(CaptureRefused::OpenRequest),
             "capture must recheck upload work started by the GC hint under execution exclusion"
         );
-    }
-}
-
-/// A checked snapshot for the original host context.
-pub(crate) use local_snapshot::Snapshot as LocalSnapshot;
-pub use local_snapshot::{
-    size_bound as snapshot_size_bound, Error as LocalSnapshotError, SnapshotShape,
-};
-
-/// Reads and checks only the snapshot owned by this original host context.
-pub(crate) fn read_in_context(
-    slot: &Arc<Slot>,
-    activator: &Arc<dyn Activator>,
-) -> anyhow::Result<LocalSnapshot> {
-    let mut reservation = slot.ctx.snapshot.lock();
-    let reservation = reservation
-        .as_mut()
-        .ok_or_else(|| anyhow::anyhow!("instance has no snapshot reservation"))?;
-    let storage_bytes = reservation.reserved_bytes().0;
-    let bytes = reservation.load()?;
-    Ok(local_snapshot::Snapshot::open(
-        bytes,
-        local_snapshot::Identity {
-            module: activator.module_hash(),
-            abi_rev: activator.abi_rev(),
-            instance: slot.id,
-        },
-        local_snapshot::Bounds {
-            memory_bytes: slot.ctx.limits.instance_memory_max,
-            storage_bytes,
-        },
-    )?)
-}
-
-mod local_snapshot {
-    use isoplane_engine::{InstanceImage, MemoryImage, ModuleHash};
-    use serde::{Deserialize, Serialize};
-
-    use crate::InstanceId;
-
-    const LENGTH_BYTES: usize = std::mem::size_of::<u32>();
-    const CHECKSUM_BYTES: usize = 32;
-    const PAGE: usize = isoplane_abi::PAGE_SIZE;
-
-    /// Maximum sandbox memory and mutable globals admitted for one instance.
-    #[derive(Clone, Copy)]
-    pub struct SnapshotShape {
-        /// Maximum reachable linear-memory bytes, including growth.
-        pub max_memory_bytes: u64,
-        /// Mutable numeric globals exported by the compiled module.
-        pub mutable_globals: usize,
-    }
-
-    /// Bounds raw changed pages and the widest encoded header without allocating them.
-    pub fn size_bound(shape: SnapshotShape) -> Result<u64, Error> {
-        use isoplane_engine::snapshot::GlobalValue;
-        use postcard::experimental::serialized_size;
-
-        let pages = shape.max_memory_bytes.div_ceil(PAGE as u64);
-        let header = Header {
-            module: [u8::MAX; 32],
-            abi_rev: u32::MAX,
-            instance: u64::MAX,
-            image: InstanceImage {
-                memory_pages: u32::MAX,
-                ..InstanceImage::default()
-            },
-            runs: Vec::new(),
-        };
-        let run = Run {
-            first_page: u32::MAX,
-            pages: u32::MAX,
-            zero: true,
-        };
-        let mut bytes = (LENGTH_BYTES + CHECKSUM_BYTES + serialized_size(&header)?) as u64;
-        for (count, element_bytes) in [
-            (pages, serialized_size(&run)?),
-            (
-                shape.mutable_globals as u64,
-                serialized_size(&GlobalValue::I64(i64::MIN))?,
-            ),
-        ] {
-            let prefix_growth = serialized_size(&count)? - serialized_size(&0_usize)?;
-            bytes = bytes
-                .checked_add(prefix_growth as u64)
-                .and_then(|bytes| bytes.checked_add(count.checked_mul(element_bytes as u64)?))
-                .ok_or(Error::Overflow)?;
-        }
-        pages
-            .checked_mul(PAGE as u64)
-            .and_then(|payload| bytes.checked_add(payload))
-            .ok_or(Error::Overflow)
-    }
-
-    /// Identity of one instance's snapshot in its original host context.
-    #[derive(Clone, Copy)]
-    pub(super) struct Identity {
-        pub module: ModuleHash,
-        pub abi_rev: u32,
-        pub instance: InstanceId,
-    }
-
-    /// Bounds supplied by the instance and its storage owner.
-    #[derive(Clone, Copy)]
-    pub(super) struct Bounds {
-        pub memory_bytes: u64,
-        pub storage_bytes: u64,
-    }
-
-    /// Local snapshot encoding, corruption, identity or capacity failure.
-    #[derive(Debug, thiserror::Error)]
-    pub enum Error {
-        /// The stored bytes, page layout or memory size are invalid.
-        #[error("local snapshot is corrupt")]
-        Corrupt,
-        /// The snapshot's compiled module does not match its owner.
-        #[error("local snapshot belongs to another module")]
-        ModuleMismatch,
-        /// The snapshot's host ABI revision does not match its owner.
-        #[error("local snapshot belongs to another ABI revision")]
-        AbiMismatch,
-        /// The snapshot was captured for a different instance.
-        #[error("local snapshot belongs to another instance")]
-        InstanceMismatch,
-        /// The snapshot exceeds an existing memory or storage bound.
-        #[error("local snapshot exceeds its {limit_bytes}-byte {resource} bound")]
-        Capacity {
-            /// The memory or storage resource that refused the snapshot.
-            resource: &'static str,
-            /// The admitted byte limit.
-            limit_bytes: u64,
-        },
-        /// A size or page offset cannot be represented.
-        #[error("local snapshot size arithmetic overflow")]
-        Overflow,
-        /// Encoding or decoding the bounded header failed.
-        #[error("local snapshot codec: {0}")]
-        Codec(#[from] postcard::Error),
-    }
-
-    /// Encoded state and the measured number of pages written.
-    pub(super) struct Encoded {
-        pub bytes: Vec<u8>,
-        pub changed_pages: u32,
-    }
-
-    #[derive(Serialize, Deserialize)]
-    struct Header {
-        module: [u8; 32],
-        abi_rev: u32,
-        instance: u64,
-        image: InstanceImage,
-        runs: Vec<Run>,
-    }
-
-    #[derive(Serialize, Deserialize)]
-    struct Run {
-        first_page: u32,
-        pages: u32,
-        zero: bool,
-    }
-
-    impl Run {
-        fn bytes(&self) -> Result<std::ops::Range<usize>, Error> {
-            let start = (self.first_page as usize)
-                .checked_mul(PAGE)
-                .ok_or(Error::Overflow)?;
-            let length = (self.pages as usize)
-                .checked_mul(PAGE)
-                .ok_or(Error::Overflow)?;
-            Ok(start..start.checked_add(length).ok_or(Error::Overflow)?)
-        }
-    }
-
-    /// Encodes sandbox state; live host resources stay with the instance owner.
-    pub(super) fn encode(
-        identity: Identity,
-        bounds: Bounds,
-        image: InstanceImage,
-        memory: &[u8],
-        template: &MemoryImage,
-    ) -> Result<Encoded, Error> {
-        if memory.len() as u64 > bounds.memory_bytes {
-            return Err(Error::Capacity {
-                resource: "memory",
-                limit_bytes: bounds.memory_bytes,
-            });
-        }
-        if !memory.len().is_multiple_of(PAGE) {
-            return Err(Error::Corrupt);
-        }
-        if u64::from(image.memory_pages).checked_mul(isoplane_abi::WASM_PAGE_SIZE as u64)
-            != Some(memory.len() as u64)
-        {
-            return Err(Error::Corrupt);
-        }
-        let mut runs: Vec<Run> = Vec::new();
-        let mut changed_pages = 0_u32;
-        for (page, bytes) in memory.as_chunks::<PAGE>().0.iter().enumerate() {
-            if template.page_eq(page, bytes) {
-                continue;
-            }
-            let page = u32::try_from(page).map_err(|_| Error::Overflow)?;
-            changed_pages = changed_pages.checked_add(1).ok_or(Error::Overflow)?;
-            let zero = bytes.iter().all(|byte| *byte == 0);
-            match runs.last_mut() {
-                Some(run)
-                    if run.zero == zero && run.first_page.checked_add(run.pages) == Some(page) =>
-                {
-                    run.pages = run.pages.checked_add(1).ok_or(Error::Overflow)?;
-                }
-                _ => runs.push(Run {
-                    first_page: page,
-                    pages: 1,
-                    zero,
-                }),
-            }
-        }
-        let header = Header {
-            module: identity.module.0,
-            abi_rev: identity.abi_rev,
-            instance: identity.instance.0,
-            image,
-            runs,
-        };
-        let encoded_header = postcard::to_allocvec(&header)?;
-        let header_bytes = u32::try_from(encoded_header.len()).map_err(|_| Error::Overflow)?;
-        let mut total = LENGTH_BYTES
-            .checked_add(encoded_header.len())
-            .and_then(|bytes| bytes.checked_add(CHECKSUM_BYTES))
-            .ok_or(Error::Overflow)?;
-        for run in &header.runs {
-            if !run.zero {
-                total = total
-                    .checked_add(run.bytes()?.len())
-                    .ok_or(Error::Overflow)?;
-            }
-        }
-        if total as u64 > bounds.storage_bytes {
-            return Err(Error::Capacity {
-                resource: "storage",
-                limit_bytes: bounds.storage_bytes,
-            });
-        }
-        let mut bytes = Vec::with_capacity(total);
-        bytes.extend_from_slice(&header_bytes.to_le_bytes());
-        bytes.extend_from_slice(&encoded_header);
-        for run in &header.runs {
-            if !run.zero {
-                bytes.extend_from_slice(memory.get(run.bytes()?).ok_or(Error::Corrupt)?);
-            }
-        }
-        let checksum = blake3::hash(&bytes);
-        bytes.extend_from_slice(checksum.as_bytes());
-        Ok(Encoded {
-            bytes,
-            changed_pages,
-        })
-    }
-
-    /// A checked snapshot, usable only by the matching original instance owner.
-    pub(crate) struct Snapshot {
-        header: Header,
-        bytes: Vec<u8>,
-        payload_start: usize,
-    }
-
-    impl Snapshot {
-        /// Checks the owner, compatibility, complete checksum and page bounds.
-        pub(super) fn open(
-            bytes: Vec<u8>,
-            identity: Identity,
-            bounds: Bounds,
-        ) -> Result<Self, Error> {
-            if bytes.len() as u64 > bounds.storage_bytes {
-                return Err(Error::Capacity {
-                    resource: "storage",
-                    limit_bytes: bounds.storage_bytes,
-                });
-            }
-            let checksum_at = bytes
-                .len()
-                .checked_sub(CHECKSUM_BYTES)
-                .filter(|offset| *offset >= LENGTH_BYTES)
-                .ok_or(Error::Corrupt)?;
-            let content = bytes.get(..checksum_at).ok_or(Error::Corrupt)?;
-            if blake3::hash(content).as_bytes().as_slice()
-                != bytes.get(checksum_at..).ok_or(Error::Corrupt)?
-            {
-                return Err(Error::Corrupt);
-            }
-            let prefix: [u8; LENGTH_BYTES] = content
-                .get(..LENGTH_BYTES)
-                .ok_or(Error::Corrupt)?
-                .try_into()
-                .map_err(|_| Error::Corrupt)?;
-            let payload_start = LENGTH_BYTES
-                .checked_add(u32::from_le_bytes(prefix) as usize)
-                .filter(|offset| *offset <= checksum_at)
-                .ok_or(Error::Corrupt)?;
-            let header: Header = postcard::from_bytes(
-                content
-                    .get(LENGTH_BYTES..payload_start)
-                    .ok_or(Error::Corrupt)?,
-            )?;
-            if header.module != identity.module.0 {
-                return Err(Error::ModuleMismatch);
-            }
-            if header.abi_rev != identity.abi_rev {
-                return Err(Error::AbiMismatch);
-            }
-            if header.instance != identity.instance.0 {
-                return Err(Error::InstanceMismatch);
-            }
-            let memory_bytes = u64::from(header.image.memory_pages)
-                .checked_mul(isoplane_abi::WASM_PAGE_SIZE as u64)
-                .ok_or(Error::Overflow)?;
-            if memory_bytes > bounds.memory_bytes {
-                return Err(Error::Capacity {
-                    resource: "memory",
-                    limit_bytes: bounds.memory_bytes,
-                });
-            }
-            let mut previous_end = 0;
-            let mut payload_bytes = 0_usize;
-            for run in &header.runs {
-                let range = run.bytes()?;
-                if run.pages == 0 || range.start < previous_end || range.end as u64 > memory_bytes {
-                    return Err(Error::Corrupt);
-                }
-                previous_end = range.end;
-                if !run.zero {
-                    payload_bytes = payload_bytes
-                        .checked_add(range.len())
-                        .ok_or(Error::Overflow)?;
-                }
-            }
-            if payload_start.checked_add(payload_bytes) != Some(checksum_at) {
-                return Err(Error::Corrupt);
-            }
-            Ok(Self {
-                header,
-                bytes,
-                payload_start,
-            })
-        }
-
-        /// Sandbox globals, tables and memory size captured at the return boundary.
-        pub(crate) fn image(&self) -> &InstanceImage {
-            &self.header.image
-        }
-
-        /// Applies checked pages to an activation restored from the same template.
-        pub(crate) fn apply(&self, memory: &mut [u8]) -> Result<(), Error> {
-            if u64::from(self.header.image.memory_pages)
-                .checked_mul(isoplane_abi::WASM_PAGE_SIZE as u64)
-                != Some(memory.len() as u64)
-            {
-                return Err(Error::Corrupt);
-            }
-            let mut offset = self.payload_start;
-            for run in &self.header.runs {
-                let target = memory.get_mut(run.bytes()?).ok_or(Error::Corrupt)?;
-                if run.zero {
-                    target.fill(0);
-                } else {
-                    let end = offset.checked_add(target.len()).ok_or(Error::Overflow)?;
-                    let source = self.bytes.get(offset..end).ok_or(Error::Corrupt)?;
-                    target.copy_from_slice(source);
-                    offset = end;
-                }
-            }
-            Ok(())
-        }
     }
 }

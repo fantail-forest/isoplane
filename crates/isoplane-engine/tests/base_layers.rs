@@ -396,6 +396,34 @@ fn an_instance_of_a_layer_keeps_its_writes_to_base_and_layer_pages_private() {
         concurrent.memory() == initialized.as_slice(),
         "a concurrent instance of the layer must not see another's writes"
     );
+    #[cfg(target_os = "linux")]
+    {
+        let covers = |ranges: &[std::ops::Range<u64>], offset: u64| {
+            ranges.iter().any(|range| range.contains(&offset))
+        };
+        let written = writer
+            .changed_ranges()
+            .expect("a layered instance reads its page-table state");
+        assert!(
+            covers(&written, 100) && covers(&written, 70000),
+            "the writer's pages must be reported as changed: {written:?}"
+        );
+        assert!(
+            written
+                .iter()
+                .map(|range| range.end - range.start)
+                .sum::<u64>()
+                < writer.memory_len() as u64,
+            "pages the handler never wrote must not be reported: {written:?}"
+        );
+        let read = concurrent
+            .changed_ranges()
+            .expect("a layered instance reads its page-table state");
+        assert!(
+            !covers(&read, 100) && !covers(&read, 70000),
+            "pages an instance only read still read the layer: {read:?}"
+        );
+    }
     drop(writer);
     assert!(
         activate(&engine, &template).memory() == initialized.as_slice(),

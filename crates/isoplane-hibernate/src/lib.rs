@@ -1,4 +1,5 @@
-//! Reserved local backing and snapshot identity primitives.
+//! Same-process pressure snapshots with reserved local backing.
+//! Host resources remain owned by the original execution context during sleep.
 
 #![forbid(unsafe_code)]
 
@@ -6,6 +7,8 @@
 pub type Result<T> = anyhow::Result<T>;
 
 pub mod delta;
+
+pub mod local;
 
 pub mod snapshot;
 

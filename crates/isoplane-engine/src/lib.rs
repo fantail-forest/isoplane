@@ -28,6 +28,8 @@ mod layout;
 mod linker;
 mod mapped;
 mod meter;
+#[cfg(target_os = "linux")]
+mod pagemap;
 mod state;
 #[cfg(target_os = "linux")]
 mod storage_fault;

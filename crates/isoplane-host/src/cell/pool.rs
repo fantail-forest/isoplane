@@ -232,11 +232,8 @@ pub(super) mod cell_tests {
         module
     }
 
-    pub(in crate::cell) fn cell(
-        cfg: CellConfig,
-        hib: Arc<dyn isoplane_hibernate::Hibernator>,
-    ) -> Arc<Cell> {
-        Cell::new(cfg, services(), hib).expect("a cell starts")
+    pub(in crate::cell) fn cell(cfg: CellConfig) -> Arc<Cell> {
+        Cell::new(cfg, services()).expect("a cell starts")
     }
 
     pub(in crate::cell) fn wait_for(mut p: impl FnMut() -> bool, within: Duration) -> bool {
@@ -255,13 +252,10 @@ pub(super) mod cell_tests {
     /// bug and stays loud.
     #[test]
     fn a_panicking_dispatch_does_not_take_the_execution_thread_with_it() {
-        let cell = cell(
-            CellConfig {
-                exec_threads: 1,
-                ..CellConfig::for_test("panic-dispatch")
-            },
-            Arc::new(FakeHibernator),
-        );
+        let cell = cell(CellConfig {
+            exec_threads: 1,
+            ..CellConfig::for_test("panic-dispatch")
+        });
 
         let bad = ModuleId::new("bad", "v1");
         cell.register_module(
@@ -348,13 +342,10 @@ pub(super) mod cell_tests {
         let events = Events::default();
         let _trace = events.install();
         use crate::bindings::request_body::RequestBodyScope;
-        let cell = cell(
-            CellConfig {
-                exec_threads: 0,
-                ..CellConfig::for_test("busy-upload")
-            },
-            Arc::new(FakeHibernator),
-        );
+        let cell = cell(CellConfig {
+            exec_threads: 0,
+            ..CellConfig::for_test("busy-upload")
+        });
         let act = Arc::new(FakeActivator::new(FakeBehaviour::done()));
         let module = act.module().clone();
         let mut app = manifest("busy-upload");
@@ -417,13 +408,10 @@ pub(super) mod cell_tests {
 
     #[test]
     fn a_queued_wake_after_reset_leaves_the_pooled_instance_pristine() {
-        let cell = cell(
-            CellConfig {
-                exec_threads: 0,
-                ..CellConfig::for_test("stale-reset-wake")
-            },
-            Arc::new(FakeHibernator),
-        );
+        let cell = cell(CellConfig {
+            exec_threads: 0,
+            ..CellConfig::for_test("stale-reset-wake")
+        });
         let act = Arc::new(FakeActivator::new(
             FakeBehaviour::done().with_lazy_init_probe(),
         ));
@@ -484,13 +472,10 @@ pub(super) mod cell_tests {
 
     #[test]
     fn a_failed_deferred_reset_removes_the_discarded_resident() {
-        let cell = cell(
-            CellConfig {
-                exec_threads: 0,
-                ..CellConfig::for_test("reset-failure-cleanup")
-            },
-            Arc::new(FakeHibernator),
-        );
+        let cell = cell(CellConfig {
+            exec_threads: 0,
+            ..CellConfig::for_test("reset-failure-cleanup")
+        });
         let act = Arc::new(FakeActivator::new(FakeBehaviour::done()));
         let module = act.module().clone();
         let mut manifest = manifest("reset-failure-cleanup");
@@ -617,13 +602,10 @@ pub(super) mod cell_tests {
 
     #[test]
     fn an_in_flight_hibernated_handler_cannot_be_discarded() {
-        let cell = cell(
-            CellConfig {
-                exec_threads: 0,
-                ..CellConfig::for_test("protected-continuation")
-            },
-            Arc::new(FakeHibernator),
-        );
+        let cell = cell(CellConfig {
+            exec_threads: 0,
+            ..CellConfig::for_test("protected-continuation")
+        });
         let (slot, response, future) = hibernated_request(&cell);
         assert!(
             cell.discard_instance(slot.id).is_err(),
@@ -656,13 +638,10 @@ pub(super) mod cell_tests {
 
     #[test]
     fn concurrent_io_wakes_restore_a_hibernated_dispatch_once() {
-        let cell = cell(
-            CellConfig {
-                exec_threads: 0,
-                ..CellConfig::for_test("restoring-io")
-            },
-            Arc::new(FakeHibernator),
-        );
+        let cell = cell(CellConfig {
+            exec_threads: 0,
+            ..CellConfig::for_test("restoring-io")
+        });
         let events = super::super::completion::test_events::Events::default();
         let clock = Arc::new(AtomicU64::new(100));
         let observed = clock.clone();
@@ -728,13 +707,10 @@ pub(super) mod cell_tests {
     fn a_missing_checkpoint_ends_its_pending_dispatch_and_releases_owned_work() {
         let events = Events::default();
         let _trace = events.install();
-        let cell = cell(
-            CellConfig {
-                exec_threads: 0,
-                ..CellConfig::for_test("missing-checkpoint")
-            },
-            Arc::new(FakeHibernator),
-        );
+        let cell = cell(CellConfig {
+            exec_threads: 0,
+            ..CellConfig::for_test("missing-checkpoint")
+        });
         let (slot, response, future) = hibernated_request(&cell);
         slot.ctx.snapshot.lock().take();
         cell.futures()
@@ -787,13 +763,10 @@ pub(super) mod cell_tests {
     #[test]
     fn a_stale_panic_handler_does_not_answer_another_requests_caller() {
         const LIVE: u64 = 900;
-        let cell = cell(
-            CellConfig {
-                exec_threads: 2,
-                ..CellConfig::for_test("stale-panic")
-            },
-            Arc::new(FakeHibernator),
-        );
+        let cell = cell(CellConfig {
+            exec_threads: 2,
+            ..CellConfig::for_test("stale-panic")
+        });
         let m = app(
             &cell,
             "parker",
@@ -853,10 +826,7 @@ pub(super) mod cell_tests {
     #[tokio::test]
     async fn a_streaming_dispatch_bills_every_hot_slice_once_at_final_completion() {
         let events = Events::default();
-        let cell = cell(
-            CellConfig::for_test("stream-occupancy"),
-            Arc::new(FakeHibernator),
-        );
+        let cell = cell(CellConfig::for_test("stream-occupancy"));
         let mut behaviour = FakeBehaviour::program([
             Step::Park {
                 imports: vec![("clock_deadline_in", 0)],

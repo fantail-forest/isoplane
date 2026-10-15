@@ -54,12 +54,10 @@ impl Activator for ResetStartActivator {
     }
 
     fn snapshot_size_bound(&self, max_memory_bytes: u64) -> anyhow::Result<u64> {
-        Ok(crate::hibernate_capture::snapshot_size_bound(
-            crate::hibernate_capture::SnapshotShape {
-                max_memory_bytes,
-                mutable_globals: self.template.mutable_global_count(),
-            },
-        )?)
+        isoplane_hibernate::local::size_bound(isoplane_hibernate::local::SnapshotShape {
+            max_memory_bytes,
+            mutable_globals: self.template.mutable_global_count(),
+        })
     }
     fn activate(
         &self,

@@ -114,12 +114,10 @@ impl Activator for PanicActivator {
         Arc::new(isoplane_engine::MemoryImage::from_dense(&self.template))
     }
     fn snapshot_size_bound(&self, _max_memory_bytes: u64) -> anyhow::Result<u64> {
-        Ok(crate::hibernate_capture::snapshot_size_bound(
-            crate::hibernate_capture::SnapshotShape {
-                max_memory_bytes: self.template.len() as u64,
-                mutable_globals: 0,
-            },
-        )?)
+        isoplane_hibernate::local::size_bound(isoplane_hibernate::local::SnapshotShape {
+            max_memory_bytes: self.template.len() as u64,
+            mutable_globals: 0,
+        })
     }
     fn activate(
         &self,

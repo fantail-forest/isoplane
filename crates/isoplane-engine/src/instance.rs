@@ -403,6 +403,12 @@ pub trait InstanceOps {
     /// execution produced. Hibernation asks after reading memory.
     fn storage_failed(&self) -> bool;
     fn memory_len(&self) -> usize;
+    /// Byte ranges of linear memory that may differ from the template, in
+    /// ascending order, or `None` when the instance cannot tell and every page
+    /// has to be compared with the template.
+    fn changed_ranges(&mut self) -> Option<Vec<std::ops::Range<u64>>> {
+        None
+    }
     /// Globals and tables. Linear memory is diffed by `isoplane-hibernate`.
     fn capture_mutable_state(&mut self) -> Result<InstanceImage>;
     fn restore_mutable_state(&mut self, img: &InstanceImage) -> Result<()>;
@@ -560,6 +566,25 @@ impl InstanceOps for Instance {
             .as_ref()
             .map(|l| l.memory.data_size(&l.store))
             .unwrap_or(0)
+    }
+
+    fn changed_ranges(&mut self) -> Option<Vec<std::ops::Range<u64>>> {
+        // A layered template maps its memory privately from the layer file, so
+        // a page the guest never wrote still reads the template.
+        #[cfg(target_os = "linux")]
+        if self.template.initialization_layer.is_some() {
+            let live = self.live.as_ref()?;
+            let address = live.memory.data_ptr(&live.store) as usize;
+            let length_bytes = live.memory.data_size(&live.store);
+            match crate::pagemap::ranges(address, length_bytes, crate::pagemap::private_copy) {
+                Ok(ranges) => return Some(ranges),
+                Err(error) => tracing::warn!(
+                    %error,
+                    "reading guest page-table state failed; comparing every page with the template"
+                ),
+            }
+        }
+        None
     }
 
     fn capture_mutable_state(&mut self) -> Result<InstanceImage> {

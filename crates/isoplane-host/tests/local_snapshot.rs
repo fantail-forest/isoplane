@@ -62,15 +62,22 @@ impl SnapshotReservation for ObservedReservation {
     fn reserved_bytes(&self) -> SnapshotBytes {
         self.inner.reserved_bytes()
     }
-    fn save(&mut self, bytes: &[u8]) -> Result<(), SnapshotError> {
-        self.inner.save(bytes)?;
+    fn save(&mut self, parts: &[std::io::IoSlice<'_>]) -> Result<(), SnapshotError> {
+        self.inner.save(parts)?;
         self.counts.saves.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
-    fn load(&mut self) -> Result<Vec<u8>, SnapshotError> {
-        let bytes = self.inner.load()?;
-        self.counts.loads.fetch_add(1, Ordering::SeqCst);
-        Ok(bytes)
+    fn read_exact_at(
+        &mut self,
+        offset: u64,
+        parts: &mut [std::io::IoSliceMut<'_>],
+    ) -> Result<(), SnapshotError> {
+        self.inner.read_exact_at(offset, parts)?;
+        // A restore reads the snapshot from its start once, then its pages.
+        if offset == 0 {
+            self.counts.loads.fetch_add(1, Ordering::SeqCst);
+        }
+        Ok(())
     }
 }
 
@@ -332,7 +339,7 @@ fn growing_to_the_memory_ceiling_preserves_the_final_page_through_local_reclamat
     assert_eq!(
         rig.counts.saves.load(Ordering::SeqCst),
         1,
-        "reclamation must save one local snapshot"
+        "reclamation must write one real snapshot"
     );
     assert_eq!(
         rig.counts.loads.load(Ordering::SeqCst),
