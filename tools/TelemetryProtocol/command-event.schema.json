@@ -116,6 +116,7 @@
         "doctor-module",
         "cache",
         "bundle",
+        "prepare-runtime",
         "unknown"
       ]
     },
