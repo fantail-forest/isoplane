@@ -293,19 +293,21 @@ public static class Handler
 }
 
 fn write_debug_application(app: &std::path::Path, mode: &str) -> std::path::PathBuf {
-    let source = app.join("Program.cs");
-    let original = std::fs::read_to_string(&source).unwrap();
-    let modified = original.replace(
-        "app.MapGet(\"/\", () => \"Hello from Isoplane!\");",
-        "app.MapGet(\"/\", DebugFixture.Application.Handle);\napp.MapGet(\"/warmup\", async () => { await Task.Delay(1); return \"warm\"; });",
-    ).replace("WarmupAsync(\"/\")", "WarmupAsync(\"/warmup\")");
-    let modified = if mode == "detach-failure" {
-        modified.replace("app.MapGet(\"/\", DebugFixture.Application.Handle);", "if (!System.Diagnostics.Debugger.IsAttached) throw new InvalidOperationException(\"ordinary runtime preparation rejected\");\napp.MapGet(\"/\", DebugFixture.Application.Handle);")
+    let source = app.join("Handler.cs");
+    let initializer = if mode == "detach-failure" {
+        r#"
+    [Initializer]
+    public static Task InitializeAsync()
+    {
+        if (!System.Diagnostics.Debugger.IsAttached) throw new InvalidOperationException("ordinary runtime preparation rejected");
+        return Task.CompletedTask;
+    }
+"#
     } else {
-        modified
+        ""
     };
     let handler = if mode == "library" {
-        "    internal static string Handle() => DebugLibrary.Calculator.Work(41).ToString();\n"
+        "    internal static Task<string> Handle() => Task.FromResult(DebugLibrary.Calculator.Work(41).ToString());\n"
     } else {
         r#"
     internal static async Task<string> Handle()
@@ -329,10 +331,11 @@ fn write_debug_application(app: &std::path::Path, mode: &str) -> std::path::Path
     } else {
         handler
     };
-    // Type declarations follow a program's top-level statements.
     std::fs::write(
         &source,
-        format!("{modified}\nnamespace DebugFixture\n{{\n    internal static class Application\n    {{\n{handler}    }}\n}}\n"),
+        format!(
+            "using Isoplane;\n\npublic static class Handler\n{{\n{initializer}\n    [HttpHandler]\n    public static async Task<Response> HandleAsync(Request request) => Response.Text(await DebugFixture.Application.Handle());\n}}\n\nnamespace DebugFixture\n{{\n    internal static class Application\n    {{\n{handler}    }}\n}}\n"
+        ),
     )
     .unwrap();
     source
@@ -397,7 +400,7 @@ fn start_debug_session(app: &std::path::Path, cli: &std::path::Path, mode: &str)
 fn installed_debug_acceptance(mode: &str) {
     let python = isoplane_fixtures::debugger_python();
     let directory = tempfile::tempdir().unwrap();
-    let app = isoplane_fixtures::web_project(directory.path());
+    let app = isoplane_fixtures::handler_project(directory.path());
     let source = write_debug_application(&app, mode);
     let debug_source = if mode == "library" {
         write_debug_library(directory.path(), &app)

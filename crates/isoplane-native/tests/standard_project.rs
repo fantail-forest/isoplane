@@ -7,8 +7,8 @@ use std::process::Command;
 
 #[test]
 fn templates_build_under_names_that_are_not_identifiers() {
-    // Task generates each template under a name chosen to break namespace
-    // resolution; taskfiles/fixtures.yml says why.
+    // Task generates and restores each template under a name chosen to break
+    // namespace resolution; taskfiles/fixtures.yml says why. Building it is the check.
     for template in [
         "isoplane-web",
         "isoplane-handler",

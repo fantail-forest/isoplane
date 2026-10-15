@@ -123,7 +123,7 @@ tasks:
         EOF
       - '{{.CLI_INSTALL}} Isoplane.Cli --version {{.VERSION}} --tool-path "{{.TEST_DOTNET}}/tool" --configfile "{{.TEST_DOTNET}}/nuget.config"'
       - cp -R crates/isoplane-native/tests/fixtures "{{.TEST_DOTNET}}/fixtures"
-      - for: [handler, web, testing]
+      - for: [handler, gated, testing]
         task: projects:build
         vars: { PROJECT: '{{.TEST_DOTNET}}/fixtures/{{.ITEM}}', VERSION: '{{.VERSION}}' }
       - '"{{.DOTNET}}" new install "{{.PACKAGES}}/Isoplane.Templates.{{.VERSION}}.nupkg" --debug:custom-hive "{{.TEST_DOTNET}}/hive"'
@@ -133,9 +133,10 @@ tasks:
       # from the inside out, so such a reference finds the folder's namespace instead of the root.
       - for: ['isoplane-web:Template-App', 'isoplane-handler:Tests.Template-App', 'isoplane-mcpserver:Tools.Template-App', 'isoplane-webapi:Todos.Template-App', 'isoplane-webapp:Notes.Template-App']
         cmd: '"{{.DOTNET}}" new {{index (splitList ":" .ITEM) 0}} --name {{index (splitList ":" .ITEM) 1}} --output "{{.TEST_DOTNET}}/templates/{{index (splitList ":" .ITEM) 0}}" --debug:custom-hive "{{.TEST_DOTNET}}/hive"'
+      # The template test builds these itself, so they are only restored here.
       - for: [isoplane-web, isoplane-handler, isoplane-mcpserver, isoplane-webapi, isoplane-webapp]
         task: projects:build
-        vars: { PROJECT: '{{.TEST_DOTNET}}/templates/{{.ITEM}}', VERSION: '{{.VERSION}}' }
+        vars: { PROJECT: '{{.TEST_DOTNET}}/templates/{{.ITEM}}', VERSION: '{{.VERSION}}', STEP: restore }
       - echo "{{.VERSION}}" > "{{.TEST_DOTNET}}/prepared"
 
   projects:build:
@@ -145,7 +146,7 @@ tasks:
       ISOPLANE_CLI: '{{.TEST_DOTNET}}/tool/isoplane{{if eq OS "windows"}}.exe{{end}}'
     cmds:
       - cp "{{.TEST_DOTNET}}/global.json" "{{.TEST_DOTNET}}/nuget.config" "{{.PROJECT}}/"
-      - '"{{.DOTNET}}" build "{{.PROJECT}}" --configuration Debug -nologo -p:IsoplaneReleaseVersion={{.VERSION}}'
+      - '"{{.DOTNET}}" {{.STEP | default "build"}} "{{.PROJECT}}"{{if not .STEP}} --configuration Debug{{end}} -nologo -p:IsoplaneReleaseVersion={{.VERSION}}'
       - cp "{{.TEST_DOTNET}}/offline.config" "{{.PROJECT}}/nuget.config"
 
   runtime:inputs:

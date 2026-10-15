@@ -1,0 +1,11 @@
+<!-- The handler fixture with a build gate: a test creates omit-publication to make the next build fail, or hold-publication to hold it until the test releases it. The SDK version comes from the global.json Task writes beside it. -->
+<Project Sdk="Isoplane.Sdk">
+  <PropertyGroup>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <Target Name="FixtureBuildGate" BeforeTargets="CoreCompile">
+    <Error Condition="Exists('omit-publication')" Text="fixture package build refused" />
+    <Exec Condition="Exists('hold-publication')" Command="sh wait-build.sh" />
+  </Target>
+</Project>

@@ -5,8 +5,8 @@
 mod dotnet_projects;
 
 pub use dotnet_projects::{
-    handler_project, install_managed_cli, managed_cli, release_version,
-    template_project, testing_consumer, web_project,
+    gated_project, handler_project, managed_cli, release_version, template_project,
+    testing_consumer,
 };
 
 use std::path::{Path, PathBuf};

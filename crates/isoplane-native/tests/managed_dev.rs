@@ -7,28 +7,10 @@ use common::Dev;
 use std::path::{Path, PathBuf};
 
 fn project(destination: &Path) -> (PathBuf, PathBuf) {
-    let app = isoplane_fixtures::handler_project(destination);
-    source(&app, "working publication", "");
-    let project = app.join("HandlerFixture.csproj");
-    let text = std::fs::read_to_string(&project).expect("generated project");
-    std::fs::write(
-        &project,
-        text.replace(
-            "</Project>",
-            r#"
-  <Target Name="FixtureBuildGate" BeforeTargets="CoreCompile">
-    <Error Condition="Exists('omit-publication')" Text="fixture package build refused" />
-    <Exec Condition="Exists('hold-publication')" Command="sh wait-build.sh" />
-  </Target>
-</Project>"#,
-        ),
+    (
+        isoplane_fixtures::gated_project(destination),
+        isoplane_fixtures::managed_cli(),
     )
-    .expect("fixture build gate");
-    std::fs::write(app.join("wait-build.sh"),
-        "set -eu\nmkfifo .isoplane/publication-gate\nprintf 'publication-is-held\\n'\nexec cat .isoplane/publication-gate\n")
-        .expect("fixture external build gate");
-    let cli = isoplane_fixtures::managed_cli();
-    (app, cli)
 }
 
 fn source(app: &Path, response: &str, log: &str) {
@@ -65,11 +47,10 @@ async fn body(dev: &Dev) -> String {
 async fn guest_logs_reach_the_installed_cli_from_execution_threads() {
     let directory = tempfile::tempdir().expect("isolate the installed logging workflow");
     let (app, cli) = project(directory.path());
-    source(&app, "logged response", "managed-session-guest-log");
     let mut dev = Dev::start_managed(&app, &cli);
     assert_eq!(
         body(&dev).await,
-        "logged response",
+        "working publication",
         "the logging guest must finish its request"
     );
     dev.wait_for("managed-session-guest-log");
@@ -209,7 +190,6 @@ fn a_second_managed_process_cannot_share_the_projects_state() {
 fn the_cutover_supervisor_starts_an_installed_managed_worker() {
     let directory = tempfile::tempdir().unwrap();
     let (app, cli) = project(directory.path());
-    source(&app, "cutover worker", "");
     let script =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/local/cutover.py");
     let python = std::env::var_os("ISOPLANE_TEST_PYTHON")
@@ -226,7 +206,7 @@ async def run():
     owner, url = await supervisor.worker("managed", sys.argv[3])
     try:
         with urllib.request.urlopen(url, timeout=30) as response:
-            assert response.read() == b"cutover worker", "the managed worker must serve the real guest"
+            assert response.read() == b"working publication", "the managed worker must serve the real guest"
     finally:
         await owner.kill()
 asyncio.run(run())

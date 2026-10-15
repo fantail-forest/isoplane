@@ -1,4 +1,4 @@
-<!-- An ordinary xunit project that tests the web fixture through the Isoplane.Testing package. Task prepares it with the release version in IsoplaneReleaseVersion. -->
+<!-- An ordinary xunit project that tests the handler fixture through the Isoplane.Testing package. Task prepares it with the release version in IsoplaneReleaseVersion. -->
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>

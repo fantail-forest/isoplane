@@ -1,7 +1,0 @@
-<!-- An ASP.NET application built with the installed SDK, for tests of ASP.NET applications. The SDK version comes from the global.json Task writes beside it. -->
-<Project Sdk="Isoplane.AspNetCore">
-  <PropertyGroup>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
-  </PropertyGroup>
-</Project>
