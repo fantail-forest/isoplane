@@ -18,7 +18,7 @@ fn the_dotnet_template_activates_without_running_the_runtime_start_up() {
     )
     .expect(".NET guest must validate");
 
-    let out = managed::prepare("isoplane_guest_dotnet", Default::default())
+    let out = managed::prepare("isoplane_guest_dotnet_bcl", Default::default())
         .expect("pre-init must succeed on the managed application");
     assert!(
         !out.initialized.pal_calls.is_empty(),

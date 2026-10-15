@@ -15,46 +15,45 @@ public static class CleanupProbe
     private static readonly TaskCompletionSource _signal = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     /// <summary>Arms one abandoned operation, or observes the same guest on a later request.</summary>
-    [HttpHandler]
-    public static async Task<Response> HandleAsync(Request request)
+    public static async Task<Response> HandleAsync(string path)
     {
         _requests++;
-        if (request.Path == "/idle-socket")
+        if (path == "/idle-socket")
         {
             _idleSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
             _idleSocket.NoDelay = true;
             return Response.Text("retained");
         }
-        if (request.Path == "/read-idle-socket")
+        if (path == "/read-idle-socket")
             return Response.Text($"{_requests}:{_idleSocket?.NoDelay}");
-        if (request.Path == "/promise-arm")
+        if (path == "/promise-arm")
         {
             _ = AfterSignalAsync();
             return Response.Text("armed");
         }
-        if (request.Path == "/promise-signal")
+        if (path == "/promise-signal")
         {
             _signal.SetResult();
             await Task.Yield();
             return Response.Text("signalled");
         }
-        if (request.Path == "/promise-complete")
+        if (path == "/promise-complete")
         {
             Task completion = AfterSignalAsync();
             _signal.SetResult();
             await completion.ConfigureAwait(false);
             return Response.Text($"{_requests}:{_callbacks}");
         }
-        if (request.Path == "/drive-timer")
+        if (path == "/drive-timer")
         {
             Task timer = Task.Delay(1);
             await Dns.GetHostAddressesAsync("clock-barrier.test").ConfigureAwait(false);
             await timer.ConfigureAwait(false);
             return Response.Text($"{_requests}:{_callbacks}");
         }
-        if (request.Path == "/observe") return Response.Text($"{_requests}:{_callbacks}");
-        _ = AbandonAsync(request.Path);
-        if (request.Path != "/timer")
+        if (path == "/observe") return Response.Text($"{_requests}:{_callbacks}");
+        _ = AbandonAsync(path);
+        if (path != "/timer")
             await Dns.GetHostAddressesAsync("barrier.test").ConfigureAwait(false);
         return Response.Text("armed");
     }

@@ -11,14 +11,13 @@ namespace Isoplane.App;
 public static class DnsProbe
 {
     /// <summary>Returns the first host-resolved address.</summary>
-    [HttpHandler]
-    public static async Task<Response> HandleAsync(Request request)
+    public static async Task<Response> HandleAsync(string path)
     {
         using var cancellation = new CancellationTokenSource();
-        if (request.Path == "/cancel.test") cancellation.CancelAfter(100);
+        if (path == "/cancel.test") cancellation.CancelAfter(100);
         try
         {
-            IPAddress[] addresses = await Dns.GetHostAddressesAsync(request.Path.Substring(1), cancellation.Token).ConfigureAwait(false);
+            IPAddress[] addresses = await Dns.GetHostAddressesAsync(path.Substring(1), cancellation.Token).ConfigureAwait(false);
             return Response.Text(addresses[0].ToString());
         }
         catch (SocketException error)

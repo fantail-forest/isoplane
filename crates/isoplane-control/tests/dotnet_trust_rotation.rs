@@ -112,7 +112,7 @@ fn rotation(runtime: GuestRuntime) -> &'static Rotation {
         let dir = tempfile::tempdir().expect("a temporary directory");
         let a = self_signed_root(dir.path(), "root-a");
         let b = self_signed_root(dir.path(), "root-b");
-        let prepared = managed::prepare("isoplane_guest_dotnet_trust", bundle(&[&a]))
+        let prepared = managed::prepare("isoplane_guest_dotnet_bcl", bundle(&[&a]))
             .expect("prepare the trust application with the supplied bundle");
         let template = prepared
             .portable_template()
@@ -142,7 +142,7 @@ fn node_serving(files: PlatformFiles, template: &[u8], clock_ms: u64) -> (Reacto
     reactor.context.begin_slice(clock_ms, 1);
     let guest = ReturnedGuest::with_application_files(
         template,
-        managed::files("isoplane_guest_dotnet_trust"),
+        managed::files("isoplane_guest_dotnet_bcl"),
         &reactor,
     );
     (reactor, guest)
@@ -153,7 +153,7 @@ async fn the_template_carries_the_store_loaded_at_preparation(runtime: GuestRunt
     let Rotation { a, b, template } = rotation(runtime);
 
     let (reactor, mut guest) = node_serving(bundle(&[b]), template, PAST_RECHECK_MS);
-    let at_boot = guest.answer(&reactor, "/at-boot", 4).await;
+    let at_boot = guest.answer(&reactor, "/trust/at-boot", 4).await;
     assert_eq!(
         at_boot,
         listing(&[a]),
@@ -170,7 +170,7 @@ async fn a_removed_root_is_gone_from_the_prepared_templates_store_after_the_rech
     let Rotation { b, template, .. } = rotation(runtime);
 
     let (reactor, mut guest) = node_serving(bundle(&[b]), template, PAST_RECHECK_MS);
-    let roots = guest.answer(&reactor, "/roots", 4).await;
+    let roots = guest.answer(&reactor, "/trust/roots", 4).await;
     assert_eq!(
         roots,
         listing(&[b]),
@@ -187,7 +187,7 @@ async fn the_prepared_templates_store_keeps_its_roots_within_the_recheck_interva
     let Rotation { a, b, template } = rotation(runtime);
 
     let (reactor, mut guest) = node_serving(bundle(&[b]), template, WITHIN_RECHECK_MS);
-    let roots = guest.answer(&reactor, "/roots", 4).await;
+    let roots = guest.answer(&reactor, "/trust/roots", 4).await;
     assert_eq!(
         roots,
         listing(&[a]),

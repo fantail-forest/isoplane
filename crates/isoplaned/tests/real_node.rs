@@ -160,7 +160,7 @@ async fn a_csharp_handler_receives_request_fields_for_every_standard_http_method
     use hyper::Request;
 
     let rig = start_with(
-        common::preparation::Guest::from("isoplane_guest_dotnet_request"),
+        common::preparation::Guest::from("isoplane_guest_dotnet_node"),
         InitSandbox::RuntimeBringUp,
     )
     .await;
@@ -413,7 +413,7 @@ async fn response_framing_respects_methods_and_statuses_that_forbid_content() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn managed_libraries_observe_a_read_only_disk_holding_only_the_platform_files() {
     let rig = start_with(
-        common::preparation::Guest::from("isoplane_guest_dotnet_filesystem"),
+        common::preparation::Guest::from("isoplane_guest_dotnet_node"),
         InitSandbox::RuntimeBringUp,
     )
     .await;
@@ -435,7 +435,12 @@ async fn managed_libraries_observe_a_read_only_disk_holding_only_the_platform_fi
         ("/resource", "trusted embedded resource"),
         ("/assembly", "System.Private.CoreLib"),
     ] {
-        let response = get(rig.proxy, "quotes.isoplane.dev", path).await;
+        let response = get(
+            rig.proxy,
+            "quotes.isoplane.dev",
+            &format!("/filesystem{path}"),
+        )
+        .await;
         if response.status != hyper::StatusCode::OK || response.body != expected {
             mismatches.push(format!(
                 "{path}: status {}; expected {expected:?}, got {:?}",

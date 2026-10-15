@@ -10,12 +10,11 @@ namespace Isoplane.App;
 public static class NetworkRefusalProbe
 {
     /// <summary>Returns the actual SocketError raised by an attempted listener.</summary>
-    [HttpHandler]
-    public static Task<Response> HandleAsync(Request request)
+    public static Task<Response> HandleAsync(string path)
     {
         try
         {
-            switch (request.Path)
+            switch (path)
             {
                 case "/tcp-listener":
                     using (var listener = new TcpListener(IPAddress.Loopback, 0)) listener.Start();

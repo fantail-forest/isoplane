@@ -1,4 +1,3 @@
-#if ISOPLANE_ACTIVATION_PROBE
 using System;
 using System.Diagnostics;
 using System.Security.Cryptography;
@@ -81,4 +80,3 @@ internal static class ActivationProbe
         }
     }
 }
-#endif

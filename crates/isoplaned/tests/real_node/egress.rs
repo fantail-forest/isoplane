@@ -186,7 +186,7 @@ async fn a_managed_network_stream_exchanges_partial_payloads_through_a_real_node
             "v1",
             "acme",
             manifest("quotes"),
-            &common::preparation::Guest::from("isoplane_guest_dotnet_stream"),
+            &common::preparation::Guest::from("isoplane_guest_dotnet_native_io"),
             InitSandbox::RuntimeBringUp,
         )
         .await
@@ -204,7 +204,7 @@ async fn a_managed_network_stream_exchanges_partial_payloads_through_a_real_node
         get(
             proxy,
             "quotes.isoplane.dev",
-            &format!("/{}/{}", address.ip(), address.port()),
+            &format!("/stream/{}/{}", address.ip(), address.port()),
         )
         .await
     });

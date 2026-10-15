@@ -5,7 +5,7 @@ use crate::dotnet::{fixture, Fixture, GuestRuntime, Request};
 use isoplane_engine::Instance;
 
 fn hashing(runtime: GuestRuntime) -> &'static Fixture {
-    fixture("isoplane_guest_dotnet_hashing", runtime)
+    fixture("isoplane_guest_dotnet_bcl", runtime)
 }
 
 fn hash(
@@ -39,11 +39,11 @@ in_mono_runtime! {
             ),
         ];
         for path in [
-            "/sha-array",
-            "/sha-span",
-            "/sha-instance",
-            "/sha-reset",
-            "/sha-short-output",
+            "/hashing/sha-array",
+            "/hashing/sha-span",
+            "/hashing/sha-instance",
+            "/hashing/sha-reset",
+            "/hashing/sha-short-output",
         ] {
             for (source, expected) in cases {
                 assert_eq!(
@@ -74,7 +74,7 @@ in_mono_runtime! {
                 "B613679A0814D9EC772F95D778C35FC5FF1697C493715653C6C712144292C5AD",
             ),
         ];
-        for path in ["/hmac-array", "/hmac-span", "/hmac-instance", "/hmac-reset"] {
+        for path in ["/hashing/hmac-array", "/hashing/hmac-span", "/hashing/hmac-instance", "/hashing/hmac-reset"] {
             for (key, source, expected) in &cases {
                 assert_eq!(
                     hash(&mut instance, &recorder, path, key, source),
@@ -89,11 +89,11 @@ in_mono_runtime! {
         let (mut instance, recorder) = hashing(runtime).activate();
         let source = vec![0xa5; 1024 * 1024 + 1];
         for path in [
-            "/sha-array",
-            "/sha-span",
-            "/sha-instance",
-            "/sha-reset",
-            "/sha-short-output",
+            "/hashing/sha-array",
+            "/hashing/sha-span",
+            "/hashing/sha-instance",
+            "/hashing/sha-reset",
+            "/hashing/sha-short-output",
         ] {
             assert_eq!(
                 hash(&mut instance, &recorder, path, "", &source),
@@ -106,9 +106,9 @@ in_mono_runtime! {
     fn managed_hash_array_overloads_reject_null_arguments_by_name(runtime: GuestRuntime) {
         let (mut instance, recorder) = hashing(runtime).activate();
         for (path, parameter) in [
-            ("/sha-null", "source"),
-            ("/hmac-null-key", "key"),
-            ("/hmac-null-source", "source"),
+            ("/hashing/sha-null", "source"),
+            ("/hashing/hmac-null-key", "key"),
+            ("/hashing/hmac-null-source", "source"),
         ] {
             assert_eq!(
                 hash(&mut instance, &recorder, path, "", b"input"),
@@ -166,7 +166,7 @@ in_mono_runtime! {
         ];
         for kind in ["bytes", "string", "span"] {
             for (password, salt, iterations, count, expected) in cases {
-                let path = format!("/pbkdf2/{kind}/{iterations}/{count}");
+                let path = format!("/hashing/pbkdf2/{kind}/{iterations}/{count}");
                 assert_eq!(
                     hash(&mut instance, &recorder, &path, salt, password),
                     expected.as_bytes(),
@@ -174,7 +174,7 @@ in_mono_runtime! {
                 );
             }
             assert!(
-                hash(&mut instance, &recorder, &format!("/pbkdf2/{kind}/1/0"), "", b"").is_empty(),
+                hash(&mut instance, &recorder, &format!("/hashing/pbkdf2/{kind}/1/0"), "", b"").is_empty(),
                 "zero-length derivation must return no bytes"
             );
         }
@@ -183,11 +183,11 @@ in_mono_runtime! {
     fn managed_pbkdf2_retains_standard_argument_guards(runtime: GuestRuntime) {
         let (mut instance, recorder) = hashing(runtime).activate();
         for (path, expected) in [
-            ("/pbkdf-null-password", "ArgumentNullException:password"),
-            ("/pbkdf-null-salt", "ArgumentNullException:salt"),
-            ("/pbkdf2/bytes/0/32", "ArgumentOutOfRangeException:iterations"),
-            ("/pbkdf2/string/-1/32", "ArgumentOutOfRangeException:iterations"),
-            ("/pbkdf2/bytes/1/-1", "ArgumentOutOfRangeException:outputLength"),
+            ("/hashing/pbkdf-null-password", "ArgumentNullException:password"),
+            ("/hashing/pbkdf-null-salt", "ArgumentNullException:salt"),
+            ("/hashing/pbkdf2/bytes/0/32", "ArgumentOutOfRangeException:iterations"),
+            ("/hashing/pbkdf2/string/-1/32", "ArgumentOutOfRangeException:iterations"),
+            ("/hashing/pbkdf2/bytes/1/-1", "ArgumentOutOfRangeException:outputLength"),
         ] {
             assert_eq!(
                 hash(&mut instance, &recorder, path, "", b"password"),
@@ -201,10 +201,10 @@ in_mono_runtime! {
         let (mut instance, recorder) = hashing(runtime).activate();
         // Key "key", no data; the values are checked against the openssl command.
         for (path, expected) in [
-            ("/hmac-clone", "5D5D139563C95B5967B9BD9A8C9B233A9DEDB45072794CD232DC1B74832607D0"),
-            ("/hmac-current", "5D5D139563C95B5967B9BD9A8C9B233A9DEDB45072794CD232DC1B74832607D0"),
-            ("/hmac-sha1", "F42BB0EEB018EBBD4597AE7213711EC60760843F"),
-            ("/pbkdf-sha1", "4DB40A685139602EA72A3A5F490F3407C0DBAC8FBFE71A488F1933F20F368E42"),
+            ("/hashing/hmac-clone", "5D5D139563C95B5967B9BD9A8C9B233A9DEDB45072794CD232DC1B74832607D0"),
+            ("/hashing/hmac-current", "5D5D139563C95B5967B9BD9A8C9B233A9DEDB45072794CD232DC1B74832607D0"),
+            ("/hashing/hmac-sha1", "F42BB0EEB018EBBD4597AE7213711EC60760843F"),
+            ("/hashing/pbkdf-sha1", "4DB40A685139602EA72A3A5F490F3407C0DBAC8FBFE71A488F1933F20F368E42"),
         ] {
             assert_eq!(
                 String::from_utf8_lossy(&hash(&mut instance, &recorder, path, "6b6579", b"")),
@@ -213,7 +213,7 @@ in_mono_runtime! {
             );
         }
         assert_eq!(
-            hash(&mut instance, &recorder, "/hmac-disposed", "6b6579", b""),
+            hash(&mut instance, &recorder, "/hashing/hmac-disposed", "6b6579", b""),
             b"ObjectDisposedException",
             "disposed keyed state must refuse further use"
         );
@@ -223,12 +223,12 @@ in_mono_runtime! {
         let fixture = hashing(runtime);
         let (mut original, recorder) = fixture.activate();
         assert!(
-            hash(&mut original, &recorder, "/hmac-start", "6b6579", b"a").is_empty(),
+            hash(&mut original, &recorder, "/hashing/hmac-start", "6b6579", b"a").is_empty(),
             "starting a digest must leave the keyed state unfinished"
         );
         let (mut restored, recorder) = fixture.restore_from(original, 0xAB);
         assert_eq!(
-            hash(&mut restored, &recorder, "/hmac-finish", "", b"bc"),
+            hash(&mut restored, &recorder, "/hashing/hmac-finish", "", b"bc"),
             b"9C196E32DC0175F86F4B1CB89289D6619DE6BEE699E4C378E68309ED97A1A6AB",
             "restored incremental HMAC must retain the key and pre-capture prefix"
         );
@@ -240,12 +240,12 @@ in_mono_runtime! {
         let sha384_empty = "38B060A751AC96384CD9327EB1B1E36A21FDB71114BE07434C0CC7BF63F6E1DA274EDEBFE76F65FBD51AD2F14898B95B";
         let sha256_empty = "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855";
         for (path, expected) in [
-            ("/sha-instance-null", "ArgumentNullException:buffer"),
-            ("/sha-instance-offset", "ArgumentOutOfRangeException:offset"),
-            ("/sha-instance-disposed", "ObjectDisposedException"),
-            ("/sha-unsupported", sha384_empty),
-            ("/sha-clone", sha256_empty),
-            ("/sha-current", sha256_empty),
+            ("/hashing/sha-instance-null", "ArgumentNullException:buffer"),
+            ("/hashing/sha-instance-offset", "ArgumentOutOfRangeException:offset"),
+            ("/hashing/sha-instance-disposed", "ObjectDisposedException"),
+            ("/hashing/sha-unsupported", sha384_empty),
+            ("/hashing/sha-clone", sha256_empty),
+            ("/hashing/sha-current", sha256_empty),
         ] {
             assert_eq!(
                 String::from_utf8_lossy(&hash(&mut instance, &recorder, path, "", b"abc")),
@@ -259,12 +259,12 @@ in_mono_runtime! {
         let fixture = hashing(runtime);
         let (mut original, recorder) = fixture.activate();
         assert!(
-            hash(&mut original, &recorder, "/sha-start", "", b"a").is_empty(),
+            hash(&mut original, &recorder, "/hashing/sha-start", "", b"a").is_empty(),
             "starting SHA256 must leave the digest unfinished"
         );
         let (mut restored, recorder) = fixture.restore_from(original, 0xAB);
         assert_eq!(
-            hash(&mut restored, &recorder, "/sha-finish", "", b"bc"),
+            hash(&mut restored, &recorder, "/hashing/sha-finish", "", b"bc"),
             b"BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD",
             "restored SHA256 must retain the unfinished pre-capture prefix"
         );

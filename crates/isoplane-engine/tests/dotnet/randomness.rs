@@ -5,7 +5,7 @@ use crate::dotnet::{budget, fixture, Fixture, GuestRuntime, Request};
 use isoplane_engine::{Completion, DispatchOutcome, Instance};
 
 fn randomness(runtime: GuestRuntime) -> &'static Fixture {
-    fixture("isoplane_guest_dotnet_randomness", runtime)
+    fixture("isoplane_guest_dotnet_bcl", runtime)
 }
 
 /// An initialized instance whose response and exception paths are already
@@ -19,17 +19,17 @@ fn activate(runtime: GuestRuntime, first_byte: u8) -> (Instance, Recorder) {
         "the managed RNG fixture must initialize: {initialized:?}"
     );
     assert_eq!(
-        request(&mut instance, &recorder, "/empty"),
+        request(&mut instance, &recorder, "/randomness/empty"),
         b"0",
         "empty RNG warmup must succeed"
     );
     assert_eq!(
-        request(&mut instance, &recorder, "/negative"),
+        request(&mut instance, &recorder, "/randomness/negative"),
         b"ArgumentOutOfRangeException:count:-1",
         "negative-count warmup must preserve argument behavior"
     );
     assert_eq!(
-        request(&mut instance, &recorder, "/instance-null"),
+        request(&mut instance, &recorder, "/randomness/instance-null"),
         b"ArgumentNullException:data",
         "instance RNG validation must warm without drawing bytes"
     );
@@ -52,7 +52,7 @@ fn dispatch(instance: &mut Instance, path: &str) -> DispatchOutcome {
 
 in_mono_runtime! {
     fn ordinary_rng_draws_fresh_host_bytes_for_each_call_request_and_template_activation(runtime: GuestRuntime) {
-        for path in ["/draw", "/instance"] {
+        for path in ["/randomness/draw", "/randomness/instance"] {
             let mut bodies = Vec::new();
             for first_byte in [0x31, 0x71] {
                 let (mut instance, recorder) = activate(runtime, first_byte);
@@ -86,7 +86,7 @@ in_mono_runtime! {
     }
 
     fn empty_rng_requests_do_not_draw_host_entropy(runtime: GuestRuntime) {
-        for path in ["/empty", "/instance-empty"] {
+        for path in ["/randomness/empty", "/randomness/instance-empty"] {
             let (mut instance, recorder) = activate(runtime, 0x41);
             let before = recorder.entropy_draws.lock().len();
             assert_eq!(
@@ -106,7 +106,7 @@ in_mono_runtime! {
         let (mut instance, recorder) = activate(runtime, 0x51);
         let before = recorder.entropy_draws.lock().len();
         assert_eq!(
-            request(&mut instance, &recorder, "/negative"),
+            request(&mut instance, &recorder, "/randomness/negative"),
             b"ArgumentOutOfRangeException:count:-1",
             "GetBytes must retain the standard exception type, parameter and actual value"
         );
@@ -118,7 +118,7 @@ in_mono_runtime! {
     }
 
     fn ordinary_rng_accepts_buffers_larger_than_one_host_transfer(runtime: GuestRuntime) {
-        for path in ["/large", "/instance-large"] {
+        for path in ["/randomness/large", "/randomness/instance-large"] {
             let (mut instance, recorder) = activate(runtime, 0x61);
             let before = recorder.entropy_draws.lock().len();
             let body = request(&mut instance, &recorder, path);
@@ -135,7 +135,7 @@ in_mono_runtime! {
     }
 
     fn a_denied_entropy_source_cannot_be_reported_as_successful_managed_randomness(runtime: GuestRuntime) {
-        for path in ["/draw", "/instance"] {
+        for path in ["/randomness/draw", "/randomness/instance"] {
             let (mut instance, recorder) = activate(runtime, 0x81);
             recorder
                 .deny_entropy
@@ -153,7 +153,7 @@ in_mono_runtime! {
     }
 
     fn a_restored_warm_managed_heap_draws_from_its_new_host_entropy_source(runtime: GuestRuntime) {
-        for path in ["/draw", "/instance"] {
+        for path in ["/randomness/draw", "/randomness/instance"] {
             let (mut original, original_recorder) = activate(runtime, 0x21);
             let first = request(&mut original, &original_recorder, path);
             let (mut restored, recorder) = randomness(runtime).restore_from(original, 0xC1);
@@ -172,7 +172,7 @@ in_mono_runtime! {
     fn managed_crypto_value_types_preserve_their_ordinary_state(runtime: GuestRuntime) {
         let (mut instance, recorder) = activate(runtime, 0x31);
         assert_eq!(
-            request(&mut instance, &recorder, "/values"),
+            request(&mut instance, &recorder, "/randomness/values"),
             b"values",
             "ordinary crypto value and collection types must retain their managed state"
         );
@@ -182,7 +182,7 @@ in_mono_runtime! {
         let (mut instance, recorder) = activate(runtime, 0x31);
         let before = recorder.entropy_draws.lock().len();
         assert_eq!(
-            request(&mut instance, &recorder, "/instance-null"),
+            request(&mut instance, &recorder, "/randomness/instance-null"),
             b"ArgumentNullException:data",
             "null instance buffers must retain the standard exception parameter"
         );
@@ -196,8 +196,8 @@ in_mono_runtime! {
     fn invalid_instance_rng_ranges_report_standard_parameter_names_without_draws(runtime: GuestRuntime) {
         let (mut instance, recorder) = activate(runtime, 0x31);
         for (path, expected) in [
-            ("/instance-offset", "ArgumentOutOfRangeException:offset"),
-            ("/instance-count", "ArgumentOutOfRangeException:count"),
+            ("/randomness/instance-offset", "ArgumentOutOfRangeException:offset"),
+            ("/randomness/instance-count", "ArgumentOutOfRangeException:count"),
         ] {
             request(&mut instance, &recorder, path);
             let before = recorder.entropy_draws.lock().len();

@@ -180,75 +180,48 @@ tasks:
 
   dotnet:
     deps:
-      - task: dotnet:isoplane_guest_dotnet_activation
-      - task: dotnet:isoplane_guest_dotnet_certificates
-      - task: dotnet:isoplane_guest_dotnet_streaming
-      - task: dotnet:isoplane_guest_dotnet_hashing
-      - task: dotnet:isoplane_guest_dotnet_trust
-      - task: dotnet:isoplane_guest_dotnet_randomness
-      - task: dotnet:isoplane_guest_dotnet_memory
-      - task: dotnet:isoplane_guest_dotnet_failing_boot
-      - task: dotnet:isoplane_guest_dotnet_network_refusal
-      - task: dotnet:isoplane_guest_dotnet_dns
-      - task: dotnet:isoplane_guest_dotnet_stream
-      - task: dotnet:isoplane_guest_dotnet_connect
-      - task: dotnet:isoplane_guest_dotnet_cleanup
-      - task: dotnet:isoplane_guest_dotnet_timer
-      - task: dotnet:isoplane_guest_dotnet_logs
-      - task: dotnet:isoplane_guest_dotnet_filesystem
-      - task: dotnet:isoplane_guest_aspnet
-      - task: dotnet:isoplane_guest_dotnet_request
+      - task: dotnet:isoplane_guest_dotnet_native_io
+      - task: dotnet:isoplane_guest_dotnet_bcl
+      - task: dotnet:isoplane_guest_dotnet_node
       - task: dotnet:isoplane_guest_dotnet_upload
-      - task: dotnet:isoplane_guest_dotnet
+      - task: dotnet:isoplane_guest_dotnet_activation
+      - task: dotnet:isoplane_guest_dotnet_failing_boot
+      - task: dotnet:isoplane_guest_aspnet
+
+  dotnet:isoplane_guest_dotnet_native_io:
+    cmds:
+      - task: probe:build
+        vars:
+          NAME: isoplane_guest_dotnet_native_io
+          PROBE: NativeIo
+
+  dotnet:isoplane_guest_dotnet_bcl:
+    cmds:
+      - task: probe:build
+        vars:
+          NAME: isoplane_guest_dotnet_bcl
+          PROBE: Bcl
+
+  dotnet:isoplane_guest_dotnet_node:
+    cmds:
+      - task: probe:build
+        vars:
+          NAME: isoplane_guest_dotnet_node
+          PROBE: Node
+
+  dotnet:isoplane_guest_dotnet_upload:
+    cmds:
+      - task: probe:build
+        vars:
+          NAME: isoplane_guest_dotnet_upload
+          PROBE: Upload
 
   dotnet:isoplane_guest_dotnet_activation:
     cmds:
       - task: probe:build
         vars:
           NAME: isoplane_guest_dotnet_activation
-          PROBE: ActivationProbe
-
-  dotnet:isoplane_guest_dotnet_certificates:
-    cmds:
-      - task: probe:build
-        vars:
-          NAME: isoplane_guest_dotnet_certificates
-          PROBE: CertificateProbe
-
-  dotnet:isoplane_guest_dotnet_streaming:
-    cmds:
-      - task: probe:build
-        vars:
-          NAME: isoplane_guest_dotnet_streaming
-          PROBE: StreamingProbe
-
-  dotnet:isoplane_guest_dotnet_hashing:
-    cmds:
-      - task: probe:build
-        vars:
-          NAME: isoplane_guest_dotnet_hashing
-          PROBE: HashingProbe
-
-  dotnet:isoplane_guest_dotnet_trust:
-    cmds:
-      - task: probe:build
-        vars:
-          NAME: isoplane_guest_dotnet_trust
-          PROBE: TrustProbe
-
-  dotnet:isoplane_guest_dotnet_randomness:
-    cmds:
-      - task: probe:build
-        vars:
-          NAME: isoplane_guest_dotnet_randomness
-          PROBE: RandomnessProbe
-
-  dotnet:isoplane_guest_dotnet_memory:
-    cmds:
-      - task: probe:build
-        vars:
-          NAME: isoplane_guest_dotnet_memory
-          PROBE: MemoryProbe
+          PROBE: Activation
 
   dotnet:isoplane_guest_dotnet_failing_boot:
     cmds:
@@ -257,89 +230,12 @@ tasks:
           NAME: isoplane_guest_dotnet_failing_boot
           PROBE: FailingBoot
 
-  dotnet:isoplane_guest_dotnet_network_refusal:
-    cmds:
-      - task: probe:build
-        vars:
-          NAME: isoplane_guest_dotnet_network_refusal
-          PROBE: NetworkRefusalProbe
-
-  dotnet:isoplane_guest_dotnet_dns:
-    cmds:
-      - task: probe:build
-        vars:
-          NAME: isoplane_guest_dotnet_dns
-          PROBE: DnsProbe
-
-  dotnet:isoplane_guest_dotnet_stream:
-    cmds:
-      - task: probe:build
-        vars:
-          NAME: isoplane_guest_dotnet_stream
-          PROBE: StreamProbe
-
-  dotnet:isoplane_guest_dotnet_connect:
-    cmds:
-      - task: probe:build
-        vars:
-          NAME: isoplane_guest_dotnet_connect
-          PROBE: ConnectProbe
-
-  dotnet:isoplane_guest_dotnet_cleanup:
-    cmds:
-      - task: probe:build
-        vars:
-          NAME: isoplane_guest_dotnet_cleanup
-          PROBE: CleanupProbe
-
-  dotnet:isoplane_guest_dotnet_timer:
-    cmds:
-      - task: probe:build
-        vars:
-          NAME: isoplane_guest_dotnet_timer
-          PROBE: TimerProbe
-
-  dotnet:isoplane_guest_dotnet_logs:
-    cmds:
-      - task: probe:build
-        vars:
-          NAME: isoplane_guest_dotnet_logs
-          PROBE: LogProbe
-
-  dotnet:isoplane_guest_dotnet_filesystem:
-    cmds:
-      - task: probe:build
-        vars:
-          NAME: isoplane_guest_dotnet_filesystem
-          PROBE: FilesystemProbe
-
   dotnet:isoplane_guest_aspnet:
     cmds:
       - task: probe:build
         vars:
           NAME: isoplane_guest_aspnet
           PROJECT: guests/aspnet/src
-
-  dotnet:isoplane_guest_dotnet_request:
-    cmds:
-      - task: probe:build
-        vars:
-          NAME: isoplane_guest_dotnet_request
-          PROBE: RequestProbe
-
-  dotnet:isoplane_guest_dotnet_upload:
-    cmds:
-      - task: probe:build
-        vars:
-          NAME: isoplane_guest_dotnet_upload
-          PROBE: UploadProbe
-
-  dotnet:isoplane_guest_dotnet:
-    cmds:
-      - task: probe:build
-        vars:
-          NAME: isoplane_guest_dotnet
-          PROBE: Api
 
   acceptance:
     cmds:
@@ -555,8 +451,7 @@ tasks:
       - '{{.ROOT_DIR}}/{{.PROJECT}}/**/*.cs'
       - '{{.ROOT_DIR}}/{{.PROJECT}}/**/*.csproj'
       - '{{.ROOT_DIR}}/taskfiles/fixtures.yml'
-      - '{{.ROOT_DIR}}/guests/dotnet/src/App/filesystem-resource.txt'
-      - '{{.ROOT_DIR}}/guests/dotnet/src/App/{{.PROBE}}.cs'
+      - '{{.ROOT_DIR}}/guests/dotnet/src/{Shared,{{.PROBE}}}/*'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/**/*'
       - '{{.ROOT_DIR}}/tools/BuildProtocol/**/*'
       - '{{.ROOT_DIR}}/Directory.Build.props'
@@ -570,7 +465,6 @@ tasks:
       - '{{.ROOT_DIR}}/.build/clr-anycpu/probes/{{.NAME}}.tar'
     env:
       IsoplaneProbe: '{{.PROBE}}'
-      IsoplaneProbeSymbol: 'ISOPLANE_{{trimSuffix "Probe" .PROBE | upper}}_PROBE'
       ISOPLANE_FIXTURE_ARTIFACTS: '{{.ROOT_DIR}}/.build/clr-anycpu/probe-intermediates/{{.NAME}}'
       ISOPLANE_MANAGED_ARTIFACTS: '{{.MANAGED}}'
       ArtifactsPath: '{{.MANAGED}}'

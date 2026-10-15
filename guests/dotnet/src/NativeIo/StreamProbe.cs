@@ -13,10 +13,9 @@ namespace Isoplane.App;
 public static class StreamProbe
 {
     /// <summary>Reads the endpoint's payload and writes the same bytes back.</summary>
-    [HttpHandler]
-    public static async Task<Response> HandleAsync(Request request)
+    public static async Task<Response> HandleAsync(string path)
     {
-        string[] parts = request.Path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        string[] parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
         IPAddress address = IPAddress.Parse(parts[0]);
         int port = int.Parse(parts[1], CultureInfo.InvariantCulture);
         using var socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp);

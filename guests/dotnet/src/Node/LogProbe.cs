@@ -9,10 +9,9 @@ namespace Isoplane.App;
 public static class LogProbe
 {
     /// <summary>Completes after the host resumes the logging request.</summary>
-    [HttpHandler]
-    public static async Task<Response> HandleAsync(Request req)
+    public static async Task<Response> HandleAsync(string path)
     {
-        if (req.Path == "/after-response")
+        if (path == "/after-response")
         {
             _ = LogAfterResponse();
             return Response.Text("returned");

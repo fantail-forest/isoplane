@@ -45,7 +45,7 @@ fn cleanup_cell(
     let module = ModuleId::new("managed-cleanup", "v1");
     let template = template
         .clone()
-        .with_application_files(managed::files("isoplane_guest_dotnet_cleanup"))
+        .with_application_files(managed::files("isoplane_guest_dotnet_native_io"))
         .expect("the cleanup fixture must bind its application files");
     let activator = EngineActivator::new(engine.clone(), template, module.clone());
     let cell = if operation == "/timer" {
@@ -89,12 +89,13 @@ async fn dispatch_at_idle(
 fn dispatch_request(
     cell: &Arc<Cell>,
     module: &ModuleId,
-    path: &str,
+    operation: &str,
 ) -> isoplane_host::DispatchResult {
+    let path = format!("/cleanup{operation}");
     let request = HttpRequest {
         method: "GET".into(),
         url: format!("https://cleanup.test{path}"),
-        path: path.into(),
+        path: path.clone(),
         query: vec![],
         headers: vec![],
         body: vec![],
@@ -102,7 +103,7 @@ fn dispatch_request(
     let result = cell
         .dispatch_blocking(
             module,
-            Target::Handler { route: path.into() },
+            Target::Handler { route: path },
             cell.http_record(module, request),
             Duration::from_secs(60),
         )
@@ -282,8 +283,8 @@ async fn check_expired_abandoned_timer(runtime: GuestRuntime, abandon_first: boo
     let response = tokio::task::spawn_blocking(move || {
         let request = HttpRequest {
             method: "GET".into(),
-            url: "https://cleanup.test/drive-timer".into(),
-            path: "/drive-timer".into(),
+            url: "https://cleanup.test/cleanup/drive-timer".into(),
+            path: "/cleanup/drive-timer".into(),
             query: vec![],
             headers: vec![],
             body: vec![],
@@ -291,7 +292,7 @@ async fn check_expired_abandoned_timer(runtime: GuestRuntime, abandon_first: boo
         requester.dispatch_blocking(
             &request_module,
             Target::Handler {
-                route: "/drive-timer".into(),
+                route: "/cleanup/drive-timer".into(),
             },
             requester.http_record(&request_module, request),
             Duration::from_secs(10),

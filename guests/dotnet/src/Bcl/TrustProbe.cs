@@ -1,4 +1,3 @@
-#if ISOPLANE_TRUST_PROBE
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -19,21 +18,19 @@ internal static class TrustProbe
 {
     private static string _atBoot = "";
 
-    [Initializer]
     public static Task InitializeAsync()
     {
         _atBoot = Roots();
         return Task.CompletedTask;
     }
 
-    [HttpHandler]
-    public static Task<Response> HandleAsync(Request request)
+    public static Task<Response> HandleAsync(string path)
     {
-        string text = request.Path switch
+        string text = path switch
         {
             "/at-boot" => _atBoot,
             "/roots" => Roots(),
-            _ => throw new ArgumentException("Unknown trust probe path.", nameof(request)),
+            _ => throw new ArgumentException("Unknown trust probe path.", nameof(path)),
         };
         return Task.FromResult(Response.Text(text));
     }
@@ -48,4 +45,3 @@ internal static class TrustProbe
         return "roots=" + thumbprints.Count.ToString(CultureInfo.InvariantCulture) + " " + string.Join(",", thumbprints);
     }
 }
-#endif

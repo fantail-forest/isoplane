@@ -10,16 +10,15 @@ public static class TimerProbe
     private static int _requests;
 
     /// <summary>Exercises awaited timers and observes abandoned timer continuations.</summary>
-    [HttpHandler]
-    public static async Task<Response> HandleAsync(Request request)
+    public static async Task<Response> HandleAsync(string path)
     {
         _requests++;
-        if (request.Path == "/abandon")
+        if (path == "/abandon")
         {
             _ = AbandonedDelay();
             return Response.Text("armed");
         }
-        if (request.Path == "/observe")
+        if (path == "/observe")
             return Response.Text($"{_requests}:{_abandonedCallbacks}");
         await Task.Delay(100).ConfigureAwait(false);
         return Response.Text("timer resumed");

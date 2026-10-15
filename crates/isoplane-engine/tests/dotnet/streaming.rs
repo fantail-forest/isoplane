@@ -8,14 +8,14 @@ use isoplane_abi::result::ResultRecord;
 use isoplane_engine::{Completion, InstanceOps};
 
 fn streaming(runtime: GuestRuntime) -> &'static Fixture {
-    fixture("isoplane_guest_dotnet_streaming", runtime)
+    fixture("isoplane_guest_dotnet_bcl", runtime)
 }
 
 in_mono_runtime! {
     fn the_managed_sdk_rejects_a_refused_response_handle_before_exposing_a_writer(runtime: GuestRuntime) {
         let (mut instance, recorder) = streaming(runtime).activate();
         recorder.reject_next_response.store(true, Ordering::Relaxed);
-        let outcome = Request::get("/refused").dispatch(&mut instance);
+        let outcome = Request::get("/streaming/refused").dispatch(&mut instance);
         assert_eq!(
             outcome.completion,
             Completion::Done,
@@ -35,7 +35,7 @@ in_mono_runtime! {
 
     fn a_pending_core_response_write_blocks_concurrent_writes_and_completion_until_acknowledged(runtime: GuestRuntime) {
         let (mut instance, recorder) = streaming(runtime).activate();
-        let outcome = Request::get("/pending").dispatch(&mut instance);
+        let outcome = Request::get("/streaming/pending").dispatch(&mut instance);
         assert_eq!(outcome.completion, Completion::Parked, "the guest must await the first write acknowledgement after observing both guards: {outcome:?}");
         assert_eq!(
             recorder

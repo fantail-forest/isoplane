@@ -22,17 +22,17 @@ async fn managed_logs_keep_host_ownership_across_park_wake_without_post_response
     {
         let before = otlp::output::guest_logs(&output).len();
         let wasm = tokio::task::spawn_blocking(move || {
-            common::preparation::Guest::from("isoplane_guest_dotnet_logs")
+            common::preparation::Guest::from("isoplane_guest_dotnet_node")
         })
         .await
         .expect("the managed logging fixture must build");
         let rig = common::start_with_policy(wasm, InitSandbox::RuntimeBringUp, None, |_| {}).await;
-        let completed = common::get(rig.proxy, "quotes.isoplane.dev", "/after-response").await;
+        let completed = common::get(rig.proxy, "quotes.isoplane.dev", "/logs/after-response").await;
         assert_eq!(
             completed.body, "returned",
             "the unawaited log probe must complete its response"
         );
-        let response = common::get(rig.proxy, "quotes.isoplane.dev", "/logging").await;
+        let response = common::get(rig.proxy, "quotes.isoplane.dev", "/logs/logging").await;
         assert_eq!(
             response.status, 200,
             "the Mono handler must finish after its logged host future"

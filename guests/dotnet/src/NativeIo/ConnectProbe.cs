@@ -11,10 +11,9 @@ namespace Isoplane.App;
 public static class ConnectProbe
 {
     /// <summary>Connects to the test endpoint and disposes the socket after resuming.</summary>
-    [HttpHandler]
-    public static async Task<Response> HandleAsync(Request request)
+    public static async Task<Response> HandleAsync(string path)
     {
-        string[] parts = request.Path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        string[] parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
         IPAddress address = IPAddress.Parse(parts[0]);
         int port = int.Parse(parts[1], CultureInfo.InvariantCulture);
         try

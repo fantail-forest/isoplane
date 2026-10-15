@@ -1,4 +1,3 @@
-#if ISOPLANE_MEMORY_PROBE
 using System;
 using System.Threading.Tasks;
 using Isoplane;
@@ -9,7 +8,6 @@ internal static class MemoryProbe
 {
     private static long _initialMemoryBytes;
 
-    [Initializer]
     public static Task InitializeAsync()
     {
         GC.Collect();
@@ -17,12 +15,10 @@ internal static class MemoryProbe
         return Task.CompletedTask;
     }
 
-    [HttpHandler]
-    public static Task<Response> HandleAsync(Request request)
+    public static Task<Response> HandleAsync()
     {
         GC.Collect();
         long currentMemoryBytes = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes;
         return Task.FromResult(Response.Text($"{_initialMemoryBytes}:{currentMemoryBytes}"));
     }
 }
-#endif

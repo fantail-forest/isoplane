@@ -5,7 +5,7 @@ use isoplane_engine::Completion;
 fn initialized_limit_survives_restore(runtime: GuestRuntime, limit_bytes: u64) {
     let fixture = Fixture {
         memory_limit_bytes: Some(limit_bytes),
-        ..fixture("isoplane_guest_dotnet_memory", runtime).clone()
+        ..fixture("isoplane_guest_dotnet_bcl", runtime).clone()
     };
     let (mut original, _) = fixture.activate();
     let initialized = original.run_initialize(budget());
@@ -15,7 +15,7 @@ fn initialized_limit_survives_restore(runtime: GuestRuntime, limit_bytes: u64) {
         "the managed memory probe must initialize under the effective ceiling: {initialized:?}"
     );
     let (mut restored, recorder) = fixture.restore_from(original, 0xAB);
-    let response = String::from_utf8(Request::get("/").answer(&mut restored, &recorder))
+    let response = String::from_utf8(Request::get("/memory").answer(&mut restored, &recorder))
         .expect("the memory probe must return decimal byte counts");
     assert_eq!(response, format!("{limit_bytes}:{limit_bytes}"),
         "the collector must observe the effective limit at initialization and retain it after capture and restoration");

@@ -1,4 +1,3 @@
-#if ISOPLANE_CERTIFICATE_PROBE
 using System;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
@@ -13,14 +12,13 @@ public static class CertificateProbe
 
     private static X509Certificate2? saved;
 
-    [HttpHandler]
-    public static Task<Response> HandleAsync(Request request)
+    public static Task<Response> HandleAsync(string path)
     {
         byte[] der = Convert.FromBase64String(CertificateDer);
         string result;
         try
         {
-            result = request.Path switch
+            result = path switch
             {
                 "/values" => Values(der, false),
                 "/capture" => Save(der),
@@ -127,4 +125,3 @@ public static class CertificateProbe
         return Convert.ToHexString(certificate.RawData);
     }
 }
-#endif

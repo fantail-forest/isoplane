@@ -1,4 +1,3 @@
-#if ISOPLANE_STREAMING_PROBE
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
@@ -8,10 +7,9 @@ namespace Isoplane.App;
 
 public static class StreamingProbe
 {
-    [HttpHandler]
-    public static async Task<Response> HandleAsync(Request request)
+    public static async Task<Response> HandleAsync(string path)
     {
-        if (request.Path == "/pending")
+        if (path == "/pending")
         {
             var stream = Response.Stream(200, Array.Empty<KeyValuePair<string, string>>());
             var pending = stream.WriteAsync(new byte[] { 1 });
@@ -32,4 +30,3 @@ public static class StreamingProbe
         throw new InvalidOperationException("A refused response handle escaped the SDK guard.");
     }
 }
-#endif

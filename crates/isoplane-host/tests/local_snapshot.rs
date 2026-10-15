@@ -385,9 +385,9 @@ fn managed_stream_snapshot(runtime: GuestRuntime) {
         &wasm,
         256 << 20,
         policy.clone(),
-        managed::files("isoplane_guest_dotnet_stream"),
+        managed::files("isoplane_guest_dotnet_native_io"),
     );
-    let response = rig.submit(&format!("/{}/{}", peer.ip(), peer.port()));
+    let response = rig.submit(&format!("/stream/{}/{}", peer.ip(), peer.port()));
     let instance = connected
         .recv_timeout(DEADLINE)
         .expect("real TCP connection must reach the controlled barrier");

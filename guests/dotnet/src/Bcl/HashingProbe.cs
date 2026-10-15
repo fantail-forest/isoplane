@@ -1,4 +1,3 @@
-#if ISOPLANE_HASHING_PROBE
 using System;
 using System.Security.Cryptography;
 using System.Text;
@@ -12,22 +11,21 @@ public static class HashingProbe
     private static IncrementalHash? saved;
     private static SHA256? savedSha;
 
-    [HttpHandler]
-    public static Task<Response> HandleAsync(Request request)
+    public static Task<Response> HandleAsync(Request request, string path)
     {
         byte[] data = request.Body.ToArray();
         byte[] key = Convert.FromHexString(request.Query[0].Value);
         byte[] result;
         try
         {
-            if (request.Path.StartsWith("/pbkdf2/", StringComparison.Ordinal))
+            if (path.StartsWith("/pbkdf2/", StringComparison.Ordinal))
             {
-                string[] parts = request.Path.Split('/');
+                string[] parts = path.Split('/');
                 int iterations = int.Parse(parts[3]);
                 int count = int.Parse(parts[4]);
                 result = Derive(parts[2], data, key, iterations, count);
             }
-            else result = request.Path switch
+            else result = path switch
             {
                 "/pbkdf-null-password" => Rfc2898DeriveBytes.Pbkdf2((byte[])null!, key, 1, HashAlgorithmName.SHA256, 32),
                 "/pbkdf-null-salt" => Rfc2898DeriveBytes.Pbkdf2(data, (byte[])null!, 1, HashAlgorithmName.SHA256, 32),
@@ -229,4 +227,3 @@ public static class HashingProbe
     }
 
 }
-#endif

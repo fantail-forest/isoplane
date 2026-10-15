@@ -1,4 +1,3 @@
-#if ISOPLANE_RANDOMNESS_PROBE
 using System;
 using System.Security.Cryptography;
 using System.Threading.Tasks;
@@ -10,17 +9,15 @@ public static class RandomnessProbe
 {
     private static RandomNumberGenerator InstanceRandom = null!;
 
-    [Initializer]
     public static Task InitializeAsync()
     {
         InstanceRandom = RandomNumberGenerator.Create();
         return Task.CompletedTask;
     }
 
-    [HttpHandler]
-    public static Task<Response> HandleAsync(Request request)
+    public static Task<Response> HandleAsync(Request request, string path)
     {
-        if (request.Path == "/instance")
+        if (path == "/instance")
         {
             byte[] slice = new byte[] { 0x11, 0x22, 0x33, 0x44 };
             InstanceRandom.GetBytes(slice, 1, 2);
@@ -28,13 +25,13 @@ public static class RandomnessProbe
             InstanceRandom.GetBytes(result.AsSpan());
             return Task.FromResult(Response.Text(Convert.ToHexString(slice) + ":" + Convert.ToHexString(result)));
         }
-        if (request.Path == "/instance-empty")
+        if (path == "/instance-empty")
         {
             InstanceRandom.GetBytes(Array.Empty<byte>());
             InstanceRandom.GetBytes(Span<byte>.Empty);
             return Task.FromResult(Response.Text("0"));
         }
-        if (request.Path == "/instance-null")
+        if (path == "/instance-null")
         {
             try { InstanceRandom.GetBytes(null!); }
             catch (ArgumentNullException error)
@@ -43,10 +40,10 @@ public static class RandomnessProbe
             }
             throw new InvalidOperationException("A null random buffer was accepted.");
         }
-        if (request.Path == "/instance-offset" || request.Path == "/instance-count")
+        if (path == "/instance-offset" || path == "/instance-count")
         {
-            int offset = request.Path == "/instance-offset" ? -1 : 0;
-            int count = request.Path == "/instance-count" ? -1 : 0;
+            int offset = path == "/instance-offset" ? -1 : 0;
+            int count = path == "/instance-count" ? -1 : 0;
             try { InstanceRandom.GetBytes(new byte[1], offset, count); }
             catch (ArgumentOutOfRangeException error)
             {
@@ -54,7 +51,7 @@ public static class RandomnessProbe
             }
             throw new InvalidOperationException("An invalid instance buffer range was accepted.");
         }
-        if (request.Path == "/values")
+        if (path == "/values")
         {
             var name = new HashAlgorithmName("SHA256");
             if (name != HashAlgorithmName.SHA256 || name.Name != "SHA256")
@@ -65,12 +62,12 @@ public static class RandomnessProbe
                 throw new InvalidOperationException("Managed crypto containers lost their state.");
             return Task.FromResult(Response.Text("values"));
         }
-        if (request.Path == "/empty")
+        if (path == "/empty")
         {
             RandomNumberGenerator.Fill(Span<byte>.Empty);
             return Task.FromResult(Response.Text(RandomNumberGenerator.GetBytes(0).Length.ToString()));
         }
-        if (request.Path == "/negative")
+        if (path == "/negative")
         {
             try { RandomNumberGenerator.GetBytes(-1); }
             catch (ArgumentOutOfRangeException error)
@@ -79,11 +76,11 @@ public static class RandomnessProbe
             }
             throw new InvalidOperationException("A negative random byte count was accepted.");
         }
-        if (request.Path == "/large" || request.Path == "/instance-large")
+        if (path == "/large" || path == "/instance-large")
         {
             int count = int.Parse(request.Query[0].Value);
             byte[] large;
-            if (request.Path == "/instance-large")
+            if (path == "/instance-large")
             {
                 large = new byte[count];
                 InstanceRandom.GetBytes(large);
@@ -100,4 +97,3 @@ public static class RandomnessProbe
         return Task.FromResult(Response.Text(Convert.ToHexString(bytes) + ":" + Convert.ToHexString(allocated)));
     }
 }
-#endif

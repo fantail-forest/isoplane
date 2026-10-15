@@ -1,4 +1,3 @@
-#if ISOPLANE_FILESYSTEM_PROBE
 using System;
 using System.IO;
 using System.Reflection;
@@ -12,20 +11,18 @@ public static class FilesystemProbe
 {
     private static string InitialDirectory = "";
 
-    [Initializer]
     public static Task InitializeAsync()
     {
         InitialDirectory = Directory.GetCurrentDirectory();
         return Task.CompletedTask;
     }
 
-    [HttpHandler]
-    public static Task<Response> HandleAsync(Request request)
+    public static Task<Response> HandleAsync(string path)
     {
         string result;
         try
         {
-            result = request.Path switch
+            result = path switch
             {
                 "/root" => $"{InitialDirectory}|{Directory.Exists("/")}|{string.Join(",", Directory.GetFileSystemEntries("/"))}",
                 "/missing" => $"{File.Exists("/etc/passwd")}|{Directory.Exists("/tmp")}|{File.Exists("../../etc/passwd")}",
@@ -63,4 +60,3 @@ public static class FilesystemProbe
         return reader.ReadToEnd();
     }
 }
-#endif
