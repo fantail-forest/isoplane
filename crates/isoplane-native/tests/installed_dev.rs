@@ -87,24 +87,6 @@ async fn an_installed_application_resumes_ordinary_timers() {
         "Hello from Isoplane!",
         "Mono must invoke the application's handler through the actual sandbox"
     );
-    std::fs::write(
-        app.join("Handler.cs"),
-        r#"using Isoplane;
-
-public static class Handler
-{
-    [HttpHandler]
-    public static async Task<Response> HandleAsync(Request request)
-    {
-        if (request.Path != "/async") return Response.Text("Hello from Isoplane!");
-        await Task.Delay(1);
-        return Response.Text("async-ready");
-    }
-}
-"#,
-    )
-    .unwrap();
-    dev.wait_event("reloaded");
     let response = client
         .get(format!("{}/async", dev.url))
         .send()

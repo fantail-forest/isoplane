@@ -35,8 +35,8 @@ pub fn release_version() -> String {
 }
 
 /// A copy in `destination/app` of the handler application in
-/// `crates/isoplane-native/tests/fixtures/handler`. It answers every request with
-/// "Hello from Isoplane!" from `Handler.cs`.
+/// `crates/isoplane-native/tests/fixtures/handler`. `Handler.cs` answers `/async` with
+/// "async-ready" after a host timer, and every other path with "Hello from Isoplane!".
 pub fn handler_project(destination: &Path) -> PathBuf {
     copy_project(
         &prepared().join("fixtures/handler"),
