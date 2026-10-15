@@ -61,7 +61,6 @@ public sealed class ManagedBundleTests : MsbuildTests
             new XElement("Target", new XAttribute("Name", "RuntimeAssetFixture"), new XAttribute("BeforeTargets", "IsoplaneManagedBundle"),
                 new XElement("ItemGroup", new XElement("ReferenceCopyLocalPaths", new XAttribute("Include", "runtime.wasm;customer-native.so")),
                     new XElement("RuntimePackAsset", new XAttribute("Include", "runtime.wasm")))),
-            new XElement("Import", new XAttribute("Project", Path.Combine(SdkDirectory(), "AspNetCore/buildTransitive/Isoplane.AspNetCore.targets"))),
             new XElement("Import", new XAttribute("Project", Path.Combine(SdkDirectory(), "Build/Isoplane.ManagedBundle.targets")))))
             .Save(project);
         var output = Path.Combine(directory, "inputs.json");
@@ -75,16 +74,8 @@ public sealed class ManagedBundleTests : MsbuildTests
         using var document = JsonDocument.Parse(File.ReadAllBytes(output));
         var items = document.RootElement.GetProperty("Items");
         static string[] Names(JsonElement items, string name) => items.GetProperty(name).EnumerateArray().Select(item => item.GetProperty("Filename").GetString()!).ToArray();
-        static bool AspNetImplementation(JsonElement item) => item.GetProperty("FullPath").GetString()!
-            .Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-            .Contains("microsoft.aspnetcore.app.runtime.linux-x64", StringComparer.OrdinalIgnoreCase);
-        var bundled = items.GetProperty("IsoplaneBundleAssembly").EnumerateArray().ToLookup(AspNetImplementation, item => item.GetProperty("FullPath").GetString()!);
-        Assert.Equal(new[] { "Application", "Dependency" }, bundled[false].Select(Path.GetFileNameWithoutExtension).Order());
-        Assert.True(bundled[true].Any(), "The application's selected ASP.NET implementation must ship in the bundle instead of being inherited from the platform.");
-        var aspNetPack = Directory.GetFiles(Path.GetDirectoryName(bundled[true].First())!, "*.dll").Select(Path.GetFileName);
-        Assert.True(bundled[true].Select(Path.GetFileName).Order().SequenceEqual(aspNetPack.Order()), "The selected ASP.NET implementation must ship in full, at the version the application restored.");
+        Assert.Equal(new[] { "Application", "Dependency" }, Names(items, "IsoplaneBundleAssembly").Order());
         Assert.True(!Names(items, "IsoplaneBundlePlatformReference").Contains("Dependency"), "A project reference's reference assembly must not be mistaken for a platform dependency.");
-        Assert.True(!items.GetProperty("IsoplaneBundlePlatformReference").EnumerateArray().Any(AspNetImplementation), "The selected ASP.NET implementation must not be reported as a platform-supplied reference.");
         var expectedSymbols = !symbols ? Array.Empty<string>() : packageReference ? new[] { "Application" } : new[] { "Application", "Dependency" };
         Assert.True(Names(items, "IsoplaneBundleSymbol").Order().SequenceEqual(expectedSymbols), "Portable symbols must be collected when supplied for application assemblies.");
         Assert.True(Names(items, "IsoplaneBundleAsset").Order().SequenceEqual(new[] { "customer-native", "data" }), "Application data and customer native inputs must be reported; platform runtime artifacts, NuGet settings and explicitly unpublished files must stay local.");
