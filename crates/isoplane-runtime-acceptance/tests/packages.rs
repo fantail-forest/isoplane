@@ -350,11 +350,19 @@ async fn a_packages_initialization_hook_runs_once_before_its_template_is_capture
 }
 
 #[tokio::test(start_paused = true)]
-async fn an_aspnet_package_runs_on_the_shared_runtime_across_restored_stores() {
+async fn an_aspnet_package_answers_across_restored_stores_after_one_warmup() {
     let body = answer_package("web", "/hello/isoplane").await;
     assert!(
         body.starts_with("hello, isoplane;"),
         "the package's ASP.NET route must answer from its content file through the runtime's adapter: {body}"
+    );
+    assert!(
+        body.ends_with("; warmups=1"),
+        "the warm-up the package's entry point subscribes must reach its pipeline exactly once: {body}"
+    );
+    assert!(
+        body.contains("; greetings=2;"),
+        "the first real greeting must follow one completed initialization greeting: {body}"
     );
 }
 
@@ -364,24 +372,6 @@ async fn an_aspnet_package_serves_its_static_web_assets() {
     assert_eq!(
         body, "body { color: teal; }\n",
         "a file under the package's wwwroot must be served from the package"
-    );
-}
-
-#[tokio::test(start_paused = true)]
-async fn an_aspnet_packages_warmup_runs_once_before_its_template_is_captured() {
-    let body = answer_package("web", "/hello/isoplane").await;
-    assert!(
-        body.ends_with("; warmups=1"),
-        "the warm-up the package's entry point subscribes must reach its pipeline exactly once: {body}"
-    );
-}
-
-#[tokio::test(start_paused = true)]
-async fn an_aspnet_package_warms_its_read_route_before_template_capture() {
-    let body = answer_package("web", "/hello/isoplane").await;
-    assert!(
-        body.contains("; greetings=2;"),
-        "the first real greeting must follow one completed initialization greeting: {body}"
     );
 }
 

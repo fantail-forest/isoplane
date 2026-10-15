@@ -15,8 +15,7 @@ using Microsoft.Extensions.Logging.Console;
 namespace Web;
 
 /// <summary>
-/// Minimal API routes over a singleton, a content file, a static web asset, a streamed upload,
-/// a logged entry and, when a <c>Peer</c> setting names one, a client from <c>IHttpClientFactory</c>.
+/// Minimal API routes over a singleton, a content file, a static web asset, a logged entry and, when a <c>Peer</c> setting names one, a client from <c>IHttpClientFactory</c>.
 /// A <c>ConsoleLogging</c> setting names the logging calls its builder makes.
 /// </summary>
 public static class Application
@@ -44,15 +43,6 @@ public static class Application
             await next(context);
         });
         app.MapStaticAssets();
-        app.MapPost("/upload", async (HttpRequest request) =>
-        {
-            long total = 0;
-            byte[] buffer = new byte[4096];
-            int read;
-            while ((read = await request.Body.ReadAsync(buffer)) != 0)
-                total += read;
-            return "received:" + total.ToString(CultureInfo.InvariantCulture);
-        });
         app.MapGet("/log", async (ILoggerFactory loggers) =>
         {
             await Task.Delay(TimeSpan.FromMilliseconds(50)).ConfigureAwait(false);
