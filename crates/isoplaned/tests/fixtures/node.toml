@@ -1,11 +1,8 @@
-# The engine every test node runs. task fixtures:node compiles the shared runtime for it, and
-# the tests copy that compile into each node, so a test that needs another engine compiles its
-# own. Several nodes are built concurrently in one process, and the default address-space
-# reservation fits only a handful. The memory ceiling is the standard plan's, which a .NET
-# guest's minimum memory needs.
+# The engine every test node runs: isoplane_fixtures::engine_config with room for 16 instances,
+# so the nodes load the shared runtime task fixtures:compiled-runtime compiled. Several nodes are
+# built concurrently in one process, and the default address-space reservation fits only a handful.
 deployment = "development"
 
 [engine]
 max_instances = 16
-max_memory_mib = 128
-guard_mib = 64
+total_tables = 64

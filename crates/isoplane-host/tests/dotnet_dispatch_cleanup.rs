@@ -5,7 +5,7 @@ mod common;
 mod managed;
 use isoplane_abi::config::{HandlerLifecycle, Limits};
 use isoplane_abi::dispatch::HttpRequest;
-use isoplane_engine::{EngineConfig, IsoplaneEngine};
+use isoplane_engine::IsoplaneEngine;
 use isoplane_fixtures::GuestRuntime;
 use isoplane_host::activator::EngineActivator;
 use isoplane_host::cell::{Cell, CellConfig, Target};
@@ -13,24 +13,17 @@ use isoplane_host::ModuleId;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// The shared runtime, compiled once for every test in this binary, on an engine with room
-/// for each test's instances.
+/// The shared runtime Task compiled, loaded once for every test in this binary on an engine
+/// with room for each test's instances.
 fn shared_runtime() -> &'static (Arc<IsoplaneEngine>, isoplane_engine::Template) {
     static RUNTIME: std::sync::OnceLock<(Arc<IsoplaneEngine>, isoplane_engine::Template)> =
         std::sync::OnceLock::new();
     RUNTIME.get_or_init(|| {
         let engine = Arc::new(
-            IsoplaneEngine::new(EngineConfig {
-                max_instances: 32,
-                max_memory_bytes: 256 << 20,
-                guard_size_bytes: 64 << 20,
-                ..EngineConfig::default()
-            })
-            .expect("the managed fixture engine must start"),
+            IsoplaneEngine::new(isoplane_fixtures::engine_config(32))
+                .expect("the managed fixture engine must start"),
         );
-        let template = engine
-            .load_template(&isoplane_fixtures::mono_runtime())
-            .expect("the shared runtime must load through the real engine");
+        let template = isoplane_fixtures::load_compiled_runtime(&engine);
         (engine, template)
     })
 }

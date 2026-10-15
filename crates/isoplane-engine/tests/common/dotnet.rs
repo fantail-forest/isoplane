@@ -8,8 +8,7 @@ use std::sync::{Mutex, OnceLock};
 use super::bindings::{Recorder, TestBindings};
 use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest, TraceContext};
 use isoplane_engine::{
-    Completion, DispatchOutcome, EngineConfig, Instance, InstanceOps, IsoplaneEngine,
-    OccupancyBudget, Template,
+    Completion, DispatchOutcome, Instance, InstanceOps, IsoplaneEngine, OccupancyBudget, Template,
 };
 pub use isoplane_fixtures::GuestRuntime;
 #[path = "managed.rs"]
@@ -47,24 +46,15 @@ pub struct Fixture {
 
 type FixtureSlots = HashMap<(&'static str, GuestRuntime), &'static OnceLock<Fixture>>;
 
-/// The shared runtime, compiled once for every fixture in this binary, on an engine with room
-/// for all of their instances.
+/// The shared runtime Task compiled, loaded once for every fixture in this binary on an engine
+/// with room for all of their instances.
 fn shared_runtime(runtime: GuestRuntime) -> &'static (IsoplaneEngine, Template) {
     static RUNTIME: OnceLock<(IsoplaneEngine, Template)> = OnceLock::new();
     let GuestRuntime::Mono = runtime;
     RUNTIME.get_or_init(|| {
-        let engine = IsoplaneEngine::new(EngineConfig {
-            max_instances: 64,
-            max_memory_bytes: 256 << 20,
-            guard_size_bytes: 64 << 20,
-            ..EngineConfig::default()
-        })
-        .unwrap_or_else(|error| panic!("the fixture engine must initialize: {error:#}"));
-        let template = engine
-            .load_template(&isoplane_fixtures::mono_runtime())
-            .unwrap_or_else(|error| {
-                panic!("the shared runtime must load under {runtime}: {error:#}")
-            });
+        let engine = IsoplaneEngine::new(isoplane_fixtures::engine_config(64))
+            .unwrap_or_else(|error| panic!("the fixture engine must initialize: {error:#}"));
+        let template = isoplane_fixtures::load_compiled_runtime(&engine);
         (engine, template)
     })
 }

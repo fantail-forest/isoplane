@@ -135,14 +135,38 @@ struct Rig {
 
 impl Rig {
     fn new(wasm: &[u8], max_memory_bytes: u64, egress: Arc<HostEgressPolicy>) -> Self {
-        Self::with_files(wasm, max_memory_bytes, egress, Default::default())
+        let engine = Arc::new(
+            IsoplaneEngine::new(EngineConfig {
+                max_instances: 2,
+                max_memory_bytes,
+                guard_size_bytes: 64 << 20,
+                ..Default::default()
+            })
+            .expect("real engine must start"),
+        );
+        let template = engine.load_template(wasm).expect("real guest must load");
+        Self::serving(engine, template, max_memory_bytes, egress)
     }
 
-    fn with_files(
-        wasm: &[u8],
-        max_memory_bytes: u64,
+    /// The shared runtime Task compiled, serving `files`.
+    fn shared_runtime(
         egress: Arc<HostEgressPolicy>,
         files: isoplane_engine::PlatformFiles,
+    ) -> Self {
+        let config = isoplane_fixtures::engine_config(2);
+        let max_memory_bytes = config.max_memory_bytes;
+        let engine = Arc::new(IsoplaneEngine::new(config).expect("real engine must start"));
+        let template = isoplane_fixtures::load_compiled_runtime(&engine)
+            .with_application_files(files)
+            .expect("real guest must load");
+        Self::serving(engine, template, max_memory_bytes, egress)
+    }
+
+    fn serving(
+        engine: Arc<IsoplaneEngine>,
+        template: isoplane_engine::Template,
+        max_memory_bytes: u64,
+        egress: Arc<HostEgressPolicy>,
     ) -> Self {
         let directory = tempfile::tempdir().expect("each test owns a snapshot directory");
         let counts = Arc::new(StorageCounts::default());
@@ -170,20 +194,7 @@ impl Rig {
         )
         .expect("cell must start with real snapshots");
         cell.set_node_coordinated_reclamation();
-        let engine = Arc::new(
-            IsoplaneEngine::new(EngineConfig {
-                max_instances: 2,
-                max_memory_bytes,
-                guard_size_bytes: 64 << 20,
-                ..Default::default()
-            })
-            .expect("real engine must start"),
-        );
         let module = ModuleId::new("snapshot-probe", "v1");
-        let template = engine
-            .load_template(wasm)
-            .and_then(|template| template.with_application_files(files))
-            .expect("real guest must load");
         let activator = Arc::new(EngineActivator::new(engine, template, module.clone()));
         cell.register_module(
             "snapshot-test",
@@ -362,7 +373,6 @@ fn begin_now(
 fn managed_stream_snapshot(runtime: GuestRuntime) {
     isoplane_harness::LogCapture::global();
     let GuestRuntime::Mono = runtime;
-    let wasm = isoplane_fixtures::mono_runtime();
     let listener =
         TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).expect("owned peer must bind");
     let peer = listener
@@ -381,9 +391,7 @@ fn managed_stream_snapshot(runtime: GuestRuntime) {
         .with_connections(connections.clone())
         .with_destinations(Arc::new(ExactPeer(peer))),
     );
-    let rig = Rig::with_files(
-        &wasm,
-        256 << 20,
+    let rig = Rig::shared_runtime(
         policy.clone(),
         managed::files("isoplane_guest_dotnet_native_io"),
     );

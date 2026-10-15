@@ -24,7 +24,7 @@ vars:
   SCRATCH: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/tmp'
   TEST_RUNTIME_CACHE: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/test-runtimes/cache'
   TEST_DOTNET: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/test-dotnet'
-  TEST_NODE: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/test-node'
+  TEST_COMPILED_RUNTIME: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/test-compiled-runtime'
 
   MODULES: '{{.ISOPLANE_TEST_RUNTIME_MODULES | default (printf "%s/.build/wasm32/runtime-modules" .ROOT_DIR)}}'
   FEED: '{{.ISOPLANE_TEST_RUNTIME_FEED | default (printf "%s/.build/wasm32/runtime/feed" .ROOT_DIR)}}'
@@ -46,7 +46,7 @@ env:
   ISOPLANE_TEST_PACKAGE_FEED: '{{.PACKAGES}}'
   ISOPLANE_TEST_RUNTIME_CACHE: '{{.TEST_RUNTIME_CACHE}}'
   ISOPLANE_TEST_DOTNET: '{{.TEST_DOTNET}}'
-  ISOPLANE_TEST_NODE_ARTIFACTS: '{{.TEST_NODE}}/artifacts'
+  ISOPLANE_TEST_COMPILED_RUNTIME: '{{.TEST_COMPILED_RUNTIME}}'
   ISOPLANE_TEST_NATIVE_PACKAGE_FEED: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/packages'
   ISOPLANE_TEST_DEBUGGER_PYTHON: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/dap-python/{{if eq OS "windows"}}Scripts/python.exe{{else}}bin/python{{end}}'
   ISOPLANE_TEST_HOT_RELOAD_ARTIFACTS: '{{.HOT_RELOAD_ARTIFACTS}}'

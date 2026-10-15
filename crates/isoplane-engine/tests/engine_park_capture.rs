@@ -173,25 +173,17 @@ fn gc_hint_is_optional() {
     assert!(i.is_parked(), "the no-op hint leaves the instance parked");
 }
 
-/// The ASP.NET probe on the shared runtime, compiled once for both ASP.NET tests in this binary.
+/// The ASP.NET probe on the shared runtime Task compiled, loaded once for both ASP.NET tests in this binary.
 fn aspnet_guest() -> &'static (isoplane_engine::IsoplaneEngine, isoplane_engine::Template) {
     static GUEST: std::sync::OnceLock<(
         isoplane_engine::IsoplaneEngine,
         isoplane_engine::Template,
     )> = std::sync::OnceLock::new();
     GUEST.get_or_init(|| {
-        let engine = isoplane_engine::IsoplaneEngine::new(isoplane_engine::EngineConfig {
-            max_instances: 4,
-            max_memory_bytes: 128 << 20,
-            guard_size_bytes: 64 << 20,
-            ..Default::default()
-        })
-        .expect("the ASP.NET engine must construct");
-        let template = engine
-            .load_template(&isoplane_fixtures::mono_runtime())
-            .and_then(|template| {
-                template.with_application_files(managed::probe_files("isoplane_guest_aspnet"))
-            })
+        let engine = isoplane_engine::IsoplaneEngine::new(isoplane_fixtures::engine_config(4))
+            .expect("the ASP.NET engine must construct");
+        let template = isoplane_fixtures::load_compiled_runtime(&engine)
+            .with_application_files(managed::probe_files("isoplane_guest_aspnet"))
             .expect("the packaged ASP.NET guest must load");
         (engine, template)
     })

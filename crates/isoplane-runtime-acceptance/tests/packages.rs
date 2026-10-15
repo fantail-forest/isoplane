@@ -129,41 +129,10 @@ fn request(runtime: &[u8], files: Vec<PlatformFile>) -> BuildRequest {
     }
 }
 
-/// Compilations of the runtime shared by every preparation in this binary
-/// that is not itself about compilation reuse.
+/// The runtime Task compiled for the engine every preparation in this binary
+/// uses, except those about compilation reuse.
 fn shared_cache() -> Arc<CompilationCache> {
-    static CACHE: OnceLock<Arc<CompilationCache>> = OnceLock::new();
-    CACHE
-        .get_or_init(|| {
-            let storage = isoplane_cache::Cache::new(
-                isoplane_fixtures::target_directory().join("compiled-tests"),
-                isoplane_cache::PROJECT_CACHE_BYTES,
-            )
-            .expect("open bounded runtime test cache");
-            let binary = std::fs::File::open(std::env::current_exe().expect("test binary path"))
-                .expect("open test binary identity");
-            let mut identity =
-                blake3::Hasher::new_derive_key("isoplane runtime acceptance compiled cache");
-            identity
-                .update_reader(binary)
-                .expect("hash test binary identity");
-            let lease = storage
-                .lease(isoplane_cache::CacheKey(*identity.finalize().as_bytes()))
-                .expect("lease runtime test cache");
-            let directory = lease.directory().to_path_buf();
-            static LEASE: OnceLock<isoplane_cache::Lease> = OnceLock::new();
-            assert!(
-                LEASE.set(lease).is_ok(),
-                "the shared test cache must acquire one process lifetime lease"
-            );
-            // SAFETY: this private test-output directory is written only through
-            // CompilationCache's atomic compiler path, keyed by the portable module
-            // and engine compatibility; nothing outside this binary supplies it.
-            let cache = unsafe { CompilationCache::from_trusted_directory(directory) }
-                .expect("create the compiled-runtime cache");
-            Arc::new(cache)
-        })
-        .clone()
+    isoplane_fixtures::compiled_runtime_cache()
 }
 
 async fn prepare(

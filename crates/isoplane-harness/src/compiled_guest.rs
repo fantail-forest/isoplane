@@ -67,13 +67,17 @@ impl CompiledGuests {
 /// The engine every returned guest runs on, serving `files`. Preparation
 /// output a returned guest loads must come from an engine configured alike.
 pub fn engine_configuration(files: PlatformFiles) -> EngineConfig {
-    EngineConfig {
-        // This harness holds at most two instances; node-sized pools only reserve unused slots.
-        max_instances: 2,
-        max_memory_bytes: crate::GUEST_LIMITS.instance_memory_max,
+    // This harness holds at most two instances; node-sized pools only reserve unused slots.
+    let config = EngineConfig {
         platform_files: files,
-        ..EngineConfig::default()
-    }
+        ..isoplane_fixtures::engine_config(2)
+    };
+    assert_eq!(
+        config.max_memory_bytes,
+        crate::GUEST_LIMITS.instance_memory_max,
+        "returned guests run under their plan's memory limit"
+    );
+    config
 }
 
 pub(super) fn engine_serving(module: &[u8], files: PlatformFiles) -> (IsoplaneEngine, Template) {

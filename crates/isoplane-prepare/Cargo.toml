@@ -33,5 +33,6 @@ tar.workspace = true
 hex.workspace = true
 
 [dev-dependencies]
+isoplane-fixtures.workspace = true
 wasmtime.workspace = true
 wat.workspace = true

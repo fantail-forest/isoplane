@@ -1,8 +1,13 @@
 //! Readers for fixtures prepared by Task before the test suite starts.
 //! This crate is for test dependencies and panics when required artifacts are absent.
-#![forbid(unsafe_code)]
 
+mod compiled_runtime;
 mod dotnet_projects;
+
+pub use compiled_runtime::{
+    compiled_runtime_artifacts, compiled_runtime_cache, engine_config, instrumented_runtime,
+    load_compiled_runtime,
+};
 
 pub use dotnet_projects::{
     gated_project, handler_project, managed_cli, release_version, template_project,
@@ -179,30 +184,6 @@ pub fn runtime_cache() -> PathBuf {
     assert!(
         path.is_dir(),
         "the prepared runtime cache is missing at {}; run task fixtures:runtime",
-        path.display()
-    );
-    path
-}
-
-/// The shared runtime compiled by `task fixtures:node` for the engine in
-/// `crates/isoplaned/tests/fixtures/node.toml`, as entries for a node's artifact store.
-pub fn node_runtime_artifacts() -> PathBuf {
-    let path = std::env::var_os("ISOPLANE_TEST_NODE_ARTIFACTS")
-        .map(PathBuf::from)
-        .expect("run task fixtures:node to select the prepared node runtime");
-    let compiled = std::fs::read_dir(&path)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .any(|entry| {
-            entry
-                .path()
-                .extension()
-                .is_some_and(|extension| extension == "cwasm")
-        });
-    assert!(
-        compiled,
-        "the prepared node runtime is missing at {}; run task fixtures:node",
         path.display()
     );
     path

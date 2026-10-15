@@ -1,5 +1,6 @@
 use isoplane_abi::config::{InitSandbox, Limits};
 use isoplane_engine::{EngineConfig, PlatformFile, PlatformFiles};
+use isoplane_prepare::Preparation as _;
 use isoplane_prepare::{
     BuildProduct, BuildRequest, Initialization, PortableTemplate, RuntimeProfile, WorkerFailure,
 };
@@ -22,10 +23,8 @@ pub fn prepare(name: &str, platform_files: PlatformFiles) -> Result<BuildProduct
     let wasm = isoplane_fixtures::mono_runtime();
     let request = BuildRequest {
         engine: EngineConfig {
-            pooling: false,
-            max_memory_bytes: 256 << 20,
             platform_files,
-            ..Default::default()
+            ..isoplane_fixtures::engine_config(2)
         },
         application_files: files(name),
         runtime: RuntimeProfile::SharedRuntime {
@@ -47,5 +46,29 @@ pub fn prepare(name: &str, platform_files: PlatformFiles) -> Result<BuildProduct
             log_bytes: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_LOG_BYTES,
         },
     };
-    isoplane_prepare::prepare_in_current_process(&wasm, &request)
+    let preparation =
+        isoplane_prepare::LocalPreparation::with_cache(isoplane_fixtures::compiled_runtime_cache())
+            .expect("local preparation");
+    // Its own thread, so the async tests that call this can wait for it too.
+    let prepared = std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("preparation runtime")
+                    .block_on(preparation.prepare(
+                        &wasm,
+                        &request,
+                        &tokio_util::sync::CancellationToken::new(),
+                    ))
+            })
+            .join()
+            .expect("preparation does not panic")
+    });
+    match prepared {
+        Ok(product) => Ok(product),
+        Err(isoplane_prepare::PrepareError::Rejected(failure)) => Err(failure),
+        Err(error) => panic!("preparation must run to an outcome: {error}"),
+    }
 }

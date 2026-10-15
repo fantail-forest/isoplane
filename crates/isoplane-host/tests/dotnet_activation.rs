@@ -4,7 +4,7 @@ mod common;
 
 use isoplane_abi::config::{HandlerLifecycle, Limits};
 use isoplane_abi::dispatch::HttpRequest;
-use isoplane_engine::{EngineConfig, IsoplaneEngine, PlatformFile, PlatformFiles};
+use isoplane_engine::{IsoplaneEngine, PlatformFile, PlatformFiles};
 use isoplane_fixtures::GuestRuntime;
 use isoplane_harness::EmittedGuestLogs as _;
 use isoplane_host::activator::EngineActivator;
@@ -17,15 +17,9 @@ use std::time::Duration;
 async fn activation_finishes_before_dispatch(runtime: GuestRuntime) {
     isoplane_harness::LogCapture::global();
     let GuestRuntime::Mono = runtime;
-    let wasm = isoplane_fixtures::mono_runtime();
     let engine = Arc::new(
-        IsoplaneEngine::new(EngineConfig {
-            max_instances: 4,
-            max_memory_bytes: 256 << 20,
-            guard_size_bytes: 64 << 20,
-            ..EngineConfig::default()
-        })
-        .expect("the managed activation engine must start"),
+        IsoplaneEngine::new(isoplane_fixtures::engine_config(4))
+            .expect("the managed activation engine must start"),
     );
     let module = ModuleId::new("managed-activation", "v1");
     let files = isoplane_fixtures::managed_probe("isoplane_guest_dotnet_activation")
@@ -36,9 +30,7 @@ async fn activation_finishes_before_dispatch(runtime: GuestRuntime) {
             modified_ns: 0,
         })
         .collect();
-    let template = engine
-        .load_template(&wasm)
-        .expect("the shared runtime must load")
+    let template = isoplane_fixtures::load_compiled_runtime(&engine)
         .with_application_files(PlatformFiles::new(files).expect("valid activation package files"))
         .expect("bind the managed activation probe");
     let activator = EngineActivator::new(engine, template, module.clone());

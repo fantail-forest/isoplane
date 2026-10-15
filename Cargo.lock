@@ -1554,6 +1554,7 @@ name = "isoplane-fixtures"
 version = "0.1.0"
 dependencies = [
  "isoplane-abi",
+ "isoplane-engine",
  "tar",
 ]
 
@@ -1699,6 +1700,7 @@ dependencies = [
  "hex",
  "isoplane-abi",
  "isoplane-engine",
+ "isoplane-fixtures",
  "isoplane-host",
  "isoplane-runtime",
  "parking_lot",
@@ -1783,7 +1785,6 @@ dependencies = [
  "hyper",
  "hyper-util",
  "isoplane-abi",
- "isoplane-cache",
  "isoplane-engine",
  "isoplane-fixtures",
  "isoplane-harness",

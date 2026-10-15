@@ -18,14 +18,14 @@ tasks:
 
   rust:
     desc: Prepare the guest fixtures Rust tests load and run selected Rust tests
-    deps: [':initialize', ':fixtures:rust', ':fixtures:dotnet', ':fixtures:acceptance', ':fixtures:package', ':fixtures:node']
+    deps: [':initialize', ':fixtures:rust', ':fixtures:dotnet', ':fixtures:acceptance', ':fixtures:package', ':fixtures:compiled-runtime']
     env: *test_env
     cmds:
       - '{{.DEVELOPMENT_COMMAND}}cargo test {{.CLI_ARGS}}'
 
   runtime:
     desc: Run shared runtime acceptance tests
-    deps: [':initialize', ':fixtures:acceptance', ':fixtures:feed', ':fixtures:package']
+    deps: [':initialize', ':fixtures:acceptance', ':fixtures:feed', ':fixtures:package', ':fixtures:compiled-runtime']
     env: *test_env
     cmds:
       - '{{.DEVELOPMENT_COMMAND}}cargo test -p isoplane-runtime-acceptance {{.CLI_ARGS}}'

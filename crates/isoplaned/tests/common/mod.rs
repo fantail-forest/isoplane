@@ -57,9 +57,16 @@ fn seed_compiled_runtime(dir: &std::path::Path) {
         std::fs::set_permissions(&artifacts, std::fs::Permissions::from_mode(0o700))
             .expect("make the artifact store private to its node");
     }
-    let seed = isoplane_fixtures::node_runtime_artifacts();
-    for entry in std::fs::read_dir(&seed).expect("list the prepared node runtime") {
-        let entry = entry.expect("read the prepared node runtime");
+    let seed = isoplane_fixtures::compiled_runtime_artifacts();
+    for entry in std::fs::read_dir(&seed).expect("list the compiled shared runtime") {
+        let entry = entry.expect("read the compiled shared runtime");
+        let compiled = entry
+            .path()
+            .extension()
+            .is_some_and(|extension| extension == "cwasm" || extension == "meta");
+        if !compiled {
+            continue;
+        }
         let target = artifacts.join(entry.file_name());
         // A node restarted on the same directory already holds the entry. Copying onto it
         // would truncate the shared file before reading it.

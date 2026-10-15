@@ -2,15 +2,10 @@
 
 use isoplane_abi::config::{GuestMemoryBytes, Limits};
 use isoplane_control::validator::{self, ViolationCode};
-use isoplane_engine::{EngineConfig, IsoplaneEngine};
+use isoplane_engine::IsoplaneEngine;
 
 fn engine() -> IsoplaneEngine {
-    IsoplaneEngine::new(EngineConfig {
-        max_instances: 2,
-        max_memory_bytes: 256 << 20,
-        ..EngineConfig::default()
-    })
-    .expect("the test engine must start")
+    IsoplaneEngine::new(isoplane_fixtures::engine_config(2)).expect("the test engine must start")
 }
 
 #[test]
@@ -22,9 +17,7 @@ fn the_mono_module_links_exactly_the_platform_imports_admitted_by_the_validator(
         Some(GuestMemoryBytes::WASM32_MAX),
     )
     .expect("the Mono fixture must satisfy admission");
-    let template = engine()
-        .load_template(&wasm)
-        .expect("the admitted Mono fixture must load into the engine");
+    let template = isoplane_fixtures::load_compiled_runtime(&engine());
     let mut admitted: Vec<_> = report.pal.iter().map(|import| import.full_name()).collect();
     let mut linked: Vec<_> = template
         .pal_composed()

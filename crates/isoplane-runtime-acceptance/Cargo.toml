@@ -7,9 +7,6 @@ rust-version.workspace = true
 license-file.workspace = true
 description = "Acceptance tests for the source-built guest runtime: its scheduling, socket, name-resolution, cryptography and HTTP integrations, and application packages on the shared interpreter runtime, driven through the real host reactor"
 
-[dependencies]
-isoplane-cache.workspace = true
-
 [dev-dependencies]
 brotli = { workspace = true }
 sha1 = { workspace = true }

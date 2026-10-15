@@ -227,6 +227,10 @@ enum Source {
         bytes: Arc<[u8]>,
         application_files: PlatformFiles,
     },
+    /// The shared runtime as Task compiled it, serving an application's files.
+    SharedRuntime {
+        application_files: PlatformFiles,
+    },
     Prepared(Arc<PreparedTemplate>),
     #[cfg(target_os = "linux")]
     Layered {
@@ -244,6 +248,14 @@ impl Source {
             } => {
                 let (engine, template) = engine_serving(bytes, files);
                 let template = template
+                    .with_application_files(application_files.clone())
+                    .expect("bind application files to the returned guest");
+                (engine, template)
+            }
+            Source::SharedRuntime { application_files } => {
+                let engine = IsoplaneEngine::new(engine_configuration(files))
+                    .expect("the returned-guest engine must initialize");
+                let template = isoplane_fixtures::load_compiled_runtime(&engine)
                     .with_application_files(application_files.clone())
                     .expect("bind application files to the returned guest");
                 (engine, template)
@@ -331,9 +343,11 @@ impl ReturnedGuest {
                 modified_ns: 0,
             })
             .collect();
-        Self::with_application_files(
-            &isoplane_fixtures::mono_runtime(),
-            PlatformFiles::new(application_files).expect("valid managed probe package"),
+        Self::serving(
+            Source::SharedRuntime {
+                application_files: PlatformFiles::new(application_files)
+                    .expect("valid managed probe package"),
+            },
             reactor,
         )
     }
