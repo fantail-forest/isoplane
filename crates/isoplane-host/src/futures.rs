@@ -64,6 +64,9 @@ struct Entry {
     owner: Arc<OwnedFutures>,
     dispatch: u64,
     import: &'static str,
+    /// A wake whose condition the host can recreate in a later dispatch, so
+    /// cancelling it with its dispatch abandons no guest work.
+    rearmable: bool,
     state: State,
     result: Option<ResultRecord>,
     task: Option<tokio::task::AbortHandle>,
@@ -217,6 +220,30 @@ impl FutureTable {
         import: &'static str,
         limit: u32,
     ) -> Result<u64, PendingCapError> {
+        self.alloc_entry(owner, dispatch, import, class, limit, false)
+    }
+
+    /// Like [`FutureTable::alloc`], for a wake the host recreates when the
+    /// guest next waits on the same condition. Ending its dispatch cancels it
+    /// without counting as abandoned guest work.
+    pub fn alloc_rearmable(
+        &self,
+        owner: InstanceId,
+        dispatch: u64,
+        import: &'static str,
+        limit: u32,
+    ) -> Result<u64, PendingCapError> {
+        self.alloc_entry(owner, dispatch, import, class, limit, true)
+    }
+
+    fn alloc_entry(
+        &self,
+        owner: InstanceId,
+        dispatch: u64,
+        import: &'static str,
+        limit: u32,
+        rearmable: bool,
+    ) -> Result<u64, PendingCapError> {
         let arc = self.owned_of(owner);
         let mut o = arc.inner.lock();
         let outstanding = *o.per_dispatch.get(&dispatch).unwrap_or(&0);
@@ -233,6 +260,7 @@ impl FutureTable {
                 owner: arc,
                 dispatch,
                 import,
+                rearmable,
                 state: State::Pending,
                 result: None,
                 task: None,
@@ -273,6 +301,7 @@ impl FutureTable {
                 owner: arc,
                 dispatch,
                 import: "ctx_cancel",
+                rearmable: false,
                 state: State::Pending,
                 result: None,
                 task: None,
@@ -363,7 +392,8 @@ impl FutureTable {
     /// still pending or completed and undelivered; a result left in `ready`
     /// would be served to the next request on this instance as a wake for a
     /// future it never issued.
-    /// Returns whether guest work was abandoned, excluding implicit cancellation bookkeeping.
+    /// Returns whether guest work was abandoned, excluding implicit
+    /// cancellation bookkeeping and re-armable wakes.
     pub fn end_dispatch(&self, owner: InstanceId, dispatch: u64) -> bool {
         let Some(arc) = self.existing(owner) else {
             return false;
@@ -382,7 +412,7 @@ impl FutureTable {
         let mut abandoned_guest_work = false;
         for id in doomed {
             if let Some((_, mut entry)) = self.entries.remove_sync(&id) {
-                abandoned_guest_work |= entry.import != "ctx_cancel";
+                abandoned_guest_work |= entry.import != "ctx_cancel" && !entry.rearmable;
                 entry.cancel_task();
             }
             o.pending.remove(&id);
@@ -496,6 +526,27 @@ mod tests {
         );
         assert_cancelled(task).await;
         assert_eq!(table.live_futures(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_rearmable_wake_ends_with_its_dispatch_without_abandoning_guest_work() {
+        let table = table();
+        let owner = InstanceId(1);
+        let id = table
+            .alloc_rearmable(owner, 1, "poll_call", 8)
+            .expect("future allocation");
+        let (task, _release) = held_task().await;
+        table.attach_task(id, task.abort_handle());
+        assert!(
+            !table.end_dispatch(owner, 1),
+            "a wake the host can re-arm must not count as abandoned guest work"
+        );
+        assert_cancelled(task).await;
+        assert_eq!(
+            table.live_futures(),
+            0,
+            "dispatch teardown must still release the wake's record"
+        );
     }
 
     #[tokio::test]

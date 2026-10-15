@@ -684,7 +684,67 @@ struct Socket {
 
 struct Timer {
     ready: Arc<AtomicBool>,
-    _task: Option<ReactorWork>,
+    /// When the timer is due, on the reactor's clock; `None` for one created
+    /// ready.
+    deadline: Option<tokio::time::Instant>,
+    /// Ends with the dispatch that armed it; the deadline does not.
+    wake: Option<ReactorWork>,
+}
+
+impl Timer {
+    /// Marks the timer ready once its deadline has passed, and otherwise arms
+    /// a wake in the current dispatch if it has none, so a guest that waits on
+    /// a timer created in an earlier request is still woken by it.
+    fn refresh(&mut self, bindings: &dyn Context) -> Result<(), Error> {
+        let Some(deadline) = self.deadline else {
+            return Ok(());
+        };
+        if self.ready.load(Ordering::Acquire)
+            || self.wake.as_ref().is_some_and(ReactorWork::is_pending)
+        {
+            return Ok(());
+        }
+        let runtime = bindings
+            .runtime()
+            .ok_or(Error::Unsupported("native timer without reactor"))?;
+        if reactor_now(&runtime) >= deadline {
+            self.ready.store(true, Ordering::Release);
+            self.wake = None;
+        } else {
+            self.wake = Some(arm_timer(&self.ready, deadline, &runtime, bindings)?);
+        }
+        Ok(())
+    }
+}
+
+fn reactor_now(runtime: &Runtime) -> tokio::time::Instant {
+    let _reactor = runtime.reactor.enter();
+    tokio::time::Instant::now()
+}
+
+fn arm_timer(
+    ready: &Arc<AtomicBool>,
+    deadline: tokio::time::Instant,
+    runtime: &Runtime,
+    bindings: &dyn Context,
+) -> Result<ReactorWork, Error> {
+    let future = bindings
+        .alloc_rearmable(isoplane_abi::native_io::canonical::POLL_IMPORT)
+        .ok_or(Error::ResourceLimit)?;
+    let completion = runtime.clone();
+    let ready = ready.clone();
+    let task = runtime.spawn(async move {
+        tokio::time::sleep_until(deadline).await;
+        ready.store(true, Ordering::Release);
+        completion.settle_future(future, ResultRecord::Ok(Vec::new()));
+    });
+    runtime.futures.attach_task(future, task.abort_handle());
+    Ok(ReactorWork {
+        future: FutureId::from(future),
+        owner: bindings.instance(),
+        table: runtime.futures.clone(),
+        task: task.abort_handle(),
+    })
 }
 
 enum Resource {
@@ -741,7 +801,7 @@ impl Resources {
             let kind = match resource {
                 Resource::Network => continue,
                 Resource::Timer(timer)
-                    if timer._task.is_none() && timer.ready.load(Ordering::Acquire) =>
+                    if timer.wake.is_none() && timer.ready.load(Ordering::Acquire) =>
                 {
                     ready_pollables.push(handle);
                     continue;
@@ -826,7 +886,8 @@ impl Resources {
                 handle,
                 Resource::Timer(Timer {
                     ready: Arc::new(AtomicBool::new(true)),
-                    _task: None,
+                    deadline: None,
+                    wake: None,
                 }),
             );
         }
@@ -1102,44 +1163,39 @@ impl Resources {
             }
             Request::Timer(duration) => {
                 self.reserve(ResourceCount(1))?;
-                let ready = Arc::new(AtomicBool::new(duration.0 == 0));
-                let task = if duration.0 == 0 {
-                    None
+                let timer = if duration.0 == 0 {
+                    Timer {
+                        ready: Arc::new(AtomicBool::new(true)),
+                        deadline: None,
+                        wake: None,
+                    }
                 } else {
                     let runtime = bindings
                         .runtime()
-                        .ok_or(Error::Unsupported("native timer without reactor"))?
-                        .clone();
-                    let future = bindings
-                        .alloc(
-                            isoplane_abi::native_io::canonical::POLL_IMPORT,
-                        )
-                        .ok_or(Error::ResourceLimit)?;
-                    let completion = runtime.clone();
-                    let ready = ready.clone();
-                    let task = runtime.spawn(async move {
-                        let duration_ms = duration
-                            .0
-                            .div_ceil(isoplane_abi::pal::CLOCK_QUANTUM_NS as u64);
-                        tokio::time::sleep(std::time::Duration::from_millis(duration_ms)).await;
-                        ready.store(true, Ordering::Release);
-                        completion.settle_future(future, ResultRecord::Ok(Vec::new()));
-                    });
-                    runtime.futures.attach_task(future, task.abort_handle());
-                    Some(ReactorWork {
-                        future: FutureId::from(future),
-                        owner: bindings.instance(),
-                        table: runtime.futures.clone(),
-                        task: task.abort_handle(),
-                    })
+                        .ok_or(Error::Unsupported("native timer without reactor"))?;
+                    let duration_ms = duration
+                        .0
+                        .div_ceil(isoplane_abi::pal::CLOCK_QUANTUM_NS as u64);
+                    let deadline =
+                        reactor_now(&runtime) + std::time::Duration::from_millis(duration_ms);
+                    let ready = Arc::new(AtomicBool::new(false));
+                    let wake = arm_timer(&ready, deadline, &runtime, bindings)?;
+                    Timer {
+                        ready,
+                        deadline: Some(deadline),
+                        wake: Some(wake),
+                    }
                 };
-                self.insert(Resource::Timer(Timer { ready, _task: task }))
-                    .map(Response::Handle)
+                self.insert(Resource::Timer(timer)).map(Response::Handle)
             }
-            Request::Ready(handle) => self.ready(handle).map(Response::Ready),
+            Request::Ready(handle) => {
+                self.refresh_timer(handle, bindings)?;
+                self.ready(handle).map(Response::Ready)
+            }
             Request::Poll(handles) => {
                 let mut indexes = Vec::new();
                 for (index, handle) in handles.into_iter().enumerate() {
+                    self.refresh_timer(handle, bindings)?;
                     if self.ready(handle)? {
                         indexes.push(u32::try_from(index).map_err(|_| Error::ResourceLimit)?);
                     } else {
@@ -1179,6 +1235,17 @@ impl Resources {
                 }
                 Ok(Response::Done)
             }
+        }
+    }
+
+    fn refresh_timer(
+        &mut self,
+        handle: ResourceHandle,
+        bindings: &dyn Context,
+    ) -> Result<(), Error> {
+        match self.entries.get_mut(&handle) {
+            Some(Resource::Timer(timer)) => timer.refresh(bindings),
+            _ => Ok(()),
         }
     }
 
@@ -1391,9 +1458,7 @@ impl Resources {
                 },
             )
             .map_err(|reason| Error::Denied(reason.to_string()))?;
-        let future = bindings
-            .alloc("socket_call")
-            .ok_or(Error::ResourceLimit)?;
+        let future = bindings.alloc("socket_call").ok_or(Error::ResourceLimit)?;
         *state.lock() = SocketState::Connecting;
 
         let completion = runtime.clone();
@@ -1474,6 +1539,103 @@ mod timer_tests {
         }
     }
 
+    struct Woken(Mutex<Vec<InstanceId>>);
+
+    impl crate::bindings::WakeSink for Woken {
+        fn signal(&self, owner: InstanceId) {
+            self.0.lock().push(owner);
+        }
+    }
+
+    fn reactor_bindings() -> (Arc<crate::bindings::InstanceCtx>, Arc<Woken>) {
+        use isoplane_abi::config::{HandlerLifecycle, Limits};
+        let woken = Arc::new(Woken(Mutex::new(Vec::new())));
+        let mut context = crate::bindings::InstanceCtx::for_test(
+            InstanceId(7),
+            HandlerLifecycle::Reuse,
+            Limits::default(),
+        );
+        context.rt = Some(Arc::new(crate::bindings::CellRuntime {
+            runtime_configuration: Default::default(),
+            services: Arc::new(crate::cell::Services {
+                egress: Arc::new(
+                    crate::egress::HostEgressPolicy::system(
+                        crate::egress::ConnectionLimits::uniform(1).expect("connection limits"),
+                    )
+                    .expect("egress policy"),
+                ),
+                fetcher: Arc::new(crate::fakes::FakeFetcher::default()),
+            }),
+            futures: Arc::new(FutureTable::new()),
+            metrics: Arc::new(crate::metrics::Metrics::new()),
+            wake: woken.clone(),
+            reactor: tokio::runtime::Handle::current(),
+        }));
+        context.begin_slice(0, 1);
+        (Arc::new(context), woken)
+    }
+
+    fn ready(resources: &mut Resources, handle: ResourceHandle, bindings: &CellBindings) -> bool {
+        match resources.call(Request::Ready(handle), bindings) {
+            Ok(Response::Ready(ready)) => ready,
+            other => panic!("a readiness check returned {other:?}"),
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_timer_outlives_the_request_that_created_it() {
+        let (context, woken) = reactor_bindings();
+        let bindings = CellBindings::new(context.clone());
+        let futures = context.rt.as_ref().expect("reactor").futures.clone();
+        let mut resources = Resources::new(ResourceLimits {
+            handles: ResourceCount(2),
+        });
+        let mut timer = |milliseconds: u64| match resources.call(
+            Request::Timer(DurationNanos(milliseconds * 1_000_000)),
+            &bindings,
+        ) {
+            Ok(Response::Handle(handle)) => handle,
+            other => panic!("a {milliseconds} ms timer returned {other:?}"),
+        };
+        let (soon, later) = (timer(10), timer(50));
+        assert!(
+            !futures.end_dispatch(context.instance, 1),
+            "step 1: pending timers must not count as abandoned work"
+        );
+        assert_eq!(
+            futures.live_futures(),
+            0,
+            "step 1: their wakes end with the request"
+        );
+
+        tokio::time::advance(std::time::Duration::from_millis(20)).await;
+        assert!(
+            ready(&mut resources, soon, &bindings),
+            "step 2: a timer is due once its deadline passes, though its wake ended"
+        );
+        assert!(
+            !ready(&mut resources, later, &bindings),
+            "step 2: a timer is not due before its deadline"
+        );
+        assert_eq!(
+            futures.live_futures(),
+            1,
+            "step 2: checking a timer that is not yet due arms a wake for it"
+        );
+
+        tokio::time::advance(std::time::Duration::from_millis(40)).await;
+        tokio::task::yield_now().await;
+        assert_eq!(
+            *woken.0.lock(),
+            vec![context.instance],
+            "step 3: the re-armed wake must wake the instance at the deadline"
+        );
+        assert!(
+            ready(&mut resources, later, &bindings),
+            "step 3: the woken timer must be due"
+        );
+    }
+
     #[test]
     fn cancellation_refuses_new_deadlines_but_allows_polling_and_disposal() {
         use isoplane_engine::HostBindings;
@@ -1549,7 +1711,8 @@ mod timer_tests {
         let handle = resources
             .insert(Resource::Timer(Timer {
                 ready: Arc::new(AtomicBool::new(false)),
-                _task: None,
+                deadline: None,
+                wake: None,
             }))
             .expect("the unready test timer must fit its resource budget");
         assert!(
@@ -1567,7 +1730,8 @@ mod timer_tests {
         let pending = resources
             .insert(Resource::Timer(Timer {
                 ready: Arc::new(AtomicBool::new(false)),
-                _task: None,
+                deadline: None,
+                wake: None,
             }))
             .expect("the pending test pollable must fit");
         let ready = created(&mut resources, &bindings);

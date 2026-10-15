@@ -149,9 +149,11 @@ operation completes.
   when the client goes away or the request has used its running time.
 - Enforces the [execution limits](execution-limits.md), and stops an instance
   whose request keeps running after its running time is used up.
-- Cancels any timer or outbound call still pending when the response is
+- Cancels any outbound call or name lookup still pending when the response is
   complete, and then discards the instance, because the code waiting on that
-  work could never resume.
+  work could never resume. A timer still pending is kept with the instance and
+  runs when it is due, at the start of a later request; see
+  [Work belongs to a request](dotnet-runtime-differences.md#work-belongs-to-a-request).
 
 **Your application**
 

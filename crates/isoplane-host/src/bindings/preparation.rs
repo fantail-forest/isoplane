@@ -145,6 +145,17 @@ impl Context for PreparationIo {
             )
             .ok()
     }
+    fn alloc_rearmable(&self, import: &'static str) -> Option<u64> {
+        self.runtime
+            .futures
+            .alloc_rearmable(
+                self.instance(),
+                0,
+                import,
+                self.config.pending_futures,
+            )
+            .ok()
+    }
 }
 
 impl Drop for PreparationIo {

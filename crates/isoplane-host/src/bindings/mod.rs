@@ -79,15 +79,22 @@ impl CellBindings {
 
     /// A refusal latches [`TrapCode::TooManyFutures`], because `call_future`
     /// returns a bare `u64` and cannot trap directly.
-    pub(super) fn alloc(&self, import: &'static str) -> Option<u64> {
+    pub(super) fn alloc(
+        &self,
+        import: &'static str,
+        rearmable: bool,
+    ) -> Option<u64> {
         let rt = self.rt()?;
         let dispatch = self.ctx.dispatch_id();
-        match rt.futures.alloc(
-            self.ctx.instance,
-            dispatch,
-            import,
-            self.ctx.limits.pending_futures_per_dispatch,
-        ) {
+        let limit = self.ctx.limits.pending_futures_per_dispatch;
+        let allocated = if rearmable {
+            rt.futures
+                .alloc_rearmable(self.ctx.instance, dispatch, import, limit)
+        } else {
+            rt.futures
+                .alloc(self.ctx.instance, dispatch, import, limit)
+        };
+        match allocated {
             Ok(id) => Some(id),
             Err(e) => {
                 tracing::warn!(
@@ -210,7 +217,7 @@ impl HostBindings for CellBindings {
                 return INVALID_FUTURE;
             }
         };
-        let Some(id) = self.alloc(def.name) else {
+        let Some(id) = self.alloc(def.name, false) else {
             return INVALID_FUTURE;
         };
 

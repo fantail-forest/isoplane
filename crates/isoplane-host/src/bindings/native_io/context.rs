@@ -45,6 +45,9 @@ pub(crate) trait Context {
     fn reach(&self) -> crate::egress::Reach<'_>;
     fn connection_owner(&self) -> std::io::Result<crate::egress::ConnectionOwner>;
     fn alloc(&self, import: &'static str) -> Option<u64>;
+    /// A wake the host recreates in a later dispatch; see
+    /// [`FutureTable::alloc_rearmable`].
+    fn alloc_rearmable(&self, import: &'static str) -> Option<u64>;
 }
 
 impl Context for CellBindings {
@@ -78,6 +81,9 @@ impl Context for CellBindings {
         )
     }
     fn alloc(&self, import: &'static str) -> Option<u64> {
-        self.alloc(import)
+        self.alloc(import, false)
+    }
+    fn alloc_rearmable(&self, import: &'static str) -> Option<u64> {
+        self.alloc(import, true)
     }
 }

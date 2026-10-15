@@ -150,14 +150,18 @@ requests it does not run at all.
   the service. Bounded asynchronous work in `IHostedService.StartAsync` is
   accepted.
 - **Await everything the request needs before it responds.** Once the response is
-  complete the request is over. A timer or outbound call that is still pending is
-  cancelled and never completes, so a task started and not awaited, such as
-  `_ = SendEmailAsync()`, may never finish. Isoplane also discards the instance
-  when a request ends with something pending: the next request starts from a
-  fresh copy of the template and pays for activation again, with nothing
-  reported. Dispose a timer, or cancel a delay, before the request ends. A
-  `new HttpClient()` kept from one request to the next leaves such a timer; a
-  client from `IHttpClientFactory` does not, as [Network](#network) explains.
+  complete the request is over. An outbound call or name lookup that is still
+  pending is cancelled and never completes, and Isoplane discards the instance:
+  the next request starts from a fresh copy of the template and pays for
+  activation again, with nothing reported.
+- **A timer outlives its request.** When a request ends with a `Timer`,
+  `Task.Delay` or `CancellationTokenSource.CancelAfter` still pending, Isoplane
+  keeps the instance and the timer with it. Nothing runs between requests, so a
+  timer that comes due while the instance is idle runs at the start of the next
+  request on that instance, before that request's own code, until it returns or
+  awaits. A timer never runs if its instance is discarded first, and an idle
+  instance can be discarded at any time. So a task started and not awaited,
+  such as `_ = SendEmailAsync()`, may finish during a later request, or never.
 - **`finally` blocks and disposal are part of the request.** They run as the
   awaited code unwinds, as they do anywhere else, and that includes middleware
   code after `await next()` and the disposal of scoped services. Two cases
@@ -334,10 +338,8 @@ APIs, which covers `HttpClient`, TLS and database drivers.
   closes it once the response has been read, so it keeps no connection between
   calls. Elsewhere a client keeps idle connections for its next calls and
   removes them on a timer, and the factory replaces each handler every two
-  minutes on another. A timer still pending when a request ends costs the
-  instance, as [Work belongs to a request](#work-belongs-to-a-request) says, and
-  one left by [initialization](application-lifecycle.md) stops the application
-  from starting, so Isoplane switches both off. The cost is a new connection,
+  minutes on another. A timer left by [initialization](application-lifecycle.md)
+  stops the application from starting, so Isoplane switches both off. The cost is a new connection,
   and over HTTPS a new TLS handshake, for each call, including calls a request
   makes one after another to the same host.
 - Either timer comes back if you ask for it: `SetHandlerLifetime` with a finite
@@ -349,8 +351,9 @@ APIs, which covers `HttpClient`, TLS and database drivers.
   open, and calls fail once the application has used up its outbound
   connections.
 - A client you construct yourself with `new HttpClient()` and keep for later
-  requests starts the timer that removes idle connections when it first calls a
-  host, so every request that uses it costs the instance. Take the client from
+  requests keeps its idle connections open between requests, and they count
+  toward the instance's [outbound connections](execution-limits.md#outbound-connections).
+  The timer that removes them runs only during a request. Take the client from
   `IHttpClientFactory` instead, or construct it with
   `new HttpClient(new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.Zero })`.
   A client created and disposed within one request reuses its connection for
@@ -415,7 +418,8 @@ What follows from that:
   deadline arrive.
 - A timeout only fires while the application is waiting. `Task.Delay`,
   `CancellationTokenSource.CancelAfter` and `Timer` callbacks are delivered when
-  it next waits, not in the middle of a computation.
+  it next waits, not in the middle of a computation, or at the start of the
+  next request if they came due between requests.
 
 ## How code runs
 

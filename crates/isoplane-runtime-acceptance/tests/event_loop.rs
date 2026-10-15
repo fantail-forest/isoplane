@@ -235,7 +235,7 @@ in_mono_runtime! {
 
 in_mono_runtime! {
     #[tokio::test(start_paused = true)]
-    async fn an_abandoned_timer_ends_with_its_dispatch_and_never_fires_later(runtime: GuestRuntime) {
+    async fn a_timer_left_pending_runs_before_a_later_request(runtime: GuestRuntime) {
         let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
         reactor.context.begin_dispatch(1, 1);
         let mut guest = guest(&reactor, runtime);
@@ -246,11 +246,14 @@ in_mono_runtime! {
             1,
             "the abandoned delay registers a real host timer"
         );
-        reactor.futures.end_dispatch(reactor.context.instance, 1);
+        assert!(
+            !reactor.futures.end_dispatch(reactor.context.instance, 1),
+            "a pending timer must not count as abandoned work"
+        );
         assert_eq!(
             reactor.futures.live_futures(),
             0,
-            "dispatch completion must cancel the abandoned timer"
+            "dispatch completion must end the timer's wake"
         );
         tokio::task::yield_now().await;
         tokio::time::advance(std::time::Duration::from_millis(200)).await;
@@ -261,8 +264,8 @@ in_mono_runtime! {
             assert_eq!(outcome.completion, Completion::Done, "{outcome:?}");
             assert_eq!(
                 reactor.response_text(dispatch),
-                format!("{dispatch}:0"),
-                "the reused guest must keep its state and never run an abandoned callback"
+                format!("{dispatch}:1"),
+                "the due callback must run once, before the request reads its count"
             );
             reactor
                 .futures

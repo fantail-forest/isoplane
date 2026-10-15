@@ -149,11 +149,9 @@ async fn check_managed_cleanup(runtime: GuestRuntime, operation: &str) {
         0,
         "the production dispatch boundary must cancel pending managed work without test cleanup"
     );
-    if operation != "/timer" {
-        tokio::time::timeout(Duration::from_secs(60), work.cancelled.notified())
-            .await
-            .expect("dispatch completion must cancel the pending host operation");
-    }
+    tokio::time::timeout(Duration::from_secs(60), work.cancelled.notified())
+        .await
+        .expect("dispatch completion must cancel the pending host operation");
     let replacement = dispatch_at_idle(&cell, &module, "/observe").await;
     assert_ne!(
         replacement.instance, armed.instance,
@@ -243,8 +241,29 @@ impl isoplane_host::egress::ConnectionFactory for PendingConnection {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_cell_cancels_an_abandoned_interpreted_timer_and_discards_only_the_affected_guest() {
-    check_managed_cleanup(GuestRuntime::Mono, "/timer").await;
+async fn a_timer_left_pending_keeps_its_instance() {
+    let (cell, module) = cleanup_cell(
+        GuestRuntime::Mono,
+        Arc::new(PendingWork::default()),
+        "/timer",
+    );
+    let long = dispatch_at_idle(&cell, &module, "/timer").await;
+    assert_eq!(
+        long.body, b"armed",
+        "step 1: the guest must leave a timer pending"
+    );
+    assert_eq!(
+        cell.futures().live_futures(),
+        0,
+        "step 1: the pending timer's wake must end with its request"
+    );
+    let waiting = dispatch_at_idle(&cell, &module, "/observe").await;
+    assert_eq!(
+        (waiting.instance, waiting.body.as_slice()),
+        (long.instance, &b"2:0"[..]),
+        "step 2: the instance must be kept, its timer not yet due"
+    );
+    cell.shutdown();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -257,12 +276,9 @@ async fn the_cell_cancels_an_abandoned_interpreted_socket_and_discards_only_the_
     check_managed_cleanup(GuestRuntime::Mono, "/socket").await;
 }
 
-async fn check_expired_abandoned_timer(runtime: GuestRuntime, abandon_first: bool) {
+async fn check_guest_timer_after_clock_advances(runtime: GuestRuntime) {
     let work = Arc::new(PendingWork::default());
     let (cell, module) = cleanup_cell(runtime, work.clone(), "/dns");
-    if abandon_first {
-        dispatch_and_discard(&cell, &module, "/timer").await;
-    }
     let armed = dispatch_at_idle(&cell, &module, "/observe").await;
     let slot = cell
         .slot(armed.instance)
@@ -310,12 +326,9 @@ async fn check_expired_abandoned_timer(runtime: GuestRuntime, abandon_first: boo
         .expect("a later request's own timer must complete after its deadline");
     assert_eq!(
         result.status, 200,
-        "abandoned timers must not break a later request: {result:?}"
+        "the request's own timer must complete: {result:?}"
     );
-    assert_eq!(
-        result.body, b"2:0",
-        "expired abandoned callbacks must not run in a later request"
-    );
+    assert_eq!(result.body, b"2:0", "no other callback may run");
     wait_until_idle(&cell, &module).await;
     let observed = dispatch_at_idle(&cell, &module, "/observe").await;
     assert_eq!(
@@ -326,13 +339,8 @@ async fn check_expired_abandoned_timer(runtime: GuestRuntime, abandon_first: boo
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn an_expired_abandoned_interpreted_timer_cannot_break_a_later_requests_timer() {
-    check_expired_abandoned_timer(GuestRuntime::Mono, true).await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_clean_interpreted_guest_drives_its_timer_after_clock_advances() {
-    check_expired_abandoned_timer(GuestRuntime::Mono, false).await;
+    check_guest_timer_after_clock_advances(GuestRuntime::Mono).await;
 }
 
 async fn check_dormant_promise(runtime: GuestRuntime) {

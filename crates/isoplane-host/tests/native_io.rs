@@ -59,7 +59,7 @@ in_mono_runtime! {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn an_abandoned_managed_timer_cannot_run_during_a_later_request(runtime: GuestRuntime) {
+    async fn a_managed_timer_left_pending_runs_before_a_later_request(runtime: GuestRuntime) {
         let owner = InstanceId::alloc();
         let reactor = Reactor::with_network(owner, isoplane_harness::Network::with_resolver(Box::new(NoDns)));
         let context = &reactor.context;
@@ -77,17 +77,20 @@ in_mono_runtime! {
             1,
             "the abandoned managed delay must register a real host timer"
         );
-        futures.end_dispatch(owner, 1);
+        assert!(
+            !futures.end_dispatch(owner, 1),
+            "a pending timer must not count as abandoned work"
+        );
         assert_eq!(
             futures.live_futures(),
             0,
-            "dispatch completion must cancel the timer's host future"
+            "dispatch completion must end the timer's wake"
         );
         tokio::task::yield_now().await;
         tokio::time::advance(Duration::from_millis(100)).await;
         tokio::task::yield_now().await;
 
-        // Observe twice: a callback pumped after response creation must not escape detection.
+        // Observe twice: the callback runs once, before the first later request reads its count.
         for dispatch in 2..=3 {
             context.begin_dispatch(101, dispatch);
             let outcome = guest.start("/timer/observe");
@@ -105,8 +108,8 @@ in_mono_runtime! {
                 .body();
             assert_eq!(
                 body,
-                format!("{dispatch}:0").as_bytes(),
-                "the reused guest lost state or ran an abandoned timer callback"
+                format!("{dispatch}:1").as_bytes(),
+                "the due callback must run once, before the request reads its count"
             );
             futures.end_dispatch(owner, dispatch);
         }

@@ -534,7 +534,7 @@ async fn an_aspnet_request_that_calls_out_through_a_factory_client_leaves_its_in
             !reactor
                 .futures
                 .end_dispatch(reactor.context.instance, dispatch),
-            "request {dispatch} must leave no timer or read pending, or the cell discards its instance"
+            "request {dispatch} must leave no read pending, or the cell discards its instance"
         );
         assert_eq!(
             reactor

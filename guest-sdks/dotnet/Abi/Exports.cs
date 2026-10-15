@@ -114,6 +114,11 @@ public static unsafe class Exports<TRouter>
             FutureTable.Reset();
             FutureTable.BeginCancellation(d.CancelFuture);
 
+            // Timers that came due while the instance was idle run before the
+            // request, each until it returns or awaits, so the request sees
+            // the state they bring up to date.
+            ManagedWork.Drain();
+
             _root = RequestDispatch.RouteAsync(_router!, d);
 
             return Settle();
