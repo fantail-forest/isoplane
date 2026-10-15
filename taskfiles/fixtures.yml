@@ -23,7 +23,6 @@ tasks:
       - .build/wasm32/rust-guests/hello.wasm
       - .build/wasm32/rust-guests/quotes-api.wasm
       - .build/wasm32/rust-guests/misbehaver.wasm
-      - .build/wasm32/rust-guests/bigheap.wasm
       - .build/wasm32/rust-guests/impure-cctor.wasm
       - .build/wasm32/rust-guests/undeclared-import.wasm
       - .build/wasm32/rust-guests/foreign-module.wasm

@@ -36,7 +36,6 @@ emits no maximum by default.
 | `quotes-api` | `Handler` fixture for host futures, response streaming and initialization units. |
 | `misbehaver` | Hostile execution fixtures: loops, sync-over-async, allocation pressure and explicit traps. |
 | `impure-cctor` | Initialization-unit fixture for bounded deferral and retry. |
-| `bigheap` | Dirties a chosen number of pages and parks for local snapshot measurements. |
 | `undeclared-import` | Validator fixtures importing an undeclared field or a foreign module. |
 
 

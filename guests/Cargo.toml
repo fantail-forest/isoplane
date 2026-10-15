@@ -16,7 +16,6 @@ members = [
     "misbehaver",
     "undeclared-import",
     "impure-cctor",
-    "bigheap",
 ]
 
 [workspace.package]

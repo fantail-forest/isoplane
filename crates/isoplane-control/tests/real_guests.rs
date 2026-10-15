@@ -12,7 +12,6 @@ const VERDICTS: &[(&str, &[(V, &str)])] = &[
     ("hello", &[]),
     ("quotes-api", &[]),
     ("misbehaver", &[]),
-    ("bigheap", &[]),
     ("impure-cctor", &[]),
     (
         "undeclared-import",

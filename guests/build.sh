@@ -53,7 +53,7 @@ if [ "${#preflight_missing[@]}" -ne 0 ]; then
 fi
 
 # `undeclared-import` is built twice, once per variant.
-GUESTS=(hello quotes-api misbehaver bigheap impure-cctor undeclared-import)
+GUESTS=(hello quotes-api misbehaver impure-cctor undeclared-import)
 
 echo "==> building guests for $TARGET ($PROFILE)"
 for g in "${GUESTS[@]}"; do
