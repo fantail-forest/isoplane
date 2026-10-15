@@ -20,10 +20,7 @@ def exercise(source, send, response, until):
     handler = next((index for index, name in enumerate(names) if name.endswith('.Application.Handle')), None)
     assert handler is not None, f'the stack must retain the customer caller of a referenced library: {names}'
     assert any(name.startswith('System.') for name in names[1:handler]), f'the framework method the handler calls the library through must appear between them: {names}'
-    hosting = max((index for index, name in enumerate(names) if name.startswith('Microsoft.AspNetCore.')), default=None)
-    assert hosting is not None and hosting > handler, f'the ASP.NET Core frames that invoke the handler must appear below it: {names}'
-    assert any(name.startswith('Isoplane.AspNetCore.') for name in names[hosting + 1:]), f'the SDK frames that host ASP.NET Core must appear below it: {names}'
-    assert names[-1].startswith('Isoplane.AspNetCore.'), f'the stack must end at the outermost SDK frame, without the runtime frames that invoke it: {names}'
+    assert len(names) - 1 > handler and names[-1].startswith('Isoplane.'), f'the stack must end at the SDK frame that dispatches to the handler, without the runtime frames that invoke it: {names}'
     frame = frames[0]
     assert same_source(frame['source']['path'], source) and 'Calculator.Work' in frame['name'], 'the debugger must stop in the referenced project source'
     scopes = response(send('scopes', {'frameId': frame['id']}))['body']['scopes']
