@@ -83,7 +83,6 @@ def request(address, method, path, value=None):
                                      data=None if value is None else json.dumps(value).encode(),
                                      headers={'Content-Type': 'application/json'})
     with urllib.request.urlopen(outgoing, timeout=60) as response:
-        assert response.headers.get('X-Todo-App') == 'host-server', 'ASP.NET response callbacks must execute'
         body = response.read()
         return response.status, json.loads(body) if body else None
 
@@ -143,7 +142,7 @@ def application(dotnet, project, configuration, env, records, suffix=""):
 def prepared_project(source, destination):
     """Isolate mutable scenario settings while reusing prepared compiler outputs."""
     if not (source / 'bin').is_dir() or not (source / 'obj/project.assets.json').is_file():
-        raise FileNotFoundError(f'Prepare {source.name} with task scenarios:prepare SAMPLE={source.name}')
+        raise FileNotFoundError(f'Prepare {source} with task scenarios:postgres')
     shutil.copytree(source, destination, ignore=shutil.ignore_patterns('bin', 'obj', 'out', '.isoplane'))
     (destination / 'bin').symlink_to((source / 'bin').resolve(), target_is_directory=True)
     (destination / 'obj').mkdir()

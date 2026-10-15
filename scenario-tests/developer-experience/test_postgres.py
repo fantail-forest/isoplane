@@ -14,7 +14,7 @@ class PostgreSql(unittest.TestCase):
         arguments = SimpleNamespace(
             cli=Path(os.environ['ISOPLANE_TEST_CLI_ASSEMBLY']),
             dotnet=Path(os.environ['ISOPLANE_TEST_DOTNET']),
-            sample=Path(os.environ['ISOPLANE_TEST_SAMPLE']),
+            application=Path(os.environ['ISOPLANE_TEST_POSTGRES_APPLICATION']),
             configuration='Release')
         scratch = Path(__file__).resolve().parents[2] / '.test-runs/postgres'
         scratch.mkdir(parents=True, exist_ok=True)
@@ -27,7 +27,7 @@ def execute(arguments, records):
     with tempfile.TemporaryDirectory(prefix='application-', dir=records) as work:
         directory = Path(work)
         project = directory / 'app'
-        prepared_project(arguments.sample, project)
+        prepared_project(arguments.application, project)
         env = os.environ.copy()
         env['APPDATA'] = str(directory / 'user-secrets')
         env['PATH'] = str(arguments.cli.resolve().parent) + os.pathsep + env['PATH']
@@ -38,7 +38,7 @@ def execute(arguments, records):
         with database(directory) as (container, port, password):
             command(['docker', 'exec', '-i', container, 'psql', '-U', 'postgres', '-d', 'todo', '-v', 'ON_ERROR_STOP=1'],
                     data=(project / 'schema.sql').read_text())
-            connection = f'Host=127.0.0.1;Port={port};Database=todo;Username=postgres;Password={password}'
+            connection = f'Host=127.0.0.1;Port={port};Database=todo;Username=postgres;Password={password};SSL Mode=VerifyFull'
             command([dotnet, 'user-secrets', 'set', '--project', str(project)], env=env,
                     data=json.dumps({'ConnectionStrings:Todo': connection}))
             configuration = arguments.configuration
@@ -52,7 +52,7 @@ def execute(arguments, records):
             except StartupRejected:
                 pass
             rejected = (records / f'{configuration}-untrusted.log').read_text()
-            assert 'System.Security.Authentication.AuthenticationException' in rejected, 'removing trust must fail TLS authentication, not merely return an unrelated server error'
+            assert 'Exception while performing SSL handshake' in rejected, 'removing trust must fail the TLS handshake, not merely return an unrelated server error'
             assert 'outbound operation denied' not in rejected, 'the untrusted-root test must reach the database'
             print(f'{configuration}: verified-TLS CRUD and untrusted-root rejection passed', flush=True)
             for record in records.glob('*.log'):

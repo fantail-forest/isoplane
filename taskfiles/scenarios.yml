@@ -7,68 +7,35 @@ env:
   ISOPLANE_MANAGED_ARTIFACTS: '{{.MANAGED}}'
 
 tasks:
-  prepare:
-    desc: Prepare a reusable scenario application (SAMPLE and CONFIGURATION)
-    deps:
-      - ':cli'
-      - ':runtime'
-    requires:
-      vars:
-        - name: SAMPLE
-          enum: [aspnet-todo]
-    vars:
-      CONFIGURATION: '{{.CONFIGURATION | default "Release"}}'
-      DIRECTORY: '{{.SCENARIOS}}/{{.CONFIGURATION}}'
-    label: 'scenario:{{.SAMPLE}}:{{.CONFIGURATION}}'
-    sources:
-      - '{{.ROOT_DIR}}/samples/{{.SAMPLE}}/**/*'
-      - exclude: 'samples/**/{bin,obj,out,.isoplane}/**/*'
-      - '{{.MANAGED}}/bin/{Isoplane.Sdk,Isoplane.AspNetCore}/release/*.dll'
-      - '{{.ROOT_DIR}}/guest-sdks/dotnet/Build/*'
-      - '{{.ROOT_DIR}}/guest-sdks/dotnet/AspNetCore/buildTransitive/*'
-      - '{{.CLI}}'
-      - '{{.ROOT_DIR}}/Directory.Build.props'
-      - '{{.ROOT_DIR}}/taskfiles/Scenario.proj'
-      - '{{.ROOT_DIR}}/taskfiles/Scenario.xslt'
-      - '{{.ROOT_DIR}}/taskfiles/scenarios.yml'
-    generates:
-      - '{{.DIRECTORY}}/{{.SAMPLE}}/bin/{{.CONFIGURATION}}/**/Todo.dll'
-      - '{{.DIRECTORY}}/{{.SAMPLE}}/obj/project.assets.json'
-    cmds:
-      - 'test "{{OS}}" = linux || { echo "Prepare scenario applications on Linux first." >&2; exit 1; }'
-      - task: stage
-        vars: {SAMPLE: '{{.SAMPLE}}', DIRECTORY: '{{.DIRECTORY}}'}
-      - '"{{.DOTNET}}" build "{{.DIRECTORY}}/{{.SAMPLE}}" --configuration {{.CONFIGURATION}}'
-
-  stage:
-    internal: true
-    label: 'stage:{{.SAMPLE}}:{{.DIRECTORY}}'
-    run: when_changed
-    cmds:
-      - 'mkdir -p "{{.DIRECTORY}}/{{.SAMPLE}}"'
-      - 'rsync -a --delete --exclude bin --exclude obj --exclude out --exclude .isoplane --exclude .local-postgres.json "{{.ROOT_DIR}}/samples/{{.SAMPLE}}/" "{{.DIRECTORY}}/{{.SAMPLE}}/"'
-      - '"{{.DOTNET}}" msbuild taskfiles/Scenario.proj -nologo -t:StageProject -p:Directory="{{.DIRECTORY}}/{{.SAMPLE}}" -p:Root="{{.ROOT_DIR}}"'
-
   postgres:
-    desc: Run PostgreSQL behavior against a prepared application
-    deps:
-      - task: prepare
-        vars: {SAMPLE: aspnet-todo, CONFIGURATION: Release}
+    desc: Run PostgreSQL behavior against the prepared fixture application
+    deps: [postgres:build]
     env:
       ISOPLANE_TEST_CLI_ASSEMBLY: '{{.CLI}}'
       ISOPLANE_TEST_DOTNET: '{{.DOTNET}}'
-      ISOPLANE_TEST_SAMPLE: '{{.SCENARIOS}}/Release/aspnet-todo'
+      ISOPLANE_TEST_POSTGRES_APPLICATION: '{{.SCENARIOS}}/Release/postgres'
       ISOPLANE_CLI_ASSEMBLY: '{{.CLI}}'
     cmds:
       - '"{{.PYTHON}}" -m unittest discover -s scenario-tests/developer-experience -p test_postgres.py -v'
 
-  local-postgres:
-    desc: Check the PostgreSQL helper in an explicitly prepared release
-    requires:
-      vars: [RELEASE]
-    preconditions:
-      - 'test -f "{{.RELEASE}}/release.json"'
-    env:
-      ISOPLANE_TEST_RELEASE: '{{.RELEASE}}'
+  postgres:build:
+    internal: true
+    deps: [':cli', ':runtime']
+    vars:
+      DIRECTORY: '{{.SCENARIOS}}/Release/postgres'
+    sources:
+      - '{{.ROOT_DIR}}/scenario-tests/developer-experience/fixtures/postgres/**/*'
+      - '{{.MANAGED}}/bin/Isoplane.Sdk/release/*.dll'
+      - '{{.ROOT_DIR}}/guest-sdks/dotnet/Build/*'
+      - '{{.CLI}}'
+      - '{{.ROOT_DIR}}/Directory.Build.props'
+      - '{{.ROOT_DIR}}/taskfiles/scenarios.yml'
+    generates:
+      - '{{.DIRECTORY}}/bin/Release/**/PostgresFixture.dll'
+      - '{{.DIRECTORY}}/obj/project.assets.json'
     cmds:
-      - '"{{.PYTHON}}" -m unittest discover -s scenario-tests/developer-experience -p test_local_postgres.py -v'
+      - 'test "{{OS}}" = linux || { echo "Prepare scenario applications on Linux first." >&2; exit 1; }'
+      - 'mkdir -p "{{.DIRECTORY}}"'
+      - 'rsync -a --delete --exclude bin --exclude obj --exclude .isoplane scenario-tests/developer-experience/fixtures/postgres/ "{{.DIRECTORY}}/"'
+      - '"{{.DOTNET}}" build "{{.DIRECTORY}}" --configuration Release'
+

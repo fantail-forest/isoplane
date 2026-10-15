@@ -1,0 +1,20 @@
+<!-- A handler application using EF Core over Npgsql, built against this checkout's SDK and runtime. -->
+<Project>
+  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
+  <Import Project="$(ISOPLANE_BUILD_ROOT)/guest-sdks/dotnet/Build/Isoplane.ManagedBundle.props" />
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsoplaneRuntimeDirectory>$(ISOPLANE_RUNTIME_DIRECTORY)</IsoplaneRuntimeDirectory>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.0" />
+    <ProjectReference Include="$(ISOPLANE_BUILD_ROOT)/guest-sdks/dotnet/Isoplane.Sdk.csproj"
+                      GlobalPropertiesToRemove="RuntimeIdentifier;SelfContained"
+                      AdditionalProperties="ArtifactsPath=$(ISOPLANE_MANAGED_ARTIFACTS);IsoplaneManagedOnly=true;UseAppHost=false" />
+  </ItemGroup>
+  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
+  <Import Project="$(ISOPLANE_BUILD_ROOT)/guest-sdks/dotnet/Build/Isoplane.ManagedBundle.targets" />
+  <Import Project="$(ISOPLANE_BUILD_ROOT)/guest-sdks/dotnet/Build/Isoplane.Run.targets" />
+</Project>
