@@ -173,24 +173,36 @@ fn gc_hint_is_optional() {
     assert!(i.is_parked(), "the no-op hint leaves the instance parked");
 }
 
+/// The ASP.NET probe on the shared runtime, compiled once for both ASP.NET tests in this binary.
+fn aspnet_guest() -> &'static (isoplane_engine::IsoplaneEngine, isoplane_engine::Template) {
+    static GUEST: std::sync::OnceLock<(
+        isoplane_engine::IsoplaneEngine,
+        isoplane_engine::Template,
+    )> = std::sync::OnceLock::new();
+    GUEST.get_or_init(|| {
+        let engine = isoplane_engine::IsoplaneEngine::new(isoplane_engine::EngineConfig {
+            max_instances: 4,
+            max_memory_bytes: 128 << 20,
+            guard_size_bytes: 64 << 20,
+            ..Default::default()
+        })
+        .expect("the ASP.NET engine must construct");
+        let template = engine
+            .load_template(&isoplane_fixtures::mono_runtime())
+            .and_then(|template| {
+                template.with_application_files(managed::probe_files("isoplane_guest_aspnet"))
+            })
+            .expect("the packaged ASP.NET guest must load");
+        (engine, template)
+    })
+}
+
 #[test]
 fn aspnet_request_scopes_remain_isolated_after_restoring_guest_state() {
-    let engine = isoplane_engine::IsoplaneEngine::new(isoplane_engine::EngineConfig {
-        max_instances: 2,
-        max_memory_bytes: 128 << 20,
-        guard_size_bytes: 64 << 20,
-        ..Default::default()
-    })
-    .expect("the ASP.NET engine must construct");
-    let template = engine
-        .load_template(&isoplane_fixtures::mono_runtime())
-        .and_then(|template| {
-            template.with_application_files(managed::probe_files("isoplane_guest_aspnet"))
-        })
-        .expect("the packaged ASP.NET guest must load");
+    let (engine, template) = aspnet_guest();
     let recorder = Recorder::default();
     let mut instance = engine
-        .activate(&template, Box::new(TestBindings::new(recorder.clone())))
+        .activate(template, Box::new(TestBindings::new(recorder.clone())))
         .expect("ASP.NET instance");
     let mut request = http_dispatch(1);
     if let isoplane_abi::dispatch::DispatchKind::Http(http) = &mut request.kind {
@@ -216,7 +228,7 @@ fn aspnet_request_scopes_remain_isolated_after_restoring_guest_state() {
     let memory = instance.memory().to_vec();
     drop(instance);
     let mut restored = engine
-        .activate(&template, Box::new(TestBindings::new(recorder.clone())))
+        .activate(template, Box::new(TestBindings::new(recorder.clone())))
         .expect("restored ASP.NET instance");
     restored
         .restore_mutable_state(&image)
@@ -232,22 +244,10 @@ fn aspnet_request_scopes_remain_isolated_after_restoring_guest_state() {
 
 #[test]
 fn aspnet_cancellation_after_restore_disposes_the_request_scope() {
-    let engine = isoplane_engine::IsoplaneEngine::new(isoplane_engine::EngineConfig {
-        max_instances: 2,
-        max_memory_bytes: 128 << 20,
-        guard_size_bytes: 64 << 20,
-        ..Default::default()
-    })
-    .expect("the ASP.NET engine must construct");
-    let template = engine
-        .load_template(&isoplane_fixtures::mono_runtime())
-        .and_then(|template| {
-            template.with_application_files(managed::probe_files("isoplane_guest_aspnet"))
-        })
-        .expect("the packaged ASP.NET guest must load");
+    let (engine, template) = aspnet_guest();
     let recorder = Recorder::default();
     let mut instance = engine
-        .activate(&template, Box::new(TestBindings::new(recorder.clone())))
+        .activate(template, Box::new(TestBindings::new(recorder.clone())))
         .expect("the cancellation guest must activate");
     let mut request = http_dispatch(1);
     request.cancel_future = 42;
@@ -271,7 +271,7 @@ fn aspnet_cancellation_after_restore_disposes_the_request_scope() {
     let memory = instance.memory().to_vec();
     drop(instance);
     let mut restored = engine
-        .activate(&template, Box::new(TestBindings::new(recorder.clone())))
+        .activate(template, Box::new(TestBindings::new(recorder.clone())))
         .expect("the cancellation guest must reactivate");
     restored
         .restore_mutable_state(&image)
