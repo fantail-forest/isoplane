@@ -1,6 +1,7 @@
 """Exercise managed debugger features through the installed CLI and a real guest."""
 import re
 from pathlib import Path
+from debug_sources import stop_event
 
 EXPECTED_RESPONSE = b'102:8:9:206'
 
@@ -28,7 +29,7 @@ def exercise(source, send, response, until):
     lines = locations(source)
 
     def stop(reason=None):
-        event = until(lambda item: item.get('event') == 'stopped')
+        event = until(stop_event)
         if reason is not None:
             assert event['body']['reason'] == reason, 'the adapter must identify why execution paused'
         thread = event['body']['threadId']

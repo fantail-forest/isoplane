@@ -1,5 +1,6 @@
 """Keep paused frames and jump targets aligned after source-only line changes."""
 from pathlib import Path
+from debug_sources import stop_event
 
 EXPECTED_RESPONSE = b"231"
 
@@ -10,7 +11,7 @@ def configure(source, send, response):
 
 def exercise(source, send, response, until):
     def stop():
-        event = until(lambda item: item.get("event") == "stopped")
+        event = until(stop_event)
         thread = event["body"]["threadId"]
         frame = response(send("stackTrace", {"threadId": thread}))["body"]["stackFrames"][0]
         return thread, frame

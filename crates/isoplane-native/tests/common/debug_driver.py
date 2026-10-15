@@ -40,7 +40,7 @@ import debug_statement_iterators
 import debug_statement_handlers
 import debug_watchpoints
 import debug_watchpoint_steps
-from debug_sources import same_source
+from debug_sources import same_source, stop_event
 
 launcher, endpoint, url, source, owner, mode, module = sys.argv[1:]
 # The fixture route whose code this mode pauses in, appended to whichever address serves it.
@@ -143,12 +143,22 @@ def stop_owner():
         assert sys.stdin.readline() == "owner-stopped\n"
 
 
+# Requests whose HTTP exchange has finished, with how it ended.
+completed_requests = {}
+
+
 def until(predicate):
     for index, value in enumerate(deferred):
         if predicate(value):
             return deferred.pop(index)
     while True:
+        if predicate is stop_event and http_result in completed_requests:
+            raise AssertionError("the request completed without pausing the debugger: "
+                                 + completed_requests[http_result])
         value = messages.get()
+        if "requestCompleted" in value:
+            completed_requests[value["requestCompleted"]] = value["outcome"]
+            continue
         print(json.dumps(value), flush=True)
         if value.get("type") == "request" and value.get("command") == "runInTerminal":
             launch_terminal(value)
@@ -174,6 +184,8 @@ def request_http(result):
         result.set_result((error.code, error.read()))
     except Exception as error:
         result.set_exception(error)
+    outcome = repr(result.exception() or result.result())
+    messages.put({"requestCompleted": result, "outcome": f"{url} -> {outcome}"})
 
 
 def process_tree():
@@ -239,7 +251,7 @@ try:
             bound = until(lambda item: item.get("event") == "breakpoint" and item["body"]["breakpoint"]["verified"])
             assert bound["body"]["breakpoint"]["line"] == before, "the adapter must confirm binding at the requested customer line"
             for expected in [before, after]:
-                stopped = until(lambda item: item.get("event") == "stopped")
+                stopped = until(stop_event)
                 thread = stopped["body"]["threadId"]
                 frame = response(send("stackTrace", {"threadId": thread}))["body"]["stackFrames"][0]
                 if attempt > 0 and previous_frame is not None:

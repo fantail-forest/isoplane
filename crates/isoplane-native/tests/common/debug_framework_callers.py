@@ -1,6 +1,6 @@
 """Name a framework async caller that has no symbols after the application resumes."""
 from pathlib import Path
-from debug_sources import same_source
+from debug_sources import same_source, stop_event
 
 EXPECTED_RESPONSE = b"4"
 
@@ -11,7 +11,7 @@ def configure(source, send, response):
 
 
 def exercise(source, send, response, until):
-    stopped = until(lambda message: message.get("event") == "stopped")["body"]
+    stopped = until(stop_event)["body"]
     assert stopped["reason"] == "breakpoint", f"the resumed write must stop at its breakpoint: {stopped}"
     frames = response(send("stackTrace", {"threadId": stopped["threadId"]}))["body"]["stackFrames"]
     names = [frame["name"] for frame in frames]

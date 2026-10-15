@@ -1,6 +1,6 @@
 """Preserve logical callers and saved locals across host I/O."""
 from pathlib import Path
-from debug_sources import same_source
+from debug_sources import same_source, stop_event
 
 EXPECTED_RESPONSE = b"104"
 
@@ -71,13 +71,13 @@ def inspect(source, send, response, thread, until):
 
 
 def exercise(source, send, response, until):
-    stopped = until(lambda message: message.get("event") == "stopped")["body"]
+    stopped = until(stop_event)["body"]
     if stopped["reason"] == "exception":
         details = response(send("exceptionInfo", {"threadId": stopped["threadId"]}))
         raise AssertionError(f"async debugging must reach the resumed application without an unhandled exception: {details}")
     pending, saved_local_watchpoint = inspect(source, send, response, stopped["threadId"], until)
     response(send("continue", {"threadId": stopped["threadId"]}))
-    helper = until(lambda message: message.get("event") == "stopped")["body"]
+    helper = until(stop_event)["body"]
     assert helper["reason"] == "breakpoint", "execution must reach the synchronous helper before writing watched storage"
     frames = response(send("stackTrace", {"threadId": helper["threadId"]}))["body"]["stackFrames"]
     names = [frame["name"] for frame in frames]
@@ -87,7 +87,7 @@ def exercise(source, send, response, until):
     assert outer["result"] == "51", "saved-frame watches must retain the caller's edits and parameters while a synchronous helper executes"
     response(send("continue", {"threadId": helper["threadId"]}))
     while pending:
-        stopped = until(lambda message: message.get("event") == "stopped")["body"]
+        stopped = until(stop_event)["body"]
         assert stopped["reason"] == "data breakpoint", "saved-frame watchpoints must observe writes after another await and GC"
         hits = set(stopped.get("hitBreakpointIds", []))
         assert hits and hits <= pending, "the stop must identify the expected managed storage location"

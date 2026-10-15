@@ -1,5 +1,6 @@
 """Adopt caller edits after nested calls return without replaying side effects."""
 from pathlib import Path
+from debug_sources import stop_event
 
 EXPECTED_RESPONSE = b"1326:7:1"
 
@@ -10,7 +11,7 @@ def configure(source, send, response):
 
 def exercise(source, send, response, until):
     def stop():
-        event = until(lambda item: item.get("event") == "stopped")
+        event = until(stop_event)
         return event["body"]["threadId"]
 
     thread = stop()

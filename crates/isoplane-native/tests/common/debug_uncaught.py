@@ -1,5 +1,6 @@
 """Qualify the uncaught filter against real caught and unhandled guest exceptions."""
 from pathlib import Path
+from debug_sources import stop_event
 
 EXPECTED_STATUS = 500
 EXPECTED_RESPONSE = b'guest_panic: guest returned trapped(Panic)'
@@ -15,7 +16,7 @@ def configure(source, send, response):
 
 def exercise(source, send, response, until):
     global filtered_request_completed
-    stopped = until(lambda item: item.get('event') == 'stopped')
+    stopped = until(stop_event)
     assert stopped['body']['reason'] == 'breakpoint', 'the uncaught filter must skip the caught exception'
     thread = stopped['body']['threadId']
     frames = response(send('stackTrace', {'threadId': thread}))['body']['stackFrames']
@@ -26,7 +27,7 @@ def exercise(source, send, response, until):
     response(send('continue', {'threadId': thread}))
     if filtered_request_completed:
         return
-    stopped = until(lambda item: item.get('event') == 'stopped')
+    stopped = until(stop_event)
     assert stopped['body']['reason'] == 'exception', 'an unhandled exception must stop execution'
     thread = stopped['body']['threadId']
     exception = response(send('exceptionInfo', {'threadId': thread}))['body']

@@ -1,5 +1,6 @@
 """Move within active handlers, preserving rethrow and normal/exceptional finally exits."""
 from pathlib import Path
+from debug_sources import stop_event
 
 EXPECTED_RESPONSE = b'original:24:0'
 
@@ -20,7 +21,7 @@ def exercise(source, send, response, until):
     lines = locations(source)
 
     def stop(line):
-        event = until(lambda item: item.get('event') == 'stopped')
+        event = until(stop_event)
         thread = event['body']['threadId']
         frame = response(send('stackTrace', {'threadId': thread}))['body']['stackFrames'][0]
         assert frame['line'] == lines[line], (event, frame)

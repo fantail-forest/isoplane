@@ -1,5 +1,6 @@
 """Edit paused iterator bodies, retaining hoisted locals through yield and await."""
 from pathlib import Path
+from debug_sources import stop_event
 
 EXPECTED_RESPONSE = b"101,1101,101,1101:True:True"
 
@@ -14,7 +15,7 @@ def exercise(source, send, response, until):
     edited = Path(source).read_text()
 
     def stop():
-        event = until(lambda item: item.get("event") == "stopped")
+        event = until(stop_event)
         thread = event["body"]["threadId"]
         frame = response(send("stackTrace", {"threadId": thread}))["body"]["stackFrames"][0]
         return thread, frame

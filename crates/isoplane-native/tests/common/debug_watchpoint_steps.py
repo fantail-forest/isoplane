@@ -2,6 +2,7 @@
 from pathlib import Path
 
 from debug_watchpoints import EXPECTED_RESPONSE
+from debug_sources import stop_event
 
 
 def configure(source, send, response):
@@ -12,7 +13,7 @@ def configure(source, send, response):
 
 def exercise(source, send, response, until):
     def stop(reason, method):
-        event = until(lambda item: item.get('event') == 'stopped')['body']
+        event = until(stop_event)['body']
         assert event['reason'] == reason, event
         frame = response(send('stackTrace', {'threadId': event['threadId']}))['body']['stackFrames'][0]
         assert method in frame['name'], frame

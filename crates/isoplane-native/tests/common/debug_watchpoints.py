@@ -1,6 +1,7 @@
 """Prove managed data breakpoints against interpreter writes and garbage collection."""
 from pathlib import Path
 import debug_local_watchpoints
+from debug_sources import stop_event
 
 EXPECTED_RESPONSE = b'7:4:0:0:old:0:31'
 
@@ -12,7 +13,7 @@ def configure(source, send, response):
 
 def exercise(source, send, response, until):
     def stop(reason):
-        event = until(lambda item: item.get('event') == 'stopped')['body']
+        event = until(stop_event)['body']
         assert event['reason'] == reason, 'managed writes must report a data breakpoint stop'
         thread = event['threadId']
         frame = response(send('stackTrace', {'threadId': thread}))['body']['stackFrames'][0]

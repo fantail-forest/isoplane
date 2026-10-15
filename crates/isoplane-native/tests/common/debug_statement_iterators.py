@@ -1,5 +1,6 @@
 """Jump across and repeat iterator yields, preserving values and disposal."""
 from pathlib import Path
+from debug_sources import stop_event
 
 EXPECTED_RESPONSE = b"11,11,111,11,11,111:True:True"
 
@@ -20,7 +21,7 @@ def exercise(source, send, response, until):
     lines = locations(source)
 
     def stop():
-        event = until(lambda item: item.get("event") == "stopped")
+        event = until(stop_event)
         thread = event["body"]["threadId"]
         frame = response(send("stackTrace", {"threadId": thread}))["body"]["stackFrames"][0]
         return thread, frame

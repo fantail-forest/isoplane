@@ -1,5 +1,6 @@
 """Resume construction into edited callers without creating the object twice."""
 from pathlib import Path
+from debug_sources import stop_event
 
 EXPECTED_RESPONSE = b"3123:7:2"
 
@@ -10,7 +11,7 @@ def configure(source, send, response):
 
 def exercise(source, send, response, until):
     def stop():
-        return until(lambda item: item.get("event") == "stopped")["body"]["threadId"]
+        return until(stop_event)["body"]["threadId"]
 
     text = Path(source).read_text()
     for marker, value in [("CLASS_CONSTRUCTION_EDIT", 1000), ("VALUE_CONSTRUCTION_EDIT", 2000)]:

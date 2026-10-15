@@ -1,5 +1,6 @@
 """Move the next statement through DAP and observe the resulting guest response."""
 from pathlib import Path
+from debug_sources import stop_event
 
 EXPECTED_RESPONSE = b'11:112:13'
 
@@ -21,7 +22,7 @@ def exercise(source, send, response, until):
     lines = locations(source)
 
     def stop():
-        event = until(lambda item: item.get('event') == 'stopped')
+        event = until(stop_event)
         thread = event['body']['threadId']
         frame = response(send('stackTrace', {'threadId': thread}))['body']['stackFrames'][0]
         return thread, frame

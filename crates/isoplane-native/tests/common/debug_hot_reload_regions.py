@@ -1,6 +1,7 @@
 """Adopt added locals in an async or protected body without losing live state."""
 from pathlib import Path
 import sys
+from debug_sources import stop_event
 
 ASYNC = sys.argv[-2] == "edit-and-continue-async"
 EXPECTED_RESPONSE = b"35" if ASYNC else b"1035"
@@ -12,7 +13,7 @@ def configure(source, send, response):
 
 def exercise(source, send, response, until):
     def stop():
-        event = until(lambda item: item.get("event") == "stopped")
+        event = until(stop_event)
         thread = event["body"]["threadId"]
         frame = response(send("stackTrace", {"threadId": thread}))["body"]["stackFrames"][0]
         return thread, frame

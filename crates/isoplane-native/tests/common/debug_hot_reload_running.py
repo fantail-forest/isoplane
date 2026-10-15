@@ -1,5 +1,6 @@
 """Apply edits during execution without introducing or consuming debugger stops."""
 from pathlib import Path
+from debug_sources import stop_event
 
 EXPECTED_RESPONSE = b'42:2:2:True:{"Value":1,"Added":3}'
 
@@ -13,7 +14,7 @@ def configure(source, send, response):
 
 
 def exercise(source, send, response, until):
-    stopped = until(lambda item: item.get("event") == "stopped")
+    stopped = until(stop_event)
     thread = stopped["body"]["threadId"]
     response(send("continue", {"threadId": thread}))
     original = Path(source).read_text()
@@ -24,7 +25,7 @@ def exercise(source, send, response, until):
     applied = response(send("isoplane/hotReload", {"sources": [{"path": source, "text": edited}]}))["body"]
     assert applied["appliedModules"] == 1 and not applied["diagnostics"] and not applied["restartRequired"], applied
     until(lambda item: item.get("event") == "output" and "notification-fixture-warning" in item.get("body", {}).get("output", ""))
-    stopped = until(lambda item: item.get("event") == "stopped")
+    stopped = until(stop_event)
     assert stopped["body"]["reason"] == "breakpoint", stopped
     thread = stopped["body"]["threadId"]
     frame = response(send("stackTrace", {"threadId": thread}))["body"]["stackFrames"][0]
@@ -36,6 +37,6 @@ def exercise(source, send, response, until):
     applied = response(send("isoplane/hotReload", {"sources": [{"path": source, "text": edited}]}))["body"]
     assert applied["appliedModules"] == 1 and not applied["diagnostics"] and not applied["restartRequired"], applied
     until(lambda item: item.get("event") == "output" and "notification-fixture-warning" in item.get("body", {}).get("output", ""))
-    refreshed = until(lambda item: item.get("event") == "stopped")
+    refreshed = until(stop_event)
     assert refreshed["body"]["reason"] == "pause", refreshed
     response(send("continue", {"threadId": thread}))

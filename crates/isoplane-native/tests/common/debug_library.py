@@ -1,6 +1,6 @@
 """Bind source symbols from a referenced managed project."""
 from pathlib import Path
-from debug_sources import same_source
+from debug_sources import same_source, stop_event
 
 EXPECTED_RESPONSE = b'42'
 
@@ -11,7 +11,7 @@ def configure(source, send, response):
 
 
 def exercise(source, send, response, until):
-    event = until(lambda item: item.get('event') == 'stopped')['body']
+    event = until(stop_event)['body']
     assert event['reason'] == 'breakpoint', 'the referenced library must bind its source breakpoint'
     frames = response(send('stackTrace', {'threadId': event['threadId']}))['body']['stackFrames']
     names = [frame['name'] for frame in frames]
