@@ -9,6 +9,7 @@ description = "The isoplane:platform@1 contract: dispatch/result records, poll s
 
 [dependencies]
 serde = { workspace = true }
+serde_bytes = { workspace = true }
 postcard = { workspace = true }
 thiserror = { workspace = true }
 

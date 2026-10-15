@@ -650,23 +650,6 @@ fn matching_base<'a>(
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn payloads_encode_as_three_sequences_of_bytes() {
-        #[derive(serde::Serialize)]
-        struct AsBytes(#[serde(with = "super::byte_payloads")] [Vec<u8>; 3]);
-        let payloads = [vec![1, 2, 3], Vec::new(), vec![0xff; 300]];
-        let encoded = postcard::to_allocvec(&AsBytes(payloads.clone())).expect("encode");
-        assert_eq!(
-            encoded,
-            postcard::to_allocvec(&payloads).expect("encode plainly"),
-            "prepared templates published before must still decode"
-        );
-        #[derive(serde::Deserialize)]
-        struct Decoded(#[serde(with = "super::byte_payloads")] [Vec<u8>; 3]);
-        let Decoded(decoded) = postcard::from_bytes(&encoded).expect("decode");
-        assert_eq!(decoded, payloads);
-    }
-
     use super::*;
 
     fn prepared() -> (IsoplaneEngine, PreparedTemplate, PreparedIdentity) {

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 /// when it issued the import call.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ResultRecord {
-    Ok(Vec<u8>),
+    Ok(#[serde(with = "serde_bytes")] Vec<u8>),
     Err(FutureError),
 }
 
@@ -59,11 +59,13 @@ pub struct FetchResponse {
     pub body_handle: u32,
     /// The whole body, when it fit under the inline cap and no streaming read
     /// is needed.
+    #[serde(with = "serde_bytes")]
     pub body_inline: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BodyChunk {
+    #[serde(with = "serde_bytes")]
     pub data: Vec<u8>,
     pub eof: bool,
 }
