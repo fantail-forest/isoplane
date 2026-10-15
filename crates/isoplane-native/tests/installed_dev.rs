@@ -508,6 +508,11 @@ fn interpreted_debugging_reconstructs_suspended_async_callers() {
 }
 
 #[test]
+fn framework_async_callers_without_symbols_appear_by_name_after_an_await() {
+    debugger::prepared_acceptance("framework-callers");
+}
+
+#[test]
 fn optimized_async_callers_keep_editable_state_and_watchpoints() {
     debugger::prepared_acceptance("async-optimized");
 }

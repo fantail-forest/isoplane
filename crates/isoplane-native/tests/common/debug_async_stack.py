@@ -24,7 +24,10 @@ def inspect(source, send, response, thread, until):
     application = [frame for frame in frames if same_source(frame.get("source", {}).get("path"), source)]
     names = [frame["name"] for frame in frames]
     assert len(application) == 3 and frames[:3] == application, f"the resumed async stack must start with Inner, Outer and Handle across host parking: {names}"
-    assert names[3:] and all(name.startswith("Isoplane.AspNetCore.") for name in names[3:]), f"only the SDK's suspended hosting callers may follow the application's, without runtime machinery or the frames that resumed it: {names}"
+    assert all(name.endswith(" [awaiting]") and name.startswith(("Microsoft.AspNetCore.", "Isoplane.AspNetCore.")) for name in names[3:]), f"only the suspended ASP.NET Core and SDK callers may follow the application's, without runtime machinery or the frames that resumed it: {names}"
+    hosting = next((frame for frame in frames[3:] if frame["name"].startswith("Microsoft.AspNetCore.")), None)
+    assert hosting is not None and hosting.get("source") is None, f"the ASP.NET Core caller awaiting the handler must appear by name without symbols: {names}"
+    assert names[-1].startswith("Isoplane.AspNetCore."), f"the SDK's hosting callers must follow ASP.NET Core's: {names}"
     assert trace["totalFrames"] == len(frames), "the frame count must describe the filtered stack"
     page = response(send("stackTrace", {"threadId": thread, "startFrame": 1, "levels": 1}))["body"]
     assert page["totalFrames"] == len(frames) and [frame["name"] for frame in page["stackFrames"]] == [frames[1]["name"]], "stack pagination must use visible frame positions"
@@ -79,7 +82,7 @@ def exercise(source, send, response, until):
     frames = response(send("stackTrace", {"threadId": helper["threadId"]}))["body"]["stackFrames"]
     names = [frame["name"] for frame in frames]
     assert all(name in frame for frame, name in zip(names, ["ComputeTotal", "Inner", "Outer", "Handle"])), f"a synchronous helper must retain the executing async method and its suspended caller chain: {names}"
-    assert names[4:] and all(name.startswith("Isoplane.AspNetCore.") for name in names[4:]), f"only the SDK's suspended hosting callers may follow the application's: {names}"
+    assert names[4:] and all(name.endswith(" [awaiting]") and name.startswith(("Microsoft.AspNetCore.", "Isoplane.AspNetCore.")) for name in names[4:]), f"only the suspended ASP.NET Core and SDK callers may follow the application's: {names}"
     outer = response(send("evaluate", {"frameId": frames[2]["id"], "expression": "outer + input", "context": "watch"}))["body"]
     assert outer["result"] == "51", "saved-frame watches must retain the caller's edits and parameters while a synchronous helper executes"
     response(send("continue", {"threadId": helper["threadId"]}))

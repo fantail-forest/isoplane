@@ -78,9 +78,11 @@ can be a positive count such as `5`, a comparison such as `>= 5`, or `% 5` to st
 on every fifth hit. Logpoints write their message without stopping execution.
 
 The call stack shows application, package-dependency, Isoplane SDK and .NET
-frames, and reconstructed async callers. It hides the Isoplane runtime's internal
-frames below the SDK, the .NET frames they call to start or resume the
-application, and package methods marked as generated or non-user code.
+frames, and reconstructed async callers. Frames and async callers from assemblies
+without symbols, such as .NET and ASP.NET Core, appear by name without a source
+location. The call stack hides the Isoplane runtime's internal frames below the
+SDK, the .NET frames they call to start or resume the application, and package
+methods marked as generated or non-user code.
 
 ## Edit code during a session
 

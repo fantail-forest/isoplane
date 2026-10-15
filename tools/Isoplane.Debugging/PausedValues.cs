@@ -52,7 +52,9 @@ internal sealed class PausedValues(TargetEventArgs stopped, Func<int> allocate, 
             int id = allocate();
             frames.Add(id, frame);
             var location = frame.Async is { } suspended
-                ? new SourceLocation(suspended.Method.Name + " [awaiting]", suspended.Location.Source, suspended.Location.Line, suspended.Location.Column, suspended.Location.Line, suspended.Location.Column)
+                ? suspended.Location is { } awaiting
+                    ? new SourceLocation(suspended.Name + " [awaiting]", awaiting.Source, awaiting.Line, awaiting.Column, awaiting.Line, awaiting.Column)
+                    : new SourceLocation(suspended.Name + " [awaiting]", null, 0, 0, 0, 0)
                 : frame.Physical.SourceLocation;
             result.Add(new Dap.StackFrame
             {
@@ -228,7 +230,7 @@ internal sealed class PausedValues(TargetEventArgs stopped, Func<int> allocate, 
     {
         if (visibleFrames is null) return;
         foreach (var frame in visibleFrames)
-            frame.Async?.Context.Adapter.Dispose();
+            frame.Async?.Context?.Adapter.Dispose();
     }
 
     private Frame FrameFor(int? frameId) => frameId is null ? new Frame(stopped.Backtrace.GetFrame(0), 0)

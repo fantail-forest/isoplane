@@ -33,6 +33,7 @@ public static class Application
         app.MapGet("/hotreload-unchanged-handler", HotReload.Application.HandleUnchanged);
         Watchpoints.Application.Map(app);
         Uncaught.Application.Map(app);
+        FrameworkCallers.Application.Map(app);
         Protocol.Application.Map(app);
         app.MapGet("/warmup", () => "warm");
         Isoplane.Initialization.Initializing += () => app.WarmupAsync("/warmup");

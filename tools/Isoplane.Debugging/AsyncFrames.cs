@@ -1,6 +1,7 @@
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
+using System.Text.RegularExpressions;
 using Isoplane.Build;
 using Microsoft.VisualStudio.Shared.VSCodeDebugProtocol;
 using Mono.Debugger.Soft;
@@ -10,14 +11,18 @@ using Mono.Debugging.Soft;
 
 namespace Isoplane.Debugging;
 
-internal sealed record AsyncFrame(AsyncDebugSymbols.Method Method, AsyncDebugSymbols.AwaitLocation Location,
-    SoftEvaluationContext Context)
+/// <summary>
+/// A suspended async caller. Without symbols it has only the name its state machine's metadata gives,
+/// with no source location or saved values, as other .NET debuggers show framework callers.
+/// </summary>
+internal sealed record AsyncFrame(string Name, AsyncDebugSymbols.AwaitLocation? Location, SoftEvaluationContext? Context)
 {
-    internal ObjectValue[] Locals() => Context.Adapter.GetLocalVariables(Context)
+    internal ObjectValue[] Locals() => Context is null ? [] : Context.Adapter.GetLocalVariables(Context)
         .Concat(Context.Adapter.GetParameters(Context)).Select(value => value.CreateObjectValue(false)).ToArray();
 
     internal ObjectValue Evaluate(string expression)
     {
+        if (Context is null) throw new EvaluatorException("The async caller {0} has no symbols, so its saved values cannot be evaluated.", Name);
         var value = Context.Evaluator.Evaluate(Context, expression);
         if (value is NamespaceValueReference)
             throw new EvaluatorException("The expression '{0}' does not resolve to a value in this async frame.", expression);
@@ -96,9 +101,10 @@ internal static class AsyncFrames
         var stateType = StateType(state);
         if (stateType is null) return null;
         var method = stateType.GetMethod("MoveNext");
+        if (!code.Shows(method)) return null;
         var assembly = method.DeclaringType.Assembly;
-        var pdb = code.Shows(method) && assembly.HasDebugInfoLoaded() ? assembly.GetPdbBlob() : null;
-        if (pdb is null) return null;
+        if ((assembly.HasDebugInfoLoaded() ? assembly.GetPdbBlob() : null) is not { } pdb)
+            return new AsyncFrame(KickoffName(stateType.FullName), null, null);
         using var pe = new PEReader(new MemoryStream(assembly.GetMetadataBlob()));
         using var symbols = MetadataReaderProvider.FromPortablePdbStream(new MemoryStream(pdb));
         var info = AsyncDebugSymbols.Read(pe.GetMetadataReader(), symbols.GetMetadataReader(), (MethodDefinitionHandle)MetadataTokens.Handle(method.MetadataToken));
@@ -115,7 +121,22 @@ internal static class AsyncFrames
         var storage = new FieldValueReference(context, storageField, owner, owner.Type);
         context.Adapter = new AsyncVariables(storage, stateType, assembly.GetType(info.DeclaringType)
             ?? throw new ProtocolException("The async caller's declaring type is unavailable.")) { Session = session };
-        return new AsyncFrame(info, info.Awaits[index], context);
+        return new AsyncFrame(info.Name, info.Awaits[index], context);
+    }
+
+    /// <summary>
+    /// The method an async state machine runs, named from its type: Roslyn names the state machine of
+    /// Method <c>&lt;Method&gt;d__N</c>, and of a local function Local in Method <c>&lt;&lt;Method&gt;g__Local|N_M&gt;d</c>.
+    /// </summary>
+    internal static string KickoffName(string stateMachine)
+    {
+        string name = Regex.Replace(stateMachine, @"`\d+|\[.*$", "");
+        int nested = name.LastIndexOf('+');
+        var match = nested < 0 ? Match.Empty
+            : Regex.Match(name[(nested + 1)..], @"^<(?:<(?<method>[^<>]+)>g__(?<local>[^|>]+)\|[^>]*|(?<method>[^<>]+))>d");
+        if (!match.Success) return name.Replace('+', '.');
+        string method = match.Groups["method"].Value + (match.Groups["local"].Success ? "." + match.Groups["local"].Value : "");
+        return name[..nested].Replace('+', '.') + "." + method;
     }
 
     private static ObjectMirror? Root(List<ObjectMirror> nodes, IReadOnlyList<Mono.Debugger.Soft.StackFrame> physical, int frameIndex)
