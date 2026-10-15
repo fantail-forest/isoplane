@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the C# test fixtures; samples have their own build scripts.
+# Build the C# test fixtures.
 # Usage: guests/build-dotnet.sh [--if-stale] [--fixture name]
 set -euo pipefail
 

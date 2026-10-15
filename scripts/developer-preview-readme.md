@@ -1,8 +1,8 @@
 # Isoplane developer preview
 
-This release targets @RUNTIME_IDENTIFIER@. It contains `release.json`, a NuGet
-package feed (`packages/`) and a sample. `release.json` records the source
-revision and package checksums; `package-version.txt` records the version.
+This release targets @RUNTIME_IDENTIFIER@. It contains `release.json` and a
+NuGet package feed (`packages/`). `release.json` records the source revision and
+package checksums; `package-version.txt` records the version.
 
 @SDK_PREREQUISITES@
 

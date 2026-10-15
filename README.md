@@ -59,7 +59,7 @@ cargo metadata --no-deps --format-version 1 \
 | `crates/`              | The host: the contract, engine, local snapshots, proxy, cell, control plane, `isoplaned` and the native Isoplane support library. |
 | `guest-sdks/dotnet`    | The C# guest SDK. |
 | `guest-sdks/rust`      | Internal Rust helpers for guest test fixtures. |
-| `guests/`             | The guest modules: fixtures the host tests drive, and the C# samples.     |
+| `guests/`             | The guest modules: fixtures the host tests drive.                         |
 | `docs/userdocs` | Customer guides for Isoplane. |
 | `docs/opinion-registry` | How software is built here.                                             |
 | `scripts/`            | `scripts/dev` runs a local command; `scripts/clean` reclaims build intermediates. |

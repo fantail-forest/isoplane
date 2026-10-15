@@ -52,7 +52,7 @@ For every way a guest could try to escape or abuse the sandbox, keep a guest tha
 
 ## Pack fixture apps
 
-One fixture app can cover several behaviours. Split it only when those behaviours would interfere with each other, or to stay within a size limit. Don't add test-only behaviour to samples customers copy from.
+One fixture app can cover several behaviours. Split it only when those behaviours would interfere with each other, or to stay within a size limit. Don't add test-only behaviour to templates or samples customers copy from.
 
 ## Don't test third-party services
 

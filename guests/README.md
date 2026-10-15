@@ -1,6 +1,6 @@
 # `guests/`
 
-The guest modules the host tests drive, and the C# samples. The Rust guests
+The guest modules the host tests drive. The Rust guests
 are a Cargo workspace of their own, targeting `wasm32-unknown-unknown` under
 a size-tuned release profile; the Rust guest SDK in `../guest-sdks/rust` is a
 member of it. The C# guests reference the SDK in `../guest-sdks/dotnet`.

@@ -32,9 +32,6 @@ tasks:
       - '{{.ROOT_DIR}}/taskfiles/Release.proj'
       - '{{.ROOT_DIR}}/scripts/release-manifest.py'
       - '{{.ROOT_DIR}}/scripts/developer-preview-readme.md'
-      - '{{.ROOT_DIR}}/samples/aspnet-todo/**/*'
-      - exclude: 'samples/aspnet-todo/{bin,obj,out,.isoplane*}/**/*'
-      - exclude: 'samples/aspnet-todo/.local-postgres.json'
       - '{{.SOURCE_REF}}'
     generates:
       - '{{.RELEASE}}/release.json'

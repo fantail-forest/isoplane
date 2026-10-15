@@ -2,11 +2,8 @@
   <Target Name="StageRelease">
     <ItemGroup>
       <Package Include="$(SharedPackages)/Isoplane.*.$(Version).nupkg;$(NativePackages)/Isoplane.*.$(Version).nupkg" />
-      <Sample Include="../samples/aspnet-todo/**/*" Exclude="../samples/aspnet-todo/**/bin/**;../samples/aspnet-todo/**/obj/**;../samples/aspnet-todo/**/out/**;../samples/aspnet-todo/.isoplane*/**;../samples/aspnet-todo/.local-postgres.json" />
     </ItemGroup>
     <Copy SourceFiles="@(Package)" DestinationFolder="$(ReleaseDirectory)/packages" SkipUnchangedFiles="true" />
-    <Copy SourceFiles="@(Sample)" DestinationFiles="@(Sample->'$(ReleaseDirectory)/samples/aspnet-todo/%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
-    <XmlPoke XmlInputPath="$(ReleaseDirectory)/samples/aspnet-todo/Todo.csproj" Query="/Project/@Sdk" Value="Isoplane.AspNetCore/$(Version)" />
     <WriteLinesToFile File="$(ReleaseDirectory)/package-version.txt" Lines="$(Version)" Overwrite="true" WriteOnlyWhenDifferent="true" />
   </Target>
 </Project>

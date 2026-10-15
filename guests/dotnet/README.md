@@ -7,6 +7,6 @@ as managed packages on the shared Mono runtime. Task prepares them before tests 
 scripts/dev guests/build-dotnet.sh --if-stale
 ```
 
-Customer examples live in `samples/` and compile to packages for the SDK's
-shared runtime. Runtime and package fixtures are under
+Customer starting points are the project templates in
+`guest-sdks/dotnet/Templates`. Runtime and package fixtures are under
 `guest-runtime/tests/guest` and `guest-runtime/tests/packages`.
