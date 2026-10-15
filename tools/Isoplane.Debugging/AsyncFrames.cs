@@ -97,7 +97,7 @@ internal static class AsyncFrames
         if (stateType is null) return null;
         var method = stateType.GetMethod("MoveNext");
         var assembly = method.DeclaringType.Assembly;
-        var pdb = code.Contains(method) && assembly.HasDebugInfoLoaded() ? assembly.GetPdbBlob() : null;
+        var pdb = code.Shows(method) && assembly.HasDebugInfoLoaded() ? assembly.GetPdbBlob() : null;
         if (pdb is null) return null;
         using var pe = new PEReader(new MemoryStream(assembly.GetMetadataBlob()));
         using var symbols = MetadataReaderProvider.FromPortablePdbStream(new MemoryStream(pdb));

@@ -289,7 +289,7 @@ fn write_debug_application(app: &std::path::Path, mode: &str) -> std::path::Path
         ""
     };
     let handler = if mode == "library" {
-        "    internal static Task<string> Handle() => Task.FromResult(DebugLibrary.Calculator.Work(41).ToString());\n"
+        "    internal static Task<string> Handle() => Task.FromResult(Array.ConvertAll(new[] { 41 }, DebugLibrary.Calculator.Work)[0].ToString());\n"
     } else {
         r#"
     internal static async Task<string> Handle()

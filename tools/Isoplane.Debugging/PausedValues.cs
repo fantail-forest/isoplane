@@ -69,14 +69,12 @@ internal sealed class PausedValues(TargetEventArgs stopped, Func<int> allocate, 
         var code = new GuestCode(session.VirtualMachine);
         var physical = session.VirtualMachine.GetThreads().Single(thread => thread.Id == stopped.Thread.Id).GetFrames();
         var result = new List<Frame>();
-        for (int index = 0; index < stopped.Backtrace.FrameCount; index++)
+        foreach (int index in code.Shown(physical))
         {
             var frame = stopped.Backtrace.GetFrame(index);
-            if (!frame.IsExternalCode && !frame.IsDebuggerHidden && physical[index].Method is { } method && code.Contains(method))
-            {
-                result.Add(new Frame(frame, index));
-                result.AddRange(AsyncFrames.Read(session, code, physical, index).Select(caller => new Frame(null, null, caller)));
-            }
+            if (frame.IsDebuggerHidden) continue;
+            result.Add(new Frame(frame, index));
+            result.AddRange(AsyncFrames.Read(session, code, physical, index).Select(caller => new Frame(null, null, caller)));
         }
         return result;
     }

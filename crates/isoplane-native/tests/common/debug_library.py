@@ -14,8 +14,13 @@ def exercise(source, send, response, until):
     event = until(lambda item: item.get('event') == 'stopped')['body']
     assert event['reason'] == 'breakpoint', 'the referenced library must bind its source breakpoint'
     frames = response(send('stackTrace', {'threadId': event['threadId']}))['body']['stackFrames']
-    assert all(not frame['name'].startswith(('System.', 'Microsoft.AspNetCore.', 'Isoplane.')) for frame in frames), 'runtime and SDK frames must not appear in the customer stack'
-    assert any(frame['name'].endswith('.Application.Handle') for frame in frames), 'filtering runtime frames must retain the customer caller of a referenced library'
+    names = [frame['name'] for frame in frames]
+    assert not [name for name in names if name.startswith('Isoplane')], f'Isoplane runtime and SDK frames must not appear in the stack: {names}'
+    handler = next((index for index, name in enumerate(names) if name.endswith('.Application.Handle')), None)
+    assert handler is not None, f'the stack must retain the customer caller of a referenced library: {names}'
+    assert any(name.startswith('System.') for name in names[1:handler]), f'the framework method the handler calls the library through must appear between them: {names}'
+    assert any(name.startswith('Microsoft.AspNetCore.') for name in names[handler + 1:]), f'the ASP.NET Core frames that invoke the handler must appear below it: {names}'
+    assert names[-1].startswith('Microsoft.AspNetCore.'), f'the stack must end at the outermost package frame, without the runtime frames that invoke it: {names}'
     frame = frames[0]
     assert same_source(frame['source']['path'], source) and 'Calculator.Work' in frame['name'], 'the debugger must stop in the referenced project source'
     scopes = response(send('scopes', {'frameId': frame['id']}))['body']['scopes']

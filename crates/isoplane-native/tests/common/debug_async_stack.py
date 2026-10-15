@@ -22,8 +22,8 @@ def inspect(source, send, response, thread, until):
                 ("Outer", outer_await, "outer", "22"),
                 ("Handle", "int result = await Outer", "seed", "21")]
     application = [frame for frame in frames if same_source(frame.get("source", {}).get("path"), source)]
-    assert all(not frame["name"].startswith(("System.", "Microsoft.AspNetCore.", "Isoplane.")) for frame in frames), "runtime and SDK frames must not appear in the customer async stack"
     assert len(application) == 3, "the resumed async stack must retain Inner, Outer and Handle across host parking"
+    assert frames == application, f"runtime frames and the framework frames the runtime resumed the application through must not appear below its callers: {[frame['name'] for frame in frames]}"
     assert trace["totalFrames"] == len(frames), "the frame count must describe the filtered stack"
     page = response(send("stackTrace", {"threadId": thread, "startFrame": 1, "levels": 1}))["body"]
     assert page["totalFrames"] == len(frames) and [frame["name"] for frame in page["stackFrames"]] == [frames[1]["name"]], "stack pagination must use visible frame positions"
