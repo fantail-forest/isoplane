@@ -25,15 +25,10 @@ pub fn config(dir: &std::path::Path) -> NodeConfig {
     let mut cfg = NodeConfig::dev_default();
     cfg.node = "real-node".into();
     cfg.data_dir = dir.to_path_buf();
-    // Several nodes are built concurrently in one process; the default
-    // address-space reservation fits only a handful. The memory ceiling is
-    // the default application's, which a .NET guest's minimum memory needs.
-    cfg.engine = isoplaned::config::EngineLimits {
-        max_instances: 16,
-        max_memory_mib: 128,
-        guard_mib: 64,
-        ..Default::default()
-    };
+    cfg.engine = NodeConfig::from_toml(include_str!("../fixtures/node.toml"))
+        .expect("the test node configuration parses")
+        .engine;
+    seed_compiled_runtime(dir);
     cfg.cells = vec![CellConfig {
         name: "cell-1".into(),
     }];
@@ -48,6 +43,33 @@ pub fn config(dir: &std::path::Path) -> NodeConfig {
         versions: vec![VersionConfig { id: "v1".into() }],
     }];
     cfg
+}
+
+/// Gives the node in `dir` the shared runtime Task compiled for the test engine, so that
+/// deploying a managed guest prepares it without compiling the runtime again. The files are
+/// hard links: the compilation cache replaces entries by renaming, never in place.
+fn seed_compiled_runtime(dir: &std::path::Path) {
+    let artifacts = isoplaned::real::RealPaths::under(dir).artifacts;
+    std::fs::create_dir_all(&artifacts).expect("create the node's artifact store");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&artifacts, std::fs::Permissions::from_mode(0o700))
+            .expect("make the artifact store private to its node");
+    }
+    let seed = isoplane_fixtures::node_runtime_artifacts();
+    for entry in std::fs::read_dir(&seed).expect("list the prepared node runtime") {
+        let entry = entry.expect("read the prepared node runtime");
+        let target = artifacts.join(entry.file_name());
+        // A node restarted on the same directory already holds the entry. Copying onto it
+        // would truncate the shared file before reading it.
+        if target.exists() {
+            continue;
+        }
+        std::fs::hard_link(entry.path(), &target)
+            .or_else(|_| std::fs::copy(entry.path(), &target).map(drop))
+            .unwrap_or_else(|e| panic!("seed {}: {e}", target.display()));
+    }
 }
 
 pub struct Rig {

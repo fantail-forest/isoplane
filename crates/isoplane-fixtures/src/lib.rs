@@ -184,6 +184,30 @@ pub fn runtime_cache() -> PathBuf {
     path
 }
 
+/// The shared runtime compiled by `task fixtures:node` for the engine in
+/// `crates/isoplaned/tests/fixtures/node.toml`, as entries for a node's artifact store.
+pub fn node_runtime_artifacts() -> PathBuf {
+    let path = std::env::var_os("ISOPLANE_TEST_NODE_ARTIFACTS")
+        .map(PathBuf::from)
+        .expect("run task fixtures:node to select the prepared node runtime");
+    let compiled = std::fs::read_dir(&path)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|entry| {
+            entry
+                .path()
+                .extension()
+                .is_some_and(|extension| extension == "cwasm")
+        });
+    assert!(
+        compiled,
+        "the prepared node runtime is missing at {}; run task fixtures:node",
+        path.display()
+    );
+    path
+}
+
 /// The identity of the pack the local feed currently offers `runtime`, from
 /// the props file `guest-runtime/build.sh feed` writes: the pack version and
 /// the digest NuGet records for the package, `version@sha512:digest`, the

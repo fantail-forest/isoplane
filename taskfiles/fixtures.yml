@@ -3,7 +3,7 @@ version: '3'
 tasks:
   default:
     desc: Prepare shared fixtures before running tests
-    deps: [':node:runtimes', ':fixtures:rust', ':fixtures:dotnet', ':fixtures:acceptance', ':fixtures:package', ':cli', ':managed:tests', ':test:debugger:environment', ':fixtures:feed', ':fixtures:runtime', ':fixtures:projects', ':test:managed:host']
+    deps: [':node:runtimes', ':fixtures:rust', ':fixtures:dotnet', ':fixtures:acceptance', ':fixtures:package', ':cli', ':managed:tests', ':test:debugger:environment', ':fixtures:feed', ':fixtures:runtime', ':fixtures:projects', ':fixtures:node', ':test:managed:host']
 
   rust:
     desc: Build portable Rust WASM fixtures
@@ -147,6 +147,21 @@ tasks:
       - cp "{{.TEST_DOTNET}}/global.json" "{{.TEST_DOTNET}}/nuget.config" "{{.PROJECT}}/"
       - '"{{.DOTNET}}" {{.STEP | default "build"}} "{{.PROJECT}}"{{if not .STEP}} --configuration Debug{{end}} -nologo -p:IsoplaneReleaseVersion={{.VERSION}}'
       - cp "{{.TEST_DOTNET}}/offline.config" "{{.PROJECT}}/nuget.config"
+
+  node:
+    desc: Compile the shared runtime for the engine the isoplaned tests' nodes run
+    run: once
+    deps: [':initialize', ':runtime']
+    sources:
+      - '{{.MODULES}}/Isoplane.MonoRuntime.wasm'
+      - '{{.ROOT_DIR}}/crates/isoplaned/tests/fixtures/node.toml'
+      - '{{.ROOT_DIR}}/crates/{isoplaned,isoplane-engine,isoplane-prepare}/src/**/*'
+      - '{{.ROOT_DIR}}/Cargo.lock'
+    generates:
+      - '{{.TEST_NODE}}/artifacts/*.cwasm'
+    cmds:
+      - rm -rf "{{.TEST_NODE}}"
+      - '{{.DEVELOPMENT_COMMAND}}cargo run --locked --quiet -p isoplaned -- --config crates/isoplaned/tests/fixtures/node.toml --data-dir "{{.TEST_NODE}}" --precompile "{{.MODULES}}/Isoplane.MonoRuntime.wasm"'
 
   runtime:inputs:
     internal: true

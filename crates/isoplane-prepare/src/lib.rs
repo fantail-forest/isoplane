@@ -69,6 +69,13 @@ pub use failure::{BuildStage, WorkerFailure};
 mod product;
 pub use product::{prepare_in_current_process, BuildProduct, LocalPreparation, Preparation};
 
+/// The module preparation compiles for `wasm`: `wasm` itself, or, when it has an initializer,
+/// `wasm` rewritten so that what initialization leaves can be captured. A compile of this module
+/// in a node's compilation cache is what that node's preparations reuse.
+pub fn compiled_module(wasm: &[u8]) -> anyhow::Result<Vec<u8>> {
+    Ok(bake::instrument(wasm)?.wasm)
+}
+
 mod baseline;
 #[cfg(target_os = "linux")]
 pub use baseline::PublishedBaseline;

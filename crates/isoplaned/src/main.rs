@@ -31,9 +31,10 @@ fn trust_summary(facts: &isoplaned::trust::TrustFacts) -> String {
     )
 }
 
-/// Build the artifact this node's cells will map, then exit. The engine is
+/// Build the artifact this node's preparations will map, then exit. The engine is
 /// built from the node's configuration because a `.cwasm` is loadable only by
-/// an engine whose fingerprint matches the one that produced it.
+/// an engine whose fingerprint matches the one that produced it, and the module
+/// is the one preparation compiles, so the artifact is under the key it looks up.
 #[cfg(feature = "real-backends")]
 fn precompile(cfg: &NodeConfig, wasm_path: &std::path::Path) -> anyhow::Result<()> {
     let wasm = std::fs::read(wasm_path)
@@ -42,6 +43,7 @@ fn precompile(cfg: &NodeConfig, wasm_path: &std::path::Path) -> anyhow::Result<(
         cfg,
         &cfg.trust_bundle()?,
     )?)?;
+    let wasm = isoplane_prepare::compiled_module(&wasm)?;
     let dir = isoplaned::real::RealPaths::under(&cfg.data_dir).artifacts;
     let t0 = std::time::Instant::now();
     let paths = engine.precompile_to_files(&wasm, &dir)?;

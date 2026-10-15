@@ -26,10 +26,7 @@ async fn managed_logs_keep_host_ownership_across_park_wake_without_post_response
         })
         .await
         .expect("the managed logging fixture must build");
-        let rig = common::start_with_policy(wasm, InitSandbox::RuntimeBringUp, None, |cfg| {
-            cfg.engine.max_memory_mib = 256;
-        })
-        .await;
+        let rig = common::start_with_policy(wasm, InitSandbox::RuntimeBringUp, None, |_| {}).await;
         let completed = common::get(rig.proxy, "quotes.isoplane.dev", "/after-response").await;
         assert_eq!(
             completed.body, "returned",

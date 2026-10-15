@@ -18,7 +18,7 @@ tasks:
 
   rust:
     desc: Prepare Rust WASM fixtures and run selected Rust tests
-    deps: [':initialize', ':fixtures:rust']
+    deps: [':initialize', ':fixtures:rust', ':fixtures:node']
     env: *test_env
     cmds:
       - '{{.DEVELOPMENT_COMMAND}}cargo test {{.CLI_ARGS}}'
