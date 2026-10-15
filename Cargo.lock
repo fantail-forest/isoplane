@@ -1587,6 +1587,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "blake3",
+ "crc32fast",
  "fs4",
  "isoplane-abi",
  "isoplane-engine",

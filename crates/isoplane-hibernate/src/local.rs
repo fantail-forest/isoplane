@@ -3,8 +3,11 @@
 //! its memory. Host resources stay in this process, so the header carries only
 //! the binding, globals, tables and where each run of pages goes.
 //!
-//! The reservation holds a little-endian `u32` header length, the postcard
-//! header, then the bytes of every run that is not all zero, in run order.
+//! The reservation holds the postcard header's length and CRC-32 as
+//! little-endian `u32`s, the header, then the bytes of every run that is not
+//! all zero, in run order. Nothing is flushed to storage: if the kernel fails
+//! to write a page back and later evicts it, a read returns stale bytes without
+//! an error, so the header carries a CRC-32 of the payload as well.
 
 use std::io::{IoSlice, IoSliceMut};
 use std::ops::Range;
@@ -42,13 +45,14 @@ pub fn size_bound(shape: SnapshotShape) -> Result<u64> {
             ..InstanceImage::default()
         },
         runs: Vec::new(),
+        payload_crc: u32::MAX,
     };
     let widest_run = Run {
         first_page: u32::MAX,
         pages: u32::MAX,
         zero: true,
     };
-    let mut bytes = (LENGTH_BYTES + serialized_size(&header)?) as u64;
+    let mut bytes = (PREFIX_BYTES + serialized_size(&header)?) as u64;
     // Measure with the real codec; replace each empty sequence prefix and add
     // worst-width elements without allocating a maximum-size guest image.
     for (count, element_bytes) in [
@@ -94,18 +98,27 @@ pub fn save(
 ) -> Result<Saved> {
     let runs =
         tracing::info_span!("delta_diff").in_scope(|| changed_runs(memory, template, changed))?;
+    let mut payload = crc32fast::Hasher::new();
+    for run in runs.iter().filter(|run| !run.zero) {
+        payload.update(&memory[run.bytes()]);
+    }
     let header = Header {
         module_hash: binding.module_hash.0,
         abi_rev: binding.abi_rev,
         image,
         runs,
+        payload_crc: payload.finalize(),
     };
     let encoded = postcard::to_allocvec(&header).context("postcard-encode snapshot header")?;
-    let length = u32::try_from(encoded.len())
-        .context("snapshot header exceeds its length field")?
-        .to_le_bytes();
+    let mut prefix = [0; PREFIX_BYTES];
+    prefix[..4].copy_from_slice(
+        &u32::try_from(encoded.len())
+            .context("snapshot header exceeds its length field")?
+            .to_le_bytes(),
+    );
+    prefix[4..].copy_from_slice(&crc32fast::hash(&encoded).to_le_bytes());
     let mut parts = Vec::with_capacity(header.runs.len() + 2);
-    parts.push(IoSlice::new(&length));
+    parts.push(IoSlice::new(&prefix));
     parts.push(IoSlice::new(&encoded));
     let (mut changed_pages, mut zero_pages) = (0, 0);
     for run in &header.runs {
@@ -133,16 +146,20 @@ pub struct Snapshot {
 
 impl Snapshot {
     /// Reads the header. A snapshot bound to another module or ABI revision,
-    /// or with an unreadable header, fails with its [`WakeFallback`].
+    /// or whose header fails its checksum, fails with its [`WakeFallback`].
     pub fn open(reservation: &mut dyn SnapshotReservation, expect: Binding) -> Result<Self> {
-        let mut length = [0; LENGTH_BYTES];
-        reservation.read_exact_at(0, &mut [IoSliceMut::new(&mut length)])?;
-        let length = u64::from(u32::from_le_bytes(length));
+        let mut prefix = [0; PREFIX_BYTES];
+        reservation.read_exact_at(0, &mut [IoSliceMut::new(&mut prefix)])?;
+        let [l0, l1, l2, l3, c0, c1, c2, c3] = prefix;
+        let length = u64::from(u32::from_le_bytes([l0, l1, l2, l3]));
         if length > reservation.reserved_bytes().0 {
             return Err(wake_error(WakeFallback::Corrupt));
         }
         let mut encoded = vec![0; length as usize];
-        reservation.read_exact_at(LENGTH_BYTES as u64, &mut [IoSliceMut::new(&mut encoded)])?;
+        reservation.read_exact_at(PREFIX_BYTES as u64, &mut [IoSliceMut::new(&mut encoded)])?;
+        if crc32fast::hash(&encoded) != u32::from_le_bytes([c0, c1, c2, c3]) {
+            return Err(wake_error(WakeFallback::Corrupt));
+        }
         let header: Header =
             postcard::from_bytes(&encoded).map_err(|_| wake_error(WakeFallback::Corrupt))?;
         if header.module_hash != expect.module_hash.0 {
@@ -153,7 +170,7 @@ impl Snapshot {
         }
         Ok(Snapshot {
             header,
-            payload_offset: LENGTH_BYTES as u64 + length,
+            payload_offset: PREFIX_BYTES as u64 + length,
         })
     }
 
@@ -163,7 +180,9 @@ impl Snapshot {
     }
 
     /// Writes the saved pages over `memory`, which holds the template's
-    /// contents and has grown to the image's size.
+    /// contents and has grown to the image's size. Pages that fail their
+    /// checksum fail with [`WakeFallback::Corrupt`] after `memory` has been
+    /// written, so the caller discards it.
     pub fn apply(
         &self,
         reservation: &mut dyn SnapshotReservation,
@@ -190,11 +209,19 @@ impl Snapshot {
             }
         }
         reservation.read_exact_at(self.payload_offset, &mut parts)?;
+        let mut payload = crc32fast::Hasher::new();
+        for part in &parts {
+            payload.update(part);
+        }
+        if payload.finalize() != self.header.payload_crc {
+            return Err(wake_error(WakeFallback::Corrupt));
+        }
         Ok(())
     }
 }
 
-const LENGTH_BYTES: usize = 4;
+/// Header length and header CRC-32.
+const PREFIX_BYTES: usize = 8;
 
 #[derive(Serialize, Deserialize)]
 struct Header {
@@ -203,6 +230,7 @@ struct Header {
     image: InstanceImage,
     /// Ascending and disjoint.
     runs: Vec<Run>,
+    payload_crc: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -438,10 +466,54 @@ mod tests {
         }
     }
 
+    fn saved_with_a_changed_page() -> (Memory, Vec<u8>) {
+        let base = template(2);
+        let mut live = base.clone();
+        live[PAGE + 7] = 0xaa;
+        let mut storage = reservation(2, 0);
+        save(
+            &mut storage,
+            binding(),
+            InstanceImage::default(),
+            &live,
+            &MemoryImage::from_dense(&base),
+            None,
+        )
+        .expect("save");
+        (storage, base)
+    }
+
+    #[test]
+    fn a_page_altered_after_saving_fails_its_checksum() {
+        let (mut storage, base) = saved_with_a_changed_page();
+        *storage.bytes.last_mut().expect("payload") ^= 1;
+        let snapshot = Snapshot::open(&mut storage, binding()).expect("the header is intact");
+        let error = snapshot
+            .apply(&mut storage, &mut base.clone())
+            .expect_err("altered pages must not be accepted");
+        assert_eq!(
+            error.downcast_ref::<WakeFallback>(),
+            Some(&WakeFallback::Corrupt)
+        );
+    }
+
+    #[test]
+    fn a_header_altered_after_saving_fails_its_checksum() {
+        let (mut storage, _) = saved_with_a_changed_page();
+        storage.bytes[PREFIX_BYTES] ^= 1;
+        let error = Snapshot::open(&mut storage, binding())
+            .err()
+            .expect("an altered header must not be used");
+        assert_eq!(
+            error.downcast_ref::<WakeFallback>(),
+            Some(&WakeFallback::Corrupt)
+        );
+    }
+
     #[test]
     fn a_header_longer_than_the_reservation_is_corrupt() {
         let mut storage = Memory {
-            bytes: u32::MAX.to_le_bytes().to_vec(),
+            bytes: [u32::MAX.to_le_bytes(), [0; 4]].concat(),
             capacity: 64,
             ..Memory::default()
         };

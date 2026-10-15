@@ -78,6 +78,7 @@ windows-sys = { version = "0.61", features = ["Win32_System_Performance", "Win32
 win32job = "2.0.3"
 zstd        = "0.13"
 blake3      = { version = "1", features = ["rayon"] }
+crc32fast   = "1.5"
 hex         = "0.4"
 httpdate    = "1"
 rand        = "0.9"

@@ -79,9 +79,9 @@ pub trait SnapshotReservation: Send {
     fn reserved_bytes(&self) -> SnapshotBytes;
 
     /// Replace the snapshot within the reservation with `parts`, in order,
-    /// without temporary files. An I/O failure invalidates the saved snapshot;
-    /// its resident source must remain owned until this succeeds. An oversized
-    /// save preserves prior data.
+    /// without temporary files or flushing to storage. An I/O failure
+    /// invalidates the saved snapshot; its resident source must remain owned
+    /// until this succeeds. An oversized save preserves prior data.
     fn save(&mut self, parts: &[IoSlice<'_>]) -> Result<(), SnapshotError>;
 
     /// Fill `parts`, in order, from the last complete snapshot starting at
@@ -289,7 +289,6 @@ impl SnapshotReservation for LocalSnapshotReservation {
         self.file
             .rewind()
             .and_then(|()| write_all_vectored(&mut self.file, parts))
-            .and_then(|()| flush_snapshot(&self.file))
             .map_err(|source| self.io_error("save", source))?;
         self.saved_bytes = Some(bytes);
         Ok(())

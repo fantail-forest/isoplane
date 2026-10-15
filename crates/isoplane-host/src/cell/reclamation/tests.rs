@@ -14,6 +14,8 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 struct StorageState {
     reservations: AtomicUsize,
     fail_save: AtomicBool,
+    /// Flips the last saved byte, as a page the kernel lost would read back.
+    corrupt_save: AtomicBool,
 }
 
 struct Storage {
@@ -77,7 +79,13 @@ impl SnapshotReservation for Reservation {
                 source: std::io::ErrorKind::StorageFull.into(),
             });
         }
-        self.saved = Some(parts.iter().flat_map(|part| part.iter().copied()).collect());
+        let mut saved: Vec<u8> = parts.iter().flat_map(|part| part.iter().copied()).collect();
+        if self.state.corrupt_save.load(Ordering::Relaxed) {
+            if let Some(last) = saved.last_mut() {
+                *last ^= 1;
+            }
+        }
+        self.saved = Some(saved);
         Ok(())
     }
     fn read_exact_at(
@@ -330,6 +338,36 @@ fn an_idle_reuse_handler_restores_its_snapshot_through_pool_acquisition() {
     assert_ne!(
         second.body, first.body,
         "reuse restoration must preserve the guest's lazy initialization residue"
+    );
+}
+
+#[test]
+fn a_snapshot_that_fails_its_checksum_restores_from_the_template() {
+    let storage = Storage::new(1);
+    let cell = test_cell(storage.clone(), 0);
+    let module = register(
+        &cell,
+        "corrupt",
+        HandlerLifecycle::Reuse,
+        FakeBehaviour::done().with_lazy_init_probe(),
+    );
+    let first = completed(&cell, &module, 1);
+    storage.state.corrupt_save.store(true, Ordering::Relaxed);
+    assert!(
+        cell.reclaim_candidate(candidate(&cell, first.instance))
+            .expect("idle reuse capture"),
+        "the completed reuse handler must hibernate"
+    );
+    let second = completed(&cell, &module, 2);
+    assert_eq!(second.status, 200, "the request must still be served");
+    assert_eq!(
+        second.body, first.body,
+        "a corrupt snapshot must not leave its pages in the instance"
+    );
+    assert_eq!(
+        cell.metrics().delta_fallbacks,
+        1,
+        "the fallback to the template must be counted"
     );
 }
 

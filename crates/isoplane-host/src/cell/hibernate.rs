@@ -164,37 +164,46 @@ impl Cell {
             }
         });
         let dormant = slot.take_dormant();
-        let mut inst = tracing::info_span!("restore_activate").in_scope(|| {
-            let bindings = crate::bindings::CellBindings::boxed(slot.ctx.clone());
-            match (dormant, snapshot.is_ok()) {
-                (Some(mapped), true) => mapped.activate(bindings),
-                (Some(mapped), false) => {
-                    drop(mapped);
-                    entry.pool.activate(bindings)
+        let activate = |dormant: Option<Box<dyn isoplane_engine::DormantInstance>>| {
+            tracing::info_span!("restore_activate").in_scope(|| {
+                let bindings = crate::bindings::CellBindings::boxed(slot.ctx.clone());
+                match dormant {
+                    Some(mapped) => mapped.activate(bindings),
+                    None => entry.pool.activate(bindings),
                 }
-                (None, _) => entry.pool.activate(bindings),
-            }
-        })?;
-        let mut fell_back = false;
-        match snapshot {
+            })
+        };
+        let restored = match snapshot {
             Ok(snapshot) => {
-                inst.restore_mutable_state(snapshot.image())?;
-                tracing::info_span!("delta_apply").in_scope(|| {
-                    let mut reservation = slot.ctx.snapshot.lock();
-                    let reservation = reservation.as_mut().ok_or_else(|| {
-                        anyhow::anyhow!("instance {} lost its snapshot reservation", slot.id)
-                    })?;
-                    snapshot.apply(reservation.as_mut(), inst.memory())
-                })?;
+                let mut inst = activate(dormant)?;
+                let applied = inst.restore_mutable_state(snapshot.image()).and_then(|()| {
+                    tracing::info_span!("delta_apply").in_scope(|| {
+                        let mut reservation = slot.ctx.snapshot.lock();
+                        let reservation = reservation.as_mut().ok_or_else(|| {
+                            anyhow::anyhow!("instance {} lost its snapshot reservation", slot.id)
+                        })?;
+                        snapshot.apply(reservation.as_mut(), inst.memory())
+                    })
+                });
+                applied.map(|()| inst)
             }
+            Err(e) => {
+                drop(dormant);
+                Err(e)
+            }
+        };
+        let mut fell_back = false;
+        let inst = match restored {
+            Ok(inst) => inst,
             Err(e) => {
                 if self.active.contains_key(&slot.id) {
                     return Err(e.context("a pending dispatch requires its captured continuation"));
                 }
                 tracing::warn!(instance = %slot.id, error = %e, "delta unusable; falling back to template");
                 fell_back = true;
+                activate(None)?
             }
-        }
+        };
         if fell_back {
             self.metrics.delta_fallbacks.fetch_add(1, Ordering::Relaxed);
         }

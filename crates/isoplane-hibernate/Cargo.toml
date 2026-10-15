@@ -14,6 +14,7 @@ serde = { workspace = true }
 tracing = { workspace = true }
 isoplane-abi = { workspace = true, features = ["host"] }
 isoplane-engine = { workspace = true }
+crc32fast = { workspace = true }
 postcard = { workspace = true }
 fs4 = { workspace = true }
 tempfile = { workspace = true }
