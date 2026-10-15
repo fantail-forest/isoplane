@@ -432,14 +432,12 @@ public sealed class HostingTests
     }
 
     [Fact]
-    public async Task a_client_from_the_factory_starts_no_timer_to_retire_its_handler()
+    public async Task a_client_from_the_factory_keeps_its_handler()
     {
         var builder = Builder();
         builder.Services.AddHttpClient("webhook");
         await using var app = builder.Build();
         var options = app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptionsMonitor<Microsoft.Extensions.Http.HttpClientFactoryOptions>>();
-        // The factory starts its retirement timer only for a finite lifetime, and an
-        // initialization that leaves a timer running cannot be captured.
         Assert.Equal(Timeout.InfiniteTimeSpan, options.Get("webhook").HandlerLifetime);
     }
 
@@ -451,8 +449,7 @@ public sealed class HostingTests
         await using var app = builder.Build();
         var handler = app.Services.GetRequiredService<IHttpMessageHandlerFactory>().CreateHandler("webhook");
         while (handler is DelegatingHandler outer) handler = outer.InnerHandler!;
-        // A handler that keeps idle connections scavenges them on a timer, which a
-        // request cannot leave pending without losing its instance.
+        // An idle connection left by a call during warm-up would stop the template being captured.
         Assert.Equal(TimeSpan.Zero, Assert.IsType<SocketsHttpHandler>(handler).PooledConnectionLifetime);
     }
 

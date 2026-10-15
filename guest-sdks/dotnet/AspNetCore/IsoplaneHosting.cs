@@ -314,14 +314,12 @@ public static class IsoplaneHosting
             services.RemoveAll<IHostLifetime>();
             services.AddSingleton<IHostLifetime, IsoplaneLifetime>();
             services.AddHostedService<BackgroundWorkGuard>();
-            // IHttpClientFactory retires a handler on a timer it starts when it creates a client,
-            // and a handler that keeps idle connections scavenges them on a timer it starts with
-            // its first one. A timer cannot be captured in a template, and one still pending when
-            // a request ends costs the request its instance. A connection lifetime of zero keeps
-            // no connection and starts no timer: each call closes its connection once the
-            // response is read, so none outlives a DNS change or goes stale between requests. An
-            // idle timeout of zero would also start no timer, but it leaves each connection open
-            // in a pool nothing visits again.
+            // A pooled connection stays open after its call. One left by a call during
+            // initialization or warm-up stops the template being captured, and those kept between
+            // requests count against the instance's outbound connections. A connection lifetime
+            // of zero closes each connection once its response is read; an idle timeout of zero
+            // would instead leave each one open in a pool nothing visits again. With no connection
+            // to go stale, replacing the handler periodically would only cost work.
             services.ConfigureHttpClientDefaults(client => client
                 .SetHandlerLifetime(Timeout.InfiniteTimeSpan)
                 .ConfigurePrimaryHttpMessageHandler((handler, _) =>

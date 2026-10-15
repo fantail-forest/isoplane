@@ -336,19 +336,20 @@ APIs, which covers `HttpClient`, TLS and database drivers.
   with `OperationNotSupported`.
 - A client from `IHttpClientFactory` opens a connection for each call and
   closes it once the response has been read, so it keeps no connection between
-  calls. Elsewhere a client keeps idle connections for its next calls and
-  removes them on a timer, and the factory replaces each handler every two
-  minutes on another. Isoplane switches both off. The cost is a new connection,
-  and over HTTPS a new TLS handshake, for each call, including calls a request
-  makes one after another to the same host.
-- Either timer comes back if you ask for it: `SetHandlerLifetime` with a finite
-  value, any `PooledConnectionLifetime` but zero on the client's
-  `SocketsHttpHandler`, or a primary handler of your own from
-  `ConfigurePrimaryHttpMessageHandler`. Give a handler of your own
-  `PooledConnectionLifetime = TimeSpan.Zero`. A `PooledConnectionIdleTimeout`
-  of zero is no substitute: it starts no timer, but it leaves each connection
-  open, and calls fail once the application has used up its outbound
-  connections.
+  calls. Elsewhere a client keeps idle connections for its next calls.
+  Isoplane switches that off because a connection still open when
+  [initialization](application-lifecycle.md#initialization) ends stops the
+  application starting, and connections kept between requests count toward the
+  instance's [outbound connections](execution-limits.md#outbound-connections).
+  The cost is a new connection, and over HTTPS a new TLS handshake, for each
+  call, including calls a request makes one after another to the same host.
+- Idle connections come back if you ask for them: any
+  `PooledConnectionLifetime` but zero on the client's `SocketsHttpHandler`, or
+  a primary handler of your own from `ConfigurePrimaryHttpMessageHandler`. Give
+  a handler of your own `PooledConnectionLifetime = TimeSpan.Zero`. A
+  `PooledConnectionIdleTimeout` of zero is no substitute: it leaves each
+  connection open, and calls fail once the application has used up its
+  outbound connections.
 - A client you construct yourself with `new HttpClient()` and keep for later
   requests keeps its idle connections open between requests, and they count
   toward the instance's [outbound connections](execution-limits.md#outbound-connections).
