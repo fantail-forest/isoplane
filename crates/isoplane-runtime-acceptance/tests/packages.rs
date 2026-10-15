@@ -203,6 +203,38 @@ async fn prepare_on_the_shared_runtime(files: Vec<PlatformFile>) -> (BuildProduc
         .unwrap_or_else(|error| panic!("the package must prepare on the shared runtime: {error}"))
 }
 
+/// `name`, prepared on the shared runtime once for every test in this binary that only asks
+/// it for a route; a preparation is the template every instance starts from, so a test
+/// that activates its own instance cannot see another's requests.
+async fn prepared_package(name: &'static str) -> Arc<(BuildProduct, BuildRequest)> {
+    type Prepared = Arc<tokio::sync::OnceCell<Arc<(BuildProduct, BuildRequest)>>>;
+    static PACKAGES: OnceLock<std::sync::Mutex<std::collections::HashMap<&'static str, Prepared>>> =
+        OnceLock::new();
+    let cell = PACKAGES
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .entry(name)
+        .or_default()
+        .clone();
+    cell.get_or_init(|| async { Arc::new(prepare_on_the_shared_runtime(package(name)).await) })
+        .await
+        .clone()
+}
+
+/// Answers `path` on a fresh instance of the shared preparation of package `name`, as
+/// [`answer_across_restored_stores`] does.
+async fn answer_package(name: &'static str, path: &str) -> String {
+    let prepared = prepared_package(name).await;
+    answer_on_an_instance(
+        &prepared.0,
+        &prepared.1,
+        isoplane_host::InstanceId::alloc(),
+        path,
+    )
+    .await
+}
+
 /// Activates `instance` from the prepared template and answers `path` on it
 /// as [`answer_across_restored_stores`] does.
 async fn answer_on_an_instance(
@@ -269,7 +301,7 @@ fn hex(text: &str) -> Vec<u8> {
 #[tokio::test(start_paused = true)]
 async fn the_smallest_package_runs_on_the_shared_runtime_across_restored_stores() {
     assert_eq!(
-        answer_across_restored_stores(package("alpha"), "/greeting").await,
+        answer_package("alpha", "/greeting").await,
         "alpha:/greeting",
         "the package's own handler must answer through the shared runtime"
     );
@@ -277,7 +309,7 @@ async fn the_smallest_package_runs_on_the_shared_runtime_across_restored_stores(
 
 #[tokio::test(start_paused = true)]
 async fn a_package_with_its_own_dependencies_runs_on_the_shared_runtime_across_restored_stores() {
-    let body = answer_across_restored_stores(package("beta"), "/beta").await;
+    let body = answer_package("beta", "/beta").await;
     let report: serde_json::Value =
         serde_json::from_str(&body).unwrap_or_else(|error| panic!("{body} is JSON: {error}"));
     assert_eq!(
@@ -308,7 +340,7 @@ async fn a_package_with_its_own_dependencies_runs_on_the_shared_runtime_across_r
 
 #[tokio::test(start_paused = true)]
 async fn a_packages_initialization_hook_runs_once_before_its_template_is_captured() {
-    let body = answer_across_restored_stores(package("beta"), "/beta").await;
+    let body = answer_package("beta", "/beta").await;
     let report: serde_json::Value =
         serde_json::from_str(&body).unwrap_or_else(|error| panic!("{body} is JSON: {error}"));
     assert_eq!(
@@ -319,7 +351,7 @@ async fn a_packages_initialization_hook_runs_once_before_its_template_is_capture
 
 #[tokio::test(start_paused = true)]
 async fn an_aspnet_package_runs_on_the_shared_runtime_across_restored_stores() {
-    let body = answer_across_restored_stores(package("web"), "/hello/isoplane").await;
+    let body = answer_package("web", "/hello/isoplane").await;
     assert!(
         body.starts_with("hello, isoplane;"),
         "the package's ASP.NET route must answer from its content file through the runtime's adapter: {body}"
@@ -328,7 +360,7 @@ async fn an_aspnet_package_runs_on_the_shared_runtime_across_restored_stores() {
 
 #[tokio::test(start_paused = true)]
 async fn an_aspnet_package_serves_its_static_web_assets() {
-    let body = answer_across_restored_stores(package("web"), "/site.css").await;
+    let body = answer_package("web", "/site.css").await;
     assert_eq!(
         body, "body { color: teal; }\n",
         "a file under the package's wwwroot must be served from the package"
@@ -337,7 +369,7 @@ async fn an_aspnet_package_serves_its_static_web_assets() {
 
 #[tokio::test(start_paused = true)]
 async fn an_aspnet_packages_warmup_runs_once_before_its_template_is_captured() {
-    let body = answer_across_restored_stores(package("web"), "/hello/isoplane").await;
+    let body = answer_package("web", "/hello/isoplane").await;
     assert!(
         body.ends_with("; warmups=1"),
         "the warm-up the package's entry point subscribes must reach its pipeline exactly once: {body}"
@@ -346,7 +378,7 @@ async fn an_aspnet_packages_warmup_runs_once_before_its_template_is_captured() {
 
 #[tokio::test(start_paused = true)]
 async fn an_aspnet_package_warms_its_read_route_before_template_capture() {
-    let body = answer_across_restored_stores(package("web"), "/hello/isoplane").await;
+    let body = answer_package("web", "/hello/isoplane").await;
     assert!(
         body.contains("; greetings=2;"),
         "the first real greeting must follow one completed initialization greeting: {body}"
@@ -915,7 +947,7 @@ async fn initialization_that_leaves_timers_running_is_refused_naming_each() {
 /// The `native` package's outcome for one transition, before and after a
 /// Store restoration.
 async fn native_use(path: &str) -> String {
-    answer_across_restored_stores(package("native"), path).await
+    answer_package("native", path).await
 }
 
 #[tokio::test(start_paused = true)]
@@ -975,7 +1007,7 @@ async fn a_package_delegate_marshalled_to_a_function_pointer_is_refused() {
 /// The `sqlite` package's answer for one use of SQLite, after a park and
 /// across a Store restoration.
 async fn sqlite_use(path: &str) -> String {
-    answer_across_restored_stores(package("sqlite"), path).await
+    answer_package("sqlite", path).await
 }
 
 #[tokio::test(start_paused = true)]
@@ -1017,7 +1049,7 @@ async fn ef_core_over_sqlite_runs_its_registered_functions_collation_and_aggrega
 #[tokio::test(start_paused = true)]
 async fn ef_core_over_sqlite_runs_with_the_sqlitepclraw_release_the_application_chooses() {
     assert_eq!(
-        answer_across_restored_stores(package("sqlite-pclraw3"), "/catalog").await,
+        answer_package("sqlite-pclraw3", "/catalog").await,
         "saucer,cup,kettle;43.75",
         "the runtime's e_sqlite3 must serve SQLitePCLRaw 3's imports and callbacks as it serves the 2.x release EF Core selects"
     );
@@ -1048,10 +1080,10 @@ async fn a_locked_sqlite_table_fails_the_command_instead_of_waiting() {
 async fn sqlites_generator_is_reseeded_in_each_activation() {
     // The package's initializer draws from SQLite's generator, so the
     // template holds its seeded state.
-    let (product, request) = prepare_on_the_shared_runtime(package("sqlite")).await;
+    let prepared = prepared_package("sqlite").await;
     let mut draws = Vec::new();
     for instance in [7301, 7302].map(isoplane_host::InstanceId) {
-        let answer = answer_on_an_instance(&product, &request, instance, "/random").await;
+        let answer = answer_on_an_instance(&prepared.0, &prepared.1, instance, "/random").await;
         let draw: i64 = answer.parse().unwrap_or_else(|error| {
             panic!("SELECT random() must answer an integer, not {answer:?}: {error}")
         });
@@ -1067,16 +1099,12 @@ async fn sqlites_generator_is_reseeded_in_each_activation() {
 /// what the guest logged.
 async fn diagnose(path: &str) -> (isoplane_engine::DispatchOutcome, Vec<String>) {
     isoplane_harness::LogCapture::global();
-    let runtime = isoplane_fixtures::mono_runtime();
-    let preparation = LocalPreparation::with_cache(shared_cache()).expect("local preparation");
-    let (product, request) = prepare(&preparation, &runtime, package("diagnostics"))
-        .await
-        .unwrap_or_else(|error| panic!("the diagnostics package must prepare: {error}"));
+    let prepared = prepared_package("diagnostics").await;
     let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
     reactor.context.begin_slice(1, 1);
     let mut guest = {
         // SAFETY: The private decode helper receives only products from this test module's local preparation paths.
-        unsafe { ReturnedGuest::prepared(decode(&product, &request), &reactor) }
+        unsafe { ReturnedGuest::prepared(decode(&prepared.0, &prepared.1), &reactor) }
     };
     let outcome = guest.start(path);
     let logs = reactor
