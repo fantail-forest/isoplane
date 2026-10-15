@@ -39,27 +39,41 @@ internal sealed class GuestCode(VirtualMachine machine)
     }
 
     /// <summary>
-    /// The positions in <paramref name="stack"/> of the frames the guest's call stack shows: application code and the
-    /// package and framework code it runs through, down to the outermost package frame, without the Isoplane runtime
-    /// and SDK frames among them. The frames below the outermost package frame are the runtime invoking the application.
+    /// The positions in <paramref name="stack"/> of the frames the guest's call stack shows: application, SDK and
+    /// framework code down to the outermost application or SDK frame, without the runtime machinery among them.
+    /// The frames below the outermost application or SDK frame are the runtime invoking the application.
     /// </summary>
     internal List<int> Shown(IReadOnlyList<Mono.Debugger.Soft.StackFrame> stack)
     {
         int outermost = stack.Count - 1;
-        while (outermost >= 0 && !(stack[outermost].Method is { } method && InPackage(method.DeclaringType.Assembly))) outermost--;
+        while (outermost >= 0 && !(stack[outermost].Method is { } method && Anchors(method))) outermost--;
         return Enumerable.Range(0, outermost + 1).Where(index => stack[index].Method is { } method && Shows(method)).ToList();
     }
 
-    /// <summary>Whether a call stack shows <paramref name="method"/>, apart from the frames <see cref="Shown"/> trims: package code by <see cref="Contains"/> and framework code, but not the Isoplane runtime and SDK.</summary>
+    /// <summary>Whether a call stack shows <paramref name="method"/>, apart from the frames <see cref="Shown"/> trims: package code by <see cref="Contains"/>, SDK and framework code, but not runtime machinery.</summary>
     internal bool Shows(MethodMirror method)
     {
         var assembly = method.DeclaringType.Assembly;
-        return InPackage(assembly) ? !HiddenIn(assembly, method) : !IsIsoplaneRuntime(assembly.GetName().Name);
+        return InPackage(assembly) ? !HiddenIn(assembly, method) : !IsMachinery(assembly.GetName().Name, method.DeclaringType.FullName);
+    }
+
+    private bool Anchors(MethodMirror method)
+    {
+        var assembly = method.DeclaringType.Assembly;
+        if (InPackage(assembly)) return true;
+        string? name = assembly.GetName().Name;
+        return IsIsoplane(name) && !IsMachinery(name, method.DeclaringType.FullName);
     }
 
     // The package loader refuses a package assembly whose name the runtime supplies,
     // so outside the package these names belong only to the runtime's own assemblies.
-    private static bool IsIsoplaneRuntime(string? assembly) => assembly?.StartsWith("Isoplane.", StringComparison.Ordinal) == true;
+    private static bool IsIsoplane(string? assembly) => assembly?.StartsWith("Isoplane.", StringComparison.Ordinal) == true;
+
+    // Isoplane.MonoRuntime loads the package and exports the host interface, and Isoplane.Sdk's Abi and
+    // Runtime namespaces bind that interface and run the guest's dispatch and scheduling. The rest of
+    // Isoplane.Sdk and Isoplane.AspNetCore is the API applications call and are called from.
+    private static bool IsMachinery(string? assembly, string type) => assembly == "Isoplane.MonoRuntime"
+        || IsIsoplane(assembly) && (type.StartsWith("Isoplane.Abi.", StringComparison.Ordinal) || type.StartsWith("Isoplane.Runtime.", StringComparison.Ordinal));
 
     private bool HiddenIn(AssemblyMirror assembly, MethodMirror method)
     {

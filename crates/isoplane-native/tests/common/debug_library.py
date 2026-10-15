@@ -15,12 +15,15 @@ def exercise(source, send, response, until):
     assert event['reason'] == 'breakpoint', 'the referenced library must bind its source breakpoint'
     frames = response(send('stackTrace', {'threadId': event['threadId']}))['body']['stackFrames']
     names = [frame['name'] for frame in frames]
-    assert not [name for name in names if name.startswith('Isoplane')], f'Isoplane runtime and SDK frames must not appear in the stack: {names}'
+    machinery = ('Isoplane.MonoRuntime.', 'Isoplane.Abi.', 'Isoplane.Runtime.', 'IsoplaneGeneratedExports')
+    assert not [name for name in names if name.startswith(machinery)], f'runtime machinery frames must not appear in the stack: {names}'
     handler = next((index for index, name in enumerate(names) if name.endswith('.Application.Handle')), None)
     assert handler is not None, f'the stack must retain the customer caller of a referenced library: {names}'
     assert any(name.startswith('System.') for name in names[1:handler]), f'the framework method the handler calls the library through must appear between them: {names}'
-    assert any(name.startswith('Microsoft.AspNetCore.') for name in names[handler + 1:]), f'the ASP.NET Core frames that invoke the handler must appear below it: {names}'
-    assert names[-1].startswith('Microsoft.AspNetCore.'), f'the stack must end at the outermost package frame, without the runtime frames that invoke it: {names}'
+    hosting = max((index for index, name in enumerate(names) if name.startswith('Microsoft.AspNetCore.')), default=None)
+    assert hosting is not None and hosting > handler, f'the ASP.NET Core frames that invoke the handler must appear below it: {names}'
+    assert any(name.startswith('Isoplane.AspNetCore.') for name in names[hosting + 1:]), f'the SDK frames that host ASP.NET Core must appear below it: {names}'
+    assert names[-1].startswith('Isoplane.AspNetCore.'), f'the stack must end at the outermost SDK frame, without the runtime frames that invoke it: {names}'
     frame = frames[0]
     assert same_source(frame['source']['path'], source) and 'Calculator.Work' in frame['name'], 'the debugger must stop in the referenced project source'
     scopes = response(send('scopes', {'frameId': frame['id']}))['body']['scopes']

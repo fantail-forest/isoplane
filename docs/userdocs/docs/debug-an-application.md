@@ -77,10 +77,10 @@ conditional breakpoints, hit counts, and logpoints are supported. A hit conditio
 can be a positive count such as `5`, a comparison such as `>= 5`, or `% 5` to stop
 on every fifth hit. Logpoints write their message without stopping execution.
 
-The call stack shows application frames, the package-dependency and .NET frames
-they run through, and reconstructed async callers. It hides the Isoplane runtime
-and SDK frames that host the application, the .NET frames they call to start or
-resume it, and package methods marked as generated or non-user code.
+The call stack shows application, package-dependency, Isoplane SDK and .NET
+frames, and reconstructed async callers. It hides the Isoplane runtime's internal
+frames below the SDK, the .NET frames they call to start or resume the
+application, and package methods marked as generated or non-user code.
 
 ## Edit code during a session
 

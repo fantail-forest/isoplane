@@ -22,8 +22,9 @@ def inspect(source, send, response, thread, until):
                 ("Outer", outer_await, "outer", "22"),
                 ("Handle", "int result = await Outer", "seed", "21")]
     application = [frame for frame in frames if same_source(frame.get("source", {}).get("path"), source)]
-    assert len(application) == 3, "the resumed async stack must retain Inner, Outer and Handle across host parking"
-    assert frames == application, f"runtime frames and the framework frames the runtime resumed the application through must not appear below its callers: {[frame['name'] for frame in frames]}"
+    names = [frame["name"] for frame in frames]
+    assert len(application) == 3 and frames[:3] == application, f"the resumed async stack must start with Inner, Outer and Handle across host parking: {names}"
+    assert names[3:] and all(name.startswith("Isoplane.AspNetCore.") for name in names[3:]), f"only the SDK's suspended hosting callers may follow the application's, without runtime machinery or the frames that resumed it: {names}"
     assert trace["totalFrames"] == len(frames), "the frame count must describe the filtered stack"
     page = response(send("stackTrace", {"threadId": thread, "startFrame": 1, "levels": 1}))["body"]
     assert page["totalFrames"] == len(frames) and [frame["name"] for frame in page["stackFrames"]] == [frames[1]["name"]], "stack pagination must use visible frame positions"
@@ -76,7 +77,9 @@ def exercise(source, send, response, until):
     helper = until(lambda message: message.get("event") == "stopped")["body"]
     assert helper["reason"] == "breakpoint", "execution must reach the synchronous helper before writing watched storage"
     frames = response(send("stackTrace", {"threadId": helper["threadId"]}))["body"]["stackFrames"]
-    assert len(frames) == 4 and all(name in frame["name"] for frame, name in zip(frames, ["ComputeTotal", "Inner", "Outer", "Handle"])), "a synchronous helper must retain the executing async method and its suspended caller chain"
+    names = [frame["name"] for frame in frames]
+    assert all(name in frame for frame, name in zip(names, ["ComputeTotal", "Inner", "Outer", "Handle"])), f"a synchronous helper must retain the executing async method and its suspended caller chain: {names}"
+    assert names[4:] and all(name.startswith("Isoplane.AspNetCore.") for name in names[4:]), f"only the SDK's suspended hosting callers may follow the application's: {names}"
     outer = response(send("evaluate", {"frameId": frames[2]["id"], "expression": "outer + input", "context": "watch"}))["body"]
     assert outer["result"] == "51", "saved-frame watches must retain the caller's edits and parameters while a synchronous helper executes"
     response(send("continue", {"threadId": helper["threadId"]}))
