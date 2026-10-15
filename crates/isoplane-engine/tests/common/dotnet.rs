@@ -1,5 +1,5 @@
-//! The harness for the C# behaviour fixtures: one engine and template per
-//! fixture, activation with recording bindings, and the HTTP dispatch the probes
+//! The harness for the C# behaviour fixtures: one engine and compiled runtime per
+//! binary, a template per fixture, activation with recording bindings, and the HTTP dispatch the probes
 //! answer. `in_mono_runtime!` names the shared Mono runtime in test results.
 
 use std::collections::HashMap;
@@ -36,12 +36,38 @@ macro_rules! in_mono_runtime {
 }
 
 /// A loaded fixture: the engine that compiled it and its template.
+#[derive(Clone)]
 pub struct Fixture {
-    pub engine: IsoplaneEngine,
+    pub engine: &'static IsoplaneEngine,
     pub template: Template,
+    /// The limit each activation's bindings give the guest, below the engine's ceiling, as a
+    /// plan's limit does; `None` leaves the engine's.
+    pub memory_limit_bytes: Option<u64>,
 }
 
 type FixtureSlots = HashMap<(&'static str, GuestRuntime), &'static OnceLock<Fixture>>;
+
+/// The shared runtime, compiled once for every fixture in this binary, on an engine with room
+/// for all of their instances.
+fn shared_runtime(runtime: GuestRuntime) -> &'static (IsoplaneEngine, Template) {
+    static RUNTIME: OnceLock<(IsoplaneEngine, Template)> = OnceLock::new();
+    let GuestRuntime::Mono = runtime;
+    RUNTIME.get_or_init(|| {
+        let engine = IsoplaneEngine::new(EngineConfig {
+            max_instances: 64,
+            max_memory_bytes: 256 << 20,
+            guard_size_bytes: 64 << 20,
+            ..EngineConfig::default()
+        })
+        .unwrap_or_else(|error| panic!("the fixture engine must initialize: {error:#}"));
+        let template = engine
+            .load_template(&isoplane_fixtures::mono_runtime())
+            .unwrap_or_else(|error| {
+                panic!("the shared runtime must load under {runtime}: {error:#}")
+            });
+        (engine, template)
+    })
+}
 
 /// The fixture `name` published for `runtime`, loaded once per test binary.
 /// Building or loading it fails the calling test with the runtime named.
@@ -57,21 +83,16 @@ pub fn fixture(name: &'static str, runtime: GuestRuntime) -> &'static Fixture {
             .or_insert_with(|| Box::leak(Box::new(OnceLock::new())))
     };
     fixture.get_or_init(|| {
-        let engine = IsoplaneEngine::new(EngineConfig {
-            max_instances: 16,
-            max_memory_bytes: 256 << 20,
-            guard_size_bytes: 64 << 20,
-            ..EngineConfig::default()
-        })
-        .unwrap_or_else(|error| panic!("the {name} fixture engine must initialize: {error:#}"));
-        let module = isoplane_fixtures::mono_runtime();
-        let template = engine.load_template(&module).unwrap_or_else(|error| {
-            panic!("the {name} fixture must load under {runtime}: {error:#}")
-        });
+        let (engine, template) = shared_runtime(runtime);
         let template = template
+            .clone()
             .with_application_files(probe_files(name))
             .expect("bind managed probe to shared runtime");
-        Fixture { engine, template }
+        Fixture {
+            engine,
+            template,
+            memory_limit_bytes: None,
+        }
     })
 }
 
@@ -81,6 +102,7 @@ impl Fixture {
         let recorder = Recorder::default();
         let mut bindings = TestBindings::new(recorder.clone());
         bindings.fill_byte = first_byte;
+        bindings.memory_limit_bytes = self.memory_limit_bytes;
         let instance = self
             .engine
             .activate(&self.template, Box::new(bindings))

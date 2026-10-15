@@ -13,30 +13,41 @@ use isoplane_host::ModuleId;
 use std::sync::Arc;
 use std::time::Duration;
 
+/// The shared runtime, compiled once for every test in this binary, on an engine with room
+/// for each test's instances.
+fn shared_runtime() -> &'static (Arc<IsoplaneEngine>, isoplane_engine::Template) {
+    static RUNTIME: std::sync::OnceLock<(Arc<IsoplaneEngine>, isoplane_engine::Template)> =
+        std::sync::OnceLock::new();
+    RUNTIME.get_or_init(|| {
+        let engine = Arc::new(
+            IsoplaneEngine::new(EngineConfig {
+                max_instances: 32,
+                max_memory_bytes: 256 << 20,
+                guard_size_bytes: 64 << 20,
+                ..EngineConfig::default()
+            })
+            .expect("the managed fixture engine must start"),
+        );
+        let template = engine
+            .load_template(&isoplane_fixtures::mono_runtime())
+            .expect("the shared runtime must load through the real engine");
+        (engine, template)
+    })
+}
+
 fn cleanup_cell(
     runtime: GuestRuntime,
     work: Arc<PendingWork>,
     operation: &str,
 ) -> (Arc<Cell>, ModuleId) {
     let GuestRuntime::Mono = runtime;
-    let wasm = isoplane_fixtures::mono_runtime();
-    let engine = Arc::new(
-        IsoplaneEngine::new(EngineConfig {
-            max_instances: 4,
-            max_memory_bytes: 256 << 20,
-            guard_size_bytes: 64 << 20,
-            ..EngineConfig::default()
-        })
-        .expect("the managed fixture engine must start"),
-    );
+    let (engine, template) = shared_runtime();
     let module = ModuleId::new("managed-cleanup", "v1");
-    let template = engine
-        .load_template(&wasm)
-        .and_then(|template| {
-            template.with_application_files(managed::files("isoplane_guest_dotnet_cleanup"))
-        })
-        .expect("the cleanup fixture must load through the real engine");
-    let activator = EngineActivator::new(engine, template, module.clone());
+    let template = template
+        .clone()
+        .with_application_files(managed::files("isoplane_guest_dotnet_cleanup"))
+        .expect("the cleanup fixture must bind its application files");
+    let activator = EngineActivator::new(engine.clone(), template, module.clone());
     let cell = if operation == "/timer" {
         common::rig_resolving(CellConfig::for_test("managed-cleanup"), "93.184.216.34:80").0
     } else {
