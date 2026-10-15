@@ -21,6 +21,10 @@ tasks:
       ISOPLANE_GUEST_RUNTIME_FEED: '{{.FEED}}'
       ISOPLANE_CLI_ASSEMBLY: '{{.CLI}}'
       ISOPLANE_SQLITE_DIRECTORY: '{{.SQLITE}}'
+      # The feed's runtime pack keeps its version when rebuilt from the same
+      # inputs, but not its bytes, so in the user's NuGet cache one
+      # worktree's extraction fails another's digest check.
+      NUGET_PACKAGES: '{{.MODULES}}/intermediates/packages'
     sources:
       - '{{.ROOT_DIR}}/tools/BuildProtocol/WasmMemory.props'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/MonoRuntime/{src/**/*,sqlite/*,build.sh,manifest.py}'
