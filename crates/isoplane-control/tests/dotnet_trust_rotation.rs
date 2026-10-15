@@ -97,15 +97,29 @@ fn listing(roots: &[&Root]) -> String {
     format!("roots={} {}", thumbprints.len(), thumbprints.join(","))
 }
 
-/// Prepares the managed application with the supplied platform root bundle.
-async fn prepared_template(runtime: GuestRuntime, served: PlatformFiles) -> Vec<u8> {
+/// Two roots, and the managed application prepared while only the first was served: what
+/// every test in this binary starts from, made once.
+struct Rotation {
+    a: Root,
+    b: Root,
+    template: Vec<u8>,
+}
+
+fn rotation(runtime: GuestRuntime) -> &'static Rotation {
+    static ROTATION: std::sync::OnceLock<Rotation> = std::sync::OnceLock::new();
     let GuestRuntime::Mono = runtime;
-    let prepared = managed::prepare("isoplane_guest_dotnet_trust", served)
-        .expect("prepare the trust application with the supplied bundle");
-    prepared
-        .portable_template()
-        .expect("portable prepared output")
-        .to_vec()
+    ROTATION.get_or_init(|| {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let a = self_signed_root(dir.path(), "root-a");
+        let b = self_signed_root(dir.path(), "root-b");
+        let prepared = managed::prepare("isoplane_guest_dotnet_trust", bundle(&[&a]))
+            .expect("prepare the trust application with the supplied bundle");
+        let template = prepared
+            .portable_template()
+            .expect("portable prepared output")
+            .to_vec();
+        Rotation { a, b, template }
+    })
 }
 
 struct NoDns;
@@ -136,16 +150,13 @@ fn node_serving(files: PlatformFiles, template: &[u8], clock_ms: u64) -> (Reacto
 
 async fn the_template_carries_the_store_loaded_at_preparation(runtime: GuestRuntime) {
     isoplane_harness::LogCapture::global();
-    let dir = tempfile::tempdir().expect("a temporary directory");
-    let a = self_signed_root(dir.path(), "root-a");
-    let b = self_signed_root(dir.path(), "root-b");
-    let template = prepared_template(runtime, bundle(&[&a])).await;
+    let Rotation { a, b, template } = rotation(runtime);
 
-    let (reactor, mut guest) = node_serving(bundle(&[&b]), &template, PAST_RECHECK_MS);
+    let (reactor, mut guest) = node_serving(bundle(&[b]), template, PAST_RECHECK_MS);
     let at_boot = guest.answer(&reactor, "/at-boot", 4).await;
     assert_eq!(
         at_boot,
-        listing(&[&a]),
+        listing(&[a]),
         "the application was constructed at preparation, when A was served, and the template \
          carries what its store listed then ({runtime}); logs: {:?}",
         reactor.context.emitted_logs()
@@ -156,16 +167,13 @@ async fn a_removed_root_is_gone_from_the_prepared_templates_store_after_the_rech
     runtime: GuestRuntime,
 ) {
     isoplane_harness::LogCapture::global();
-    let dir = tempfile::tempdir().expect("a temporary directory");
-    let a = self_signed_root(dir.path(), "root-a");
-    let b = self_signed_root(dir.path(), "root-b");
-    let template = prepared_template(runtime, bundle(&[&a])).await;
+    let Rotation { b, template, .. } = rotation(runtime);
 
-    let (reactor, mut guest) = node_serving(bundle(&[&b]), &template, PAST_RECHECK_MS);
+    let (reactor, mut guest) = node_serving(bundle(&[b]), template, PAST_RECHECK_MS);
     let roots = guest.answer(&reactor, "/roots", 4).await;
     assert_eq!(
         roots,
-        listing(&[&b]),
+        listing(&[b]),
         "five seconds of guest time after preparation loaded the store, its next use reloads the \
          served bundle: A's root is gone and B's is trusted ({runtime}); logs: {:?}",
         reactor.context.emitted_logs()
@@ -176,16 +184,13 @@ async fn the_prepared_templates_store_keeps_its_roots_within_the_recheck_interva
     runtime: GuestRuntime,
 ) {
     isoplane_harness::LogCapture::global();
-    let dir = tempfile::tempdir().expect("a temporary directory");
-    let a = self_signed_root(dir.path(), "root-a");
-    let b = self_signed_root(dir.path(), "root-b");
-    let template = prepared_template(runtime, bundle(&[&a])).await;
+    let Rotation { a, b, template } = rotation(runtime);
 
-    let (reactor, mut guest) = node_serving(bundle(&[&b]), &template, WITHIN_RECHECK_MS);
+    let (reactor, mut guest) = node_serving(bundle(&[b]), template, WITHIN_RECHECK_MS);
     let roots = guest.answer(&reactor, "/roots", 4).await;
     assert_eq!(
         roots,
-        listing(&[&a]),
+        listing(&[a]),
         "within five seconds of guest time since preparation loaded the store, the cached roots \
          still serve: the rotation is not seen yet ({runtime}); logs: {:?}",
         reactor.context.emitted_logs()
