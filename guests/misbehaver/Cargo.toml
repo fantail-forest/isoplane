@@ -11,5 +11,3 @@ crate-type = ["cdylib"]
 [dependencies]
 isoplane-guest = { workspace = true }
 isoplane-abi   = { workspace = true }
-serde      = { workspace = true }
-postcard   = { workspace = true }

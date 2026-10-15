@@ -80,7 +80,6 @@ version = "0.1.0"
 dependencies = [
  "isoplane-abi",
  "isoplane-guest",
- "postcard",
  "serde",
  "serde_json",
 ]
@@ -132,8 +131,6 @@ version = "0.1.0"
 dependencies = [
  "isoplane-abi",
  "isoplane-guest",
- "postcard",
- "serde",
 ]
 
 [[package]]
@@ -300,8 +297,6 @@ version = "0.1.0"
 dependencies = [
  "isoplane-abi",
  "isoplane-guest",
- "postcard",
- "serde",
 ]
 
 [[package]]
