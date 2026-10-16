@@ -41,13 +41,15 @@ application apart from the others on the same hardware, and it is why an
 application can do only what Isoplane provides. A native library built for the
 machine's processor would run outside the sandbox, so it is not loaded.
 
-## One thread
+## A single-threaded instance {#single-threaded}
 
-Each instance has exactly one thread, and `Environment.ProcessorCount` is 1.
-This follows from [never blocking](#never-blocks): an instance needs a thread
-only while its code runs, and one is all it is given. In return, an instance
-costs no thread while it waits, and code in an instance never runs on two
-threads at once.
+Each instance runs your application on exactly one thread, and handles one
+request at a time; `Environment.ProcessorCount` is 1. To serve more requests at
+once, Isoplane runs more instances of the application rather than more threads
+in one. This follows from [never blocking](#never-blocks): an instance needs a
+thread only while its code runs, and one is all it is given. In return, an
+instance costs no thread while it waits, and code in an instance never runs on
+two threads at once.
 
 Starting a thread throws `PlatformNotSupportedException`, and the build warns
 about it as [`ISOPLANE1002`](reference/error-codes.md#isoplane1002). Rewrite
@@ -71,6 +73,12 @@ until the method next awaits. A long computation also uses up the request's
 [running time](execution-limits.md#running-time), which explains how to split
 one so that cancellation can reach it.
 
+Thread-safe types need no change. `Lazy<T>` in its default thread-safe mode,
+`ConcurrentDictionary`, `ConcurrentQueue`, `ConcurrentStack` and
+`ConcurrentBag` work as usual.
+
+## How locks work {#locks}
+
 Locks work as they do elsewhere, with one thread to own them. A lock that is
 free is taken at once, by `lock`, `Monitor.Enter` and `Monitor.TryEnter`,
 `System.Threading.Lock`, `SpinLock`, `Mutex`, `ReaderWriterLockSlim` and
@@ -79,37 +87,32 @@ is held is held by this same thread, so taking it again re-enters it: a lock
 that allows recursion lets the code in, and one that does not throws
 `LockRecursionException`, just as a thread re-entering its own lock would
 anywhere else. A `SpinLock` that does not track its owner would wait for
-itself forever elsewhere; here it throws `PlatformNotSupportedException`. A
-lock therefore never keeps out other work in the same instance. To keep other
-asynchronous work out of a section that awaits, use `SemaphoreSlim` with
-`await WaitAsync()`, as you would on any platform, since no lock can be held
-across an `await`.
+itself forever elsewhere; here it throws `PlatformNotSupportedException`.
+
+A lock therefore never keeps out other work in the same instance, and code
+that takes locks needs no change to run here. To keep other asynchronous work
+out of a section that awaits, use `SemaphoreSlim` with `await WaitAsync()`, as
+you would on any platform, since no lock can be held across an `await`.
+
+## Waits, delays and timers {#waits}
+
+Waiting is asynchronous, because a waiting instance
+[must not hold a worker](#never-blocks).
 
 A wait that can be satisfied at once succeeds, as it does anywhere else:
 taking a free `SemaphoreSlim` or `Semaphore`, waiting on a set event or a
 finished task, and taking from a non-empty `BlockingCollection` all return
 straight away, and a wait with a timeout of zero that cannot be satisfied
-returns `false`. A wait that would have to block throws
+returns `false`.
+
+A synchronous wait that would have to block throws
 `PlatformNotSupportedException` straight away, whatever timeout it was given.
 Nothing else in the instance can run while it waits, so nothing could release
 the semaphore, set the event or finish the task, and the wait could only hold
-the worker until it timed out. Failing at once points you at the line to
-change. [Waiting is asynchronous](#waiting-is-asynchronous) lists each call and
-what to use instead.
-
-Thread-safe types need no change. `Lazy<T>` in its default thread-safe mode,
-`ConcurrentDictionary`, `ConcurrentQueue`, `ConcurrentStack` and
-`ConcurrentBag` work as usual.
-
-## Waiting is asynchronous
-
-A synchronous wait that cannot be satisfied at once throws
-`PlatformNotSupportedException` instead of waiting, even when it was given a
-timeout, because a waiting instance [must not hold a worker](#never-blocks). A
-wait with a timeout of zero returns `false` instead, as it does anywhere else.
-`Monitor.Wait`, `Thread.Sleep` and joining the current thread always have to
-wait, because only another thread could pulse the monitor or finish the
-thread, so they throw whenever their timeout is not zero. Use the
+the worker until it timed out; failing at once points you at the line to
+change. `Monitor.Wait`, `Thread.Sleep` and joining the current thread always
+have to wait, because only another thread could pulse the monitor or finish
+the thread, so they throw whenever their timeout is not zero. Use the
 asynchronous form of each call:
 
 | Call | Throws | Use instead |
@@ -126,6 +129,12 @@ asynchronous form of each call:
 | `Monitor.Wait(...)` | always, except with a timeout of zero | `await` a `TaskCompletionSource` |
 | `Thread.Sleep(...)` | always, except `Thread.Sleep(0)` | `await Task.Delay(...)` |
 | `Thread.CurrentThread.Join(...)` | always, except with a timeout of zero | — |
+
+To wait for a while, `await Task.Delay(...)`. Delays and timers are as precise
+as the [clock](#time), one millisecond, and a timer that comes due while the
+application is computing runs once it next awaits. A timer can also outlive
+the request that started it: [what can run between requests?](#between-requests)
+describes what happens to it then.
 
 `task.Wait()` with no timeout, on a task that `Task.Run` queued and that has not
 started yet, runs the task there and then, as .NET can do anywhere, and returns

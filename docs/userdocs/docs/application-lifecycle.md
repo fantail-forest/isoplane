@@ -166,7 +166,7 @@ operation completes.
 - Awaits everything the request needs before it responds. Work started and not
   awaited may never finish.
 - Uses asynchronous APIs throughout; see
-  [how .NET differs on Isoplane](dotnet-runtime-differences.md#waiting-is-asynchronous).
+  [how .NET differs on Isoplane](dotnet-runtime-differences.md#waits).
 - Forwards the cancellation token to the asynchronous calls it makes.
 - Disposes what it opens. Do not leave cleanup to a finalizer.
 - Takes its `HttpClient` from `IHttpClientFactory`, whose clients keep no connection
