@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using System.Threading;
 using Isoplane.Abi;
 
 namespace Isoplane.Runtime;
@@ -13,67 +12,78 @@ namespace Isoplane.Runtime;
 /// </summary>
 internal static class FutureTable
 {
-    private static readonly Dictionary<ulong, TaskCompletionSource<ResultRecord>> Pending = new();
+    private static readonly Dictionary<ulong, Entry> Pending = new();
+
+    private readonly struct Entry
+    {
+        internal readonly TaskCompletionSource<ResultRecord> Completion;
+        internal readonly ulong Dispatch;
+        internal Entry(TaskCompletionSource<ResultRecord> completion, ulong dispatch)
+        {
+            Completion = completion;
+            Dispatch = dispatch;
+        }
+    }
 
     /// <summary>
-    /// The guest's own ceiling on pending futures, so a runaway fan-out is a
-    /// <see cref="TrapCode.TooManyFutures"/> trap rather than unbounded
-    /// growth.
+    /// The guest's own ceiling on one dispatch's pending futures, so a runaway
+    /// fan-out is a <see cref="TrapCode.TooManyFutures"/> trap rather than
+    /// unbounded growth.
     /// </summary>
     internal const int MaxPending = 128;
-
-    private static ulong cancellationId;
-    private static CancellationTokenSource? cancellation;
-
-    internal static CancellationToken Aborted => cancellation?.Token ?? CancellationToken.None;
-
-    internal static void BeginCancellation(ulong id)
-    {
-        cancellationId = id;
-        cancellation = id == 0 ? null : new CancellationTokenSource();
-    }
 
     internal static int Count => Pending.Count;
 
     /// <summary>
-    /// Registers a future id an import returned and yields the task the
-    /// guest awaits. <c>RunContinuationsAsynchronously</c> keeps the
-    /// continuation on the scheduler's queue rather than running it inline
-    /// under <c>isoplane_wake</c>'s frame.
+    /// Registers a future id an import returned, for the current dispatch,
+    /// and yields the task the guest awaits. <c>RunContinuationsAsynchronously</c>
+    /// keeps the continuation on the scheduler's queue rather than running it
+    /// inline under <c>isoplane_wake</c>'s frame.
     /// </summary>
     internal static Task<ResultRecord> Register(long futureId)
     {
         ulong id = (ulong)futureId;
-        if (Pending.Count >= MaxPending) throw new TooManyFuturesException();
+        ulong dispatch = GuestDispatch.Current?.Id ?? 0;
+        if (Owned(dispatch) >= MaxPending) throw new TooManyFuturesException();
 
         var tcs = new TaskCompletionSource<ResultRecord>(TaskCreationOptions.RunContinuationsAsynchronously);
-        Pending[id] = tcs;
+        Pending[id] = new Entry(tcs, dispatch);
         return tcs.Task;
     }
 
     /// <summary>
     /// Delivers a completion from <c>isoplane_wake</c>. An unknown id is a future
-    /// the guest already abandoned.
+    /// the guest already abandoned, or a wake with no result of its own.
     /// </summary>
     internal static bool Complete(long futureId, ResultRecord result)
     {
         ulong id = (ulong)futureId;
-        if (id != 0 && id == cancellationId)
-        {
-            cancellation!.Cancel();
-            return true;
-        }
-        if (!Pending.Remove(id, out var tcs)) return false;
-        tcs.SetResult(result);
+        if (id != 0 && GuestDispatch.Cancel(id)) return true;
+        if (!Pending.Remove(id, out var entry)) return false;
+        entry.Completion.SetResult(result);
         return true;
     }
 
-    internal static void Reset()
+    /// <summary>The futures a dispatch is waiting on.</summary>
+    internal static int Owned(ulong dispatch)
     {
-        Pending.Clear();
-        cancellation?.Dispose();
-        cancellation = null;
-        cancellationId = 0;
+        int owned = 0;
+        foreach (var entry in Pending.Values)
+        {
+            if (entry.Dispatch == dispatch) owned++;
+        }
+        return owned;
+    }
+
+    /// <summary>Drops a dispatch's futures; the host cancels them as the dispatch ends.</summary>
+    internal static void Forget(ulong dispatch)
+    {
+        var owned = new List<ulong>();
+        foreach (var (id, entry) in Pending)
+        {
+            if (entry.Dispatch == dispatch) owned.Add(id);
+        }
+        foreach (ulong id in owned) Pending.Remove(id);
     }
 }
 

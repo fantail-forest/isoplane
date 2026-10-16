@@ -6,18 +6,18 @@ namespace Isoplane.Runtime;
 
 /// <summary>
 /// Queues continuations posted through Isoplane's synchronization context in
-/// guest memory. The export driver drains the queue during each slice, then
-/// returns when no runnable work remains. This
-/// scheduler does not intercept awaiters that bypass context capture or
-/// prove that an incomplete task has a completion source.
+/// guest memory. Each dispatch has its own, so a continuation runs in a slice
+/// of the dispatch that awaited; <see cref="Instance"/> serves code outside any
+/// dispatch. The export driver drains the current dispatch's queue during each
+/// slice, then returns when no runnable work remains. This scheduler does not
+/// intercept awaiters that bypass context capture or prove that an incomplete
+/// task has a completion source.
 /// </summary>
 internal sealed class IsoplaneSynchronizationContext : SynchronizationContext
 {
     internal static readonly IsoplaneSynchronizationContext Instance = new();
 
     private readonly Queue<Work> _queue = new();
-
-    private IsoplaneSynchronizationContext() { }
 
     private readonly struct Work
     {

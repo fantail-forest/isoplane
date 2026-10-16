@@ -89,7 +89,7 @@ public class RequestHead
 
     internal RequestHead(DispatchRecord record)
     {
-        Aborted = Isoplane.Runtime.FutureTable.Aborted;
+        Aborted = Isoplane.Runtime.GuestDispatch.Current?.Aborted ?? CancellationToken.None;
         Method = record.Method;
         Url = record.Url;
         Path = record.Path;

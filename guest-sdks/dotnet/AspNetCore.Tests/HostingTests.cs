@@ -207,8 +207,7 @@ public sealed class HostingTests
     [Fact]
     public async Task a_host_cancellation_wake_reaches_aspnet_and_disposes_the_scope()
     {
-        Isoplane.Runtime.FutureTable.Reset();
-        Isoplane.Runtime.FutureTable.BeginCancellation(42);
+        var dispatch = Isoplane.Runtime.GuestDispatch.Begin(new DispatchRecord { DispatchId = 1, CancelFuture = 42 });
         var scope = new Scope();
         var builder = Builder();
         builder.Services.AddScoped(_ => scope);
@@ -228,7 +227,7 @@ public sealed class HostingTests
             Assert.True(error is OperationCanceledException, "host cancellation must end the request");
             Assert.True(scope.Disposed, "host cancellation must dispose the request scope");
         }
-        finally { Isoplane.Runtime.FutureTable.Reset(); }
+        finally { dispatch.End(); }
     }
 
     [Fact]

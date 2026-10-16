@@ -84,9 +84,31 @@ internal sealed class ResultRecord
     internal static ResultRecord Decode(ReadOnlySpan<byte> bytes)
     {
         var r = new PostcardReader(bytes);
+        return Decode(ref r);
+    }
+
+    internal static ResultRecord Decode(ref PostcardReader r)
+    {
         uint tag = r.U32();
         if (tag == 0) return new ResultRecord { IsOk = true, Payload = r.Bytes().ToArray() };
         return new ResultRecord { IsOk = false, Error = (FutureError)r.Varint() };
+    }
+}
+
+/// <summary>
+/// <c>isoplane-abi::result::WakeRecord</c>: the dispatch a wake's slice runs,
+/// and the completed future's result.
+/// </summary>
+internal sealed class WakeRecord
+{
+    internal ulong Dispatch;
+    internal ResultRecord Result = new();
+
+    internal static WakeRecord Decode(ReadOnlySpan<byte> bytes)
+    {
+        var r = new PostcardReader(bytes);
+        ulong dispatch = r.U64();
+        return new WakeRecord { Dispatch = dispatch, Result = ResultRecord.Decode(ref r) };
     }
 }
 

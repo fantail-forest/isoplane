@@ -19,8 +19,6 @@ public static unsafe class Exports<TRouter>
     private static bool _booted;
     private static bool _runtimeBooted;
     private static TRouter? _router;
-    private static Task<Response>? _root;
-    private static bool _runningTimers;
     private static Task? _initialization;
 
     /// <summary>Ensures guest scheduling and application state are initialized. Captured state may already contain initialized objects.</summary>
@@ -113,8 +111,7 @@ public static unsafe class Exports<TRouter>
 
             TraceDispatch(d);
 
-            FutureTable.Reset();
-            FutureTable.BeginCancellation(d.CancelFuture);
+            var dispatch = GuestDispatch.Begin(d);
 
             // Before any timer can run, so those initialization left count
             // from this instance's activation.
@@ -123,14 +120,15 @@ public static unsafe class Exports<TRouter>
             // Timers that came due while the instance was idle run first, each
             // until it returns or awaits, so the dispatch's own work sees the
             // state they bring up to date.
-            ManagedWork.Drain();
+            ManagedWork.Drain(dispatch);
 
-            _runningTimers = d.Kind == DispatchKind.Timers;
-            if (_runningTimers) return SettleTimers();
+            if (dispatch.Kind != DispatchKind.Timers)
+            {
+                using (DispatchPartition.Mark(dispatch.Id))
+                    dispatch.Root = RequestDispatch.RouteAsync(_router!, d);
+            }
 
-            _root = RequestDispatch.RouteAsync(_router!, d);
-
-            return Settle();
+            return Settle(dispatch);
         }
         catch (TooManyFuturesException)
         {
@@ -148,8 +146,8 @@ public static unsafe class Exports<TRouter>
     }
 
     /// <summary>
-    /// A host future completed. Distinct futures complete in no particular
-    /// order.
+    /// A host future completed, in a slice of the dispatch the wake record
+    /// names. Distinct futures complete in no particular order.
     /// </summary>
     public static long Wake(long future, int ptr, int len)
     {
@@ -158,23 +156,28 @@ public static unsafe class Exports<TRouter>
             Boot();
             byte[] bytes = TakeOwnership(ptr, len);
 
-            ResultRecord r;
+            WakeRecord wake;
             try
             {
-                r = ResultRecord.Decode(bytes);
+                wake = WakeRecord.Decode(bytes);
             }
             catch (PostcardException)
             {
                 return PollStatus.Trapped(TrapCode.Protocol);
             }
 
-            Log(1, "isoplane_wake enter: future=" + future.ToString());
+            Log(1, "isoplane_wake enter: dispatch=" + wake.Dispatch.ToString() + " future=" + future.ToString());
 
-
-            FutureTable.Complete(future, r);
-
-            if (_initialization is not null) return SettleInitialization();
-            return _runningTimers ? SettleTimers() : Settle();
+            if (_initialization is not null)
+            {
+                FutureTable.Complete(future, wake.Result);
+                return SettleInitialization();
+            }
+            // The host wakes only a dispatch in progress.
+            if (GuestDispatch.Resume(wake.Dispatch) is not { } dispatch)
+                return PollStatus.Trapped(TrapCode.Protocol);
+            FutureTable.Complete(future, wake.Result);
+            return Settle(dispatch);
         }
         catch (TooManyFuturesException)
         {
@@ -225,16 +228,24 @@ public static unsafe class Exports<TRouter>
     }
 
     /// <summary>
-    /// Drains runnable continuations, then returns <c>pending</c> through the
-    /// export if the root task is incomplete. Returning ends the slice with
-    /// nothing of it left on the native stack; an incomplete root does not
-    /// prove that a host future exists to advance it.
+    /// Drains the dispatch's runnable continuations, then returns <c>pending</c>
+    /// through the export if its root task is incomplete. Returning ends the
+    /// slice with nothing of it left on the native stack; an incomplete root
+    /// does not prove that a host future exists to advance it. A timers
+    /// dispatch has no result of its own to wait for: it is done once it waits
+    /// on no future of its own, only on more timers.
     /// </summary>
-    private static long Settle()
+    private static long Settle(GuestDispatch dispatch)
     {
-        ManagedWork.Drain();
+        ManagedWork.Drain(dispatch);
+        GuestDispatch.RequestSlicesForOthers();
 
-        Task<Response> root = _root!;
+        if (dispatch.Root is not { } root)
+        {
+            if (FutureTable.Owned(dispatch.Id) > 0) return PollStatus.Pending();
+            dispatch.End();
+            return PollStatus.Done(0);
+        }
 
         if (!root.IsCompleted)
         {
@@ -242,31 +253,21 @@ public static unsafe class Exports<TRouter>
             return PollStatus.Pending();
         }
 
+        dispatch.End();
+
         if (root.IsFaulted || root.IsCanceled)
         {
-            _root = null;
             Exception? inner = root.Exception?.GetBaseException();
             return inner is null ? PollStatus.Trapped(TrapCode.Panic) : Panic(inner);
         }
 
         Response resp = root.Result;
-        _root = null;
 
         int handle = resp.Finish();
 
         Log(1, "done: status=" + resp.Status.ToString());
 
         return PollStatus.Done((uint)handle);
-    }
-
-    /// <summary>
-    /// A timers dispatch has no result of its own to wait for. The host ends
-    /// it once nothing but timers is pending.
-    /// </summary>
-    private static long SettleTimers()
-    {
-        ManagedWork.Drain();
-        return PollStatus.Pending();
     }
 
     private static long SettleInitialization()

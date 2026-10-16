@@ -5,15 +5,24 @@ namespace Isoplane.Runtime;
 
 internal static class ManagedWork
 {
-    internal static void Drain()
+    /// <summary>
+    /// Runs ready work until none remains: the runtime's queue, the
+    /// continuations posted to the instance's context, which belong to no
+    /// dispatch, and those posted to <paramref name="dispatch"/>'s.
+    /// </summary>
+    internal static void Drain(GuestDispatch? dispatch = null)
     {
+        var instance = IsoplaneSynchronizationContext.Instance;
+        var context = dispatch?.Context ?? instance;
         do
         {
             RunReady(null!);
-            SynchronizationContext.SetSynchronizationContext(IsoplaneSynchronizationContext.Instance);
-            IsoplaneSynchronizationContext.Instance.Drain();
+            SynchronizationContext.SetSynchronizationContext(instance);
+            instance.Drain();
+            SynchronizationContext.SetSynchronizationContext(context);
+            context.Drain();
         }
-        while (ThreadPool.PendingWorkItemCount > 0 || IsoplaneSynchronizationContext.Instance.HasWork);
+        while (ThreadPool.PendingWorkItemCount > 0 || instance.HasWork || context.HasWork);
     }
 
     [UnsafeAccessor(UnsafeAccessorKind.StaticMethod, Name = "RunWasiEventLoopOnce")]
