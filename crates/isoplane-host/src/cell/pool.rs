@@ -134,6 +134,11 @@ impl Cell {
         for job in self.queue.drain_stopped() {
             Self::cancel_queued_dispatch(job);
         }
+        for (_, starts) in self.starts.drain() {
+            for job in starts {
+                Self::cancel_queued_dispatch(job);
+            }
+        }
         for (id, dispatches) in self.active.drain() {
             let slot = self.slot(id);
             for dispatch in dispatches.into_inner() {

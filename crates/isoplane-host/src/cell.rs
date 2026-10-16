@@ -4,7 +4,7 @@
 //! preempts a CPU-bound tenant on its own pool thread, and the cell controls
 //! admission with a bounded lane per worker.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
@@ -171,6 +171,9 @@ pub struct Cell {
     modules: RwLock<HashMap<ModuleId, Arc<ModuleEntry>>>,
     residents: Mutex<HashMap<InstanceId, Resident>>,
     active: ShardedMap<InstanceId, registry::ActiveDispatches>,
+    /// Dispatches that joined an instance while another dispatch's slice ran,
+    /// waiting to begin between slices.
+    starts: ShardedMap<InstanceId, VecDeque<DispatchJob>>,
     completion_clock: RwLock<completion::CompletionClock>,
     snapshots: Arc<dyn isoplane_hibernate::snapshot::SnapshotStorage>,
     memory_pressure: RwLock<Arc<dyn crate::memory_pressure::MemoryPressureSource>>,
@@ -258,6 +261,7 @@ impl Cell {
             modules: RwLock::new(HashMap::new()),
             residents: Mutex::new(HashMap::new()),
             active: ShardedMap::new(ACTIVE_SHARDS),
+            starts: ShardedMap::new(ACTIVE_SHARDS),
             snapshots,
             memory_pressure: RwLock::new(Arc::new(crate::memory_pressure::SystemMemoryPressure)),
             reclaiming: AtomicBool::new(false),

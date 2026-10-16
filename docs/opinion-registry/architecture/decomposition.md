@@ -46,7 +46,7 @@ Put responsibilities that discover, place, distribute, replicate, coordinate, se
 
 **Not this:** Making every local test start a node supervisor, telemetry exporter and distributed directory, or implement no-op substitutes for them.
 
-**Exception:** Their local execution consequences remain real: enforce supplied limits and ownership, bound queues, serialize dispatch, mediate capabilities, retain host resources, and emit accurate outcomes.
+**Exception:** Their local execution consequences remain real: enforce supplied limits and ownership, bound queues, run one slice at a time per instance, mediate capabilities, retain host resources, and emit accurate outcomes.
 
 ## Introduce only the infrastructure interfaces execution consumes
 

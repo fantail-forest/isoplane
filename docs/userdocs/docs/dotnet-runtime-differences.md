@@ -25,55 +25,50 @@ see [execution limits](execution-limits.md).
 
 ## Units of work {#units-of-work}
 
-Isoplane divides the work it gives an instance into two units: dispatches,
-and the slices a dispatch runs in.
+Isoplane divides the work it gives an instance into two units: dispatches and
+slices.
 
 A *dispatch* is the unit of work Isoplane delivers to an instance. Most
 dispatches handle one HTTP request. If the application
 [runs timers between requests](#run-timers-between-requests), a dispatch can
-also run the timers that came due while the instance was idle. An instance
-handles one dispatch at a time.
+also run timers that have come due. An instance can have several dispatches in
+progress at once.
 
-A *slice* is a smaller unit: one stretch of running within a dispatch. A
-dispatch runs in one or more slices. A slice begins when the instance starts
-running the dispatch's code, or resumes it after waiting, and ends when that
-code awaits something that has to wait, or the dispatch finishes. Some
-things are fixed for the length of a slice, such as the [clock](#time) and
-whether the dispatch has been cancelled.
+A *slice* is a period of time in which code from one dispatch is running on a
+worker thread. An instance has at most one slice running at any moment, so
+dispatches in progress on the same instance interleave, one slice at a time.
+Slices do not preempt one another: a slice ends only when its code awaits
+something that is not ready yet, or its dispatch finishes. The [clock](#time),
+and whether the dispatch has been cancelled, stay fixed for the length of a
+slice.
 
-The timeline below shows two instances of one application, with a row for each
-dispatch and a bar for each slice. The gaps between a dispatch's slices are
-waits, on a database query for example. Instance A handles request 1 in four
-slices. A timer comes due while it waits, and the timer's callback runs in a
-slice of request 1's dispatch, using that dispatch's running time. Slices that
-run timer callbacks are shown in a second color. Request 2 arrives while
-instance A is busy, so Isoplane delivers it to instance B. Later, while
-instance A is idle, another timer comes due, and because the application runs
-timers between requests, instance A runs it in a dispatch of its own. On any
-one instance, dispatches follow one another and never overlap.
+The timeline below shows one instance, with a row for each dispatch. Each bar
+is a slice, and the gaps between a row's bars are waits, for a database query
+for example.
 
 ```mermaid
 ---
 displayMode: compact
 ---
 gantt
+    title One instance
     dateFormat x
     axisFormat %Q ms
-    tickInterval 100millisecond
+    tickInterval 50millisecond
     todayMarker off
-    section A: request 1
-    ​ : 0, 30
-    ​ : 100, 140
-    ​ : active, 170, 190
-    ​ : 230, 260
-    section A: timers
-    ​ : active, 420, 450
-    section A: request 3
-    ​ : 620, 680
-    ​ : 760, 790
-    section B: request 2
-    ​ : 60, 120
-    ​ : 280, 310
+    section Request 1
+    slice : 0, 40
+    slice : 120, 160
+    slice : 260, 290
+    section Request 2
+    slice : 45, 85
+    slice : 170, 210
+    slice : 295, 325
+    section Timers
+    slice : 90, 115
+    section Request 3
+    slice : 210, 250
+    slice : 330, 360
 ```
 
 Apart from initialization, an application's code runs only during dispatches.
@@ -101,12 +96,18 @@ and saves the running time that work would use.
 
 ## A single-threaded instance {#single-threaded}
 
-Each instance runs your application on exactly one thread, and handles one
-dispatch at a time; `Environment.ProcessorCount` is 1. To serve more requests at
-once, Isoplane runs more instances of the application rather than more threads
-in one. Because an instance needs a thread only while its code is running, one
-thread is enough, and a waiting instance does not occupy one at all. Code in an
-instance never runs on two threads at once.
+Each instance runs your application on exactly one thread;
+`Environment.ProcessorCount` is 1. An instance can have several dispatches in
+progress, which take turns on that thread one [slice](#units-of-work) at a
+time, and Isoplane runs more instances to serve more requests than one
+instance takes. Because an instance needs a thread only while its code is
+running, one thread is enough, and a waiting instance does not occupy one at
+all. Code in an instance never runs on two threads at once.
+
+The dispatches in progress on an instance share its memory, so static fields
+and singletons are shared between the requests they handle, as they are
+between concurrent requests on any server. Code written for concurrent
+requests needs no change.
 
 ### Starting a thread {#starting-a-thread}
 
@@ -133,9 +134,9 @@ faster on Isoplane. Start several operations and `await Task.WhenAll(...)`,
 and all of them are in flight while the instance waits.
 
 Computation, by contrast, occupies the thread. While a method computes without
-awaiting, nothing else in the instance runs, including other asynchronous work
-of the same dispatch, and a cancellation token does not change until the
-method next awaits. A long computation also uses up the dispatch's running
+awaiting, nothing else in the instance runs: neither other asynchronous work of
+the same dispatch nor the other dispatches in progress on the instance, which
+wait for it. A cancellation token does not change until the method next awaits. A long computation also uses up the dispatch's running
 time. To let cancellation reach one, split it up as
 [Running time](execution-limits.md#running-time) describes.
 

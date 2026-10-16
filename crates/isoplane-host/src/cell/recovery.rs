@@ -78,9 +78,6 @@ impl Cell {
             })
         });
         self.rt.futures.end_dispatch(id, did);
-        if let Some(tx) = tx {
-            owner.answer(&tx, owner.failure_result(500, "host_panic"));
-        }
         self.remove_active(id, did);
         // The panic may have left the instance's host state inconsistent, so
         // the dispatches still on it fail with it.
@@ -98,6 +95,10 @@ impl Cell {
             self.forget(&slot);
         }
         self.rt.futures.release_instance(id);
+        // Answered last, so a caller never sees its instance still resident.
+        if let Some(tx) = tx {
+            owner.answer(&tx, owner.failure_result(500, "host_panic"));
+        }
     }
 
     /// Answers and ends a dispatch whose instance is going away without a

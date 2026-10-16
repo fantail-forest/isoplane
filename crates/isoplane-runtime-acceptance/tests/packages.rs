@@ -1078,6 +1078,100 @@ async fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
     .unwrap_or_else(|_| panic!("{what}"));
 }
 
+fn alpha_request(
+    cell: &isoplane_host::cell::Cell,
+    module: &isoplane_host::ModuleId,
+    path: &str,
+) -> isoplane_abi::dispatch::DispatchRecord {
+    cell.http_record(
+        module,
+        isoplane_abi::dispatch::HttpRequest {
+            method: "GET".into(),
+            url: format!("https://alpha.test{path}"),
+            path: path.into(),
+            query: vec![],
+            headers: vec![],
+            body: vec![],
+        },
+    )
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_request_that_unblocks_another_on_its_instance_leaves_it_to_resume_in_its_own_slice() {
+    isoplane_harness::LogCapture::global();
+    let prepared = prepared_package("alpha").await;
+    let module = isoplane_host::ModuleId::new("alpha", "v1");
+    let cell = serving_cell(&prepared.0, &prepared.1, &module, 300_000, false);
+    let gate = |path: &str| isoplane_host::cell::Target::Handler { route: path.into() };
+
+    let waiting = cell
+        .submit(
+            &module,
+            gate("/gate/wait"),
+            alpha_request(&cell, &module, "/gate/wait"),
+        )
+        .expect("step 1: the cell must admit the waiting request");
+    wait_until(
+        "step 1: the waiting request must park on its instance",
+        || {
+            cell.resident_ids()
+                .first()
+                .and_then(|id| cell.slot(*id))
+                .is_some_and(|slot| {
+                    slot.state() == isoplane_host::LifecycleTier::Parked
+                        && cell.metrics().served_activated == 1
+                })
+        },
+    )
+    .await;
+
+    let opened = cell
+        .dispatch(
+            &module,
+            gate("/gate/open"),
+            alpha_request(&cell, &module, "/gate/open"),
+            std::time::Duration::from_secs(60),
+        )
+        .await
+        .expect("step 2: the opening request must be answered");
+    assert_eq!(
+        (
+            opened.status,
+            opened.body.as_slice(),
+            cell.metrics().served_shared
+        ),
+        (200, b"opened".as_slice(), 1),
+        "step 2: the opening request must join the waiting request's instance: {opened:?}"
+    );
+
+    let resumed = tokio::task::spawn_blocking(move || {
+        waiting.recv_timeout(std::time::Duration::from_secs(60))
+    })
+    .await
+    .expect("the receiving task")
+    .expect("step 3: the waiting request must finish once the gate opens");
+    assert_eq!(
+        (resumed.status, resumed.body.as_slice(), resumed.instance),
+        (200, b"resumed".as_slice(), opened.instance),
+        "step 3: the waiting request must resume on the same instance: {resumed:?}"
+    );
+    let resumed_in: Vec<u64> = cell
+        .slot(opened.instance)
+        .expect("step 4: the instance stays resident")
+        .ctx
+        .emitted_logs()
+        .into_iter()
+        .filter(|log| log.fields.contains("resumed after the gate opened"))
+        .map(|log| log.dispatch)
+        .collect();
+    assert_eq!(
+        resumed_in,
+        vec![resumed.dispatch_id],
+        "step 4: the waiting request's continuation must run in its own dispatch's slice, not the one that opened the gate"
+    );
+    cell.shutdown();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_idle_instance_that_opted_in_runs_its_timers_until_it_goes_too_long_without_a_request() {
     isoplane_harness::LogCapture::global();

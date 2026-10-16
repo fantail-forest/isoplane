@@ -14,6 +14,24 @@ impl Cell {
         let entry = job.completion.entry.clone();
 
         let t0 = Instant::now();
+        if matches!(job.target, Delivery::Handler { .. }) {
+            if let Some(slot) = self.join_shared(&entry) {
+                self.note_acquired(AcquireSource::Shared, t0.elapsed());
+                let execution = slot.try_lock_execution();
+                match execution {
+                    Some(_execution) => {
+                        self.begin_dispatch(&slot, &entry, job, AcquireSource::Shared)
+                    }
+                    // Another dispatch's slice is running; this one begins
+                    // between slices, from the wake lane.
+                    None => {
+                        self.starts.upsert(slot.id, |starts| starts.push_back(job));
+                        self.queue_wake(slot.clone());
+                    }
+                }
+                return;
+            }
+        }
         let acquired = tracing::info_span!("acquire").in_scope(|| match &job.target {
             Delivery::Handler { .. } => self.acquire_handler(&entry),
             Delivery::IdleTimers { slot, .. } => Ok((slot.clone(), AcquireSource::WarmParked)),
@@ -40,8 +58,44 @@ impl Cell {
         };
         let _execution = slot.lock_execution();
         self.note_acquired(src, t0.elapsed());
+        self.begin_dispatch(&slot, &entry, job, src);
+    }
+
+    /// Begins a dispatch on `slot` and runs its first slice; the caller holds
+    /// the instance's execution lock. A dispatch that joined an instance
+    /// already running others ([`AcquireSource::Shared`]) holds a reserved
+    /// place there until now.
+    fn begin_dispatch(
+        self: &Arc<Self>,
+        slot: &Arc<Slot>,
+        entry: &Arc<ModuleEntry>,
+        job: DispatchJob,
+        src: AcquireSource,
+    ) {
+        let did = job.rec.dispatch_id;
+        let joined = src == AcquireSource::Shared;
+        if joined && !self.ready_to_join(slot, entry) {
+            self.release_reservation(slot.id);
+            job.completion
+                .select(TerminalReason::InstanceDiscarded, 503);
+            let _completion = job.completion.settlement();
+            job.completion.answer(
+                &job.responder,
+                DispatchResult {
+                    status: 503,
+                    body: b"instance_discarded".to_vec(),
+                    ..DispatchResult::shed(did)
+                },
+            );
+            return;
+        }
         let acquired = src.label();
         job.completion.acquired(slot.id, acquired);
+        // A local debugger instance runs initialization inside its one
+        // dispatch, and accepts no other.
+        if matches!(job.target, Delivery::Handler { .. }) && entry.debug_occupancy_ms.is_none() {
+            self.share(entry, slot);
+        }
 
         let budget = OccupancyBudget {
             occupancy_ms: job.rec.occupancy_budget_ms,
@@ -72,6 +126,7 @@ impl Cell {
                 responder: Some(job.responder),
                 completion: job.completion.clone(),
             },
+            joined,
         );
 
         entry.meters.record_dispatch();
@@ -92,7 +147,7 @@ impl Cell {
         *dispatch.transport.lock() = job.stream.clone();
         if let Some(stream) = &job.stream {
             let cell = Arc::downgrade(self);
-            let owner = Arc::downgrade(&slot);
+            let owner = Arc::downgrade(slot);
             let cancelled = Arc::downgrade(&dispatch);
             let response = Arc::downgrade(stream);
             stream.on_end_requested(Box::new(move || {
@@ -110,7 +165,7 @@ impl Cell {
         }
         drop(dispatch);
 
-        if self.end_stream_at_boundary(&slot, &entry, did, None) {
+        if self.end_stream_at_boundary(slot, entry, did, None) {
             return;
         }
 
@@ -122,7 +177,7 @@ impl Cell {
                     job.completion.select(TerminalReason::EntryRefused, 409);
                     let _completion = job.completion.settlement();
                     self.respond(
-                        &slot,
+                        slot,
                         did,
                         DispatchResult {
                             status: 409,
@@ -148,7 +203,7 @@ impl Cell {
             drop(hot);
             job.completion.add_slice(&out);
             entry.meters.record_occupancy(&out);
-            if ends_the_instance(&out, &slot) {
+            if ends_the_instance(&out, slot) {
                 guard.destroy();
             } else {
                 drop(guard);
@@ -158,8 +213,18 @@ impl Cell {
 
         // A completion that landed while the dispatch was Hot waited on the
         // reentrancy rule; hand the instance to the wake lane for it.
-        if !self.settle(&slot, &entry, did, outcome, &job.completion) {
+        if !self.settle(slot, entry, did, outcome, &job.completion) {
             self.queue_wake(slot.clone());
+        }
+    }
+
+    /// Whether a joined instance can begin another dispatch: it is resident,
+    /// or restored from hibernation now.
+    fn ready_to_join(self: &Arc<Self>, slot: &Arc<Slot>, entry: &Arc<ModuleEntry>) -> bool {
+        match slot.state() {
+            LifecycleTier::Discarded => false,
+            LifecycleTier::Hibernated => self.restore_for_wake(slot, entry),
+            LifecycleTier::Hot | LifecycleTier::Parked => true,
         }
     }
 
@@ -181,6 +246,7 @@ impl Cell {
                 self.metrics.activation_us.record(took.as_micros() as u64);
                 &self.metrics.served_activated
             }
+            AcquireSource::Shared => &self.metrics.served_shared,
         }
         .fetch_add(1, Ordering::Relaxed);
     }
@@ -195,19 +261,49 @@ impl Cell {
     /// future it delivers.
     pub(super) fn run_wake(self: &Arc<Self>, slot: Arc<Slot>) {
         let _execution = slot.lock_execution();
+        loop {
+            self.begin_joined(&slot);
+            if self.run_woken(&slot) && !self.has_starts(slot.id) {
+                return;
+            }
+        }
+    }
+
+    /// Begins the dispatches that joined the instance while another
+    /// dispatch's slice ran.
+    fn begin_joined(self: &Arc<Self>, slot: &Arc<Slot>) {
+        while let Some(job) = self
+            .starts
+            .with_mut_or_remove(&slot.id, VecDeque::pop_front, VecDeque::is_empty)
+            .flatten()
+        {
+            let owner = job.completion.clone();
+            IN_FLIGHT.replace(Some(Arc::downgrade(&owner)));
+            let entry = owner.entry.clone();
+            owner.in_scope(|| self.begin_dispatch(slot, &entry, job, AcquireSource::Shared));
+        }
+    }
+
+    fn has_starts(&self, instance: InstanceId) -> bool {
+        self.starts.contains_key(&instance)
+    }
+
+    /// Runs the instance's ready slices; true when none remain.
+    fn run_woken(self: &Arc<Self>, slot: &Arc<Slot>) -> bool {
+        let slot = slot.clone();
         let Some(entry) = self.first_active(slot.id, |dispatch| dispatch.completion.entry.clone())
         else {
-            return;
+            return true;
         };
         for dispatch in self.active_dispatch_ids(slot.id) {
             if self.end_stream_at_boundary(&slot, &entry, dispatch, None)
                 && !self.active.contains_key(&slot.id)
             {
-                return;
+                return true;
             }
         }
         if slot.state() == LifecycleTier::Hibernated && !self.restore_for_wake(&slot, &entry) {
-            return;
+            return true;
         }
 
         loop {
@@ -218,7 +314,7 @@ impl Cell {
                 Ok(g) => g,
                 Err(EnterError::Busy) => {
                     self.count_enter_refusal(EnterError::Busy);
-                    return;
+                    return true;
                 }
                 Err(error @ EnterError::NotResident(_)) => {
                     self.count_enter_refusal(error);
@@ -229,12 +325,12 @@ impl Cell {
                         409,
                         "instance_unavailable",
                     );
-                    return;
+                    return true;
                 }
             };
             let Some(ready) = self.rt.futures.take_ready(slot.id) else {
                 // The first wake's loop drained every completion.
-                return;
+                return true;
             };
             let Some(owner) = self.with_active(slot.id, ready.dispatch, |dispatch| {
                 dispatch.completion.clone()
@@ -246,7 +342,7 @@ impl Cell {
             IN_FLIGHT.replace(Some(Arc::downgrade(&owner)));
             let done = owner.in_scope(|| self.run_woken_slice(&slot, &entry, guard, ready, &owner));
             if done {
-                return;
+                return true;
             }
         }
     }

@@ -150,6 +150,7 @@ pub struct Metrics {
     /// How a dispatch got its instance, for both instance kinds. The four are
     /// exhaustive over admitted dispatches: their sum is `dispatches`.
     pub served_warm: AtomicU64,
+    pub served_shared: AtomicU64,
     pub served_pooled_fresh: AtomicU64,
     pub served_hibernation_wake: AtomicU64,
     pub served_activated: AtomicU64,
@@ -229,6 +230,7 @@ impl Metrics {
             futures_shed_capture: l(&self.futures_shed_capture),
             futures_buffered: l(&self.futures_buffered),
             served_warm: l(&self.served_warm),
+            served_shared: l(&self.served_shared),
             served_pooled_fresh: l(&self.served_pooled_fresh),
             served_hibernation_wake: l(&self.served_hibernation_wake),
             served_activated: l(&self.served_activated),
@@ -321,6 +323,7 @@ pub struct MetricsSnapshot {
     pub futures_shed_capture: u64,
     pub futures_buffered: u64,
     pub served_warm: u64,
+    pub served_shared: u64,
     pub served_pooled_fresh: u64,
     pub served_hibernation_wake: u64,
     pub served_activated: u64,
@@ -384,6 +387,7 @@ impl MetricsSnapshot {
             ),
             ("futures_buffered", self.futures_buffered.to_string()),
             ("served_warm", self.served_warm.to_string()),
+            ("served_shared", self.served_shared.to_string()),
             ("served_pooled_fresh", self.served_pooled_fresh.to_string()),
             (
                 "served_hibernation_wake",

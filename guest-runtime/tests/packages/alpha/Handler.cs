@@ -13,6 +13,7 @@ public static class Handler
     private static bool libraryLoadedDuringInitialization;
     private static Timer? heartbeat;
     private static int beats;
+    private static readonly SemaphoreSlim gate = new(0);
 
     /// <summary>Warms the response path before template capture.</summary>
     [Initializer]
@@ -28,6 +29,19 @@ public static class Handler
     [HttpHandler]
     public static async Task<Response> HandleAsync(Request req)
     {
+        // One request waits on a gate that another opens, with no host future
+        // between them.
+        if (req.Path == "/gate/wait")
+        {
+            await gate.WaitAsync().ConfigureAwait(false);
+            Console.WriteLine("resumed after the gate opened");
+            return Response.Text("resumed");
+        }
+        if (req.Path == "/gate/open")
+        {
+            gate.Release();
+            return Response.Text("opened");
+        }
         if (req.Path == "/load-library")
         {
             Assembly library = Assembly.Load("Beta.Library");

@@ -3,6 +3,9 @@
 use super::*;
 
 pub(super) struct ModuleEntry {
+    /// Instances that have had dispatches in progress, which a new dispatch
+    /// may join; pruned as they are found to have none.
+    pub(super) shared: Mutex<Vec<Weak<Slot>>>,
     pub(super) tenant: String,
     pub(super) limits: Limits,
     pub(super) debug_occupancy_ms: Option<u32>,
@@ -30,9 +33,15 @@ pub(super) struct ActiveDispatch {
     pub(super) completion: Arc<DispatchCompletion>,
 }
 
-/// The dispatches in progress on one instance.
+/// How many dispatches an instance runs at once. An instance runs one slice at
+/// a time, so dispatches that mostly wait share it well and ones that mostly
+/// compute delay each other; past this a dispatch gets another instance.
+pub(super) const DISPATCHES_PER_INSTANCE: usize = 8;
+
+/// The dispatches in progress on one instance, and the ones that have joined
+/// it and wait for their first slice.
 #[derive(Default)]
-pub(super) struct ActiveDispatches(Vec<ActiveDispatch>);
+pub(super) struct ActiveDispatches(Vec<ActiveDispatch>, usize);
 
 impl ActiveDispatches {
     pub(super) fn get(&self, dispatch: u64) -> Option<&ActiveDispatch> {
@@ -52,12 +61,87 @@ impl ActiveDispatches {
     pub(super) fn into_inner(self) -> Vec<ActiveDispatch> {
         self.0
     }
+
+    fn count(&self) -> usize {
+        self.0.len() + self.1
+    }
 }
 
 impl Cell {
-    pub(super) fn insert_active(&self, instance: InstanceId, dispatch: ActiveDispatch) {
+    /// Starts tracking a dispatch on its instance; `joined` releases the place
+    /// [`Cell::join_shared`] reserved for it.
+    pub(super) fn insert_active(
+        &self,
+        instance: InstanceId,
+        dispatch: ActiveDispatch,
+        joined: bool,
+    ) {
+        self.active.upsert(instance, |active| {
+            active.0.push(dispatch);
+            if joined {
+                active.1 -= 1;
+            }
+        });
+    }
+
+    /// Releases a joined dispatch's reserved place without it having begun.
+    pub(super) fn release_reservation(&self, instance: InstanceId) -> usize {
         self.active
-            .upsert(instance, |active| active.0.push(dispatch));
+            .with_mut_or_remove(
+                &instance,
+                |active| {
+                    active.1 -= 1;
+                    active.count()
+                },
+                |active| active.count() == 0,
+            )
+            .unwrap_or(0)
+    }
+
+    /// An instance of `entry` that already has dispatches in progress and room
+    /// for another, with a place reserved for it, so the instance is not
+    /// released before the dispatch begins.
+    pub(super) fn join_shared(&self, entry: &ModuleEntry) -> Option<Arc<Slot>> {
+        let mut shared = entry.shared.lock();
+        let mut joined = None;
+        shared.retain(|candidate| {
+            let Some(slot) = candidate.upgrade() else {
+                return false;
+            };
+            if joined.is_some() {
+                return true;
+            }
+            if slot.state() == LifecycleTier::Discarded {
+                return false;
+            }
+            let reserved = self.active.with_mut(&slot.id, |active| {
+                let room = active.count() < DISPATCHES_PER_INSTANCE;
+                if room {
+                    active.1 += 1;
+                }
+                room
+            });
+            match reserved {
+                None => false,
+                Some(true) => {
+                    joined = Some(slot);
+                    true
+                }
+                Some(false) => true,
+            }
+        });
+        joined
+    }
+
+    /// Offers an instance that has begun a dispatch to later dispatches.
+    pub(super) fn share(&self, entry: &ModuleEntry, slot: &Arc<Slot>) {
+        let mut shared = entry.shared.lock();
+        if !shared
+            .iter()
+            .any(|candidate| std::ptr::eq(candidate.as_ptr(), Arc::as_ptr(slot)))
+        {
+            shared.push(Arc::downgrade(slot));
+        }
     }
 
     /// Runs `f` on one of `instance`'s dispatches in progress.
@@ -118,9 +202,9 @@ impl Cell {
                         .iter()
                         .position(|candidate| candidate.dispatch_id == dispatch)
                         .map(|index| active.0.remove(index));
-                    (removed, active.0.len())
+                    (removed, active.count())
                 },
-                |active| active.0.is_empty(),
+                |active| active.count() == 0,
             )
             .unwrap_or((None, 0))
     }
@@ -224,6 +308,7 @@ impl Cell {
         }
         let module = activator.module().clone();
         let entry = ModuleEntry {
+            shared: Mutex::new(Vec::new()),
             tenant: tenant.to_string(),
             limits,
             debug_occupancy_ms,

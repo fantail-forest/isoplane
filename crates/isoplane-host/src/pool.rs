@@ -51,6 +51,8 @@ pub enum AcquireSource {
     HibernationWake,
     /// A cold activation from the template.
     Activated,
+    /// An instance already running other dispatches, joined.
+    Shared,
 }
 
 impl AcquireSource {
@@ -60,6 +62,7 @@ impl AcquireSource {
             AcquireSource::PooledFresh => "pooled_fresh",
             AcquireSource::HibernationWake => "hibernation_wake",
             AcquireSource::Activated => "activated",
+            AcquireSource::Shared => "shared",
         }
     }
 }
