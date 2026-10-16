@@ -4,8 +4,10 @@ title: How .NET differs on Isoplane
 
 An Isoplane application is ordinary .NET code, but it runs inside a sandbox
 instead of as a process on a server. Some things .NET normally lets you do are
-missing there, and others behave differently. This page lists all of them. Where
-another page covers one in more depth, the entry links to it.
+missing there, and others behave differently. This page lists all of them. For
+each it says why Isoplane works that way, what that gives you, and what to
+change in your application, where there is anything to change. Where another
+page covers a difference in more depth, the entry links to it.
 
 The limits Isoplane places on memory and running time are a separate subject:
 see [execution limits](execution-limits.md).
@@ -13,82 +15,102 @@ see [execution limits](execution-limits.md).
 ## Why the sandbox works this way
 
 Isoplane isolates every instance of every application in a sandbox of its own.
-Two choices make that isolation both strong and cheap, and the rules on this
-page are what they cost.
+Two choices make that isolation both strong and cheap, and most of the
+differences on this page follow from one of them.
 
 ### An application never blocks {#never-blocks}
 
 Isoplane runs many applications on a small number of worker threads. Whenever
-an application is idle, because it is waiting on an asynchronous operation or
-has no request to process, Isoplane sets that instance aside and gives the
-worker to another one. An instance therefore holds no thread while it waits,
-which is what lets Isoplane give each one a sandbox of its own without
-dedicating a thread, a process or a machine to it.
+an instance is waiting, on an asynchronous operation or for its next request,
+Isoplane sets it aside and gives the worker to another one. A waiting instance
+holds no thread, and the time it spends waiting does not count toward a
+request's [running time](execution-limits.md#running-time). That is what lets
+every instance have a sandbox of its own without a thread, a process or a
+machine dedicated to it.
 
-A call that blocks cannot be set aside. It would hold a worker, which other
-applications share, for as long as it waited. That is why waits are
-asynchronous, why the application has no threads of its own, and why nothing
-runs between requests.
+A call that blocks cannot be set aside: it would hold a worker that other
+applications share for as long as it waited. That is why waits are
+asynchronous, why an application has no threads of its own, and why nothing
+runs between requests unless the application asks for its timers to.
 
 ### Nothing runs outside the sandbox {#nothing-outside-the-sandbox}
 
-Isoplane mediates every interaction an application has with the outside world,
+Isoplane mediates everything an application does beyond its own memory,
 including the network, files, the clock and waiting. That is what keeps one
-application apart from the others on the same hardware. It is also why an
-application can do only what Isoplane provides, and why a native library built
-for the machine's processor is not loaded: it would run outside the sandbox.
+application apart from the others on the same hardware, and it is why an
+application can do only what Isoplane provides. A native library built for the
+machine's processor would run outside the sandbox, so it is not loaded.
 
 ## One thread
 
 Each instance has exactly one thread, and `Environment.ProcessorCount` is 1.
+This follows from [never blocking](#never-blocks): an instance needs a thread
+only while its code runs, and one is all it is given. In return, an instance
+costs no thread while it waits, and code in an instance never runs on two
+threads at once.
 
-- **Starting a thread fails.** `Thread.Start` throws
-  `PlatformNotSupportedException`. The build warns about it as
-  [`ISOPLANE1002`](reference/error-codes.md#isoplane1002).
-- **The thread pool is that one thread.** `Task.Run` and
-  `ThreadPool.QueueUserWorkItem` queue work that runs once the code that is
-  running now awaits or returns. `Task.Run` does not make work parallel and does
-  not move it out of the way of the request.
-- **`Parallel.For` and `Parallel.ForEach` run their iterations one after
-  another.**
-- **Asynchronous I/O is still concurrent.** Start several operations and
-  `await Task.WhenAll(...)`: they are all in flight while the instance waits.
-- **Computation holds the thread.** While a method computes without awaiting,
-  nothing else in the instance runs, including the other asynchronous work of the
-  same request. Cancellation reaches the application only while it is waiting, so
-  a long computation does not see its request being cancelled. It also uses up
-  the request's [running time](execution-limits.md#running-time).
-- **A lock is always free.** With one thread there is never another holder, so
-  `lock`, `Monitor.Enter` and `Monitor.TryEnter`, `System.Threading.Lock`,
-  `SpinLock`, `Mutex`, `ReaderWriterLockSlim` and `ReaderWriterLock` take the
-  lock at once, in every mode and with or without a timeout. Entering a lock
-  the code already holds behaves as it does elsewhere: a recursive lock lets it
-  in, and one that refuses recursion throws `LockRecursionException`. A
-  `SpinLock` that does not track its owner would wait for itself forever
-  elsewhere; here it throws `PlatformNotSupportedException`.
-- **A wait that can be satisfied at once succeeds.** Taking a free
-  `SemaphoreSlim` or `Semaphore`, waiting on a set event or a finished task, and
-  taking from a non-empty `BlockingCollection` all return straight away, as they
-  do anywhere else. A wait with a timeout of zero that cannot be satisfied
-  returns `false`.
-- **A wait that would have to block throws.** Nothing else in the instance
-  can run while the code waits, so nothing could release the semaphore, set
-  the event or finish the task. Such a wait throws
-  `PlatformNotSupportedException` straight away, whatever timeout it was
-  given. [Waiting is asynchronous](#waiting-is-asynchronous) lists each call
-  and what to use instead.
-- **Thread-safe types work as usual.** `Lazy<T>` in its default thread-safe
-  mode, `ConcurrentDictionary`, `ConcurrentQueue`, `ConcurrentStack` and
-  `ConcurrentBag` need no change.
+Starting a thread throws `PlatformNotSupportedException`, and the build warns
+about it as [`ISOPLANE1002`](reference/error-codes.md#isoplane1002). Rewrite
+such work as asynchronous code that the request awaits.
+
+The thread pool is the same thread. `Task.Run` and
+`ThreadPool.QueueUserWorkItem` queue work that runs once the code running now
+awaits or returns, so `Task.Run` neither makes work parallel nor moves it out
+of the request's way. `Parallel.For` and `Parallel.ForEach` run their
+iterations one after another. Code that uses any of these still works,
+without the speed-up it was written for.
+
+Asynchronous I/O is still concurrent, and it is how to make a request faster
+here. Start several operations and `await Task.WhenAll(...)`, and all of them
+are in flight while the instance waits.
+
+Computation, by contrast, keeps the thread. While a method computes without
+awaiting, nothing else in the instance runs, including other asynchronous work
+of the same request, and the request's cancellation token does not change
+until the method next awaits. A long computation also uses up the request's
+[running time](execution-limits.md#running-time), which explains how to split
+one so that cancellation can reach it.
+
+Locks work as they do elsewhere, with one thread to own them. A lock that is
+free is taken at once, by `lock`, `Monitor.Enter` and `Monitor.TryEnter`,
+`System.Threading.Lock`, `SpinLock`, `Mutex`, `ReaderWriterLockSlim` and
+`ReaderWriterLock`, in every mode and with or without a timeout. A lock that
+is held is held by this same thread, so taking it again re-enters it: a lock
+that allows recursion lets the code in, and one that does not throws
+`LockRecursionException`, just as a thread re-entering its own lock would
+anywhere else. A `SpinLock` that does not track its owner would wait for
+itself forever elsewhere; here it throws `PlatformNotSupportedException`. A
+lock therefore never keeps out other work in the same instance. To keep other
+asynchronous work out of a section that awaits, use `SemaphoreSlim` with
+`await WaitAsync()`, as you would on any platform, since no lock can be held
+across an `await`.
+
+A wait that can be satisfied at once succeeds, as it does anywhere else:
+taking a free `SemaphoreSlim` or `Semaphore`, waiting on a set event or a
+finished task, and taking from a non-empty `BlockingCollection` all return
+straight away, and a wait with a timeout of zero that cannot be satisfied
+returns `false`. A wait that would have to block throws
+`PlatformNotSupportedException` straight away, whatever timeout it was given.
+Nothing else in the instance can run while it waits, so nothing could release
+the semaphore, set the event or finish the task, and the wait could only hold
+the worker until it timed out. Failing at once points you at the line to
+change. [Waiting is asynchronous](#waiting-is-asynchronous) lists each call and
+what to use instead.
+
+Thread-safe types need no change. `Lazy<T>` in its default thread-safe mode,
+`ConcurrentDictionary`, `ConcurrentQueue`, `ConcurrentStack` and
+`ConcurrentBag` work as usual.
 
 ## Waiting is asynchronous
 
 A synchronous wait that cannot be satisfied at once throws
 `PlatformNotSupportedException` instead of waiting, even when it was given a
-timeout. A wait with a timeout of zero returns `false` instead, as it does
-anywhere else. `Monitor.Wait`, `Thread.Sleep` and joining the current thread
-always have to wait, because only another thread could pulse the monitor or
-finish the thread, so they throw whenever their timeout is not zero.
+timeout, because a waiting instance [must not hold a worker](#never-blocks). A
+wait with a timeout of zero returns `false` instead, as it does anywhere else.
+`Monitor.Wait`, `Thread.Sleep` and joining the current thread always have to
+wait, because only another thread could pulse the monitor or finish the
+thread, so they throw whenever their timeout is not zero. Use the
+asynchronous form of each call:
 
 | Call | Throws | Use instead |
 | --- | --- | --- |
@@ -139,99 +161,146 @@ NuGet packages are not inspected unless you set
 The `app.Run()` error is described in
 [Adapt `Program.cs`](onboard-an-application.md#adapt-programcs).
 
-## Work belongs to a request
+## When your code runs
 
-An application runs while it starts up and while it handles a request. Between
-requests it does not run at all, unless it asks for its timers to.
+An application's code runs at three kinds of moment: while it starts up, while
+it handles a request, and, if it asks for this, when Isoplane wakes it to run
+its timers. The rest of the time an instance is idle. It holds no thread and
+uses no processor time, and Isoplane can set it aside or discard it whenever it
+needs the room. That is what lets an application that is waiting, or that
+nobody is using, cost so little.
 
-- **No background work.** A loop in a `BackgroundService`, a recurring timer or a
-  queue consumer has nothing to run on. An application whose `BackgroundService`
-  is still running once the host has started is refused, with an error that names
-  the service. Bounded asynchronous work in `IHostedService.StartAsync` is
-  accepted.
-- **Await everything the request needs before it responds.** Once the response is
-  complete the request is over. An outbound call or name lookup that is still
-  pending is cancelled and never completes, and Isoplane discards the instance:
-  the next request starts from a fresh copy of the template and pays for
-  activation again, with nothing reported.
-- **A timer outlives its request.** When a request ends with a `Timer`,
-  `Task.Delay` or `CancellationTokenSource.CancelAfter` still pending, Isoplane
-  keeps the instance and the timer with it. Nothing runs between requests, so a
-  timer that comes due while the instance is idle runs at the start of the next
-  request on that instance, before that request's own code, until it returns or
-  awaits. A timer never runs if its instance is discarded first, and an idle
-  instance can be discarded at any time. So a task started and not awaited,
-  such as `_ = SendEmailAsync()`, may finish during a later request, or never.
-- **Timers can run between requests, at the cost of a request each time.**
-  Call [`Initialization.RunTimersBetweenRequests`](reference/sdk/Isoplane.Sdk/Isoplane/Initialization/RunTimersBetweenRequests.md)
-  during initialization, and Isoplane also wakes an idle instance to run the
-  timers that have come due, no sooner than the minimum interval you give, of
-  at least 100 milliseconds, after its last request or wake ended:
+### How Isoplane accounts for work
 
-  ```csharp
-  Initialization.RunTimersBetweenRequests(minimumInterval: TimeSpan.FromMinutes(1));
-  ```
+The request is the unit of work. Each request has an allowance of [running time](execution-limits.md#running-time):
+the time its code spends running, not the time it spends waiting for a database
+or another service. A wake to run timers between requests counts as one
+request too. Code that runs at the start of a request because a timer came due
+uses that request's running time.
 
-  An instance
-  that has had no request for five minutes is stopped rather than woken again,
-  and an instance Isoplane has set aside to save memory runs its timers only
-  when its next request arrives. Use it for upkeep, such as sending telemetry
-  that would otherwise wait for the next request, and not for work that has to
-  happen on schedule.
+Forward the request's cancellation token to the calls you await. That token is
+`HttpContext.RequestAborted`, or
+[`RequestHead.Aborted`](reference/sdk/Isoplane.Sdk/Isoplane/RequestHead/Aborted.md)
+without ASP.NET. It is cancelled when the client goes away or the request uses
+up its running time, so passing it on stops work that nobody is waiting for,
+and saves the running time that work would use.
 
-  To show what that costs, in local development and tests Isoplane logs a
-  notice for each periodic timer once the application has opted in: how often
-  the timer fires, and how many wakes the instance's timers can cause, as "up
-  to N per hour (M per month) while the app is receiving at least one request
-  per 5 minutes". A wake runs every timer that is due, so the figure is a
-  ceiling. Deployments do not log these notices.
-- **`finally` blocks and disposal are part of the request.** They run as the
-  awaited code unwinds, as they do anywhere else, and that includes middleware
-  code after `await next()` and the disposal of scoped services. Two cases
-  differ. Work in them that has to wait for I/O after the response is complete
-  may not finish. And when Isoplane stops an instance because a request went
-  over its [limits](execution-limits.md), they do not run at all.
-- **Finalizers may never run.** There is no finalizer thread: a finalizer runs on
-  the application's thread during a garbage collection. That can be in a later
-  request, whose running time it then uses, and it does not happen if the
-  instance is discarded first. Release what matters with `Dispose` or
-  `DisposeAsync`.
-- **Nothing else is guaranteed to run after the response.** Code that is ready to
-  run at that moment may still run while the request is within its limits. Do
-  not rely on it to save data or to release something.
-- **Forward the request's cancellation token to the calls you await.** That token
-  is `HttpContext.RequestAborted`, or
-  [`RequestHead.Aborted`](reference/sdk/Isoplane.Sdk/Isoplane/RequestHead/Aborted.md)
-  without ASP.NET. It is cancelled when the client goes away or the request uses
-  up its running time, so work nobody is waiting for stops.
+### What has to finish before the response? {#before-the-response}
+
+Everything the response depends on. Once the response is complete the request
+is over, and an outbound call or name lookup that is still pending is cancelled
+and never completes. The instance is discarded along with it, because the code
+waiting on that call could never resume: the next request starts from a fresh
+copy of the template and pays for activation again, with nothing reported.
+
+Other code that is ready to run when the response completes may still run while
+the request is within its limits, but nothing guarantees it. Do not leave saving
+data or releasing a resource to it. Work that has to happen after the response
+belongs in another service, such as a queue that something else reads.
+
+### What can run between requests? {#between-requests}
+
+Timers can. A timer outlives the request that started it: when a request ends
+with a `Timer`, `Task.Delay` or `CancellationTokenSource.CancelAfter` still
+pending, Isoplane keeps the instance and the timer with it. Libraries that keep
+timers of their own, such as rate limiters, connection pools and telemetry
+exporters, therefore work without change.
+
+By default a timer that comes due while the instance is idle waits for the next
+request on that instance, and runs at its start, before the request's own code,
+until it returns or awaits. A timer never runs if its instance is discarded
+first, and an idle instance can be discarded at any time. A task started and not
+awaited, such as `_ = SendEmailAsync()`, may therefore finish during a later
+request, or never: await the work the response depends on.
+
+#### Running timers between requests {#run-timers-between-requests}
+
+An application can also have its timers run while it has no request to handle,
+at the cost of a request each time an instance is woken for them. Call
+[`Initialization.RunTimersBetweenRequests`](reference/sdk/Isoplane.Sdk/Isoplane/Initialization/RunTimersBetweenRequests.md)
+during initialization, and Isoplane wakes an idle instance to run the timers
+that have come due, no sooner than the minimum interval you give after its last
+request or wake ended. The interval must be at least 100 milliseconds:
+
+```csharp
+Initialization.RunTimersBetweenRequests(minimumInterval: TimeSpan.FromMinutes(1));
+```
+
+An instance
+that has had no request for five minutes is stopped rather than woken again,
+and an instance Isoplane has set aside to save memory runs its timers only when
+its next request arrives. Use it for upkeep, such as sending telemetry that
+would otherwise wait for the next request, and not for work that has to happen
+on schedule.
+
+### What has nowhere to run? {#nowhere-to-run}
+
+Work that is meant to run continuously, or on a schedule it must keep, such as
+a loop in a `BackgroundService`, a queue consumer, or a job scheduler. Timer
+wakes are best effort and stop once an instance has gone five minutes without
+a request, so they cannot carry such work, and nothing else runs between
+requests. An application whose `BackgroundService` is still running once the
+host has started is refused, with an error that names the service. Bounded
+asynchronous work in `IHostedService.StartAsync` is accepted.
+
+Start such work from a request instead: for example, from an endpoint that a
+scheduler or a queue service calls.
+
+### Cleanup
+
+`finally` blocks and disposal are part of the request. They run as the awaited
+code unwinds, as they do anywhere else, and that includes middleware code after
+`await next()` and the disposal of scoped services. Two cases differ. Work in
+them that has to wait for I/O after the response is complete may not finish.
+And when Isoplane stops an instance because a request went over its
+[limits](execution-limits.md), they do not run at all. Keep cleanup quick and
+independent of I/O after the response.
+
+Finalizers may never run. With one thread, there is no finalizer thread: a
+finalizer runs on the application's thread during a garbage collection. That
+can be in a later request, whose running time it then uses, and it does not
+happen if the instance is discarded first. Release what matters with `Dispose`
+or `DisposeAsync`.
 
 ## Instances come and go
 
-Isoplane decides how many instances of an application run, and may discard one
-after any request. Successive requests can reach different instances.
+Isoplane decides how many instances of an application run, starting more as
+traffic grows and discarding them when they are idle or the memory is needed.
+Every instance starts from a copy of the application as it stood when
+initialization finished, so a new instance starts without running your startup
+code again. Successive requests can reach different
+instances, and any instance can be discarded after any request.
 
-- **Memory is a cache, not storage.** Static fields, `IMemoryCache` and in-memory
-  session state belong to one instance and can disappear. Keep anything that
-  must last in a database or another external service.
-- **Open connections may not survive between requests.** A stale connection is
-  possible even after a request that completed normally.
-- **Initialization state is captured and copied.** `Program.cs` runs up to `RunAsync` while
-  Isoplane prepares the application, and every instance starts from a copy of
-  that memory. A connection opened during initialization cannot be carried
-  into an instance, so close it before initialization finishes.
-- **A value created during initialization is the same in every instance.** If
-  it has to be unique to each instance, as an identifier does, replace it when
-  the instance activates, by subscribing to `Isoplane.Activation.Activated`.
-- **Random numbers are reseeded for you, with exceptions.** Each instance
-  reseeds `Random.Shared`, every `Random` created without a seed and SQLite's
-  `random()`, and cryptographic randomness is always drawn fresh. A `Random`
-  you gave a seed, another generator that is not a `System.Random`, and a value
-  already drawn during initialization are copied as they are.
-- **ASP.NET Core Data Protection keys are shared within a template.** Instances
-  use the keys captured in that template. Fresh initialization may create a
-  different key; reusing a template retains its key. [Keep the keys across
-  builds](#keep-data-protection-keys-across-builds) while earlier protected data
-  must remain readable.
+Memory is a cache, not storage. Static fields, `IMemoryCache` and in-memory
+session state belong to one instance and can disappear. Keep anything that
+must last in a database or another external service.
+
+A connection kept from an earlier request may be stale, even after a request
+that completed normally. Be ready to open a new one when it fails, as a
+connection pool would anywhere.
+
+Initialization state is captured and copied. `Program.cs` runs up to `RunAsync`
+while Isoplane prepares the application, and every instance starts from a copy
+of that memory. That is why expensive startup work, such as building caches or
+warming up routes, belongs in initialization: the captured result is reused by
+instances. A connection opened during initialization cannot be carried into an
+instance, so close it before initialization finishes.
+
+A value created during initialization is the same in every instance. If it has
+to be unique to each instance, as an identifier does, replace it when the
+instance activates, by subscribing to `Isoplane.Activation.Activated`.
+
+Random numbers are reseeded for you, with exceptions. Each instance reseeds
+`Random.Shared`, every `Random` created without a seed and SQLite's
+`random()`, and cryptographic randomness is always drawn fresh. A `Random` you
+gave a seed, another generator that is not a `System.Random`, and a value
+already drawn during initialization are copied as they are. Create those in an
+`Activation.Activated` callback when each instance needs its own.
+
+ASP.NET Core Data Protection keys are shared by instances of the same template,
+so antiforgery tokens and authentication cookies work across those instances.
+Fresh initialization may create a different key; reusing a template retains its
+key. To read older protected data, [keep its keys](#keep-data-protection-keys-across-builds).
 
 [The application lifecycle](application-lifecycle.md) explains each of these in
 more depth.
@@ -243,8 +312,9 @@ Fresh initialization may create a different key; reusing a prepared template
 retains its captured key. Keep earlier keys while data protected with them
 must remain readable, using one of these stores.
 
-**From a secret in the application's settings.** Add one line where you
-configure services:
+#### From a secret in the application's settings
+
+Add one line where you configure services:
 
 ```csharp
 builder.Services.AddDataProtection().UseConfiguredKeys();
@@ -262,8 +332,9 @@ put the new secret at `DataProtection:Keys:0` and move the old one to
 `DataProtection:Keys:1`: the first protects new data and every one listed still
 unprotects, so remove the old one once nothing it protected is in use.
 
-**From the application's database.** If the application uses Entity Framework
-Core, add the
+#### From the application's database
+
+If the application uses Entity Framework Core, add the
 [`Isoplane.AspNetCore.DataProtection.EntityFrameworkCore`](reference/sdk/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.md)
 package at the version of your Isoplane SDK:
 
@@ -332,129 +403,167 @@ with the driver's own pooling off.
 
 ## Network
 
-Inbound, an application receives HTTP requests and nothing else.
+Inbound, an application receives HTTP requests and nothing else. Isoplane
+accepts the connections and delivers each request to an instance, which is what
+lets it send a request to whichever instance is free and start more as traffic
+grows. An application therefore cannot listen on a port or accept connections
+of its own.
 
-- It cannot listen on a port or accept connections of its own.
-- Requests arrive as HTTP/1.1, without connection upgrades or response trailers.
-  WebSockets are unavailable, and so are SignalR's WebSocket transport, Blazor
-  Server interactivity and gRPC over HTTP/2. gRPC-Web and statically rendered
-  Blazor pages work. See
-  [Check application assumptions](onboard-an-application.md#check-application-assumptions).
+Requests arrive as HTTP/1.1, without connection upgrades or response trailers.
+WebSockets are unavailable, and so are SignalR's WebSocket transport, Blazor
+Server interactivity and gRPC over HTTP/2. gRPC-Web and statically rendered
+Blazor pages work. See
+[Check application assumptions](onboard-an-application.md#check-application-assumptions).
 
 Outbound, an application can open TCP connections through the asynchronous
-APIs, which covers `HttpClient`, TLS and database drivers.
+APIs, which covers `HttpClient`, TLS and database drivers. Isoplane makes each
+connection on the application's behalf, which is how a connection stays open
+while its instance is set aside and how the limits that protect other
+applications are applied. There is no UDP: where a library offers a choice of
+transport, such as a telemetry exporter, choose one over TCP, such as HTTP.
 
-- There is no UDP.
-- **Socket options apply within limits Isoplane sets.** `NoDelay`, keep-alive
-  and the receive and send buffer sizes work as elsewhere, but a value outside
-  the supported range is clamped to it, and reading an option back returns the
-  value in force:
-  - **Buffer sizes:** 4,096 to 212,992 bytes. An unset buffer size reads back
-    as 65,536.
-  - **Keep-alive idle time:** 10 to 32,767 seconds.
-  - **Keep-alive interval:** 1 to 32,767 seconds.
-  - **Keep-alive probe count:** 1 to 127.
+Socket options apply within ranges Isoplane sets for the connections it makes
+on the application's behalf. `NoDelay`, keep-alive and the receive and send
+buffer sizes work as elsewhere, but a value outside its range is clamped to
+it, and reading an option back returns the value in force:
 
-  Setting or reading the hop limit (`Socket.Ttl`) throws `SocketException`
-  with `OperationNotSupported`.
-- A client from `IHttpClientFactory` opens a connection for each call and
-  closes it once the response has been read, so it keeps no connection between
-  calls. Elsewhere a client keeps idle connections for its next calls.
-  Isoplane switches that off because a connection still open when
-  [initialization](application-lifecycle.md#initialization) ends stops the
-  application starting, and connections kept between requests count toward the
-  instance's [outbound connections](execution-limits.md#outbound-connections).
-  The cost is a new connection, and over HTTPS a new TLS handshake, for each
-  call, including calls a request makes one after another to the same host.
-- Idle connections come back if you ask for them: any
-  `PooledConnectionLifetime` but zero on the client's `SocketsHttpHandler`, or
-  a primary handler of your own from `ConfigurePrimaryHttpMessageHandler`. Give
-  a handler of your own `PooledConnectionLifetime = TimeSpan.Zero`. A
-  `PooledConnectionIdleTimeout` of zero is no substitute: it leaves each
-  connection open, and calls fail once the application has used up its
-  outbound connections.
-- A client you construct yourself with `new HttpClient()` and keep for later
-  requests keeps its idle connections open between requests, and they count
-  toward the instance's [outbound connections](execution-limits.md#outbound-connections).
-  The timer that removes them runs only during a request. Take the client from
-  `IHttpClientFactory` instead, or construct it with
-  `new HttpClient(new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.Zero })`.
-  A client created and disposed within one request reuses its connection for
-  that request's calls and closes it when it is disposed.
-- TLS certificates are validated as usual. Switching validation off is not a fix
-  for a connection that fails.
+| Option | Range |
+| --- | --- |
+| Receive and send buffer sizes | 4,096 to 212,992 bytes; an unset size reads back as 65,536 |
+| Keep-alive idle time | 10 to 32,767 seconds |
+| Keep-alive interval | 1 to 32,767 seconds |
+| Keep-alive probe count | 1 to 127 |
+
+Setting or reading the hop limit (`Socket.Ttl`) throws `SocketException` with
+`OperationNotSupported`.
+
+A client from `IHttpClientFactory` opens a connection for each call and closes
+it once the response has been read, so it keeps no connection between calls.
+Elsewhere a client keeps idle connections for its next calls. Isoplane switches
+that off because a connection still open when
+[initialization](application-lifecycle.md#initialization) ends stops the
+application starting, and connections kept between requests count toward the
+instance's [outbound connections](execution-limits.md#outbound-connections).
+The cost is a new connection, and over HTTPS a new TLS handshake, for each
+call, including calls a request makes one after another to the same host.
+
+Idle connections come back if you ask for them: any `PooledConnectionLifetime`
+but zero on the client's `SocketsHttpHandler`, or a primary handler of your own
+from `ConfigurePrimaryHttpMessageHandler`. Give a handler of your own
+`PooledConnectionLifetime = TimeSpan.Zero`. A `PooledConnectionIdleTimeout` of
+zero is no substitute: it leaves each connection open, and calls fail once the
+application has used up its outbound connections.
+
+A client you construct yourself with `new HttpClient()` and keep for later
+requests keeps its idle connections open between requests, and they count
+toward the instance's
+[outbound connections](execution-limits.md#outbound-connections). The timer
+that removes them runs only during a request. Take the client from
+`IHttpClientFactory` instead, or construct it with
+`new HttpClient(new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.Zero })`.
+A client created and disposed within one request reuses its connection for that
+request's calls and closes it when it is disposed.
+
+TLS certificates are validated as usual. Switching validation off is not a fix
+for a connection that fails.
 
 ## The machine underneath
 
-- **The file system is read-only.** It holds the files of your application
-  package, such as `appsettings.json` and `wwwroot`, and nothing else. Creating
-  or writing a file fails, so there is nowhere to put temporary files. Keep uploads
-  and generated files in memory while you handle the request, or in external
-  storage.
-- **A file's modification time is the one it had when the application was
-  built**, to the second. ASP.NET Core sends it as the `Last-Modified` header
-  of a static file, as it does anywhere else. `UseStaticFiles` sends no
-  `Cache-Control` header, so a browser may keep such a file for a while without
-  asking whether it has changed, here as on any host: `MapStaticAssets`, or a
-  link with `asp-append-version`, avoids that.
-- **Environment variables are empty.** Settings reach the application through
-  configuration; see [local development settings](local-settings.md).
-- **There are no other processes.** An application cannot start one.
-- **Native libraries come from the runtime.** Isoplane's runtime includes the
-  native parts of .NET, such as compression, globalization and OpenSSL, and
-  [SQLite](library-compatibility.md#sqlite) for in-memory databases, all
-  compiled to WebAssembly so that they run inside the sandbox. An
-  application's package carries managed code only, so it cannot add a native
-  library of its own, and the Linux, macOS and Windows binaries a NuGet package
-  ships are not loaded. A P/Invoke into a library the runtime does not include
-  fails when it is called, not when the application builds or starts. A NuGet
-  package that ships a native binary therefore still works as long as the code
-  you use stays in managed code, and fails only on a path that reaches the
-  native call. The build reports such declarations as
-  [`ISOPLANE1001`](reference/error-codes.md#isoplane1001) when you set
-  [`IsoplaneWarnOnNativeImports`](reference/project-settings.md#isoplanewarnonnativeimports).
-- **The process is 32-bit.** `Environment.Is64BitProcess` is `false`.
-- **Local time is UTC**, and the default culture is the invariant culture. Named
-  cultures and time zones are available when you ask for them.
+The file system is read-only. It holds the files of your application package,
+such as `appsettings.json` and `wwwroot`, and nothing else. Every instance
+starts from the same build, and anything one wrote would vanish with it and be
+missing from the others, so a read-only file system keeps instances identical
+and keeps you from relying on a file that will not be there. Creating or
+writing a file fails, so there is nowhere to put temporary files. Keep uploads
+and generated files in memory while you handle the request, or in external
+storage.
+
+A file's modification time is the one it had when the application was built,
+to the second. ASP.NET Core sends it as the `Last-Modified` header of a static
+file, as it does anywhere else. `UseStaticFiles` sends no `Cache-Control`
+header, so a browser may keep such a file for a while without asking whether it
+has changed, here as on any host: `MapStaticAssets`, or a link with
+`asp-append-version`, avoids that.
+
+Environment variables are empty, because an instance has no process
+environment of its own. Settings reach the application through .NET
+configuration instead, so read them from `IConfiguration`; see
+[local development settings](local-settings.md).
+
+There are no other processes, and an application cannot start one: a process
+would run [outside the sandbox](#nothing-outside-the-sandbox). Use a managed
+library for the work instead, or call a service that does it.
+
+Native libraries come from the runtime. Isoplane's runtime includes the native
+parts of .NET, such as compression, globalization and OpenSSL, and
+[SQLite](library-compatibility.md#sqlite) for in-memory databases, all compiled
+to WebAssembly so that they run inside the sandbox. An application's package
+carries managed code only, so it cannot add a native library of its own, and
+the Linux, macOS and Windows binaries a NuGet package ships are not loaded. A
+P/Invoke into a library the runtime does not include fails when it is called,
+not when the application builds or starts. A NuGet package that ships a native
+binary therefore still works as long as the code you use stays in managed code,
+and fails only on a path that reaches the native call. The build reports such
+declarations as [`ISOPLANE1001`](reference/error-codes.md#isoplane1001) when you
+set [`IsoplaneWarnOnNativeImports`](reference/project-settings.md#isoplanewarnonnativeimports).
+
+The process is 32-bit, because WebAssembly addresses memory with 32-bit
+pointers, and `Environment.Is64BitProcess` is `false`. An instance's memory is
+far smaller than 32 bits can address, so this matters only to code that checks
+the value or assumes 64-bit pointers.
+
+Local time is UTC, and the default culture is the invariant culture. An
+instance has no machine of its own to take a time zone or a locale from, so
+the defaults are the same wherever it runs. Named cultures and time zones are
+all available when you ask for them by name: set the culture for a request
+with ASP.NET Core's request localization, or pass a `CultureInfo` to the call
+that formats a value, and convert times with
+`TimeZoneInfo.FindSystemTimeZoneById`.
 
 ## Time
 
-The clock an application sees is deliberately coarse. A precise timer is what
-timing attacks between applications on shared hardware depend on, so Isoplane
-does not provide one.
+The clock an application sees is deliberately coarse, and it stands still while
+code runs. This is a defence against Spectre and other side-channel attacks,
+which work by timing tiny differences in how long the processor takes, and so
+need a precise clock. Hardware is shared between applications, and denying
+every application such a clock protects yours from its neighbours, and theirs
+from yours.
 
-- **Time stands still while code runs.** The clock is set when a request starts
-  and each time the application resumes after waiting. Between those points
-  every reading returns the same value, from `DateTime.UtcNow`, `Stopwatch` and
-  `Environment.TickCount64` alike.
-- **Resolution is one millisecond.** `Stopwatch.IsHighResolution` still reports
-  `true`, and `Stopwatch.Frequency` still reports nanoseconds. Timers have the
-  same resolution.
-- **Timers and cancellation stand still too.** A timer that comes due, or a
-  cancellation token that is cancelled, while code runs is seen only after the
-  application next waits. Checking a timer or `IsCancellationRequested` in a
-  loop that does not await never sees it change.
+The clock is set when a request starts and each time the application resumes
+after waiting. Between those points every reading returns the same value, from
+`DateTime.UtcNow`, `Stopwatch` and `Environment.TickCount64` alike. Its
+resolution is one millisecond, although `Stopwatch.IsHighResolution` still
+reports `true` and `Stopwatch.Frequency` still reports nanoseconds. Timers have
+the same resolution.
+
+Timers and cancellation stand still in the same way. A timer that comes due,
+or a cancellation token that is cancelled, while code runs is seen only after
+the application next waits. Checking a timer or `IsCancellationRequested` in a
+loop that does not await never sees it change.
 
 What follows from that:
 
 - `Stopwatch` cannot time a piece of computation, and a benchmark run inside
   the application measures nothing. Across an `await` it measures the wait, to
-  the millisecond.
-- Timestamps the application takes without waiting in between are identical, so
-  log lines it stamps itself can all show the same time.
-- A loop that computes and checks the time for its own deadline never sees the
-  deadline arrive.
-- A timeout only fires while the application is waiting. `Task.Delay`,
-  `CancellationTokenSource.CancelAfter` and `Timer` callbacks are delivered when
-  it next waits, not in the middle of a computation, or at the start of the
-  next request if they came due between requests, unless the application
-  [runs timers between requests](#work-belongs-to-a-request).
+  the millisecond. Run benchmarks on ordinary .NET outside Isoplane.
+- Timestamps the application takes without waiting in between are identical,
+  so log lines it stamps itself can all show the same time.
+- A loop that computes and checks the time, a timer or a cancellation token for
+  its own deadline never sees the deadline arrive. Split the work into parts
+  and await something that waits between them, as
+  [running time](execution-limits.md#running-time) describes.
+- A timeout fires only while the application is waiting. `Task.Delay`,
+  `CancellationTokenSource.CancelAfter` and `Timer` callbacks are delivered
+  when it next waits, not in the middle of a computation, or at the start of
+  the next request if they came due between requests, unless the application
+  [runs timers between requests](#run-timers-between-requests).
 
 ## How code runs
 
 Your code runs as IL on an interpreter. There is no JIT compiler, and nothing is
 trimmed or compiled ahead of time, so reflection, runtime type loading,
-`Reflection.Emit` and compiled expressions all work.
+`Reflection.Emit` and compiled expressions all work, and libraries that depend
+on them need no change.
 
 The SDK version in the project file, the number in
 `Sdk="Isoplane.AspNetCore/..."`, also selects the runtime the application runs

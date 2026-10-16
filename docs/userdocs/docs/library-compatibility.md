@@ -504,8 +504,9 @@ Size of the change: small.
 
 [`UseRateLimiter`][UseRateLimiter] works, and its limits hold for one
 instance. The middleware's timer, which ticks every 100 ms to refill permits
-and tidy up, runs only while the instance handles a request; see
-[Work belongs to a request](dotnet-runtime-differences.md#work-belongs-to-a-request).
+and tidy up, runs at the start of the instance's next request, unless the
+application runs timers between requests; see
+[What can run between requests?](dotnet-runtime-differences.md#between-requests).
 
 ```csharp
 builder.Services.AddRateLimiter(options =>
@@ -614,9 +615,11 @@ complete.
   service and in its clients. Whether HTTP/2 can be supported is not known
   yet.
 - **A [`BackgroundService`][BackgroundService] that keeps running**, a
-  recurring timer or a queue consumer has nothing to run on between requests.
-  Doing that work while a request is handled is a large change. See
-  [Work belongs to a request](dotnet-runtime-differences.md#work-belongs-to-a-request).
+  scheduled job or a queue consumer has nothing to run on between requests.
+  Timers can run between requests, but only best effort. Work that must keep
+  running or keep a schedule needs an external scheduler. Doing that work
+  while a request is handled is a large change. See
+  [What has nowhere to run?](dotnet-runtime-differences.md#nowhere-to-run)
 
 ## `Microsoft.Extensions.Configuration`
 
@@ -881,7 +884,7 @@ builder.Services.AddDbContext<CatalogContext>(options => options.UseSqlite(Refer
 
 `Activated` runs once for each instance, so each instance loads the data once.
 `Microsoft.Data.Sqlite` keeps a timer that tidies its connection pool, and
-like any timer it [stays with the instance](dotnet-runtime-differences.md#work-belongs-to-a-request)
+like any timer it [stays with the instance](dotnet-runtime-differences.md#between-requests)
 between requests.
 
 Finish or roll back a transaction before another connection uses the same
@@ -1001,16 +1004,16 @@ What to know before relying on it:
 - **Use the asynchronous methods only.** `ConnectionMultiplexer.Connect`, the
   synchronous `IDistributedCache` methods and synchronous commands such as
   `db.StringGet(...)` throw `PlatformNotSupportedException`.
-- **A client kept between requests costs the instance.** The client runs a
-  heartbeat timer every second while it is connected, and a request that ends
-  with a timer running is
-  [followed by a fresh instance](dotnet-runtime-differences.md#work-belongs-to-a-request),
+- **A client kept between requests costs the instance.** A connected client
+  keeps a read waiting on its connection, and a request that ends with a
+  network operation still pending is
+  [followed by a fresh instance](dotnet-runtime-differences.md#before-the-response),
   which adds about a third of a second to the next request here. The cache
   keeps its client, so every request that uses the cache costs its instance.
   Connecting and disposing the client within the request, as above, keeps the
   instance, at the cost of a connection for each request.
 - **Connect inside a request, not during initialization.** A connected client
-  holds a socket and its heartbeat timer, and initialization refuses both.
+  holds a socket, and initialization refuses an open socket.
 - **The Redis output cache store does not start**
   ([`AddStackExchangeRedisOutputCache`][AddStackExchangeRedisOutputCache]): it
   runs a clean-up loop on a timer from start-up.
@@ -1037,7 +1040,8 @@ builder.Services.AddOpenTelemetry()
 ```
 
 The SDK starts two delays of its own for the code above, and like any timer
-they [run only during requests](dotnet-runtime-differences.md#work-belongs-to-a-request):
+they [run during requests](dotnet-runtime-differences.md#between-requests),
+unless the application runs timers between requests:
 
 - A delay of 10 s awaited by the SDK's self-diagnostics, which look for a
   configuration file.
@@ -1432,7 +1436,7 @@ general rules suggest what to expect, the entry says so.
 - **`Grpc.Net.Client`**, and Azure Cosmos DB.
 - **Job schedulers and message consumers**, such as Hangfire, Quartz.NET and
   MassTransit. They rely on
-  [work between requests](dotnet-runtime-differences.md#work-belongs-to-a-request).
+  [work that has nowhere to run](dotnet-runtime-differences.md#nowhere-to-run).
 
 To look into a package yourself, build with
 [`IsoplaneAnalyzeDependencies`](reference/project-settings.md#isoplaneanalyzedependencies)

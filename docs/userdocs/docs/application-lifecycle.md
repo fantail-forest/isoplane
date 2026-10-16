@@ -71,7 +71,7 @@ await app.RunAsync();
   same in every instance.
 - May leave timers running. A timer with 30 s left when initialization ends
   first fires 30 s after an instance starts, at the start of a request, as
-  [Work belongs to a request](dotnet-runtime-differences.md#work-belongs-to-a-request)
+  [What can run between requests?](dotnet-runtime-differences.md#between-requests)
   describes.
 - Starts no background work.
 
@@ -159,7 +159,7 @@ operation completes.
   complete, and then discards the instance, because the code waiting on that
   work could never resume. A timer still pending is kept with the instance and
   runs when it is due, at the start of a later request; see
-  [Work belongs to a request](dotnet-runtime-differences.md#work-belongs-to-a-request).
+  [What can run between requests?](dotnet-runtime-differences.md#between-requests).
 
 **Your application**
 
