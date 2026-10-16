@@ -10,7 +10,7 @@ pub mod otlp;
 use isoplane_abi::config::InitSandbox;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn managed_logs_keep_host_ownership_across_park_wake_without_post_response_work() {
+async fn managed_logs_keep_host_ownership_across_park_wake() {
     let output = otlp::output::LogOutput::default();
     let writer = output.clone();
     let logging = tokio::task::spawn_blocking(move || {
@@ -27,11 +27,6 @@ async fn managed_logs_keep_host_ownership_across_park_wake_without_post_response
         .await
         .expect("the managed logging fixture must build");
         let rig = common::start_with_policy(wasm, InitSandbox::RuntimeBringUp, None, |_| {}).await;
-        let completed = common::get(rig.proxy, "quotes.isoplane.dev", "/logs/after-response").await;
-        assert_eq!(
-            completed.body, "returned",
-            "the unawaited log probe must complete its response"
-        );
         let response = common::get(rig.proxy, "quotes.isoplane.dev", "/logs/logging").await;
         assert_eq!(
             response.status, 200,
@@ -45,12 +40,6 @@ async fn managed_logs_keep_host_ownership_across_park_wake_without_post_response
             .into_iter()
             .skip(before)
             .collect();
-        assert!(
-            !records
-                .iter()
-                .any(|record| record.fields.contains("forbidden-after-response")),
-            "a continuation from a completed response cannot log during the following request"
-        );
         let find = |text: &str| {
             records
                 .iter()

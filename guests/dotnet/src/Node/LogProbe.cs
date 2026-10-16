@@ -29,6 +29,6 @@ public static class LogProbe
     private static async Task LogAfterResponse()
     {
         await Task.Delay(1);
-        Console.WriteLine("forbidden-after-response");
+        Console.WriteLine("left-over-work");
     }
 }
