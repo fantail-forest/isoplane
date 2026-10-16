@@ -315,6 +315,7 @@ impl HostBindings for CellBindings {
             "clock_now_coarse" => ctx.slice_clock_ms() as i64,
             // The choice belongs to the template, so it is made once, before capture.
             "timers_between_requests" => -1,
+            "development_notices" => i64::from(ctx.development_notices),
 
             // Out-buffer imports belong to `call_fill`; here there is nowhere
             // to put the bytes, and a zero-filled buffer would be a constant

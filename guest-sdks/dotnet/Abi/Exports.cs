@@ -38,6 +38,7 @@ public static unsafe class Exports<TRouter>
     {
         if (_runtimeBooted) return;
         GuestConsole.Install();
+        TimerNotices.Install();
         SynchronizationContext.SetSynchronizationContext(IsoplaneSynchronizationContext.Instance);
         _runtimeBooted = true;
     }
@@ -118,6 +119,7 @@ public static unsafe class Exports<TRouter>
             // Before any timer can run, so those initialization left count
             // from this instance's activation.
             RuntimeTimers.CountFromActivation();
+            TimerNotices.Activate();
             // Timers that came due while the instance was idle run before the
             // request, each until it returns or awaits, so the request sees
             // the state they bring up to date.

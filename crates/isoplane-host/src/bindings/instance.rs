@@ -62,6 +62,8 @@ pub struct InstanceCtx {
     pub allowlist: Option<Vec<String>>,
     /// Exact peers an operator lets this application reach where the node's policy refuses.
     pub endpoint_exceptions: Arc<[std::net::SocketAddr]>,
+    /// Whether the guest may show notices meant only for local development.
+    pub development_notices: bool,
     pub meters: Arc<Meters>,
     pub(crate) reactor_observer:
         Mutex<Option<std::sync::Weak<dyn crate::reactor_accounting::Observer>>>,
@@ -169,6 +171,7 @@ impl InstanceCtx {
             lifecycle: tenancy.lifecycle,
             allowlist: tenancy.allowlist,
             endpoint_exceptions: Arc::new([]),
+            development_notices: false,
             meters,
             rt,
             clock_ms: AtomicU64::new(0),

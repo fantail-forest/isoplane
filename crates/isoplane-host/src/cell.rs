@@ -82,6 +82,9 @@ pub struct CellConfig {
     /// How long an instance whose application runs timers between requests
     /// may go without a request before it is stopped rather than woken again.
     pub timer_wake_idle_limit_ms: u64,
+    /// Whether guests may show the developer notices meant only for local
+    /// development and tests, such as what their timers will cost.
+    pub development_notices: bool,
 }
 
 impl Default for CellConfig {
@@ -100,6 +103,7 @@ impl Default for CellConfig {
             breaker: BreakerConfig::default(),
             sweep_interval_ms: 250,
             timer_wake_idle_limit_ms: 5 * 60 * 1000,
+            development_notices: false,
         }
     }
 }
@@ -111,6 +115,7 @@ impl CellConfig {
         Self {
             exec_threads: threads.execution,
             reactor_threads: threads.reactor,
+            development_notices: true,
             ..Self::default()
         }
     }

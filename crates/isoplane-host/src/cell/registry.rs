@@ -191,6 +191,7 @@ impl Cell {
         );
         context.limits = entry.manifest.effective_limits();
         context.endpoint_exceptions = entry.endpoint_exceptions.clone();
+        context.development_notices = self.cfg.development_notices;
         context.configure_resources(self.cfg.guest_resources);
         Arc::new(context)
     }

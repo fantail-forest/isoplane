@@ -983,12 +983,14 @@ async fn alpha_initialized_by(initializer: &str) -> (BuildProduct, BuildRequest)
 }
 
 /// A cell serving `product` as module `module`, whose instances stop after
-/// `timer_wake_idle_limit_ms` without a request.
+/// `timer_wake_idle_limit_ms` without a request, and which shows guests'
+/// development notices when `development_notices` is set.
 fn serving_cell(
     product: &BuildProduct,
     request: &BuildRequest,
     module: &isoplane_host::ModuleId,
     timer_wake_idle_limit_ms: u64,
+    development_notices: bool,
 ) -> Arc<isoplane_host::cell::Cell> {
     let engine = Arc::new(
         IsoplaneEngine::new(engine_configuration(PlatformFiles::default()))
@@ -1010,6 +1012,7 @@ fn serving_cell(
     let cell = isoplane_host::cell::Cell::new(
         isoplane_host::CellConfig {
             timer_wake_idle_limit_ms,
+            development_notices,
             ..isoplane_host::CellConfig::for_test("timer-wakes")
         },
         services,
@@ -1083,7 +1086,7 @@ async fn an_idle_instance_that_opted_in_runs_its_timers_until_it_goes_too_long_w
     isoplane_harness::LogCapture::global();
     let (product, request) = alpha_initialized_by("RunTimersBetweenRequestsAsync").await;
     let module = isoplane_host::ModuleId::new("alpha", "v1");
-    let cell = serving_cell(&product, &request, &module, 1_000);
+    let cell = serving_cell(&product, &request, &module, 1_000, false);
     let meters = cell.meters(&module).expect("the module has meters");
 
     let first = ask_for_beats(&cell, &module).await;
@@ -1110,7 +1113,8 @@ async fn an_idle_instance_that_opted_in_runs_its_timers_until_it_goes_too_long_w
 
     wait_until(
         "step 3: the instance must stop once it has gone 1 s without a request",
-        || cell.idle_instances(&module) == Some((0, 0)),
+        // Not merely out of the pool, which it also is while a wake runs.
+        || cell.slot(first.instance).is_none(),
     )
     .await;
     let wakes = meters.dispatches() - 1;
@@ -1124,6 +1128,48 @@ async fn an_idle_instance_that_opted_in_runs_its_timers_until_it_goes_too_long_w
         "step 5: a request after the stop must start a new instance"
     );
     cell.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_opted_in_timer_is_reported_only_where_the_host_shows_development_notices() {
+    isoplane_harness::LogCapture::global();
+    let (product, request) = alpha_initialized_by("RunTimersBetweenRequestsAsync").await;
+    let module = isoplane_host::ModuleId::new("alpha", "v1");
+    for shown in [true, false] {
+        let cell = serving_cell(&product, &request, &module, 60_000, shown);
+        let first = ask_for_beats(&cell, &module).await;
+        let notices: Vec<String> = cell
+            .slot(first.instance)
+            .expect("the instance stays resident after its request")
+            .ctx
+            .emitted_logs()
+            .into_iter()
+            .map(|log| log.fields)
+            .filter(|fields| fields.contains("Timer Alpha.Handler.LoggedBeat"))
+            .collect();
+        if shown {
+            assert_eq!(
+                notices.len(),
+                1,
+                "the timer initialization started must be reported once: {notices:?}"
+            );
+            assert!(
+                notices[0].contains("fires every 20 ms")
+                    && notices[0].contains(
+                        "up to 36,000 per hour (26,280,000 per month) while the app is receiving \
+                         at least one request per 5 minutes"
+                    ),
+                "the notice must state the timer's period and the instance's ceiling: {}",
+                notices[0]
+            );
+        } else {
+            assert!(
+                notices.is_empty(),
+                "a host that does not show development notices must get none: {notices:?}"
+            );
+        }
+        cell.shutdown();
+    }
 }
 
 /// The `native` package's outcome for one transition, before and after a

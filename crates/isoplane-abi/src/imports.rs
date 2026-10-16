@@ -172,6 +172,9 @@ pub const IMPORTS: &[ImportDef] = &[
     ImportDef { buf: BufSpec::In(1), init_visible: true, ..imp!("log_emit", Observe, Sig { params: &[I32, I32, I32], results: &[] }, SYNC,
         "structured log at `trace=0` .. `error=4`; worker occupancy counts against the dispatch budget, \
          which is what stops log-as-compute abuse") },
+    ImportDef { buf: BufSpec::None, ..imp!("development_notices", Observe, Sig { params: &[], results: &[I64] }, SYNC,
+        "non-zero where the host shows guests' development notices, such as what their timers will cost: in local \
+         development and tests, never in a deployment") },
     imp!("trace_span_begin", Observe, BUF_TO_I32, SYNC,
         "opens a trace span and returns its id, for correlating work inside one dispatch"),
     ImportDef { buf: BufSpec::None, ..imp!("trace_span_end", Observe, Sig { params: &[I32], results: &[] }, SYNC,

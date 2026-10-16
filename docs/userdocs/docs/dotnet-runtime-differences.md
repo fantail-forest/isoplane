@@ -178,6 +178,13 @@ requests it does not run at all, unless it asks for its timers to.
   when its next request arrives. Use it for upkeep, such as sending telemetry
   that would otherwise wait for the next request, and not for work that has to
   happen on schedule.
+
+  To show what that costs, in local development and tests Isoplane logs a
+  notice for each periodic timer once the application has opted in: how often
+  the timer fires, and how many wakes the instance's timers can cause, as "up
+  to N per hour (M per month) while the app is receiving at least one request
+  per 5 minutes". A wake runs every timer that is due, so the figure is a
+  ceiling. Deployments do not log these notices.
 - **`finally` blocks and disposal are part of the request.** They run as the
   awaited code unwinds, as they do anywhere else, and that includes middleware
   code after `await next()` and the disposal of scoped services. Two cases

@@ -28,6 +28,8 @@ Without this call, a timer that comes due while an instance has no request to ha
 
 Wakes are best effort: an instance that has had no request for five minutes is stopped instead of woken, and an instance Isoplane has set aside to save memory runs its timers only when its next request arrives. Use a timer between requests for upkeep such as flushing telemetry, not for work that has to happen on schedule.
 
+In local development and tests, each periodic timer is reported in the log with how often it fires and how many wakes the instance's timers can cause.
+
 The setting applies to every instance, so call this during initialization: from an [`Initializing`](./Initializing.md) callback, or from the method marked with [`InitializerAttribute`](../InitializerAttribute.md). A later call replaces the interval an earlier one set.
 
 ## Examples

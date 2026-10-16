@@ -82,8 +82,12 @@ public static class Initialization
     /// <para>
     /// Wakes are best effort: an instance that has had no request for five
     /// minutes is stopped instead of woken, and an instance Isoplane has set aside to save memory runs
-    /// its timers only when its next request arrives. Use a timer between requests for upkeep such as flushing telemetry, not for work that
-    /// has to happen on schedule.
+    /// its timers only when its next request arrives. Use a timer between requests for upkeep such as
+    /// flushing telemetry, not for work that has to happen on schedule.
+    /// </para>
+    /// <para>
+    /// In local development and tests, each periodic timer is reported in the log with how often it
+    /// fires and how many wakes the instance's timers can cause.
     /// </para>
     /// <para>
     /// The setting applies to every instance, so call this during initialization: from an
@@ -109,7 +113,12 @@ public static class Initialization
         var minimumIntervalMs = (long)Math.Ceiling(minimumInterval.TotalMilliseconds);
         if (Isoplane.Abi.H.TimersBetweenRequests(minimumIntervalMs) != 0)
             throw new InvalidOperationException("Call RunTimersBetweenRequests during initialization: the setting is saved with the application's template.");
+        TimersBetweenRequestsMs = minimumIntervalMs;
+        Isoplane.Runtime.TimerNotices.OptedIn();
     }
+
+    /// <summary>The least time between timer wakes, once the application has opted in.</summary>
+    internal static long? TimersBetweenRequestsMs { get; private set; }
 
     internal static event Func<Task>? Starting;
 
