@@ -3,51 +3,29 @@ title: How .NET differs on Isoplane
 ---
 
 An Isoplane application is ordinary .NET code, but it runs inside a sandbox
-instead of as a process on a server. Some things .NET normally lets you do are
-missing there, and others behave differently. This page lists all of them. For
-each it says why Isoplane works that way, what that gives you, and what to
-change in your application, where there is anything to change. Where another
-page covers a difference in more depth, the entry links to it.
+instead of as a process on a server. Each instance of each application gets a
+sandbox of its own, and everything it does beyond its own memory, from the
+network and files to the clock, goes through Isoplane. To make that cheap,
+Isoplane gives an instance a thread only while its code is running: an instance
+that is waiting, or has no request to handle, is set aside and holds no thread
+at all.
+
+Most of the differences on this page follow from those two choices. Some things
+.NET normally lets you do are missing, and others behave differently. Each
+section says why, what that gives you, and what to change in your application,
+where there is anything to change. Where another page covers a difference in
+more depth, the section links to it.
 
 The limits Isoplane places on memory and running time are a separate subject:
 see [execution limits](execution-limits.md).
-
-## Why the sandbox works this way
-
-Isoplane isolates every instance of every application in a sandbox of its own.
-Two choices make that isolation both strong and cheap, and most of the
-differences on this page follow from one of them.
-
-### An application never blocks {#never-blocks}
-
-Isoplane runs many applications on a small number of worker threads. Whenever
-an instance is waiting, on an asynchronous operation or for its next request,
-Isoplane sets it aside and gives the worker to another one. A waiting instance
-holds no thread, and the time it spends waiting does not count toward a
-request's [running time](execution-limits.md#running-time). That is what lets
-every instance have a sandbox of its own without a thread, a process or a
-machine dedicated to it.
-
-A call that blocks cannot be set aside: it would hold a worker that other
-applications share for as long as it waited. That is why waits are
-asynchronous, why an application has no threads of its own, and why nothing
-runs between requests unless the application asks for its timers to.
-
-### Nothing runs outside the sandbox {#nothing-outside-the-sandbox}
-
-Isoplane mediates everything an application does beyond its own memory,
-including the network, files, the clock and waiting. That is what keeps one
-application apart from the others on the same hardware, and it is why an
-application can do only what Isoplane provides. A native library built for the
-machine's processor would run outside the sandbox, so it is not loaded.
 
 ## A single-threaded instance {#single-threaded}
 
 Each instance runs your application on exactly one thread, and handles one
 request at a time; `Environment.ProcessorCount` is 1. To serve more requests at
 once, Isoplane runs more instances of the application rather than more threads
-in one. This follows from [never blocking](#never-blocks): an instance needs a
-thread only while its code runs, and one is all it is given. In return, an
+in one. An instance needs a thread only while its code runs, and one is all it
+is given. In return, an
 instance costs no thread while it waits, and code in an instance never runs on
 two threads at once.
 
@@ -96,8 +74,11 @@ you would on any platform, since no lock can be held across an `await`.
 
 ## Waits, delays and timers {#waits}
 
-Waiting is asynchronous, because a waiting instance
-[must not hold a worker](#never-blocks).
+Waiting is asynchronous. A waiting instance is set aside and holds no thread,
+which is how many applications share a few worker threads, and its waiting
+does not count toward the request's
+[running time](execution-limits.md#running-time). A wait that blocked would
+keep the thread, which other applications need.
 
 A wait that can be satisfied at once succeeds, as it does anywhere else:
 taking a free `SemaphoreSlim` or `Semaphore`, waiting on a set event or a
@@ -169,6 +150,49 @@ NuGet packages are not inspected unless you set
 [`IsoplaneAnalyzeDependencies`](reference/project-settings.md#isoplaneanalyzedependencies).
 The `app.Run()` error is described in
 [Adapt `Program.cs`](onboard-an-application.md#adapt-programcs).
+
+## The clock {#time}
+
+The clock an application sees is deliberately coarse, and it stands still while
+code runs. This is a defence against Spectre and other side-channel attacks,
+which work by timing tiny differences in how long the processor takes, and so
+need a precise clock. Hardware is shared between applications, and denying
+every application such a clock protects yours from its neighbours, and theirs
+from yours.
+
+The clock is set when a request starts and each time the application resumes
+after waiting. Between those points every reading returns the same value, from
+`DateTime.UtcNow`, `Stopwatch` and `Environment.TickCount64` alike. Its
+resolution is one millisecond, although `Stopwatch.IsHighResolution` still
+reports `true` and `Stopwatch.Frequency` still reports nanoseconds. Timers have
+the same resolution.
+
+Timers and cancellation stand still in the same way. A timer that comes due,
+or a cancellation token that is cancelled, while code runs is seen only after
+the application next waits. Checking a timer or `IsCancellationRequested` in a
+loop that does not await never sees it change.
+
+What follows from that:
+
+- `Stopwatch` cannot time a piece of computation, and a benchmark run inside
+  the application measures nothing. Run benchmarks on ordinary .NET outside
+  Isoplane.
+- Across an `await` that has to wait, `Stopwatch` measures from when the
+  application last started running or resumed before you started it, to when
+  it resumed after the wait. That includes the wait and any computation since
+  that earlier point, so it is an upper bound on the wait, to the millisecond.
+  An `await` on something already complete does not advance it.
+- Timestamps the application takes without waiting in between are identical,
+  so log lines it stamps itself can all show the same time.
+- A loop that computes and checks the time, a timer or a cancellation token for
+  its own deadline never sees the deadline arrive. Split the work into parts
+  and await something that waits between them, as
+  [running time](execution-limits.md#running-time) describes.
+- A timeout fires only while the application is waiting. `Task.Delay`,
+  `CancellationTokenSource.CancelAfter` and `Timer` callbacks are delivered
+  when it next waits, not in the middle of a computation, or at the start of
+  the next request if they came due between requests, unless the application
+  [runs timers between requests](#run-timers-between-requests).
 
 ## When your code runs
 
@@ -508,7 +532,7 @@ configuration instead, so read them from `IConfiguration`; see
 [local development settings](local-settings.md).
 
 There are no other processes, and an application cannot start one: a process
-would run [outside the sandbox](#nothing-outside-the-sandbox). Use a managed
+would run outside the sandbox. Use a managed
 library for the work instead, or call a service that does it.
 
 ## Native libraries {#native-libraries}
@@ -535,49 +559,6 @@ all available when you ask for them by name: set the culture for a request
 with ASP.NET Core's request localization, or pass a `CultureInfo` to the call
 that formats a value, and convert times with
 `TimeZoneInfo.FindSystemTimeZoneById`.
-
-## Time
-
-The clock an application sees is deliberately coarse, and it stands still while
-code runs. This is a defence against Spectre and other side-channel attacks,
-which work by timing tiny differences in how long the processor takes, and so
-need a precise clock. Hardware is shared between applications, and denying
-every application such a clock protects yours from its neighbours, and theirs
-from yours.
-
-The clock is set when a request starts and each time the application resumes
-after waiting. Between those points every reading returns the same value, from
-`DateTime.UtcNow`, `Stopwatch` and `Environment.TickCount64` alike. Its
-resolution is one millisecond, although `Stopwatch.IsHighResolution` still
-reports `true` and `Stopwatch.Frequency` still reports nanoseconds. Timers have
-the same resolution.
-
-Timers and cancellation stand still in the same way. A timer that comes due,
-or a cancellation token that is cancelled, while code runs is seen only after
-the application next waits. Checking a timer or `IsCancellationRequested` in a
-loop that does not await never sees it change.
-
-What follows from that:
-
-- `Stopwatch` cannot time a piece of computation, and a benchmark run inside
-  the application measures nothing. Run benchmarks on ordinary .NET outside
-  Isoplane.
-- Across an `await` that has to wait, `Stopwatch` measures from when the
-  application last started running or resumed before you started it, to when
-  it resumed after the wait. That includes the wait and any computation since
-  that earlier point, so it is an upper bound on the wait, to the millisecond.
-  An `await` on something already complete does not advance it.
-- Timestamps the application takes without waiting in between are identical,
-  so log lines it stamps itself can all show the same time.
-- A loop that computes and checks the time, a timer or a cancellation token for
-  its own deadline never sees the deadline arrive. Split the work into parts
-  and await something that waits between them, as
-  [running time](execution-limits.md#running-time) describes.
-- A timeout fires only while the application is waiting. `Task.Delay`,
-  `CancellationTokenSource.CancelAfter` and `Timer` callbacks are delivered
-  when it next waits, not in the middle of a computation, or at the start of
-  the next request if they came due between requests, unless the application
-  [runs timers between requests](#run-timers-between-requests).
 
 ## How code runs
 

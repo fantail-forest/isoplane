@@ -6,8 +6,8 @@ Most NuGet packages run on Isoplane unchanged. The ones that do not fail for a
 handful of reasons, all of which follow from
 [how .NET differs on Isoplane](dotnet-runtime-differences.md): something waits
 synchronously, starts a thread, relies on a timer firing between requests,
-writes a file, or loads a native library. That page also explains
-[what those limits are the price of](dotnet-runtime-differences.md#why-the-sandbox-works-this-way).
+writes a file, or loads a native library. That page also explains what each
+of those limits gives you.
 
 This page lists the specific incompatibilities we know of, by package: APIs,
 packages and framework features that fail even though your own code is
@@ -597,7 +597,7 @@ Size of the change: moderate. The I/O moves to a place that can await it.
 #### Looking ahead
 
 These interfaces can only do I/O by
-[blocking](dotnet-runtime-differences.md#never-blocks), so the I/O has to
+[blocking](dotnet-runtime-differences.md#waits), so the I/O has to
 move. Where one is common enough, Isoplane can provide a replacement that
 makes the change smaller, as it does for
 [Data Protection keys](#data-protection).
@@ -745,7 +745,7 @@ Or load a navigation explicitly before reading it, with
 [`LoadAsync`][ReferenceEntry.LoadAsync]:
 `await db.Entry(order).Reference(order => order.Customer).LoadAsync();`.
 This is the lasting approach: a property read can only load by
-[blocking](dotnet-runtime-differences.md#never-blocks).
+[blocking](dotnet-runtime-differences.md#waits).
 
 Size of the change: moderate. Every place that relies on a navigation
 being loaded on demand has to say what it needs.
