@@ -94,9 +94,9 @@ static int isoplane_vfs_randomness(sqlite3_vfs *vfs, int size, char *out)
     return size;
 }
 
-/* Nothing else runs in the instance while a call is in progress, so waiting
- * could not release the lock a busy handler waits for, and a guest call must
- * not block. Reporting no time slept lets SQLite's busy handler count down its
+/* Nothing else runs in the instance while a slice is running, so waiting
+ * could not release the lock a busy handler waits for, and a slice must not
+ * block. Reporting no time slept lets SQLite's busy handler count down its
  * timeout without waiting. */
 static int isoplane_vfs_sleep(sqlite3_vfs *vfs, int microseconds)
 {

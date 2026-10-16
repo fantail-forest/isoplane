@@ -16,8 +16,8 @@ internal sealed class IsoplaneLifetime : IHostLifetime
 
 /// <summary>
 /// Refuses background work that outlives startup. The platform suspends an
-/// instance between requests, so such work would run only while some request
-/// happened to be in progress. A <see cref="BackgroundService"/> that has
+/// instance between dispatches, so such work would run only while some
+/// dispatch happened to be in progress. A <see cref="BackgroundService"/> that has
 /// finished by the time the host has started, or that a library registers
 /// and never starts, is ordinary startup work.
 /// </summary>

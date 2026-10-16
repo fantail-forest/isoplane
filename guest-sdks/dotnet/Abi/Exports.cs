@@ -120,9 +120,9 @@ public static unsafe class Exports<TRouter>
             // from this instance's activation.
             RuntimeTimers.CountFromActivation();
             TimerNotices.Activate();
-            // Timers that came due while the instance was idle run before the
-            // request, each until it returns or awaits, so the request sees
-            // the state they bring up to date.
+            // Timers that came due while the instance was idle run first, each
+            // until it returns or awaits, so the dispatch's own work sees the
+            // state they bring up to date.
             ManagedWork.Drain();
 
             _runningTimers = d.Kind == DispatchKind.Timers;
@@ -226,9 +226,9 @@ public static unsafe class Exports<TRouter>
 
     /// <summary>
     /// Drains runnable continuations, then returns <c>pending</c> through the
-    /// export if the root task is incomplete. Returning leaves no live guest
-    /// invocation on the native stack; an incomplete root does not prove
-    /// that a host future exists to advance it.
+    /// export if the root task is incomplete. Returning ends the slice with
+    /// nothing of it left on the native stack; an incomplete root does not
+    /// prove that a host future exists to advance it.
     /// </summary>
     private static long Settle()
     {
@@ -260,8 +260,8 @@ public static unsafe class Exports<TRouter>
     }
 
     /// <summary>
-    /// A wake to run due timers has no result of its own to wait for. The host
-    /// ends it once nothing but timers is pending.
+    /// A timers dispatch has no result of its own to wait for. The host ends
+    /// it once nothing but timers is pending.
     /// </summary>
     private static long SettleTimers()
     {

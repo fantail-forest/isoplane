@@ -1,4 +1,4 @@
-// Only the local debugger host may wait while a guest invocation is live.
+// Only the local debugger host may wait while a slice is running.
 #define __wasm_import_poll_method_pollable_block isoplane_unsupported_pollable_block
 #include "isoplane_pal.c"
 #undef __wasm_import_poll_method_pollable_block

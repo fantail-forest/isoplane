@@ -90,7 +90,7 @@ internal sealed class EventLoop
             }
             case "ready-work":
             {
-                // Queued work must run in this invocation, before the timer parks the guest.
+                // Queued work must run in this slice, before the timer parks the guest.
                 int ran = 0;
                 var done = new TaskCompletionSource();
                 ThreadPool.UnsafeQueueUserWorkItem(_ => { ran++; done.SetResult(); }, null);

@@ -10,7 +10,7 @@ namespace Isoplane.Runtime;
 /// Tells a developer, in local development and tests, what each periodic timer
 /// costs once the application runs timers between requests. Every timer is
 /// recorded from start-up, so one created before the application opts in is
-/// reported too. Nothing is reported before the instance's first request: the
+/// reported too. Nothing is reported before the instance's first dispatch: the
 /// host says whether notices are shown only to a running instance.
 /// </summary>
 internal static class TimerNotices
@@ -33,7 +33,7 @@ internal static class TimerNotices
         PeriodicTimerScheduled(null) = Record;
     }
 
-    /// <summary>The instance is serving its first request, so the host can be asked whether to report.</summary>
+    /// <summary>The instance is serving its first dispatch, so the host can be asked whether to report.</summary>
     internal static void Activate()
     {
         s_activated = true;

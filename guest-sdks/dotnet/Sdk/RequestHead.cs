@@ -66,19 +66,21 @@ public class RequestHead
     public IReadOnlyList<KeyValuePair<string, string>> Headers { get; }
 
     /// <summary>
-    /// Cancelled when the request should stop: the client has gone away, or the request has used up
-    /// its running time.
+    /// Cancelled when the request's dispatch should stop: the client has gone away, or the dispatch has
+    /// used up its running time.
     /// </summary>
     /// <remarks>
     /// <para>
     /// Pass it to the asynchronous calls the handler makes, so that work nobody is waiting for stops.
     /// </para>
     /// <para>
-    /// Running time is the time a request spends executing. Time spent waiting for something the
-    /// handler awaits, such as a database or another service, does not count. Once a request has used
-    /// its allowance and the token is cancelled, it has a short further period in which to finish;
-    /// after that Isoplane stops the instance. A local session allows the most the platform offers.
-    /// To see how the application behaves with less, set <c>occupancyMsPerHttpDispatch</c> as
+    /// Running time is the time a dispatch spends executing; a dispatch is the work Isoplane gives an
+    /// instance to handle one request, described in
+    /// <see href="https://isoplane.dev/docs/dotnet-runtime-differences#units-of-work">Units of work</see>.
+    /// Time spent waiting for something the handler awaits, such as a database or another service, does
+    /// not count. Once a dispatch has used its allowance and the token is cancelled, it has a short
+    /// further period in which to finish; after that Isoplane stops the instance. A local session allows the most the platform offers.
+    /// To see how the application behaves with less, set <c>occupancyMsPerDispatch</c> as
     /// <see href="https://isoplane.dev/docs/local-settings#try-the-application-under-tighter-limits">Try the application under tighter limits</see>
     /// describes.
     /// </para>

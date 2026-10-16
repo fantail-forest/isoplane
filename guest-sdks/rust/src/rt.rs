@@ -183,8 +183,8 @@ impl Runtime {
 //
 // The engine builds wasmtime without threads, shared memory or atomics and the
 // validator rejects a module that declares them, so the module cannot express a
-// second thread; and both `isoplane-host` and the engine refuse a reentrant call
-// into an instance while one is outstanding. Together those make an
+// second thread; and both `isoplane-host` and the engine refuse to start a
+// slice in an instance while another is running. Together those make an
 // `UnsafeCell` global the honest representation. The one hazard left is
 // *self*-nesting, so `with` refuses it in debug builds.
 // ---------------------------------------------------------------------------
@@ -461,7 +461,7 @@ mod tests {
         });
     }
 
-    /// The other half: a wake is a *new* call from the host, and it completes
+    /// The other half: a wake is a *new* slice, and it completes
     /// the dispatch on a fresh stack.
     #[test]
     fn a_wake_resumes_and_completes() {

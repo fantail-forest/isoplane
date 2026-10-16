@@ -6,8 +6,8 @@ namespace Isoplane.Runtime;
 
 /// <summary>
 /// Queues continuations posted through Isoplane's synchronization context in
-/// guest memory. The export driver drains the queue while the host is inside
-/// a guest invocation, then returns when no runnable work remains. This
+/// guest memory. The export driver drains the queue during each slice, then
+/// returns when no runnable work remains. This
 /// scheduler does not intercept awaiters that bypass context capture or
 /// prove that an incomplete task has a completion source.
 /// </summary>
@@ -29,8 +29,8 @@ internal sealed class IsoplaneSynchronizationContext : SynchronizationContext
     public override void Post(SendOrPostCallback d, object? state) => _queue.Enqueue(new Work(d, state));
 
     /// <summary>
-    /// <c>Send</c> blocks, and nothing can complete a host future while the
-    /// guest is inside a call; a sync-over-async guest would spin to its CPU
+    /// <c>Send</c> blocks, and nothing can complete a host future during a
+    /// slice; a sync-over-async guest would spin to its CPU
     /// budget, so it fails here instead.
     /// </summary>
     public override void Send(SendOrPostCallback d, object? state) => throw new NotSupportedException();

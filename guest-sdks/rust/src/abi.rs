@@ -143,6 +143,7 @@ isoplane_imports! {
     fn trace_span_begin(ptr: i32, len: i32) -> i32;
     fn trace_span_end(span: i32);
 
+    // ---- clock & entropy --------------------------------------------------
     /// The serving slice's fixed coarse time, in milliseconds since the Unix epoch.
     fn clock_now_coarse() -> i64;
     /// Creates a host timer future that completes after the requested delay.

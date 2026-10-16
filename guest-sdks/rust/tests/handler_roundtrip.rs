@@ -80,7 +80,7 @@ fn a_dispatch_that_waits_parks_and_a_wake_completes_it() {
         // The stub mints future ids from 1, so `clock_deadline_in` got id 1.
         let fut_id = 1u64;
 
-        // 2. The wake. A fresh call from the host, a fresh wasm stack.
+        // 2. The wake. A new slice, a fresh wasm stack.
         let res = ResultRecord::Ok(Vec::new());
         let enc = postcard::to_allocvec(&res).unwrap();
         let (ptr, len) = handoff(&enc);

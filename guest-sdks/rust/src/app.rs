@@ -2,7 +2,7 @@
 //!
 //! Every method takes `&'static self`: there is exactly one instance of the
 //! app type per wasm instance, it lives for as long as linear memory does, and
-//! the host refuses a reentrant call while one is outstanding. App state that
+//! the host refuses to start a slice while another is running. App state that
 //! must change goes in a `Cell`/`RefCell` field -- which is also an honest
 //! reminder that those fields are a best-effort per-instance cache, never a
 //! store: the instance can be reset, evicted or replaced at any time.
