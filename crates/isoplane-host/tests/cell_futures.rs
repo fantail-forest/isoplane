@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use isoplane_abi::config::{HandlerLifecycle, Limits};
+use isoplane_abi::config::Limits;
 use isoplane_abi::dispatch::{DispatchRecord, HttpRequest};
 use isoplane_engine::Completion;
 
@@ -87,7 +87,6 @@ fn the_pending_futures_cap_traps_the_guest() {
             act,
             manifest(
                 "greedy",
-                HandlerLifecycle::Reuse,
                 Limits {
                     module_bytes_compressed: 5242880,
                     package_bytes: 52428800,
@@ -136,15 +135,7 @@ fn the_pending_futures_cap_traps_the_guest() {
     ));
     let ok_mod = ok.module().clone();
     paid.cell
-        .register_module(
-            "acme",
-            ok,
-            manifest(
-                "higher-limit-app",
-                HandlerLifecycle::Reuse,
-                Limits::default(),
-            ),
-        )
+        .register_module("acme", ok, manifest("higher-limit-app", Limits::default()))
         .unwrap();
     let mut rec = http(&paid.cell, &ok_mod, "/ok");
     rec.dispatch_id = 2;
@@ -187,11 +178,7 @@ async fn wait_until_fails_the_dispatch_and_releases_its_work() {
     ));
     let module = act.module().clone();
     r.cell
-        .register_module(
-            "acme",
-            act,
-            manifest("bg", HandlerLifecycle::Fresh, Limits::default()),
-        )
+        .register_module("acme", act, manifest("bg", Limits::default()))
         .unwrap();
 
     let rec = http(&r.cell, &module, "/bg");
@@ -248,7 +235,7 @@ fn entering_grace_wakes_the_dispatch_cancellation_future() {
         .register_module(
             "tenant",
             activator,
-            manifest("cancellation", HandlerLifecycle::Reuse, Limits::default()),
+            manifest("cancellation", Limits::default()),
         )
         .expect("registering the cancellation guest");
     let result = rig
@@ -276,7 +263,7 @@ fn operator_budgets_reach_the_dispatch_and_pending_future_table() {
         }]),
     ));
     let module = act.module().clone();
-    let mut app = manifest("bounded", HandlerLifecycle::Reuse, Limits::default());
+    let mut app = manifest("bounded", Limits::default());
     app.resource_limits.pending_futures_per_dispatch = Some(2);
     app.resource_limits.occupancy_ms_per_http_dispatch = Some(1234);
     r.cell

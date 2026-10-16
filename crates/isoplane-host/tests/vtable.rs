@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use isoplane_abi::calls::FetchRequest;
-use isoplane_abi::config::{HandlerLifecycle, Limits};
+use isoplane_abi::config::Limits;
 use isoplane_abi::result::{FetchResponse, FutureError, ResultRecord};
 use isoplane_engine::{HostBindings, ImportCall};
 
@@ -80,7 +80,6 @@ fn vtable_with_resolver(
             tenant: "acme".into(),
             limits,
 
-            lifecycle: HandlerLifecycle::Reuse,
             allowlist,
         },
         meters.clone(),

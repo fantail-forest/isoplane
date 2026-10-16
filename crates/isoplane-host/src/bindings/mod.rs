@@ -423,7 +423,7 @@ impl HostBindings for CellBindings {
 mod tests {
     use super::*;
     use crate::InstanceId;
-    use isoplane_abi::config::{HandlerLifecycle, Limits};
+    use isoplane_abi::config::Limits;
     use isoplane_abi::imports::IMPORTS;
 
     /// Scalars an import carries, per the contract crate's `BufSpec`.
@@ -437,11 +437,7 @@ mod tests {
     }
 
     pub(super) fn ctx() -> Arc<InstanceCtx> {
-        Arc::new(InstanceCtx::for_test(
-            InstanceId(1),
-            HandlerLifecycle::Reuse,
-            Limits::default(),
-        ))
+        Arc::new(InstanceCtx::for_test(InstanceId(1), Limits::default()))
     }
 
     pub(super) fn call<'a>(
@@ -601,16 +597,8 @@ mod tests {
 
     #[test]
     fn clones_do_not_share_an_rng_stream() {
-        let a = Arc::new(InstanceCtx::for_test(
-            InstanceId(1),
-            HandlerLifecycle::Reuse,
-            Limits::default(),
-        ));
-        let z = Arc::new(InstanceCtx::for_test(
-            InstanceId(2),
-            HandlerLifecycle::Reuse,
-            Limits::default(),
-        ));
+        let a = Arc::new(InstanceCtx::for_test(InstanceId(1), Limits::default()));
+        let z = Arc::new(InstanceCtx::for_test(InstanceId(2), Limits::default()));
         let mut ba = CellBindings::new(a);
         let mut bz = CellBindings::new(z);
         let (mut x, mut y) = ([0u8; 32], [0u8; 32]);

@@ -1,7 +1,7 @@
 //! Internal mapping microbenchmark: unique overlays over one shared baseline.
 #![forbid(unsafe_code)]
 use anyhow::{ensure, Context, Result};
-use isoplane_abi::config::{HandlerLifecycle, Limits};
+use isoplane_abi::config::Limits;
 use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest, TraceContext};
 use isoplane_engine::prepared::PreparedIdentity;
 use isoplane_engine::{
@@ -47,7 +47,6 @@ fn bindings(id: usize) -> Box<dyn HostBindings> {
             tenant: "mapping-experiment".into(),
             limits: PLAN,
 
-            lifecycle: HandlerLifecycle::Reuse,
             allowlist: None,
         },
         Arc::new(isoplane_host::meters::Meters::new()),

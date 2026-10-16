@@ -1031,9 +1031,6 @@ fn serving_cell(
             resource_limits: Default::default(),
             validation_limits: Default::default(),
             name: module.app.clone(),
-            handlers: isoplane_abi::config::HandlerConfig {
-                lifecycle: isoplane_abi::config::HandlerLifecycle::Reuse,
-            },
             bindings: Default::default(),
             limits: isoplane_harness::GUEST_LIMITS,
             init_visible_vars: vec![],

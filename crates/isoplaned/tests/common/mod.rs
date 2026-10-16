@@ -36,7 +36,6 @@ pub fn config(dir: &std::path::Path) -> NodeConfig {
         name: "quotes".into(),
         tenant: "acme".into(),
         limits: Default::default(),
-        lifecycle: Default::default(),
         cell: "cell-1".into(),
         hosts: vec!["quotes.isoplane.dev".into()],
         path_prefix: "/".into(),

@@ -1,38 +1,41 @@
 use super::*;
-use crate::disposition::{decide, RequestEnd};
+use crate::disposition::{decide, policy_reset, Disposition, DispositionKind, RequestEnd};
 use crate::fakes::{FakeActivator, FakeBehaviour};
 use crate::LifecycleTier;
 use isoplane_abi::config::Limits;
 use isoplane_engine::Completion;
 use std::time::Duration;
 
-fn pool(lifecycle: HandlerLifecycle) -> InstancePool {
-    InstancePool::new(
-        Arc::new(FakeActivator::new(FakeBehaviour::default())),
-        lifecycle,
-        1,
-    )
+fn pool() -> InstancePool {
+    InstancePool::new(Arc::new(FakeActivator::new(FakeBehaviour::default())), 1)
 }
 
 fn acquire(pool: &InstancePool) -> Arc<Slot> {
-    pool.acquire(|id| Arc::new(InstanceCtx::for_test(id, pool.lifecycle, Limits::default())))
+    pool.acquire(|id| Arc::new(InstanceCtx::for_test(id, Limits::default())))
         .expect("test pool activation must succeed")
         .0
 }
 
-fn release(pool: &InstancePool, slot: Arc<Slot>) {
-    let RequestEnd::Disposed(disposition) = decide(pool.lifecycle, Completion::Done, false) else {
+/// The two ways back to an idle list: a completed dispatch stays warm, and a
+/// policy reset waits as a reset candidate.
+fn idle_dispositions() -> [Disposition; 2] {
+    let RequestEnd::Disposed(warm) = decide(Completion::Done, false) else {
         panic!("a completed dispatch must have a pool disposition")
     };
-    pool.release(slot, disposition);
+    [warm, policy_reset()]
+}
+
+fn release(pool: &InstancePool, slot: Arc<Slot>) {
+    let [warm, _] = idle_dispositions();
+    pool.release(slot, warm);
 }
 
 #[test]
 fn an_idle_claim_prevents_acquisition_without_holding_the_pool_lock() {
-    for lifecycle in [HandlerLifecycle::Fresh, HandlerLifecycle::Reuse] {
-        let pool = pool(lifecycle);
+    for disposition in idle_dispositions() {
+        let pool = pool();
         let slot = acquire(&pool);
-        release(&pool, slot.clone());
+        pool.release(slot.clone(), disposition);
         std::thread::scope(|scope| {
             let claim = pool
                 .claim_idle(slot.id)
@@ -43,7 +46,7 @@ fn an_idle_claim_prevents_acquisition_without_holding_the_pool_lock() {
                 let other = acquire(pool_ref);
                 send.send(other.id)
                     .expect("acquisition observer must remain connected");
-                release(pool_ref, other);
+                pool_ref.release(other, disposition);
             });
             let other = receive
                 .recv_timeout(Duration::from_secs(10))
@@ -69,13 +72,13 @@ fn an_idle_claim_prevents_acquisition_without_holding_the_pool_lock() {
 
 #[test]
 fn claims_reserve_idle_capacity_until_they_are_returned() {
-    for lifecycle in [HandlerLifecycle::Fresh, HandlerLifecycle::Reuse] {
-        let pool = pool(lifecycle);
+    for disposition in idle_dispositions() {
+        let pool = pool();
         let first = acquire(&pool);
         let second = acquire(&pool);
-        release(&pool, first.clone());
+        pool.release(first.clone(), disposition);
         let claim = pool.claim_idle(first.id).expect("first idle slot");
-        release(&pool, second.clone());
+        pool.release(second.clone(), disposition);
         assert_eq!(
             second.state(),
             LifecycleTier::Discarded,
@@ -97,10 +100,10 @@ fn claims_reserve_idle_capacity_until_they_are_returned() {
 
 #[test]
 fn a_claim_returns_a_hibernated_entry_to_its_original_list() {
-    for lifecycle in [HandlerLifecycle::Fresh, HandlerLifecycle::Reuse] {
-        let pool = pool(lifecycle);
+    for disposition in idle_dispositions() {
+        let pool = pool();
         let slot = acquire(&pool);
-        release(&pool, slot.clone());
+        pool.release(slot.clone(), disposition);
         let claim = pool.claim_idle(slot.id).expect("idle slot");
         claim.slot().hibernate().expect("idle capture boundary");
         drop(claim);
@@ -109,10 +112,10 @@ fn a_claim_returns_a_hibernated_entry_to_its_original_list() {
             LifecycleTier::Hibernated,
             "claim return must not park or reset a hibernated guest"
         );
-        let expected = if lifecycle == HandlerLifecycle::Fresh {
-            (0, 1)
-        } else {
-            (1, 0)
+        let expected = match disposition.kind() {
+            DispositionKind::Warm => (1, 0),
+            DispositionKind::Reset => (0, 1),
+            DispositionKind::Discard => unreachable!("only idle dispositions are tested"),
         };
         assert_eq!(
             pool.idle_counts(),
@@ -129,7 +132,7 @@ fn a_claim_returns_a_hibernated_entry_to_its_original_list() {
 
 #[test]
 fn a_discarded_claim_leaves_pool_accounting_once() {
-    let pool = pool(HandlerLifecycle::Reuse);
+    let pool = pool();
     let slot = acquire(&pool);
     release(&pool, slot.clone());
     let claim = pool.claim_idle(slot.id).expect("idle slot");
@@ -153,7 +156,7 @@ fn a_discarded_claim_leaves_pool_accounting_once() {
 
 #[test]
 fn an_outstanding_claim_cannot_repopulate_a_drained_pool() {
-    let pool = pool(HandlerLifecycle::Reuse);
+    let pool = pool();
     let slot = acquire(&pool);
     release(&pool, slot.clone());
     let claim = pool.claim_idle(slot.id).expect("idle slot");
@@ -182,7 +185,7 @@ fn an_outstanding_claim_cannot_repopulate_a_drained_pool() {
 
 #[test]
 fn only_one_reclaimer_can_claim_an_idle_entry() {
-    let pool = pool(HandlerLifecycle::Reuse);
+    let pool = pool();
     let slot = acquire(&pool);
     assert!(
         pool.claim_idle(slot.id).is_none(),

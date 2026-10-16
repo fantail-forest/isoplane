@@ -4,7 +4,7 @@ use std::io::Write;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use isoplane_abi::config::{HandlerLifecycle, Limits};
+use isoplane_abi::config::Limits;
 use isoplane_abi::dispatch::{DispatchKind, DispatchRecord};
 use isoplane_hibernate::snapshot::{
     SnapshotBytes, SnapshotError, SnapshotReservation, SnapshotStorage,
@@ -67,11 +67,7 @@ fn exhausted_snapshot_capacity_refuses_admission_before_guest_activation() {
     cell.register_module(
         "acme",
         activator.clone(),
-        common::manifest(
-            "capacity-refusal",
-            HandlerLifecycle::Reuse,
-            Limits::default(),
-        ),
+        common::manifest("capacity-refusal", Limits::default()),
     )
     .expect("fixture module must register");
     let record = DispatchRecord {

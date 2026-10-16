@@ -2,7 +2,7 @@
 
 mod common;
 
-use isoplane_abi::config::{HandlerLifecycle, Limits};
+use isoplane_abi::config::Limits;
 use isoplane_abi::dispatch::HttpRequest;
 use isoplane_engine::{IsoplaneEngine, PlatformFile, PlatformFiles};
 use isoplane_fixtures::GuestRuntime;
@@ -42,11 +42,7 @@ async fn activation_finishes_before_dispatch(runtime: GuestRuntime) {
     cell.register_module(
         "tenant",
         Arc::new(activator),
-        common::manifest(
-            "managed-activation",
-            HandlerLifecycle::Reuse,
-            Limits::default(),
-        ),
+        common::manifest("managed-activation", Limits::default()),
     )
     .expect("the activation module must register");
     cell.set_runtime_configuration(

@@ -294,7 +294,7 @@ fn unsupported(message: &'static str) -> DispatchOutcome {
 mod tests {
     use super::*;
     use crate::{CellBindings, InstanceCtx, InstanceId};
-    use isoplane_abi::config::{HandlerLifecycle, Limits};
+    use isoplane_abi::config::Limits;
     use isoplane_abi::dispatch::{DispatchKind, HttpRequest, TraceContext};
 
     fn activator(initialize: Option<&str>) -> Result<DebugActivator, DebugError> {
@@ -341,11 +341,7 @@ mod tests {
     }
 
     fn activate(activator: DebugActivator) -> Box<dyn InstanceOps + Send> {
-        let ctx = Arc::new(InstanceCtx::for_test(
-            InstanceId(1),
-            HandlerLifecycle::Fresh,
-            Limits::default(),
-        ));
+        let ctx = Arc::new(InstanceCtx::for_test(InstanceId(1), Limits::default()));
         ctx.begin_dispatch(1, 1);
         activator
             .activate(CellBindings::boxed(ctx))
@@ -530,7 +526,6 @@ mod tests {
     fn debug_bindings_preserve_the_application_memory_ceiling() {
         let context = Arc::new(crate::bindings::InstanceCtx::for_test(
             crate::InstanceId(1),
-            isoplane_abi::config::HandlerLifecycle::Reuse,
             isoplane_abi::config::Limits {
                 module_bytes_compressed: 5242880,
                 package_bytes: 52428800,

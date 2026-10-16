@@ -78,7 +78,6 @@ pub fn quotes_target(version: &str, tier: CodeTier) -> isoplane_abi::host::Route
         app: "quotes".into(),
         tenant: "acme".into(),
         version: version.into(),
-        lifecycle: isoplane_abi::config::HandlerLifecycle::Reuse,
         tier,
     }
 }

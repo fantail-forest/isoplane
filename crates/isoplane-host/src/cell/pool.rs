@@ -166,7 +166,7 @@ pub(super) mod cell_tests {
     use super::super::completion::test_events::Events;
     use super::*;
     use crate::fakes::*;
-    use isoplane_abi::config::{AppManifest, Bindings, HandlerConfig};
+    use isoplane_abi::config::{AppManifest, Bindings};
 
     struct NoResolver;
     #[async_trait::async_trait]
@@ -197,9 +197,6 @@ pub(super) mod cell_tests {
             resource_limits: Default::default(),
             validation_limits: Default::default(),
             name: name.into(),
-            handlers: HandlerConfig {
-                lifecycle: HandlerLifecycle::Reuse,
-            },
             bindings: Bindings::default(),
             limits: Limits::default(),
             init_visible_vars: vec![],
@@ -330,9 +327,7 @@ pub(super) mod cell_tests {
         });
         let act = Arc::new(FakeActivator::new(FakeBehaviour::done()));
         let module = act.module().clone();
-        let mut app = manifest("busy-upload");
-        app.handlers.lifecycle = HandlerLifecycle::Reuse;
-        cell.register_module("acme", act, app)
+        cell.register_module("acme", act, manifest("busy-upload"))
             .expect("register reusable guest");
         let run = |id, upload| {
             let (responder, response) = std::sync::mpsc::sync_channel(1);
@@ -398,9 +393,7 @@ pub(super) mod cell_tests {
             FakeBehaviour::done().with_lazy_init_probe(),
         ));
         let module = act.module().clone();
-        let mut manifest = manifest("stale-reset-wake");
-        manifest.handlers.lifecycle = HandlerLifecycle::Fresh;
-        cell.register_module("acme", act, manifest)
+        cell.register_module("acme", act, manifest("stale-reset-wake"))
             .expect("register");
         let run = |id| {
             let (responder, rx) = std::sync::mpsc::sync_channel(1);
@@ -422,12 +415,16 @@ pub(super) mod cell_tests {
                 .expect("dispatch answered")
         };
         let first = run(1);
-        let slot = cell.slot(first.instance).expect("pooled instance");
-        assert!(
-            !slot.is_pristine(),
-            "a completed dispatch must wait for acquisition before resetting"
-        );
         let entry = cell.modules.read().get(&module).cloned().unwrap();
+        let (warm, _) = cell.acquire_handler(&entry).expect("warm instance");
+        assert_eq!(warm.id, first.instance, "the completed instance stays warm");
+        entry
+            .pool
+            .release(warm.clone(), crate::disposition::policy_reset());
+        assert!(
+            !warm.is_pristine(),
+            "a policy reset must wait for acquisition before resetting"
+        );
         let (slot, _) = cell.acquire_handler(&entry).expect("reset candidate");
         assert!(slot.is_pristine(), "acquisition must reset the candidate");
         cell.run_wake(slot.clone());
@@ -461,9 +458,7 @@ pub(super) mod cell_tests {
         });
         let act = Arc::new(FakeActivator::new(FakeBehaviour::done()));
         let module = act.module().clone();
-        let mut manifest = manifest("reset-failure-cleanup");
-        manifest.handlers.lifecycle = HandlerLifecycle::Fresh;
-        cell.register_module("acme", act, manifest)
+        cell.register_module("acme", act, manifest("reset-failure-cleanup"))
             .expect("register");
         let entry = cell.modules.read().get(&module).cloned().unwrap();
         let (candidate, _) = cell.acquire_handler(&entry).expect("initial activation");

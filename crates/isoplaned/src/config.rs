@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::SocketAddr;
 
-use isoplane_abi::config::{HandlerLifecycle, Limits, DEFAULT_ADMIN_PORT, DEFAULT_PROXY_PORT};
+use isoplane_abi::config::{Limits, DEFAULT_ADMIN_PORT, DEFAULT_PROXY_PORT};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -241,8 +241,6 @@ pub struct AppConfig {
     pub tenant: String,
     #[serde(default)]
     pub limits: Limits,
-    #[serde(default)]
-    pub lifecycle: HandlerLifecycle,
     /// Which cell this app's instances run in.
     pub cell: String,
     #[serde(default)]
@@ -327,7 +325,6 @@ impl NodeConfig {
                 name: "quotes".into(),
                 tenant: "acme".into(),
                 limits: Limits::default(),
-                lifecycle: HandlerLifecycle::Reuse,
                 cell: "cell-1".into(),
                 hosts: vec![
                     "quotes.isoplane.dev".into(),

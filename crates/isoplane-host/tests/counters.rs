@@ -4,7 +4,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use isoplane_abi::config::{AppManifest, Bindings, HandlerConfig, HandlerLifecycle, Limits};
+use isoplane_abi::config::{AppManifest, Bindings, Limits};
 use isoplane_abi::dispatch::{DispatchRecord, HttpRequest};
 use isoplane_abi::status::TrapCode;
 
@@ -47,13 +47,12 @@ fn rig(cfg: CellConfig) -> Rig {
     }
 }
 
-fn manifest(name: &str, lifecycle: HandlerLifecycle) -> AppManifest {
+fn manifest(name: &str) -> AppManifest {
     AppManifest {
         guest_memory_bytes: None,
         resource_limits: Default::default(),
         validation_limits: Default::default(),
         name: name.into(),
-        handlers: HandlerConfig { lifecycle },
         bindings: Bindings::default(),
         limits: Limits::default(),
         init_visible_vars: vec![],
@@ -88,9 +87,7 @@ fn wait_for(mut cond: impl FnMut() -> bool, within: Duration) -> bool {
 fn app(r: &Rig, name: &str, behaviour: FakeBehaviour) -> ModuleId {
     let act = Arc::new(FakeActivator::named(ModuleId::new(name, "v1"), behaviour));
     let module = act.module().clone();
-    r.cell
-        .register_module("acme", act, manifest(name, HandlerLifecycle::Reuse))
-        .unwrap();
+    r.cell.register_module("acme", act, manifest(name)).unwrap();
     module
 }
 

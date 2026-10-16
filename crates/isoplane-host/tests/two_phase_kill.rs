@@ -7,7 +7,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use isoplane_abi::config::{AppManifest, Bindings, HandlerConfig, HandlerLifecycle, Limits};
+use isoplane_abi::config::{AppManifest, Bindings, Limits};
 use isoplane_abi::dispatch::HttpRequest;
 use isoplane_engine::{Completion, EngineConfig, IsoplaneEngine};
 
@@ -47,20 +47,19 @@ fn services() -> Arc<Services> {
     })
 }
 
-fn manifest(name: &str, lifecycle: HandlerLifecycle) -> AppManifest {
+fn manifest(name: &str) -> AppManifest {
     AppManifest {
         guest_memory_bytes: None,
         resource_limits: Default::default(),
         validation_limits: Default::default(),
         name: name.into(),
-        handlers: HandlerConfig { lifecycle },
         bindings: Bindings::default(),
         limits: Limits::default(),
         init_visible_vars: vec![],
     }
 }
 
-fn rig(lifecycle: HandlerLifecycle) -> (Arc<Cell>, ModuleId) {
+fn rig() -> (Arc<Cell>, ModuleId) {
     let engine = Arc::new(
         IsoplaneEngine::new(EngineConfig {
             max_instances: 64,
@@ -73,16 +72,13 @@ fn rig(lifecycle: HandlerLifecycle) -> (Arc<Cell>, ModuleId) {
     let module = ModuleId::new("misbehaver", "v1");
     let act = EngineActivator::load(engine, module.clone(), &misbehaver_wasm())
         .expect("misbehaver.wasm must compile: it is the subject of these tests");
-    cell_with(lifecycle, Arc::new(act))
+    cell_with(Arc::new(act))
 }
 
-fn cell_with(
-    lifecycle: HandlerLifecycle,
-    act: Arc<dyn isoplane_host::Activator>,
-) -> (Arc<Cell>, ModuleId) {
+fn cell_with(act: Arc<dyn isoplane_host::Activator>) -> (Arc<Cell>, ModuleId) {
     let module = act.module().clone();
     let cell = Cell::new(CellConfig::for_test("isoplane-kill"), services()).expect("a cell starts");
-    cell.register_module("acme", act, manifest("misbehaver", lifecycle))
+    cell.register_module("acme", act, manifest("misbehaver"))
         .expect("register");
     (cell, module)
 }
@@ -123,7 +119,7 @@ fn get(cell: &Cell, module: &ModuleId, path: &str) -> DispatchResult {
 /// make sure nothing calls into it again: it evicts the instance.
 #[test]
 fn conformance_1_a_killed_instance_is_evicted_and_never_called_again() {
-    let (cell, module) = rig(HandlerLifecycle::Reuse);
+    let (cell, module) = rig();
 
     let killed = get(&cell, &module, "/spin");
     assert_eq!(
@@ -159,13 +155,10 @@ fn conformance_1_a_killed_instance_is_evicted_and_never_called_again() {
 
 #[test]
 fn a_clean_kill_is_recorded_without_evicting_the_instance() {
-    let (cell, module) = cell_with(
-        HandlerLifecycle::Reuse,
-        Arc::new(FakeActivator::named(
-            ModuleId::new("misbehaver", "v1"),
-            FakeBehaviour::program([Step::CleanKill { overage_ns: 123 }]),
-        )),
-    );
+    let (cell, module) = cell_with(Arc::new(FakeActivator::named(
+        ModuleId::new("misbehaver", "v1"),
+        FakeBehaviour::program([Step::CleanKill { overage_ns: 123 }]),
+    )));
     let out = get(&cell, &module, "/cooperative");
     assert_eq!(out.completion, Completion::CleanKill);
     assert_eq!(out.status, 503);
@@ -189,7 +182,7 @@ fn a_clean_kill_is_recorded_without_evicting_the_instance() {
 #[test]
 fn a_guest_that_awaits_between_chunks_unwinds_on_its_cancellation_and_takes_the_clean_kill() {
     TestLogCapture::global();
-    let (cell, module) = rig(HandlerLifecycle::Reuse);
+    let (cell, module) = rig();
     let out = get(&cell, &module, "/cooperative");
     assert_eq!(
         (out.completion, out.status),
@@ -214,7 +207,7 @@ fn a_guest_that_awaits_between_chunks_unwinds_on_its_cancellation_and_takes_the_
 /// extension for everybody.
 #[test]
 fn negative_control_an_uncooperative_guest_cannot_reach_the_clean_path() {
-    let (cell, module) = rig(HandlerLifecycle::Reuse);
+    let (cell, module) = rig();
 
     for route in ["/spin", "/gc_pin"] {
         let out = get(&cell, &module, route);
@@ -246,13 +239,10 @@ fn the_hang_breaker_counts_only_hard_kills() {
         (Step::CleanKill { overage_ns: 123 }, 6, 0, 0),
         (Step::HardKill, 0, 3, 3),
     ] {
-        let (cell, module) = cell_with(
-            HandlerLifecycle::Reuse,
-            Arc::new(FakeActivator::named(
-                ModuleId::new("misbehaver", "v1"),
-                FakeBehaviour::program([step]),
-            )),
-        );
+        let (cell, module) = cell_with(Arc::new(FakeActivator::named(
+            ModuleId::new("misbehaver", "v1"),
+            FakeBehaviour::program([step]),
+        )));
         for _ in 0..6 {
             get(&cell, &module, "/budget");
         }

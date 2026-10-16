@@ -9,8 +9,6 @@ use super::Limits;
 pub struct AppManifest {
     pub name: String,
     #[serde(default)]
-    pub handlers: HandlerConfig,
-    #[serde(default)]
     pub bindings: Bindings,
     #[serde(default)]
     pub limits: Limits,
@@ -26,12 +24,6 @@ pub struct AppManifest {
     /// Non-secret variables handed to the init sandbox as a data blob.
     #[serde(default)]
     pub init_visible_vars: Vec<(String, String)>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct HandlerConfig {
-    #[serde(default)]
-    pub lifecycle: HandlerLifecycle,
 }
 
 /// Selects additional runtime initialization imports.
@@ -55,20 +47,6 @@ impl InitSandbox {
         }
     }
 }
-
-/// Per-app: whether an instance may serve more than one dispatch.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum HandlerLifecycle {
-    /// Instances may survive across dispatches, and the platform resets or
-    /// discards them whenever it chooses.
-    #[default]
-    Reuse,
-    /// Every dispatch runs on a pristine clone of the template.
-    Fresh,
-}
-
-impl HandlerLifecycle {}
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

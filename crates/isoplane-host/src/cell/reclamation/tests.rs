@@ -145,17 +145,10 @@ fn test_cell(storage: Arc<Storage>, handler_after_ms: u64) -> Arc<Cell> {
     .expect("the synchronous reclamation test cell must initialize")
 }
 
-fn register(
-    cell: &Arc<Cell>,
-    name: &str,
-    lifecycle: HandlerLifecycle,
-    behaviour: FakeBehaviour,
-) -> ModuleId {
+fn register(cell: &Arc<Cell>, name: &str, behaviour: FakeBehaviour) -> ModuleId {
     let activator = Arc::new(FakeActivator::named(ModuleId::new(name, "v1"), behaviour));
     let module = activator.module().clone();
-    let mut manifest = manifest(name);
-    manifest.handlers.lifecycle = lifecycle;
-    cell.register_module("acme", activator, manifest)
+    cell.register_module("acme", activator, manifest(name))
         .expect("reclamation fixture module must register");
     module
 }
@@ -184,7 +177,7 @@ fn completed(cell: &Arc<Cell>, module: &ModuleId, id: u64) -> DispatchResult {
 }
 
 fn idle(cell: &Arc<Cell>, name: &str, last_used_ms: u64) -> Arc<Slot> {
-    let module = register(cell, name, HandlerLifecycle::Reuse, FakeBehaviour::done());
+    let module = register(cell, name, FakeBehaviour::done());
     let result = completed(cell, &module, 1);
     assert_eq!(
         result.status, 200,
@@ -205,7 +198,6 @@ fn active(
     let module = register(
         cell,
         name,
-        HandlerLifecycle::Reuse,
         FakeBehaviour::program([Step::Park { imports: vec![] }]),
     );
     let response = dispatch(cell, &module, 1);
@@ -314,12 +306,7 @@ fn a_candidate_observed_before_recent_activity_cannot_reclaim_the_slot() {
 #[test]
 fn an_idle_reuse_handler_restores_its_snapshot_through_pool_acquisition() {
     let cell = test_cell(Storage::new(1), 0);
-    let module = register(
-        &cell,
-        "reuse",
-        HandlerLifecycle::Reuse,
-        FakeBehaviour::done().with_lazy_init_probe(),
-    );
+    let module = register(&cell, "reuse", FakeBehaviour::done().with_lazy_init_probe());
     let first = completed(&cell, &module, 1);
     assert!(
         cell.reclaim_candidate(candidate(&cell, first.instance))
@@ -348,7 +335,6 @@ fn a_snapshot_that_fails_its_checksum_restores_from_the_template() {
     let module = register(
         &cell,
         "corrupt",
-        HandlerLifecycle::Reuse,
         FakeBehaviour::done().with_lazy_init_probe(),
     );
     let first = completed(&cell, &module, 1);
@@ -372,24 +358,27 @@ fn a_snapshot_that_fails_its_checksum_restores_from_the_template() {
 }
 
 #[test]
-fn a_hibernated_fresh_candidate_is_reset_before_the_next_request() {
+fn a_hibernated_reset_candidate_is_reset_before_the_next_request() {
     let cell = test_cell(Storage::new(1), 0);
-    let module = register(
-        &cell,
-        "fresh",
-        HandlerLifecycle::Fresh,
-        FakeBehaviour::done().with_lazy_init_probe(),
-    );
+    let module = register(&cell, "reset", FakeBehaviour::done().with_lazy_init_probe());
     let first = completed(&cell, &module, 1);
+    let entry = cell
+        .modules
+        .read()
+        .get(&module)
+        .cloned()
+        .expect("registered module");
+    let (warm, _) = cell.acquire_handler(&entry).expect("warm instance");
+    entry.pool.release(warm, crate::disposition::policy_reset());
     assert!(
         cell.reclaim_candidate(candidate(&cell, first.instance))
-            .expect("fresh candidate capture"),
-        "the completed fresh candidate must hibernate before reset"
+            .expect("reset candidate capture"),
+        "the reset candidate must hibernate before reset"
     );
     let second = completed(&cell, &module, 2);
     assert_eq!(
         second.acquired, "pooled_fresh",
-        "fresh pool acquisition must perform its deferred reset after restoration"
+        "acquisition must perform the deferred reset after restoration"
     );
     assert_eq!(
         second.instance, first.instance,
@@ -397,7 +386,7 @@ fn a_hibernated_fresh_candidate_is_reset_before_the_next_request() {
     );
     assert_eq!(
         second.body, first.body,
-        "fresh acquisition must clear prior request initialization residue"
+        "a reset acquisition must clear prior request initialization residue"
     );
 }
 
@@ -484,7 +473,7 @@ fn storage_pressure_evicts_an_idle_snapshot_before_admitting_another_handler() {
             .expect("cached capture"),
         "the completed handler must have an evictable snapshot"
     );
-    let module = register(&cell, "new", HandlerLifecycle::Reuse, FakeBehaviour::done());
+    let module = register(&cell, "new", FakeBehaviour::done());
     let result = completed(&cell, &module, 2);
     assert_eq!(
         result.status, 200,
@@ -536,7 +525,7 @@ fn storage_pressure_cannot_evict_an_active_dispatch_snapshot() {
             .expect("active capture"),
         "the parked active request must be locally suspendable"
     );
-    let module = register(&cell, "new", HandlerLifecycle::Reuse, FakeBehaviour::done());
+    let module = register(&cell, "new", FakeBehaviour::done());
     let refused = completed(&cell, &module, 2);
     assert_eq!(
         refused.status, 503,

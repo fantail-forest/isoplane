@@ -1663,13 +1663,9 @@ mod timer_tests {
     }
 
     fn reactor_bindings() -> (Arc<crate::bindings::InstanceCtx>, Arc<Woken>) {
-        use isoplane_abi::config::{HandlerLifecycle, Limits};
+        use isoplane_abi::config::Limits;
         let woken = Arc::new(Woken(Mutex::new(Vec::new())));
-        let mut context = crate::bindings::InstanceCtx::for_test(
-            InstanceId(7),
-            HandlerLifecycle::Reuse,
-            Limits::default(),
-        );
+        let mut context = crate::bindings::InstanceCtx::for_test(InstanceId(7), Limits::default());
         context.rt = Some(Arc::new(crate::bindings::CellRuntime {
             runtime_configuration: Default::default(),
             services: Arc::new(crate::cell::Services {

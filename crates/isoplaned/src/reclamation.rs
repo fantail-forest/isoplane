@@ -373,7 +373,6 @@ mod tests {
         let version = application.versions[0].id.clone();
         let tenant = application.tenant.clone();
         let hostname = application.hosts[0].clone();
-        let lifecycle = application.lifecycle;
         let limits = application.limits;
         config.apps = vec![application];
         let node = crate::Node::build(config).expect("assemble a real node");
@@ -418,7 +417,7 @@ mod tests {
             .load_template(&wasm)
             .expect("load real guest template");
         let manifest = serde_json::from_value(serde_json::json!({
-            "name": app, "handlers": { "lifecycle": lifecycle }, "limits": limits,
+            "name": app, "limits": limits,
             "guest_memory_bytes": 2 * isoplane_abi::WASM_PAGE_SIZE,
         }))
         .expect("fixture manifest must describe its memory ceiling");

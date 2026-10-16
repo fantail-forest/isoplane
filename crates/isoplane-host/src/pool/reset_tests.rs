@@ -5,7 +5,7 @@ use crate::bindings::InstanceCtx;
 use crate::disposition::policy_reset;
 use crate::slot::{LifecycleTier, Slot};
 use crate::{InstanceId, ModuleId};
-use isoplane_abi::config::{HandlerLifecycle, Limits};
+use isoplane_abi::config::Limits;
 use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest};
 use isoplane_engine::{
     Completion, EngineConfig, HostBindings, ImportCall, IsoplaneEngine, OccupancyBudget, Template,
@@ -75,11 +75,7 @@ impl Activator for ResetStartActivator {
 }
 
 fn context(id: InstanceId) -> Arc<InstanceCtx> {
-    Arc::new(InstanceCtx::for_test(
-        id,
-        HandlerLifecycle::Fresh,
-        Limits::default(),
-    ))
+    Arc::new(InstanceCtx::for_test(id, Limits::default()))
 }
 
 fn completed_start_guest() -> (InstancePool, Arc<Slot>, Arc<ResetStartActivator>) {
@@ -111,7 +107,7 @@ fn completed_start_guest() -> (InstancePool, Arc<Slot>, Arc<ResetStartActivator>
         template,
         refuse_activation: AtomicBool::new(false),
     });
-    let pool = InstancePool::new(activator.clone(), HandlerLifecycle::Fresh, 1);
+    let pool = InstancePool::new(activator.clone(), 1);
     let (slot, _) = pool.acquire(context).unwrap();
     let dispatch = DispatchRecord {
         dispatch_id: 1,

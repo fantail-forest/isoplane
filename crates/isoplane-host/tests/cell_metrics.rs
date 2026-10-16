@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use isoplane_abi::config::{HandlerLifecycle, Limits};
+use isoplane_abi::config::Limits;
 use isoplane_abi::dispatch::{DispatchRecord, HttpRequest};
 
 use isoplane_host::cell::{Cell, CellConfig, Target};
@@ -58,11 +58,7 @@ fn the_metrics_endpoint_decomposes_the_lifecycle() {
     ));
     let module = act.module().clone();
     r.cell
-        .register_module(
-            "acme",
-            act,
-            manifest("m", HandlerLifecycle::Reuse, Limits::default()),
-        )
+        .register_module("acme", act, manifest("m", Limits::default()))
         .unwrap();
     for i in 0..5 {
         let mut rec = http(&r.cell, &module, "/");
@@ -135,18 +131,10 @@ fn logging_is_charged_to_the_dispatch_that_logs() {
     let qm = quiet.module().clone();
     let lm = loud.module().clone();
     r.cell
-        .register_module(
-            "acme",
-            quiet,
-            manifest("quiet-logger", HandlerLifecycle::Fresh, Limits::default()),
-        )
+        .register_module("acme", quiet, manifest("quiet-logger", Limits::default()))
         .unwrap();
     r.cell
-        .register_module(
-            "acme",
-            loud,
-            manifest("loud-logger", HandlerLifecycle::Fresh, Limits::default()),
-        )
+        .register_module("acme", loud, manifest("loud-logger", Limits::default()))
         .unwrap();
 
     let q = r

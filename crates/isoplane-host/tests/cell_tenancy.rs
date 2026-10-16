@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use isoplane_abi::config::{HandlerLifecycle, Limits};
+use isoplane_abi::config::Limits;
 
 use isoplane_host::cell::{Cell, CellConfig};
 use isoplane_host::fakes::*;
@@ -37,7 +37,7 @@ fn runtime_configuration_requires_the_registered_module_owner() {
         .register_module(
             "acme",
             Arc::new(FakeActivator::named(module.clone(), FakeBehaviour::done())),
-            manifest("app", HandlerLifecycle::Reuse, Limits::default()),
+            manifest("app", Limits::default()),
         )
         .expect("register module");
     assert!(

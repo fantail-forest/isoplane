@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use isoplane_abi::config::{GuestMemoryBytes, HandlerLifecycle, Limits};
+use isoplane_abi::config::{GuestMemoryBytes, Limits};
 use isoplane_engine::{Completion, EngineConfig, IsoplaneEngine};
 use isoplane_host::cell::Target;
 use isoplane_host::{CellConfig, EngineActivator, ModuleId};
@@ -65,7 +65,6 @@ fn dispatch_growth(
         .expect("a cell starts");
         let mut manifest = common::manifest(
             "memory-budget",
-            HandlerLifecycle::Reuse,
             Limits {
                 module_bytes_compressed: 5242880,
                 package_bytes: 52428800,
@@ -185,7 +184,6 @@ fn a_template_larger_than_the_application_budget_is_refused_at_activation() {
             .expect("template fits the engine capacity");
         let context = Arc::new(isoplane_host::bindings::InstanceCtx::for_test(
             isoplane_host::InstanceId(1),
-            HandlerLifecycle::Reuse,
             Limits {
                 module_bytes_compressed: 5242880,
                 package_bytes: 52428800,

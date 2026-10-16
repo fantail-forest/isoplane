@@ -3,7 +3,7 @@
 mod common;
 #[path = "common/managed.rs"]
 mod managed;
-use isoplane_abi::config::{HandlerLifecycle, Limits};
+use isoplane_abi::config::Limits;
 use isoplane_abi::dispatch::HttpRequest;
 use isoplane_engine::IsoplaneEngine;
 use isoplane_fixtures::GuestRuntime;
@@ -59,11 +59,7 @@ fn cleanup_cell(
     cell.register_module(
         "tenant",
         Arc::new(activator),
-        common::manifest(
-            "managed-cleanup",
-            HandlerLifecycle::Reuse,
-            Limits::default(),
-        ),
+        common::manifest("managed-cleanup", Limits::default()),
     )
     .expect("the cleanup module must register");
     (cell, module)

@@ -1,9 +1,9 @@
-//! Fresh vs. reuse residue and entropy isolation across clones.
+//! Reuse residue and entropy isolation across clones.
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use isoplane_abi::config::{HandlerLifecycle, Limits};
+use isoplane_abi::config::Limits;
 use isoplane_abi::dispatch::{DispatchRecord, HttpRequest};
 
 use isoplane_host::cell::{Cell, CellConfig, Target};
@@ -59,79 +59,63 @@ async fn dropping_a_cell_from_an_async_task_cancels_its_reactor_tasks() {
 /// The fake guest's lazy-init probe reports `0` for a pristine instance and
 /// `1` for a previous request's residue.
 #[test]
-fn fresh_leaves_no_residue_reuse_does() {
+fn a_reused_instance_keeps_its_residue() {
     let r = rig(CellConfig::for_test("residue"), );
+    let act = Arc::new(FakeActivator::named(
+        ModuleId::new("reuse-app", "v1"),
+        FakeBehaviour::done().with_lazy_init_probe(),
+    ));
+    let module = act.module().clone();
+    r.cell
+        .register_module("acme", act, manifest("reuse-app", Limits::default()))
+        .unwrap();
 
-    for (app, lifecycle) in [
-        ("reuse-app", HandlerLifecycle::Reuse),
-        ("fresh-app", HandlerLifecycle::Fresh),
-    ] {
-        let act = Arc::new(FakeActivator::named(
-            ModuleId::new(app, "v1"),
-            FakeBehaviour::done().with_lazy_init_probe(),
-        ));
-        let module = act.module().clone();
-        r.cell
-            .register_module("acme", act, manifest(app, lifecycle, Limits::default()))
+    let mut observed = Vec::new();
+    for i in 0..25 {
+        let mut rec = http(&r.cell, &module, "/probe");
+        rec.dispatch_id = i;
+        let out = r
+            .cell
+            .dispatch_blocking(
+                &module,
+                Target::Handler {
+                    route: "/probe".into(),
+                },
+                rec,
+                T,
+            )
             .unwrap();
-
-        let mut observed = Vec::new();
-        for i in 0..25 {
-            let mut rec = http(&r.cell, &module, "/probe");
-            rec.dispatch_id = i;
-            let out = r
-                .cell
-                .dispatch_blocking(
-                    &module,
-                    Target::Handler {
-                        route: "/probe".into(),
-                    },
-                    rec,
-                    T,
-                )
-                .unwrap();
-            assert_eq!(out.status, 200, "{app} failed: {:?}", out.trap);
-            observed.push(out.body[0]);
-        }
-
-        match lifecycle {
-            HandlerLifecycle::Fresh => {
-                assert!(
-                    observed.iter().all(|v| *v == 0),
-                    "a `fresh` dispatch observed residue: {observed:?}"
-                );
-                let m = r.cell.meters(&module).unwrap();
-                assert_eq!(m.dispatches(), 25, "every dispatch is counted");
-            }
-            HandlerLifecycle::Reuse => {
-                assert_eq!(observed[0], 0, "the first dispatch cannot observe residue");
-                assert!(
-                    observed[1..].contains(&1),
-                    "`reuse` must let per-instance memoization pay off: {observed:?}"
-                );
-                let m = r.cell.meters(&module).unwrap();
-            }
-        }
+        assert_eq!(out.status, 200, "reuse-app failed: {:?}", out.trap);
+        observed.push(out.body[0]);
     }
+
+    assert_eq!(observed[0], 0, "the first dispatch cannot observe residue");
+    assert!(
+        observed[1..].contains(&1),
+        "reuse must let per-instance memoization pay off: {observed:?}"
+    );
+    let m = r.cell.meters(&module).unwrap();
+    assert_eq!(m.dispatches(), 25, "every dispatch is counted");
     r.cell.shutdown();
 }
 
 
 #[test]
 fn clones_of_one_template_never_share_entropy() {
-    let r = rig(CellConfig::for_test("entropy"), );
+    // No idle instances, so every dispatch runs on a new clone of the template.
+    let r = rig(
+        CellConfig {
+            max_idle_per_module: 0,
+            ..CellConfig::for_test("entropy")
+        },
+    );
     let act = Arc::new(FakeActivator::named(
         ModuleId::new("rng", "v1"),
         FakeBehaviour::program([Step::Entropy { bytes: 32 }]),
     ));
     let module = act.module().clone();
-    // `fresh`: every dispatch is a clone of the same template.
     r.cell
-        .register_module(
-            "acme",
-            act.clone(),
-            manifest("rng", HandlerLifecycle::Fresh, Limits::default()),
-        )
+        .register_module("acme", act.clone(), manifest("rng", Limits::default()))
         .unwrap();
 
     for i in 0..50 {
@@ -172,11 +156,7 @@ fn a_retired_module_refuses_new_work_and_discards_its_idle_instances() {
     ));
     let module = act.module().clone();
     r.cell
-        .register_module(
-            "acme",
-            act,
-            manifest("retired-app", HandlerLifecycle::Reuse, Limits::default()),
-        )
+        .register_module("acme", act, manifest("retired-app", Limits::default()))
         .unwrap();
     let handler = || Target::Handler { route: "/".into() };
     let served = r

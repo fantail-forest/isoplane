@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use isoplane_abi::config::{AppManifest, Bindings, HandlerConfig, HandlerLifecycle, Limits};
+use isoplane_abi::config::{AppManifest, Bindings, Limits};
 
 use isoplane_host::cell::{Cell, CellConfig, Services};
 use isoplane_host::egress::HostEgressPolicy;
@@ -43,13 +43,12 @@ pub fn services_resolving(addr: &str) -> (Arc<Services>, Arc<FakeFetcher>) {
     (svc, fetcher)
 }
 
-pub fn manifest(name: &str, lifecycle: HandlerLifecycle, limits: Limits) -> AppManifest {
+pub fn manifest(name: &str, limits: Limits) -> AppManifest {
     AppManifest {
         guest_memory_bytes: None,
         resource_limits: Default::default(),
         validation_limits: Default::default(),
         name: name.into(),
-        handlers: HandlerConfig { lifecycle },
         bindings: Bindings::default(),
         limits: limits,
         init_visible_vars: vec![],

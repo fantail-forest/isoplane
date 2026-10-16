@@ -414,7 +414,6 @@ impl LocalApp {
             app: prepared.manifest.name,
             tenant: prepared.tenant,
             version: prepared.version,
-            lifecycle: prepared.manifest.handlers.lifecycle,
             tier: isoplane_abi::host::CodeTier::Fast,
         };
         let routes = Arc::new(AppRoute(target.clone()));
@@ -528,7 +527,6 @@ mod storage_tests {
                     module: ModuleId::new("app", "test"),
                     tenant: "test".into(),
                     limits: project.manifest.limits,
-                    lifecycle: Default::default(),
                     allowlist: None,
                 },
                 Arc::default(),

@@ -45,8 +45,8 @@ impl Cancellation {
             .fetch_max(generation.0, Ordering::AcqRel);
     }
 
-    /// A new dispatch starts uncancelled. Under `reuse` the previous one may
-    /// have ended in a clean kill a moment ago.
+    /// A new dispatch starts uncancelled. The instance's previous one may have
+    /// ended in a clean kill a moment ago.
     pub(crate) fn begin_dispatch(&self) {
         self.requested.store(false, Ordering::Release);
         self.observed.store(false, Ordering::Release);

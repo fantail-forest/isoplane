@@ -359,15 +359,14 @@ mod tests {
     }
 
     fn parked_slot(how: Completion) -> (Arc<Slot>, Arc<dyn Activator>) {
-        use isoplane_abi::config::{HandlerLifecycle, Limits};
+        use isoplane_abi::config::Limits;
         use isoplane_hibernate::snapshot::SnapshotStorage;
         let act: Arc<dyn Activator> = Arc::new(HintActivator::new(how));
-        let pool = InstancePool::new(act.clone(), HandlerLifecycle::Reuse, 4);
+        let pool = InstancePool::new(act.clone(), 4);
         let (slot, _) = pool
             .acquire(|id| {
                 Arc::new(crate::bindings::InstanceCtx::for_test(
                     id,
-                    HandlerLifecycle::Reuse,
                     Limits::default(),
                 ))
             })

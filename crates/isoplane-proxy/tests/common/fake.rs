@@ -4,7 +4,6 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 
 use async_trait::async_trait;
-use isoplane_abi::config::HandlerLifecycle;
 use isoplane_abi::dispatch::HttpRequest;
 use isoplane_abi::host::{CodeTier, Dispatcher, HttpReply, RouteTarget};
 use parking_lot::Mutex;
@@ -72,7 +71,6 @@ impl Dispatcher for FakeCell {
             "version": target.version,
             "tenant": target.tenant,
             "tier": match target.tier { CodeTier::Fast => "fast", CodeTier::Optimized => "optimized" },
-            "lifecycle": match target.lifecycle { HandlerLifecycle::Reuse => "reuse", HandlerLifecycle::Fresh => "fresh" },
             "method": req.method,
             "path": req.path,
             "headers": req.headers,

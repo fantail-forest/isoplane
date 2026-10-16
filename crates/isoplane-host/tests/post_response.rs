@@ -5,7 +5,7 @@
 
 mod common;
 
-use isoplane_abi::config::{HandlerLifecycle, Limits};
+use isoplane_abi::config::Limits;
 use isoplane_abi::dispatch::HttpRequest;
 use isoplane_engine::{Completion, EngineConfig, IsoplaneEngine};
 use isoplane_host::cell::{Cell, CellConfig, DispatchResult, Target};
@@ -44,7 +44,7 @@ fn dispatch(handle: &str, wake: &str) -> (Arc<Cell>, DispatchResult) {
     cell.register_module(
         "owner",
         activator,
-        common::manifest("background", HandlerLifecycle::Reuse, Limits::default()),
+        common::manifest("background", Limits::default()),
     )
     .expect("register real guest");
     let record = cell.http_record(

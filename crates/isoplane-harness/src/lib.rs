@@ -13,7 +13,7 @@ use compiled_guest::engine_serving;
 use std::sync::Arc;
 use std::time::Duration;
 
-use isoplane_abi::config::{HandlerLifecycle, Limits};
+use isoplane_abi::config::Limits;
 use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest, TraceContext};
 use isoplane_abi::result::ResultRecord;
 use isoplane_engine::prepared::PreparedTemplate;
@@ -212,7 +212,6 @@ fn context(owner: InstanceId, runtime: Arc<CellRuntime>) -> Arc<InstanceCtx> {
             tenant: "returned-guest-test".into(),
             limits: GUEST_LIMITS,
 
-            lifecycle: HandlerLifecycle::Reuse,
             allowlist: None,
         },
         Arc::new(Meters::new()),

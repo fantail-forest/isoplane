@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use hyper::body::Frame;
-use isoplane_abi::config::{HandlerLifecycle, Limits};
+use isoplane_abi::config::Limits;
 use isoplane_abi::result::{FetchResponse, FutureError, ResultRecord};
 use isoplane_engine::{HostBindings, ImportCall};
 use isoplane_host::bindings::{
@@ -150,7 +150,6 @@ impl Rig {
                 tenant: tenant.into(),
                 limits: Limits::default(),
 
-                lifecycle: HandlerLifecycle::Reuse,
                 allowlist: None,
             },
             Arc::new(Meters::new()),
@@ -234,9 +233,6 @@ pub fn cell(
             resource_limits: Default::default(),
             validation_limits: Default::default(),
             name: module.app.clone(),
-            handlers: isoplane_abi::config::HandlerConfig {
-                lifecycle: HandlerLifecycle::Reuse,
-            },
             bindings: Default::default(),
             limits: Limits::default(),
             init_visible_vars: vec![],

@@ -63,7 +63,6 @@ impl Cell {
             slot.id,
             ActiveRequest {
                 dispatch_id: job.rec.dispatch_id,
-                lifecycle: entry.manifest.handlers.lifecycle,
                 module: job.module.clone(),
                 route: job.target.route(),
                 idle_stop_at: match &job.target {
@@ -252,11 +251,7 @@ impl Cell {
                     self.count_enter_refusal(error);
                     owner.select(TerminalReason::EntryRefused, 409);
                     self.respond(slot, owner.failure_result(409, "instance_unavailable"));
-                    self.finish_and_release(
-                        slot,
-                        &entry,
-                        evict(),
-                    );
+                    self.finish_and_release(slot, &entry, evict());
                     return;
                 }
             };
@@ -339,24 +334,16 @@ impl Cell {
             completion
         };
 
-        let (lifecycle, module, route, runs_idle_timers) = self
+        let (module, route, runs_idle_timers) = self
             .active
             .with_mut(&slot.id, |req| {
                 (
-                    req.lifecycle,
                     req.module.clone(),
                     req.route.clone(),
                     req.idle_stop_at.is_some(),
                 )
             })
-            .unwrap_or_else(|| {
-                (
-                    entry.manifest.handlers.lifecycle,
-                    entry.activator.module().clone(),
-                    String::new(),
-                    false,
-                )
-            });
+            .unwrap_or_else(|| (entry.activator.module().clone(), String::new(), false));
         // Running timers has no result to wait for: it is done once the guest
         // waits on nothing but more timers.
         let completion = if completion == Completion::Parked
@@ -405,7 +392,7 @@ impl Cell {
                     self.respond(slot, result);
                 }
 
-                match decide(lifecycle, completion, streaming_open) {
+                match decide(completion, streaming_open) {
                     RequestEnd::RetainedForStreaming => {
                         slot.park(crate::now_ms());
                         !self.rt.futures.has_ready(slot.id)
@@ -450,7 +437,7 @@ impl Cell {
                     Some(msg),
                 );
                 self.respond(slot, result);
-                match decide(lifecycle, completion, false) {
+                match decide(completion, false) {
                     RequestEnd::Disposed(d) => {
                         self.finish_and_release(slot, entry, d);
                         true
@@ -506,9 +493,7 @@ impl Cell {
     }
 
     /// The instance parks between slices. Returns whether the wake loop is done with it.
-    fn park_after_slice(
-&self,        slot: &Arc<Slot>,
-    ) -> bool {
+    fn park_after_slice(&self,slot: &Arc<Slot>, ) -> bool {
         slot.park(crate::now_ms());
         // A completion that landed while Hot is drained now.
         !self.rt.futures.has_ready(slot.id)

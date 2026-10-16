@@ -346,18 +346,14 @@ mod tests {
     use super::*;
     use crate::fakes::{FakeActivator, FakeBehaviour};
     use crate::pool::InstancePool;
-    use isoplane_abi::config::{HandlerLifecycle, Limits};
+    use isoplane_abi::config::Limits;
 
-    fn ctx_for(id: InstanceId, lifecycle: HandlerLifecycle) -> Arc<InstanceCtx> {
-        Arc::new(InstanceCtx::for_test(id, lifecycle, Limits::default()))
+    fn ctx_for(id: InstanceId) -> Arc<InstanceCtx> {
+        Arc::new(InstanceCtx::for_test(id, Limits::default()))
     }
 
-    fn pool(lifecycle: HandlerLifecycle) -> InstancePool {
-        InstancePool::new(
-            Arc::new(FakeActivator::new(FakeBehaviour::default())),
-            lifecycle,
-            16,
-        )
+    fn pool() -> InstancePool {
+        InstancePool::new(Arc::new(FakeActivator::new(FakeBehaviour::default())), 16)
     }
 
     fn pollable(slot: &Slot) -> isoplane_abi::native_io::ResourceHandle {
@@ -420,7 +416,7 @@ mod tests {
         })
         .unwrap();
         let template = engine.load_template(&wasm).unwrap();
-        let ctx = ctx_for(InstanceId(1), HandlerLifecycle::Fresh);
+        let ctx = ctx_for(InstanceId(1));
         let instance = engine
             .activate(&template, crate::bindings::CellBindings::boxed(ctx.clone()))
             .unwrap();
@@ -452,23 +448,23 @@ mod tests {
                 )),
                 Ok(isoplane_abi::native_io::Response::Ready(true))
             ),
-            "fresh reuse must restore the guest-cached inert pollable"
+            "a reset must restore the guest-cached inert pollable"
         );
         assert_eq!(
             pollable(slot).0,
             5,
-            "fresh reuse must restart allocation at the captured next handle"
+            "a reset must restart allocation at the captured next handle"
         );
     }
 
     #[test]
-    fn fresh_slot_reset_releases_old_resources_before_restoring_the_prepared_baseline() {
+    fn slot_reset_releases_old_resources_before_restoring_the_prepared_baseline() {
         let (_engine, _template, ctx, instance) = prepared_native_instance();
         let slot = Slot::new(ctx.instance, ctx, Box::new(instance));
         assert_prepared_native_baseline(&slot);
         let retired = pollable(&slot);
         slot.reset()
-            .expect("fresh reuse must restore native authority before the first guest entry");
+            .expect("a reset must restore native authority before the first guest entry");
         assert_pollable_released(&slot, retired);
         assert_prepared_native_baseline(&slot);
     }
@@ -523,10 +519,8 @@ mod tests {
 
     #[test]
     fn resetting_to_pristine_memory_releases_native_resources() {
-        let pool = pool(HandlerLifecycle::Reuse);
-        let (slot, _) = pool
-            .acquire(|id| ctx_for(id, HandlerLifecycle::Reuse))
-            .expect("the slot must activate");
+        let pool = pool();
+        let (slot, _) = pool.acquire(ctx_for).expect("the slot must activate");
         let handle = pollable(&slot);
         slot.reset()
             .expect("the idle slot must reset to its template");
@@ -535,10 +529,8 @@ mod tests {
 
     #[test]
     fn discarding_a_slot_releases_native_resources_even_while_its_context_is_retained() {
-        let pool = pool(HandlerLifecycle::Reuse);
-        let (slot, _) = pool
-            .acquire(|id| ctx_for(id, HandlerLifecycle::Reuse))
-            .expect("the slot must activate");
+        let pool = pool();
+        let (slot, _) = pool.acquire(ctx_for).expect("the slot must activate");
         let handle = pollable(&slot);
         slot.discard();
         assert_pollable_released(&slot, handle);
@@ -576,10 +568,8 @@ mod tests {
 
     #[test]
     fn a_second_call_into_a_busy_instance_is_impossible() {
-        let p = pool(HandlerLifecycle::Reuse);
-        let (slot, _) = p
-            .acquire(|id| ctx_for(id, HandlerLifecycle::Reuse))
-            .expect("acquire");
+        let p = pool();
+        let (slot, _) = p.acquire(ctx_for).expect("acquire");
         let guard = slot.enter().expect("first entry");
         assert_eq!(
             slot.enter().err(),
@@ -596,10 +586,8 @@ mod tests {
 
     #[test]
     fn a_hibernated_slot_has_nothing_to_call_into() {
-        let p = pool(HandlerLifecycle::Reuse);
-        let (slot, _) = p
-            .acquire(|id| ctx_for(id, HandlerLifecycle::Reuse))
-            .expect("acquire");
+        let p = pool();
+        let (slot, _) = p.acquire(ctx_for).expect("acquire");
         slot.park(0);
         slot.hibernate().expect("hibernate");
         assert_eq!(
@@ -611,10 +599,8 @@ mod tests {
 
     #[test]
     fn capture_is_refused_unless_parked() {
-        let p = pool(HandlerLifecycle::Reuse);
-        let (slot, _) = p
-            .acquire(|id| ctx_for(id, HandlerLifecycle::Reuse))
-            .expect("acquire");
+        let p = pool();
+        let (slot, _) = p.acquire(ctx_for).expect("acquire");
         let guard = slot.enter().expect("enter");
         assert!(
             !slot.is_capture_eligible(),

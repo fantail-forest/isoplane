@@ -6,9 +6,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
-use isoplane_abi::config::{
-    AppManifest, Bindings, GuestMemoryBytes, HandlerConfig, HandlerLifecycle, Limits,
-};
+use isoplane_abi::config::{AppManifest, Bindings, GuestMemoryBytes, Limits};
 use isoplane_engine::{Completion, EngineConfig, IsoplaneEngine};
 use isoplane_fixtures::GuestRuntime;
 use isoplane_harness::EmittedGuestLogs as _;
@@ -213,9 +211,6 @@ impl Rig {
                 ),
                 resource_limits: Default::default(),
                 validation_limits: Default::default(),
-                handlers: HandlerConfig {
-                    lifecycle: HandlerLifecycle::Reuse,
-                },
                 bindings: Bindings::default(),
                 limits: Limits::default(),
                 init_visible_vars: vec![],

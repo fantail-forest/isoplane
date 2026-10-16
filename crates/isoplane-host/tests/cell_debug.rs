@@ -2,7 +2,7 @@
 
 mod common;
 
-use isoplane_abi::config::{HandlerLifecycle, Limits};
+use isoplane_abi::config::Limits;
 use isoplane_abi::dispatch::HttpRequest;
 use isoplane_abi::result::ResultRecord;
 use isoplane_engine::{Completion, EngineConfig, IsoplaneEngine};
@@ -70,9 +70,9 @@ fn rig(park: bool) -> Rig {
     cell.register_debug_module(
         "owner",
         activator.clone(),
-        common::manifest("debug-cell", HandlerLifecycle::Reuse, Limits::default()),
+        common::manifest("debug-cell", Limits::default()),
     )
-    .expect("debug registration must establish fresh execution");
+    .expect("debug registration must succeed under the debug wall backstop");
     Rig { cell, module }
 }
 
@@ -230,11 +230,7 @@ fn debug_registration_refuses_a_production_wall_backstop() {
             .register_debug_module(
                 "owner",
                 activator,
-                common::manifest(
-                    "debug-registration",
-                    HandlerLifecycle::Fresh,
-                    Limits::default()
-                )
+                common::manifest("debug-registration", Limits::default())
             )
             .is_err(),
         "debug registration must not silently inherit production wall limits"

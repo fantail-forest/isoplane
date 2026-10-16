@@ -165,7 +165,7 @@ mod tests {
     use crate::bindings::{CellRuntime, InstanceCtx, Services, WakeSink};
     use crate::egress::{DestinationPolicy, HostEgressPolicy, Resolver};
     use crate::fakes::FakeFetcher;
-    use isoplane_abi::config::{HandlerLifecycle, Limits};
+    use isoplane_abi::config::Limits;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     struct NoDns;
@@ -233,8 +233,7 @@ mod tests {
             .expect("the instance must acquire its open permit")
             .established();
         let wake = Arc::new(Wake(tokio::sync::Notify::new()));
-        let mut context =
-            InstanceCtx::for_test(InstanceId(83), HandlerLifecycle::Reuse, Limits::default());
+        let mut context = InstanceCtx::for_test(InstanceId(83), Limits::default());
         context.rt = Some(Arc::new(CellRuntime {
             runtime_configuration: Default::default(),
             services: Arc::new(Services {

@@ -57,7 +57,6 @@ pub struct RouteTarget {
     pub app: String,
     pub version: String,
     pub tenant: String,
-    pub lifecycle: crate::config::HandlerLifecycle,
     pub tier: CodeTier,
 }
 

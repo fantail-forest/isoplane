@@ -1,22 +1,19 @@
 //! What happens to an instance at the end of a request; [`Disposition`] has one producer, [`decide`].
 
-use isoplane_abi::config::HandlerLifecycle;
 use isoplane_engine::Completion;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DispositionKind {
-    /// Keep the instance with its residue. Only reachable under `reuse`.
+    /// Keep the instance with its residue.
     Warm,
-    /// Back to template contents, then pooled; indistinguishable from a
-    /// fresh clone, so a `fresh` acquisition may draw from this pool.
+    /// Back to template contents, then pooled.
     Reset,
     Discard,
 }
 
-/// Constructible only by [`decide`], [`evict`] and [`policy_reset`], none of
-/// which produce `Warm` for a `fresh` app.
+/// Constructible only by [`decide`], [`evict`], [`warm`] and [`policy_reset`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[must_use = "an undisposed instance would leak residue, which `fresh` forbids"]
+#[must_use = "an undisposed instance would never return to its pool"]
 pub struct Disposition(DispositionKind);
 
 impl Disposition {
@@ -39,36 +36,23 @@ impl Disposition {
 pub enum RequestEnd {
     /// The guest returned `pending`; a wake will resume the request.
     Parked,
-    /// The streaming response is unfinished; under `fresh` the reset is still owed.
+    /// The streaming response is unfinished; the dispatch ends when it finishes.
     RetainedForStreaming,
     Disposed(Disposition),
 }
 
-/// The disposition table. A trapped or killed instance is discarded; `fresh`
-/// never yields `Warm`; `reuse` yields `Warm`.
-pub fn decide(
-    lifecycle: HandlerLifecycle,
-    completion: Completion,
-    streaming_open: bool,
-) -> RequestEnd {
+/// The disposition table. A trapped or killed instance is discarded, a
+/// cleanly killed one is reset, and a completed one stays warm.
+pub fn decide(completion: Completion, streaming_open: bool) -> RequestEnd {
     match completion {
         Completion::Parked => RequestEnd::Parked,
         Completion::Trapped | Completion::BudgetKill => {
             RequestEnd::Disposed(Disposition(DispositionKind::Discard))
         }
-        // Cooperative termination resets dispatch state under either reuse policy.
+        // Cooperative termination resets dispatch state.
         Completion::CleanKill => RequestEnd::Disposed(Disposition(DispositionKind::Reset)),
-        Completion::Done => {
-            if streaming_open {
-                return RequestEnd::RetainedForStreaming;
-            }
-            match lifecycle {
-                HandlerLifecycle::Fresh => {
-                    RequestEnd::Disposed(Disposition(DispositionKind::Reset))
-                }
-                HandlerLifecycle::Reuse => RequestEnd::Disposed(Disposition(DispositionKind::Warm)),
-            }
-        }
+        Completion::Done if streaming_open => RequestEnd::RetainedForStreaming,
+        Completion::Done => RequestEnd::Disposed(Disposition(DispositionKind::Warm)),
     }
 }
 
@@ -92,47 +76,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fresh_never_decides_warm() {
+    fn each_completion_has_its_disposition() {
         use Completion::*;
-        for c in [Done, Parked, Trapped, BudgetKill] {
-            for wait in [false, true] {
-                let end = decide(HandlerLifecycle::Fresh, c, wait);
-                if let RequestEnd::Disposed(d) = end {
-                    assert!(!d.is_warm(), "fresh produced Warm for {c:?} wait={wait}");
-                }
-            }
-        }
         assert_eq!(
-            decide(HandlerLifecycle::Fresh, Done, false),
-            RequestEnd::Disposed(Disposition(DispositionKind::Reset)),
-            "a completed fresh dispatch resets"
-        );
-        assert_eq!(
-            decide(HandlerLifecycle::Fresh, Done, true),
-            RequestEnd::RetainedForStreaming,
-            "the reset is owed only after the streaming response finishes"
-        );
-        assert_eq!(
-            decide(HandlerLifecycle::Reuse, Done, false),
+            decide(Done, false),
             RequestEnd::Disposed(Disposition(DispositionKind::Warm)),
-            "a completed reuse dispatch stays warm"
+            "a completed dispatch stays warm"
         );
-        for lc in [HandlerLifecycle::Fresh, HandlerLifecycle::Reuse] {
-            assert_eq!(
-                decide(lc, BudgetKill, false),
-                RequestEnd::Disposed(Disposition(DispositionKind::Discard)),
-                "a killed instance is never reused"
-            );
-            assert_eq!(
-                decide(lc, Trapped, false),
-                RequestEnd::Disposed(Disposition(DispositionKind::Discard)),
-                "a trapped instance is never reused"
-            );
-            assert_eq!(
-                decide(lc, Parked, false),
-                RequestEnd::Parked,
-                "a parked dispatch is still in flight"
-            );
-        }
+        assert_eq!(
+            decide(Done, true),
+            RequestEnd::RetainedForStreaming,
+            "an unfinished streaming response retains its dispatch"
+        );
+        assert_eq!(
+            decide(CleanKill, false),
+            RequestEnd::Disposed(Disposition(DispositionKind::Reset)),
+            "a cleanly killed instance is reset before reuse"
+        );
+        assert_eq!(
+            decide(BudgetKill, false),
+            RequestEnd::Disposed(Disposition(DispositionKind::Discard)),
+            "a killed instance is never reused"
+        );
+        assert_eq!(
+            decide(Trapped, false),
+            RequestEnd::Disposed(Disposition(DispositionKind::Discard)),
+            "a trapped instance is never reused"
+        );
+        assert_eq!(
+            decide(Parked, false),
+            RequestEnd::Parked,
+            "a parked dispatch is still in flight"
+        );
     }
 }

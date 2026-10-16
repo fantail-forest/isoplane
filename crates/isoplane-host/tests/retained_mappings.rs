@@ -2,7 +2,7 @@
 #![cfg(target_os = "linux")]
 mod common;
 
-use isoplane_abi::config::{HandlerLifecycle, Limits};
+use isoplane_abi::config::Limits;
 use isoplane_abi::dispatch::HttpRequest;
 use isoplane_engine::prepared::PreparedIdentity;
 use isoplane_engine::{
@@ -88,7 +88,7 @@ fn a_hibernated_guest_restores_its_delta_into_the_same_mapping() {
     cell.register_module(
         "owner",
         Arc::new(EngineActivator::new(engine, template, module.clone())),
-        common::manifest("retained", HandlerLifecycle::Reuse, Limits::default()),
+        common::manifest("retained", Limits::default()),
     )
     .expect("registration");
     let mut address = None;

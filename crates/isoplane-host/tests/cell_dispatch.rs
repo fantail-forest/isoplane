@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use isoplane_abi::config::{HandlerLifecycle, Limits};
+use isoplane_abi::config::Limits;
 use isoplane_abi::dispatch::{DispatchRecord, HttpRequest};
 use isoplane_abi::result::ResultRecord;
 use isoplane_engine::Completion;
@@ -71,33 +71,27 @@ fn a_budget_killed_spinner_does_not_block_another_tenants_wake() {
     ));
     let spin_mod = spinner.module().clone();
     r.cell
-        .register_module(
-            "noisy",
-            spinner,
-            manifest("spinner", HandlerLifecycle::Reuse, Limits::default()),
-        )
+        .register_module("noisy", spinner, manifest("spinner", Limits::default()))
         .unwrap();
 
-    // `fresh`, so every request gets a fresh copy of the program.
+    // One park-then-wake round trip per `wake_once`; the second continues the
+    // program on the instance the first left warm.
+    let round_trip = [
+        Step::Park {
+            imports: vec![("clock_deadline_in", PARK_MS)],
+        },
+        Step::Done {
+            status: 200,
+            body: b"woken".to_vec(),
+        },
+    ];
     let victim = Arc::new(FakeActivator::named(
         ModuleId::new("victim", "v1"),
-        FakeBehaviour::program([
-            Step::Park {
-                imports: vec![("clock_deadline_in", PARK_MS)],
-            },
-            Step::Done {
-                status: 200,
-                body: b"woken".to_vec(),
-            },
-        ]),
+        FakeBehaviour::program(round_trip.iter().cloned().chain(round_trip.iter().cloned())),
     ));
     let victim_mod = victim.module().clone();
     r.cell
-        .register_module(
-            "quiet",
-            victim,
-            manifest("victim", HandlerLifecycle::Fresh, Limits::default()),
-        )
+        .register_module("quiet", victim, manifest("victim", Limits::default()))
         .unwrap();
 
     wake_once(&r, &victim_mod);
@@ -205,11 +199,7 @@ fn the_breaker_fails_a_repeat_offender_fast_without_entering_the_guest() {
     ));
     let module = act.module().clone();
     r.cell
-        .register_module(
-            "acme",
-            act.clone(),
-            manifest("hangs", HandlerLifecycle::Reuse, Limits::default()),
-        )
+        .register_module("acme", act.clone(), manifest("hangs", Limits::default()))
         .unwrap();
 
     let mut killed_occupancy = Vec::new();
@@ -300,11 +290,7 @@ fn many_dispatches_share_one_channel_and_stay_matchable() {
     ));
     let slow_mod = slow.module().clone();
     r.cell
-        .register_module(
-            "acme",
-            slow,
-            manifest("slow", HandlerLifecycle::Fresh, Limits::default()),
-        )
+        .register_module("acme", slow, manifest("slow", Limits::default()))
         .unwrap();
 
     let fast = Arc::new(FakeActivator::named(
@@ -316,11 +302,7 @@ fn many_dispatches_share_one_channel_and_stay_matchable() {
     ));
     let fast_mod = fast.module().clone();
     r.cell
-        .register_module(
-            "acme",
-            fast,
-            manifest("fast", HandlerLifecycle::Reuse, Limits::default()),
-        )
+        .register_module("acme", fast, manifest("fast", Limits::default()))
         .unwrap();
 
     const SLOW_ID: u64 = 9_000;
@@ -409,11 +391,7 @@ fn a_shed_submission_says_so_rather_than_going_quiet() {
     ));
     let module = act.module().clone();
     r.cell
-        .register_module(
-            "acme",
-            act,
-            manifest("spin", HandlerLifecycle::Reuse, Limits::default()),
-        )
+        .register_module("acme", act, manifest("spin", Limits::default()))
         .unwrap();
 
     let (tx, rx) = std::sync::mpsc::sync_channel::<isoplane_host::DispatchResult>(128);
@@ -494,7 +472,7 @@ fn async_dispatch_completes_while_the_blocking_pool_is_occupied() {
         .register_module(
             "tenant",
             guest,
-            manifest("async-dispatch", HandlerLifecycle::Fresh, Limits::default()),
+            manifest("async-dispatch", Limits::default()),
         )
         .unwrap();
     let runtime = tokio::runtime::Builder::new_current_thread()

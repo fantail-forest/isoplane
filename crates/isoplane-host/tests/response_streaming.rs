@@ -8,7 +8,7 @@ mod common;
 use std::sync::Arc;
 use std::time::Duration;
 
-use isoplane_abi::config::{HandlerLifecycle, Limits};
+use isoplane_abi::config::Limits;
 use isoplane_abi::dispatch::{HttpRequest, ResponseHead};
 use isoplane_abi::host::{CodeTier, Dispatcher, HttpExchange, RouteTarget};
 use isoplane_engine::{EngineConfig, IsoplaneEngine};
@@ -57,7 +57,7 @@ async fn response(after_finish: &str) -> (Arc<Cell>, HttpExchange) {
     cell.register_module(
         "owner",
         activator,
-        common::manifest("response", HandlerLifecycle::Reuse, Limits::default()),
+        common::manifest("response", Limits::default()),
     )
     .expect("register response guest");
     let target = RouteTarget {
@@ -65,7 +65,6 @@ async fn response(after_finish: &str) -> (Arc<Cell>, HttpExchange) {
         version: "v1".into(),
         tenant: "owner".into(),
 
-        lifecycle: HandlerLifecycle::Reuse,
         tier: CodeTier::Fast,
     };
     let exchange = cell

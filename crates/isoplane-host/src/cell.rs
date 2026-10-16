@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use parking_lot::{Mutex, RwLock};
 
-use isoplane_abi::config::{AppManifest, HandlerLifecycle, Limits};
+use isoplane_abi::config::{AppManifest, Limits};
 use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, TraceContext};
 use isoplane_abi::status::{PollStatus, TrapCode};
 use isoplane_engine::{Completion, DispatchOutcome, KillPhase, OccupancyBudget};

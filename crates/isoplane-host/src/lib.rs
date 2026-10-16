@@ -11,13 +11,10 @@
 //! cell controls is admission, a bounded queue per worker and a shed when it
 //! is full.
 //!
-//! Two guarantees are carried by the type system rather than by review. The
-//! only `&mut dyn InstanceOps` in this crate comes from
-//! [`slot::CallGuard`], obtained by moving the instance out of its slot,
-//! so a reentrant call finds an empty slot. And a `fresh` instance is reset or
-//! discarded after its dispatch because [`disposition::Disposition`] has one
-//! producer, [`disposition::decide`], and no value of it means "keep a fresh
-//! instance warm".
+//! The type system rather than review keeps reentrant calls out: the only
+//! `&mut dyn InstanceOps` in this crate comes from [`slot::CallGuard`],
+//! obtained by moving the instance out of its slot, so a reentrant call finds
+//! an empty slot.
 //!
 //! A cell is a thread group within one process, not a seccomp'd process, and
 //! fairness between tenants is whatever the kernel gives equal-weight threads.

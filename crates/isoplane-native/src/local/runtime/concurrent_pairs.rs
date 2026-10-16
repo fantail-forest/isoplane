@@ -125,13 +125,6 @@ pub fn run_concurrent_pairs(path: &Path) -> anyhow::Result<()> {
                 value
             }
         };
-        anyhow::ensure!(
-            matches!(
-                value.manifest.handlers.lifecycle,
-                isoplane_abi::config::HandlerLifecycle::Reuse
-            ),
-            "the pair experiment requires reuse handlers"
-        );
         cases.push(ReadyCase {
             case,
             prepared: value,
@@ -292,7 +285,6 @@ fn register(
             tenant: ready.prepared.tenant.clone(),
             version: ready.prepared.version.clone(),
             plan: manifest.limits,
-            lifecycle: manifest.handlers.lifecycle,
             tier: isoplane_abi::host::CodeTier::Fast,
         },
     );

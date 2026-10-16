@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use isoplane_abi::config::{HandlerLifecycle, Limits};
+use isoplane_abi::config::Limits;
 use isoplane_abi::dispatch::{DispatchRecord, HttpRequest};
 use isoplane_abi::result::{FutureError, ResultRecord};
 
@@ -64,11 +64,7 @@ fn a_guest_cannot_fetch_a_private_address() {
     ));
     let module = act.module().clone();
     r.cell
-        .register_module(
-            "acme",
-            act.clone(),
-            manifest("prober", HandlerLifecycle::Fresh, Limits::default()),
-        )
+        .register_module("acme", act.clone(), manifest("prober", Limits::default()))
         .unwrap();
 
     let rx = r
@@ -121,11 +117,7 @@ fn an_endpoint_exception_lets_only_its_own_application_reach_a_private_peer() {
         .register_module_with_exceptions(
             "acme",
             excepted.clone(),
-            manifest(
-                "database-client",
-                HandlerLifecycle::Fresh,
-                Limits::default(),
-            ),
+            manifest("database-client", Limits::default()),
             Arc::new(["10.0.0.5:80".parse().expect("endpoint")]),
         )
         .unwrap();
@@ -133,7 +125,7 @@ fn an_endpoint_exception_lets_only_its_own_application_reach_a_private_peer() {
         .register_module(
             "acme",
             other.clone(),
-            manifest("neighbour", HandlerLifecycle::Fresh, Limits::default()),
+            manifest("neighbour", Limits::default()),
         )
         .unwrap();
     let mut pending = Vec::new();

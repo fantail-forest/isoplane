@@ -21,7 +21,6 @@ pub(super) struct Resident {
 
 pub(super) struct ActiveRequest {
     pub(super) dispatch_id: u64,
-    pub(super) lifecycle: HandlerLifecycle,
     pub(super) module: ModuleId,
     pub(super) route: String,
     /// For a dispatch that runs an idle instance's timers, when the instance
@@ -88,19 +87,19 @@ impl Cell {
         self.register_execution(tenant, activator, manifest, None, exceptions)
     }
 
-    /// Registers a fresh local debug guest with no idle pooling or capture.
-    /// The caller must use the local debug wall backstop for its cell.
+    /// Registers a local debug guest with no idle pooling or capture, so each
+    /// request activates a new guest. The caller must use the local debug wall
+    /// backstop for its cell.
     pub fn register_debug_module(
         self: &Arc<Self>,
         tenant: &str,
         activator: Arc<crate::debug::DebugActivator>,
-        mut manifest: AppManifest,
+        manifest: AppManifest,
     ) -> crate::Result<()> {
         anyhow::ensure!(
             self.cfg.wall_ms_cap == crate::debug::DEBUG_BUDGET_MS,
             "local debugging requires its explicit cell wall backstop"
         );
-        manifest.handlers.lifecycle = HandlerLifecycle::Fresh;
         self.register_execution(
             tenant,
             activator,
@@ -130,7 +129,6 @@ impl Cell {
             );
         }
         let module = activator.module().clone();
-        let lifecycle = manifest.handlers.lifecycle;
         let entry = ModuleEntry {
             tenant: tenant.to_string(),
             limits,
@@ -138,7 +136,6 @@ impl Cell {
             manifest,
             pool: InstancePool::new(
                 activator.clone(),
-                lifecycle,
                 if debug_occupancy_ms.is_some() {
                     0
                 } else {
@@ -183,7 +180,6 @@ impl Cell {
                 module: entry.activator.module().clone(),
                 tenant: entry.tenant.clone(),
                 limits: entry.limits,
-                lifecycle: entry.manifest.handlers.lifecycle,
                 allowlist: entry.manifest.bindings.fetch_allowlist.clone(),
             },
             entry.meters.clone(),

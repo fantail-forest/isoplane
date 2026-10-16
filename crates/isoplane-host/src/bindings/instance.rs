@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
-use isoplane_abi::config::{HandlerLifecycle, Limits};
+use isoplane_abi::config::Limits;
 use isoplane_abi::status::TrapCode;
 use parking_lot::Mutex;
 
@@ -24,7 +24,6 @@ pub struct Tenancy {
     pub module: ModuleId,
     pub tenant: String,
     pub limits: Limits,
-    pub lifecycle: HandlerLifecycle,
     pub allowlist: Option<Vec<String>>,
 }
 
@@ -58,7 +57,6 @@ pub struct InstanceCtx {
     pub tenant: String,
     pub limits: Limits,
     pub(super) guest_resources: GuestResourceLimits,
-    pub lifecycle: HandlerLifecycle,
     pub allowlist: Option<Vec<String>>,
     /// Exact peers an operator lets this application reach where the node's policy refuses.
     pub endpoint_exceptions: Arc<[std::net::SocketAddr]>,
@@ -168,7 +166,6 @@ impl InstanceCtx {
             tenant: tenancy.tenant,
             limits: tenancy.limits,
             guest_resources: GuestResourceLimits::default(),
-            lifecycle: tenancy.lifecycle,
             allowlist: tenancy.allowlist,
             endpoint_exceptions: Arc::new([]),
             development_notices: false,
@@ -197,14 +194,13 @@ impl InstanceCtx {
     }
 
     /// A context with no cell behind it, for tests of the slot machinery.
-    pub fn for_test(instance: InstanceId, lifecycle: HandlerLifecycle, limits: Limits) -> Self {
+    pub fn for_test(instance: InstanceId, limits: Limits) -> Self {
         Self::new(
             instance,
             Tenancy {
                 module: ModuleId::new("test", "v1"),
                 tenant: "t".into(),
                 limits,
-                lifecycle,
                 allowlist: None,
             },
             Arc::new(Meters::new()),
@@ -220,8 +216,8 @@ impl InstanceCtx {
         self.dispatch.store(dispatch, Ordering::Relaxed);
     }
 
-    /// Resets the per-dispatch counters, including the poison, which under
-    /// `reuse` may be left from a clean kill a moment ago.
+    /// Resets the per-dispatch counters, including the poison, which a clean
+    /// kill a moment ago may have left.
     pub fn begin_dispatch(&self, now_ms: u64, dispatch: u64) {
         if let Some(body) = self.request_body.lock().take() {
             body.close();

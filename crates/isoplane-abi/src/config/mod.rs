@@ -9,7 +9,7 @@ mod node;
 
 pub use lifecycle::LifecycleTier;
 pub use limits::{Limits, ResourceLimitOverrides};
-pub use manifest::{AppManifest, Bindings, HandlerConfig, HandlerLifecycle, InitSandbox};
+pub use manifest::{AppManifest, Bindings, InitSandbox};
 pub use memory::{GuestMemoryBytes, InvalidGuestMemory, WASM32_MEMORY_MAX_BYTES};
 pub use node::{DEFAULT_ADMIN_PORT, DEFAULT_PROXY_PORT};
 

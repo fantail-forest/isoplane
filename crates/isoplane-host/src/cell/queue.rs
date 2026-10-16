@@ -282,7 +282,7 @@ mod queue_tests {
     use super::*;
     use crate::bindings::InstanceCtx;
     use crate::pool::InstancePool;
-    use isoplane_abi::config::{HandlerLifecycle, Limits};
+    use isoplane_abi::config::Limits;
     use std::time::{Duration, Instant};
 
     /// The queue never looks inside a job, so the payload is minimal.
@@ -322,14 +322,11 @@ mod queue_tests {
                 resource_limits: Default::default(),
                 validation_limits: Default::default(),
                 name: "queue-test".into(),
-                handlers: isoplane_abi::config::HandlerConfig {
-                    lifecycle: HandlerLifecycle::Reuse,
-                },
                 bindings: Default::default(),
                 limits: Limits::default(),
                 init_visible_vars: vec![],
             },
-            pool: InstancePool::new(activator.clone(), HandlerLifecycle::Reuse, 1),
+            pool: InstancePool::new(activator.clone(), 1),
             activator,
             meters: Arc::new(crate::meters::Meters::new()),
             endpoint_exceptions: Arc::new([]),
@@ -358,17 +355,10 @@ mod queue_tests {
             Arc::new(crate::fakes::FakeActivator::new(
                 crate::fakes::FakeBehaviour::done(),
             )),
-            HandlerLifecycle::Reuse,
             16,
         );
         let (slot, _) = pool
-            .acquire(|id| {
-                Arc::new(InstanceCtx::for_test(
-                    id,
-                    HandlerLifecycle::Reuse,
-                    Limits::default(),
-                ))
-            })
+            .acquire(|id| Arc::new(InstanceCtx::for_test(id, Limits::default())))
             .expect("a slot");
         slot
     }

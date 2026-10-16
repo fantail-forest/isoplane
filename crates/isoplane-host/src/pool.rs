@@ -3,12 +3,11 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use isoplane_abi::config::HandlerLifecycle;
 use isoplane_engine::{InstanceOps, ModuleHash};
 use parking_lot::Mutex;
 
 use crate::bindings::InstanceCtx;
-use crate::disposition::{policy_reset, Disposition, DispositionKind};
+use crate::disposition::{Disposition, DispositionKind};
 use crate::slot::Slot;
 use crate::{InstanceId, ModuleId};
 
@@ -68,7 +67,6 @@ impl AcquireSource {
 /// A per-module pool of Handler instances.
 pub struct InstancePool {
     pub module: ModuleId,
-    pub lifecycle: HandlerLifecycle,
     activator: Arc<dyn Activator>,
     warm: Mutex<IdleList>,
     reset_candidates: Mutex<IdleList>,
@@ -121,14 +119,9 @@ impl Drop for IdleClaim<'_> {
 }
 
 impl InstancePool {
-    pub fn new(
-        activator: Arc<dyn Activator>,
-        lifecycle: HandlerLifecycle,
-        max_idle: usize,
-    ) -> Self {
+    pub fn new(activator: Arc<dyn Activator>, max_idle: usize) -> Self {
         Self {
             module: activator.module().clone(),
-            lifecycle,
             activator,
             warm: Mutex::new(IdleList::default()),
             reset_candidates: Mutex::new(IdleList::default()),
@@ -214,7 +207,6 @@ impl InstancePool {
     }
 
     /// Reuse a warm instance, reset a candidate for this acquisition, or activate.
-    /// Fresh handlers never consult the warm list.
     pub fn acquire<F>(&self, make_ctx: F) -> anyhow::Result<(Arc<Slot>, AcquireSource)>
     where
         F: FnOnce(InstanceId) -> Arc<InstanceCtx>,
@@ -251,33 +243,31 @@ impl InstancePool {
         D: FnMut(&Arc<Slot>),
         R: FnMut(&Arc<Slot>) -> anyhow::Result<()>,
     {
-        if self.lifecycle == HandlerLifecycle::Reuse {
-            loop {
-                let candidate = self.warm.lock().slots.pop();
-                let Some(slot) = candidate else { break };
-                let source = {
-                    let _execution = slot.lock_execution();
-                    match slot.state() {
-                        crate::LifecycleTier::Discarded => {
+        loop {
+            let candidate = self.warm.lock().slots.pop();
+            let Some(slot) = candidate else { break };
+            let source = {
+                let _execution = slot.lock_execution();
+                match slot.state() {
+                    crate::LifecycleTier::Discarded => {
+                        self.live.fetch_sub(1, Ordering::Relaxed);
+                        discard(&slot);
+                        continue;
+                    }
+                    crate::LifecycleTier::Hibernated => {
+                        if let Err(error) = restore(&slot) {
+                            slot.discard();
                             self.live.fetch_sub(1, Ordering::Relaxed);
                             discard(&slot);
-                            continue;
+                            return Err(error);
                         }
-                        crate::LifecycleTier::Hibernated => {
-                            if let Err(error) = restore(&slot) {
-                                slot.discard();
-                                self.live.fetch_sub(1, Ordering::Relaxed);
-                                discard(&slot);
-                                return Err(error);
-                            }
-                            AcquireSource::HibernationWake
-                        }
-                        crate::LifecycleTier::Parked => AcquireSource::WarmParked,
-                        crate::LifecycleTier::Hot => AcquireSource::WarmParked,
+                        AcquireSource::HibernationWake
                     }
-                };
-                return Ok((slot, source));
-            }
+                    crate::LifecycleTier::Parked => AcquireSource::WarmParked,
+                    crate::LifecycleTier::Hot => AcquireSource::WarmParked,
+                }
+            };
+            return Ok((slot, source));
         }
         loop {
             let candidate = self.reset_candidates.lock().slots.pop();
@@ -315,11 +305,6 @@ impl InstancePool {
     pub fn release(&self, slot: Arc<Slot>, d: Disposition) {
         match d.kind() {
             DispositionKind::Warm => {
-                if self.lifecycle == HandlerLifecycle::Fresh {
-                    // Fails closed to the hygienic side: residue never leaks
-                    // from a fresh app whatever produced the disposition.
-                    return self.release(slot, policy_reset());
-                }
                 slot.park(crate::now_ms());
                 let mut w = self.warm.lock();
                 if !self.retired.load(Ordering::Acquire)
@@ -382,82 +367,44 @@ mod claim_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::disposition::{decide, RequestEnd};
+    use crate::disposition::{decide, policy_reset, RequestEnd};
     use crate::fakes::{FakeActivator, FakeBehaviour};
     use isoplane_abi::config::Limits;
     use isoplane_engine::Completion;
 
-    fn ctx_for(id: InstanceId, lifecycle: HandlerLifecycle) -> Arc<InstanceCtx> {
-        Arc::new(InstanceCtx::for_test(id, lifecycle, Limits::default()))
+    fn ctx_for(id: InstanceId) -> Arc<InstanceCtx> {
+        Arc::new(InstanceCtx::for_test(id, Limits::default()))
     }
 
-    fn pool(lifecycle: HandlerLifecycle) -> InstancePool {
-        InstancePool::new(
-            Arc::new(FakeActivator::new(FakeBehaviour::default())),
-            lifecycle,
-            16,
-        )
+    fn pool() -> InstancePool {
+        InstancePool::new(Arc::new(FakeActivator::new(FakeBehaviour::default())), 16)
     }
 
     #[test]
     fn an_instance_released_after_retirement_is_discarded_not_pooled() {
-        for lifecycle in [HandlerLifecycle::Reuse, HandlerLifecycle::Fresh] {
-            let p = pool(lifecycle);
-            let (slot, _) = p.acquire(|id| ctx_for(id, lifecycle)).expect("acquire");
-            p.retire();
-            let RequestEnd::Disposed(disposition) = decide(lifecycle, Completion::Done, false)
-            else {
-                panic!("a completed request must dispose of its instance");
-            };
-            p.release(slot.clone(), disposition);
-            assert_eq!(
-                p.idle_counts(),
-                (0, 0),
-                "{lifecycle:?}: a retired module must not pool a released instance"
-            );
-            assert_eq!(
-                slot.state(),
-                crate::slot::LifecycleTier::Discarded,
-                "{lifecycle:?}: the released instance must be discarded"
-            );
-        }
-    }
-
-    #[test]
-    fn fresh_never_touches_the_warm_pool() {
-        let p = pool(HandlerLifecycle::Fresh);
-        let (a, src) = p
-            .acquire(|id| ctx_for(id, HandlerLifecycle::Fresh))
-            .expect("acquire");
-        assert_eq!(src, AcquireSource::Activated, "an empty pool activates");
-        let id_a = a.id;
-        let RequestEnd::Disposed(d) = decide(HandlerLifecycle::Fresh, Completion::Done, false)
-        else {
-            panic!("expected a terminal disposition");
+        let p = pool();
+        let (slot, _) = p.acquire(ctx_for).expect("acquire");
+        p.retire();
+        let RequestEnd::Disposed(disposition) = decide(Completion::Done, false) else {
+            panic!("a completed request must dispose of its instance");
         };
-        p.release(a, d);
-        let (warm, fresh) = p.idle_counts();
-        assert_eq!(warm, 0, "a fresh app must never populate the warm pool");
-        assert_eq!(fresh, 1, "the pending reset candidate is pooled");
-
-        let (b, src) = p
-            .acquire(|id| ctx_for(id, HandlerLifecycle::Fresh))
-            .expect("acquire");
+        p.release(slot.clone(), disposition);
         assert_eq!(
-            src,
-            AcquireSource::PooledFresh,
-            "the next acquisition resets the pooled candidate"
+            p.idle_counts(),
+            (0, 0),
+            "a retired module must not pool a released instance"
         );
-        assert_eq!(b.id, id_a, "the same slot comes back");
-        assert!(b.is_pristine(), "and it carries no residue");
+        assert_eq!(
+            slot.state(),
+            crate::slot::LifecycleTier::Discarded,
+            "the released instance must be discarded"
+        );
     }
 
     #[test]
     fn residue_in_a_reset_candidate_is_cleared_before_acquisition() {
-        let p = pool(HandlerLifecycle::Fresh);
-        let (slot, _) = p
-            .acquire(|id| ctx_for(id, HandlerLifecycle::Fresh))
-            .expect("activate");
+        let p = pool();
+        let (slot, _) = p.acquire(ctx_for).expect("activate");
         slot.enter()
             .expect("write request residue")
             .instance()
@@ -471,9 +418,7 @@ mod tests {
             99,
             "release must not reset guest memory without a new request"
         );
-        let (reused, source) = p
-            .acquire(|id| ctx_for(id, HandlerLifecycle::Fresh))
-            .expect("reset candidate");
+        let (reused, source) = p.acquire(ctx_for).expect("reset candidate");
         assert_eq!(
             source,
             AcquireSource::PooledFresh,
@@ -485,7 +430,7 @@ mod tests {
         );
         assert!(
             reused.is_pristine(),
-            "fresh acquisition must not carry request residue"
+            "a reset acquisition must not carry request residue"
         );
         assert_eq!(
             reused
@@ -499,51 +444,36 @@ mod tests {
     }
 
     #[test]
-    fn reuse_prefers_warm_then_fresh_then_activate() {
-        let p = pool(HandlerLifecycle::Reuse);
-        let (a, src) = p
-            .acquire(|id| ctx_for(id, HandlerLifecycle::Reuse))
-            .expect("acquire");
+    fn acquisition_prefers_warm_then_reset_then_activate() {
+        let p = pool();
+        let (a, src) = p.acquire(ctx_for).expect("acquire");
         assert_eq!(src, AcquireSource::Activated, "an empty pool activates");
-        let (b, _) = p
-            .acquire(|id| ctx_for(id, HandlerLifecycle::Reuse))
-            .expect("acquire");
+        let (b, _) = p.acquire(ctx_for).expect("acquire");
         let warm_id = a.id;
-        let fresh_id = b.id;
-        let RequestEnd::Disposed(warm) = decide(HandlerLifecycle::Reuse, Completion::Done, false)
-        else {
-            panic!("a completed reuse dispatch stays warm");
+        let reset_id = b.id;
+        let RequestEnd::Disposed(warm) = decide(Completion::Done, false) else {
+            panic!("a completed dispatch stays warm");
         };
         p.release(a, warm);
         p.release(b, policy_reset());
 
-        let (got, src) = p
-            .acquire(|id| ctx_for(id, HandlerLifecycle::Reuse))
-            .expect("acquire");
+        let (got, src) = p.acquire(ctx_for).expect("acquire");
         assert_eq!(src, AcquireSource::WarmParked, "warm first");
         assert_eq!(got.id, warm_id, "and it is the warm instance");
 
-        let (got, src) = p
-            .acquire(|id| ctx_for(id, HandlerLifecycle::Reuse))
-            .expect("acquire");
-        assert_eq!(src, AcquireSource::PooledFresh, "then pooled fresh");
-        assert_eq!(got.id, fresh_id, "and it is the reset instance");
+        let (got, src) = p.acquire(ctx_for).expect("acquire");
+        assert_eq!(src, AcquireSource::PooledFresh, "then a reset candidate");
+        assert_eq!(got.id, reset_id, "and it is the reset instance");
 
-        let (_, src) = p
-            .acquire(|id| ctx_for(id, HandlerLifecycle::Reuse))
-            .expect("acquire");
+        let (_, src) = p.acquire(ctx_for).expect("acquire");
         assert_eq!(src, AcquireSource::Activated, "then a cold activation");
     }
 
     #[test]
     fn a_killed_instance_leaves_the_pool_entirely() {
-        let p = pool(HandlerLifecycle::Reuse);
-        let (a, _) = p
-            .acquire(|id| ctx_for(id, HandlerLifecycle::Reuse))
-            .expect("acquire");
-        let RequestEnd::Disposed(d) =
-            decide(HandlerLifecycle::Reuse, Completion::BudgetKill, false)
-        else {
+        let p = pool();
+        let (a, _) = p.acquire(ctx_for).expect("acquire");
+        let RequestEnd::Disposed(d) = decide(Completion::BudgetKill, false) else {
             panic!("a kill is terminal")
         };
         p.release(a, d);

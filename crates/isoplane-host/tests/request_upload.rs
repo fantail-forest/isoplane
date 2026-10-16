@@ -2,7 +2,7 @@
 
 mod common;
 
-use isoplane_abi::config::{HandlerLifecycle, Limits};
+use isoplane_abi::config::Limits;
 use isoplane_abi::dispatch::HttpRequest;
 use isoplane_abi::result::{FutureError, ResultRecord};
 use isoplane_engine::{Completion, EngineConfig, IsoplaneEngine};
@@ -54,7 +54,7 @@ fn request_body_reads_reject_zero_and_negative_sizes_through_the_real_import() {
         cell.register_module(
             "owner",
             activator,
-            common::manifest("read-size", HandlerLifecycle::Reuse, Limits::default()),
+            common::manifest("read-size", Limits::default()),
         )
         .expect("register hostile read guest");
         let request = cell.http_record(
@@ -136,7 +136,7 @@ fn response_cell(imports: &str, before_response: &str) -> Arc<isoplane_host::Cel
     cell.register_module(
         "owner",
         activator,
-        common::manifest("early-upload", HandlerLifecycle::Reuse, Limits::default()),
+        common::manifest("early-upload", Limits::default()),
     )
     .expect("register early response guest");
     cell
@@ -157,7 +157,6 @@ async fn an_early_response_releases_the_unread_upload_at_dispatch_settlement() {
                 version: "v1".into(),
                 tenant: "owner".into(),
 
-                lifecycle: HandlerLifecycle::Reuse,
                 tier: CodeTier::Fast,
             },
             HttpUpload {
@@ -232,7 +231,6 @@ async fn a_guest_without_upload_imports_receives_the_complete_inline_body() {
                 version: "v1".into(),
                 tenant: "owner".into(),
 
-                lifecycle: HandlerLifecycle::Reuse,
                 tier: CodeTier::Fast,
             },
             HttpUpload {
@@ -284,7 +282,6 @@ async fn a_metadata_only_guest_distinguishes_unknown_length_empty_uploads_from_b
                     version: "v1".into(),
                     tenant: "owner".into(),
 
-                    lifecycle: HandlerLifecycle::Reuse,
                     tier: CodeTier::Fast,
                 },
                 HttpUpload {
