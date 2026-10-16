@@ -4,17 +4,17 @@ title: How .NET differs on Isoplane
 
 An Isoplane application is ordinary .NET code, but it runs inside a sandbox
 rather than as a process on a server, and that changes some of what .NET lets
-you do. Most of the differences on this page come from two design decisions.
+you do. Most of the differences on this page come from two design decisions:
 
-The first is isolation. Each instance of an application runs in a sandbox of
-its own, and everything it does beyond its own memory, such as using the
-network, reading files or reading the clock, goes through Isoplane. That is
-what keeps applications apart on shared hardware.
+1. Each instance of an application runs in a sandbox of its own, and
+   everything it does beyond its own memory goes through Isoplane.
+2. An instance gets a worker thread only while its code is running.
 
-The second is how threads are shared. An instance gets a worker thread only
-while its code is running. An instance that is waiting, or has no request to
-handle, sits idle without occupying a worker thread, so many applications can
-share a few threads.
+The first is what keeps applications apart on shared hardware: using the
+network, reading files and reading the clock all go through Isoplane, so it
+decides what an application can reach. The second is what lets many
+applications share a few worker threads: an instance that is waiting, or has
+no request to handle, sits idle without occupying one.
 
 Each section below explains why something differs, what that gives you, and
 what to change in your application, if anything. Where another page covers a
