@@ -81,8 +81,8 @@ read the stack trace to see which call failed.
 | `PlatformNotSupportedException: net_wasi_sync_name_resolution` | The same, for a connection that was opened synchronously. |
 | `PlatformNotSupportedException: Arg_PlatformNotSupported`, with [`Thread.Start`][Thread.Start] near the top of the stack | A library started a thread. See [MongoDB](#mongodb), [Redis](#redis) and [the console logger](#console-logging). |
 | `DirectoryNotFoundException: /tmp/` | ASP.NET Core tried to move a large request or response to a temporary file. See [uploads](#uploads), [request buffering](#enable-buffering), [Newtonsoft.Json](#newtonsoft-json) and [XML formatters](#xml-formatters). |
-| `IOException: Read-only file system` | Something tried to write a file. The [file system is read-only](dotnet-runtime-differences.md#the-machine-underneath). |
-| [`DllNotFoundException`][DllNotFoundException], sometimes inside a `TypeInitializationException` | A package called into a native library that the runtime does not include. An application cannot bring its own; see [the machine underneath](dotnet-runtime-differences.md#the-machine-underneath). |
+| `IOException: Read-only file system` | Something tried to write a file. The [file system is read-only](dotnet-runtime-differences.md#file-system). |
+| [`DllNotFoundException`][DllNotFoundException], sometimes inside a `TypeInitializationException` | A package called into a native library that the runtime does not include. An application cannot bring its own; see [native libraries](dotnet-runtime-differences.md#native-libraries). |
 | The application refuses to start with `unhandled System.PlatformNotSupportedException` and no stack trace | A call made while the application starts failed. The known ones are [remote configuration](#remote-configuration) and, in an application written without ASP.NET Core, [the console logger](#console-logging). |
 | The application refuses to start, naming a service that was `Still running once the application had started` | A package registered a background service. See [MCP sessions](#mcp-sessions) and [background work](#connections-and-background-work). |
 | A minimal API endpoint answers 200 with an empty body, or the build fails with `CS9144: Cannot intercept method` | A handler names code that another source generator produces. See [generated code in handlers](#generated-code-in-handlers). |
@@ -609,7 +609,7 @@ complete.
 
 - **WebSockets, SignalR's WebSocket transport and Blazor Server
   interactivity** are unavailable, and nothing takes their place today.
-  Statically rendered Blazor pages work. See [Network](dotnet-runtime-differences.md#network).
+  Statically rendered Blazor pages work. See [Incoming requests](dotnet-runtime-differences.md#incoming-requests).
 - **gRPC over HTTP/2** is unavailable, because requests arrive as HTTP/1.1.
   gRPC-Web works, which is a moderate change: it has to be enabled in the
   service and in its clients. Whether HTTP/2 can be supported is not known

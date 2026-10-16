@@ -75,7 +75,7 @@ to `true` in the application's project file.
 Check whether your application reaches the call. If it does, use a managed .NET
 API for the same job, or a different package. If it never does, there is nothing
 to fix. See
-[the machine underneath](../dotnet-runtime-differences.md#the-machine-underneath).
+[native libraries](../dotnet-runtime-differences.md#native-libraries).
 
 ### ISOPLANE1002
 

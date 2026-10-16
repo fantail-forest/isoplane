@@ -403,7 +403,9 @@ with the driver's own pooling off.
 
 ## Network
 
-Inbound, an application receives HTTP requests and nothing else. Isoplane
+### Incoming requests {#incoming-requests}
+
+An application receives HTTP requests and nothing else. Isoplane
 accepts the connections and delivers each request to an instance, which is what
 lets it send a request to whichever instance is free and start more as traffic
 grows. An application therefore cannot listen on a port or accept connections
@@ -415,12 +417,17 @@ Server interactivity and gRPC over HTTP/2. gRPC-Web and statically rendered
 Blazor pages work. See
 [Check application assumptions](onboard-an-application.md#check-application-assumptions).
 
-Outbound, an application can open TCP connections through the asynchronous
+### Outgoing connections {#outgoing-connections}
+
+An application can open TCP connections through the asynchronous
 APIs, which covers `HttpClient`, TLS and database drivers. Isoplane makes each
 connection on the application's behalf, which is how a connection stays open
 while its instance is set aside and how the limits that protect other
 applications are applied. There is no UDP: where a library offers a choice of
 transport, such as a telemetry exporter, choose one over TCP, such as HTTP.
+
+TLS certificates are validated as usual. Switching validation off is not a fix
+for a connection that fails.
 
 Socket options apply within ranges Isoplane sets for the connections it makes
 on the application's behalf. `NoDelay`, keep-alive and the receive and send
@@ -436,6 +443,8 @@ it, and reading an option back returns the value in force:
 
 Setting or reading the hop limit (`Socket.Ttl`) throws `SocketException` with
 `OperationNotSupported`.
+
+### HTTP clients and connection reuse {#http-clients}
 
 A client from `IHttpClientFactory` opens a connection for each call and closes
 it once the response has been read, so it keeps no connection between calls.
@@ -464,10 +473,7 @@ that removes them runs only during a request. Take the client from
 A client created and disposed within one request reuses its connection for that
 request's calls and closes it when it is disposed.
 
-TLS certificates are validated as usual. Switching validation off is not a fix
-for a connection that fails.
-
-## The machine underneath
+## File system {#file-system}
 
 The file system is read-only. It holds the files of your application package,
 such as `appsettings.json` and `wwwroot`, and nothing else. Every instance
@@ -485,6 +491,8 @@ header, so a browser may keep such a file for a while without asking whether it
 has changed, here as on any host: `MapStaticAssets`, or a link with
 `asp-append-version`, avoids that.
 
+## Environment and processes {#environment-and-processes}
+
 Environment variables are empty, because an instance has no process
 environment of its own. Settings reach the application through .NET
 configuration instead, so read them from `IConfiguration`; see
@@ -493,6 +501,8 @@ configuration instead, so read them from `IConfiguration`; see
 There are no other processes, and an application cannot start one: a process
 would run [outside the sandbox](#nothing-outside-the-sandbox). Use a managed
 library for the work instead, or call a service that does it.
+
+## Native libraries {#native-libraries}
 
 Native libraries come from the runtime. Isoplane's runtime includes the native
 parts of .NET, such as compression, globalization and OpenSSL, and
@@ -507,10 +517,7 @@ and fails only on a path that reaches the native call. The build reports such
 declarations as [`ISOPLANE1001`](reference/error-codes.md#isoplane1001) when you
 set [`IsoplaneWarnOnNativeImports`](reference/project-settings.md#isoplanewarnonnativeimports).
 
-The process is 32-bit, because WebAssembly addresses memory with 32-bit
-pointers, and `Environment.Is64BitProcess` is `false`. An instance's memory is
-far smaller than 32 bits can address, so this matters only to code that checks
-the value or assumes 64-bit pointers.
+## Culture and time zone {#culture-and-time-zone}
 
 Local time is UTC, and the default culture is the invariant culture. An
 instance has no machine of its own to take a time zone or a locale from, so
@@ -564,6 +571,11 @@ Your code runs as IL on an interpreter. There is no JIT compiler, and nothing is
 trimmed or compiled ahead of time, so reflection, runtime type loading,
 `Reflection.Emit` and compiled expressions all work, and libraries that depend
 on them need no change.
+
+The process is 32-bit, because WebAssembly addresses memory with 32-bit
+pointers, and `Environment.Is64BitProcess` is `false`. An instance's memory is
+far smaller than 32 bits can address, so this matters only to code that checks
+the value or assumes 64-bit pointers.
 
 The SDK version in the project file, the number in
 `Sdk="Isoplane.AspNetCore/..."`, also selects the runtime the application runs

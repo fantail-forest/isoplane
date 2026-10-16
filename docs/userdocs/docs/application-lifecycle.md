@@ -171,7 +171,7 @@ operation completes.
 - Disposes what it opens. Do not leave cleanup to a finalizer.
 - Takes its `HttpClient` from `IHttpClientFactory`, whose clients keep no connection
   open, rather than keeping one it constructed itself; see
-  [Network](dotnet-runtime-differences.md#network).
+  [HTTP clients and connection reuse](dotnet-runtime-differences.md#http-clients).
 - Saves anything that must last to a database or another external service
   before it responds.
 
