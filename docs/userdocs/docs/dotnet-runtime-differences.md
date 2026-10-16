@@ -23,19 +23,21 @@ difference in more depth, the section links to it.
 The limits Isoplane places on memory and running time are a separate subject:
 see [execution limits](execution-limits.md).
 
-## Dispatches and slices {#dispatches}
+## Units of work {#units-of-work}
 
-This page uses two terms for the work Isoplane gives an instance.
+Isoplane divides the work it gives an instance into two units: dispatches,
+and the slices a dispatch runs in.
 
-A *dispatch* is one unit of work delivered to an instance. Most dispatches
-handle one HTTP request. If the application
+A *dispatch* is the unit of work Isoplane delivers to an instance. Most
+dispatches handle one HTTP request. If the application
 [runs timers between requests](#run-timers-between-requests), a dispatch can
 also run the timers that came due while the instance was idle. An instance
 handles one dispatch at a time.
 
-A dispatch runs in one or more *slices*. A slice begins when the instance
-starts running the dispatch's code, or resumes it after waiting, and ends when
-that code awaits something that has to wait, or the dispatch finishes. Some
+A *slice* is a smaller unit: one stretch of running within a dispatch. A
+dispatch runs in one or more slices. A slice begins when the instance starts
+running the dispatch's code, or resumes it after waiting, and ends when that
+code awaits something that has to wait, or the dispatch finishes. Some
 things are fixed for the length of a slice, such as the [clock](#time) and
 whether the dispatch has been cancelled.
 
@@ -213,7 +215,7 @@ which work by timing tiny differences in how long the processor takes, and so
 need a precise clock. Because applications share hardware, withholding a
 precise clock from all of them protects each one from the others.
 
-The clock is set at the start of each [slice](#dispatches), and every reading
+The clock is set at the start of each [slice](#units-of-work), and every reading
 within a slice returns the same value, from `DateTime.UtcNow`, `Stopwatch` and
 `Environment.TickCount64` alike. Its
 resolution is one millisecond, although `Stopwatch.IsHighResolution` still
