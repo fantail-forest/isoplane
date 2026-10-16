@@ -75,7 +75,6 @@ public static class Activation
     private static Task ActivateAsync()
     {
         RuntimeGenerators.Reseed();
-        RuntimeTimers.CountFromActivation();
         return LifecycleHook.InvokeCallbacksAsync(Activated);
     }
 }
