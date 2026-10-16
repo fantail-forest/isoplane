@@ -11,7 +11,7 @@ what is left to your application.
 | [Initialization](#initialization) | When creating a template, before requests | Runs `Program.cs` and saves the application's memory as a template | Prepares shared state, and closes every connection it opened |
 | [Activation](#activation) | Each time an instance starts | Copies the template and reseeds random generators | Replaces copied state that has to be unique to each instance, such as an identifier |
 | [Handling a request](#handling-a-request) | Each request | Delivers the request, suspends the instance while it waits, enforces limits | Awaits its work, and forwards the request's cancellation token to the asynchronous calls it makes |
-| [Between requests](#between-requests) | Whenever an instance has no request | Keeps the instance for later, or discards it | Expects nothing to run and nothing to survive |
+| [Between requests](#between-requests) | Whenever an instance has no request | Keeps the instance and its pending timers for later, or discards it | Expects nothing to run on time and nothing to survive |
 | [A new build or changed settings](#a-new-build-or-changed-settings) | When you change the application or its settings | Prepares a new template when needed; matching captured state may be reused | Keeps what must outlive a build somewhere else |
 
 An *instance* is one running copy of the application. Isoplane runs as many as
@@ -197,11 +197,16 @@ request, or discard it. Successive requests can reach different instances.
 - Decides how many instances run and which one gets a request.
 - Discards an instance whenever it chooses, without notice. No shutdown event is
   raised and no cleanup code runs.
+- Keeps a timer that is still pending with its instance. A timer that comes due
+  while the instance is idle runs at the start of the instance's next request,
+  before the request's own code.
 - Wakes an idle instance to run the timers that have come due, if the
   application called
   [`Initialization.RunTimersBetweenRequests`](reference/sdk/Isoplane.Sdk/Isoplane/Initialization/RunTimersBetweenRequests.md)
   during initialization. An instance that has had no request for five minutes
-  is stopped instead.
+  is stopped instead. An instance Isoplane
+  has set aside to save memory is not woken: its timers run when its next
+  request arrives.
 
 **Your application**
 
@@ -221,6 +226,7 @@ request, or discard it. Successive requests can reach different instances.
 | --- | --- |
 | Isoplane discards the instance | Nothing is reported. Its memory is gone, and the next request reaches an instance that starts from the template. |
 | A connection kept from an earlier request has gone stale | Its next use fails as a dropped connection does anywhere. Open a new one. |
+| A timer comes due while the instance is idle | It runs at the start of the instance's next request, or at a wake if the application [runs timers between requests](dotnet-runtime-differences.md#run-timers-between-requests). It never runs if the instance is discarded first. |
 
 ## A new build or changed settings
 
