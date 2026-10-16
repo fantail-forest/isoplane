@@ -39,8 +39,8 @@ impl<T: 'static> Default for Slot<T> {
     }
 }
 
-/// Stateless entrypoint. Whether an instance is reused between requests or
-/// reset first is the app manifest's `lifecycle`.
+/// Stateless entrypoint. The platform may reuse an instance between requests,
+/// or reset or discard it first.
 pub trait Handler: Sized + 'static {
     fn new() -> Self;
 

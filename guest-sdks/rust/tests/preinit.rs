@@ -101,8 +101,7 @@ fn a_deferred_unit_is_skipped_at_init_and_runs_on_first_touch() {
         assert_eq!(IMPURE_RAN.load(Ordering::Relaxed), 1);
         assert_eq!(IMPURE.run_count(), 1);
 
-        // Under `lifecycle = "reuse"` that cost is paid once per instance,
-        // not once per dispatch. Touching it again must not re-run it.
+        // That cost is paid once per instance, not once per dispatch. Touching it again must not re-run it.
         assert_eq!(*IMPURE.get(), 11);
         assert_eq!(IMPURE.run_count(), 1);
 

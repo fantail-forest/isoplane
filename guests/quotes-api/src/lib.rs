@@ -43,8 +43,7 @@ pub struct Api {
 
 #[derive(Serialize)]
 struct MemoReport {
-    /// Dispatches this *instance* has served. Stays at 1 forever under
-    /// `fresh`; climbs under `reuse`.
+    /// Dispatches this *instance* has served; climbs while it is reused.
     instance_dispatches: u64,
     /// Initializer executions represented by this guest state, including preparation.
     routes_initializer_runs: u32,

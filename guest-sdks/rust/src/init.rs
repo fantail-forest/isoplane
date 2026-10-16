@@ -39,8 +39,8 @@ pub struct LazyInit<T: 'static> {
     slot: UnsafeCell<Option<T>>,
     init: fn() -> T,
     /// How many times the initializer has actually executed *in this
-    /// instance*. This is the number that makes reuse-vs-fresh observable:
-    /// under `reuse` it stays at 1, under `fresh` it climbs.
+    /// instance*. This is the number that makes instance reuse observable: it
+    /// stays at 1 however many dispatches a reused instance serves.
     runs: Cell<u32>,
 }
 
