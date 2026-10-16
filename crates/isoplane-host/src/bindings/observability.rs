@@ -19,6 +19,7 @@ impl CellBindings {
         let n = u32::try_from(payload.len()).unwrap_or(u32::MAX);
         let previous = self
             .ctx
+            .current()
             .log_bytes
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
                 Some(used.saturating_add(n))
@@ -105,7 +106,10 @@ mod tests {
                 log_bytes_per_dispatch: u32::MAX,
                 ..Default::default()
             });
-        context.log_bytes.store(u32::MAX - 1, Ordering::Relaxed);
+        context
+            .current()
+            .log_bytes
+            .store(u32::MAX - 1, Ordering::Relaxed);
         let mut bindings = CellBindings::new(context.clone());
         bindings.call_sync(call("log_emit", b"a", [2, 0, 0]));
         bindings.call_sync(call("log_emit", b"b", [2, 0, 0]));
@@ -182,7 +186,10 @@ mod tests {
             1,
             "the exact log-byte boundary is accepted and subsequent bytes are refused"
         );
-        context.log_bytes.store(u32::MAX, Ordering::Relaxed);
+        context
+            .current()
+            .log_bytes
+            .store(u32::MAX, Ordering::Relaxed);
         bindings.call_sync(call("log_emit", b"cannot wrap", [2, 0, 0]));
         assert_eq!(
             output.records().len(),

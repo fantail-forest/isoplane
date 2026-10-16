@@ -358,23 +358,28 @@ impl FutureTable {
         }
     }
 
-    /// The next deliverable result for `owner`; called while the instance's
-    /// [`crate::CallGuard`] is held, so a completion that landed mid-dispatch
-    /// is delivered after the slice returns rather than reentrantly.
-    pub fn take_ready(&self, owner: InstanceId) -> Option<(u64, ResultRecord)> {
+    /// The next deliverable result for `owner`, with the dispatch that owns
+    /// it; called while the instance's [`crate::CallGuard`] is held, so a
+    /// completion that landed mid-slice is delivered after the slice returns
+    /// rather than reentrantly.
+    pub fn take_ready(&self, owner: InstanceId) -> Option<Ready> {
         let arc = self.existing(owner)?;
         let mut o = arc.inner.lock();
         loop {
             let id = o.ready.pop_front()?;
-            let Some(result) = self.entries.update_sync(&id, |_, e| {
+            let Some((dispatch, result)) = self.entries.update_sync(&id, |_, e| {
                 e.state = State::Delivered;
-                e.result.take()
+                (e.dispatch, e.result.take())
             }) else {
                 continue;
             };
             let Some(result) = result else { continue };
             self.entries.remove_sync(&id);
-            return Some((id, result));
+            return Some(Ready {
+                future: id,
+                dispatch,
+                result,
+            });
         }
     }
 
@@ -506,6 +511,21 @@ impl FutureTable {
     }
 }
 
+/// A completed future ready for delivery to its dispatch.
+#[derive(Debug)]
+pub struct Ready {
+    pub future: u64,
+    pub dispatch: u64,
+    pub result: ResultRecord,
+}
+
+impl Ready {
+    /// The future and its result, for a caller that already knows the dispatch.
+    pub fn into_pair(self) -> (u64, ResultRecord) {
+        (self.future, self.result)
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -557,7 +577,7 @@ mod tests {
             matches!(table.complete(id, ResultRecord::Ok(vec![])), WakeTarget::Instance(instance) if instance == owner)
         );
         assert_eq!(
-            table.take_ready(owner),
+            table.take_ready(owner).map(Ready::into_pair),
             Some((id, ResultRecord::Ok(vec![])))
         );
         assert_cancelled(task).await;
@@ -802,7 +822,10 @@ mod tests {
             "an unknown future is an orphan"
         );
 
-        let (id, res) = t.take_ready(a).expect("a ready result");
+        let (id, res) = t
+            .take_ready(a)
+            .map(Ready::into_pair)
+            .expect("a ready result");
         assert_eq!(id, fa, "the ready result is the completed future");
         assert!(
             matches!(res, ResultRecord::Ok(v) if v == vec![1]),
@@ -888,7 +911,7 @@ mod tests {
             "undelivered guest results must prevent warm reuse"
         );
         assert_eq!(
-            t.take_ready(owner),
+            t.take_ready(owner).map(Ready::into_pair),
             None,
             "a result remains live only for its owning dispatch"
         );

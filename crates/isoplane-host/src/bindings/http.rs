@@ -24,7 +24,7 @@ impl CellBindings {
                 )),
             );
         };
-        let Some(scope) = self.ctx.request_body.lock().clone() else {
+        let Some(scope) = self.ctx.current().request_body.lock().clone() else {
             return self.settle_now(
                 id,
                 ResultRecord::Err(FutureError::Denied(
@@ -52,6 +52,7 @@ impl CellBindings {
     pub(super) fn req_body_can_have_body(&self) -> i64 {
         let result = self
             .ctx
+            .current()
             .request_body
             .lock()
             .as_ref()
@@ -68,7 +69,12 @@ impl CellBindings {
 
     /// Denies past the per-dispatch subrequest cap.
     fn check_subrequest(&self) -> Result<(), FutureError> {
-        let n = self.ctx.subrequests.fetch_add(1, Ordering::Relaxed) + 1;
+        let n = self
+            .ctx
+            .current()
+            .subrequests
+            .fetch_add(1, Ordering::Relaxed)
+            + 1;
         if n > self.ctx.limits.subrequests_per_dispatch {
             return Err(FutureError::Denied(format!(
                 "subrequest cap of {} per dispatch exceeded",
@@ -97,7 +103,7 @@ impl CellBindings {
                         .settle_now(id, ResultRecord::Err(FutureError::Io(error.to_string())))
                 }
             };
-        let scope = self.ctx.http.lock().clone();
+        let scope = self.ctx.current().http.clone();
         let operation = match scope.begin_fetch() {
             Ok(operation) => operation,
             Err(error) => return self.settle_now(id, ResultRecord::Err(error)),
@@ -154,7 +160,7 @@ impl CellBindings {
     pub(super) fn http_body_read(&self, rt: Arc<CellRuntime>, id: u64, scalars: [u64; 3]) -> u64 {
         let handle = scalars[0] as u32;
         let max = scalars[1] as usize;
-        let scope = self.ctx.http.lock().clone();
+        let scope = self.ctx.current().http.clone();
         let (operation, body) = match scope.begin_read(handle) {
             Ok(read) => read,
             Err(error) => return self.settle_now(id, ResultRecord::Err(error)),
@@ -183,7 +189,8 @@ impl CellBindings {
             responses
                 .get(handle)
                 .filter(|response| response.head.streaming && !response.finished)
-                .and(responses.transport.clone())
+                .and_then(|response| self.ctx.dispatch(response.dispatch))
+                .and_then(|dispatch| dispatch.transport.lock().clone())
         };
         if let Some(stream) = stream {
             let write = stream.prepare(payload.to_vec());
@@ -206,7 +213,8 @@ impl CellBindings {
         let Some(mut head) = self.decode::<ResponseHead>(payload) else {
             return 0;
         };
-        let transport = self.ctx.responses.lock().transport.clone();
+        let dispatch = self.ctx.current();
+        let transport = dispatch.transport.lock().clone();
         if head.streaming {
             if let Some(stream) = transport {
                 if let Err(error) = stream.start(&head) {
@@ -229,7 +237,7 @@ impl CellBindings {
                 }
             }
         }
-        self.ctx.responses.lock().create(head) as i64
+        self.ctx.responses.lock().create(dispatch.id(), head) as i64
     }
 
     pub(super) fn resp_finish(&self, scalars: [u64; 3]) -> i64 {

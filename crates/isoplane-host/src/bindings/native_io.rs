@@ -1682,7 +1682,7 @@ mod timer_tests {
             wake: woken.clone(),
             reactor: tokio::runtime::Handle::current(),
         }));
-        context.begin_slice(0, 1);
+        context.begin_dispatch(0, 1);
         (Arc::new(context), woken)
     }
 
@@ -1782,7 +1782,7 @@ mod timer_tests {
         use isoplane_engine::HostBindings;
         let context = super::super::tests::ctx();
         let mut bindings = CellBindings::new(context.clone());
-        context.request_cancellation();
+        context.start_dispatch(1, 1).request_cancellation();
         bindings.begin_slice();
         assert!(
             matches!(

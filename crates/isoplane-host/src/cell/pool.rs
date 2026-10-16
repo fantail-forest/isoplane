@@ -134,28 +134,38 @@ impl Cell {
         for job in self.queue.drain_stopped() {
             Self::cancel_queued_dispatch(job);
         }
-        for (id, dispatch) in self.active.drain() {
-            let owner = dispatch.completion;
-            owner.select(TerminalReason::CellStopped, 503);
-            let stream = self
-                .slot(id)
-                .and_then(|slot| slot.ctx.responses.lock().transport.take());
-            let _response = stream.as_ref().map(|stream| stream.clone().settlement());
-            let _completion = owner.settlement();
-            if let Some(stream) = stream {
-                stream.fail("cell_stopped".into());
+        for (id, dispatches) in self.active.drain() {
+            let slot = self.slot(id);
+            for dispatch in dispatches.into_inner() {
+                let owner = dispatch.completion;
+                owner.select(TerminalReason::CellStopped, 503);
+                let state = slot
+                    .as_ref()
+                    .and_then(|slot| slot.ctx.dispatch(dispatch.dispatch_id));
+                let stream = state
+                    .as_ref()
+                    .and_then(|state| state.transport.lock().take());
+                let _response = stream.as_ref().map(|stream| stream.clone().settlement());
+                let _completion = owner.settlement();
+                if let Some(stream) = stream {
+                    stream.fail("cell_stopped".into());
+                }
+                if let Some(state) = state {
+                    state.request_cancellation();
+                }
+                if let Some(slot) = &slot {
+                    slot.ctx.end_dispatch(dispatch.dispatch_id);
+                }
+                self.rt.futures.end_dispatch(id, dispatch.dispatch_id);
+                if let Some(sender) = dispatch.responder {
+                    owner.answer(&sender, owner.failure_result(503, "cell_stopped"));
+                }
             }
-            if let Some(slot) = self.slot(id) {
-                slot.ctx.end_http_dispatch();
-                slot.ctx.request_cancellation();
+            if let Some(slot) = slot {
                 slot.discard();
                 self.forget(&slot);
             }
-            self.rt.futures.end_dispatch(id, dispatch.dispatch_id);
             self.rt.futures.release_instance(id);
-            if let Some(sender) = dispatch.responder {
-                owner.answer(&sender, owner.failure_result(503, "cell_stopped"));
-            }
         }
     }
 }
@@ -758,7 +768,7 @@ pub(super) mod cell_tests {
         let id = *cell.resident_ids().first().expect("resident");
         assert!(
             wait_for(
-                || cell.active.with(&id, |a| a.dispatch_id) == Some(LIVE),
+                || cell.first_active(id, |a| a.dispatch_id) == Some(LIVE),
                 Duration::from_secs(10)
             ),
             "dispatch {LIVE} never reached `active`"
@@ -774,14 +784,13 @@ pub(super) mod cell_tests {
             "a handler holding a stale dispatch id answered the live dispatch's caller"
         );
         assert_eq!(
-            cell.active.with(&id, |a| a.dispatch_id),
+            cell.first_active(id, |a| a.dispatch_id),
             Some(LIVE),
             "and it deleted the live dispatch's entry on the way past"
         );
 
         let current = cell
-            .active
-            .with(&id, |dispatch| dispatch.completion.clone())
+            .first_active(id, |dispatch| dispatch.completion.clone())
             .expect("live owner");
         current.select(TerminalReason::HostPanic, 500);
         cell.answer_after_panic(Some(current));

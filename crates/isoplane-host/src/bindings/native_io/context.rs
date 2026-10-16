@@ -59,7 +59,7 @@ impl Context for CellBindings {
             wake: runtime.wake.clone(),
             reactor: runtime.reactor.clone(),
             meters: self.ctx.meters.clone(),
-            observer: self.ctx.reactor_observer.lock().clone(),
+            observer: self.ctx.current().reactor_observer.lock().clone(),
         })
     }
     fn tenant(&self) -> &str {

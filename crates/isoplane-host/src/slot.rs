@@ -326,7 +326,6 @@ impl Slot {
         g.resident = None;
         g.dormant = None;
         self.ctx.snapshot.lock().take();
-        self.ctx.end_http_dispatch();
         self.ctx.release_native_resources();
         g.state = LifecycleTier::Discarded;
         g.parked_since_ms = None;

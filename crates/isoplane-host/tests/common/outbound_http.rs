@@ -189,7 +189,12 @@ impl Rig {
 
     pub async fn result<T: serde::de::DeserializeOwned>(&self, id: u64) -> Result<T, FutureError> {
         loop {
-            if let Some((received, result)) = self.runtime.futures.take_ready(self.ctx.instance) {
+            if let Some((received, result)) = self
+                .runtime
+                .futures
+                .take_ready(self.ctx.instance)
+                .map(isoplane_host::futures::Ready::into_pair)
+            {
                 assert_eq!(
                     received, id,
                     "the host must deliver the requested operation's result"

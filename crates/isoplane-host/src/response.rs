@@ -4,9 +4,6 @@
 //! initially returned its handle.
 
 use std::collections::HashMap;
-use std::sync::Arc;
-
-use crate::response_transport::ResponseTransport;
 
 use isoplane_abi::dispatch::ResponseHead;
 use parking_lot::Mutex;
@@ -15,6 +12,8 @@ use parking_lot::Mutex;
 /// appends, `resp_finish` closes it.
 #[derive(Debug, Clone)]
 pub struct Response {
+    /// The dispatch that created it.
+    pub dispatch: u64,
     pub head: ResponseHead,
     pub chunks: Vec<Vec<u8>>,
     pub finished: bool,
@@ -33,18 +32,18 @@ impl Response {
 #[derive(Default)]
 pub struct ResponseTable {
     next: u32,
-    pub(crate) transport: Option<Arc<ResponseTransport>>,
     open: HashMap<u32, Response>,
 }
 
 impl ResponseTable {
     /// Handles start at 1; 0 is "no response" in `PollStatus::Done`.
-    pub fn create(&mut self, head: ResponseHead) -> u32 {
+    pub fn create(&mut self, dispatch: u64, head: ResponseHead) -> u32 {
         self.next += 1;
         let h = self.next;
         self.open.insert(
             h,
             Response {
+                dispatch,
                 head,
                 chunks: Vec::new(),
                 finished: false,
@@ -83,17 +82,18 @@ impl ResponseTable {
         self.open.remove(&handle)
     }
 
-    pub(crate) fn completed_transport_response(&self) -> Option<u32> {
-        self.transport.as_ref()?;
+    /// A finished streaming response of `dispatch`.
+    pub(crate) fn finished_stream(&self, dispatch: u64) -> Option<u32> {
         self.open.iter().find_map(|(handle, response)| {
-            (response.head.streaming && response.finished).then_some(*handle)
+            (response.dispatch == dispatch && response.head.streaming && response.finished)
+                .then_some(*handle)
         })
     }
 
-    pub(crate) fn has_open_transport(&self) -> bool {
-        self.transport
-            .as_ref()
-            .is_some_and(|stream| stream.has_started())
+    /// Drops the responses a dispatch left behind.
+    pub(crate) fn end_dispatch(&mut self, dispatch: u64) {
+        self.open
+            .retain(|_, response| response.dispatch != dispatch);
     }
 
     pub fn is_streaming(&self, handle: u32) -> bool {
@@ -128,7 +128,7 @@ mod tests {
     fn handles_are_never_zero() {
         let mut t = ResponseTable::default();
         assert_ne!(
-            t.create(head(false)),
+            t.create(1, head(false)),
             0,
             "0 means `no response` in PollStatus::Done"
         );
@@ -137,7 +137,7 @@ mod tests {
     #[test]
     fn streaming_appends_after_done() {
         let mut t = ResponseTable::default();
-        let h = t.create(head(true));
+        let h = t.create(1, head(true));
         assert!(
             t.is_streaming(h),
             "an unfinished streaming response is open"
@@ -156,7 +156,7 @@ mod tests {
     #[test]
     fn writes_after_finish_are_refused() {
         let mut t = ResponseTable::default();
-        let h = t.create(head(true));
+        let h = t.create(1, head(true));
         t.finish(h).expect("finish");
         assert_eq!(
             t.write(h, vec![1]),

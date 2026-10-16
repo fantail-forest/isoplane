@@ -40,6 +40,8 @@ pub(super) enum TerminalReason {
     HostPanic,
     OccupancyClockUnavailable,
     CellStopped,
+    /// Another dispatch on the same instance ended it.
+    InstanceDiscarded,
 }
 
 impl TerminalReason {
@@ -59,6 +61,7 @@ impl TerminalReason {
             Self::HostPanic => "host_panic",
             Self::OccupancyClockUnavailable => "occupancy_clock_unavailable",
             Self::CellStopped => "cell_stopped",
+            Self::InstanceDiscarded => "instance_discarded",
         }
     }
 }
@@ -370,7 +373,8 @@ impl DispatchCompletion {
             | TerminalReason::EntryRefused
             | TerminalReason::HostPanic
             | TerminalReason::OccupancyClockUnavailable
-            | TerminalReason::CellStopped => (Some(reason.label()), true),
+            | TerminalReason::CellStopped
+            | TerminalReason::InstanceDiscarded => (Some(reason.label()), true),
         };
         drop(state);
         let total_wall_ns = self.total_wall_ns();

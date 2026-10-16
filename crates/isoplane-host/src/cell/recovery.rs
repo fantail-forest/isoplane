@@ -53,11 +53,11 @@ impl Cell {
         };
         // One acquisition for the check and the take: `(true, None)` is our
         // own entry already answered, which still needs removing.
+        let did = owner.dispatch_id();
         let (mine, tx) = self
-            .active
-            .with_mut(&id, |a| {
+            .with_active_mut(id, did, |a| {
                 if Arc::ptr_eq(&a.completion, &owner) {
-                    (true, a.responder.take().map(|tx| (tx, a.dispatch_id)))
+                    (true, a.responder.take())
                 } else {
                     (false, None)
                 }
@@ -67,23 +67,71 @@ impl Cell {
             return;
         }
         _response_settlement = self.slot(id).and_then(|slot| {
-            slot.ctx.end_http_dispatch();
-            let stream = slot.ctx.responses.lock().transport.take();
+            let stream = slot
+                .ctx
+                .dispatch(did)
+                .and_then(|dispatch| dispatch.transport.lock().take());
+            slot.ctx.end_dispatch(did);
             stream.map(|stream| {
                 stream.fail("host_panic".into());
                 stream.settlement()
             })
         });
-        self.rt.futures.end_dispatch(id, owner.dispatch_id());
-        self.rt.futures.release_instance(id);
+        self.rt.futures.end_dispatch(id, did);
+        if let Some(tx) = tx {
+            owner.answer(&tx, owner.failure_result(500, "host_panic"));
+        }
+        self.remove_active(id, did);
+        // The panic may have left the instance's host state inconsistent, so
+        // the dispatches still on it fail with it.
         if let Some(slot) = self.slot(id) {
-            slot.ctx.request_cancellation();
+            for dispatch in self.active_dispatch_ids(id) {
+                self.end_on_stopped_instance(
+                    &slot,
+                    dispatch,
+                    TerminalReason::InstanceDiscarded,
+                    503,
+                    "instance_discarded",
+                );
+            }
             slot.discard();
             self.forget(&slot);
         }
-        if let Some((tx, _dispatch_id)) = tx {
-            owner.answer(&tx, owner.failure_result(500, "host_panic"));
+        self.rt.futures.release_instance(id);
+    }
+
+    /// Answers and ends a dispatch whose instance is going away without a
+    /// further slice.
+    pub(super) fn end_on_stopped_instance(
+        &self,
+        slot: &Arc<Slot>,
+        dispatch: u64,
+        reason: TerminalReason,
+        status: u16,
+        code: &'static str,
+    ) {
+        let (active, _) = self.remove_active(slot.id, dispatch);
+        let Some(active) = active else {
+            return;
+        };
+        let owner = active.completion;
+        owner.select(reason, status);
+        let stream = slot
+            .ctx
+            .dispatch(dispatch)
+            .and_then(|state| state.transport.lock().take());
+        let _response = stream.as_ref().map(|stream| stream.clone().settlement());
+        let _completion = owner.settlement();
+        if let Some(stream) = stream {
+            stream.fail(code.into());
         }
-        self.active.remove(&id);
+        if let Some(state) = slot.ctx.dispatch(dispatch) {
+            state.request_cancellation();
+        }
+        slot.ctx.end_dispatch(dispatch);
+        self.rt.futures.end_dispatch(slot.id, dispatch);
+        if let Some(sender) = active.responder {
+            owner.answer(&sender, owner.failure_result(status, code));
+        }
     }
 }

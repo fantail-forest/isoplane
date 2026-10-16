@@ -9,12 +9,14 @@ use isoplane_abi::config::Limits;
 use isoplane_abi::status::TrapCode;
 use parking_lot::Mutex;
 
+use super::dispatch::DispatchState;
 use super::CellRuntime;
 use crate::meters::Meters;
 use crate::response::ResponseTable;
 use crate::{InstanceId, ModuleId};
 
-/// A slot-local dispatch generation, independent of caller-supplied dispatch IDs.
+/// How many dispatches an instance has begun: a later dispatch has a greater
+/// generation.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct DispatchGeneration(pub(super) u64);
 
@@ -63,39 +65,30 @@ pub struct InstanceCtx {
     /// Whether the guest may show notices meant only for local development.
     pub development_notices: bool,
     pub meters: Arc<Meters>,
-    pub(crate) reactor_observer:
-        Mutex<Option<std::sync::Weak<dyn crate::reactor_accounting::Observer>>>,
     /// `None` in tests that exercise the slot machinery without a cell.
     pub rt: Option<Arc<CellRuntime>>,
 
     /// The frozen slice clock, written once per slice by the cell.
     pub(super) clock_ms: AtomicU64,
-    /// The current dispatch, the unit the future cap applies to.
-    pub(super) dispatch: AtomicU64,
-    pub(super) subrequests: AtomicU32,
-    /// Bounds log volume independently of its occupied-worker cost.
-    pub(super) log_bytes: AtomicU32,
+    /// The dispatches in progress on this instance.
+    dispatches: Mutex<HashMap<u64, Arc<DispatchState>>>,
+    /// The dispatch the current or most recent slice runs; the imports a
+    /// slice calls act on it.
+    current: Mutex<Arc<DispatchState>>,
+    /// Current outside any dispatch: during initialization and host-initiated
+    /// slices such as the pre-capture GC hint.
+    no_dispatch: Arc<DispatchState>,
     pub(super) entropy_calls: AtomicU64,
     /// A trap the vtable owes the guest but cannot raise from an import call
     /// that returns an `i64`; the cell converts it after the slice returns.
     pub(super) trap_latch: Mutex<Option<TrapCode>>,
-    /// Requested when the dispatch enters its grace window or the host ends
-    /// it; from the guest's next slice every import it calls returns
-    /// `Cancelled` at once, so the unwind has something to unwind for and no
-    /// new work starts on budget the dispatch does not have.
-    cancellation: super::cancellation::Cancellation,
     dispatch_generation: AtomicU64,
-    /// The dispatch's implicit cancellation future; the host cancels by
-    /// completing it, never by entering the instance.
-    pub(super) cancel_future: AtomicU64,
     /// Host-to-guest bytes for `entropy_fill`, copied in by the engine after
     /// the call.
     pub(super) out_buffer: Mutex<Vec<u8>>,
     pub responses: Mutex<ResponseTable>,
     pub(super) spans: Mutex<HashMap<i32, (String, u64)>>,
     pub(super) next_span: AtomicU32,
-    pub(super) http: Mutex<Arc<super::http_scope::HttpScope>>,
-    pub(crate) request_body: Mutex<Option<Arc<super::request_body::RequestBodyScope>>>,
     pub(super) native_io: Mutex<super::native_io::Resources>,
 }
 
@@ -113,13 +106,15 @@ impl InstanceCtx {
     /// before guest entry. Socket and DNS readiness can change asynchronously.
     pub(crate) fn begin_guest_slice(&self, now: tokio::time::Instant) {
         self.native_io.lock().begin_slice(now);
-        self.cancellation.begin_slice(self.dispatch_generation());
+        self.current().cancellation().begin_slice();
     }
 
-    /// True exactly once per requested cancellation, after the slice it was
-    /// requested in has ended.
-    pub(crate) fn take_undelivered_cancellation(&self) -> bool {
-        self.cancellation.take_undelivered()
+    /// The current dispatch's cancellation future, exactly once per requested
+    /// cancellation, after the slice it was requested in has ended.
+    pub(crate) fn take_undelivered_cancellation(&self) -> Option<u64> {
+        let current = self.current();
+        (current.cancellation().take_undelivered() && current.cancel_future() != 0)
+            .then(|| current.cancel_future())
     }
 
     /// When the guest's current slice began, if one has.
@@ -139,18 +134,46 @@ impl InstanceCtx {
 
     pub(crate) fn release_native_resources(&self) {
         self.native_io.lock().clear();
-        self.end_http_dispatch();
-    }
-
-    pub(crate) fn end_http_dispatch(&self) {
-        self.http.lock().close();
-        if let Some(body) = self.request_body.lock().take() {
-            body.close();
+        for dispatch in self.dispatches.lock().values() {
+            dispatch.close();
         }
     }
 
     pub(crate) fn has_outbound_http(&self) -> bool {
-        self.http.lock().is_active()
+        self.dispatches
+            .lock()
+            .values()
+            .any(|dispatch| dispatch.has_outbound_http())
+    }
+
+    /// Whether any dispatch in progress is still reading its request body.
+    pub(crate) fn has_active_request_body(&self) -> bool {
+        self.dispatches.lock().values().any(|dispatch| {
+            dispatch
+                .request_body
+                .lock()
+                .as_ref()
+                .is_some_and(|body| body.is_active())
+        })
+    }
+
+    /// Whether any dispatch in progress has a request body at all.
+    pub(crate) fn has_request_body(&self) -> bool {
+        self.dispatches
+            .lock()
+            .values()
+            .any(|dispatch| dispatch.request_body.lock().is_some())
+    }
+
+    /// Whether any dispatch in progress has started streaming its response.
+    pub(crate) fn has_open_transport(&self) -> bool {
+        self.dispatches.lock().values().any(|dispatch| {
+            dispatch
+                .transport
+                .lock()
+                .as_ref()
+                .is_some_and(|stream| stream.has_started())
+        })
     }
 
     pub fn new(
@@ -159,6 +182,7 @@ impl InstanceCtx {
         meters: Arc<Meters>,
         rt: Option<Arc<CellRuntime>>,
     ) -> Self {
+        let no_dispatch = DispatchState::new(0);
         Self {
             snapshot: Mutex::new(None),
             instance,
@@ -172,21 +196,16 @@ impl InstanceCtx {
             meters,
             rt,
             clock_ms: AtomicU64::new(0),
-            dispatch: AtomicU64::new(0),
-            subrequests: AtomicU32::new(0),
-            log_bytes: AtomicU32::new(0),
+            dispatches: Mutex::new(HashMap::new()),
+            current: Mutex::new(no_dispatch.clone()),
+            no_dispatch,
             entropy_calls: AtomicU64::new(0),
             trap_latch: Mutex::new(None),
-            cancellation: Default::default(),
-            reactor_observer: Mutex::new(None),
             dispatch_generation: AtomicU64::new(0),
-            cancel_future: AtomicU64::new(0),
             out_buffer: Mutex::new(Vec::new()),
             responses: Mutex::new(ResponseTable::default()),
             spans: Mutex::new(HashMap::new()),
             next_span: AtomicU32::new(1),
-            http: Mutex::new(super::http_scope::HttpScope::new()),
-            request_body: Mutex::new(None),
             native_io: Mutex::new(super::native_io::Resources::new(
                 super::native_io::ResourceLimits::default(),
             )),
@@ -208,34 +227,69 @@ impl InstanceCtx {
         )
     }
 
-    /// Freezes the coarse clock for one slice. Monotonic per instance, so a
-    /// host clock stepping backwards is not visible inside the sandbox.
+    /// Freezes the coarse clock for one slice of `dispatch`, which the slice's
+    /// imports then act on; a slice of a dispatch the instance has not seen
+    /// begins it, and dispatch 0 is outside any dispatch. Monotonic per
+    /// instance, so a host clock stepping backwards is not visible inside the
+    /// sandbox.
     pub fn begin_slice(&self, now_ms: u64, dispatch: u64) {
         let prev = self.clock_ms.load(Ordering::Relaxed);
         self.clock_ms.store(now_ms.max(prev), Ordering::Relaxed);
-        self.dispatch.store(dispatch, Ordering::Relaxed);
+        let state = match dispatch {
+            0 => self.no_dispatch.clone(),
+            _ => self.dispatch_state(dispatch),
+        };
+        *self.current.lock() = state;
     }
 
-    /// Resets the per-dispatch counters, including the poison, which a clean
-    /// kill a moment ago may have left.
-    pub fn begin_dispatch(&self, now_ms: u64, dispatch: u64) {
-        if let Some(body) = self.request_body.lock().take() {
-            body.close();
+    fn dispatch_state(&self, dispatch: u64) -> Arc<DispatchState> {
+        let mut dispatches = self.dispatches.lock();
+        if let Some(state) = dispatches.get(&dispatch) {
+            return state.clone();
         }
-        let mut http = self.http.lock();
-        http.close();
-        *http = super::http_scope::HttpScope::new();
-        drop(http);
-        self.subrequests.store(0, Ordering::Relaxed);
-        self.log_bytes.store(0, Ordering::Relaxed);
+        let state = DispatchState::new(dispatch);
+        dispatches.insert(dispatch, state.clone());
         self.dispatch_generation.fetch_add(1, Ordering::AcqRel);
-        self.cancellation.begin_dispatch();
-        self.cancel_future.store(0, Ordering::Relaxed);
+        state
+    }
+
+    /// Starts a new dispatch and makes it current.
+    pub fn begin_dispatch(&self, now_ms: u64, dispatch: u64) {
+        self.start_dispatch(now_ms, dispatch);
+    }
+
+    /// Starts the state for a new dispatch and makes it current. A dispatch
+    /// with the same id that is still in progress is ended first.
+    pub(crate) fn start_dispatch(&self, now_ms: u64, dispatch: u64) -> Arc<DispatchState> {
+        self.end_dispatch(dispatch);
         self.begin_slice(now_ms, dispatch);
+        self.current()
+    }
+
+    /// Ends a dispatch's state, closing what it held open.
+    pub(crate) fn end_dispatch(&self, dispatch: u64) {
+        if let Some(state) = self.dispatches.lock().remove(&dispatch) {
+            state.close();
+        }
+        let mut current = self.current.lock();
+        if current.id() == dispatch {
+            *current = self.no_dispatch.clone();
+        }
+    }
+
+    /// A dispatch in progress on this instance.
+    pub(crate) fn dispatch(&self, dispatch: u64) -> Option<Arc<DispatchState>> {
+        self.dispatches.lock().get(&dispatch).cloned()
+    }
+
+    /// The dispatch the current slice runs.
+    pub(crate) fn current(&self) -> Arc<DispatchState> {
+        self.current.lock().clone()
     }
 
     pub(crate) fn reactor_usage(&self) -> crate::reactor_accounting::TaskUsage {
         let observer = self
+            .current()
             .reactor_observer
             .lock()
             .as_ref()
@@ -251,44 +305,26 @@ impl InstanceCtx {
         reactor.spawn(self.reactor_usage().measure(future))
     }
 
-    pub fn set_cancel_future(&self, id: u64) {
-        self.cancel_future.store(id, Ordering::Relaxed);
-    }
-
-    pub fn cancel_future(&self) -> u64 {
-        self.cancel_future.load(Ordering::Relaxed)
-    }
-
-    /// Whether the dispatch is cancelled as the guest sees it: as it stood
-    /// when the guest's current slice began.
+    /// Whether the current dispatch is cancelled as the guest sees it: as it
+    /// stood when the guest's current slice began.
     pub fn is_cancelled(&self) -> bool {
-        self.cancellation.observed()
+        self.current().cancellation().observed()
     }
 
     pub(crate) fn dispatch_generation(&self) -> DispatchGeneration {
         DispatchGeneration(self.dispatch_generation.load(Ordering::Acquire))
     }
 
-    /// Requests cancellation of the dispatch of `generation`, if it is still
-    /// the current one when the guest's next slice begins.
-    pub(crate) fn cancel_generation(&self, generation: DispatchGeneration) {
-        self.cancellation.request_generation(generation);
-    }
-
-    /// Requests cancellation of the current dispatch; the guest sees it from
-    /// its next slice. Returns false if it was already requested.
-    pub fn request_cancellation(&self) -> bool {
-        self.cancellation.request()
-    }
-
     pub fn slice_clock_ms(&self) -> u64 {
         self.clock_ms.load(Ordering::Relaxed)
     }
+    /// The dispatch the current slice runs; 0 outside any dispatch.
     pub fn dispatch_id(&self) -> u64 {
-        self.dispatch.load(Ordering::Relaxed)
+        self.current().id()
     }
+    /// Subrequests the current dispatch has started.
     pub fn subrequests(&self) -> u32 {
-        self.subrequests.load(Ordering::Relaxed)
+        self.current().subrequests()
     }
     pub fn entropy_calls(&self) -> u64 {
         self.entropy_calls.load(Ordering::Relaxed)
@@ -309,14 +345,5 @@ impl InstanceCtx {
     }
     pub fn take_out_buffer(&self) -> Vec<u8> {
         std::mem::take(&mut self.out_buffer.lock())
-    }
-}
-
-impl Drop for InstanceCtx {
-    fn drop(&mut self) {
-        self.http.get_mut().close();
-        if let Some(body) = self.request_body.get_mut().take() {
-            body.close();
-        }
     }
 }

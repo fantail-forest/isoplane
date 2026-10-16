@@ -83,12 +83,21 @@ impl PreparationIo {
     pub async fn next_completion(&self) -> Option<(u64, ResultRecord)> {
         loop {
             let notified = self.wake.0.notified();
-            if let Some(result) = self.runtime.futures.take_ready(self.instance()) {
+            if let Some(result) = self
+                .runtime
+                .futures
+                .take_ready(self.instance())
+                .map(crate::futures::Ready::into_pair)
+            {
                 return Some(result);
             }
             if self.pending_count() == 0 {
                 // A completion may arrive between the first ready check and the pending check.
-                return self.runtime.futures.take_ready(self.instance());
+                return self
+                    .runtime
+                    .futures
+                    .take_ready(self.instance())
+                    .map(crate::futures::Ready::into_pair);
             }
             notified.await;
         }

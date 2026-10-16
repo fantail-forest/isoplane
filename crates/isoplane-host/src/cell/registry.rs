@@ -30,7 +30,101 @@ pub(super) struct ActiveDispatch {
     pub(super) completion: Arc<DispatchCompletion>,
 }
 
+/// The dispatches in progress on one instance.
+#[derive(Default)]
+pub(super) struct ActiveDispatches(Vec<ActiveDispatch>);
+
+impl ActiveDispatches {
+    pub(super) fn get(&self, dispatch: u64) -> Option<&ActiveDispatch> {
+        self.0.iter().find(|active| active.dispatch_id == dispatch)
+    }
+
+    pub(super) fn get_mut(&mut self, dispatch: u64) -> Option<&mut ActiveDispatch> {
+        self.0
+            .iter_mut()
+            .find(|active| active.dispatch_id == dispatch)
+    }
+
+    pub(super) fn iter(&self) -> impl Iterator<Item = &ActiveDispatch> {
+        self.0.iter()
+    }
+
+    pub(super) fn into_inner(self) -> Vec<ActiveDispatch> {
+        self.0
+    }
+}
+
 impl Cell {
+    pub(super) fn insert_active(&self, instance: InstanceId, dispatch: ActiveDispatch) {
+        self.active
+            .upsert(instance, |active| active.0.push(dispatch));
+    }
+
+    /// Runs `f` on one of `instance`'s dispatches in progress.
+    pub(super) fn with_active<R>(
+        &self,
+        instance: InstanceId,
+        dispatch: u64,
+        f: impl FnOnce(&ActiveDispatch) -> R,
+    ) -> Option<R> {
+        self.active
+            .with(&instance, |active| active.get(dispatch).map(f))
+            .flatten()
+    }
+
+    pub(super) fn with_active_mut<R>(
+        &self,
+        instance: InstanceId,
+        dispatch: u64,
+        f: impl FnOnce(&mut ActiveDispatch) -> R,
+    ) -> Option<R> {
+        self.active
+            .with_mut(&instance, |active| active.get_mut(dispatch).map(f))
+            .flatten()
+    }
+
+    /// Runs `f` on the earliest of `instance`'s dispatches in progress.
+    pub(super) fn first_active<R>(
+        &self,
+        instance: InstanceId,
+        f: impl FnOnce(&ActiveDispatch) -> R,
+    ) -> Option<R> {
+        self.active
+            .with(&instance, |active| active.iter().next().map(f))
+            .flatten()
+    }
+
+    pub(super) fn active_dispatch_ids(&self, instance: InstanceId) -> Vec<u64> {
+        self.active
+            .with(&instance, |active| {
+                active.iter().map(|dispatch| dispatch.dispatch_id).collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Removes a dispatch, and returns it with how many remain on the
+    /// instance.
+    pub(super) fn remove_active(
+        &self,
+        instance: InstanceId,
+        dispatch: u64,
+    ) -> (Option<ActiveDispatch>, usize) {
+        self.active
+            .with_mut_or_remove(
+                &instance,
+                |active| {
+                    let removed = active
+                        .0
+                        .iter()
+                        .position(|candidate| candidate.dispatch_id == dispatch)
+                        .map(|index| active.0.remove(index));
+                    (removed, active.0.len())
+                },
+                |active| active.0.is_empty(),
+            )
+            .unwrap_or((None, 0))
+    }
+
     /// Sets activation configuration for a registered module owned by `tenant`.
     /// The blob remains host-resident and is unavailable during preparation.
     pub fn set_runtime_configuration(

@@ -18,7 +18,7 @@ impl Cell {
     ) -> hibernate_policy::CaptureEnv<'a> {
         hibernate_policy::CaptureEnv {
             dispatch_active: self.active.contains_key(&slot.id),
-            observer: self.active.with(&slot.id, |dispatch| {
+            observer: self.first_active(slot.id, |dispatch| {
                 dispatch.completion.clone() as Arc<dyn hibernate_policy::CaptureObserver>
             }),
             activator: &entry.activator,
@@ -31,9 +31,7 @@ impl Cell {
         slot: &Arc<Slot>,
         entry: &Arc<ModuleEntry>,
     ) -> Result<u64, hibernate_policy::CaptureRefused> {
-        let owner = self
-            .active
-            .with(&slot.id, |dispatch| dispatch.completion.clone());
+        let owner = self.first_active(slot.id, |dispatch| dispatch.completion.clone());
         let capture = || {
             let _stage = tracing::info_span!("capture", tenant = %entry.tenant,
                 app = %entry.activator.module().app, version = %entry.activator.module().version,
@@ -51,8 +49,14 @@ impl Cell {
             Ok(result) => result,
             Err(_) => {
                 self.note_caught_panic("capture");
-                if let Some(owner) = owner {
-                    self.end_failed_capture(slot, entry, &owner, TerminalReason::HostPanic);
+                if owner.is_some() {
+                    self.fail_instance(
+                        slot,
+                        entry,
+                        TerminalReason::HostPanic,
+                        500,
+                        "capture_failed",
+                    );
                 } else if slot.state() == LifecycleTier::Discarded {
                     self.forget(slot);
                 }
@@ -92,17 +96,13 @@ impl Cell {
                 if let hibernate_policy::CaptureRefused::GcHintDidNotComplete(c) = e {
                     if !c.instance_survives() {
                         self.record_offpath_kill(slot, entry, c);
-                        if let Some(owner) = self
-                            .active
-                            .with(&slot.id, |dispatch| dispatch.completion.clone())
-                        {
-                            self.end_failed_capture(
-                                slot,
-                                entry,
-                                &owner,
-                                TerminalReason::CaptureFailed,
-                            );
-                        }
+                        self.fail_instance(
+                            slot,
+                            entry,
+                            TerminalReason::CaptureFailed,
+                            500,
+                            "capture_failed",
+                        );
                     }
                 }
                 return Err(e);

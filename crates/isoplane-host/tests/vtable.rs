@@ -109,7 +109,11 @@ fn fetch_payload(url: &str) -> Vec<u8> {
 
 async fn settle(v: &Vt, id: u64) -> ResultRecord {
     for _ in 0..500 {
-        if let Some((got, res)) = v.futures.take_ready(v.ctx.instance) {
+        if let Some((got, res)) = v
+            .futures
+            .take_ready(v.ctx.instance)
+            .map(isoplane_host::futures::Ready::into_pair)
+        {
             assert_eq!(got, id, "the ready result is the future being awaited");
             return res;
         }

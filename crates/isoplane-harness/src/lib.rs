@@ -633,7 +633,10 @@ async fn next_completion(
     wake: &tokio::sync::Notify,
 ) -> (u64, ResultRecord) {
     loop {
-        if let Some(completion) = futures.take_ready(owner) {
+        if let Some(completion) = futures
+            .take_ready(owner)
+            .map(isoplane_host::futures::Ready::into_pair)
+        {
             return completion;
         }
         // Notifications coalesce and can outlive a cancelled completion.

@@ -3,6 +3,7 @@
 //! Scalar arguments follow declaration order after the buffer pair.
 
 mod cancellation;
+mod dispatch;
 mod http;
 mod http_scope;
 mod instance;
@@ -395,7 +396,7 @@ impl HostBindings for CellBindings {
     /// Called mid-slice from the epoch callback, so it only requests: the
     /// guest sees the cancellation from its next slice (see `cancellation`).
     fn enter_grace(&mut self) {
-        if self.ctx.request_cancellation() {
+        if self.ctx.current().request_cancellation() {
             tracing::debug!(
                 tenant = %self.ctx.tenant, instance = %self.ctx.instance,
                 dispatch = self.ctx.dispatch_id(),
@@ -408,8 +409,7 @@ impl HostBindings for CellBindings {
     /// unwind. Done between slices, so the future's readiness is never a
     /// mid-slice signal either.
     fn end_slice(&mut self) {
-        let cancel = self.ctx.cancel_future();
-        if self.ctx.take_undelivered_cancellation() && cancel != 0 {
+        if let Some(cancel) = self.ctx.take_undelivered_cancellation() {
             self.settle_now(cancel, ResultRecord::Err(FutureError::Cancelled));
         }
     }

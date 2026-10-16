@@ -1,0 +1,91 @@
+//! What the host keeps for one dispatch on an instance. An instance can have
+//! several dispatches in progress; each slice runs exactly one of them, and the
+//! imports it calls act on that dispatch's state.
+
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::{Arc, Weak};
+
+use parking_lot::Mutex;
+
+use super::cancellation::Cancellation;
+use super::http_scope::HttpScope;
+use super::request_body::RequestBodyScope;
+use crate::response_transport::ResponseTransport;
+
+pub(crate) struct DispatchState {
+    id: u64,
+    pub(super) subrequests: AtomicU32,
+    /// Bounds log volume independently of its occupied-worker cost.
+    pub(super) log_bytes: AtomicU32,
+    cancellation: Cancellation,
+    /// The dispatch's implicit cancellation future; the host cancels by
+    /// completing it, never by entering the instance.
+    cancel_future: AtomicU64,
+    pub(super) http: Arc<HttpScope>,
+    pub(crate) request_body: Mutex<Option<Arc<RequestBodyScope>>>,
+    pub(crate) reactor_observer: Mutex<Option<Weak<dyn crate::reactor_accounting::Observer>>>,
+    /// Where a streaming response for this dispatch goes, when its caller
+    /// streams.
+    pub(crate) transport: Mutex<Option<Arc<ResponseTransport>>>,
+}
+
+impl DispatchState {
+    pub(super) fn new(id: u64) -> Arc<Self> {
+        Arc::new(Self {
+            id,
+            subrequests: AtomicU32::new(0),
+            log_bytes: AtomicU32::new(0),
+            cancellation: Cancellation::default(),
+            cancel_future: AtomicU64::new(0),
+            http: HttpScope::new(),
+            request_body: Mutex::new(None),
+            reactor_observer: Mutex::new(None),
+            transport: Mutex::new(None),
+        })
+    }
+
+    pub(crate) fn id(&self) -> u64 {
+        self.id
+    }
+
+    pub(crate) fn set_cancel_future(&self, id: u64) {
+        self.cancel_future.store(id, Ordering::Relaxed);
+    }
+
+    pub(crate) fn cancel_future(&self) -> u64 {
+        self.cancel_future.load(Ordering::Relaxed)
+    }
+
+    /// Requests cancellation; the guest sees it from the dispatch's next
+    /// slice. Returns false if it was already requested.
+    pub(crate) fn request_cancellation(&self) -> bool {
+        self.cancellation.request()
+    }
+
+    pub(super) fn cancellation(&self) -> &Cancellation {
+        &self.cancellation
+    }
+
+    pub(crate) fn subrequests(&self) -> u32 {
+        self.subrequests.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn has_outbound_http(&self) -> bool {
+        self.http.is_active()
+    }
+
+    /// Releases what the dispatch held open: its outbound HTTP bodies and its
+    /// request body.
+    pub(super) fn close(&self) {
+        self.http.close();
+        if let Some(body) = self.request_body.lock().take() {
+            body.close();
+        }
+    }
+}
+
+impl Drop for DispatchState {
+    fn drop(&mut self) {
+        self.close();
+    }
+}

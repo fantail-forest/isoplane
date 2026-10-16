@@ -168,13 +168,9 @@ pub struct Cell {
     runtime: Option<tokio::runtime::Runtime>,
     queue: Arc<WorkQueue>,
     index: Arc<Mutex<HashMap<InstanceId, Weak<Slot>>>>,
-    /// A bounded ring of killed slots, kept so a later call gets "this
-    /// instance was killed" rather than "never heard of it". The engine would
-    /// answer a call on a killed store, so the refusal has to outlive the
-    /// instance.
     modules: RwLock<HashMap<ModuleId, Arc<ModuleEntry>>>,
     residents: Mutex<HashMap<InstanceId, Resident>>,
-    active: ShardedMap<InstanceId, ActiveDispatch>,
+    active: ShardedMap<InstanceId, registry::ActiveDispatches>,
     completion_clock: RwLock<completion::CompletionClock>,
     snapshots: Arc<dyn isoplane_hibernate::snapshot::SnapshotStorage>,
     memory_pressure: RwLock<Arc<dyn crate::memory_pressure::MemoryPressureSource>>,

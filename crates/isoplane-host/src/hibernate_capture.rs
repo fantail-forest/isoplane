@@ -112,16 +112,10 @@ fn capture_with<T>(
         isoplane_engine::InstanceImage,
     ) -> Result<T, CaptureRefused>,
 ) -> Result<(T, u64), CaptureRefused> {
-    if slot
-        .ctx
-        .request_body
-        .lock()
-        .as_ref()
-        .is_some_and(|body| body.is_active())
-    {
+    if slot.ctx.has_active_request_body() {
         return Err(CaptureRefused::OpenRequest);
     }
-    if slot.ctx.responses.lock().has_open_transport() {
+    if slot.ctx.has_open_transport() {
         return Err(CaptureRefused::OpenResponse);
     }
     if !slot.is_capture_eligible() {
@@ -165,13 +159,7 @@ fn capture_with<T>(
         return Err(CaptureRefused::StackNotEmptyAfterHint);
     }
 
-    if slot
-        .ctx
-        .request_body
-        .lock()
-        .as_ref()
-        .is_some_and(|body| body.is_active())
-    {
+    if slot.ctx.has_active_request_body() {
         return Err(CaptureRefused::OpenRequest);
     }
     if slot.ctx.has_outbound_http() {
@@ -425,7 +413,7 @@ mod tests {
         );
         futures.complete(id, ResultRecord::Ok(b"completed while asleep".to_vec()));
         assert!(
-            matches!(futures.take_ready(slot.id), Some((ready, ResultRecord::Ok(bytes))) if ready == id && bytes == b"completed while asleep"),
+            matches!(futures.take_ready(slot.id).map(crate::futures::Ready::into_pair), Some((ready, ResultRecord::Ok(bytes))) if ready == id && bytes == b"completed while asleep"),
             "the original operation must deliver its result after local capture"
         );
     }
@@ -449,7 +437,7 @@ mod tests {
         )
         .expect("a host-resident result must not prevent local capture");
         assert!(
-            matches!(futures.take_ready(slot.id), Some((ready, ResultRecord::Ok(bytes))) if ready == id && bytes == vec![42; 32]),
+            matches!(futures.take_ready(slot.id).map(crate::futures::Ready::into_pair), Some((ready, ResultRecord::Ok(bytes))) if ready == id && bytes == vec![42; 32]),
             "local capture must preserve the exact ready result"
         );
     }
@@ -549,7 +537,7 @@ mod tests {
         use std::num::NonZeroU32;
         let (slot, act) = parked_slot(Completion::Done);
         let source = RequestBodyScope::new(None, true);
-        *slot.ctx.request_body.lock() = Some(source.clone());
+        *slot.ctx.start_dispatch(1, 1).request_body.lock() = Some(source.clone());
         let futures = Arc::new(FutureTable::new());
         let id = futures
             .alloc(slot.id, 1, "req_body_read", 8)
@@ -575,7 +563,7 @@ mod tests {
         )
         .expect("EOF with a ready result permits local capture");
         assert!(
-            matches!(futures.take_ready(slot.id), Some((ready_id, ResultRecord::Ok(bytes))) if ready_id == id && bytes.is_empty()),
+            matches!(futures.take_ready(slot.id).map(crate::futures::Ready::into_pair), Some((ready_id, ResultRecord::Ok(bytes))) if ready_id == id && bytes.is_empty()),
             "the original context must receive the original EOF result"
         );
         assert_eq!(
@@ -600,7 +588,7 @@ mod tests {
         use crate::bindings::request_body::RequestBodyScope;
         let (initial, act) = parked_slot(Completion::Done);
         let source = RequestBodyScope::new(None, true);
-        *initial.ctx.request_body.lock() = Some(source.clone());
+        *initial.ctx.start_dispatch(1, 1).request_body.lock() = Some(source.clone());
         let slot = Arc::new(Slot::new(
             initial.id,
             initial.ctx.clone(),

@@ -1024,10 +1024,7 @@ fn a_discarded_wake_ends_its_owned_dispatch() {
     cell.run_dispatch(*job);
     let slot = cell.slot(cell.resident_ids()[0]).expect("parked slot");
     let measured_occupancy_ns = cell
-        .active
-        .with(&slot.id, |dispatch| {
-            dispatch.completion.usage().occupancy_ns
-        })
+        .first_active(slot.id, |dispatch| dispatch.completion.usage().occupancy_ns)
         .expect("active owner usage");
     slot.discard();
     cell.run_wake(slot.clone());

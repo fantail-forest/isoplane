@@ -57,10 +57,12 @@ impl<K: ShardKey + Hash + Eq, V> ShardedMap<K, V> {
         self.shard(k).lock().contains_key(k)
     }
 
+    #[cfg(test)]
     pub(crate) fn insert(&self, k: K, v: V) -> Option<V> {
         self.shard(&k).lock().insert(k, v)
     }
 
+    #[cfg(test)]
     pub(crate) fn remove(&self, k: &K) -> Option<V> {
         self.shard(k).lock().remove(k)
     }
@@ -79,6 +81,32 @@ impl<K: ShardKey + Hash + Eq, V> ShardedMap<K, V> {
 
     pub(crate) fn with_mut<R>(&self, k: &K, f: impl FnOnce(&mut V) -> R) -> Option<R> {
         self.shard(k).lock().get_mut(k).map(f)
+    }
+
+    /// Runs `f` on the value for `k`, inserting `V::default()` first if there
+    /// is none, under one lock.
+    pub(crate) fn upsert<R>(&self, k: K, f: impl FnOnce(&mut V) -> R) -> R
+    where
+        V: Default,
+    {
+        f(self.shard(&k).lock().entry(k).or_default())
+    }
+
+    /// Runs `f` on the value for `k` and removes the entry when `f` leaves it
+    /// satisfying `empty`, under one lock.
+    pub(crate) fn with_mut_or_remove<R>(
+        &self,
+        k: &K,
+        f: impl FnOnce(&mut V) -> R,
+        empty: impl FnOnce(&V) -> bool,
+    ) -> Option<R> {
+        let mut shard = self.shard(k).lock();
+        let value = shard.get_mut(k)?;
+        let result = f(value);
+        if empty(value) {
+            shard.remove(k);
+        }
+        Some(result)
     }
 }
 

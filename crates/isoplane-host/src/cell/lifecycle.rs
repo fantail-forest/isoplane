@@ -59,7 +59,7 @@ impl Cell {
             .futures
             .alloc_cancellation(slot.id, job.rec.dispatch_id);
 
-        self.active.insert(
+        self.insert_active(
             slot.id,
             ActiveDispatch {
                 dispatch_id: job.rec.dispatch_id,
@@ -77,36 +77,40 @@ impl Cell {
         entry.meters.record_dispatch();
         self.metrics.dispatches.fetch_add(1, Ordering::Relaxed);
 
-        slot.ctx
-            .begin_dispatch(crate::now_ms(), job.rec.dispatch_id);
+        let dispatch = slot
+            .ctx
+            .start_dispatch(crate::now_ms(), job.rec.dispatch_id);
         let observer: Arc<dyn crate::reactor_accounting::Observer> = job.completion.clone();
-        *slot.ctx.reactor_observer.lock() = Some(Arc::downgrade(&observer));
-        slot.ctx.set_cancel_future(job.rec.cancel_future);
+        *dispatch.reactor_observer.lock() = Some(Arc::downgrade(&observer));
+        dispatch.set_cancel_future(job.rec.cancel_future);
         if let isoplane_abi::dispatch::DispatchKind::Http(request) = &job.rec.kind {
-            *slot.ctx.request_body.lock() = Some(job.upload.clone().unwrap_or_else(|| {
+            *dispatch.request_body.lock() = Some(job.upload.clone().unwrap_or_else(|| {
                 crate::bindings::request_body::RequestBodyScope::new(None, !request.body.is_empty())
             }));
         }
 
-        slot.ctx.responses.lock().transport = job.stream.clone();
+        *dispatch.transport.lock() = job.stream.clone();
         if let Some(stream) = &job.stream {
             let cell = Arc::downgrade(self);
             let owner = Arc::downgrade(&slot);
-            let generation = slot.ctx.dispatch_generation();
+            let cancelled = Arc::downgrade(&dispatch);
             let response = Arc::downgrade(stream);
             stream.on_end_requested(Box::new(move || {
                 if let (Some(cell), Some(slot), Some(response)) =
                     (cell.upgrade(), owner.upgrade(), response.upgrade())
                 {
                     if response.is_cancelled() || response.failure().is_some() {
-                        slot.ctx.cancel_generation(generation);
+                        if let Some(dispatch) = cancelled.upgrade() {
+                            dispatch.request_cancellation();
+                        }
                     }
                     cell.queue_wake(slot);
                 }
             }));
         }
+        drop(dispatch);
 
-        if self.end_stream_at_boundary(&slot, &entry, None) {
+        if self.end_stream_at_boundary(&slot, &entry, did, None) {
             return;
         }
 
@@ -119,6 +123,7 @@ impl Cell {
                     let _completion = job.completion.settlement();
                     self.respond(
                         &slot,
+                        did,
                         DispatchResult {
                             status: 409,
                             body: b"instance busy".to_vec(),
@@ -127,14 +132,12 @@ impl Cell {
                     );
                     let _settlement = slot
                         .ctx
-                        .responses
-                        .lock()
-                        .transport
-                        .take()
+                        .dispatch(did)
+                        .and_then(|dispatch| dispatch.transport.lock().take())
                         .map(|stream| stream.settlement());
-                    slot.ctx.end_http_dispatch();
+                    slot.ctx.end_dispatch(did);
                     self.rt.futures.end_dispatch(slot.id, did);
-                    self.active.remove(&slot.id);
+                    self.remove_active(slot.id, did);
                     return;
                 }
             };
@@ -155,7 +158,7 @@ impl Cell {
 
         // A completion that landed while the dispatch was Hot waited on the
         // reentrancy rule; hand the instance to the wake lane for it.
-        if !self.settle(&slot, &entry, outcome, &job.completion) {
+        if !self.settle(&slot, &entry, did, outcome, &job.completion) {
             self.queue_wake(slot.clone());
         }
     }
@@ -188,60 +191,30 @@ impl Cell {
     }
 
     /// One woken slice, and every further slice the instance can take without
-    /// going back through a lane.
+    /// going back through a lane. Each slice runs the dispatch that owns the
+    /// future it delivers.
     pub(super) fn run_wake(self: &Arc<Self>, slot: Arc<Slot>) {
         let _execution = slot.lock_execution();
-        let Some(owner) = self
-            .active
-            .with(&slot.id, |dispatch| dispatch.completion.clone())
+        let Some(entry) = self.first_active(slot.id, |dispatch| dispatch.completion.entry.clone())
         else {
             return;
         };
-        IN_FLIGHT.replace(Some(Arc::downgrade(&owner)));
-        owner.in_scope(|| self.run_owned_wake(&slot, &owner));
-    }
-
-    fn run_owned_wake(self: &Arc<Self>, slot: &Arc<Slot>, owner: &Arc<DispatchCompletion>) {
-        let entry = owner.entry.clone();
-
-        if self.end_stream_at_boundary(slot, &entry, None) {
-            return;
-        }
-
-        if slot.state() == LifecycleTier::Hibernated {
-            let started = Instant::now();
-            if let Err(error) = self.wake(slot, &entry) {
-                let message = format!(
-                    "instance {} could not restore its pending dispatch: {error}",
-                    slot.id
-                );
-                owner.select(TerminalReason::RestoreFailed, 500);
-                let result = owner.result(
-                    slot.id,
-                    500,
-                    vec![],
-                    message.as_bytes().to_vec(),
-                    Completion::Trapped,
-                    Some(message),
-                );
-                self.respond(slot, result);
-                self.finish_and_release(slot, &entry, evict());
+        for dispatch in self.active_dispatch_ids(slot.id) {
+            if self.end_stream_at_boundary(&slot, &entry, dispatch, None)
+                && !self.active.contains_key(&slot.id)
+            {
                 return;
             }
-            self.metrics
-                .hibernation_wake_us
-                .record(started.elapsed().as_micros() as u64);
-            self.metrics
-                .hibernation_wakes
-                .fetch_add(1, Ordering::Relaxed);
-            entry.meters.record_hibernation_wake();
+        }
+        if slot.state() == LifecycleTier::Hibernated && !self.restore_for_wake(&slot, &entry) {
+            return;
         }
 
         loop {
             // The instance is entered before the result is taken out, so a
             // result is never pulled with nowhere to deliver it. A busy
             // instance drains the result itself when its call returns.
-            let mut guard = match slot.enter() {
+            let guard = match slot.enter() {
                 Ok(g) => g,
                 Err(EnterError::Busy) => {
                     self.count_enter_refusal(EnterError::Busy);
@@ -249,43 +222,112 @@ impl Cell {
                 }
                 Err(error @ EnterError::NotResident(_)) => {
                     self.count_enter_refusal(error);
-                    owner.select(TerminalReason::EntryRefused, 409);
-                    self.respond(slot, owner.failure_result(409, "instance_unavailable"));
-                    self.finish_and_release(slot, &entry, evict());
+                    self.fail_instance(
+                        &slot,
+                        &entry,
+                        TerminalReason::EntryRefused,
+                        409,
+                        "instance_unavailable",
+                    );
                     return;
                 }
             };
-            let Some((fid, res)) = self.rt.futures.take_ready(slot.id) else {
+            let Some(ready) = self.rt.futures.take_ready(slot.id) else {
                 // The first wake's loop drained every completion.
                 return;
             };
-            // The budget binds the dispatch, so a wake resumes with what
-            // earlier slices burned; otherwise a guest could park and wake
-            // indefinitely on a fresh budget each time.
-            let budget = owner.next_budget();
-
-            slot.ctx
-                .begin_slice(crate::now_ms(), slot.ctx.dispatch_id());
-
-            let t0 = Instant::now();
-            let hot = super::completion::HotSlice::new(&self.hot);
-            owner.begin_slice();
-            let outcome = tracing::info_span!("guest_slice")
-                .in_scope(|| guard.instance().wake(fid, &res, budget));
-            drop(hot);
-            owner.add_slice(&outcome);
-            entry.meters.record_occupancy(&outcome);
-            if ends_the_instance(&outcome, slot) {
-                guard.destroy();
-            } else {
-                drop(guard);
-            }
-            self.metrics.wake_us.record(t0.elapsed().as_micros() as u64);
-
-            if self.settle(slot, &entry, outcome, owner) {
+            let Some(owner) = self.with_active(slot.id, ready.dispatch, |dispatch| {
+                dispatch.completion.clone()
+            }) else {
+                tracing::debug!(instance = %slot.id, dispatch = ready.dispatch,
+                    "dropped a result for a dispatch that has ended");
+                continue;
+            };
+            IN_FLIGHT.replace(Some(Arc::downgrade(&owner)));
+            let done = owner.in_scope(|| self.run_woken_slice(&slot, &entry, guard, ready, &owner));
+            if done {
                 return;
             }
         }
+    }
+
+    /// Restores a hibernated instance before its next slice; false if it
+    /// could not be restored, in which case every dispatch on it has failed.
+    fn restore_for_wake(self: &Arc<Self>, slot: &Arc<Slot>, entry: &Arc<ModuleEntry>) -> bool {
+        let started = Instant::now();
+        if let Err(error) = self.wake(slot, entry) {
+            let message = format!(
+                "instance {} could not restore its pending dispatches: {error}",
+                slot.id
+            );
+            for dispatch in self.active_dispatch_ids(slot.id) {
+                let Some(owner) =
+                    self.with_active(slot.id, dispatch, |active| active.completion.clone())
+                else {
+                    continue;
+                };
+                owner.select(TerminalReason::RestoreFailed, 500);
+                let result = owner.result(
+                    slot.id,
+                    500,
+                    vec![],
+                    message.as_bytes().to_vec(),
+                    Completion::Trapped,
+                    Some(message.clone()),
+                );
+                self.respond(slot, dispatch, result);
+            }
+            self.fail_instance(
+                slot,
+                entry,
+                TerminalReason::RestoreFailed,
+                500,
+                "restore_failed",
+            );
+            return false;
+        }
+        self.metrics
+            .hibernation_wake_us
+            .record(started.elapsed().as_micros() as u64);
+        self.metrics
+            .hibernation_wakes
+            .fetch_add(1, Ordering::Relaxed);
+        entry.meters.record_hibernation_wake();
+        true
+    }
+
+    /// Delivers one ready result in a slice of its dispatch. Returns true when
+    /// the instance takes no more wakes in this loop.
+    fn run_woken_slice(
+        self: &Arc<Self>,
+        slot: &Arc<Slot>,
+        entry: &Arc<ModuleEntry>,
+        mut guard: crate::slot::CallGuard<'_>,
+        ready: crate::futures::Ready,
+        owner: &Arc<DispatchCompletion>,
+    ) -> bool {
+        // The budget binds the dispatch, so a wake resumes with what earlier
+        // slices burned; otherwise a guest could park and wake indefinitely on
+        // a fresh budget each time.
+        let budget = owner.next_budget();
+        slot.ctx.begin_slice(crate::now_ms(), ready.dispatch);
+
+        let t0 = Instant::now();
+        let hot = super::completion::HotSlice::new(&self.hot);
+        owner.begin_slice();
+        let outcome = tracing::info_span!("guest_slice")
+            .in_scope(|| guard.instance().wake(ready.future, &ready.result, budget));
+        drop(hot);
+        owner.add_slice(&outcome);
+        entry.meters.record_occupancy(&outcome);
+        if ends_the_instance(&outcome, slot) {
+            guard.destroy();
+        } else {
+            drop(guard);
+        }
+        self.metrics.wake_us.record(t0.elapsed().as_micros() as u64);
+
+        self.settle(slot, entry, ready.dispatch, outcome, owner)
     }
 
     /// Returns true when the instance takes no more wakes in this loop.
@@ -293,6 +335,7 @@ impl Cell {
         self: &Arc<Self>,
         slot: &Arc<Slot>,
         entry: &Arc<ModuleEntry>,
+        did: u64,
         out: DispatchOutcome,
         owner: &Arc<DispatchCompletion>,
     ) -> bool {
@@ -327,7 +370,11 @@ impl Cell {
             _ => out.completion,
         };
 
-        let closed_response = slot.ctx.responses.lock().completed_transport_response();
+        let closed_response = slot
+            .ctx
+            .dispatch(did)
+            .filter(|dispatch| dispatch.transport.lock().is_some())
+            .and_then(|_| slot.ctx.responses.lock().finished_stream(did));
         let completion = if completion == Completion::Parked && closed_response.is_some() {
             Completion::Done
         } else {
@@ -335,8 +382,7 @@ impl Cell {
         };
 
         let (module, route, runs_idle_timers) = self
-            .active
-            .with_mut(&slot.id, |req| {
+            .with_active(slot.id, did, |req| {
                 (
                     req.module.clone(),
                     req.route.clone(),
@@ -355,7 +401,7 @@ impl Cell {
             completion
         };
         let breaker_key = BreakerKey { module, route };
-        if self.end_stream_at_boundary(slot, entry, Some(completion)) {
+        if self.end_stream_at_boundary(slot, entry, did, Some(completion)) {
             return true;
         }
 
@@ -388,8 +434,12 @@ impl Cell {
                     None => (204, vec![], Vec::new()),
                 };
                 let result = owner.result(slot.id, status, headers, body, completion, None);
-                if !streaming_open || slot.ctx.responses.lock().transport.is_none() {
-                    self.respond(slot, result);
+                let streams = slot
+                    .ctx
+                    .dispatch(did)
+                    .is_some_and(|dispatch| dispatch.transport.lock().is_some());
+                if !streaming_open || !streams {
+                    self.respond(slot, did, result);
                 }
 
                 match decide(completion, streaming_open) {
@@ -399,8 +449,7 @@ impl Cell {
                     }
                     DispatchEnd::Disposed(d) => {
                         self.breaker.record_success(&breaker_key);
-                        self.finish_and_release(slot, entry, d);
-                        true
+                        self.finish_and_release(slot, entry, did, d)
                     }
                     DispatchEnd::Parked => self.park_after_slice(slot),
                 }
@@ -436,12 +485,9 @@ impl Cell {
                     completion,
                     Some(msg),
                 );
-                self.respond(slot, result);
+                self.respond(slot, did, result);
                 match decide(completion, false) {
-                    DispatchEnd::Disposed(d) => {
-                        self.finish_and_release(slot, entry, d);
-                        true
-                    }
+                    DispatchEnd::Disposed(d) => self.finish_and_release(slot, entry, did, d),
                     DispatchEnd::Parked | DispatchEnd::RetainedForStreaming => {
                         self.park_after_slice(slot)
                     }
@@ -485,9 +531,8 @@ impl Cell {
                     completion,
                     Some(msg),
                 );
-                self.respond(slot, result);
-                self.finish_and_release(slot, entry, evict());
-                true
+                self.respond(slot, did, result);
+                self.finish_and_release(slot, entry, did, evict())
             }
         }
     }
@@ -500,11 +545,15 @@ impl Cell {
         !self.rt.futures.has_ready(slot.id)
     }
 
-    fn respond(&self, slot: &Arc<Slot>, result: DispatchResult) {
-        self.active.with(&slot.id, |dispatch| {
+    fn respond(&self, slot: &Arc<Slot>, did: u64, result: DispatchResult) {
+        self.with_active(slot.id, did, |dispatch| {
             dispatch.completion.select_result(&result)
         });
-        if let Some(stream) = slot.ctx.responses.lock().transport.clone() {
+        let stream = slot
+            .ctx
+            .dispatch(did)
+            .and_then(|dispatch| dispatch.transport.lock().clone());
+        if let Some(stream) = stream {
             if stream.has_started() {
                 if let Some(error) = &result.trap {
                     stream.fail(error.clone());
@@ -514,8 +563,7 @@ impl Cell {
             }
         }
         let response = self
-            .active
-            .with_mut(&slot.id, |dispatch| {
+            .with_active_mut(slot.id, did, |dispatch| {
                 dispatch
                     .responder
                     .take()
@@ -531,16 +579,17 @@ impl Cell {
         self: &Arc<Self>,
         slot: &Arc<Slot>,
         entry: &Arc<ModuleEntry>,
+        did: u64,
         completion: Option<Completion>,
     ) -> bool {
-        let Some(owner) = self
-            .active
-            .with(&slot.id, |dispatch| dispatch.completion.clone())
+        let Some(owner) = self.with_active(slot.id, did, |dispatch| dispatch.completion.clone())
         else {
             return false;
         };
-        let stream = slot.ctx.responses.lock().transport.clone();
-        let Some(stream) = stream else {
+        let Some(dispatch) = slot.ctx.dispatch(did) else {
+            return false;
+        };
+        let Some(stream) = dispatch.transport.lock().clone() else {
             return false;
         };
         let failure = stream.failure();
@@ -553,22 +602,20 @@ impl Cell {
             }) {
                 return false;
             }
-            slot.ctx.request_cancellation();
+            dispatch.request_cancellation();
             let result = owner.result(slot.id, status, headers, vec![], Completion::Done, None);
-            self.respond(slot, result);
-            self.finish_and_release(slot, entry, evict());
+            self.respond(slot, did, result);
+            self.finish_and_release(slot, entry, did, evict());
             return true;
         }
-        slot.ctx.request_cancellation();
+        dispatch.request_cancellation();
         let status = if failure.is_some() { 502 } else { 499 };
         let terminal = if failure.is_some() {
             TerminalReason::TransportFailure
         } else {
             TerminalReason::RequestCancelled
         };
-        self.active.with(&slot.id, |dispatch| {
-            dispatch.completion.select(terminal, status)
-        });
+        owner.select(terminal, status);
         let reason = failure.unwrap_or_else(|| "request_cancelled".into());
         let result = owner.result(
             slot.id,
@@ -578,64 +625,121 @@ impl Cell {
             Completion::Trapped,
             Some(reason),
         );
-        self.respond(slot, result);
-        self.finish_and_release(slot, entry, evict());
+        self.respond(slot, did, result);
+        self.finish_and_release(slot, entry, did, evict());
         true
     }
 
-    pub(super) fn end_failed_capture(
+    /// Fails every dispatch in progress on an instance that cannot continue,
+    /// then evicts it.
+    pub(super) fn fail_instance(
         self: &Arc<Self>,
         slot: &Arc<Slot>,
         entry: &Arc<ModuleEntry>,
-        owner: &Arc<DispatchCompletion>,
         reason: TerminalReason,
+        status: u16,
+        code: &'static str,
     ) {
-        owner.select(reason, 500);
-        let result = owner.result(
-            slot.id,
-            500,
-            vec![],
-            b"dispatch could not survive capture".to_vec(),
-            Completion::Trapped,
-            Some("capture_failed".into()),
-        );
-        self.respond(slot, result);
-        self.finish_and_release(slot, entry, evict());
+        let dispatches = self.active_dispatch_ids(slot.id);
+        let Some((&last, others)) = dispatches.split_last() else {
+            return;
+        };
+        for &dispatch in others {
+            self.fail_dispatch(slot, dispatch, reason, status, code);
+            self.end_dispatch_books(slot, entry, dispatch);
+        }
+        self.fail_dispatch(slot, last, reason, status, code);
+        self.finish_and_release(slot, entry, last, evict());
     }
 
-    fn finish_and_release(
-        self: &Arc<Self>,
+    fn fail_dispatch(
+        &self,
+        slot: &Arc<Slot>,
+        dispatch: u64,
+        reason: TerminalReason,
+        status: u16,
+        code: &'static str,
+    ) {
+        let Some(owner) = self.with_active(slot.id, dispatch, |active| active.completion.clone())
+        else {
+            return;
+        };
+        owner.select(reason, status);
+        let result = owner.result(
+            slot.id,
+            status,
+            vec![],
+            code.as_bytes().to_vec(),
+            Completion::Trapped,
+            Some(code.into()),
+        );
+        self.respond(slot, dispatch, result);
+    }
+
+    /// Ends one dispatch's books without releasing the instance: its
+    /// response transport, completion event, host state and futures.
+    /// Returns the ended dispatch, how many remain on the instance, and
+    /// whether the dispatch left guest work behind.
+    fn end_dispatch_books(
+        &self,
         slot: &Arc<Slot>,
         entry: &Arc<ModuleEntry>,
-        d: crate::disposition::Disposition,
-    ) {
+        did: u64,
+    ) -> (Option<ActiveDispatch>, usize, bool) {
         let _settlement = slot
             .ctx
-            .responses
-            .lock()
-            .transport
-            .take()
+            .dispatch(did)
+            .and_then(|dispatch| dispatch.transport.lock().take())
             .map(|stream| stream.settlement());
-        let completion = self
-            .active
-            .with(&slot.id, |dispatch| dispatch.completion.clone());
-        let _completion = completion.as_ref().map(|owner| owner.settlement());
-        slot.ctx.end_http_dispatch();
-        let req = self.active.remove(&slot.id);
-        let generation = slot.ctx.dispatch_generation();
+        let (req, remaining) = self.remove_active(slot.id, did);
+        let _completion = req.as_ref().map(|owner| owner.completion.settlement());
+        slot.ctx.end_dispatch(did);
+        slot.ctx.responses.lock().end_dispatch(did);
         let mut abandoned_guest_work = false;
         if let Some(r) = &req {
-            abandoned_guest_work = self.rt.futures.end_dispatch(slot.id, r.dispatch_id);
+            abandoned_guest_work = self.rt.futures.end_dispatch(slot.id, did);
             if let Some(total_wall_ns) = r.completion.total_wall_ns() {
                 self.metrics.dispatch_us.record(total_wall_ns / 1_000);
             }
             self.metrics.park_ms.record(slot.parked_ms_total());
             entry.meters.record_park(slot.parked_ms_total());
         }
+        (req, remaining, abandoned_guest_work)
+    }
 
+    /// Ends a dispatch and, once none remain on the instance, releases the
+    /// instance with disposition `d`. A disposition that loses the instance
+    /// fails the dispatches still in progress on it. Returns true: the wake
+    /// loop is done with the instance.
+    fn finish_and_release(
+        self: &Arc<Self>,
+        slot: &Arc<Slot>,
+        entry: &Arc<ModuleEntry>,
+        did: u64,
+        d: crate::disposition::Disposition,
+    ) -> bool {
+        let generation = slot.ctx.dispatch_generation();
+        let (req, remaining, abandoned_guest_work) = self.end_dispatch_books(slot, entry, did);
         let d = if abandoned_guest_work { evict() } else { d };
+        let keeps_instance =
+            d.is_warm() || matches!(d.kind(), crate::disposition::DispositionKind::Reset);
+        if remaining > 0 {
+            if keeps_instance {
+                return self.park_after_slice(slot);
+            }
+            for dispatch in self.active_dispatch_ids(slot.id) {
+                self.fail_dispatch(
+                    slot,
+                    dispatch,
+                    TerminalReason::InstanceDiscarded,
+                    503,
+                    "instance_discarded",
+                );
+                self.end_dispatch_books(slot, entry, dispatch);
+            }
+        }
 
-        if !d.is_warm() && !matches!(d.kind(), crate::disposition::DispositionKind::Reset) {
+        if !keeps_instance {
             self.forget(slot);
         }
         self.rt.futures.release_instance(slot.id);
@@ -651,5 +755,6 @@ impl Cell {
                 req.and_then(|dispatch| dispatch.idle_stop_at),
             );
         }
+        true
     }
 }
