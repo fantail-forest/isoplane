@@ -20,7 +20,7 @@ use crate::bindings::Tenancy;
 use crate::bindings::{CellRuntime, InstanceCtx, WakeSink};
 pub use crate::bindings::{Fetcher, Services};
 use crate::breaker::{BreakerConfig, BreakerKey, HangBreaker};
-use crate::disposition::{decide, evict, RequestEnd};
+use crate::disposition::{decide, evict, DispatchEnd};
 use crate::futures::FutureTable;
 use crate::hibernate_policy::{self, HibernateConfig};
 use crate::meters::Meters;
@@ -51,7 +51,7 @@ use crate::{InstanceId, ModuleId};
 use completion::{DispatchCompletion, TerminalReason};
 use pool::IN_FLIGHT;
 use queue::{Delivery, DispatchJob, Job, WakeItem, WorkQueue};
-use registry::{ActiveRequest, ModuleEntry, Resident};
+use registry::{ActiveDispatch, ModuleEntry, Resident};
 use wake::CellWake;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -73,7 +73,7 @@ pub struct CellConfig {
     #[serde(skip)]
     pub response_queue_bytes: usize,
     /// Wall-clock backstop for a dispatch; reported separately from active execution time.
-    pub wall_ms_cap: u32,
+    pub slice_wall_ms_cap: u32,
     /// Host resources retained on behalf of each guest instance.
     pub guest_resources: crate::bindings::GuestResourceLimits,
     pub hibernate: HibernateConfig,
@@ -97,7 +97,7 @@ impl Default for CellConfig {
             queue_depth_per_worker: 64,
             max_idle_per_module: 64,
             response_queue_bytes: isoplane_abi::host::DEFAULT_RESPONSE_QUEUE_BYTES,
-            wall_ms_cap: 30_000,
+            slice_wall_ms_cap: 30_000,
             guest_resources: Default::default(),
             hibernate: HibernateConfig::default(),
             breaker: BreakerConfig::default(),
@@ -174,7 +174,7 @@ pub struct Cell {
     /// instance.
     modules: RwLock<HashMap<ModuleId, Arc<ModuleEntry>>>,
     residents: Mutex<HashMap<InstanceId, Resident>>,
-    active: ShardedMap<InstanceId, ActiveRequest>,
+    active: ShardedMap<InstanceId, ActiveDispatch>,
     completion_clock: RwLock<completion::CompletionClock>,
     snapshots: Arc<dyn isoplane_hibernate::snapshot::SnapshotStorage>,
     memory_pressure: RwLock<Arc<dyn crate::memory_pressure::MemoryPressureSource>>,

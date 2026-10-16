@@ -189,7 +189,7 @@ async fn the_subrequest_cap_is_per_dispatch() {
             module_bytes_compressed: 5242880,
             package_bytes: 52428800,
             instance_memory_max: 134217728,
-            occupancy_ms_per_http_dispatch: 100,
+            occupancy_ms_per_dispatch: 100,
             subrequests_per_dispatch: 20,
             pending_futures_per_dispatch: 6,
         },
@@ -200,7 +200,7 @@ async fn the_subrequest_cap_is_per_dispatch() {
         module_bytes_compressed: 5242880,
         package_bytes: 52428800,
         instance_memory_max: 134217728,
-        occupancy_ms_per_http_dispatch: 100,
+        occupancy_ms_per_dispatch: 100,
         subrequests_per_dispatch: 20,
         pending_futures_per_dispatch: 6,
     }
@@ -212,7 +212,7 @@ async fn the_subrequest_cap_is_per_dispatch() {
             module_bytes_compressed: 5242880,
             package_bytes: 52428800,
             instance_memory_max: 134217728,
-            occupancy_ms_per_http_dispatch: 100,
+            occupancy_ms_per_dispatch: 100,
             subrequests_per_dispatch: 20,
             pending_futures_per_dispatch: 6
         }

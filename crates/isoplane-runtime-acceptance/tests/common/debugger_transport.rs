@@ -207,7 +207,7 @@ async fn partial_debugger_headers_and_delayed_payloads_preserve_packet_boundarie
                 },
                 OccupancyBudget {
                     occupancy_ms: 180_000,
-                    wall_ms_cap: 180_000,
+                    slice_wall_ms_cap: 180_000,
                     spent_ns: 0,
                 },
             )

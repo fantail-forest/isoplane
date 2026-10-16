@@ -10,11 +10,11 @@ mod tests;
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
 )]
 pub enum ReclaimKind {
-    /// Completed request with resident memory retained for reuse.
+    /// Completed dispatch with resident memory retained for reuse.
     Idle,
-    /// Unfinished request parked at a returned-stack boundary.
+    /// Unfinished dispatch parked at a returned-stack boundary.
     Active,
-    /// Completed request whose cached snapshot can be discarded.
+    /// Completed dispatch whose cached snapshot can be discarded.
     HibernatedIdle,
 }
 

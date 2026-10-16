@@ -72,7 +72,7 @@ internal sealed class LocalProject(string directory, string? targetDirectory)
                 ["module_bytes_compressed"] = 52428800UL,
                 ["package_bytes"] = 52428800UL,
                 ["instance_memory_max"] = 536870912UL,
-                ["occupancy_ms_per_http_dispatch"] = 300000UL,
+                ["occupancy_ms_per_dispatch"] = 300000UL,
                 ["subrequests_per_dispatch"] = 10000UL,
                 ["pending_futures_per_dispatch"] = 4096UL,
             } };

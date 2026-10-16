@@ -235,7 +235,7 @@ in_mono_runtime! {
 
 in_mono_runtime! {
     #[tokio::test(start_paused = true)]
-    async fn a_timer_left_pending_runs_before_a_later_request(runtime: GuestRuntime) {
+    async fn a_timer_left_pending_runs_before_a_later_dispatch(runtime: GuestRuntime) {
         let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
         reactor.context.begin_dispatch(1, 1);
         let mut guest = guest(&reactor, runtime);
@@ -450,7 +450,7 @@ in_mono_runtime! {
         scheduling_survives_store_restoration(runtime, "custom-awaiter").await;
     }
     #[tokio::test(start_paused = true)]
-    async fn async_void_work_observed_by_its_request_resumes_after_a_delta(runtime: GuestRuntime) {
+    async fn async_void_work_observed_by_its_dispatch_resumes_after_a_delta(runtime: GuestRuntime) {
         scheduling_survives_store_restoration(runtime, "async-void").await;
     }
 }

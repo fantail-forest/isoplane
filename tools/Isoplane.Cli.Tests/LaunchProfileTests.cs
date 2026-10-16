@@ -24,7 +24,7 @@ public sealed class LaunchProfileTests : IDisposable
             },
             "tight": {
               "commandName": "Project",
-              "isoplaneLimitsOverride": { "memoryBytes": 67108864, "occupancyMsPerHttpDispatch": 100, "subrequestsPerDispatch": 20, "pendingFuturesPerDispatch": 6 }
+              "isoplaneLimitsOverride": { "memoryBytes": 67108864, "occupancyMsPerDispatch": 100, "subrequestsPerDispatch": 20, "pendingFuturesPerDispatch": 6 }
             }
           }
         }
@@ -58,7 +58,7 @@ public sealed class LaunchProfileTests : IDisposable
         Assert.Equal(67108864UL, profile.Limits.MemoryBytes);
         Assert.Equal(new Dictionary<string, ulong>
         {
-            ["occupancy_ms_per_http_dispatch"] = 100, ["subrequests_per_dispatch"] = 20, ["pending_futures_per_dispatch"] = 6
+            ["occupancy_ms_per_dispatch"] = 100, ["subrequests_per_dispatch"] = 20, ["pending_futures_per_dispatch"] = 6
         }, profile.Limits.ResourceLimits);
     }
 
@@ -103,7 +103,7 @@ public sealed class LaunchProfileTests : IDisposable
         Assert.Equal("App", manifest.GetProperty("name").GetString());
         Assert.Equal(536870912UL, manifest.GetProperty("limits").GetProperty("instance_memory_max").GetUInt64());
         Assert.Equal(67108864UL, manifest.GetProperty("guest_memory_bytes").GetUInt64());
-        Assert.Equal(100UL, manifest.GetProperty("resource_limits").GetProperty("occupancy_ms_per_http_dispatch").GetUInt64());
+        Assert.Equal(100UL, manifest.GetProperty("resource_limits").GetProperty("occupancy_ms_per_dispatch").GetUInt64());
         Assert.False(options.RootElement.TryGetProperty("machine_roots", out _), "A session without exported roots must leave the platform bundle selected.");
     }
 

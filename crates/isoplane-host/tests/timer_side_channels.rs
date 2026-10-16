@@ -20,7 +20,7 @@ use std::time::Duration;
 const SUBSCRIBE_DURATION: i32 = 0;
 const POLLABLE_READY: i32 = 58;
 
-/// Runs one request on a module whose `isoplane_handle` and `isoplane_wake`
+/// Runs one request dispatch on a module whose `isoplane_handle` and `isoplane_wake`
 /// bodies are given. `$call` makes a one-argument `poll_call`, and the handle
 /// of the module's first timer is kept at address 2048.
 fn dispatch(handle: &str, wake: &str) -> DispatchResult {

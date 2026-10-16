@@ -68,7 +68,7 @@ fn every_module_build_sh_writes_draws_the_verdict_recorded_for_it() {
                 module_bytes_compressed: 5242880,
                 package_bytes: 52428800,
                 instance_memory_max: 134217728,
-                occupancy_ms_per_http_dispatch: 100,
+                occupancy_ms_per_dispatch: 100,
                 subrequests_per_dispatch: 20,
                 pending_futures_per_dispatch: 6,
             },

@@ -949,7 +949,7 @@ fn initialization_budget(
         .ok_or(PrepareError::Limit("initialization wall time"))?;
     Ok(OccupancyBudget {
         occupancy_ms: request.occupancy_ms,
-        wall_ms_cap: u32::try_from(
+        slice_wall_ms_cap: u32::try_from(
             remaining
                 .as_nanos()
                 .div_ceil(Duration::from_millis(1).as_nanos()),
@@ -982,11 +982,11 @@ mod budget_tests {
         let initial = initialization_budget(&request, 0, Duration::ZERO).unwrap();
         let wake = initialization_budget(&request, 7_000_000, Duration::from_millis(75)).unwrap();
         assert_eq!(
-            initial.wall_ms_cap, 100,
+            initial.slice_wall_ms_cap, 100,
             "the initial slice must not extend its deadline"
         );
         assert_eq!(
-            wake.wall_ms_cap, 25,
+            wake.slice_wall_ms_cap, 25,
             "host waits and earlier passes must reduce the next wall budget"
         );
         assert_eq!(
@@ -1016,7 +1016,7 @@ mod budget_tests {
     fn submillisecond_remainder_is_rounded_up_only_for_the_engine_slice() {
         let budget = initialization_budget(&request(), 0, Duration::from_micros(99_500)).unwrap();
         assert_eq!(
-            budget.wall_ms_cap, 1,
+            budget.slice_wall_ms_cap, 1,
             "the engine must receive a positive cap for a fractional remaining millisecond"
         );
     }

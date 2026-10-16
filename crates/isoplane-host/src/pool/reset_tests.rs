@@ -128,11 +128,11 @@ fn completed_start_guest() -> (InstancePool, Arc<Slot>, Arc<ResetStartActivator>
         .enter()
         .unwrap()
         .instance()
-        .dispatch(&dispatch, OccupancyBudget::http());
+        .dispatch(&dispatch, OccupancyBudget::default());
     assert_eq!(
         outcome.completion,
         Completion::Done,
-        "the guest must finish its request before testing post-response reset"
+        "the guest must finish its dispatch before testing post-response reset"
     );
     (pool, slot, activator)
 }
@@ -149,17 +149,17 @@ fn releasing_a_completed_guest_does_not_reexecute_its_wasm_start() {
     assert_eq!(
         pool.idle_counts(),
         (0, 1),
-        "the untouched guest must remain a reset candidate until another request needs it"
+        "the untouched guest must remain a reset candidate until another dispatch needs it"
     );
 }
 
 #[test]
-fn a_reset_start_trap_discards_the_candidate_and_activates_for_the_waiting_request() {
+fn a_reset_start_trap_discards_the_candidate_and_activates_for_the_waiting_dispatch() {
     let (pool, previous, _) = completed_start_guest();
     pool.release(previous.clone(), policy_reset());
     let (replacement, source) = pool
         .acquire(context)
-        .expect("reset failure must fall back to activation for the same request");
+        .expect("reset failure must fall back to activation for the same dispatch");
     assert_eq!(
         source,
         AcquireSource::Activated,
@@ -167,7 +167,7 @@ fn a_reset_start_trap_discards_the_candidate_and_activates_for_the_waiting_reque
     );
     assert_ne!(
         replacement.id, previous.id,
-        "a candidate that trapped during reset cannot serve the new request"
+        "a candidate that trapped during reset cannot serve the new dispatch"
     );
     assert_eq!(
         previous.state(),

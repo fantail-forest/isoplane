@@ -85,7 +85,7 @@ fn a_module_with_wasi_imports_instantiates_through_the_pal_adapter() {
 
     let mut i = activate(&e, &t);
     assert_eq!(
-        i.dispatch(&http_dispatch(1), OccupancyBudget::http())
+        i.dispatch(&http_dispatch(1), OccupancyBudget::default())
             .completion,
         Completion::Done,
         "the module dispatches"
@@ -113,7 +113,7 @@ fn the_pal_clock_is_quantized_and_frozen_within_a_slice() {
     };
 
     assert_eq!(
-        i.dispatch(&http_dispatch(1), OccupancyBudget::http())
+        i.dispatch(&http_dispatch(1), OccupancyBudget::default())
             .completion,
         Completion::Done,
         "the dispatch completes"
@@ -130,7 +130,7 @@ fn the_pal_clock_is_quantized_and_frozen_within_a_slice() {
     );
 
     assert_eq!(
-        i.dispatch(&http_dispatch(2), OccupancyBudget::http())
+        i.dispatch(&http_dispatch(2), OccupancyBudget::default())
             .completion,
         Completion::Done,
         "the second dispatch completes"
@@ -164,7 +164,7 @@ fn the_pal_entropy_delegation_draws_per_call_and_never_caches() {
     let mut i = activate(&e, &t);
 
     assert_eq!(
-        i.dispatch(&http_dispatch(1), OccupancyBudget::http())
+        i.dispatch(&http_dispatch(1), OccupancyBudget::default())
             .completion,
         Completion::Done,
         "the dispatch completes"
@@ -214,7 +214,7 @@ fn a_pal_trap_on_call_stub_traps_rather_than_answering() {
     let t = e.load_template(&wasm).expect("template");
     let mut i = activate(&e, &t);
 
-    let out = i.dispatch(&http_dispatch(1), OccupancyBudget::http());
+    let out = i.dispatch(&http_dispatch(1), OccupancyBudget::default());
     assert_eq!(
         out.completion,
         Completion::Trapped,
@@ -243,7 +243,7 @@ fn the_pal_environment_delegation_answers_empty() {
     let t = e.load_template(&wasm).expect("template");
     let mut i = activate(&e, &t);
     assert_eq!(
-        i.dispatch(&http_dispatch(1), OccupancyBudget::http())
+        i.dispatch(&http_dispatch(1), OccupancyBudget::default())
             .completion,
         Completion::Done,
         "the dispatch completes"
@@ -340,7 +340,7 @@ mod native_readiness {
                 },
                 OccupancyBudget {
                     occupancy_ms: 30_000,
-                    wall_ms_cap: 60_000,
+                    slice_wall_ms_cap: 60_000,
                     spent_ns: 0,
                 },
             )
@@ -377,7 +377,7 @@ mod native_readiness {
             .expect("the send fixture must activate");
         assert_eq!(
             instance
-                .dispatch(&super::http_dispatch(1), OccupancyBudget::http())
+                .dispatch(&super::http_dispatch(1), OccupancyBudget::default())
                 .completion,
             Completion::Done,
             "a nonblocking send must return its result without trapping"

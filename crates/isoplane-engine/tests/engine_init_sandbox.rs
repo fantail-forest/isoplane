@@ -13,7 +13,7 @@ fn read_u32(m: &[u8], off: usize) -> u32 {
 fn budget(occupancy_ms: u32) -> OccupancyBudget {
     OccupancyBudget {
         occupancy_ms,
-        wall_ms_cap: 30_000,
+        slice_wall_ms_cap: 30_000,
         spent_ns: 0,
     }
 }
@@ -177,7 +177,7 @@ fn outside_the_init_sandbox_every_declared_import_is_reachable() {
     );
     let t = e.load_template(&wasm).expect("template");
     let mut i = activate(&e, &t);
-    let out = i.run_initialize(OccupancyBudget::http());
+    let out = i.run_initialize(OccupancyBudget::default());
     assert_eq!(
         out.completion,
         Completion::Done,

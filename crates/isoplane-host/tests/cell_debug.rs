@@ -62,7 +62,7 @@ fn rig(park: bool) -> Rig {
     );
     let (cell, _) = common::rig_resolving(
         CellConfig {
-            wall_ms_cap: DEBUG_BUDGET_MS,
+            slice_wall_ms_cap: DEBUG_BUDGET_MS,
             ..CellConfig::for_test("debug-cell")
         },
         "93.184.216.34:80",
@@ -88,7 +88,7 @@ fn request() -> HttpRequest {
 }
 
 #[tokio::test]
-async fn a_debug_request_initializes_raw_state_and_is_discarded_after_completion() {
+async fn a_debug_dispatch_initializes_raw_state_and_is_discarded_after_completion() {
     let rig = rig(false);
     let record = rig.cell.http_record(&rig.module, request());
     assert_eq!(
@@ -103,7 +103,7 @@ async fn a_debug_request_initializes_raw_state_and_is_discarded_after_completion
             record,
             Duration::from_secs(30),
         )
-        .expect("the shared cell must complete the debug request");
+        .expect("the shared cell must complete the debug dispatch");
     assert_eq!(
         result.completion,
         Completion::Done,
@@ -117,7 +117,7 @@ async fn a_debug_request_initializes_raw_state_and_is_discarded_after_completion
     );
     assert!(
         rig.cell.futures().live_guest_future_ids().is_empty(),
-        "completion must release every debug request future"
+        "completion must release every debug dispatch future"
     );
 }
 
@@ -131,7 +131,7 @@ async fn an_awaiting_debug_guest_refuses_capture_and_wakes_through_the_cell() {
             Target::Handler { route: "/".into() },
             rig.cell.http_record(&rig.module, request()),
         )
-        .expect("the debug request must be admitted");
+        .expect("the debug dispatch must be admitted");
     let (instance, future) = tokio::time::timeout(Duration::from_secs(30), async {
         loop {
             if let Some(instance) = rig.cell.resident_ids().first().copied() {
@@ -147,7 +147,7 @@ async fn an_awaiting_debug_guest_refuses_capture_and_wakes_through_the_cell() {
         }
     })
     .await
-    .expect("the debug request never parked on its real host timer");
+    .expect("the debug dispatch never parked on its real host timer");
     let cell = rig.cell.clone();
     let capture = tokio::task::spawn_blocking(move || cell.force_hibernate(instance))
         .await

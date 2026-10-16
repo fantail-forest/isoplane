@@ -85,7 +85,7 @@ read by the `/greeting` route that `Program.cs` shows commented out.
   beside `environmentVariables`:
 
   ```json
-  "isoplaneLimitsOverride": { "memoryBytes": 134217728, "occupancyMsPerHttpDispatch": 1000 }
+  "isoplaneLimitsOverride": { "memoryBytes": 134217728, "occupancyMsPerDispatch": 1000 }
   ```
 - **Add a NuGet package.** `dotnet add package <name>`.
 

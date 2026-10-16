@@ -140,8 +140,8 @@ pub fn read_occupancy_ns() -> u64 {
     try_read_occupancy_ns().unwrap_or(0)
 }
 
-/// A worker-occupancy measurement over one Hot interval, the interval measured.
-/// Time between two Hot intervals is inside no `OccupancyInterval`, which is why a
+/// A worker-occupancy measurement over one slice or reactor poll, the only
+/// interval recorded. Time between them is inside no `OccupancyInterval`, which is why a
 /// parked instance costs zero occupancy.
 pub struct OccupancyInterval {
     /// `None` when the clock could not be read at `start`; a zero start would

@@ -51,7 +51,7 @@ fn observed_limit(
         let mut instance = engine
             .activate(&template, Box::new(bindings))
             .expect("the memory query fixture must activate");
-        let outcome = instance.run_initialize(OccupancyBudget::http());
+        let outcome = instance.run_initialize(OccupancyBudget::default());
         assert_eq!(outcome.completion, Completion::Done,
         "initialization must query its limit and survive growth refused by that same ceiling: {outcome:?}");
         let reported =

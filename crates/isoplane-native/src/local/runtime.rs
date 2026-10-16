@@ -387,7 +387,7 @@ impl LocalApp {
             ..CellConfig::local()
         };
         if matches!(prepared.activator, PreparedActivator::Debug(_)) {
-            config.wall_ms_cap = isoplane_host::debug::DEBUG_BUDGET_MS;
+            config.slice_wall_ms_cap = isoplane_host::debug::DEBUG_BUDGET_MS;
         }
         let snapshots = Arc::new(isoplane_hibernate::snapshot::LocalSnapshotStorage::new(
             scratch.path().join("snapshots"),
@@ -536,7 +536,7 @@ mod storage_tests {
             let mut instance = engine
                 .activate(&template, CellBindings::boxed(Arc::new(context)))
                 .unwrap();
-            let outcome = instance.run_initialize(OccupancyBudget::http());
+            let outcome = instance.run_initialize(OccupancyBudget::default());
             assert_eq!(outcome.completion, Completion::Done, "{outcome:?}");
             assert_eq!(instance.memory().len(), 2049 * isoplane_abi::WASM_PAGE_SIZE);
             project.runtime_profile = isoplane_prepare::RuntimeProfile::raw_wasm();

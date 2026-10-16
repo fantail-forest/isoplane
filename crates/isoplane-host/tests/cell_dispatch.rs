@@ -133,7 +133,7 @@ fn a_budget_killed_spinner_does_not_block_another_tenants_wake() {
     assert_eq!(m.tenants["quiet"].traps, 0, "the victim tenant was harmed");
     assert_eq!(
         m.tenants["noisy"].traps, 2,
-        "the offender's own requests are what suffer"
+        "the offender's own dispatches are what suffer"
     );
     assert_eq!(m.budget_kills, 2, "both spinners were killed at budget");
     r.cell.shutdown();
@@ -250,7 +250,7 @@ fn the_breaker_fails_a_repeat_offender_fast_without_entering_the_guest() {
     assert_eq!(
         act.activation_count(),
         activations_before,
-        "the breaker activated an instance to reject the request"
+        "the breaker activated an instance to reject the dispatch"
     );
     assert_eq!(
         r.cell.metrics().breaker_rejections,
@@ -261,7 +261,7 @@ fn the_breaker_fails_a_repeat_offender_fast_without_entering_the_guest() {
 }
 
 /// One slow dispatch is submitted first and fifty fast ones behind it, so
-/// the first result off the shared channel is not the first request in.
+/// the first result off the shared channel is not the first dispatch in.
 #[test]
 fn many_dispatches_share_one_channel_and_stay_matchable() {
     let r = rig(CellConfig {

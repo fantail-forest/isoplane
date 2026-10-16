@@ -111,7 +111,7 @@ settings in `tests/Sample-Handler.Tests/SandboxFixture.cs`.
   beside `environmentVariables`:
 
   ```json
-  "isoplaneLimitsOverride": { "memoryBytes": 134217728, "occupancyMsPerHttpDispatch": 1000 }
+  "isoplaneLimitsOverride": { "memoryBytes": 134217728, "occupancyMsPerDispatch": 1000 }
   ```
 - **Add a NuGet package.** `dotnet add src/Sample-Handler package <name>`.
 - **Use ASP.NET Core instead.** Start from `dotnet new isoplane-web` or

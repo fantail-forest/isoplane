@@ -19,7 +19,7 @@ pub trait DormantInstance: Send {
 struct Mapped(Instance);
 
 impl IsoplaneEngine {
-    /// Map a captured application before request admission, without host resources.
+    /// Map a captured application before dispatch admission, without host resources.
     /// Returns `None` without Linux pooling or a captured template image.
     /// The retained activation consumes one slot from the engine's capacity.
     pub fn map_activation(

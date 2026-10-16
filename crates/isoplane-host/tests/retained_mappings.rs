@@ -60,7 +60,7 @@ fn a_hibernated_guest_restores_its_delta_into_the_same_mapping() {
         .expect("initialize");
     assert_eq!(
         initialization
-            .run_initialize(OccupancyBudget::http())
+            .run_initialize(OccupancyBudget::default())
             .completion,
         Completion::Done,
         "initialization must finish"
@@ -114,7 +114,7 @@ fn a_hibernated_guest_restores_its_delta_into_the_same_mapping() {
         assert_eq!(
             u32::from_le_bytes(memory[64..68].try_into().expect("counter bytes")),
             expected,
-            "hibernation must preserve the previous request's changes"
+            "hibernation must preserve the previous dispatch's changes"
         );
         assert_eq!(
             memory.len(),

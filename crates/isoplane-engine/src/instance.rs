@@ -83,16 +83,16 @@ impl Entry<'_> {
     }
 }
 
-struct HotInvocation<'a>(&'a crate::watchdog::Shared);
+struct HotSlice<'a>(&'a crate::watchdog::Shared);
 
-impl<'a> HotInvocation<'a> {
+impl<'a> HotSlice<'a> {
     fn new(watchdog: &'a crate::watchdog::Shared) -> Self {
         watchdog.enter_hot();
         Self(watchdog)
     }
 }
 
-impl Drop for HotInvocation<'_> {
+impl Drop for HotSlice<'_> {
     fn drop(&mut self) {
         self.0.exit_hot();
     }
@@ -165,8 +165,8 @@ impl Instance {
         }
     }
 
-    /// One hot interval: meter start, epoch deadline armed, synchronous call
-    /// into the guest, meter stop.
+    /// One slice: meter start, epoch deadline armed, synchronous call into
+    /// the guest, meter stop.
     fn slice(&mut self, budget: OccupancyBudget, entry: Entry<'_>) -> DispatchOutcome {
         if let Some(why) = self.discarded {
             return self.refuse(
@@ -210,7 +210,7 @@ impl Instance {
             occupancy_budget_ns: budget.budget_ns(),
             grace_ns: budget.grace_ns(),
             spent_ns: budget.spent_ns,
-            wall_cap_ns: (budget.wall_ms_cap as u64).saturating_mul(1_000_000),
+            slice_wall_cap_ns: (budget.slice_wall_ms_cap as u64).saturating_mul(1_000_000),
             check_ticks: 1,
         };
 
@@ -227,7 +227,7 @@ impl Instance {
 
         // The watchdog only ticks while something is hot, so this precedes
         // arming the deadline.
-        let hot = HotInvocation::new(engine.watchdog.shared());
+        let hot = HotSlice::new(engine.watchdog.shared());
 
         let wall0 = Instant::now();
         live.store.data_mut().begin_slice(
@@ -242,7 +242,7 @@ impl Instance {
 
         let raw = call_entry(live, entry);
 
-        // Classification and teardown are outside the invocation's occupancy meter.
+        // Classification and teardown are outside the slice's occupancy meter.
         let occupancy_end_ns = interval_occupancy_ns(occupancy_start_ns);
         let (occupancy_ns, occupancy_measurement) = match occupancy_end_ns {
             Some(occupancy_ns) => (occupancy_ns, OccupancyMeasurement::Complete),
@@ -277,7 +277,7 @@ impl Instance {
         };
 
         // Host code that read failed storage beneath this instance saw zeros in
-        // its place, so whatever the call returned was computed from memory the
+        // its place, so whatever the slice returned was computed from memory the
         // instance does not hold.
         #[cfg(target_os = "linux")]
         let (status, trap) = if live
@@ -401,11 +401,11 @@ pub trait InstanceOps {
     fn gc_hint(&mut self, pressure: u8) -> DispatchOutcome;
     /// Restore template state, retaining mappings when their shape is unchanged.
     fn reset(&mut self) -> Result<()>;
-    /// True only when the last call returned `pending` and wasmtime reports
+    /// True only when the last slice returned `pending` and wasmtime reports
     /// no wasm frame on the native stack.
     fn is_parked(&self) -> bool;
     /// True when the instance may be captured: the stack is empty, the last
-    /// call ended in a state the instance survives, and it is not discarded.
+    /// slice ended in a state the instance survives, and it is not discarded.
     /// Weaker than [`InstanceOps::is_parked`] on purpose: an instance that
     /// returned `done` and went idle is the case hibernation is about.
     fn is_capture_eligible(&self) -> bool;
@@ -427,7 +427,7 @@ pub trait InstanceOps {
     fn restore_mutable_state(&mut self, img: &InstanceImage) -> Result<()>;
 }
 
-/// How a call into the guest ended.
+/// How a slice ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Completion {
     Done,
@@ -438,7 +438,7 @@ pub enum Completion {
     /// Still executing at B+G and terminated without unwinding. The instance
     /// is discarded: its memory is a state no execution produced.
     BudgetKill,
-    /// Entered grace and returned inside it. The request still fails, but the
+    /// Entered grace and returned inside it. The dispatch still fails, but the
     /// instance is consistent and its slot reusable.
     CleanKill,
 }
@@ -480,7 +480,7 @@ impl InstanceOps for Instance {
     fn gc_hint(&mut self, pressure: u8) -> DispatchOutcome {
         // The hint runs on the hibernation path with no dispatch budget of its
         // own; the HTTP budget stops a guest turning it into free compute.
-        self.run_gc_hint(pressure, OccupancyBudget::http())
+        self.run_gc_hint(pressure, OccupancyBudget::default())
     }
 
     fn reset(&mut self) -> Result<()> {

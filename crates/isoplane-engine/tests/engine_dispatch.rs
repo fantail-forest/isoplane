@@ -45,7 +45,7 @@ fn the_coarse_clock_does_not_advance_within_a_dispatch_slice() {
         .activate(&t, Box::new(TestBindings::new(rec.clone())))
         .expect("activation");
 
-    i.dispatch(&http_dispatch(1), OccupancyBudget::http());
+    i.dispatch(&http_dispatch(1), OccupancyBudget::default());
     let (a, b, c) = {
         let m = i.memory();
         (read_u64(m, 0), read_u64(m, 8), read_u64(m, 16))
@@ -53,7 +53,7 @@ fn the_coarse_clock_does_not_advance_within_a_dispatch_slice() {
     assert_eq!(a, b, "the clock advanced mid-slice");
     assert_eq!(b, c, "the clock advanced mid-slice");
 
-    i.dispatch(&http_dispatch(2), OccupancyBudget::http());
+    i.dispatch(&http_dispatch(2), OccupancyBudget::default());
     let (d, e2, f) = {
         let m = i.memory();
         (read_u64(m, 0), read_u64(m, 8), read_u64(m, 16))
@@ -97,7 +97,7 @@ fn a_future_returning_import_is_the_only_thing_that_advances_the_clock() {
     let mut i = e
         .activate(&t, Box::new(TestBindings::new(rec.clone())))
         .expect("activation");
-    i.dispatch(&http_dispatch(1), OccupancyBudget::http());
+    i.dispatch(&http_dispatch(1), OccupancyBudget::default());
 
     let m = i.memory();
     let (a, b, c) = (read_u64(m, 0), read_u64(m, 8), read_u64(m, 16));
@@ -155,7 +155,7 @@ fn guest_buffers_are_copied_out_and_out_buffers_are_copied_in() {
     let mut i = e
         .activate(&t, Box::new(TestBindings::new(rec.clone())))
         .expect("activation");
-    let out = i.dispatch(&http_dispatch(1), OccupancyBudget::http());
+    let out = i.dispatch(&http_dispatch(1), OccupancyBudget::default());
     assert_eq!(
         out.completion,
         Completion::Done,
@@ -192,7 +192,7 @@ fn an_out_of_bounds_import_buffer_traps_rather_than_reading_host_memory() {
     );
     let t = e.load_template(&wasm).expect("template");
     let mut i = activate(&e, &t);
-    let out = i.dispatch(&http_dispatch(1), OccupancyBudget::http());
+    let out = i.dispatch(&http_dispatch(1), OccupancyBudget::default());
     let trap = out.trap.expect("a buffer outside linear memory must trap");
     assert!(
         trap.message.contains("outside"),
@@ -234,7 +234,7 @@ fn assert_entropy_failure(reported_bytes: Option<i64>) {
     let mut i = e
         .activate(&t, Box::new(b))
         .expect("the entropy fixture must activate");
-    let outcome = i.dispatch(&http_dispatch(1), OccupancyBudget::http());
+    let outcome = i.dispatch(&http_dispatch(1), OccupancyBudget::default());
     assert_eq!(
         outcome.completion,
         Completion::Trapped,

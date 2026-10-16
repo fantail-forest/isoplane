@@ -63,7 +63,7 @@ fn guest(paths: &[&str]) -> Vec<u8> {
 fn result(instance: &mut Instance, index: usize) -> Vec<u8> {
     assert_eq!(
         instance
-            .dispatch(&dispatch(), OccupancyBudget::http())
+            .dispatch(&dispatch(), OccupancyBudget::default())
             .completion,
         Completion::Done,
         "reading immutable application files must complete without external I/O"
@@ -262,7 +262,7 @@ fn binding_files_to_an_active_template_leaves_its_instances_namespace_unchanged(
         b"late",
         "the new template must serve the files bound to it"
     );
-    active.dispatch(&dispatch(), OccupancyBudget::http());
+    active.dispatch(&dispatch(), OccupancyBudget::default());
     assert_ne!(
         active.memory()[1300],
         0,

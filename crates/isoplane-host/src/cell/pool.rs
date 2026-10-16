@@ -134,8 +134,8 @@ impl Cell {
         for job in self.queue.drain_stopped() {
             Self::cancel_queued_dispatch(job);
         }
-        for (id, request) in self.active.drain() {
-            let owner = request.completion;
+        for (id, dispatch) in self.active.drain() {
+            let owner = dispatch.completion;
             owner.select(TerminalReason::CellStopped, 503);
             let stream = self
                 .slot(id)
@@ -151,9 +151,9 @@ impl Cell {
                 slot.discard();
                 self.forget(&slot);
             }
-            self.rt.futures.end_dispatch(id, request.dispatch_id);
+            self.rt.futures.end_dispatch(id, dispatch.dispatch_id);
             self.rt.futures.release_instance(id);
-            if let Some(sender) = request.responder {
+            if let Some(sender) = dispatch.responder {
                 owner.answer(&sender, owner.failure_result(503, "cell_stopped"));
             }
         }
@@ -286,7 +286,7 @@ pub(super) mod cell_tests {
             .expect("the pool's only thread must still be running");
         assert!(
             (200..300).contains(&ok.status),
-            "the next request is served normally: {ok:?}"
+            "the next dispatch is served normally: {ok:?}"
         );
 
         assert_eq!(
@@ -312,7 +312,7 @@ pub(super) mod cell_tests {
         );
         assert_eq!(
             records[0]["occupancy_complete"], false,
-            "an interrupted invocation cannot claim a complete zero occupancy measurement"
+            "an interrupted slice cannot claim a complete zero occupancy measurement"
         );
     }
 
@@ -353,7 +353,7 @@ pub(super) mod cell_tests {
         let refused = run(2, Some(upload.clone()));
         assert_eq!(
             refused.status, 409,
-            "the held invocation must exercise slot entry refusal"
+            "the held slice must exercise slot entry refusal"
         );
         assert!(
             matches!(
@@ -440,7 +440,7 @@ pub(super) mod cell_tests {
         );
         assert_eq!(
             next.acquired, "pooled_fresh",
-            "the request uses the hygienic pool"
+            "the dispatch uses the hygienic pool"
         );
         assert_eq!(
             next.body,
@@ -525,7 +525,7 @@ pub(super) mod cell_tests {
         }
     }
 
-    fn hibernated_request(
+    fn hibernated_dispatch(
         cell: &Arc<Cell>,
     ) -> (Arc<Slot>, std::sync::mpsc::Receiver<DispatchResult>, u64) {
         let module = ModuleId::new("sleeping-io", "v1");
@@ -566,7 +566,7 @@ pub(super) mod cell_tests {
         );
         let slot = cell
             .slot(owners[0])
-            .expect("the parked request must remain resident");
+            .expect("the parked dispatch must remain resident");
         cell.force_hibernate(slot.id)
             .expect("the pending dispatch must capture");
         let futures = cell.futures().live_guest_future_ids();
@@ -584,10 +584,10 @@ pub(super) mod cell_tests {
             exec_threads: 0,
             ..CellConfig::for_test("protected-continuation")
         });
-        let (slot, response, future) = hibernated_request(&cell);
+        let (slot, response, future) = hibernated_dispatch(&cell);
         assert!(
             cell.discard_instance(slot.id).is_err(),
-            "eviction must refuse an unfinished request even when it is hibernated"
+            "eviction must refuse an unfinished dispatch even when it is hibernated"
         );
         assert_eq!(
             slot.state(),
@@ -599,7 +599,7 @@ pub(super) mod cell_tests {
         cell.run_wake(slot.clone());
         let result = response
             .recv_timeout(Duration::from_secs(10))
-            .expect("the protected request must finish after its I/O completes");
+            .expect("the protected dispatch must finish after its I/O completes");
         assert_eq!(
             result.body, b"restored",
             "the original continuation must finish"
@@ -624,7 +624,7 @@ pub(super) mod cell_tests {
         let clock = Arc::new(AtomicU64::new(100));
         let observed = clock.clone();
         *cell.completion_clock.write() = Arc::new(move || Some(observed.load(Ordering::Relaxed)));
-        let (slot, response, future) = events.scope(|| hibernated_request(&cell));
+        let (slot, response, future) = events.scope(|| hibernated_dispatch(&cell));
         assert!(
             events.records().is_empty(),
             "capture must not complete a parked dispatch"
@@ -670,13 +670,10 @@ pub(super) mod cell_tests {
             records[0]["total_wall_ns"], 800,
             "restoration must retain the original delivery clock"
         );
-        assert_eq!(
-            records[0]["slices"], 2,
-            "capture must preserve both invocation intervals"
-        );
+        assert_eq!(records[0]["slices"], 2, "capture must preserve both slices");
         assert_eq!(
             records[0]["capture_hints"], 1,
-            "capture hint usage must remain separate from invocations"
+            "capture hint usage must remain separate from slices"
         );
         cell.shutdown();
     }
@@ -689,7 +686,7 @@ pub(super) mod cell_tests {
             exec_threads: 0,
             ..CellConfig::for_test("missing-checkpoint")
         });
-        let (slot, response, future) = hibernated_request(&cell);
+        let (slot, response, future) = hibernated_dispatch(&cell);
         slot.ctx.snapshot.lock().take();
         cell.futures()
             .complete(future, isoplane_abi::result::ResultRecord::Ok(vec![]));
@@ -699,7 +696,7 @@ pub(super) mod cell_tests {
             .expect("a failed restoration must answer its caller");
         assert_eq!(
             result.status, 500,
-            "a missing continuation must fail the active request"
+            "a missing continuation must fail the active dispatch"
         );
         assert!(
             result.trap.is_some(),
@@ -734,12 +731,12 @@ pub(super) mod cell_tests {
         );
     }
 
-    /// Constructs the state the race produces, a live request on an instance
+    /// Constructs the state the race produces, a live dispatch on an instance
     /// and a handler holding a stale dispatch id for it, rather than racing
     /// threads. Both directions are asserted, or a handler that never answers
     /// would satisfy the guard.
     #[test]
-    fn a_stale_panic_handler_does_not_answer_another_requests_caller() {
+    fn a_stale_panic_handler_does_not_answer_the_caller_of_another_dispatch() {
         const LIVE: u64 = 900;
         let cell = cell(CellConfig {
             exec_threads: 2,
@@ -774,17 +771,17 @@ pub(super) mod cell_tests {
         cell.answer_after_panic(Some(stale));
         assert!(
             matches!(rx.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty)),
-            "a handler holding a stale dispatch id answered the live request's caller"
+            "a handler holding a stale dispatch id answered the live dispatch's caller"
         );
         assert_eq!(
             cell.active.with(&id, |a| a.dispatch_id),
             Some(LIVE),
-            "and it deleted the live request's entry on the way past"
+            "and it deleted the live dispatch's entry on the way past"
         );
 
         let current = cell
             .active
-            .with(&id, |request| request.completion.clone())
+            .with(&id, |dispatch| dispatch.completion.clone())
             .expect("live owner");
         current.select(TerminalReason::HostPanic, 500);
         cell.answer_after_panic(Some(current));
@@ -862,14 +859,14 @@ pub(super) mod cell_tests {
             "response usage includes every prescribed hot slice"
         );
         tokio::time::timeout(Duration::from_secs(10), async {
-            while cell.metrics_raw().request_us.count() == 0 {
+            while cell.metrics_raw().dispatch_us.count() == 0 {
                 tokio::task::yield_now().await;
             }
         })
         .await
         .expect("dispatch cleanup must settle");
         let records = events.completed(1);
-        assert_eq!(records[0]["invocation_occupancy_ns"], 33);
+        assert_eq!(records[0]["slice_occupancy_ns"], 33);
         let meters = cell.meters(&module).expect("module meters");
         assert_eq!(
             meters.occupancy_ns(),
@@ -886,7 +883,7 @@ pub(super) mod cell_tests {
         assert_eq!(
             cell.futures().live_futures(),
             0,
-            "stream EOF must leave no request futures after settlement"
+            "stream EOF must leave no dispatch futures after settlement"
         );
         cell.shutdown();
     }

@@ -67,10 +67,10 @@ impl TerminalReason {
 pub(super) struct Usage {
     pub(super) occupancy_ns: u64,
     reactor_occupancy_ns: u64,
-    pub(super) hot_wall_ns: u64,
+    pub(super) slice_wall_ns: u64,
     pub(super) slices: u32,
     incomplete: bool,
-    invoking: bool,
+    in_slice: bool,
     overage_ns: u64,
     limit: Option<isoplane_engine::ExecutionLimit>,
     kill_phase: Option<isoplane_engine::KillPhase>,
@@ -178,16 +178,16 @@ impl DispatchCompletion {
 
     pub(super) fn begin_slice(&self) {
         let mut state = self.state.lock();
-        state.usage.invoking = true;
+        state.usage.in_slice = true;
         state.usage.slices = state.usage.slices.saturating_add(1);
     }
 
     pub(super) fn add_slice(&self, outcome: &DispatchOutcome) {
         let mut state = self.state.lock();
         let usage = &mut state.usage;
-        usage.invoking = false;
+        usage.in_slice = false;
         usage.occupancy_ns = usage.occupancy_ns.saturating_add(outcome.occupancy_ns);
-        usage.hot_wall_ns = usage.hot_wall_ns.saturating_add(outcome.wall_ns);
+        usage.slice_wall_ns = usage.slice_wall_ns.saturating_add(outcome.wall_ns);
         usage.incomplete |=
             outcome.occupancy_measurement == isoplane_engine::OccupancyMeasurement::Incomplete;
         usage.overage_ns = outcome.overage_ns;
@@ -235,7 +235,7 @@ impl DispatchCompletion {
             body,
             completion,
             occupancy_ns: state.usage.occupancy_ns,
-            wall_ns: state.usage.hot_wall_ns,
+            wall_ns: state.usage.slice_wall_ns,
             slices: state.usage.slices,
             instance,
             acquired: state.acquired.unwrap_or("none"),
@@ -380,21 +380,21 @@ impl DispatchCompletion {
             dispatch_token = self.token.0, dispatch_id = self.dispatch_id, dispatch_kind = self.kind,
             instance, acquired, outcome = reason.label(), status,
             error_kind, error_classification_complete, io_kind, os_error, guest_trap_code,
-            occupancy_scope = "dispatch_invocations_and_reactor_polls", activation_occupancy_included = false,
-            invocation_occupancy_ns = usage.occupancy_ns.saturating_sub(usage.reactor_occupancy_ns),
+            occupancy_scope = "dispatch_slices_and_reactor_polls", activation_occupancy_included = false,
+            slice_occupancy_ns = usage.occupancy_ns.saturating_sub(usage.reactor_occupancy_ns),
             reactor_occupancy_ns = usage.reactor_occupancy_ns,
-            occupancy_ns = usage.occupancy_ns, occupancy_complete = !usage.incomplete && !usage.invoking,
-            hot_wall_ns = usage.hot_wall_ns,
-            hot_wall_complete = !usage.invoking,
+            occupancy_ns = usage.occupancy_ns, occupancy_complete = !usage.incomplete && !usage.in_slice,
+            slice_wall_ns = usage.slice_wall_ns,
+            slice_wall_complete = !usage.in_slice,
             capture_hint_occupancy_ns = usage.capture_hint_occupancy_ns,
             capture_hint_wall_ns = usage.capture_hint_wall_ns,
             capture_hint_complete = !usage.hint_incomplete && !usage.hint_running,
             capture_hints = usage.capture_hints,
             total_guest_occupancy_ns = usage.occupancy_ns.saturating_add(usage.capture_hint_occupancy_ns),
-            total_guest_occupancy_complete = !usage.incomplete && !usage.invoking && !usage.hint_incomplete && !usage.hint_running,
+            total_guest_occupancy_complete = !usage.incomplete && !usage.in_slice && !usage.hint_incomplete && !usage.hint_running,
             total_wall_ns, total_wall_complete = total_wall_ns.is_some(),
             slices = usage.slices, occupancy_budget_ns = self.budget.budget_ns(),
-            execution_wall_cap_ns = u64::from(self.budget.wall_ms_cap) * 1_000_000,
+            slice_wall_cap_ns = u64::from(self.budget.slice_wall_ms_cap) * 1_000_000,
             overage_ns = usage.overage_ns, kill_phase = usage.kill_phase.map(|phase| phase.as_str()),
             "dispatch completed"
         ));
@@ -492,7 +492,7 @@ impl Cell {
             record,
             OccupancyBudget {
                 occupancy_ms: record.occupancy_budget_ms,
-                wall_ms_cap: self.cfg.wall_ms_cap,
+                slice_wall_ms_cap: self.cfg.slice_wall_ms_cap,
                 spent_ns: 0,
             },
             self.completion_clock.read().clone(),
@@ -500,16 +500,16 @@ impl Cell {
     }
 }
 
-pub(super) struct HotInterval<'a>(&'a AtomicUsize);
+pub(super) struct HotSlice<'a>(&'a AtomicUsize);
 
-impl<'a> HotInterval<'a> {
+impl<'a> HotSlice<'a> {
     pub(super) fn new(hot: &'a AtomicUsize) -> Self {
         hot.fetch_add(1, Ordering::Relaxed);
         Self(hot)
     }
 }
 
-impl Drop for HotInterval<'_> {
+impl Drop for HotSlice<'_> {
     fn drop(&mut self) {
         self.0.fetch_sub(1, Ordering::Relaxed);
     }

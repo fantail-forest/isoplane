@@ -49,7 +49,9 @@ fn publish_layer(engine: &IsoplaneEngine, path: &Path) {
     let source = engine.load_layer_source(&wasm).expect("layer source");
     let mut instance = activate(engine, &source);
     assert_eq!(
-        instance.run_initialize(OccupancyBudget::http()).completion,
+        instance
+            .run_initialize(OccupancyBudget::default())
+            .completion,
         Completion::Done,
         "the initializer must complete before capture"
     );
@@ -110,7 +112,7 @@ fn host_code_writing_into_failed_template_storage_fails_the_dispatch() {
     let engine = test_engine();
     let directory = tempfile::tempdir().expect("directory");
     let (_template, mut instance) = failed_layer(&engine, directory.path());
-    let outcome = instance.dispatch(&http_dispatch(1), OccupancyBudget::http());
+    let outcome = instance.dispatch(&http_dispatch(1), OccupancyBudget::default());
     assert_eq!(
         outcome.trap.map(|trap| trap.kind),
         Some(TrapKind::StorageFault),
@@ -138,13 +140,13 @@ fn other_templates_keep_serving_after_one_templates_storage_fails() {
     let engine = test_engine();
     let directory = tempfile::tempdir().expect("directory");
     let (_template, mut instance) = failed_layer(&engine, directory.path());
-    instance.dispatch(&http_dispatch(1), OccupancyBudget::http());
+    instance.dispatch(&http_dispatch(1), OccupancyBudget::default());
     let healthy = engine
         .load_template(&guest(1, "", "", DONE, DONE))
         .expect("another template");
     assert_eq!(
         activate(&engine, &healthy)
-            .dispatch(&http_dispatch(2), OccupancyBudget::http())
+            .dispatch(&http_dispatch(2), OccupancyBudget::default())
             .completion,
         Completion::Done,
         "a storage fault in one template must leave the engine serving others"
@@ -193,7 +195,7 @@ fn a_mapped_template_keeps_running_after_its_native_payload_is_truncated() {
     truncate(&path.join("template.cwasm"));
     assert_eq!(
         activate(&engine, &template)
-            .dispatch(&http_dispatch(1), OccupancyBudget::http())
+            .dispatch(&http_dispatch(1), OccupancyBudget::default())
             .completion,
         Completion::Done,
         "compiled code must not depend on its payload file once verified"

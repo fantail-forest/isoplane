@@ -1,4 +1,4 @@
-//! One dispatch from admission to its final response: the request lifecycle across every slice, the outcome switch, and the books a killed instance keeps.
+//! One dispatch from admission to its final response: the dispatch lifecycle across every slice, the outcome switch, and the books a killed instance keeps.
 
 use super::*;
 
@@ -45,7 +45,7 @@ impl Cell {
 
         let budget = OccupancyBudget {
             occupancy_ms: job.rec.occupancy_budget_ms,
-            wall_ms_cap: self.cfg.wall_ms_cap,
+            slice_wall_ms_cap: self.cfg.slice_wall_ms_cap,
             // Later slices carry what earlier ones spent, so the budget binds
             // the dispatch rather than each wake.
             spent_ns: 0,
@@ -61,7 +61,7 @@ impl Cell {
 
         self.active.insert(
             slot.id,
-            ActiveRequest {
+            ActiveDispatch {
                 dispatch_id: job.rec.dispatch_id,
                 module: job.module.clone(),
                 route: job.target.route(),
@@ -138,7 +138,7 @@ impl Cell {
                     return;
                 }
             };
-            let hot = super::completion::HotInterval::new(&self.hot);
+            let hot = super::completion::HotSlice::new(&self.hot);
             job.completion.begin_slice();
             let out = tracing::info_span!("guest_slice")
                 .in_scope(|| guard.instance().dispatch(&job.rec, budget));
@@ -193,7 +193,7 @@ impl Cell {
         let _execution = slot.lock_execution();
         let Some(owner) = self
             .active
-            .with(&slot.id, |request| request.completion.clone())
+            .with(&slot.id, |dispatch| dispatch.completion.clone())
         else {
             return;
         };
@@ -268,7 +268,7 @@ impl Cell {
                 .begin_slice(crate::now_ms(), slot.ctx.dispatch_id());
 
             let t0 = Instant::now();
-            let hot = super::completion::HotInterval::new(&self.hot);
+            let hot = super::completion::HotSlice::new(&self.hot);
             owner.begin_slice();
             let outcome = tracing::info_span!("guest_slice")
                 .in_scope(|| guard.instance().wake(fid, &res, budget));
@@ -393,19 +393,19 @@ impl Cell {
                 }
 
                 match decide(completion, streaming_open) {
-                    RequestEnd::RetainedForStreaming => {
+                    DispatchEnd::RetainedForStreaming => {
                         slot.park(crate::now_ms());
                         !self.rt.futures.has_ready(slot.id)
                     }
-                    RequestEnd::Disposed(d) => {
+                    DispatchEnd::Disposed(d) => {
                         self.breaker.record_success(&breaker_key);
                         self.finish_and_release(slot, entry, d);
                         true
                     }
-                    RequestEnd::Parked => self.park_after_slice(slot),
+                    DispatchEnd::Parked => self.park_after_slice(slot),
                 }
             }
-            // The request still fails with `budget_exceeded`, but the
+            // The dispatch still fails with `budget_exceeded`, but the
             // instance is consistent, its slot is reused, and the breaker
             // records neither a kill nor a success: a clean kill is the budget
             // working as designed.
@@ -438,11 +438,11 @@ impl Cell {
                 );
                 self.respond(slot, result);
                 match decide(completion, false) {
-                    RequestEnd::Disposed(d) => {
+                    DispatchEnd::Disposed(d) => {
                         self.finish_and_release(slot, entry, d);
                         true
                     }
-                    RequestEnd::Parked | RequestEnd::RetainedForStreaming => {
+                    DispatchEnd::Parked | DispatchEnd::RetainedForStreaming => {
                         self.park_after_slice(slot)
                     }
                 }
@@ -501,8 +501,8 @@ impl Cell {
     }
 
     fn respond(&self, slot: &Arc<Slot>, result: DispatchResult) {
-        self.active.with(&slot.id, |request| {
-            request.completion.select_result(&result)
+        self.active.with(&slot.id, |dispatch| {
+            dispatch.completion.select_result(&result)
         });
         if let Some(stream) = slot.ctx.responses.lock().transport.clone() {
             if stream.has_started() {
@@ -515,11 +515,11 @@ impl Cell {
         }
         let response = self
             .active
-            .with_mut(&slot.id, |request| {
-                request
+            .with_mut(&slot.id, |dispatch| {
+                dispatch
                     .responder
                     .take()
-                    .map(|sender| (request.completion.clone(), sender))
+                    .map(|sender| (dispatch.completion.clone(), sender))
             })
             .flatten();
         if let Some((owner, sender)) = response {
@@ -535,7 +535,7 @@ impl Cell {
     ) -> bool {
         let Some(owner) = self
             .active
-            .with(&slot.id, |request| request.completion.clone())
+            .with(&slot.id, |dispatch| dispatch.completion.clone())
         else {
             return false;
         };
@@ -566,8 +566,8 @@ impl Cell {
         } else {
             TerminalReason::RequestCancelled
         };
-        self.active.with(&slot.id, |request| {
-            request.completion.select(terminal, status)
+        self.active.with(&slot.id, |dispatch| {
+            dispatch.completion.select(terminal, status)
         });
         let reason = failure.unwrap_or_else(|| "request_cancelled".into());
         let result = owner.result(
@@ -618,7 +618,7 @@ impl Cell {
             .map(|stream| stream.settlement());
         let completion = self
             .active
-            .with(&slot.id, |request| request.completion.clone());
+            .with(&slot.id, |dispatch| dispatch.completion.clone());
         let _completion = completion.as_ref().map(|owner| owner.settlement());
         slot.ctx.end_http_dispatch();
         let req = self.active.remove(&slot.id);
@@ -627,7 +627,7 @@ impl Cell {
         if let Some(r) = &req {
             abandoned_guest_work = self.rt.futures.end_dispatch(slot.id, r.dispatch_id);
             if let Some(total_wall_ns) = r.completion.total_wall_ns() {
-                self.metrics.request_us.record(total_wall_ns / 1_000);
+                self.metrics.dispatch_us.record(total_wall_ns / 1_000);
             }
             self.metrics.park_ms.record(slot.parked_ms_total());
             entry.meters.record_park(slot.parked_ms_total());
@@ -648,7 +648,7 @@ impl Cell {
                 slot,
                 entry,
                 generation,
-                req.and_then(|request| request.idle_stop_at),
+                req.and_then(|dispatch| dispatch.idle_stop_at),
             );
         }
     }

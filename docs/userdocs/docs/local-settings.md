@@ -97,7 +97,7 @@ launch profile:
 ```json
 "isoplaneLimitsOverride": {
   "memoryBytes": 134217728,
-  "occupancyMsPerHttpDispatch": 1000,
+  "occupancyMsPerDispatch": 1000,
   "subrequestsPerDispatch": 20,
   "pendingFuturesPerDispatch": 6
 }

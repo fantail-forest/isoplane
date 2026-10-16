@@ -1,7 +1,7 @@
 //! The hang breaker: repeated hard budget kills for one (module, route) fail
 //! subsequent dispatches fast until the breaker cools or a new version
 //! deploys. Isolation is already done by the time a kill happens; the breaker
-//! exists to stop burning a whole CPU budget per request to learn the same
+//! exists to stop burning a whole CPU budget per dispatch to learn the same
 //! thing again.
 
 use std::collections::HashMap;

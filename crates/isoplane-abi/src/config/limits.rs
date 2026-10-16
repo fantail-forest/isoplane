@@ -15,7 +15,7 @@ pub struct Limits {
     /// Maximum guest linear-memory bytes.
     pub instance_memory_max: u64,
     /// Occupied-worker milliseconds across all slices of one dispatch.
-    pub occupancy_ms_per_http_dispatch: u32,
+    pub occupancy_ms_per_dispatch: u32,
     /// Maximum subrequests started within one dispatch.
     pub subrequests_per_dispatch: u32,
     /// Maximum concurrently pending futures within one dispatch.
@@ -28,7 +28,7 @@ impl Default for Limits {
             module_bytes_compressed: 52428800,
             package_bytes: 52428800,
             instance_memory_max: 134217728,
-            occupancy_ms_per_http_dispatch: 30000,
+            occupancy_ms_per_dispatch: 30000,
             subrequests_per_dispatch: 200,
             pending_futures_per_dispatch: 64,
         }
@@ -44,8 +44,8 @@ pub struct ResourceLimitOverrides {
     pub module_bytes_compressed: Option<u64>,
     /// Maximum uncompressed application package size admitted for preparation.
     pub package_bytes: Option<u64>,
-    /// occupancy budget across all invocation slices of one HTTP dispatch.
-    pub occupancy_ms_per_http_dispatch: Option<u32>,
+    /// Occupancy budget across all slices of one request dispatch.
+    pub occupancy_ms_per_dispatch: Option<u32>,
     /// Maximum subrequests started by one dispatch.
     pub subrequests_per_dispatch: Option<u32>,
     /// Maximum pending futures owned by one dispatch.
@@ -60,9 +60,9 @@ impl ResourceLimitOverrides {
                 .module_bytes_compressed
                 .unwrap_or(defaults.module_bytes_compressed),
             package_bytes: self.package_bytes.unwrap_or(defaults.package_bytes),
-            occupancy_ms_per_http_dispatch: self
-                .occupancy_ms_per_http_dispatch
-                .unwrap_or(defaults.occupancy_ms_per_http_dispatch),
+            occupancy_ms_per_dispatch: self
+                .occupancy_ms_per_dispatch
+                .unwrap_or(defaults.occupancy_ms_per_dispatch),
             subrequests_per_dispatch: self
                 .subrequests_per_dispatch
                 .unwrap_or(defaults.subrequests_per_dispatch),

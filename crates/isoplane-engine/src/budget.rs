@@ -25,23 +25,26 @@ use crate::Completion;
 #[derive(Debug, Clone, Copy)]
 pub struct OccupancyBudget {
     pub occupancy_ms: u32,
-    /// Independent elapsed-time cap for one invocation, including debugger sessions.
-    pub wall_ms_cap: u32,
+    /// Independent elapsed-time cap for one slice, including debugger sessions.
+    pub slice_wall_ms_cap: u32,
     /// Worker occupancy burned by earlier slices of the same dispatch, so a guest
     /// that parks inside grace comes back with the remainder of G rather than
     /// a fresh one.
     pub spent_ns: u64,
 }
 
-impl OccupancyBudget {
-    pub fn http() -> Self {
+impl Default for OccupancyBudget {
+    /// The budget for slices outside application dispatch, such as the pre-capture GC hint.
+    fn default() -> Self {
         Self {
             occupancy_ms: 50,
-            wall_ms_cap: 30_000,
+            slice_wall_ms_cap: 30_000,
             spent_ns: 0,
         }
     }
+}
 
+impl OccupancyBudget {
     pub fn budget_ns(self) -> u64 {
         (self.occupancy_ms as u64).saturating_mul(1_000_000)
     }
@@ -103,32 +106,32 @@ impl KillPhase {
     }
 }
 
-/// Whether a returned occupancy value accounts for the entire invocation.
+/// Whether a returned occupancy value accounts for the entire slice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OccupancyMeasurement {
     /// Both clock readings succeeded.
     Complete,
-    /// No guest invocation was attempted.
+    /// No slice was attempted.
     NotExecuted,
     /// The occupancy value is only a known floor; the end reading was unavailable.
     Incomplete,
 }
 
-/// The existing execution bound that ended this invocation.
+/// The existing execution bound that ended this slice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecutionLimit {
     /// Worker occupancy exhausted its budget, including any grace.
     Occupancy,
-    /// The invocation's wall-clock backstop fired.
+    /// The slice's wall-clock backstop fired.
     Wall,
 }
 
-/// The result of one synchronous call into the guest.
+/// The result of one slice: a synchronous call into the guest.
 #[derive(Debug, Clone)]
 pub struct DispatchOutcome {
     pub status: PollStatus,
     pub completion: Completion,
-    /// Worker occupancy over this hot interval, overage included. The compute meter.
+    /// Worker occupancy over this slice, overage included. The compute meter.
     pub occupancy_ns: u64,
     /// Completeness of the occupancy floor above.
     pub occupancy_measurement: OccupancyMeasurement,
@@ -198,18 +201,18 @@ mod tests {
     #[test]
     fn grace_is_the_larger_of_two_milliseconds_and_a_tenth_of_the_budget() {
         assert_eq!(
-            OccupancyBudget::http().grace_ns(),
+            OccupancyBudget::default().grace_ns(),
             5_000_000,
             "a tenth of the 50 ms default dominates the floor"
         );
         assert_eq!(
-            OccupancyBudget::http().hard_ns(),
+            OccupancyBudget::default().hard_ns(),
             55_000_000,
             "the hard deadline is B plus G"
         );
         let small = OccupancyBudget {
             occupancy_ms: 5,
-            ..OccupancyBudget::http()
+            ..OccupancyBudget::default()
         };
         assert_eq!(
             small.grace_ns(),
@@ -218,7 +221,7 @@ mod tests {
         );
         let large = OccupancyBudget {
             occupancy_ms: 300_000,
-            ..OccupancyBudget::http()
+            ..OccupancyBudget::default()
         };
         assert_eq!(
             large.grace_ns(),
@@ -233,7 +236,7 @@ mod tests {
         for budget_ms in [100, 30000, 300000] {
             let b = OccupancyBudget {
                 occupancy_ms: budget_ms,
-                ..OccupancyBudget::http()
+                ..OccupancyBudget::default()
             };
             let g = b.grace_ns();
             assert!(

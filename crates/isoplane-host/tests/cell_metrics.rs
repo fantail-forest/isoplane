@@ -162,7 +162,7 @@ fn logging_is_charged_to_the_dispatch_that_logs() {
         assert_eq!(meters.occupancy_ns(), result.occupancy_ns);
         assert!(
             meters.log_occupancy_ns() <= meters.occupancy_ns(),
-            "logging is a subset of invocation occupancy"
+            "logging is a subset of slice occupancy"
         );
     }
     r.cell.shutdown();

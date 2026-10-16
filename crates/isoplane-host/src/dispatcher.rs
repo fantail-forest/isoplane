@@ -14,7 +14,7 @@ use crate::ModuleId;
 /// The wall cap plus a margin: the budget and the wall cap fire inside the
 /// cell, and this only keeps a caller from waiting forever on a cell bug.
 fn deadline(cell: &Cell) -> Duration {
-    Duration::from_millis(cell.cfg.wall_ms_cap as u64 + 5_000)
+    Duration::from_millis(cell.cfg.slice_wall_ms_cap as u64 + 5_000)
 }
 
 impl Cell {

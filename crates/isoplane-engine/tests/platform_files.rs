@@ -833,7 +833,7 @@ fn file_descriptors_and_directory_cursors_survive_capture_in_guest_memory_alone(
     let wasm = filesystem::lifecycle_module(&park, &wake, &strings());
     let template = engine.load_template(&wasm).expect("lifecycle template");
     let mut original = activate(&engine, &template);
-    original.dispatch(&dispatch(), OccupancyBudget::http());
+    original.dispatch(&dispatch(), OccupancyBudget::default());
     assert!(
         original.is_parked(),
         "the guest parks with its descriptors open"
@@ -849,7 +849,7 @@ fn file_descriptors_and_directory_cursors_survive_capture_in_guest_memory_alone(
     let result = restored.wake(
         1,
         &isoplane_abi::result::ResultRecord::Ok(vec![]),
-        OccupancyBudget::http(),
+        OccupancyBudget::default(),
     );
     assert_eq!(
         result.completion,

@@ -1,5 +1,5 @@
 //! The two-phase kill (grace and the hard deadline) and the wall-clock
-//! independent per-invocation wall-clock backstop.
+//! independent per-slice wall-clock backstop.
 
 mod common;
 #[path = "common/dispatch.rs"]
@@ -17,7 +17,7 @@ fn read_u64(m: &[u8], off: usize) -> u64 {
 fn budget(occupancy_ms: u32) -> OccupancyBudget {
     OccupancyBudget {
         occupancy_ms,
-        wall_ms_cap: 30_000,
+        slice_wall_ms_cap: 30_000,
         spent_ns: 0,
     }
 }
@@ -189,7 +189,7 @@ fn a_guest_abort_is_a_guest_panic_not_a_sandbox_violation() {
     let mut i = activate(&e, &t);
     i.memory()[0..5].copy_from_slice(b"boom!");
 
-    let out = i.dispatch(&http_dispatch(1), OccupancyBudget::http());
+    let out = i.dispatch(&http_dispatch(1), OccupancyBudget::default());
     let trap = out.trap.expect("abort traps");
     assert_eq!(
         trap.kind,
@@ -219,7 +219,7 @@ fn a_bounds_violation_is_classified_as_a_sandbox_trap() {
     );
     let t = e.load_template(&wasm).expect("template");
     let mut i = activate(&e, &t);
-    let out = i.dispatch(&http_dispatch(1), OccupancyBudget::http());
+    let out = i.dispatch(&http_dispatch(1), OccupancyBudget::default());
     assert_eq!(
         out.trap.as_ref().map(|t| t.kind),
         Some(TrapKind::Sandbox),
@@ -246,7 +246,7 @@ fn a_failed_isoplane_alloc_is_out_of_memory() {
         .load_template(&wat::parse_str(src).expect("wat"))
         .expect("template");
     let mut i = activate(&e, &t);
-    let out = i.dispatch(&http_dispatch(1), OccupancyBudget::http());
+    let out = i.dispatch(&http_dispatch(1), OccupancyBudget::default());
     assert_eq!(
         out.trap.as_ref().map(|t| t.kind),
         Some(TrapKind::OutOfMemory),
@@ -270,7 +270,7 @@ fn the_wall_clock_backstop_reports_its_distinct_cap() {
         &http_dispatch(1),
         OccupancyBudget {
             occupancy_ms: 600_000,
-            wall_ms_cap: 40,
+            slice_wall_ms_cap: 40,
             spent_ns: 0,
         },
     );

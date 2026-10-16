@@ -72,7 +72,7 @@ pub enum Step {
 
 #[derive(Debug, Clone, Default)]
 pub struct FakeBehaviour {
-    /// One step per call into the instance; exhausted means `done` with 200.
+    /// One step per slice; exhausted means `done` with 200.
     pub program: Vec<Step>,
     /// A deferred lazy initializer: the guest checks a flag in linear memory,
     /// sets it if unset, and reports the value it observed in the body, so a

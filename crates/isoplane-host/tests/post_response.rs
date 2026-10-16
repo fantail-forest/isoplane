@@ -70,7 +70,7 @@ fn dispatch(handle: &str, wake: &str) -> (Arc<Cell>, DispatchResult) {
 async fn await_settlement(cell: &Cell) {
     // The response is sent before cleanup; this metric is recorded after end_dispatch.
     tokio::time::timeout(Duration::from_secs(10), async {
-        while cell.metrics_raw().request_us.count() == 0 {
+        while cell.metrics_raw().dispatch_us.count() == 0 {
             tokio::task::yield_now().await;
         }
     })
@@ -119,13 +119,13 @@ async fn a_real_guest_can_still_await_a_timer_before_completing() {
     );
     assert_eq!(
         result.slices, 2,
-        "the real request must park and resume through a host-owned timer"
+        "the real dispatch must park and resume through a host-owned timer"
     );
     await_settlement(&cell).await;
     assert_eq!(
         cell.futures().live_futures(),
         0,
-        "the completed request must release its host futures"
+        "the completed dispatch must release its host futures"
     );
     cell.shutdown();
 }

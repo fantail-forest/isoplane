@@ -1,4 +1,4 @@
-//! What happens to an instance at the end of a request; [`Disposition`] has one producer, [`decide`].
+//! What happens to an instance at the end of a dispatch; [`Disposition`] has one producer, [`decide`].
 
 use isoplane_engine::Completion;
 
@@ -33,8 +33,8 @@ impl Disposition {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RequestEnd {
-    /// The guest returned `pending`; a wake will resume the request.
+pub enum DispatchEnd {
+    /// The guest returned `pending`; a wake will resume the dispatch.
     Parked,
     /// The streaming response is unfinished; the dispatch ends when it finishes.
     RetainedForStreaming,
@@ -43,16 +43,16 @@ pub enum RequestEnd {
 
 /// The disposition table. A trapped or killed instance is discarded, a
 /// cleanly killed one is reset, and a completed one stays warm.
-pub fn decide(completion: Completion, streaming_open: bool) -> RequestEnd {
+pub fn decide(completion: Completion, streaming_open: bool) -> DispatchEnd {
     match completion {
-        Completion::Parked => RequestEnd::Parked,
+        Completion::Parked => DispatchEnd::Parked,
         Completion::Trapped | Completion::BudgetKill => {
-            RequestEnd::Disposed(Disposition(DispositionKind::Discard))
+            DispatchEnd::Disposed(Disposition(DispositionKind::Discard))
         }
         // Cooperative termination resets dispatch state.
-        Completion::CleanKill => RequestEnd::Disposed(Disposition(DispositionKind::Reset)),
-        Completion::Done if streaming_open => RequestEnd::RetainedForStreaming,
-        Completion::Done => RequestEnd::Disposed(Disposition(DispositionKind::Warm)),
+        Completion::CleanKill => DispatchEnd::Disposed(Disposition(DispositionKind::Reset)),
+        Completion::Done if streaming_open => DispatchEnd::RetainedForStreaming,
+        Completion::Done => DispatchEnd::Disposed(Disposition(DispositionKind::Warm)),
     }
 }
 
@@ -66,7 +66,7 @@ pub fn warm() -> Disposition {
     Disposition(DispositionKind::Warm)
 }
 
-/// A reset requested by policy rather than by the end of a request.
+/// A reset requested by policy rather than by the end of a dispatch.
 pub fn policy_reset() -> Disposition {
     Disposition(DispositionKind::Reset)
 }
@@ -80,32 +80,32 @@ mod tests {
         use Completion::*;
         assert_eq!(
             decide(Done, false),
-            RequestEnd::Disposed(Disposition(DispositionKind::Warm)),
+            DispatchEnd::Disposed(Disposition(DispositionKind::Warm)),
             "a completed dispatch stays warm"
         );
         assert_eq!(
             decide(Done, true),
-            RequestEnd::RetainedForStreaming,
+            DispatchEnd::RetainedForStreaming,
             "an unfinished streaming response retains its dispatch"
         );
         assert_eq!(
             decide(CleanKill, false),
-            RequestEnd::Disposed(Disposition(DispositionKind::Reset)),
+            DispatchEnd::Disposed(Disposition(DispositionKind::Reset)),
             "a cleanly killed instance is reset before reuse"
         );
         assert_eq!(
             decide(BudgetKill, false),
-            RequestEnd::Disposed(Disposition(DispositionKind::Discard)),
+            DispatchEnd::Disposed(Disposition(DispositionKind::Discard)),
             "a killed instance is never reused"
         );
         assert_eq!(
             decide(Trapped, false),
-            RequestEnd::Disposed(Disposition(DispositionKind::Discard)),
+            DispatchEnd::Disposed(Disposition(DispositionKind::Discard)),
             "a trapped instance is never reused"
         );
         assert_eq!(
             decide(Parked, false),
-            RequestEnd::Parked,
+            DispatchEnd::Parked,
             "a parked dispatch is still in flight"
         );
     }

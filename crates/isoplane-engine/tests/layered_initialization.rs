@@ -48,7 +48,9 @@ fn capture(
 fn initialize(engine: &IsoplaneEngine, source: &Template) -> Instance {
     let mut instance = activate(engine, source);
     assert_eq!(
-        instance.run_initialize(OccupancyBudget::http()).completion,
+        instance
+            .run_initialize(OccupancyBudget::default())
+            .completion,
         Completion::Done,
         "initializer must complete before capture"
     );
@@ -238,7 +240,9 @@ fn layer_capture_refuses_unfinished_or_unrelated_instances() {
         "an instance that never completed initialization must not be captured"
     );
     assert_eq!(
-        instance.run_initialize(OccupancyBudget::http()).completion,
+        instance
+            .run_initialize(OccupancyBudget::default())
+            .completion,
         Completion::Done,
         "initializer must finish"
     );
@@ -420,7 +424,7 @@ fn preparing_growth_preserves_the_guest_heap_and_captured_state() {
         );
         assert_eq!(
             instance
-                .dispatch(&dispatch::http_dispatch(1), OccupancyBudget::http())
+                .dispatch(&dispatch::http_dispatch(1), OccupancyBudget::default())
                 .completion,
             Completion::Done,
             "guest growth must see the captured size and preserve initialized bytes"

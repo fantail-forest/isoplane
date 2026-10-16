@@ -41,7 +41,7 @@ pub const GUEST_LIMITS: Limits = Limits {
     module_bytes_compressed: 52428800,
     package_bytes: 52428800,
     instance_memory_max: 134217728,
-    occupancy_ms_per_http_dispatch: 30000,
+    occupancy_ms_per_dispatch: 30000,
     subrequests_per_dispatch: 200,
     pending_futures_per_dispatch: 64,
 };
@@ -436,7 +436,7 @@ impl ReturnedGuest {
                 kind: DispatchKind::Http(request),
                 trace: TraceContext::default(),
                 cancel_future: 0,
-                occupancy_budget_ms: self.context.limits.occupancy_ms_per_http_dispatch,
+                occupancy_budget_ms: self.context.limits.occupancy_ms_per_dispatch,
                 now_ms: self.context.slice_clock_ms(),
             },
             budget(&self.context),
@@ -621,8 +621,8 @@ fn capture(instance: &mut Instance, outcome: &DispatchOutcome) -> Option<(Instan
 
 fn budget(context: &InstanceCtx) -> OccupancyBudget {
     OccupancyBudget {
-        occupancy_ms: context.limits.occupancy_ms_per_http_dispatch,
-        wall_ms_cap: isoplane_host::CellConfig::default().wall_ms_cap,
+        occupancy_ms: context.limits.occupancy_ms_per_dispatch,
+        slice_wall_ms_cap: isoplane_host::CellConfig::default().slice_wall_ms_cap,
         spent_ns: 0,
     }
 }

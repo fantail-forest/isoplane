@@ -15,7 +15,7 @@ impl WakeSink for CellWake {
         let slot = self.index.lock().get(&owner).and_then(Weak::upgrade);
         let Some(s) = slot else {
             // The result is already Ready in the future table; for a live
-            // instance this is a request that is never answered.
+            // instance this is a dispatch that is never answered.
             self.metrics.wakes_dropped.fetch_add(1, Ordering::Relaxed);
             tracing::debug!(
                 instance = %owner,

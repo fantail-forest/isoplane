@@ -59,7 +59,7 @@ in_mono_runtime! {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn a_managed_timer_left_pending_runs_before_a_later_request(runtime: GuestRuntime) {
+    async fn a_managed_timer_left_pending_runs_before_a_later_dispatch(runtime: GuestRuntime) {
         let owner = InstanceId::alloc();
         let reactor = Reactor::with_network(owner, isoplane_harness::Network::with_resolver(Box::new(NoDns)));
         let context = &reactor.context;
@@ -70,7 +70,7 @@ in_mono_runtime! {
         assert_eq!(
             outcome.completion,
             Completion::Done,
-            "the request must finish without awaiting its timer: {outcome:?}"
+            "the dispatch must finish without awaiting its timer: {outcome:?}"
         );
         assert_eq!(
             futures.pending_total(owner),
@@ -90,13 +90,13 @@ in_mono_runtime! {
         tokio::time::advance(Duration::from_millis(100)).await;
         tokio::task::yield_now().await;
 
-        // Observe twice: the callback runs once, before the first later request reads its count.
+        // Observe twice: the callback runs once, before the first later dispatch reads its count.
         for dispatch in 2..=3 {
             context.begin_dispatch(101, dispatch);
             let outcome = guest.start("/timer/observe");
             let isoplane_abi::status::PollStatus::Done { response } = outcome.status else {
                 panic!(
-                    "the later request must complete: {outcome:?}; logs: {:?}",
+                    "the later dispatch must complete: {outcome:?}; logs: {:?}",
                     context.emitted_logs()
                 );
             };
@@ -109,7 +109,7 @@ in_mono_runtime! {
             assert_eq!(
                 body,
                 format!("{dispatch}:1").as_bytes(),
-                "the due callback must run once, before the request reads its count"
+                "the due callback must run once, before the dispatch reads its count"
             );
             futures.end_dispatch(owner, dispatch);
         }
@@ -322,7 +322,7 @@ async fn dropping_a_native_timer_removes_its_host_work_without_entering_managed_
             handle: timer,
             kind: isoplane_abi::native_io::ResourceKind::Pollable,
         })
-        .expect("the owner must dispose its timer without a guest invocation");
+        .expect("the owner must dispose its timer without a slice");
     tokio::time::advance(Duration::from_secs(1)).await;
     assert_eq!(
         futures.pending_total(owner),

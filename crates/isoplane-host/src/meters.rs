@@ -33,7 +33,7 @@ pub struct Meters {
     /// Occupancy past the budget, already included in `occupancy_ns`.
     overage_ns: AtomicU64,
     shed: AtomicU64,
-    /// Active intervals with an unreadable monotonic clock endpoint.
+    /// Slices and reactor polls with an unreadable monotonic clock endpoint.
     incomplete_intervals: AtomicU64,
 }
 

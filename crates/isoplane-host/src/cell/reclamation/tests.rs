@@ -345,7 +345,7 @@ fn a_snapshot_that_fails_its_checksum_restores_from_the_template() {
         "the completed reuse handler must hibernate"
     );
     let second = completed(&cell, &module, 2);
-    assert_eq!(second.status, 200, "the request must still be served");
+    assert_eq!(second.status, 200, "the dispatch must still be served");
     assert_eq!(
         second.body, first.body,
         "a corrupt snapshot must not leave its pages in the instance"
@@ -358,7 +358,7 @@ fn a_snapshot_that_fails_its_checksum_restores_from_the_template() {
 }
 
 #[test]
-fn a_hibernated_reset_candidate_is_reset_before_the_next_request() {
+fn a_hibernated_reset_candidate_is_reset_before_the_next_dispatch() {
     let cell = test_cell(Storage::new(1), 0);
     let module = register(&cell, "reset", FakeBehaviour::done().with_lazy_init_probe());
     let first = completed(&cell, &module, 1);
@@ -386,7 +386,7 @@ fn a_hibernated_reset_candidate_is_reset_before_the_next_request() {
     );
     assert_eq!(
         second.body, first.body,
-        "a reset acquisition must clear prior request initialization residue"
+        "a reset acquisition must clear prior dispatch initialization residue"
     );
 }
 
@@ -407,7 +407,7 @@ fn memory_recovery_stops_the_sweep_before_an_active_dispatch_is_captured() {
     assert_eq!(
         active.state(),
         LifecycleTier::Parked,
-        "recovery must stop reclamation before touching an unfinished request"
+        "recovery must stop reclamation before touching an unfinished dispatch"
     );
     assert!(
         !cell.reclaiming.load(Ordering::Relaxed),
@@ -523,7 +523,7 @@ fn storage_pressure_cannot_evict_an_active_dispatch_snapshot() {
     assert!(
         cell.reclaim_candidate(candidate(&cell, active.id))
             .expect("active capture"),
-        "the parked active request must be locally suspendable"
+        "the parked active dispatch must be locally suspendable"
     );
     let module = register(&cell, "new", FakeBehaviour::done());
     let refused = completed(&cell, &module, 2);
@@ -538,7 +538,7 @@ fn storage_pressure_cannot_evict_an_active_dispatch_snapshot() {
     assert_eq!(
         active.state(),
         LifecycleTier::Hibernated,
-        "storage pressure must retain the unfinished request's only continuation"
+        "storage pressure must retain the unfinished dispatch's only continuation"
     );
     assert!(
         cell.active.contains_key(&active.id),

@@ -37,11 +37,11 @@ internal static class LaunchProfileKeys
     internal static readonly LimitOverrideKey[] LimitOverrides =
     [
         Memory,
-        new("occupancyMsPerHttpDispatch", "occupancy_ms_per_http_dispatch",
-            "The running time one request may use, in milliseconds. Time spent waiting for something the request awaits does not count."),
+        new("occupancyMsPerDispatch", "occupancy_ms_per_dispatch",
+            "The running time one dispatch may use, in milliseconds. Time spent waiting for something the dispatch awaits does not count."),
         new("subrequestsPerDispatch", "subrequests_per_dispatch",
-            "The most outbound requests one request may start. Not yet enforced for .NET applications."),
+            "The most outbound requests one dispatch may start. Not yet enforced for .NET applications."),
         new("pendingFuturesPerDispatch", "pending_futures_per_dispatch",
-            "The most asynchronous operations one request may have pending at once."),
+            "The most asynchronous operations one dispatch may have pending at once."),
     ];
 }

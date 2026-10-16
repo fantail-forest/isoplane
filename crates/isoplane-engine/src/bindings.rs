@@ -32,7 +32,7 @@ pub trait HostBindings: Send + 'static {
         }
     }
 
-    /// Discard request-owned resources and restore the template baseline for fresh reuse.
+    /// Discard dispatch-owned resources and restore the template baseline for fresh reuse.
     fn reset_prepared_resources(
         &mut self,
         resources: &isoplane_abi::native_io::PreparedResources,

@@ -198,7 +198,7 @@ fn filesystem_handles_survive_capture_in_guest_memory_alone() {
         .load_template(&wasm)
         .expect("filesystem lifecycle template");
     let mut original = activate(&engine, &template);
-    original.dispatch(&dispatch(), OccupancyBudget::http());
+    original.dispatch(&dispatch(), OccupancyBudget::default());
     assert!(
         original.is_parked(),
         "filesystem handles must be captured only on an empty stack"
@@ -216,7 +216,7 @@ fn filesystem_handles_survive_capture_in_guest_memory_alone() {
     let result = restored.wake(
         1,
         &isoplane_abi::result::ResultRecord::Ok(vec![]),
-        OccupancyBudget::http(),
+        OccupancyBudget::default(),
     );
     assert_eq!(
         result.completion,
@@ -259,7 +259,7 @@ fn malformed_filesystem_packets_trap_inside_the_guest() {
             .load_template(&wasm)
             .expect("packet import signature is admitted");
         let mut instance = activate(&engine, &template);
-        let result = instance.dispatch(&dispatch(), OccupancyBudget::http());
+        let result = instance.dispatch(&dispatch(), OccupancyBudget::default());
         assert!(
             result.trap.is_some(),
             "malformed filesystem packet must fail the dispatch without a host panic"

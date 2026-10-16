@@ -825,7 +825,7 @@ mod tests {
         memory[4097] = 32;
         assert!(
             !restored.page_eq(1, &memory[4096..8192]),
-            "hibernation must notice request changes to initialized bytes"
+            "hibernation must notice dispatch changes to initialized bytes"
         );
     }
 

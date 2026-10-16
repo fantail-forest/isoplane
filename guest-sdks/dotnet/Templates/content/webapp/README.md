@@ -152,7 +152,7 @@ settings in `tests/Sample-WebApp.Tests/SandboxFixture.cs`.
   beside `environmentVariables`:
 
   ```json
-  "isoplaneLimitsOverride": { "memoryBytes": 134217728, "occupancyMsPerHttpDispatch": 1000 }
+  "isoplaneLimitsOverride": { "memoryBytes": 134217728, "occupancyMsPerDispatch": 1000 }
   ```
 - **Add a NuGet package.** `dotnet add src/Sample-WebApp package <name>`.
 

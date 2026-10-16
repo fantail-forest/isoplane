@@ -334,7 +334,7 @@ mod queue_tests {
         let completion = super::super::DispatchCompletion::new(
             entry,
             &rec,
-            isoplane_engine::OccupancyBudget::http(),
+            isoplane_engine::OccupancyBudget::default(),
             Arc::new(crate::mono_ns),
         )
         .expect("queue fixture correlation token");

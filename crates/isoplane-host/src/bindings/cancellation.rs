@@ -92,7 +92,7 @@ mod tests {
     }
 
     #[test]
-    fn a_cancellation_future_is_delivered_once_per_request() {
+    fn a_cancellation_future_is_delivered_once_per_dispatch() {
         let cancellation = Cancellation::default();
         assert!(!cancellation.take_undelivered(), "nothing was requested");
         cancellation.request();

@@ -5,7 +5,7 @@ use super::*;
 
 impl Cell {
     /// The books for a guest that trapped or was killed inside the pre-capture
-    /// gc hint, on the sweeper's thread with no request to answer. No overage
+    /// gc hint, on the sweeper's thread with no dispatch to answer. No overage
     /// is claimed: the hint runs on a cap, not a budget the tenant bought.
     pub(super) fn record_offpath_kill(
         &self,
@@ -40,7 +40,7 @@ impl Cell {
         }
     }
 
-    /// Finalizes only the owner whose invocation unwound. Pointer identity
+    /// Finalizes only the owner whose slice unwound. Pointer identity
     /// also protects a reused slot when callers repeat dispatch identifiers.
     pub(super) fn answer_after_panic(&self, holding: Option<Arc<DispatchCompletion>>) {
         let Some(owner) = holding else {

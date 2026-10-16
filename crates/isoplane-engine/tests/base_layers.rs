@@ -47,7 +47,7 @@ fn baseline(engine: &IsoplaneEngine, wasm: &[u8], directory: &Path) -> Template 
     let mut instance = activate(engine, &source);
     assert_eq!(
         instance
-            .run_initialize_runtime(OccupancyBudget::http())
+            .run_initialize_runtime(OccupancyBudget::default())
             .completion,
         Completion::Done,
         "the runtime stage must complete before capture"
@@ -71,7 +71,7 @@ fn baseline(engine: &IsoplaneEngine, wasm: &[u8], directory: &Path) -> Template 
 /// and returns the fully initialized memory it was captured from.
 fn layer(engine: &IsoplaneEngine, base: &Template, directory: &Path) -> Vec<u8> {
     let mut instance = activate(engine, base);
-    let outcome = instance.run_initialize(OccupancyBudget::http());
+    let outcome = instance.run_initialize(OccupancyBudget::default());
     assert_eq!(
         outcome.completion,
         Completion::Done,
@@ -190,7 +190,7 @@ fn distinct_layers_keep_their_mappings_and_release_private_pages_across_eviction
             );
             assert_eq!(
                 instance
-                    .dispatch(&dispatch::http_dispatch(1), OccupancyBudget::http())
+                    .dispatch(&dispatch::http_dispatch(1), OccupancyBudget::default())
                     .completion,
                 Completion::Done,
                 "guest must reach a capture boundary"
@@ -261,7 +261,9 @@ fn initialize_layer(
 ) -> isoplane_engine::Instance {
     let mut instance = activate(engine, base);
     assert_eq!(
-        instance.run_initialize(OccupancyBudget::http()).completion,
+        instance
+            .run_initialize(OccupancyBudget::default())
+            .completion,
         Completion::Done,
         "initializer must complete"
     );
@@ -381,7 +383,7 @@ fn an_instance_of_a_layer_keeps_its_writes_to_base_and_layer_pages_private() {
     let mut concurrent = activate(&engine, &template);
     assert_eq!(
         writer
-            .dispatch(&dispatch::http_dispatch(1), OccupancyBudget::http())
+            .dispatch(&dispatch::http_dispatch(1), OccupancyBudget::default())
             .completion,
         Completion::Done,
         "the handler must overwrite a base page and a layer page"

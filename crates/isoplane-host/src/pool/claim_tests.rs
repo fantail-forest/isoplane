@@ -1,5 +1,5 @@
 use super::*;
-use crate::disposition::{decide, policy_reset, Disposition, DispositionKind, RequestEnd};
+use crate::disposition::{decide, policy_reset, DispatchEnd, Disposition, DispositionKind};
 use crate::fakes::{FakeActivator, FakeBehaviour};
 use crate::LifecycleTier;
 use isoplane_abi::config::Limits;
@@ -19,7 +19,7 @@ fn acquire(pool: &InstancePool) -> Arc<Slot> {
 /// The two ways back to an idle list: a completed dispatch stays warm, and a
 /// policy reset waits as a reset candidate.
 fn idle_dispositions() -> [Disposition; 2] {
-    let RequestEnd::Disposed(warm) = decide(Completion::Done, false) else {
+    let DispatchEnd::Disposed(warm) = decide(Completion::Done, false) else {
         panic!("a completed dispatch must have a pool disposition")
     };
     [warm, policy_reset()]

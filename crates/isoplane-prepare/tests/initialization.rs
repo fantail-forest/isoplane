@@ -251,7 +251,7 @@ fn a_future_import_traps_before_calling_an_initialization_provider() {
         .expect("restricted activation must succeed");
     let result = instance.run_initialize(OccupancyBudget {
         occupancy_ms: 1000,
-        wall_ms_cap: 5000,
+        slice_wall_ms_cap: 5000,
         spent_ns: 0,
     });
     assert_eq!(

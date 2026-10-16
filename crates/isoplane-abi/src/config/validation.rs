@@ -67,5 +67,5 @@ pub const DEFAULT_TABLES_PER_MODULE: u32 = 4;
 /// Default native stack reserved per compiler worker.
 pub const DEFAULT_COMPILER_STACK_BYTES: usize = 8 << 20;
 
-/// Default native stack allowed for a guest invocation.
+/// Default native stack allowed for one slice.
 pub const DEFAULT_WASM_STACK_BYTES: usize = 512 << 10;

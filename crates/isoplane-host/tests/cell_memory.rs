@@ -69,7 +69,7 @@ fn dispatch_growth(
                 module_bytes_compressed: 5242880,
                 package_bytes: 52428800,
                 instance_memory_max: 134217728,
-                occupancy_ms_per_http_dispatch: 100,
+                occupancy_ms_per_dispatch: 100,
                 subrequests_per_dispatch: 20,
                 pending_futures_per_dispatch: 6,
             },
@@ -112,7 +112,7 @@ fn a_guest_without_a_declared_maximum_cannot_grow_past_its_plan() {
         module_bytes_compressed: 5242880,
         package_bytes: 52428800,
         instance_memory_max: 134217728,
-        occupancy_ms_per_http_dispatch: 100,
+        occupancy_ms_per_dispatch: 100,
         subrequests_per_dispatch: 20,
         pending_futures_per_dispatch: 6,
     }
@@ -127,7 +127,7 @@ fn an_operator_memory_override_allows_growth_above_the_plan_default() {
         module_bytes_compressed: 5242880,
         package_bytes: 52428800,
         instance_memory_max: 134217728,
-        occupancy_ms_per_http_dispatch: 100,
+        occupancy_ms_per_dispatch: 100,
         subrequests_per_dispatch: 20,
         pending_futures_per_dispatch: 6,
     }
@@ -141,7 +141,7 @@ fn the_engine_capacity_still_bounds_a_larger_application_override() {
         module_bytes_compressed: 5242880,
         package_bytes: 52428800,
         instance_memory_max: 134217728,
-        occupancy_ms_per_http_dispatch: 100,
+        occupancy_ms_per_dispatch: 100,
         subrequests_per_dispatch: 20,
         pending_futures_per_dispatch: 6,
     }
@@ -156,7 +156,7 @@ fn a_template_larger_than_the_application_budget_is_refused_at_activation() {
         module_bytes_compressed: 5242880,
         package_bytes: 52428800,
         instance_memory_max: 134217728,
-        occupancy_ms_per_http_dispatch: 100,
+        occupancy_ms_per_dispatch: 100,
         subrequests_per_dispatch: 20,
         pending_futures_per_dispatch: 6,
     }
@@ -188,7 +188,7 @@ fn a_template_larger_than_the_application_budget_is_refused_at_activation() {
                 module_bytes_compressed: 5242880,
                 package_bytes: 52428800,
                 instance_memory_max: 134217728,
-                occupancy_ms_per_http_dispatch: 100,
+                occupancy_ms_per_dispatch: 100,
                 subrequests_per_dispatch: 20,
                 pending_futures_per_dispatch: 6,
             },

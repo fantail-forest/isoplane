@@ -30,7 +30,7 @@ fn dispatch(instance: &mut Instance) -> Completion {
         now_ms: 0,
     };
     instance
-        .dispatch(&record, OccupancyBudget::http())
+        .dispatch(&record, OccupancyBudget::default())
         .completion
 }
 

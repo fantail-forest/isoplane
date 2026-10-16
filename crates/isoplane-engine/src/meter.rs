@@ -61,7 +61,7 @@ pub fn try_occupancy_nanos() -> Option<u64> {
     measured
 }
 
-/// End-point reading for a returned invocation; an unavailable or regressing clock is incomplete.
+/// End-point reading for a returned slice; an unavailable or regressing clock is incomplete.
 #[inline]
 pub(crate) fn interval_occupancy_ns(start: u64) -> Option<u64> {
     #[cfg(test)]
@@ -157,7 +157,7 @@ mod tests {
     }
 
     #[test]
-    fn synchronous_host_work_counts_as_occupancy_but_time_between_invocations_does_not() {
+    fn synchronous_host_work_counts_as_occupancy_but_time_between_slices_does_not() {
         struct HostWork;
         impl HostBindings for HostWork {
             fn begin_slice(&mut self) {}
@@ -181,11 +181,11 @@ mod tests {
             "i64.const 0 call $timer drop",
             Box::new(HostWork),
         );
-        let first = guest.run_initialize(OccupancyBudget::http());
+        let first = guest.run_initialize(OccupancyBudget::default());
         assert!(first.trap.is_none(), "{:?}", first.trap);
         assert_eq!(first.occupancy_ns, 1_000);
         TEST_NOW_NS.set(Some(1_000_000_000));
-        let next = guest.run_initialize(OccupancyBudget::http().after(first.occupancy_ns));
+        let next = guest.run_initialize(OccupancyBudget::default().after(first.occupancy_ns));
         assert!(next.trap.is_none(), "{:?}", next.trap);
         assert_eq!(next.occupancy_ns, 1_000);
     }
@@ -223,7 +223,7 @@ mod tests {
         }
 
         let _reset = ClockFault;
-        let budget = OccupancyBudget::http();
+        let budget = OccupancyBudget::default();
         for (elapsed_ns, completion, phase, grace_calls) in [
             (
                 budget.budget_ns() + 1,
@@ -305,7 +305,7 @@ mod tests {
     fn an_unreadable_start_clock_refuses_guest_entry() {
         let mut guest = instance("", "i32.const 0 i32.const 1 i32.store");
         let _fault = ClockFault::after(0);
-        let outcome = guest.run_initialize(OccupancyBudget::http());
+        let outcome = guest.run_initialize(OccupancyBudget::default());
         assert_eq!(
             outcome.completion,
             crate::Completion::Trapped,
@@ -314,12 +314,12 @@ mod tests {
         assert_eq!(
             guest.memory()[0],
             0,
-            "the refused invocation must not execute guest code"
+            "the refused slice must not execute guest code"
         );
         assert_eq!(
             outcome.occupancy_measurement,
             crate::OccupancyMeasurement::NotExecuted,
-            "start-clock refusal must distinguish no guest entry from an unmeasured invocation"
+            "start-clock refusal must distinguish no guest entry from an unmeasured slice"
         );
     }
 
@@ -328,8 +328,8 @@ mod tests {
         let mut guest = instance("", "(loop $spin br $spin)");
         let _fault = ClockFault::after(1);
         let outcome = guest.run_initialize(OccupancyBudget {
-            wall_ms_cap: 10,
-            ..OccupancyBudget::http()
+            slice_wall_ms_cap: 10,
+            ..OccupancyBudget::default()
         });
         let trap = outcome.trap.expect("the unreadable epoch clock must trap");
         assert_eq!(
@@ -353,7 +353,7 @@ mod tests {
         let mut guest = instance("", "i32.const 0 i32.const 1 i32.store");
         let _fault = ClockFault;
         FAIL_INTERVAL_END.set(true);
-        let outcome = guest.run_initialize(OccupancyBudget::http());
+        let outcome = guest.run_initialize(OccupancyBudget::default());
         assert_eq!(
             guest.memory()[0],
             1,
@@ -374,7 +374,7 @@ mod tests {
         );
         let watchdog = guest.engine.watchdog.shared().clone();
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            guest.run_initialize(OccupancyBudget::http())
+            guest.run_initialize(OccupancyBudget::default())
         }));
         assert!(
             result.is_err(),

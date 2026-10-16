@@ -86,7 +86,7 @@ pub(crate) fn classify(live: &Live, err: &wasmtime::Error) -> TrapInfo {
                 .unwrap_or_else(|| "occupancy budget exceeded".into()),
             Kill::Wall => err
                 .downcast_ref::<WallCapExceeded>()
-                .map(|w| format!("{w} (per-invocation elapsed-time cap)"))
+                .map(|w| format!("{w} (per-slice elapsed-time cap)"))
                 .unwrap_or_else(|| "wall-clock backstop tripped".into()),
         };
         return TrapInfo { kind, message };

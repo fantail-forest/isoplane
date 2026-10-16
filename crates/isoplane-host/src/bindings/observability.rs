@@ -88,7 +88,7 @@ mod tests {
         assert_eq!(
             context.meters.occupancy_ns(),
             0,
-            "the enclosing invocation owns accounting"
+            "the enclosing slice owns accounting"
         );
         assert_eq!(output.records().len(), 1);
     }

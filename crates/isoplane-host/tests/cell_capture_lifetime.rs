@@ -72,7 +72,7 @@ fn capturing_a_completed_guest_does_not_invoke_its_trapping_gc_hook() {
             Duration::from_secs(30),
         )
         .unwrap();
-    assert_eq!(result.status, 204, "the guest must complete its request");
+    assert_eq!(result.status, 204, "the guest must complete its dispatch");
     let instance = cell.resident_ids()[0];
     cell.force_hibernate(instance)
         .expect("completed guest capture must not enter its trapping GC callback");
@@ -84,7 +84,7 @@ fn capturing_a_completed_guest_does_not_invoke_its_trapping_gc_hook() {
 }
 
 #[tokio::test]
-async fn capturing_an_unfinished_request_still_invokes_its_gc_hook() {
+async fn capturing_an_unfinished_dispatch_still_runs_its_gc_hook() {
     let (cell, module) = rig(true);
     let _response = cell
         .submit(
@@ -107,13 +107,13 @@ async fn capturing_an_unfinished_request_still_invokes_its_gc_hook() {
         }
     })
     .await
-    .expect("the request never parked on its host timer");
+    .expect("the dispatch never parked on its host timer");
     let outcome = tokio::task::spawn_blocking(move || cell.force_hibernate(instance))
         .await
         .unwrap();
     assert_eq!(
         outcome,
         Err(CaptureRefused::GcHintDidNotComplete(Completion::Trapped)),
-        "an unfinished request's capture must still invoke and contain its trapping GC callback"
+        "an unfinished dispatch's capture must still invoke and contain its trapping GC callback"
     );
 }

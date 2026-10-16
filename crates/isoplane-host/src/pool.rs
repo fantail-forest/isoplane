@@ -367,7 +367,7 @@ mod claim_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::disposition::{decide, policy_reset, RequestEnd};
+    use crate::disposition::{decide, policy_reset, DispatchEnd};
     use crate::fakes::{FakeActivator, FakeBehaviour};
     use isoplane_abi::config::Limits;
     use isoplane_engine::Completion;
@@ -385,8 +385,8 @@ mod tests {
         let p = pool();
         let (slot, _) = p.acquire(ctx_for).expect("acquire");
         p.retire();
-        let RequestEnd::Disposed(disposition) = decide(Completion::Done, false) else {
-            panic!("a completed request must dispose of its instance");
+        let DispatchEnd::Disposed(disposition) = decide(Completion::Done, false) else {
+            panic!("a completed dispatch must dispose of its instance");
         };
         p.release(slot.clone(), disposition);
         assert_eq!(
@@ -406,7 +406,7 @@ mod tests {
         let p = pool();
         let (slot, _) = p.acquire(ctx_for).expect("activate");
         slot.enter()
-            .expect("write request residue")
+            .expect("write dispatch residue")
             .instance()
             .memory()[0] = 99;
         p.release(slot.clone(), policy_reset());
@@ -416,7 +416,7 @@ mod tests {
                 .instance()
                 .memory()[0],
             99,
-            "release must not reset guest memory without a new request"
+            "release must not reset guest memory without a new dispatch"
         );
         let (reused, source) = p.acquire(ctx_for).expect("reset candidate");
         assert_eq!(
@@ -430,7 +430,7 @@ mod tests {
         );
         assert!(
             reused.is_pristine(),
-            "a reset acquisition must not carry request residue"
+            "a reset acquisition must not carry dispatch residue"
         );
         assert_eq!(
             reused
@@ -439,7 +439,7 @@ mod tests {
                 .instance()
                 .memory()[0],
             0,
-            "reset must restore template memory before handing the slot to a request"
+            "reset must restore template memory before handing the slot to a dispatch"
         );
     }
 
@@ -451,7 +451,7 @@ mod tests {
         let (b, _) = p.acquire(ctx_for).expect("acquire");
         let warm_id = a.id;
         let reset_id = b.id;
-        let RequestEnd::Disposed(warm) = decide(Completion::Done, false) else {
+        let DispatchEnd::Disposed(warm) = decide(Completion::Done, false) else {
             panic!("a completed dispatch stays warm");
         };
         p.release(a, warm);
@@ -473,7 +473,7 @@ mod tests {
     fn a_killed_instance_leaves_the_pool_entirely() {
         let p = pool();
         let (a, _) = p.acquire(ctx_for).expect("acquire");
-        let RequestEnd::Disposed(d) = decide(Completion::BudgetKill, false) else {
+        let DispatchEnd::Disposed(d) = decide(Completion::BudgetKill, false) else {
             panic!("a kill is terminal")
         };
         p.release(a, d);

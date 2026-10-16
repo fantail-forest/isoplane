@@ -705,7 +705,7 @@ impl Timer {
     }
 
     /// Arms a wake in the current dispatch for a timer not yet due, if it has
-    /// none, so a guest that waits on a timer created in an earlier request is
+    /// none, so a guest that waits on a timer created in an earlier dispatch is
     /// still woken by it.
     fn refresh(
         &mut self,
@@ -1724,7 +1724,7 @@ mod timer_tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn a_timer_outlives_the_request_that_created_it() {
+    async fn a_timer_outlives_the_dispatch_that_created_it() {
         let (context, woken) = reactor_bindings();
         let bindings = CellBindings::new(context.clone());
         let futures = context.rt.as_ref().expect("reactor").futures.clone();
@@ -1746,7 +1746,7 @@ mod timer_tests {
         assert_eq!(
             futures.live_futures(),
             0,
-            "step 1: their wakes end with the request"
+            "step 1: their wakes end with the dispatch"
         );
 
         tokio::time::advance(std::time::Duration::from_millis(20)).await;

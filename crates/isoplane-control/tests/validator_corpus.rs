@@ -330,7 +330,7 @@ fn v3_memory_shape() {
             module_bytes_compressed: 52428800,
             package_bytes: 52428800,
             instance_memory_max: 536870912,
-            occupancy_ms_per_http_dispatch: 300000,
+            occupancy_ms_per_dispatch: 300000,
             subrequests_per_dispatch: 10000,
             pending_futures_per_dispatch: 4096
         }

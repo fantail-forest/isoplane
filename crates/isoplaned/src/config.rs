@@ -104,7 +104,7 @@ pub struct EngineLimits {
     /// Native stack bytes reserved per compiler worker.
     #[serde(default = "default_compiler_stack_bytes")]
     pub compiler_stack_bytes: usize,
-    /// Maximum native stack bytes consumed by a guest invocation.
+    /// Maximum native stack bytes consumed by one slice.
     #[serde(default = "default_wasm_stack_bytes")]
     pub max_wasm_stack_bytes: usize,
 }
@@ -462,7 +462,7 @@ name = "cell-1"
         config.host.queue_depth_per_worker = 3;
         config.network.instance_pending_connections = 2;
         config.network.instance_open_connections = 3;
-        config.host.wall_ms_cap = 60_000;
+        config.host.slice_wall_ms_cap = 60_000;
         let encoded = toml::to_string(&config).expect("the node prints its merged configuration");
         let restored = NodeConfig::from_toml(&encoded).expect("the printed configuration loads");
         assert_eq!(
@@ -486,7 +486,7 @@ name = "cell-1"
             "the printed configuration must preserve connection budgets"
         );
         assert_eq!(
-            restored.host.wall_ms_cap, 60_000,
+            restored.host.slice_wall_ms_cap, 60_000,
             "the printed configuration must preserve the dispatch wall limit"
         );
     }
@@ -583,7 +583,7 @@ tenant = "t1"
 limits.module_bytes_compressed = 52428800
 limits.package_bytes = 52428800
 limits.instance_memory_max = 134217728
-limits.occupancy_ms_per_http_dispatch = 30000
+limits.occupancy_ms_per_dispatch = 30000
 limits.subrequests_per_dispatch = 200
 limits.pending_futures_per_dispatch = 64
 cell = "cell-1"
@@ -595,7 +595,7 @@ tenant = "t2"
 limits.module_bytes_compressed = 52428800
 limits.package_bytes = 52428800
 limits.instance_memory_max = 134217728
-limits.occupancy_ms_per_http_dispatch = 30000
+limits.occupancy_ms_per_dispatch = 30000
 limits.subrequests_per_dispatch = 200
 limits.pending_futures_per_dispatch = 64
 cell = "cell-1"
@@ -617,7 +617,7 @@ tenant = "bank"
 limits.module_bytes_compressed = 52428800
 limits.package_bytes = 52428800
 limits.instance_memory_max = 536870912
-limits.occupancy_ms_per_http_dispatch = 300000
+limits.occupancy_ms_per_dispatch = 300000
 limits.subrequests_per_dispatch = 10000
 limits.pending_futures_per_dispatch = 4096
 cell = "cell-2"
@@ -629,7 +629,7 @@ tenant = "bank"
 limits.module_bytes_compressed = 52428800
 limits.package_bytes = 52428800
 limits.instance_memory_max = 536870912
-limits.occupancy_ms_per_http_dispatch = 300000
+limits.occupancy_ms_per_dispatch = 300000
 limits.subrequests_per_dispatch = 10000
 limits.pending_futures_per_dispatch = 4096
 cell = "cell-2"
@@ -648,7 +648,7 @@ tenant = "t"
 limits.module_bytes_compressed = 52428800
 limits.package_bytes = 52428800
 limits.instance_memory_max = 134217728
-limits.occupancy_ms_per_http_dispatch = 30000
+limits.occupancy_ms_per_dispatch = 30000
 limits.subrequests_per_dispatch = 200
 limits.pending_futures_per_dispatch = 64
 cell = "nope"
@@ -693,7 +693,7 @@ tenant = "t"
 limits.module_bytes_compressed = 52428800
 limits.package_bytes = 52428800
 limits.instance_memory_max = 134217728
-limits.occupancy_ms_per_http_dispatch = 30000
+limits.occupancy_ms_per_dispatch = 30000
 limits.subrequests_per_dispatch = 200
 limits.pending_futures_per_dispatch = 64
 cell = "c"

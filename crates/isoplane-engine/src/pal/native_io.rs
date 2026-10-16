@@ -46,7 +46,7 @@ pub fn packet<T: PalSource>(
     call(caller, definition, &arguments[..count as usize])
 }
 
-/// Execute an admitted canonical call without retaining a guest invocation stack.
+/// Execute an admitted canonical call synchronously, without suspending the slice.
 pub fn call<T: PalSource>(
     caller: &mut wasmtime::Caller<'_, T>,
     definition: &Definition,

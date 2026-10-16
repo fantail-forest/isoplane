@@ -86,7 +86,7 @@ impl Activator for DebugActivator {
         Ok(Box::new(DebugInstance {
             instance,
             initialized: false,
-            pending_request: None,
+            pending_dispatch: None,
         }))
     }
 }
@@ -139,7 +139,7 @@ impl HostBindings for DebugBindings {
             if !ready.is_empty() {
                 return Ok(Response::ReadyIndexes(ready));
             }
-            // Native readiness is reactor-owned; this development-only wait retains the invocation.
+            // Native readiness is reactor-owned; this development-only wait keeps the slice running.
             std::thread::park_timeout(READINESS_INTERVAL);
             waited = true;
         }
@@ -173,7 +173,7 @@ impl HostBindings for DebugBindings {
 struct DebugInstance {
     instance: Instance,
     initialized: bool,
-    pending_request: Option<DispatchRecord>,
+    pending_dispatch: Option<DispatchRecord>,
 }
 
 impl DebugInstance {
@@ -217,7 +217,7 @@ impl InstanceOps for DebugInstance {
         let initialize =
             tracing::info_span!("initialize").in_scope(|| self.instance.run_initialize(budget));
         if initialize.completion == Completion::Parked {
-            self.pending_request = Some(record.clone());
+            self.pending_dispatch = Some(record.clone());
         }
         if initialize.completion != Completion::Done {
             return initialize;
@@ -234,7 +234,7 @@ impl InstanceOps for DebugInstance {
         if outcome.completion == Completion::Parked {
             return outcome;
         }
-        match self.pending_request.take() {
+        match self.pending_dispatch.take() {
             Some(record) if outcome.completion == Completion::Done => {
                 self.dispatch_initialized(&record, budget, outcome)
             }
@@ -367,25 +367,25 @@ mod tests {
     }
 
     #[test]
-    fn raw_initialization_runs_before_the_first_request() {
+    fn raw_initialization_runs_before_the_first_dispatch() {
         let mut instance = instance("i32.const 42 global.set $initialized");
-        let result = instance.dispatch(&record(), OccupancyBudget::http());
+        let result = instance.dispatch(&record(), OccupancyBudget::default());
         assert_eq!(
             result.completion,
             Completion::Done,
-            "the request must observe raw initialization"
+            "the dispatch must observe raw initialization"
         );
         assert_eq!(
             &instance.memory()[8..12],
             &7i32.to_le_bytes(),
-            "the initialized request must run"
+            "the initialized dispatch must run"
         );
     }
 
     #[test]
-    fn initialization_failure_prevents_request_execution() {
+    fn initialization_failure_prevents_dispatch_execution() {
         let mut instance = instance("unreachable");
-        let result = instance.dispatch(&record(), OccupancyBudget::http());
+        let result = instance.dispatch(&record(), OccupancyBudget::default());
         assert_eq!(
             result.completion,
             Completion::Trapped,
@@ -398,7 +398,7 @@ mod tests {
     }
 
     #[test]
-    fn asynchronous_initialization_dispatches_the_saved_request_after_its_final_wake() {
+    fn asynchronous_initialization_runs_the_saved_dispatch_after_its_final_wake() {
         let mut instance = activate(
             activator_with_wake(
                 Some("i64.const 1 return"),
@@ -410,29 +410,29 @@ mod tests {
         );
         assert_eq!(
             instance
-                .dispatch(&record(), OccupancyBudget::http())
+                .dispatch(&record(), OccupancyBudget::default())
                 .completion,
             Completion::Parked,
-            "asynchronous initialization must park the original request"
+            "asynchronous initialization must park the original dispatch"
         );
         assert_eq!(
             instance
-                .wake(1, &ResultRecord::Ok(Vec::new()), OccupancyBudget::http())
+                .wake(1, &ResultRecord::Ok(Vec::new()), OccupancyBudget::default())
                 .completion,
             Completion::Parked,
-            "an intermediate initialization wake must keep the request pending"
+            "an intermediate initialization wake must keep the dispatch pending"
         );
         assert_eq!(
             &instance.memory()[8..12],
             &0i32.to_le_bytes(),
-            "the request cannot run before initialization finishes"
+            "the dispatch cannot run before initialization finishes"
         );
         assert_eq!(
             instance
-                .wake(2, &ResultRecord::Ok(Vec::new()), OccupancyBudget::http())
+                .wake(2, &ResultRecord::Ok(Vec::new()), OccupancyBudget::default())
                 .completion,
             Completion::Done,
-            "the final initialization wake must run the original request"
+            "the final initialization wake must run the original dispatch"
         );
         assert_eq!(
             &instance.memory()[8..12],
@@ -442,24 +442,24 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_initialization_wake_never_dispatches_the_saved_request() {
+    fn a_failed_initialization_wake_never_runs_the_saved_dispatch() {
         let mut instance = activate(
             activator_with_wake(Some("i64.const 1 return"), "unreachable")
                 .expect("the failing asynchronous initialization fixture must load"),
         );
         assert_eq!(
             instance
-                .dispatch(&record(), OccupancyBudget::http())
+                .dispatch(&record(), OccupancyBudget::default())
                 .completion,
             Completion::Parked,
             "the fixture must reach its asynchronous initialization boundary"
         );
         assert_eq!(
             instance
-                .wake(1, &ResultRecord::Ok(Vec::new()), OccupancyBudget::http())
+                .wake(1, &ResultRecord::Ok(Vec::new()), OccupancyBudget::default())
                 .completion,
             Completion::Trapped,
-            "a failed initialization wake must end the request"
+            "a failed initialization wake must end the dispatch"
         );
         assert_eq!(
             &instance.memory()[8..12],
@@ -471,11 +471,11 @@ mod tests {
     #[test]
     fn debugger_instances_refuse_capture_reset_and_a_second_dispatch() {
         let mut instance = instance("i32.const 42 global.set $initialized");
-        let result = instance.dispatch(&record(), OccupancyBudget::http());
+        let result = instance.dispatch(&record(), OccupancyBudget::default());
         assert_eq!(
             result.completion,
             Completion::Done,
-            "the first request must finish"
+            "the first dispatch must finish"
         );
         assert!(
             !instance.is_capture_eligible(),
@@ -491,10 +491,10 @@ mod tests {
         );
         assert_eq!(
             instance
-                .dispatch(&record(), OccupancyBudget::http())
+                .dispatch(&record(), OccupancyBudget::default())
                 .completion,
             Completion::Trapped,
-            "a debugger instance cannot be reused for another request"
+            "a debugger instance cannot be reused for another dispatch"
         );
     }
 
@@ -530,7 +530,7 @@ mod tests {
                 module_bytes_compressed: 5242880,
                 package_bytes: 52428800,
                 instance_memory_max: 134217728,
-                occupancy_ms_per_http_dispatch: 100,
+                occupancy_ms_per_dispatch: 100,
                 subrequests_per_dispatch: 20,
                 pending_futures_per_dispatch: 6,
             },

@@ -57,7 +57,7 @@ async fn dropping_a_cell_from_an_async_task_cancels_its_reactor_tasks() {
 }
 
 /// The fake guest's lazy-init probe reports `0` for a pristine instance and
-/// `1` for a previous request's residue.
+/// `1` for a previous dispatch's residue.
 #[test]
 fn a_reused_instance_keeps_its_residue() {
     let r = rig(CellConfig::for_test("residue"));

@@ -127,7 +127,7 @@ impl Fixture {
 pub fn budget() -> OccupancyBudget {
     OccupancyBudget {
         occupancy_ms: 30_000,
-        wall_ms_cap: 60_000,
+        slice_wall_ms_cap: 60_000,
         spent_ns: 0,
     }
 }

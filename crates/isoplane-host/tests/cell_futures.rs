@@ -65,7 +65,7 @@ fn the_pending_futures_cap_traps_the_guest() {
         module_bytes_compressed: 5242880,
         package_bytes: 52428800,
         instance_memory_max: 134217728,
-        occupancy_ms_per_http_dispatch: 100,
+        occupancy_ms_per_dispatch: 100,
         subrequests_per_dispatch: 20,
         pending_futures_per_dispatch: 6,
     }
@@ -91,7 +91,7 @@ fn the_pending_futures_cap_traps_the_guest() {
                     module_bytes_compressed: 5242880,
                     package_bytes: 52428800,
                     instance_memory_max: 134217728,
-                    occupancy_ms_per_http_dispatch: 100,
+                    occupancy_ms_per_dispatch: 100,
                     subrequests_per_dispatch: 20,
                     pending_futures_per_dispatch: 6,
                 },
@@ -194,7 +194,7 @@ async fn wait_until_fails_the_dispatch_and_releases_its_work() {
         )
         .unwrap();
     tokio::time::timeout(T, async {
-        while r.cell.metrics_raw().request_us.count() == 0 {
+        while r.cell.metrics_raw().dispatch_us.count() == 0 {
             tokio::task::yield_now().await;
         }
     })
@@ -202,7 +202,7 @@ async fn wait_until_fails_the_dispatch_and_releases_its_work() {
     .expect("the failed dispatch never settled");
     assert_eq!(
         out.status, 500,
-        "unsupported background retention must fail the request"
+        "unsupported background retention must fail the dispatch"
     );
     assert_eq!(
         out.completion,
@@ -265,7 +265,7 @@ fn operator_budgets_reach_the_dispatch_and_pending_future_table() {
     let module = act.module().clone();
     let mut app = manifest("bounded", Limits::default());
     app.resource_limits.pending_futures_per_dispatch = Some(2);
-    app.resource_limits.occupancy_ms_per_http_dispatch = Some(1234);
+    app.resource_limits.occupancy_ms_per_dispatch = Some(1234);
     r.cell
         .register_module("acme", act, app)
         .expect("configured module registers");

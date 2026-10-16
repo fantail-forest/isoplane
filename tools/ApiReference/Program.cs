@@ -482,7 +482,7 @@ Each key is optional, and each value is a positive whole number. A local session
       },
       "isoplaneLimitsOverride": {
         "memoryBytes": 134217728,
-        "occupancyMsPerHttpDispatch": 1000
+        "occupancyMsPerDispatch": 1000
       }
     }
   }

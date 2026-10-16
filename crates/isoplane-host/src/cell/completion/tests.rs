@@ -5,7 +5,7 @@ use super::*;
 use crate::cell::pool::cell_tests::{app, cell, http, manifest, wait_for};
 use crate::fakes::*;
 
-/// Stands in for a host assertion firing under a guest call.
+/// Stands in for a host assertion firing during a slice.
 struct PanicsOnDispatch {
     first: Option<Box<dyn isoplane_engine::InstanceOps + Send>>,
     end_clock_unavailable: bool,
@@ -232,7 +232,7 @@ fn completion_events_keep_queue_and_park_wall_separate_from_hot_occupancy() {
         "all hot slices must produce one terminal event"
     );
     assert_eq!(
-        records[0]["invocation_occupancy_ns"], 33,
+        records[0]["slice_occupancy_ns"], 33,
         "each prescribed hot slice must contribute occupancy exactly once"
     );
     assert_eq!(
@@ -245,7 +245,7 @@ fn completion_events_keep_queue_and_park_wall_separate_from_hot_occupancy() {
     );
     assert!(
         response.occupancy_ns >= 33,
-        "the response retains all invocation usage"
+        "the response retains all slice usage"
     );
     assert_eq!(
         cell.meters(&module).expect("meters").occupancy_ns(),
@@ -373,7 +373,7 @@ fn an_acquisition_error_emits_one_attributed_completion_without_an_instance() {
     let (result, records) = recorded_fault(FaultPoint::AcquireError);
     assert_eq!(
         result.status, 500,
-        "activation refusal must fail the request"
+        "activation refusal must fail the dispatch"
     );
     assert_eq!(
         records.len(),
@@ -412,7 +412,7 @@ fn an_acquisition_panic_is_contained_and_completes_before_a_slot_exists() {
     );
     assert_eq!(
         records[0]["occupancy_complete"], true,
-        "no dispatch invocation occurred before activation failed"
+        "no slice ran before activation failed"
     );
     assert!(
         !records[0].contains_key("instance"),
@@ -425,7 +425,7 @@ fn a_wake_panic_preserves_prior_slice_occupancy_and_marks_the_interrupted_slice_
     let (result, records) = recorded_fault(FaultPoint::Wake);
     assert!(
         result.occupancy_ns >= 11,
-        "panic response preserves prior invocation usage"
+        "panic response preserves prior slice usage"
     );
     assert_eq!(
         records.len(),
@@ -433,7 +433,7 @@ fn a_wake_panic_preserves_prior_slice_occupancy_and_marks_the_interrupted_slice_
         "park and caught wake panic must share a completion owner"
     );
     assert_eq!(
-        records[0]["invocation_occupancy_ns"], 11,
+        records[0]["slice_occupancy_ns"], 11,
         "the canonical occupancy floor must retain the first slice"
     );
     assert_eq!(
@@ -441,7 +441,7 @@ fn a_wake_panic_preserves_prior_slice_occupancy_and_marks_the_interrupted_slice_
         "the interrupted wake cannot be recorded as a complete zero"
     );
     assert_eq!(
-        records[0]["hot_wall_complete"], false,
+        records[0]["slice_wall_complete"], false,
         "the interrupted interval must also mark hot wall incomplete"
     );
     assert_eq!(
@@ -450,7 +450,7 @@ fn a_wake_panic_preserves_prior_slice_occupancy_and_marks_the_interrupted_slice_
     );
 }
 
-fn real_completion_cell(wasm: Vec<u8>, wall_ms_cap: u32) -> (Arc<Cell>, ModuleId) {
+fn real_completion_cell(wasm: Vec<u8>, slice_wall_ms_cap: u32) -> (Arc<Cell>, ModuleId) {
     let engine = Arc::new(
         isoplane_engine::IsoplaneEngine::new(isoplane_engine::EngineConfig {
             pooling: false,
@@ -464,7 +464,7 @@ fn real_completion_cell(wasm: Vec<u8>, wall_ms_cap: u32) -> (Arc<Cell>, ModuleId
     );
     let cell = cell(CellConfig {
         exec_threads: 1,
-        wall_ms_cap,
+        slice_wall_ms_cap,
         ..CellConfig::for_test("real-completion")
     });
     cell.register_module("acme", activator, manifest("real-completion"))
@@ -485,9 +485,10 @@ fn real_completion_wasm(imports: &str, data: &str, body: &str) -> Vec<u8> {
 fn real_completion_outcome(
     body: &str,
     occupancy_ms: u32,
-    wall_ms_cap: u32,
+    slice_wall_ms_cap: u32,
 ) -> serde_json::Map<String, serde_json::Value> {
-    let (cell, module) = real_completion_cell(real_completion_wasm("", "", body), wall_ms_cap);
+    let (cell, module) =
+        real_completion_cell(real_completion_wasm("", "", body), slice_wall_ms_cap);
     let events = Events::default();
     let record = DispatchRecord {
         occupancy_budget_ms: occupancy_ms,
@@ -523,20 +524,22 @@ fn real_completion_outcome(
 
 #[test]
 fn real_guest_success_has_one_canonical_completion() {
-    let event = real_completion_outcome("i64.const 0", 1000, CellConfig::default().wall_ms_cap);
+    let event =
+        real_completion_outcome("i64.const 0", 1000, CellConfig::default().slice_wall_ms_cap);
     assert_eq!(
         event["outcome"], "success",
         "a normal empty-stack return must complete successfully"
     );
     assert_eq!(
         event["occupancy_complete"], true,
-        "the real invocation must have a complete occupancy reading"
+        "the real slice must have a complete occupancy reading"
     );
 }
 
 #[test]
 fn real_guest_trap_has_one_canonical_failure() {
-    let event = real_completion_outcome("unreachable", 1000, CellConfig::default().wall_ms_cap);
+    let event =
+        real_completion_outcome("unreachable", 1000, CellConfig::default().slice_wall_ms_cap);
     assert_eq!(
         event["outcome"], "guest_trap",
         "a sandbox trap must be recorded at the terminal boundary"
@@ -548,7 +551,7 @@ fn real_occupancy_hard_kill_is_distinct_from_the_execution_wall_backstop() {
     let event = real_completion_outcome(
         "(loop br 0) unreachable",
         0,
-        CellConfig::default().wall_ms_cap,
+        CellConfig::default().slice_wall_ms_cap,
     );
     assert_eq!(
         event["outcome"], "occupancy_limit",
@@ -556,13 +559,13 @@ fn real_occupancy_hard_kill_is_distinct_from_the_execution_wall_backstop() {
     );
     assert_eq!(
         event["status"], 503,
-        "budget exhaustion must fail the request"
+        "budget exhaustion must fail the dispatch"
     );
 }
 
 #[test]
 fn a_real_zero_budget_dispatch_has_one_budget_completion() {
-    let event = real_completion_outcome("i64.const 0", 0, CellConfig::default().wall_ms_cap);
+    let event = real_completion_outcome("i64.const 0", 0, CellConfig::default().slice_wall_ms_cap);
     assert_eq!(
         event["outcome"], "occupancy_limit",
         "returning at the zero occupancy budget is a clean budget outcome"
@@ -581,7 +584,7 @@ fn real_zero_wall_backstop_reports_execution_wall_limit() {
         "a wall backstop must never be relabelled occupancy exhaustion"
     );
     assert_eq!(
-        event["execution_wall_cap_ns"], 0,
+        event["slice_wall_cap_ns"], 0,
         "the event must carry the configured bound that fired"
     );
 }
@@ -600,7 +603,7 @@ async fn ended_real_guest_response(transport_failure: bool) {
             (import "isoplane" "clock_deadline_in" (func $timer (param i64) (result i64)))"#,
             &format!(r#"(data (i32.const 1024) "{encoded}")"#),
             &format!("(drop (call $response (i32.const 1024) (i32.const {}))) (drop (call $timer (i64.const 600000))) i64.const 1", head.len()));
-    let (cell, module) = real_completion_cell(wasm, CellConfig::default().wall_ms_cap);
+    let (cell, module) = real_completion_cell(wasm, CellConfig::default().slice_wall_ms_cap);
     let stream = crate::response_transport::ResponseTransport::new(1);
     let events = Events::default();
     let task = {
@@ -682,7 +685,7 @@ fn a_real_trapping_capture_hint_completes_its_active_dispatch() {
         r#"(func (export "isoplane_gc_hint") (param i32) unreachable)"#,
         "(drop (call $timer (i64.const 600000))) i64.const 1",
     );
-    let (cell, module) = real_completion_cell(wasm, CellConfig::default().wall_ms_cap);
+    let (cell, module) = real_completion_cell(wasm, CellConfig::default().slice_wall_ms_cap);
     let response = cell
         .submit(&module, Target::Handler { route: "/".into() }, http(201))
         .expect("accepted dispatch");
@@ -781,7 +784,7 @@ fn a_panicking_capture_hint_marks_its_usage_incomplete_and_releases_the_dispatch
             .expect("panic response")
             .occupancy_ns
             >= 11,
-        "a failed hint retains prior invocation usage"
+        "a failed hint retains prior slice usage"
     );
     cell.shutdown();
     let records = events.completed(1);
@@ -800,7 +803,7 @@ fn a_panicking_capture_hint_marks_its_usage_incomplete_and_releases_the_dispatch
     );
     assert_eq!(
         records[0]["occupancy_complete"], true,
-        "the separate dispatch invocation was completely measured"
+        "the separate dispatch slice was completely measured"
     );
     assert_eq!(
         records[0]["total_guest_occupancy_complete"], false,
@@ -825,11 +828,11 @@ fn shutdown_completes_accepted_queued_work_without_inventing_an_instance() {
     let _trace = events.install();
     let response = cell
         .submit(&module, Target::Handler { route: "/".into() }, http(301))
-        .expect("the first request is accepted");
+        .expect("the first dispatch is accepted");
     assert!(
         cell.submit(&module, Target::Handler { route: "/".into() }, http(302))
             .is_none(),
-        "the second request must exercise rejected admission"
+        "the second dispatch must exercise rejected admission"
     );
     assert!(
         events.records().is_empty(),
@@ -960,12 +963,12 @@ fn an_unavailable_engine_endpoint_cannot_report_complete_zero_dispatch_occupancy
         "the host must consume engine measurement validity rather than certify a complete zero"
     );
     assert_eq!(
-        records[0]["occupancy_scope"], "dispatch_invocations_and_reactor_polls",
+        records[0]["occupancy_scope"], "dispatch_slices_and_reactor_polls",
         "occupancy completeness must name its measured scope"
     );
     assert_eq!(
         records[0]["activation_occupancy_included"], false,
-        "activation usage remains outside the invocation meter"
+        "activation usage remains outside the slice meter"
     );
 }
 
@@ -1014,15 +1017,17 @@ fn a_discarded_wake_ends_its_owned_dispatch() {
     );
     let response = cell
         .submit(&module, Target::Handler { route: "/".into() }, http(401))
-        .expect("accepted request");
-    let Job::Dispatch(job) = cell.queue.pop(0).expect("queued request") else {
+        .expect("accepted dispatch");
+    let Job::Dispatch(job) = cell.queue.pop(0).expect("queued dispatch") else {
         panic!("expected dispatch");
     };
     cell.run_dispatch(*job);
     let slot = cell.slot(cell.resident_ids()[0]).expect("parked slot");
     let measured_occupancy_ns = cell
         .active
-        .with(&slot.id, |request| request.completion.usage().occupancy_ns)
+        .with(&slot.id, |dispatch| {
+            dispatch.completion.usage().occupancy_ns
+        })
         .expect("active owner usage");
     slot.discard();
     cell.run_wake(slot.clone());
@@ -1084,15 +1089,15 @@ fn a_clock_entry_refusal_reports_no_guest_execution() {
     );
     assert_eq!(
         records[0]["occupancy_ns"], 0,
-        "refusal before guest entry has no invocation occupancy"
+        "refusal before guest entry has no slice occupancy"
     );
     assert_eq!(
         records[0]["occupancy_complete"], true,
-        "known absence of invocation is distinct from missing measurement"
+        "known absence of a slice is distinct from missing measurement"
     );
     assert_eq!(
         result.occupancy_ns, 0,
-        "the caller and event must share known invocation usage"
+        "the caller and event must share known slice usage"
     );
 }
 
@@ -1131,7 +1136,7 @@ fn completion_includes_the_final_reactor_poll_even_when_that_poll_finishes_the_d
     let records = events.completed(1);
     assert_eq!(records[0]["occupancy_ns"], 50);
     assert_eq!(records[0]["reactor_occupancy_ns"], 50);
-    assert_eq!(records[0]["invocation_occupancy_ns"], 0);
+    assert_eq!(records[0]["slice_occupancy_ns"], 0);
     assert_eq!(meters.occupancy_ns(), 50);
     owner.finish();
     assert_eq!(events.records().len(), 1);

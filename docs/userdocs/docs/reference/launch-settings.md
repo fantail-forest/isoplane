@@ -30,9 +30,9 @@ Each key is optional, and each value is a positive whole number. A local session
 | Key | Description |
 | --- | --- |
 | `memoryBytes` | The most memory an instance may use, in bytes. Must be a multiple of 65536. |
-| `occupancyMsPerHttpDispatch` | The running time one request may use, in milliseconds. Time spent waiting for something the request awaits does not count. |
-| `subrequestsPerDispatch` | The most outbound requests one request may start. Not yet enforced for .NET applications. |
-| `pendingFuturesPerDispatch` | The most asynchronous operations one request may have pending at once. |
+| `occupancyMsPerDispatch` | The running time one dispatch may use, in milliseconds. Time spent waiting for something the dispatch awaits does not count. |
+| `subrequestsPerDispatch` | The most outbound requests one dispatch may start. Not yet enforced for .NET applications. |
+| `pendingFuturesPerDispatch` | The most asynchronous operations one dispatch may have pending at once. |
 
 ## Example
 
@@ -48,7 +48,7 @@ Each key is optional, and each value is a positive whole number. A local session
       },
       "isoplaneLimitsOverride": {
         "memoryBytes": 134217728,
-        "occupancyMsPerHttpDispatch": 1000
+        "occupancyMsPerDispatch": 1000
       }
     }
   }

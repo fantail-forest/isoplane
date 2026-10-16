@@ -1,5 +1,5 @@
 //! What one cell exposes to a scrape. The histograms are per lifecycle
-//! transition rather than one blended request timer, so a slow request
+//! transition rather than one blended dispatch timer, so a slow dispatch
 //! decomposes into a named transition.
 
 use std::collections::BTreeMap;
@@ -83,7 +83,7 @@ pub struct Metrics {
     /// dispatch was still Hot; not in [`Metrics::wakes`].
     pub in_cell_wakes: AtomicU64,
     /// Completions for an instance nobody could hand them to. The result is
-    /// already in the future table, so for a live instance this is a request
+    /// already in the future table, so for a live instance this is a dispatch
     /// that is never answered; for a discarded one it is the correct outcome.
     pub wakes_dropped: AtomicU64,
     pub traps: AtomicU64,
@@ -141,7 +141,7 @@ pub struct Metrics {
     pub hibernation_wake_us: Histogram,
     pub capture_us: Histogram,
     /// Admission to final response.
-    pub request_us: Histogram,
+    pub dispatch_us: Histogram,
     pub park_ms: Histogram,
     pub dirty_pages: Histogram,
     /// The pre-capture gc hint.
@@ -239,8 +239,8 @@ impl Metrics {
             hibernation_wake_p50_us: self.hibernation_wake_us.p50(),
             hibernation_wake_p99_us: self.hibernation_wake_us.p99(),
             capture_p50_us: self.capture_us.p50(),
-            request_p50_us: self.request_us.p50(),
-            request_p99_us: self.request_us.p99(),
+            dispatch_p50_us: self.dispatch_us.p50(),
+            dispatch_p99_us: self.dispatch_us.p99(),
             gc_hint_p50_us: self.gc_hint_us.p50(),
             dirty_pages_p50: self.dirty_pages.p50(),
             dirty_pages_p99: self.dirty_pages.p99(),
@@ -331,8 +331,8 @@ pub struct MetricsSnapshot {
     pub hibernation_wake_p50_us: u64,
     pub hibernation_wake_p99_us: u64,
     pub capture_p50_us: u64,
-    pub request_p50_us: u64,
-    pub request_p99_us: u64,
+    pub dispatch_p50_us: u64,
+    pub dispatch_p99_us: u64,
     pub gc_hint_p50_us: u64,
     pub dirty_pages_p50: u64,
     pub dirty_pages_p99: u64,
@@ -403,8 +403,8 @@ impl MetricsSnapshot {
                 self.hibernation_wake_p99_us.to_string(),
             ),
             ("capture_p50_us", self.capture_p50_us.to_string()),
-            ("request_p50_us", self.request_p50_us.to_string()),
-            ("request_p99_us", self.request_p99_us.to_string()),
+            ("dispatch_p50_us", self.dispatch_p50_us.to_string()),
+            ("dispatch_p99_us", self.dispatch_p99_us.to_string()),
             ("gc_hint_p50_us", self.gc_hint_p50_us.to_string()),
             ("dirty_pages_p50", self.dirty_pages_p50.to_string()),
             ("dirty_pages_p99", self.dirty_pages_p99.to_string()),

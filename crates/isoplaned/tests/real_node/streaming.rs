@@ -240,7 +240,7 @@ async fn dropping_a_requester_before_headers_cancels_the_parked_dispatch() {
             matches!(request.await, Err(error) if error.is_cancelled()),
             "the requester must leave before headers arrive"
         );
-        while cell.metrics_raw().request_us.count() == 0 || cell.futures().live_futures() != 0 {
+        while cell.metrics_raw().dispatch_us.count() == 0 || cell.futures().live_futures() != 0 {
             tokio::task::yield_now().await;
         }
         assert_eq!(

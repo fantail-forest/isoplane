@@ -580,7 +580,7 @@ mod tests {
         drop(guard);
         assert!(
             slot.enter().is_ok(),
-            "the instance is available again once the call returns"
+            "the instance is available again once the slice returns"
         );
     }
 

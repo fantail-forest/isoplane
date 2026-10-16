@@ -23,7 +23,7 @@ impl Target {
 #[derive(Debug)]
 pub struct DispatchResult {
     /// Echoed so a caller draining one channel for many dispatches can match
-    /// a result to its request; completions arrive out of order.
+    /// a result to its dispatch; completions arrive out of order.
     pub dispatch_id: u64,
     pub status: u16,
     pub headers: Vec<(String, String)>,
@@ -363,7 +363,7 @@ impl Cell {
     pub(crate) fn occupancy_budget_ms(&self, module: &ModuleId) -> u32 {
         self.modules.read().get(module).map_or(30000, |m| {
             m.debug_occupancy_ms
-                .unwrap_or(m.manifest.effective_limits().occupancy_ms_per_http_dispatch)
+                .unwrap_or(m.manifest.effective_limits().occupancy_ms_per_dispatch)
         })
     }
 

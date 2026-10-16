@@ -14,7 +14,7 @@ use crate::meters::Meters;
 use crate::response::ResponseTable;
 use crate::{InstanceId, ModuleId};
 
-/// A slot-local request generation, independent of caller-supplied dispatch IDs.
+/// A slot-local dispatch generation, independent of caller-supplied dispatch IDs.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct DispatchGeneration(pub(super) u64);
 
@@ -70,14 +70,14 @@ pub struct InstanceCtx {
 
     /// The frozen slice clock, written once per slice by the cell.
     pub(super) clock_ms: AtomicU64,
-    /// The current top-level work item, the unit the future cap applies to.
+    /// The current dispatch, the unit the future cap applies to.
     pub(super) dispatch: AtomicU64,
     pub(super) subrequests: AtomicU32,
     /// Bounds log volume independently of its occupied-worker cost.
     pub(super) log_bytes: AtomicU32,
     pub(super) entropy_calls: AtomicU64,
-    /// A trap the vtable owes the guest but cannot raise from a call that
-    /// returns an `i64`; the cell converts it after the call returns.
+    /// A trap the vtable owes the guest but cannot raise from an import call
+    /// that returns an `i64`; the cell converts it after the slice returns.
     pub(super) trap_latch: Mutex<Option<TrapCode>>,
     /// Requested when the dispatch enters its grace window or the host ends
     /// it; from the guest's next slice every import it calls returns

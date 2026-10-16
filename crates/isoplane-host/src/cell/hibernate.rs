@@ -18,8 +18,8 @@ impl Cell {
     ) -> hibernate_policy::CaptureEnv<'a> {
         hibernate_policy::CaptureEnv {
             dispatch_active: self.active.contains_key(&slot.id),
-            observer: self.active.with(&slot.id, |request| {
-                request.completion.clone() as Arc<dyn hibernate_policy::CaptureObserver>
+            observer: self.active.with(&slot.id, |dispatch| {
+                dispatch.completion.clone() as Arc<dyn hibernate_policy::CaptureObserver>
             }),
             activator: &entry.activator,
         }
@@ -33,7 +33,7 @@ impl Cell {
     ) -> Result<u64, hibernate_policy::CaptureRefused> {
         let owner = self
             .active
-            .with(&slot.id, |request| request.completion.clone());
+            .with(&slot.id, |dispatch| dispatch.completion.clone());
         let capture = || {
             let _stage = tracing::info_span!("capture", tenant = %entry.tenant,
                 app = %entry.activator.module().app, version = %entry.activator.module().version,
@@ -94,7 +94,7 @@ impl Cell {
                         self.record_offpath_kill(slot, entry, c);
                         if let Some(owner) = self
                             .active
-                            .with(&slot.id, |request| request.completion.clone())
+                            .with(&slot.id, |dispatch| dispatch.completion.clone())
                         {
                             self.end_failed_capture(
                                 slot,

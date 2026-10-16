@@ -49,7 +49,7 @@ fn an_instance_is_parked_only_after_returning_pending() {
 
     assert!(!i.is_parked(), "a fresh instance is not parked");
 
-    let out = i.dispatch(&http_dispatch(1), OccupancyBudget::http());
+    let out = i.dispatch(&http_dispatch(1), OccupancyBudget::default());
     assert_eq!(
         out.status,
         PollStatus::Pending,
@@ -57,7 +57,7 @@ fn an_instance_is_parked_only_after_returning_pending() {
     );
     assert!(i.is_parked(), "an instance that returned pending is parked");
 
-    i.wake(1, &ResultRecord::Ok(vec![]), OccupancyBudget::http());
+    i.wake(1, &ResultRecord::Ok(vec![]), OccupancyBudget::default());
     assert!(
         !i.is_parked(),
         "an instance that returned done is not parked"
@@ -66,7 +66,7 @@ fn an_instance_is_parked_only_after_returning_pending() {
     let wasm = guest(4, "", "", "(unreachable)", DONE);
     let t2 = e.load_template(&wasm).expect("template");
     let mut j = activate(&e, &t2);
-    j.dispatch(&http_dispatch(1), OccupancyBudget::http());
+    j.dispatch(&http_dispatch(1), OccupancyBudget::default());
     assert!(
         !j.is_parked(),
         "a trapped instance is never parked however empty its stack"
@@ -92,7 +92,7 @@ fn capture_and_restore_round_trip_mutable_globals() {
 
     let mut i = activate(&e, &t);
     for n in 0..3 {
-        i.dispatch(&http_dispatch(n), OccupancyBudget::http());
+        i.dispatch(&http_dispatch(n), OccupancyBudget::default());
     }
     let img = i.capture_mutable_state().expect("capture");
     assert_eq!(img.memory_pages, 4, "the captured size is the fixture's");
@@ -133,7 +133,7 @@ fn gc_hint_reaches_the_guest_and_leaves_a_parked_instance_parked() {
     assert!(t.has_gc_hint(), "the fixture exports the hint");
 
     let mut i = activate(&e, &t);
-    i.dispatch(&http_dispatch(1), OccupancyBudget::http());
+    i.dispatch(&http_dispatch(1), OccupancyBudget::default());
     assert!(i.is_parked(), "the fixture parks");
 
     let out = i.gc_hint(255);
@@ -164,7 +164,7 @@ fn gc_hint_is_optional() {
         .expect("template");
     assert!(!t.has_gc_hint(), "the fixture exports no hint");
     let mut i = activate(&e, &t);
-    i.dispatch(&http_dispatch(1), OccupancyBudget::http());
+    i.dispatch(&http_dispatch(1), OccupancyBudget::default());
     assert_eq!(
         i.gc_hint(255).completion,
         Completion::Done,
@@ -203,7 +203,7 @@ fn aspnet_request_scopes_remain_isolated_after_restoring_guest_state() {
     }
     let budget = OccupancyBudget {
         occupancy_ms: 30_000,
-        wall_ms_cap: 30_000,
+        slice_wall_ms_cap: 30_000,
         spent_ns: 0,
     };
     for _ in 0..2 {
@@ -249,7 +249,7 @@ fn aspnet_cancellation_after_restore_disposes_the_request_scope() {
     }
     let budget = OccupancyBudget {
         occupancy_ms: 30_000,
-        wall_ms_cap: 30_000,
+        slice_wall_ms_cap: 30_000,
         spent_ns: 0,
     };
     assert_eq!(

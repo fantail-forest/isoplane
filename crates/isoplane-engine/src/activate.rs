@@ -94,7 +94,7 @@ pub(crate) fn instantiate(
 
         if let Some(w) = m.wall0 {
             let wall = w.elapsed().as_nanos() as u64;
-            if wall >= m.wall_cap_ns {
+            if wall >= m.slice_wall_cap_ns {
                 ctx.data_mut().kill = Some(Kill::Wall);
                 return Err(WallCapExceeded { wall_ns: wall }.into());
             }

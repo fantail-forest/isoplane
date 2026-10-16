@@ -360,7 +360,7 @@ impl FutureTable {
 
     /// The next deliverable result for `owner`; called while the instance's
     /// [`crate::CallGuard`] is held, so a completion that landed mid-dispatch
-    /// is delivered after the call returns rather than reentrantly.
+    /// is delivered after the slice returns rather than reentrantly.
     pub fn take_ready(&self, owner: InstanceId) -> Option<(u64, ResultRecord)> {
         let arc = self.existing(owner)?;
         let mut o = arc.inner.lock();
@@ -426,7 +426,7 @@ impl FutureTable {
 
     /// Releases all dispatch-owned futures, whether
     /// still pending or completed and undelivered; a result left in `ready`
-    /// would be served to the next request on this instance as a wake for a
+    /// would be served to the next dispatch on this instance as a wake for a
     /// future it never issued.
     /// Returns whether guest work was abandoned, excluding implicit
     /// cancellation bookkeeping and re-armable wakes.

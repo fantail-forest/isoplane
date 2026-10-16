@@ -18,7 +18,7 @@ const PLAN: Limits = Limits {
     module_bytes_compressed: 52428800,
     package_bytes: 52428800,
     instance_memory_max: 536870912,
-    occupancy_ms_per_http_dispatch: 300000,
+    occupancy_ms_per_dispatch: 300000,
     subrequests_per_dispatch: 10000,
     pending_futures_per_dispatch: 4096,
 };
@@ -26,15 +26,15 @@ const PLAN: Limits = Limits {
 fn initialization_budget() -> OccupancyBudget {
     OccupancyBudget {
         occupancy_ms: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_OCCUPANCY_MS,
-        wall_ms_cap: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_WALL_MS,
+        slice_wall_ms_cap: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_WALL_MS,
         spent_ns: 0,
     }
 }
 
 fn request_budget() -> OccupancyBudget {
     OccupancyBudget {
-        occupancy_ms: PLAN.limits().occupancy_ms_per_http_dispatch,
-        wall_ms_cap: isoplane_host::CellConfig::default().wall_ms_cap,
+        occupancy_ms: PLAN.limits().occupancy_ms_per_dispatch,
+        slice_wall_ms_cap: isoplane_host::CellConfig::default().slice_wall_ms_cap,
         spent_ns: 0,
     }
 }

@@ -169,7 +169,7 @@ async fn check_managed_cleanup(runtime: GuestRuntime, operation: &str) {
     assert_eq!(
         cell.futures().live_futures(),
         0,
-        "later dispatches must not re-arm an abandoned request's future"
+        "later dispatches must not re-arm an abandoned dispatch's future"
     );
     cell.shutdown();
 }
@@ -251,7 +251,7 @@ async fn a_timer_left_pending_keeps_its_instance() {
     assert_eq!(
         cell.futures().live_futures(),
         0,
-        "step 1: the pending timer's wake must end with its request"
+        "step 1: the pending timer's wake must end with its dispatch"
     );
     let waiting = dispatch_at_idle(&cell, &module, "/observe").await;
     assert_eq!(
@@ -305,7 +305,7 @@ async fn check_guest_timer_after_clock_advances(runtime: GuestRuntime) {
     });
     tokio::time::timeout(Duration::from_secs(60), work.clock_barrier.notified())
         .await
-        .expect("the later request must register its timer before clock advancement");
+        .expect("the later dispatch must register its timer before clock advancement");
     tokio::time::timeout(Duration::from_secs(60), async {
         while !slot.is_capture_eligible() {
             tokio::task::yield_now().await;
@@ -318,11 +318,11 @@ async fn check_guest_timer_after_clock_advances(runtime: GuestRuntime) {
     work.release_clock.notify_one();
     let result = response
         .await
-        .expect("the request thread must not panic")
-        .expect("a later request's own timer must complete after its deadline");
+        .expect("the dispatch thread must not panic")
+        .expect("a later dispatch's own timer must complete after its deadline");
     assert_eq!(
         result.status, 200,
-        "the request's own timer must complete: {result:?}"
+        "the dispatch's own timer must complete: {result:?}"
     );
     assert_eq!(result.body, b"2:0", "no other callback may run");
     wait_until_idle(&cell, &module).await;
@@ -344,7 +344,7 @@ async fn check_dormant_promise(runtime: GuestRuntime) {
     let armed = dispatch_at_idle(&cell, &module, "/promise-arm").await;
     assert_eq!(
         armed.body, b"armed",
-        "the first request must register a dormant managed continuation"
+        "the first dispatch must register a dormant managed continuation"
     );
     assert_eq!(
         cell.futures().live_futures(),
@@ -354,11 +354,11 @@ async fn check_dormant_promise(runtime: GuestRuntime) {
     let signalled = dispatch_at_idle(&cell, &module, "/promise-signal").await;
     assert_eq!(
         signalled.instance, armed.instance,
-        "the later request must signal the retained promise in the same guest"
+        "the later dispatch must signal the retained promise in the same guest"
     );
     assert_eq!(
         signalled.body, b"signalled",
-        "the later request must complete the managed promise"
+        "the later dispatch must complete the managed promise"
     );
     let observed = dispatch_at_idle(&cell, &module, "/observe").await;
     assert_eq!(
@@ -368,18 +368,18 @@ async fn check_dormant_promise(runtime: GuestRuntime) {
     assert_eq!(
         String::from_utf8_lossy(&observed.body),
         "3:1",
-        "a later active request may explicitly signal retained managed state"
+        "a later active dispatch may explicitly signal retained managed state"
     );
     cell.shutdown();
 }
 
-async fn check_same_request_promise(runtime: GuestRuntime) {
+async fn check_same_dispatch_promise(runtime: GuestRuntime) {
     let (cell, module) = cleanup_cell(runtime, Arc::new(PendingWork::default()), "/timer");
     let completed = dispatch_at_idle(&cell, &module, "/promise-complete").await;
     assert_eq!(
         String::from_utf8_lossy(&completed.body),
         "1:1",
-        "an awaited continuation completed within its own request must run once"
+        "an awaited continuation completed within its own dispatch must run once"
     );
     assert_eq!(
         cell.futures().live_futures(),
@@ -400,13 +400,13 @@ async fn check_same_request_promise(runtime: GuestRuntime) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_dormant_interpreted_promise_can_be_signalled_by_a_later_active_request() {
+async fn a_dormant_interpreted_promise_can_be_signalled_by_a_later_active_dispatch() {
     check_dormant_promise(GuestRuntime::Mono).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn an_interpreted_promise_can_resume_work_within_its_own_request() {
-    check_same_request_promise(GuestRuntime::Mono).await;
+async fn an_interpreted_promise_can_resume_work_within_its_own_dispatch() {
+    check_same_dispatch_promise(GuestRuntime::Mono).await;
 }
 
 async fn check_idle_socket_reuse(runtime: GuestRuntime) {

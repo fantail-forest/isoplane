@@ -184,7 +184,7 @@ impl Rig {
             CellConfig {
                 exec_threads: 1,
                 max_idle_per_module: 1,
-                wall_ms_cap: 60_000,
+                slice_wall_ms_cap: 60_000,
                 hibernate: isoplane_host::hibernate_policy::HibernateConfig {
                     handler_after_ms: 0,
                     ..Default::default()
@@ -325,7 +325,7 @@ fn growing_to_the_memory_ceiling_preserves_the_final_page_through_local_reclamat
     );
     assert_eq!(
         second.acquired, "hibernation_wake",
-        "next request must restore its locally saved Store"
+        "next dispatch must restore its locally saved Store"
     );
     assert_eq!(
         second.instance, first.instance,

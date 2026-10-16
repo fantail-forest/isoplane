@@ -19,7 +19,7 @@ pub(super) struct Resident {
     pub(super) module: ModuleId,
 }
 
-pub(super) struct ActiveRequest {
+pub(super) struct ActiveDispatch {
     pub(super) dispatch_id: u64,
     pub(super) module: ModuleId,
     pub(super) route: String,
@@ -88,7 +88,7 @@ impl Cell {
     }
 
     /// Registers a local debug guest with no idle pooling or capture, so each
-    /// request activates a new guest. The caller must use the local debug wall
+    /// dispatch activates a new guest. The caller must use the local debug wall
     /// backstop for its cell.
     pub fn register_debug_module(
         self: &Arc<Self>,
@@ -97,7 +97,7 @@ impl Cell {
         manifest: AppManifest,
     ) -> crate::Result<()> {
         anyhow::ensure!(
-            self.cfg.wall_ms_cap == crate::debug::DEBUG_BUDGET_MS,
+            self.cfg.slice_wall_ms_cap == crate::debug::DEBUG_BUDGET_MS,
             "local debugging requires its explicit cell wall backstop"
         );
         self.register_execution(

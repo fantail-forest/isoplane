@@ -80,7 +80,7 @@ pub fn run(engine: &IsoplaneEngine, wasm: &[u8]) -> Vec<u8> {
     let mut instance = activate(engine, &template);
     assert_eq!(
         instance
-            .dispatch(&dispatch(), OccupancyBudget::http())
+            .dispatch(&dispatch(), OccupancyBudget::default())
             .completion,
         Completion::Done,
         "a filesystem result must return normally through the engine"

@@ -78,7 +78,7 @@ pub struct EngineConfig {
     pub max_tables_per_module: u32,
     /// Native stack bytes reserved per Cranelift compiler worker.
     pub compiler_stack_bytes: usize,
-    /// Maximum native stack bytes consumed by a guest invocation.
+    /// Maximum native stack bytes consumed by one slice.
     pub max_wasm_stack_bytes: usize,
     /// Period of the epoch watchdog. Grace is delivered by epoch ticks, so
     /// [`IsoplaneEngine::new`] refuses a tick too coarse to fit

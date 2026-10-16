@@ -17,7 +17,7 @@ pub(crate) enum Kill {
     /// `Clean` variant: a clean kill is the guest returning, and leaves a
     /// `grace_at_ns` record rather than an error.
     OccupancyHard,
-    /// The independent elapsed-time backstop for one invocation. Bypasses grace.
+    /// The independent elapsed-time backstop for one slice. Bypasses grace.
     Wall,
 }
 
@@ -33,7 +33,7 @@ pub(crate) struct Meter {
     /// Worker occupancy burned by earlier slices of the same dispatch; B and G are
     /// per dispatch, not per slice.
     pub spent_ns: u64,
-    pub wall_cap_ns: u64,
+    pub slice_wall_cap_ns: u64,
     /// How far to extend the epoch deadline at each check.
     pub check_ticks: u64,
 }
@@ -59,7 +59,7 @@ impl Default for Meter {
             occupancy_budget_ns: u64::MAX,
             grace_ns: 0,
             spent_ns: 0,
-            wall_cap_ns: u64::MAX,
+            slice_wall_cap_ns: u64::MAX,
             check_ticks: 1,
         }
     }

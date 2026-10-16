@@ -102,7 +102,7 @@ async fn finishing_a_response_then_parking_cannot_resume_guest_work() {
             body, b"A",
             "the completed response must deliver its initial body"
         );
-        while cell.metrics_raw().request_us.count() == 0 {
+        while cell.metrics_raw().dispatch_us.count() == 0 {
             tokio::task::yield_now().await;
         }
         assert_eq!(

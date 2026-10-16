@@ -50,7 +50,7 @@ pub trait Dispatcher: Send + Sync + 'static {
     }
 }
 
-/// A resolved route: which app version this request runs against, and under
+/// A resolved route: which app version this request dispatch runs against, and under
 /// what policy.
 #[derive(Debug, Clone)]
 pub struct RouteTarget {
