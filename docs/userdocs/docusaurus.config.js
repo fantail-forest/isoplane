@@ -67,7 +67,8 @@ export default {
   onBrokenLinks: 'throw',
   onBrokenAnchors: 'throw',
   i18n: {defaultLocale: 'en', locales: ['en']},
-  markdown: {hooks: {onBrokenMarkdownLinks: 'throw'}},
+  markdown: {mermaid: true, hooks: {onBrokenMarkdownLinks: 'throw'}},
+  themes: ['@docusaurus/theme-mermaid'],
   presets: [['classic', {
     docs: {
       path: 'docs', routeBasePath: '/', sidebarPath: './sidebars.js',

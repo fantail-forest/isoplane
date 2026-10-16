@@ -41,25 +41,39 @@ code awaits something that has to wait, or the dispatch finishes. Some
 things are fixed for the length of a slice, such as the [clock](#time) and
 whether the dispatch has been cancelled.
 
-The timeline below shows two instances of one application. Instance A
-handles request 1 in three slices, waiting twice in between, on a database
-query for example. Request 2 arrives while instance A is busy, so Isoplane
-delivers it to instance B. Later, while instance A is idle, one of its timers
-comes due, and because the application runs timers between requests, instance
-A runs it in a dispatch of its own. On any one instance, dispatches follow one
-another and never overlap.
+The timeline below shows two instances of one application, with a row for each
+dispatch and a bar for each slice. The gaps between a dispatch's slices are
+waits, on a database query for example. Instance A handles request 1 in four
+slices. A timer comes due while it waits, and the timer's callback runs in a
+slice of request 1's dispatch, using that dispatch's running time. Slices that
+run timer callbacks are shown in a second color. Request 2 arrives while
+instance A is busy, so Isoplane delivers it to instance B. Later, while
+instance A is idle, another timer comes due, and because the application runs
+timers between requests, instance A runs it in a dispatch of its own. On any
+one instance, dispatches follow one another and never overlap.
 
-```text
-             time ──────────────────────────────────────────────────────────▶
-
-Instance A   ███·······██··███       ███····███            █████·····███
-             ╰── request 1 ──╯       ╰ timers ╯            ╰ request 3 ╯
-
-Instance B        ████·······███
-                  ╰ request 2 ─╯
-
-             ███ a slice: the instance is running
-             ··· the dispatch is waiting
+```mermaid
+---
+displayMode: compact
+---
+gantt
+    dateFormat x
+    axisFormat %Q ms
+    tickInterval 100millisecond
+    todayMarker off
+    section A: request 1
+    ​ : 0, 30
+    ​ : 100, 140
+    ​ : active, 170, 190
+    ​ : 230, 260
+    section A: timers
+    ​ : active, 420, 450
+    section A: request 3
+    ​ : 620, 680
+    ​ : 760, 790
+    section B: request 2
+    ​ : 60, 120
+    ​ : 280, 310
 ```
 
 Apart from initialization, an application's code runs only during dispatches.
