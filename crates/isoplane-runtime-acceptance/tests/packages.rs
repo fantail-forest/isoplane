@@ -1083,7 +1083,7 @@ async fn an_idle_instance_that_opted_in_runs_its_timers_until_it_goes_too_long_w
     isoplane_harness::LogCapture::global();
     let (product, request) = alpha_initialized_by("RunTimersBetweenRequestsAsync").await;
     let module = isoplane_host::ModuleId::new("alpha", "v1");
-    let cell = serving_cell(&product, &request, &module, 5_000);
+    let cell = serving_cell(&product, &request, &module, 1_000);
     let meters = cell.meters(&module).expect("the module has meters");
 
     let first = ask_for_beats(&cell, &module).await;
@@ -1109,14 +1109,14 @@ async fn an_idle_instance_that_opted_in_runs_its_timers_until_it_goes_too_long_w
     );
 
     wait_until(
-        "step 3: the instance must stop once it has gone 5 s without a request",
+        "step 3: the instance must stop once it has gone 1 s without a request",
         || cell.idle_instances(&module) == Some((0, 0)),
     )
     .await;
     let wakes = meters.dispatches() - 1;
     assert!(
-        wakes <= 4,
-        "step 4: wakes at least 1 s apart fit at most 4 times in 5 s, not {wakes}"
+        wakes <= 9,
+        "step 4: wakes at least 100 ms apart fit at most 9 times in 1 s, not {wakes}"
     );
     let after = ask_for_beats(&cell, &module).await;
     assert_ne!(

@@ -40,7 +40,7 @@ pub enum BufSpec {
 pub const MAX_OUT_BUFFER_BYTES: usize = 1 << 20;
 
 /// The least interval `timers_between_requests` accepts.
-pub const MIN_TIMERS_BETWEEN_REQUESTS_MS: u64 = 1_000;
+pub const MIN_TIMERS_BETWEEN_REQUESTS_MS: u64 = 100;
 
 /// Maximum encoded activation configuration size, bounded by the output-buffer limit.
 pub const MAX_RUNTIME_CONFIGURATION_BYTES: usize = MAX_OUT_BUFFER_BYTES;

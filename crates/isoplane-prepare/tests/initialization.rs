@@ -180,7 +180,7 @@ fn an_invalid_seed_buffer_traps_instead_of_baking_zero_entropy() {
 }
 
 #[test]
-fn preparation_accepts_a_timer_interval_of_a_second_and_refuses_a_shorter_one() {
+fn preparation_accepts_a_timer_interval_of_100_ms_and_refuses_a_shorter_one() {
     let opting_in = |minimum_interval_ms: u64| {
         guest(
             r#"(import "isoplane" "timers_between_requests" (func $timers (param i64) (result i64)))"#,
@@ -189,13 +189,13 @@ fn preparation_accepts_a_timer_interval_of_a_second_and_refuses_a_shorter_one() 
     };
     assert!(
         matches!(
-            initialize(&engine(), &opting_in(999), &request()),
+            initialize(&engine(), &opting_in(99), &request()),
             Err(PrepareError::Initialization { .. })
         ),
-        "an interval under a second must fail preparation"
+        "an interval under 100 ms must fail preparation"
     );
-    initialize(&engine(), &opting_in(1_000), &request())
-        .expect("an interval of a second must be accepted");
+    initialize(&engine(), &opting_in(100), &request())
+        .expect("an interval of 100 ms must be accepted");
 }
 
 #[test]

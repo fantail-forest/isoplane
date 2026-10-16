@@ -863,7 +863,7 @@ impl isoplane_engine::bindings::InitializationBindings for Bindings {
                     if minimum_interval_ms < isoplane_abi::imports::MIN_TIMERS_BETWEEN_REQUESTS_MS =>
                 {
                     Err(isoplane_engine::bindings::BindingError::InvalidRequest(
-                        "the least time between timer wakes is below the platform's minimum of one second",
+                        "the least time between timer wakes is below the platform's minimum of 100 ms",
                     ))
                 }
                 minimum_interval_ms => {

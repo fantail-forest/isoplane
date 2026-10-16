@@ -61,7 +61,7 @@ public static class Handler
     /// </summary>
     public static Task RunTimersBetweenRequestsAsync()
     {
-        Initialization.RunTimersBetweenRequests(minimumInterval: TimeSpan.FromSeconds(1));
+        Initialization.RunTimersBetweenRequests(minimumInterval: TimeSpan.FromMilliseconds(100));
         heartbeat = new Timer(LoggedBeat, null, TimeSpan.FromMilliseconds(20), TimeSpan.FromMilliseconds(20));
         return Task.CompletedTask;
     }

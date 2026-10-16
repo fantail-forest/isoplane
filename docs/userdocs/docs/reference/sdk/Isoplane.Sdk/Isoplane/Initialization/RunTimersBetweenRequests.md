@@ -13,13 +13,13 @@ public static void RunTimersBetweenRequests(TimeSpan minimumInterval)
 
 | parameter | description |
 | --- | --- |
-| minimumInterval | The least time between the end of one request or wake and the next wake: at least one second. |
+| minimumInterval | The least time between the end of one request or wake and the next wake: at least 100 milliseconds. |
 
 ## Exceptions
 
 | exception | condition |
 | --- | --- |
-| ArgumentOutOfRangeException | *minimumInterval* is less than one second. |
+| ArgumentOutOfRangeException | *minimumInterval* is less than 100 milliseconds. |
 | InvalidOperationException | Initialization has finished. |
 
 ## Remarks

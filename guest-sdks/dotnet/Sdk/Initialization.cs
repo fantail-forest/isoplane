@@ -65,7 +65,7 @@ public static class Initialization
     /// </example>
     public static event Func<Task>? Initializing;
 
-    private const long MinimumTimerIntervalMs = 1000;
+    private const long MinimumTimerIntervalMs = 100;
 
     /// <summary>
     /// Wakes the application's idle instances to run timers that have come due, at most once per
@@ -92,9 +92,9 @@ public static class Initialization
     /// </para>
     /// </remarks>
     /// <param name="minimumInterval">
-    /// The least time between the end of one request or wake and the next wake: at least one second.
+    /// The least time between the end of one request or wake and the next wake: at least 100 milliseconds.
     /// </param>
-    /// <exception cref="ArgumentOutOfRangeException"><paramref name="minimumInterval"/> is less than one second.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="minimumInterval"/> is less than 100 milliseconds.</exception>
     /// <exception cref="InvalidOperationException">Initialization has finished.</exception>
     /// <example>
     /// <code>

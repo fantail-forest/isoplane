@@ -166,7 +166,7 @@ requests it does not run at all, unless it asks for its timers to.
   Call [`Initialization.RunTimersBetweenRequests`](reference/sdk/Isoplane.Sdk/Isoplane/Initialization/RunTimersBetweenRequests.md)
   during initialization, and Isoplane also wakes an idle instance to run the
   timers that have come due, no sooner than the minimum interval you give, of
-  at least a second, after its last request or wake ended:
+  at least 100 milliseconds, after its last request or wake ended:
 
   ```csharp
   Initialization.RunTimersBetweenRequests(minimumInterval: TimeSpan.FromMinutes(1));
