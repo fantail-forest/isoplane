@@ -6,13 +6,13 @@ use isoplane_abi::config::Limits;
 use isoplane_abi::dispatch::HttpRequest;
 use isoplane_engine::{IsoplaneEngine, PlatformFile, PlatformFiles};
 use isoplane_fixtures::GuestRuntime;
-use isoplane_harness::EmittedGuestLogs as _;
 use isoplane_host::activator::EngineActivator;
 use isoplane_host::bindings::RuntimeConfiguration;
 use isoplane_host::cell::{CellConfig, Target};
 use isoplane_host::ModuleId;
 use std::sync::Arc;
 use std::time::Duration;
+use isoplane_harness::EmittedGuestLogs as _;
 
 async fn activation_finishes_before_dispatch(runtime: GuestRuntime) {
     isoplane_harness::LogCapture::global();

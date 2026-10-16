@@ -68,8 +68,10 @@ impl Cell {
         slot: &Arc<Slot>,
         entry: &Arc<ModuleEntry>,
     ) -> Result<u64, hibernate_policy::CaptureRefused> {
-        let capture =
-            crate::hibernate_capture::capture_in_context(slot, self.capture_env(entry, slot));
+        let capture = crate::hibernate_capture::capture_in_context(
+            slot,
+            self.capture_env(entry, slot),
+        );
         let res = match capture {
             Ok(r) => r,
             Err(hibernate_policy::CaptureRefused::SnapshotWrite(e)) => {
@@ -192,7 +194,9 @@ impl Cell {
         };
         let mut fell_back = false;
         let inst = match restored {
-            Ok(inst) => inst,
+            Ok(inst) => {
+                inst
+            }
             Err(e) => {
                 if self.active.contains_key(&slot.id) {
                     return Err(e.context("a pending dispatch requires its captured continuation"));

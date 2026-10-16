@@ -360,7 +360,7 @@ impl Cell {
         }
 
         match completion {
-            Completion::Parked => self.park_after_slice(slot, ),
+            Completion::Parked => self.park_after_slice(slot),
             Completion::Done => {
                 // Open response handles retain the active dispatch. A streaming
                 // caller consumes the transport; buffered callers keep their
@@ -402,7 +402,7 @@ impl Cell {
                         self.finish_and_release(slot, entry, d);
                         true
                     }
-                    RequestEnd::Parked => self.park_after_slice(slot, ),
+                    RequestEnd::Parked => self.park_after_slice(slot),
                 }
             }
             // The request still fails with `budget_exceeded`, but the
@@ -443,7 +443,7 @@ impl Cell {
                         true
                     }
                     RequestEnd::Parked | RequestEnd::RetainedForStreaming => {
-                        self.park_after_slice(slot, )
+                        self.park_after_slice(slot)
                     }
                 }
             }
@@ -492,8 +492,9 @@ impl Cell {
         }
     }
 
-    /// The instance parks between slices. Returns whether the wake loop is done with it.
-    fn park_after_slice(&self,slot: &Arc<Slot>, ) -> bool {
+    /// The instance parks between slices. Returns whether the wake loop is
+    /// done with it.
+    fn park_after_slice(&self, slot: &Arc<Slot>) -> bool {
         slot.park(crate::now_ms());
         // A completion that landed while Hot is drained now.
         !self.rt.futures.has_ready(slot.id)
@@ -633,7 +634,6 @@ impl Cell {
         }
 
         let d = if abandoned_guest_work { evict() } else { d };
-
 
         if !d.is_warm() && !matches!(d.kind(), crate::disposition::DispositionKind::Reset) {
             self.forget(slot);

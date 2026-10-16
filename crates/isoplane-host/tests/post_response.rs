@@ -37,10 +37,8 @@ fn dispatch(handle: &str, wake: &str) -> (Arc<Cell>, DispatchResult) {
         EngineActivator::load(engine, module.clone(), &wasm)
             .expect("the unchanged wait_until ABI must still link"),
     );
-    let (cell, _) = common::rig_resolving(
-        CellConfig::for_test("post-response"),
-        "93.184.216.34:80",
-    );
+    let (cell, _) =
+        common::rig_resolving(CellConfig::for_test("post-response"), "93.184.216.34:80");
     cell.register_module(
         "owner",
         activator,

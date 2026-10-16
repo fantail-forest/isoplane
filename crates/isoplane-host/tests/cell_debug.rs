@@ -220,10 +220,7 @@ fn debug_registration_refuses_a_production_wall_backstop() {
         )
         .expect("the debug fixture must load"),
     );
-    let (cell, _) = common::rig_resolving(
-        CellConfig::for_test("ordinary"),
-        "93.184.216.34:80",
-    );
+    let (cell, _) = common::rig_resolving(CellConfig::for_test("ordinary"), "93.184.216.34:80");
     let rig = Rig { cell, module };
     assert!(
         rig.cell

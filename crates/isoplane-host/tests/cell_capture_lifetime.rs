@@ -39,10 +39,8 @@ fn rig(pending: bool) -> (Arc<Cell>, ModuleId) {
     );
     let id = ModuleId::new("capture-lifetime", "v1");
     let activator = EngineActivator::load(engine, id.clone(), &module).unwrap();
-    let (cell, _) = common::rig_resolving(
-        CellConfig::for_test("capture-lifetime"),
-        "93.184.216.34:80",
-    );
+    let (cell, _) =
+        common::rig_resolving(CellConfig::for_test("capture-lifetime"), "93.184.216.34:80");
     cell.register_module(
         "owner",
         Arc::new(activator),

@@ -47,10 +47,8 @@ fn request_body_reads_reject_zero_and_negative_sizes_through_the_real_import() {
             activator.template().imports("isoplane", "req_body_read"),
             "the compiled import must advertise upload delivery capability"
         );
-        let (cell, _) = common::rig_resolving(
-            CellConfig::for_test("read-size"),
-            "93.184.216.34:80",
-        );
+        let (cell, _) =
+            common::rig_resolving(CellConfig::for_test("read-size"), "93.184.216.34:80");
         cell.register_module(
             "owner",
             activator,
@@ -129,10 +127,7 @@ fn response_cell(imports: &str, before_response: &str) -> Arc<isoplane_host::Cel
     let module = ModuleId::new("early-upload", "v1");
     let activator =
         Arc::new(EngineActivator::load(engine, module, &wasm).expect("upload-aware guest"));
-    let (cell, _) = common::rig_resolving(
-        CellConfig::for_test("early-upload"),
-        "93.184.216.34:80",
-    );
+    let (cell, _) = common::rig_resolving(CellConfig::for_test("early-upload"), "93.184.216.34:80");
     cell.register_module(
         "owner",
         activator,
