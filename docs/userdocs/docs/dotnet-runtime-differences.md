@@ -560,8 +560,13 @@ loop that does not await never sees it change.
 What follows from that:
 
 - `Stopwatch` cannot time a piece of computation, and a benchmark run inside
-  the application measures nothing. Across an `await` it measures the wait, to
-  the millisecond. Run benchmarks on ordinary .NET outside Isoplane.
+  the application measures nothing. Run benchmarks on ordinary .NET outside
+  Isoplane.
+- Across an `await` that has to wait, `Stopwatch` measures from when the
+  application last started running or resumed before you started it, to when
+  it resumed after the wait. That includes the wait and any computation since
+  that earlier point, so it is an upper bound on the wait, to the millisecond.
+  An `await` on something already complete does not advance it.
 - Timestamps the application takes without waiting in between are identical,
   so log lines it stamps itself can all show the same time.
 - A loop that computes and checks the time, a timer or a cancellation token for
