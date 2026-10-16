@@ -32,20 +32,29 @@ in one. Because an instance needs a thread only while its code is running, one
 thread is enough, and a waiting instance does not occupy one at all. Code in an
 instance never runs on two threads at once.
 
+### Starting a thread {#starting-a-thread}
+
 Starting a thread throws `PlatformNotSupportedException`, and the build warns
 about it as [`ISOPLANE1002`](reference/error-codes.md#isoplane1002). Rewrite
 such work as asynchronous code that the request awaits.
 
-`Task.Run` and `ThreadPool.QueueUserWorkItem` don't get a thread of their own:
-the thread pool runs on the instance's one thread, and the work they queue
+### The thread pool, `Task.Run` and `Parallel` {#thread-pool}
+
+`Task.Run` and `ThreadPool.QueueUserWorkItem` don't get a thread of their own.
+The thread pool runs on the instance's one thread, and the work they queue
 runs when the current code next awaits or returns. `Task.Run` therefore
-doesn't make work parallel, and doesn't stop it from delaying the request. `Parallel.For` and `Parallel.ForEach` run their
-iterations one after another. Code that uses any of these still works,
-without the speed-up it was written for.
+doesn't make work parallel, and doesn't stop it from delaying the request.
+
+`Parallel.For` and `Parallel.ForEach` run their iterations one after another.
+
+Code that uses any of these still works, without the speed-up it was written
+for, so there is no need to remove them from code that also runs elsewhere.
+
+### Concurrent I/O, sequential computation {#concurrency}
 
 Asynchronous I/O is still concurrent, and it is the way to make a request
-faster on Isoplane. Start several operations and `await Task.WhenAll(...)`, and all of them
-are in flight while the instance waits.
+faster on Isoplane. Start several operations and `await Task.WhenAll(...)`,
+and all of them are in flight while the instance waits.
 
 Computation, by contrast, occupies the thread. While a method computes without
 awaiting, nothing else in the instance runs, including other asynchronous work
@@ -54,9 +63,11 @@ until the method next awaits. A long computation also uses up the request's
 running time. To let cancellation reach one, split it up as
 [Running time](execution-limits.md#running-time) describes.
 
-Thread-safe types need no change. `Lazy<T>` in its default thread-safe mode,
-`ConcurrentDictionary`, `ConcurrentQueue`, `ConcurrentStack` and
-`ConcurrentBag` work as usual.
+### Thread-safe types
+
+`Lazy<T>` in its default thread-safe mode, `ConcurrentDictionary`,
+`ConcurrentQueue`, `ConcurrentStack` and `ConcurrentBag` work as usual, and
+need no change.
 
 ## How locks work {#locks}
 
