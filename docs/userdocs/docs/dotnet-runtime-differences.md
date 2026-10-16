@@ -196,9 +196,9 @@ What follows from that:
 
 ## When your code runs
 
-An application's code runs at three kinds of moment: while it starts up, while
-it handles a request, and, if it asks for this, when Isoplane wakes it to run
-its timers. The rest of the time an instance is idle. It holds no thread and
+An application's code runs in three situations: while it starts up, while it
+handles a request, and, if the application asks for this, when Isoplane wakes
+it to run its timers. The rest of the time an instance is idle. It holds no thread and
 uses no processor time, and Isoplane can set it aside or discard it whenever it
 needs the room. That is what lets an application that is waiting, or that
 nobody is using, cost so little.
