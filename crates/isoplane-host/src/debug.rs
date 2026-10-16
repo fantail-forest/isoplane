@@ -106,16 +106,22 @@ impl HostBindings for DebugBindings {
                 "local debugger cannot wait on an empty poll set",
             ));
         }
+        let mut waited = false;
         loop {
             if self.1.load(Ordering::Acquire) {
                 return Err(Error::Unsupported("local debugger session stopped"));
             }
-            // Each pass is a slice of its own, or a timer could never become
-            // ready while the debugger holds the invocation. This loosens the
-            // per-slice freeze that denies guests a clock (see
+            // A pass after a wait is a slice of its own, or a timer could
+            // never become ready while the debugger holds the slice open. This
+            // loosens the per-slice freeze that denies guests a clock (see
             // `HostBindings::begin_slice`), which is acceptable only because a
-            // debugger session is local development, never a shared host.
-            self.0.begin_slice();
+            // debugger session is local development, never a shared host. The
+            // first pass stays in the current slice: the guest's clock moves
+            // only between slices, so a timer that became ready here would be
+            // one the guest finds not yet due, re-arms and polls again, forever.
+            if waited {
+                self.0.begin_slice();
+            }
             let mut ready = Vec::new();
             for (index, handle) in handles.iter().enumerate() {
                 match self.0.native_io(Request::Ready(*handle))? {
@@ -135,6 +141,7 @@ impl HostBindings for DebugBindings {
             }
             // Native readiness is reactor-owned; this development-only wait retains the invocation.
             std::thread::park_timeout(READINESS_INTERVAL);
+            waited = true;
         }
     }
     fn call_future(&mut self, call: ImportCall<'_>) -> u64 {
