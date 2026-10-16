@@ -124,6 +124,8 @@ mod tests {
     struct NoImports;
 
     impl HostBindings for NoImports {
+        fn begin_slice(&mut self) {}
+        fn end_slice(&mut self) {}
         fn call_future(&mut self, _: ImportCall<'_>) -> u64 {
             panic!("the memory fixture has no host imports")
         }

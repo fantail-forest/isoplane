@@ -193,10 +193,15 @@ impl Instance {
 
         let clock_ms = live
             .store
-            .data()
+            .data_mut()
             .bindings
-            .as_ref()
-            .map(|b| b.slice_clock_ms())
+            .as_mut()
+            .map(|b| {
+                // SECURITY: fixes what the guest observes for the whole slice;
+                // see `HostBindings::begin_slice`.
+                b.begin_slice();
+                b.slice_clock_ms()
+            })
             .unwrap_or(0);
 
         let meter = Meter {
@@ -317,6 +322,14 @@ impl Instance {
         // A guest can return between epoch ticks; compare its active execution time
         // with the budget even when the epoch callback did not run.
         let in_grace = grace_at_ns.is_some() || dispatch_occupancy_ns >= budget.budget_ns();
+        if let Some(bindings) = live.store.data_mut().bindings.as_mut() {
+            // A slice can cross B between epoch ticks, so grace is entered here
+            // when no tick entered it. A hard kill has nothing left to cancel.
+            if in_grace && grace_at_ns.is_none() && !hard_kill {
+                bindings.enter_grace();
+            }
+            bindings.end_slice();
+        }
         let completion = if hard_kill {
             Completion::BudgetKill
         } else {

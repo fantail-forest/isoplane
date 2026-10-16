@@ -123,7 +123,7 @@ impl Cell {
         self.rt.futures.end_dispatch(id, owner.dispatch_id());
         self.rt.futures.release_instance(id);
         if let Some(slot) = self.slot(id) {
-            slot.ctx.poison_imports();
+            slot.ctx.request_cancellation();
             slot.tombstone();
             slot.discard();
             self.remember_tombstone(&slot);

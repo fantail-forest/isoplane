@@ -210,6 +210,8 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     impl HostBindings for Unused {
+        fn begin_slice(&mut self) {}
+        fn end_slice(&mut self) {}
         fn call_future(&mut self, _: isoplane_engine::ImportCall<'_>) -> u64 {
             panic!("a refused activation must not run the guest")
         }

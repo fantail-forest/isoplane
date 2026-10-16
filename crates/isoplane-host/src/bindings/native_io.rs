@@ -683,7 +683,6 @@ struct Socket {
 }
 
 struct Timer {
-    ready: Arc<AtomicBool>,
     /// When the timer is due, on the reactor's clock; `None` for one created
     /// ready.
     deadline: Option<tokio::time::Instant>,
@@ -692,26 +691,51 @@ struct Timer {
 }
 
 impl Timer {
-    /// Marks the timer ready once its deadline has passed, and otherwise arms
-    /// a wake in the current dispatch if it has none, so a guest that waits on
-    /// a timer created in an earlier request is still woken by it.
-    fn refresh(&mut self, bindings: &dyn Context) -> Result<(), Error> {
-        let Some(deadline) = self.deadline else {
+    /// Whether the guest sees the timer as ready in the slice that began at
+    /// `slice`.
+    ///
+    /// SECURITY: side-channel mitigation. Judged against the slice's start,
+    /// never the live clock, so a timer cannot become ready while the guest
+    /// runs. Otherwise a guest could arm a timer, run the code it wants to
+    /// time, and poll: the answer would say whether that code took longer than
+    /// the timer, a clock as fine as one host call, which is what
+    /// Spectre-class attacks need and the frozen slice clock denies them.
+    fn ready_in(&self, slice: tokio::time::Instant) -> bool {
+        self.deadline.is_none_or(|deadline| deadline <= slice)
+    }
+
+    /// Arms a wake in the current dispatch for a timer not yet due, if it has
+    /// none, so a guest that waits on a timer created in an earlier request is
+    /// still woken by it.
+    fn refresh(
+        &mut self,
+        slice: tokio::time::Instant,
+        bindings: &dyn Context,
+    ) -> Result<(), Error> {
+        let Some(deadline) = self.deadline.filter(|_| !self.ready_in(slice)) else {
             return Ok(());
         };
-        if self.ready.load(Ordering::Acquire) {
-            return Ok(());
-        }
-        let runtime = bindings
-            .runtime()
-            .ok_or(Error::Unsupported("native timer without reactor"))?;
-        if reactor_now(&runtime) >= deadline {
-            self.ready.store(true, Ordering::Release);
-        } else if !self.wake.as_ref().is_some_and(ReactorWork::is_pending) {
-            self.wake = Some(arm_timer(&self.ready, deadline, &runtime, bindings)?);
+        if !self.wake.as_ref().is_some_and(ReactorWork::is_pending) {
+            let runtime = bindings
+                .runtime()
+                .ok_or(Error::Unsupported("native timer without reactor"))?;
+            self.wake = Some(arm_timer(deadline, &runtime, bindings)?);
         }
         Ok(())
     }
+}
+
+/// The import that makes a timer a host future rather than a native resource;
+/// its timers count toward the same limit.
+pub(crate) const DEADLINE_IMPORT: &str = "clock_deadline_in";
+
+/// `duration` rounded up to the guest clock's quantum.
+///
+/// SECURITY: side-channel mitigation. No timer is finer than the clock the
+/// guest reads, or comparing timers would measure below the clock's quantum.
+fn quantized(duration: isoplane_abi::native_io::DurationNanos) -> std::time::Duration {
+    let quantum_ns = isoplane_abi::pal::CLOCK_QUANTUM_NS as u64;
+    std::time::Duration::from_nanos(duration.0.div_ceil(quantum_ns).saturating_mul(quantum_ns))
 }
 
 pub(crate) fn reactor_now(runtime: &Runtime) -> tokio::time::Instant {
@@ -720,7 +744,6 @@ pub(crate) fn reactor_now(runtime: &Runtime) -> tokio::time::Instant {
 }
 
 fn arm_timer(
-    ready: &Arc<AtomicBool>,
     deadline: tokio::time::Instant,
     runtime: &Runtime,
     bindings: &dyn Context,
@@ -729,10 +752,8 @@ fn arm_timer(
         .alloc_rearmable(isoplane_abi::native_io::canonical::POLL_IMPORT)
         .ok_or(Error::ResourceLimit)?;
     let completion = runtime.clone();
-    let ready = ready.clone();
     let task = runtime.spawn(async move {
         tokio::time::sleep_until(deadline).await;
-        ready.store(true, Ordering::Release);
         completion.settle_future(future, ResultRecord::Ok(Vec::new()));
     });
     runtime.futures.attach_task(future, task.abort_handle());
@@ -764,6 +785,10 @@ struct StreamFailure {
 /// Retained by InstanceCtx across Store destruction and released with its owner.
 pub(crate) struct Resources {
     next: u32,
+    /// When the guest's current slice began, on the reactor's clock.
+    /// SECURITY: everything the guest observes of timers is judged against
+    /// this, never the live clock; see [`Timer::ready_in`].
+    slice: Option<tokio::time::Instant>,
     prepared: Option<isoplane_abi::native_io::PreparedResources>,
     limits: ResourceLimits,
     entries: BTreeMap<ResourceHandle, Resource>,
@@ -781,13 +806,41 @@ pub(crate) struct IdleTimers {
 }
 
 impl Resources {
+    pub(crate) fn slice_start(&self) -> Option<tokio::time::Instant> {
+        self.slice
+    }
+
+    pub(crate) fn timers(&self) -> usize {
+        self.entries
+            .values()
+            .filter(|resource| matches!(resource, Resource::Timer(_)))
+            .count()
+    }
+
+    /// Fixes what the guest observes of timers for the slice beginning `now`.
+    pub(crate) fn begin_slice(&mut self, now: tokio::time::Instant) {
+        self.slice = Some(now);
+    }
+
+    /// The current slice's start. A caller that never began one, such as a
+    /// test driving resources directly, gets a slice that begins now.
+    fn slice(&mut self, bindings: &dyn Context) -> tokio::time::Instant {
+        *self.slice.get_or_insert_with(|| match bindings.runtime() {
+            Some(runtime) => reactor_now(&runtime),
+            None => tokio::time::Instant::now(),
+        })
+    }
+
     pub(crate) fn idle_timers(&self) -> Option<IdleTimers> {
         let minimum_interval_ms = self.prepared.as_ref()?.timers_between_requests_ms?;
+        // A timer the guest already saw as ready has been handled or ignored.
         let earliest_deadline = self
             .entries
             .values()
             .filter_map(|resource| match resource {
-                Resource::Timer(timer) if !timer.ready.load(Ordering::Acquire) => timer.deadline,
+                Resource::Timer(timer) => timer
+                    .deadline
+                    .filter(|_| self.slice.is_none_or(|slice| !timer.ready_in(slice))),
                 _ => None,
             })
             .min();
@@ -800,6 +853,7 @@ impl Resources {
     pub(crate) fn clear(&mut self) {
         self.entries.clear();
         self.next = 1;
+        self.slice = None;
         self.prepared = None;
         self.network = None;
         self.resolved.clear();
@@ -808,6 +862,7 @@ impl Resources {
     pub(crate) fn new(limits: ResourceLimits) -> Self {
         Self {
             next: 1,
+            slice: None,
             prepared: None,
             limits,
             entries: BTreeMap::new(),
@@ -829,10 +884,7 @@ impl Resources {
             let kind = match resource {
                 Resource::Network => continue,
                 Resource::Timer(timer) => {
-                    match timer
-                        .deadline
-                        .filter(|&deadline| !timer.ready.load(Ordering::Acquire) && deadline > now)
-                    {
+                    match timer.deadline.filter(|&deadline| deadline > now) {
                         Some(deadline) => {
                             pending_timers.push(isoplane_abi::native_io::PreparedTimer {
                                 handle,
@@ -932,7 +984,6 @@ impl Resources {
             self.entries.insert(
                 handle,
                 Resource::Timer(Timer {
-                    ready: Arc::new(AtomicBool::new(true)),
                     deadline: None,
                     wake: None,
                 }),
@@ -942,7 +993,6 @@ impl Resources {
             self.entries.insert(
                 timer.handle,
                 Resource::Timer(Timer {
-                    ready: Arc::new(AtomicBool::new(false)),
                     deadline: Some(now + std::time::Duration::from_millis(timer.remaining_ms)),
                     wake: None,
                 }),
@@ -1220,9 +1270,16 @@ impl Resources {
             }
             Request::Timer(duration) => {
                 self.reserve(ResourceCount(1))?;
+                let deadline_futures = bindings.runtime().map_or(0, |runtime| {
+                    runtime
+                        .futures
+                        .pending_for_import(bindings.instance(), DEADLINE_IMPORT)
+                });
+                if self.timers() + deadline_futures >= isoplane_abi::native_io::MAX_TIMERS {
+                    return Err(Error::ResourceLimit);
+                }
                 let timer = if duration.0 == 0 {
                     Timer {
-                        ready: Arc::new(AtomicBool::new(true)),
                         deadline: None,
                         wake: None,
                     }
@@ -1230,15 +1287,13 @@ impl Resources {
                     let runtime = bindings
                         .runtime()
                         .ok_or(Error::Unsupported("native timer without reactor"))?;
-                    let duration_ms = duration
-                        .0
-                        .div_ceil(isoplane_abi::pal::CLOCK_QUANTUM_NS as u64);
-                    let deadline =
-                        reactor_now(&runtime) + std::time::Duration::from_millis(duration_ms);
-                    let ready = Arc::new(AtomicBool::new(false));
-                    let wake = arm_timer(&ready, deadline, &runtime, bindings)?;
+                    // SECURITY: side-channel mitigation. Counted from the
+                    // slice's start, not from when the guest asked: two timers
+                    // armed at different points in one slice would otherwise
+                    // fire in an order that reveals the time between them.
+                    let deadline = self.slice(bindings) + quantized(duration);
+                    let wake = arm_timer(deadline, &runtime, bindings)?;
                     Timer {
-                        ready,
                         deadline: Some(deadline),
                         wake: Some(wake),
                     }
@@ -1246,14 +1301,16 @@ impl Resources {
                 self.insert(Resource::Timer(timer)).map(Response::Handle)
             }
             Request::Ready(handle) => {
-                self.refresh_timer(handle, bindings)?;
-                self.ready(handle).map(Response::Ready)
+                let slice = self.slice(bindings);
+                self.refresh_timer(handle, slice, bindings)?;
+                self.ready(handle, slice).map(Response::Ready)
             }
             Request::Poll(handles) => {
+                let slice = self.slice(bindings);
                 let mut indexes = Vec::new();
                 for (index, handle) in handles.into_iter().enumerate() {
-                    self.refresh_timer(handle, bindings)?;
-                    if self.ready(handle)? {
+                    self.refresh_timer(handle, slice, bindings)?;
+                    if self.ready(handle, slice)? {
                         indexes.push(u32::try_from(index).map_err(|_| Error::ResourceLimit)?);
                     } else {
                         self.arm(handle, bindings)?;
@@ -1298,10 +1355,11 @@ impl Resources {
     fn refresh_timer(
         &mut self,
         handle: ResourceHandle,
+        slice: tokio::time::Instant,
         bindings: &dyn Context,
     ) -> Result<(), Error> {
         match self.entries.get_mut(&handle) {
-            Some(Resource::Timer(timer)) => timer.refresh(bindings),
+            Some(Resource::Timer(timer)) => timer.refresh(slice, bindings),
             _ => Ok(()),
         }
     }
@@ -1330,9 +1388,9 @@ impl Resources {
         }
     }
 
-    fn ready(&self, handle: ResourceHandle) -> Result<bool, Error> {
+    fn ready(&self, handle: ResourceHandle, slice: tokio::time::Instant) -> Result<bool, Error> {
         match self.entries.get(&handle) {
-            Some(Resource::Timer(timer)) => Ok(timer.ready.load(Ordering::Acquire)),
+            Some(Resource::Timer(timer)) => Ok(timer.ready_in(slice)),
             Some(Resource::Subscription(target)) => match self.entries.get(target) {
                 Some(Resource::Addresses(addresses)) => Ok(addresses.ready()),
                 Some(Resource::Socket(socket)) => match &*socket.state.lock() {
@@ -1632,11 +1690,41 @@ mod timer_tests {
         (Arc::new(context), woken)
     }
 
+    /// Checks `handle` from a new slice, as a guest re-entered after time
+    /// passed would.
     fn ready(resources: &mut Resources, handle: ResourceHandle, bindings: &CellBindings) -> bool {
+        resources.begin_slice(tokio::time::Instant::now());
         match resources.call(Request::Ready(handle), bindings) {
             Ok(Response::Ready(ready)) => ready,
             other => panic!("a readiness check returned {other:?}"),
         }
+    }
+
+    /// SECURITY: no timer is finer than the clock the guest reads, or timing
+    /// a timer would measure below the clock's quantum.
+    #[tokio::test(start_paused = true)]
+    async fn a_sub_millisecond_timer_is_rounded_up_to_the_clock_quantum() {
+        let (context, _woken) = reactor_bindings();
+        let bindings = CellBindings::new(context.clone());
+        let mut resources = Resources::new(ResourceLimits {
+            handles: ResourceCount(1),
+        });
+        resources.begin_slice(tokio::time::Instant::now());
+        let Ok(Response::Handle(timer)) =
+            resources.call(Request::Timer(DurationNanos(1)), &bindings)
+        else {
+            panic!("a 1 ns timer must be created")
+        };
+        tokio::time::advance(std::time::Duration::from_micros(999)).await;
+        assert!(
+            !ready(&mut resources, timer, &bindings),
+            "a 1 ns timer must not be due before the 1 ms quantum"
+        );
+        tokio::time::advance(std::time::Duration::from_micros(1)).await;
+        assert!(
+            ready(&mut resources, timer, &bindings),
+            "a 1 ns timer must be due at the 1 ms quantum"
+        );
     }
 
     #[tokio::test(start_paused = true)]
@@ -1698,7 +1786,8 @@ mod timer_tests {
         use isoplane_engine::HostBindings;
         let context = super::super::tests::ctx();
         let mut bindings = CellBindings::new(context.clone());
-        context.poison_imports();
+        context.request_cancellation();
+        bindings.begin_slice();
         assert!(
             matches!(
                 bindings.native_io(Request::Timer(DurationNanos(1))),
@@ -1762,16 +1851,26 @@ mod timer_tests {
         );
     }
 
+    /// A subscription to a socket not yet connecting: unready, and needing no
+    /// reactor to stay so.
+    fn unready(resources: &mut Resources, bindings: &CellBindings) -> ResourceHandle {
+        let socket = match resources.call(
+            Request::CreateTcp(isoplane_abi::native_io::AddressFamily::V4),
+            bindings,
+        ) {
+            Ok(Response::Handle(handle)) => handle,
+            other => panic!("creating a socket returned {other:?}"),
+        };
+        match resources.call(Request::Subscribe(socket), bindings) {
+            Ok(Response::Handle(handle)) => handle,
+            other => panic!("subscribing to a socket returned {other:?}"),
+        }
+    }
+
     #[test]
     fn an_unready_poll_refuses_synchronous_waiting() {
-        let (mut resources, bindings) = resources(1);
-        let handle = resources
-            .insert(Resource::Timer(Timer {
-                ready: Arc::new(AtomicBool::new(false)),
-                deadline: None,
-                wake: None,
-            }))
-            .expect("the unready test timer must fit its resource budget");
+        let (mut resources, bindings) = resources(2);
+        let handle = unready(&mut resources, &bindings);
         assert!(
             matches!(
                 resources.call(Request::Poll(vec![handle]), &bindings),
@@ -1783,15 +1882,14 @@ mod timer_tests {
 
     #[test]
     fn polling_returns_only_the_indexes_of_ready_resources() {
-        let (mut resources, bindings) = resources(2);
-        let pending = resources
+        let (mut resources, bindings) = resources(3);
+        let pending = unready(&mut resources, &bindings);
+        let ready = resources
             .insert(Resource::Timer(Timer {
-                ready: Arc::new(AtomicBool::new(false)),
                 deadline: None,
                 wake: None,
             }))
-            .expect("the pending test pollable must fit");
-        let ready = created(&mut resources, &bindings);
+            .expect("the ready test pollable must fit");
         let Response::ReadyIndexes(indexes) = resources
             .call(Request::Poll(vec![pending, ready]), &bindings)
             .expect("polling with a ready resource must return")

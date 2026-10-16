@@ -32,15 +32,28 @@ without ASP.NET. The request then has a short further period in which to finish.
 If it does not, Isoplane stops the instance, and `finally` blocks in the request
 do not run.
 
-Cancellation reaches the application only while it is waiting, so a request that
-computes without awaiting never sees the token cancel and is stopped when the
-further period ends.
+Cancellation reaches the application only when it awaits. Like the
+[clock](dotnet-runtime-differences.md#time), the token stands still while code
+runs: `IsCancellationRequested` and `ThrowIfCancellationRequested` give the
+answer from when the application last resumed, so a loop that checks them
+without awaiting never sees the token cancel, and is stopped when the further
+period ends. To stop a long computation cleanly, split it into parts and, between
+them, await something that waits, such as `await Task.Delay(1, cancellationToken)`.
+`await Task.Yield()` is not enough: the code after it runs before the application
+waits.
 
 ## Pending operations
 
 Each request can have only so many asynchronous operations waiting at once, such
 as outbound calls and timers. A request that goes over that number fails. When a
 request fans out over many items, start them in batches and await each batch.
+
+## Timers
+
+An instance can hold 16 timers at once. .NET keeps every `Timer`, `Task.Delay`
+and `CancellationTokenSource.CancelAfter` of an application behind a single one,
+so this limit is reached only by native code that creates timers of its own.
+Creating a seventeenth stops the instance.
 
 ## Outbound connections
 

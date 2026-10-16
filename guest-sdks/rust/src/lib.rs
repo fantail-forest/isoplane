@@ -36,7 +36,7 @@ pub mod testing;
 
 pub use app::{GcPressure, Handler};
 pub use bindings::{fetch_bytes, log, BodyReader, Clock, Entropy, HttpFetch, Level, Span};
-pub use budget::{Budget, UnsafeToTrap};
+pub use budget::UnsafeToTrap;
 pub use ctx::Ctx;
 pub use error::{IsoplaneError, Result};
 pub use future::{join2, join3, join_all, select2, Either, HostFuture};

@@ -159,20 +159,6 @@ isoplane_imports! {
     fn resp_write(handle: i32, ptr: i32, len: i32) -> i64;
     fn resp_finish(handle: i32);
 
-
-    // ---- the kill-cooperation ABI ------------------------------------------
-    /// The host-published remaining-budget value: signed nanoseconds left
-    /// against this dispatch's budget B. Negative once the dispatch is in its
-    /// grace window, and falling.
-    ///
-    /// The .NET runtime layer reads this at the allocation slow path, GC entry
-    /// and task switch, and raises `BudgetExceededException` when it is spent.
-    /// This SDK reads it at its own equivalent boundaries — see
-    /// [`crate::budget`].
-    ///
-    /// Rounded to the host clock quantum while preserving the cancellation
-    /// boundary; this does not expose a fine-grained wall-clock timer.
-    fn budget_remaining_ns() -> i64;
     /// The runtime layer's *unsafe-to-trap* bit: non-zero while a GC phase or a
     /// scheduler queue mutation is in progress. Grace entry defers while it is
     /// set; the hard deadline at B+G ignores it.
@@ -312,7 +298,6 @@ mod tests {
             // Looks like a buffer import, is not: (handle, max_len).
             ("http_body_read", BufSpec::None),
             ("clock_deadline_in", BufSpec::None),
-            ("budget_remaining_ns", BufSpec::None),
             ("unsafe_to_trap", BufSpec::None),
             ("resp_finish", BufSpec::None),
             ("trace_span_end", BufSpec::None),

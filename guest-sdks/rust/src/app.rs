@@ -115,9 +115,9 @@ macro_rules! export_handler {
                         $crate::rt::TaskOutcome::Response($crate::__rexport::into_handle(r))
                     }),
                     // A Rust guest keeps no timers of its own between requests.
-                    DispatchKind::Timers => ::std::boxed::Box::pin(async move {
-                        $crate::rt::TaskOutcome::Response(0)
-                    }),
+                    DispatchKind::Timers => {
+                        ::std::boxed::Box::pin(async move { $crate::rt::TaskOutcome::Response(0) })
+                    }
                 }
             })
         }

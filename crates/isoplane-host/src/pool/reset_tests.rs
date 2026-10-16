@@ -16,6 +16,8 @@ use std::sync::Arc;
 struct FixedClock;
 
 impl HostBindings for FixedClock {
+    fn begin_slice(&mut self) {}
+    fn end_slice(&mut self) {}
     fn call_future(&mut self, _: ImportCall<'_>) -> u64 {
         panic!("the reset-start fixture must not issue host work")
     }

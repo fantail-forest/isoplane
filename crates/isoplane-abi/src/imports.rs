@@ -213,13 +213,12 @@ pub const IMPORTS: &[ImportDef] = &[
 
 
     // ---- the kill-cooperation ABI ------------------------------------------
-    // Both engine-owned rather than in the bindings vtable: the budget state
-    // they read and write lives in the engine's store, beside the meter the
-    // epoch callback compares against.
-    ImportDef { buf: BufSpec::None, ..imp!("budget_remaining_ns", Ctx, Sig { params: &[], results: &[I64] }, SYNC,
-        "signed nanoseconds left against this dispatch's occupancy budget, rounded to the host clock quantum; negative once the dispatch is \
-         in its grace window and still falling, so a guest can tell `at budget` from `deep into \
-         grace` and decide how much unwinding it can still afford") },
+    // Engine-owned rather than in the bindings vtable: the bit lives in the
+    // engine's store, beside the meter the epoch callback compares against.
+    // There is deliberately no import that reads the budget. SECURITY: a value
+    // that falls while the guest runs is a clock, and side-channel attacks
+    // need exactly that; a guest learns its budget ran out through
+    // cancellation at its next slice.
     ImportDef { buf: BufSpec::None, ..imp!("unsafe_to_trap", Ctx, Sig { params: &[I32], results: &[] }, SYNC,
         "the runtime layer's unsafe-to-trap bit, set around GC phases and scheduler queue \
          mutations. Grace entry defers while it is set and the hard deadline ignores it, so a \

@@ -41,8 +41,7 @@ impl Ctx {
 
     /// Cancellation is **not** an entrancy: the host never re-enters the guest
     /// to announce it. It completes this future, and the guest observes it at
-    /// its next await. A dispatch that neither awaits nor checks
-    /// [`crate::budget`] never observes cancellation and runs to the hard
+    /// its next await. A dispatch that never awaits never observes cancellation and runs to the hard
     /// deadline at B+G, where it is trapped mid-frame with no unwinding.
     ///
     /// Use with [`crate::future::select2`].

@@ -109,6 +109,8 @@ mod tests {
     struct DenyImports;
 
     impl HostBindings for DenyImports {
+        fn begin_slice(&mut self) {}
+        fn end_slice(&mut self) {}
         fn call_future(&mut self, call: ImportCall<'_>) -> u64 {
             panic!("clock fixture unexpectedly called {}", call.import);
         }
@@ -158,6 +160,8 @@ mod tests {
     fn synchronous_host_work_counts_as_occupancy_but_time_between_invocations_does_not() {
         struct HostWork;
         impl HostBindings for HostWork {
+            fn begin_slice(&mut self) {}
+            fn end_slice(&mut self) {}
             fn call_future(&mut self, _: ImportCall<'_>) -> u64 {
                 TEST_NOW_NS.set(Some(TEST_NOW_NS.get().expect("controlled clock") + 1_000));
                 1
@@ -197,6 +201,8 @@ mod tests {
             grace_calls: Arc<AtomicU64>,
         }
         impl HostBindings for Advance {
+            fn begin_slice(&mut self) {}
+            fn end_slice(&mut self) {}
             fn call_future(&mut self, _: ImportCall<'_>) -> u64 {
                 TEST_NOW_NS.set(Some(100 + self.elapsed_ns));
                 self.engine
@@ -236,11 +242,14 @@ mod tests {
             let engine = Arc::new(OnceLock::new());
             let observed_grace = Arc::new(AtomicU64::new(0));
             let mut guest = instance_with_bindings(
-                r#"(import "isoplane" "clock_deadline_in" (func $timer (param i64) (result i64)))
-                    (import "isoplane" "budget_remaining_ns" (func $remaining (result i64)))"#,
+                r#"(import "isoplane" "clock_deadline_in" (func $timer (param i64) (result i64)))"#,
+                // The host call moves the occupancy clock past B (or B+G); a
+                // short loop then gives the epoch callback a check to land on
+                // before the guest returns, as it would mid-computation.
                 r#"i64.const 0 call $timer drop
-                    (loop $check
-                        call $remaining i64.const 0 i64.ge_s br_if $check)
+                    (loop $work
+                        (i32.store (i32.const 4) (i32.add (i32.load (i32.const 4)) (i32.const 1)))
+                        (br_if $work (i32.lt_u (i32.load (i32.const 4)) (i32.const 1000))))
                     i32.const 0 i32.const 1 i32.store"#,
                 Box::new(Advance {
                     engine: engine.clone(),
@@ -311,29 +320,6 @@ mod tests {
             outcome.occupancy_measurement,
             crate::OccupancyMeasurement::NotExecuted,
             "start-clock refusal must distinguish no guest entry from an unmeasured invocation"
-        );
-    }
-
-    #[test]
-    fn an_unreadable_budget_clock_traps_instead_of_granting_more_occupancy() {
-        let mut guest = instance(
-            r#"(import "isoplane" "budget_remaining_ns" (func $budget (result i64)))"#,
-            "call $budget drop i32.const 0 i32.const 1 i32.store",
-        );
-        let _fault = ClockFault::after(0);
-        let error = crate::call::call_entry(
-            guest.live.as_mut().expect("the fixture has a live store"),
-            crate::instance::Entry::Initialize,
-        )
-        .expect_err("an unreadable budget import must trap without relying on the watchdog");
-        assert!(
-            error.downcast_ref::<OccupancyClockUnavailable>().is_some(),
-            "the import must preserve its typed clock error"
-        );
-        assert_eq!(
-            guest.memory()[0],
-            0,
-            "the guest must not continue after an unreadable budget"
         );
     }
 

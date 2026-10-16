@@ -475,6 +475,8 @@ struct DenyAll {
 }
 
 impl HostBindings for DenyAll {
+    fn begin_slice(&mut self) {}
+    fn end_slice(&mut self) {}
     fn call_future(&mut self, _call: ImportCall<'_>) -> u64 {
         self.called.store(true, Ordering::Relaxed);
         0

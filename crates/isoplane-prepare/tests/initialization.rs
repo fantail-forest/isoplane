@@ -220,6 +220,7 @@ fn a_future_import_traps_before_calling_an_initialization_provider() {
     };
     struct Provider(Arc<AtomicUsize>);
     impl InitializationBindings for Provider {
+        fn begin_slice(&mut self) {}
         fn call_sync(&mut self, call: ImportCall<'_>) -> Result<i64, BindingError> {
             self.0.fetch_add(1, Ordering::Relaxed);
             Err(BindingError::Unsupported(call.import))

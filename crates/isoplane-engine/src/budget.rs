@@ -6,9 +6,10 @@
 //!                                     ^                 ^
 //!                                     |                 `- hard trap: no unwinding,
 //!                                     |                    instance tombstoned
-//!                                     `- cancellation future completes,
-//!                                        imports poisoned to `Cancelled`,
-//!                                        `budget_remaining_ns` goes negative
+//!                                     `- cancellation requested: from the
+//!                                        guest's next slice its imports
+//!                                        answer `Cancelled` and its
+//!                                        cancellation future completes
 //! ```
 //!
 //! `G = max(2 ms, 10% of B)`. A dispatch that returns inside the grace window

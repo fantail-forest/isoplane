@@ -2,7 +2,7 @@
 //! the bindings moved into the engine at activation.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use isoplane_abi::config::{HandlerLifecycle, Limits};
@@ -16,7 +16,7 @@ use crate::{InstanceId, ModuleId};
 
 /// A slot-local request generation, independent of caller-supplied dispatch IDs.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) struct DispatchGeneration(u64);
+pub(crate) struct DispatchGeneration(pub(super) u64);
 
 /// Established ownership and numeric budgets for an instance.
 #[derive(Debug, Clone)]
@@ -79,12 +79,12 @@ pub struct InstanceCtx {
     /// A trap the vtable owes the guest but cannot raise from a call that
     /// returns an `i64`; the cell converts it after the call returns.
     pub(super) trap_latch: Mutex<Option<TrapCode>>,
-    /// Set when the dispatch enters its grace window: every import it calls
-    /// then returns `Cancelled` at once, so the unwind has something to unwind
-    /// for and no new work starts on budget the dispatch does not have.
-    pub(super) cancelled: AtomicBool,
+    /// Requested when the dispatch enters its grace window or the host ends
+    /// it; from the guest's next slice every import it calls returns
+    /// `Cancelled` at once, so the unwind has something to unwind for and no
+    /// new work starts on budget the dispatch does not have.
+    cancellation: super::cancellation::Cancellation,
     dispatch_generation: AtomicU64,
-    cancelled_generation: AtomicU64,
     /// The dispatch's implicit cancellation future; the host cancels by
     /// completing it, never by entering the instance.
     pub(super) cancel_future: AtomicU64,
@@ -107,6 +107,29 @@ impl InstanceCtx {
                 handles: super::native_io::ResourceCount(limits.native_handles),
             },
         ));
+    }
+
+    /// Uses the slice start for native timer readiness and latches cancellation
+    /// before guest entry. Socket and DNS readiness can change asynchronously.
+    pub(crate) fn begin_guest_slice(&self, now: tokio::time::Instant) {
+        self.native_io.lock().begin_slice(now);
+        self.cancellation.begin_slice(self.dispatch_generation());
+    }
+
+    /// True exactly once per requested cancellation, after the slice it was
+    /// requested in has ended.
+    pub(crate) fn take_undelivered_cancellation(&self) -> bool {
+        self.cancellation.take_undelivered()
+    }
+
+    /// When the guest's current slice began, if one has.
+    pub(crate) fn slice_start(&self) -> Option<tokio::time::Instant> {
+        self.native_io.lock().slice_start()
+    }
+
+    /// Timers the instance holds as native resources.
+    pub(crate) fn native_timers(&self) -> usize {
+        self.native_io.lock().timers()
     }
 
     /// The timers an idle instance is woken for, when its template opted in.
@@ -154,10 +177,9 @@ impl InstanceCtx {
             log_bytes: AtomicU32::new(0),
             entropy_calls: AtomicU64::new(0),
             trap_latch: Mutex::new(None),
-            cancelled: AtomicBool::new(false),
+            cancellation: Default::default(),
             reactor_observer: Mutex::new(None),
             dispatch_generation: AtomicU64::new(0),
-            cancelled_generation: AtomicU64::new(0),
             cancel_future: AtomicU64::new(0),
             out_buffer: Mutex::new(Vec::new()),
             responses: Mutex::new(ResponseTable::default()),
@@ -208,7 +230,7 @@ impl InstanceCtx {
         self.subrequests.store(0, Ordering::Relaxed);
         self.log_bytes.store(0, Ordering::Relaxed);
         self.dispatch_generation.fetch_add(1, Ordering::AcqRel);
-        self.cancelled.store(false, Ordering::Relaxed);
+        self.cancellation.begin_dispatch();
         self.cancel_future.store(0, Ordering::Relaxed);
         self.begin_slice(now_ms, dispatch);
     }
@@ -238,25 +260,26 @@ impl InstanceCtx {
         self.cancel_future.load(Ordering::Relaxed)
     }
 
+    /// Whether the dispatch is cancelled as the guest sees it: as it stood
+    /// when the guest's current slice began.
     pub fn is_cancelled(&self) -> bool {
-        let generation = self.dispatch_generation.load(Ordering::Acquire);
-        self.cancelled.load(Ordering::Relaxed)
-            || generation != 0 && self.cancelled_generation.load(Ordering::Acquire) >= generation
+        self.cancellation.observed()
     }
 
     pub(crate) fn dispatch_generation(&self) -> DispatchGeneration {
         DispatchGeneration(self.dispatch_generation.load(Ordering::Acquire))
     }
 
+    /// Requests cancellation of the dispatch of `generation`, if it is still
+    /// the current one when the guest's next slice begins.
     pub(crate) fn cancel_generation(&self, generation: DispatchGeneration) {
-        self.cancelled_generation
-            .fetch_max(generation.0, Ordering::AcqRel);
+        self.cancellation.request_generation(generation);
     }
 
-    /// Returns false if already poisoned, so the cancellation future is
-    /// completed exactly once.
-    pub fn poison_imports(&self) -> bool {
-        !self.cancelled.swap(true, Ordering::Relaxed)
+    /// Requests cancellation of the current dispatch; the guest sees it from
+    /// its next slice. Returns false if it was already requested.
+    pub fn request_cancellation(&self) -> bool {
+        self.cancellation.request()
     }
 
     pub fn slice_clock_ms(&self) -> u64 {
@@ -296,46 +319,5 @@ impl Drop for InstanceCtx {
         if let Some(body) = self.request_body.get_mut().take() {
             body.close();
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_delayed_transport_cancellation_cannot_poison_a_reused_instance() {
-        let ctx = InstanceCtx::for_test(
-            InstanceId(1),
-            HandlerLifecycle::Reuse,
-            Limits {
-                module_bytes_compressed: 5242880,
-                package_bytes: 52428800,
-                instance_memory_max: 134217728,
-                occupancy_ms_per_http_dispatch: 100,
-                subrequests_per_dispatch: 20,
-                pending_futures_per_dispatch: 6,
-            },
-        );
-        ctx.begin_dispatch(0, 10);
-        let first = ctx.dispatch_generation();
-        ctx.cancel_generation(first);
-        assert!(
-            ctx.is_cancelled(),
-            "disconnect must poison the active request immediately"
-        );
-        ctx.begin_dispatch(0, 2);
-        let second = ctx.dispatch_generation();
-        ctx.cancel_generation(first);
-        assert!(
-            !ctx.is_cancelled(),
-            "an old body's drop must not cancel a later request"
-        );
-        ctx.cancel_generation(second);
-        ctx.cancel_generation(first);
-        assert!(
-            ctx.is_cancelled(),
-            "a delayed older cancellation must not undo current cancellation"
-        );
     }
 }

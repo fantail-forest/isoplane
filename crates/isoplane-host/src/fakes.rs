@@ -133,6 +133,15 @@ pub struct FakeInstance {
 }
 
 impl FakeInstance {
+    /// One slice, bracketed by the binding hooks the engine calls around every
+    /// entry, so what the guest observes is fixed for it as the engine fixes it.
+    fn slice(&mut self, budget: OccupancyBudget, rec: Option<&DispatchRecord>) -> DispatchOutcome {
+        self.bindings.begin_slice();
+        let outcome = self.run(budget, rec);
+        self.bindings.end_slice();
+        outcome
+    }
+
     fn run(&mut self, budget: OccupancyBudget, rec: Option<&DispatchRecord>) -> DispatchOutcome {
         self.stack_empty = false;
         let interval = OccupancyInterval::start();
@@ -395,7 +404,7 @@ fn fake_payload_for(name: &'static str) -> Vec<u8> {
 
 impl InstanceOps for FakeInstance {
     fn dispatch(&mut self, rec: &DispatchRecord, budget: OccupancyBudget) -> DispatchOutcome {
-        self.run(budget, Some(rec))
+        self.slice(budget, Some(rec))
     }
     fn wake(
         &mut self,
@@ -404,7 +413,7 @@ impl InstanceOps for FakeInstance {
         budget: OccupancyBudget,
     ) -> DispatchOutcome {
         self.wakes_seen.lock().push((future, res.clone()));
-        self.run(budget, None)
+        self.slice(budget, None)
     }
     fn gc_hint(&mut self, _pressure: u8) -> DispatchOutcome {
         // Zeroes the upper half, enough for the delta size to respond.

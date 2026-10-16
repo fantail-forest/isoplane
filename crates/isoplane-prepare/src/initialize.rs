@@ -827,6 +827,12 @@ impl isoplane_engine::bindings::InitializationBindings for Bindings {
         self.memory_limit_bytes
     }
 
+    fn begin_slice(&mut self) {
+        if let Some(io) = &self.io {
+            io.begin_slice();
+        }
+    }
+
     fn runtime_bringup(&self) -> bool {
         let state = self.state.lock();
         state.bringup && state.unit.is_none() && state.last_deferred.is_none()

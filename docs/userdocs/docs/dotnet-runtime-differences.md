@@ -421,7 +421,12 @@ does not provide one.
   every reading returns the same value, from `DateTime.UtcNow`, `Stopwatch` and
   `Environment.TickCount64` alike.
 - **Resolution is one millisecond.** `Stopwatch.IsHighResolution` still reports
-  `true`, and `Stopwatch.Frequency` still reports nanoseconds.
+  `true`, and `Stopwatch.Frequency` still reports nanoseconds. Timers have the
+  same resolution.
+- **Timers and cancellation stand still too.** A timer that comes due, or a
+  cancellation token that is cancelled, while code runs is seen only after the
+  application next waits. Checking a timer or `IsCancellationRequested` in a
+  loop that does not await never sees it change.
 
 What follows from that:
 

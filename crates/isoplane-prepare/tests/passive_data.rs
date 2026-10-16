@@ -5,6 +5,7 @@ use isoplane_engine::{Completion, ImportCall, Instance, InstanceOps, OccupancyBu
 
 struct NoImports;
 impl InitializationBindings for NoImports {
+    fn begin_slice(&mut self) {}
     fn call_sync(&mut self, call: ImportCall<'_>) -> Result<i64, BindingError> {
         Err(BindingError::Unsupported(call.import))
     }

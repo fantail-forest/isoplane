@@ -271,6 +271,8 @@ mod native_readiness {
         send: Option<Result<u64, isoplane_abi::native_io::Error>>,
     }
     impl HostBindings for ReadyHost {
+        fn begin_slice(&mut self) {}
+        fn end_slice(&mut self) {}
         fn slice_clock_ms(&self) -> u64 {
             1
         }

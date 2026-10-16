@@ -1,7 +1,8 @@
 //! The two-phase kill through a real cell with a real wasm guest,
-//! `guests/misbehaver`: `/cooperative` reads `budget_remaining_ns` and is
-//! cooperates with cancellation, `/spin` never checks and is hard-killed,
-//! and `/gc_pin` pins the unsafe-to-trap bit and is hard-killed anyway.
+//! `guests/misbehaver`: `/cooperative` awaits between chunks of work and
+//! unwinds on the cancellation it sees at its next slice, `/spin` never awaits
+//! and is hard-killed, and `/gc_pin` pins the unsafe-to-trap bit and is
+//! hard-killed anyway.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -191,6 +192,30 @@ fn a_clean_kill_is_recorded_without_tombstoning_the_instance() {
     cell.shutdown();
 }
 
+#[test]
+fn a_guest_that_awaits_between_chunks_unwinds_on_its_cancellation_and_takes_the_clean_kill() {
+    TestLogCapture::global();
+    let (cell, module) = rig(HandlerLifecycle::Reuse);
+    let out = get(&cell, &module, "/cooperative");
+    assert_eq!(
+        (out.completion, out.status),
+        (Completion::CleanKill, 503),
+        "trap: {:?}",
+        out.trap
+    );
+    let finally_ran = cell
+        .slot(out.instance)
+        .expect("a clean kill keeps its instance")
+        .ctx
+        .emitted_logs()
+        .iter()
+        .any(|log| log.fields.contains("finally ran"));
+    assert!(finally_ran, "the guest's Drop must run on a clean kill");
+    let metrics = cell.metrics();
+    assert_eq!((metrics.clean_kills, metrics.hard_kills), (1, 0));
+    cell.shutdown();
+}
+
 /// If `/spin` ever came back clean, the grace window would be a budget
 /// extension for everybody.
 #[test]
@@ -244,5 +269,89 @@ fn the_hang_breaker_counts_only_hard_kills() {
         assert_eq!(metrics.breaker_rejections, rejected);
         assert_eq!(metrics.tombstones, hard);
         cell.shutdown();
+    }
+}
+
+#[derive(Clone, Default)]
+struct TestLogCapture(Arc<std::sync::Mutex<Vec<u8>>>);
+
+#[derive(Debug, serde::Deserialize)]
+struct TestGuestLog {
+    fields: String,
+}
+
+impl TestLogCapture {
+    fn global() -> &'static Self {
+        use tracing_subscriber::prelude::*;
+        static CAPTURE: std::sync::OnceLock<TestLogCapture> = std::sync::OnceLock::new();
+        CAPTURE.get_or_init(|| {
+            let capture = Self::default();
+            let subscriber = tracing_subscriber::registry().with(
+                tracing_subscriber::fmt::layer()
+                    .json()
+                    .with_ansi(false)
+                    .with_writer(capture.clone())
+                    .with_filter(tracing_subscriber::filter::filter_fn(|metadata| {
+                        metadata.target().contains("host::bindings")
+                    })),
+            );
+            tracing::subscriber::set_global_default(subscriber)
+                .expect("one guest-event subscriber per test process");
+            capture
+        })
+    }
+
+    fn for_instance(&self, instance: impl std::fmt::Display) -> Vec<TestGuestLog> {
+        let instance = instance.to_string();
+        let bytes = self.0.lock().expect("test writer mutex").clone();
+        String::from_utf8(bytes)
+            .expect("tracing emits UTF-8")
+            .lines()
+            .filter_map(|line| {
+                let event: serde_json::Value =
+                    serde_json::from_str(line).expect("tracing JSON event");
+                if event["fields"]["message"] != "guest log"
+                    || event["fields"]["instance"] != instance
+                {
+                    return None;
+                }
+                Some(
+                    serde_json::from_value(event["fields"].clone())
+                        .expect("the guest logging boundary emits text"),
+                )
+            })
+            .collect()
+    }
+}
+
+impl std::io::Write for TestLogCapture {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0
+            .lock()
+            .expect("test writer mutex")
+            .extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'writer> tracing_subscriber::fmt::MakeWriter<'writer> for TestLogCapture {
+    type Writer = Self;
+
+    fn make_writer(&'writer self) -> Self::Writer {
+        self.clone()
+    }
+}
+
+trait EmittedGuestLogs {
+    fn emitted_logs(&self) -> Vec<TestGuestLog>;
+}
+
+impl EmittedGuestLogs for isoplane_host::bindings::InstanceCtx {
+    fn emitted_logs(&self) -> Vec<TestGuestLog> {
+        TestLogCapture::global().for_instance(self.instance)
     }
 }

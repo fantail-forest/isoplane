@@ -56,6 +56,8 @@ impl TestBindings {
 }
 
 impl HostBindings for TestBindings {
+    fn begin_slice(&mut self) {}
+    fn end_slice(&mut self) {}
     fn memory_limit_bytes(&self) -> Option<u64> {
         self.memory_limit_bytes
     }

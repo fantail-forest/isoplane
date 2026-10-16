@@ -110,6 +110,12 @@ impl HostBindings for DebugBindings {
             if self.1.load(Ordering::Acquire) {
                 return Err(Error::Unsupported("local debugger session stopped"));
             }
+            // Each pass is a slice of its own, or a timer could never become
+            // ready while the debugger holds the invocation. This loosens the
+            // per-slice freeze that denies guests a clock (see
+            // `HostBindings::begin_slice`), which is acceptable only because a
+            // debugger session is local development, never a shared host.
+            self.0.begin_slice();
             let mut ready = Vec::new();
             for (index, handle) in handles.iter().enumerate() {
                 match self.0.native_io(Request::Ready(*handle))? {
@@ -142,6 +148,12 @@ impl HostBindings for DebugBindings {
     }
     fn slice_clock_ms(&self) -> u64 {
         self.0.slice_clock_ms()
+    }
+    fn begin_slice(&mut self) {
+        self.0.begin_slice();
+    }
+    fn end_slice(&mut self) {
+        self.0.end_slice();
     }
     fn is_init_sandbox(&self) -> bool {
         self.0.is_init_sandbox()
@@ -537,6 +549,8 @@ mod tests {
         malformed: bool,
     }
     impl HostBindings for Readiness {
+        fn begin_slice(&mut self) {}
+        fn end_slice(&mut self) {}
         fn native_io(&mut self, request: Request) -> Result<Response, Error> {
             assert!(
                 matches!(request, Request::Ready(_)),

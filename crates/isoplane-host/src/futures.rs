@@ -383,6 +383,22 @@ impl FutureTable {
             .is_some_and(|a| !a.inner.lock().ready.is_empty())
     }
 
+    /// The owner's pending futures that `import` created.
+    pub fn pending_for_import(&self, owner: InstanceId, import: &str) -> usize {
+        let Some(arc) = self.existing(owner) else {
+            return 0;
+        };
+        let o = arc.inner.lock();
+        o.pending
+            .iter()
+            .filter(|id| {
+                self.entries
+                    .read_sync(*id, |_, entry| entry.import == import)
+                    .unwrap_or(false)
+            })
+            .count()
+    }
+
     /// Whether the owner has a pending or undelivered future the guest is
     /// waiting on.
     pub fn holds_guest_work(&self, owner: InstanceId) -> bool {

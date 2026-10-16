@@ -45,19 +45,6 @@ impl Meter {
             .saturating_add(now_ns.saturating_sub(self.occupancy0_ns))
     }
 
-    pub fn remaining_budget_ns(&self, now_ns: u64) -> i64 {
-        let remaining =
-            i128::from(self.occupancy_budget_ns) - i128::from(self.dispatch_occupancy_ns(now_ns));
-        let quantum = i128::from(isoplane_abi::pal::CLOCK_QUANTUM_NS);
-        // Preserve the cancellation boundary without exposing a fine wall clock.
-        let coarse = if remaining > 0 {
-            ((remaining + quantum - 1) / quantum) * quantum
-        } else {
-            remaining.div_euclid(quantum) * quantum
-        };
-        coarse.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64
-    }
-
     #[inline]
     pub fn hard_ns(&self) -> u64 {
         self.occupancy_budget_ns.saturating_add(self.grace_ns)
@@ -384,6 +371,8 @@ mod occupancy_tests {
     struct GraceCalls(Arc<AtomicUsize>);
 
     impl HostBindings for GraceCalls {
+        fn begin_slice(&mut self) {}
+        fn end_slice(&mut self) {}
         fn call_future(&mut self, _: ImportCall<'_>) -> u64 {
             panic!("budget checks do not call guest imports")
         }
@@ -412,26 +401,6 @@ mod occupancy_tests {
             ..Meter::default()
         };
         (state, calls)
-    }
-
-    #[test]
-    fn guest_budget_reads_are_coarse_and_preserve_the_cancellation_boundary() {
-        let meter = Meter {
-            occupancy0_ns: 100,
-            occupancy_budget_ns: 2_000_000,
-            ..Meter::default()
-        };
-        for (elapsed, expected) in [
-            (0, 2_000_000),
-            (1, 2_000_000),
-            (999_999, 2_000_000),
-            (1_000_000, 1_000_000),
-            (1_999_999, 1_000_000),
-            (2_000_000, 0),
-            (2_000_001, -1_000_000),
-        ] {
-            assert_eq!(meter.remaining_budget_ns(100 + elapsed), expected);
-        }
     }
 
     #[test]

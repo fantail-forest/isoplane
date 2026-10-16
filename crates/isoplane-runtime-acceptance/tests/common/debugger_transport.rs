@@ -30,6 +30,8 @@ struct FragmentedReads {
 }
 
 impl HostBindings for FragmentedReads {
+    fn begin_slice(&mut self) {}
+    fn end_slice(&mut self) {}
     fn native_io(&mut self, request: Request) -> Result<Response, Error> {
         let Request::Read { stream, length } = request else {
             return self.inner.native_io(request);

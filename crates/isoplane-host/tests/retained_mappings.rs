@@ -15,6 +15,8 @@ use std::time::Duration;
 
 struct NoImports;
 impl HostBindings for NoImports {
+    fn begin_slice(&mut self) {}
+    fn end_slice(&mut self) {}
     fn call_future(&mut self, _: ImportCall<'_>) -> u64 {
         panic!("fixture has no imports")
     }

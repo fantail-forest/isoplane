@@ -77,6 +77,17 @@ pub trait HostBindings: Send + 'static {
     /// Serving bindings keep this value fixed throughout their slice.
     fn slice_clock_ms(&self) -> u64;
 
+    /// The engine is entering the guest for a slice.
+    ///
+    /// The serving binding controls clock, timer and cancellation observations at
+    /// this boundary. This is not a guarantee that all I/O observations stay fixed.
+    fn begin_slice(&mut self);
+
+    /// The guest has returned from a slice. Anything that changed while it ran
+    /// and that it should learn of, such as its cancellation, is delivered from
+    /// here, so it reaches the guest no sooner than its next slice.
+    fn end_slice(&mut self);
+
     /// Whether these bindings serve guest initialization.
     fn is_init_sandbox(&self) -> bool {
         false
@@ -126,6 +137,10 @@ pub trait InitializationBindings: Send + 'static {
     fn slice_clock_ms(&self) -> u64 {
         0
     }
+
+    /// The engine is entering the guest for a slice; see
+    /// [`HostBindings::begin_slice`].
+    fn begin_slice(&mut self);
 
     /// Application memory ceiling during initialization; None uses engine capacity.
     fn memory_limit_bytes(&self) -> Option<u64> {
@@ -196,6 +211,18 @@ impl Bindings {
         match self {
             Self::Runtime(bindings) => bindings.slice_clock_ms(),
             Self::Initialization(bindings) => bindings.slice_clock_ms(),
+        }
+    }
+    pub fn begin_slice(&mut self) {
+        match self {
+            Self::Runtime(bindings) => bindings.begin_slice(),
+            Self::Initialization(bindings) => bindings.begin_slice(),
+        }
+    }
+    pub fn end_slice(&mut self) {
+        match self {
+            Self::Runtime(bindings) => bindings.end_slice(),
+            Self::Initialization(_) => {}
         }
     }
     pub fn enter_grace(&mut self) {

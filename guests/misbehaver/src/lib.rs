@@ -4,8 +4,8 @@
 //!
 //! | route | what it does | expected platform response |
 //! |---|---|---|
-//! | `/spin` | infinite loop, never awaits, never checks | **hard** kill at B+G; no unwinding; instance tombstoned |
-//! | `/cooperative` | the same loop, but it reads the remaining budget | **clean** kill inside grace: `Drop` runs, slot reusable |
+//! | `/spin` | infinite loop, never awaits | **hard** kill at B+G; no unwinding; instance discarded |
+//! | `/cooperative` | the same loop in chunks, awaiting between them | **clean** kill inside grace: `Drop` runs, slot reusable |
 //! | `/gc_pin` | spins with the *unsafe-to-trap* bit pinned | **hard** kill at B+G anyway — a pinned bit buys exactly G |
 //! | `/sync_over_async` | polls a host future in a loop without returning | **can never** be woken, so it dies at the cap |
 //! | `/alloc_bomb` | grows memory past the plan ceiling | allocation fails -> trap (the plan ceiling, and validator rule V3) |
@@ -25,10 +25,10 @@
 //! common case. A platform can make that look true by weakening the
 //! hard path -- extending deadlines, forgiving overage, treating a spin as a
 //! slow return. `/spin` exists so that it cannot: it is genuinely
-//! uncooperative, it never calls `budget_remaining_ns`, it has no await point,
-//! and if the hard trap at exactly B+G ever stops firing there is nothing left
-//! to catch it. `/cooperative` is the same loop with one check added, so the
-//! ONLY difference between a clean kill and a tombstone is guest behaviour.
+//! uncooperative, it has no await point, and if the hard trap at exactly B+G
+//! ever stops firing there is nothing left to catch it. `/cooperative` is the
+//! same loop with an await between chunks, so the ONLY difference between a
+//! clean kill and a hard one is guest behaviour.
 //!
 //! `/gc_pin` closes the remaining hole. A runtime layer may defer grace while
 //! its *unsafe-to-trap* bit is set, and a deferral that could be held
@@ -40,7 +40,7 @@ use core::hint::black_box;
 use core::task::{Context, Poll, Waker};
 
 use isoplane_guest::{
-    log, Budget, Clock, Ctx, Handler, Level, Request, RequestExt, Response, UnsafeToTrap,
+    log, Clock, Ctx, Handler, Level, Request, RequestExt, Response, UnsafeToTrap,
 };
 
 pub struct Misbehaver;
@@ -103,26 +103,21 @@ fn alloc_bomb(mb: usize) -> ! {
 
 /// The cooperative spinner: the clean kill, demonstrated by a real guest.
 ///
-/// It burns CPU in exactly the same loop as `spin_forever`, with one addition:
-/// every `CHECK_EVERY` iterations it reads the host-published remaining
-/// budget. Once that goes non-positive the dispatch is inside its grace window
-/// and this returns -- an ordinary Rust `return`, which runs every `Drop`
-/// between here and the entrypoint. That return is the whole of the managed
-/// unwind; there is nothing else to it.
+/// It burns CPU in the same loop as `spin_forever`, in chunks, and awaits a
+/// zero-length host delay between them. That await returns to the host, and a
+/// guest learns its budget ran out only at the slice after it did: the next
+/// host future it awaits resolves to `Cancelled`, and this returns -- an
+/// ordinary Rust `return`, which runs every `Drop` between here and the
+/// entrypoint. Nothing inside a slice can tell the guest its budget ran out,
+/// because a value that changed while it ran would be a clock.
 ///
-/// (Guests build with `panic = "abort"`, so `Drop`-on-return is the only
-/// unwind shape there is. It is also the only one the platform needs: what a
-/// clean kill buys is a consistent heap at an empty stack, and a `return`
-/// produces exactly that.)
-///
-/// The check interval is the honest cost of cooperating: one host call per
-/// 64k iterations of arithmetic. Much larger and the return would land past
-/// B+G on a slow machine, turning this into `/spin` -- which is precisely the
-/// failure the "tombstones at exactly B+G" conformance test is shaped to
-/// catch, and why the interval is a constant a reader can see rather than a
-/// tuned number.
-fn cooperative_spin() -> Response {
-    const CHECK_EVERY: u64 = 1 << 16;
+/// The chunk is the honest cost of cooperating: the guest notices only once a
+/// chunk ends, and up to two chunks run after B (the one B landed in, and one
+/// whose delay was issued before the cancellation was visible). Much larger
+/// and the return would land past B+G on a slow machine, turning this into
+/// `/spin`.
+async fn cooperative_spin() -> Response {
+    const CHUNK: u64 = 1 << 14;
 
     // A `Drop` that observably ran. `finally` blocks and disposals run on a
     // clean kill and do NOT on a hard one, and that difference has to be
@@ -136,18 +131,18 @@ fn cooperative_spin() -> Response {
     let _finally = Cleanup("misbehaver/cooperative: finally ran (clean kill)");
 
     let mut x: u64 = 1;
-    let mut n: u64 = 0;
     loop {
-        x = black_box(x)
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        black_box(x);
-        n += 1;
-        if n % CHECK_EVERY == 0 && Budget::exhausted() {
+        for _ in 0..CHUNK {
+            x = black_box(x)
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            black_box(x);
+        }
+        if Clock::delay(0).await.is_err() {
             // The unwind. `_finally` drops on the way out of this frame.
             return Response::text(
                 503,
-                "cooperative: observed the grace window and unwound (clean kill)",
+                "cooperative: cancelled at its next slice and unwound (clean kill)",
             );
         }
     }
@@ -183,7 +178,7 @@ impl Handler for Misbehaver {
         async move {
             match req.path.as_str() {
                 "/spin" => spin_forever(),
-                "/cooperative" => cooperative_spin(),
+                "/cooperative" => cooperative_spin().await,
                 "/gc_pin" => gc_pin_spin(),
                 "/sync_over_async" => sync_over_async(),
                 "/alloc_bomb" => {

@@ -131,14 +131,6 @@ fn invoke(c: &mut Caller<'_, StoreState>, def: &'static ImportDef, raw: &[u64]) 
         // Engine-owned: a host-sourced value here would hand the guest back
         // the timing primitive the freeze removes.
         "clock_now_coarse" => return Ok(c.data().clock_ms),
-        // Engine-owned: reads the active-interval meter used by the epoch callback.
-        "budget_remaining_ns" => {
-            return Ok(c
-                .data()
-                .meter
-                .remaining_budget_ns(crate::meter::occupancy_nanos()?)
-                as u64);
-        }
         "unsafe_to_trap" => {
             c.data_mut().unsafe_to_trap = raw[0] != 0;
             return Ok(0);

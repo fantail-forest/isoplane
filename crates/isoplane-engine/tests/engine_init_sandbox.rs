@@ -230,6 +230,7 @@ struct NativeInitialization {
 }
 
 impl isoplane_engine::bindings::InitializationBindings for NativeInitialization {
+    fn begin_slice(&mut self) {}
     fn permits_io(&self) -> bool {
         true
     }

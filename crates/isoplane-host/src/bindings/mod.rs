@@ -2,6 +2,7 @@
 //! The coarse clock is fixed for each serving slice.
 //! Scalar arguments follow declaration order after the buffer pair.
 
+mod cancellation;
 mod http;
 mod http_scope;
 mod instance;
@@ -240,11 +241,29 @@ impl HostBindings for CellBindings {
         };
 
         match def.name {
-            "clock_deadline_in" => {
-                let ms = call.scalars[0];
+            native_io::DEADLINE_IMPORT => {
+                let timers = self.ctx.native_timers()
+                    + rt.futures
+                        .pending_for_import(self.ctx.instance, native_io::DEADLINE_IMPORT);
+                if timers > isoplane_abi::native_io::MAX_TIMERS {
+                    return self.settle_now(
+                        id,
+                        ResultRecord::Err(FutureError::Denied(format!(
+                            "an instance holds at most {} timers",
+                            isoplane_abi::native_io::MAX_TIMERS
+                        ))),
+                    );
+                }
+                // SECURITY: side-channel mitigation. Counted from the slice's
+                // start, as a native timer is; see `native_io::Timer`.
+                let deadline = self
+                    .ctx
+                    .slice_start()
+                    .unwrap_or_else(tokio::time::Instant::now)
+                    + std::time::Duration::from_millis(call.scalars[0]);
                 let rt2 = rt.clone();
                 let task = self.ctx.spawn(&rt.reactor, async move {
-                    tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+                    tokio::time::sleep_until(deadline).await;
                     CellBindings::settle(&rt2, id, ResultRecord::Ok(Vec::new()));
                 });
                 rt.futures.attach_task(id, task.abort_handle());
@@ -313,7 +332,6 @@ impl HostBindings for CellBindings {
             // Answered by the engine before reaching this vtable; an engine
             // that does not intercept them gets "budget untouched, bit clear"
             // rather than a capability violation for a declared import.
-            "budget_remaining_ns" => i64::MAX,
             "unsafe_to_trap" => 0,
 
             other => {
@@ -361,20 +379,36 @@ impl HostBindings for CellBindings {
         }
     }
 
-    /// Poisons the imports and completes the cancellation future. Runs inside
-    /// the epoch callback with the guest on the stack; completing a future
-    /// signals a wake that the reentrancy guard holds until this call returns.
+    /// Snapshots native timer time and cancellation as the engine enters the guest.
+    fn begin_slice(&mut self) {
+        let now = match self.rt() {
+            Some(runtime) => {
+                let _reactor = runtime.reactor.enter();
+                tokio::time::Instant::now()
+            }
+            None => tokio::time::Instant::now(),
+        };
+        self.ctx.begin_guest_slice(now);
+    }
+
+    /// Called mid-slice from the epoch callback, so it only requests: the
+    /// guest sees the cancellation from its next slice (see `cancellation`).
     fn enter_grace(&mut self) {
-        if !self.ctx.poison_imports() {
-            return;
+        if self.ctx.request_cancellation() {
+            tracing::debug!(
+                tenant = %self.ctx.tenant, instance = %self.ctx.instance,
+                dispatch = self.ctx.dispatch_id(),
+                "dispatch entered its grace window: cancellation requested"
+            );
         }
+    }
+
+    /// Completing the cancellation future is what wakes a parked guest to
+    /// unwind. Done between slices, so the future's readiness is never a
+    /// mid-slice signal either.
+    fn end_slice(&mut self) {
         let cancel = self.ctx.cancel_future();
-        tracing::debug!(
-            tenant = %self.ctx.tenant, instance = %self.ctx.instance,
-            dispatch = self.ctx.dispatch_id(), cancel_future = cancel,
-            "dispatch entered its grace window: imports poisoned, cancellation tripped"
-        );
-        if cancel != 0 {
+        if self.ctx.take_undelivered_cancellation() && cancel != 0 {
             self.settle_now(cancel, ResultRecord::Err(FutureError::Cancelled));
         }
     }

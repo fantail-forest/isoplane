@@ -568,13 +568,13 @@ impl Cell {
             }) {
                 return false;
             }
-            slot.ctx.poison_imports();
+            slot.ctx.request_cancellation();
             let result = owner.result(slot.id, status, headers, vec![], Completion::Done, None);
             self.respond(slot, result);
             self.finish_and_release(slot, entry, evict());
             return true;
         }
-        slot.ctx.poison_imports();
+        slot.ctx.request_cancellation();
         let status = if failure.is_some() { 502 } else { 499 };
         let terminal = if failure.is_some() {
             TerminalReason::TransportFailure

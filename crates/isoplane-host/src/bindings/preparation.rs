@@ -68,6 +68,13 @@ impl PreparationIo {
     }
 
     /// Perform a nonblocking native operation through the production resource table.
+    /// Fixes what the guest observes of timers for the slice it is entering.
+    pub fn begin_slice(&self) {
+        self.resources
+            .lock()
+            .begin_slice(super::native_io::reactor_now(&self.runtime));
+    }
+
     pub fn call(&self, request: Request) -> Result<Response, Error> {
         self.resources.lock().call(request, self)
     }
@@ -225,7 +232,12 @@ mod tests {
         tokio::time::advance(std::time::Duration::from_secs(10)).await;
         let restored = preparation(policy());
         restored.restore_resources(&prepared).unwrap();
-        let ready = |io: &PreparationIo| match io.call(Request::Ready(timer)) {
+        // Each check is a new slice, as a guest re-entered after time passed.
+        let ready = |io: &PreparationIo| {
+            io.begin_slice();
+            io.call(Request::Ready(timer))
+        };
+        let ready = |io: &PreparationIo| match ready(io) {
             Ok(Response::Ready(ready)) => ready,
             other => panic!("a readiness check returned {other:?}"),
         };

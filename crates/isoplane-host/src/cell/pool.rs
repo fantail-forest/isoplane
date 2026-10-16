@@ -147,7 +147,7 @@ impl Cell {
             }
             if let Some(slot) = self.slot(id) {
                 slot.ctx.end_http_dispatch();
-                slot.ctx.poison_imports();
+                slot.ctx.request_cancellation();
                 slot.discard();
                 self.forget(&slot);
             }

@@ -331,6 +331,14 @@ pub enum DnsFailure {
     Timeout,
 }
 
+/// The most timers one instance can hold at once, native timers and
+/// `clock_deadline_in` futures together. A .NET guest holds one: its runtime
+/// keeps every managed timer in one queue behind a single host timer.
+///
+/// SECURITY: bounds the host work and wakes one guest can cause; the host
+/// enforces it, so a guest that bypasses its runtime cannot exceed it.
+pub const MAX_TIMERS: usize = 16;
+
 /// Benign native-resource identities retained by a prepared guest; no live I/O.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PreparedResources {
