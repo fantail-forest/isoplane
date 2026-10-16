@@ -23,10 +23,49 @@ difference in more depth, the section links to it.
 The limits Isoplane places on memory and running time are a separate subject:
 see [execution limits](execution-limits.md).
 
+## Dispatches and slices {#dispatches}
+
+This page uses two terms for the work Isoplane gives an instance.
+
+A *dispatch* is one unit of work delivered to an instance. Most dispatches
+handle one HTTP request. If the application
+[runs timers between requests](#run-timers-between-requests), a dispatch can
+also run the timers that came due while the instance was idle. An instance
+handles one dispatch at a time.
+
+A dispatch runs in one or more *slices*. A slice begins when the instance
+starts running the dispatch's code, or resumes it after waiting, and ends when
+that code awaits something that has to wait, or the dispatch finishes. Some
+things are fixed for the length of a slice, such as the [clock](#time) and
+whether the dispatch has been cancelled.
+
+Apart from initialization, an application's code runs only during dispatches.
+Initialization is not a dispatch: it runs during template preparation, before any
+instance exists. `Activation.Activated` callbacks run as part of an instance's
+first dispatch. The rest of the time an instance sits idle, without occupying a
+worker thread or using any processor time, and Isoplane can set it aside or
+discard it whenever it needs the room.
+
+### Running time {#resource-usage}
+
+Isoplane bills each dispatch as one request, whether it handles a request or
+runs timers, and gives each an allowance of
+[running time](execution-limits.md#running-time): the total length of its
+slices, not the time spent waiting for a database or another service between
+them. A timer that runs at the start of a request's dispatch uses that
+dispatch's running time.
+
+Forward the request's cancellation token to the calls you await. That token is
+`HttpContext.RequestAborted`, or
+[`RequestHead.Aborted`](reference/sdk/Isoplane.Sdk/Isoplane/RequestHead/Aborted.md)
+without ASP.NET. It is cancelled when the client goes away or the dispatch uses
+up its running time, so passing it on stops work that nobody is waiting for,
+and saves the running time that work would use.
+
 ## A single-threaded instance {#single-threaded}
 
 Each instance runs your application on exactly one thread, and handles one
-request at a time; `Environment.ProcessorCount` is 1. To serve more requests at
+dispatch at a time; `Environment.ProcessorCount` is 1. To serve more requests at
 once, Isoplane runs more instances of the application rather than more threads
 in one. Because an instance needs a thread only while its code is running, one
 thread is enough, and a waiting instance does not occupy one at all. Code in an
@@ -43,7 +82,7 @@ such work as asynchronous code that the request awaits.
 `Task.Run` and `ThreadPool.QueueUserWorkItem` don't get a thread of their own.
 The thread pool runs on the instance's one thread, and the work they queue
 runs when the current code next awaits or returns. `Task.Run` therefore
-doesn't make work parallel, and doesn't stop it from delaying the request.
+doesn't make work parallel, and doesn't stop it from delaying the response.
 
 `Parallel.For` and `Parallel.ForEach` run their iterations one after another.
 
@@ -58,9 +97,9 @@ and all of them are in flight while the instance waits.
 
 Computation, by contrast, occupies the thread. While a method computes without
 awaiting, nothing else in the instance runs, including other asynchronous work
-of the same request, and the request's cancellation token does not change
-until the method next awaits. A long computation also uses up the request's
-running time. To let cancellation reach one, split it up as
+of the same dispatch, and a cancellation token does not change until the
+method next awaits. A long computation also uses up the dispatch's running
+time. To let cancellation reach one, split it up as
 [Running time](execution-limits.md#running-time) describes.
 
 ### Thread-safe types
@@ -91,7 +130,7 @@ you would on any platform, since no lock can be held across an `await`.
 
 Waiting is asynchronous. A waiting instance sits idle without occupying a
 worker thread, which is how many applications share a few worker threads, and
-its waiting does not count toward the request's
+its waiting does not count toward the dispatch's
 [running time](execution-limits.md#running-time). A wait that blocked would
 occupy a worker thread that other applications need.
 
@@ -129,7 +168,7 @@ asynchronous form of each call:
 To wait for a while, `await Task.Delay(...)`. Delays and timers have the
 [clock](#time)'s resolution of one millisecond, and a timer that comes due
 while the application is computing runs once it next awaits. A timer can also
-outlive the request that started it; see
+outlive the dispatch that started it; see
 [What can run between requests?](#between-requests).
 
 `task.Wait()` with no timeout, on a task that `Task.Run` queued and that has not
@@ -174,16 +213,16 @@ which work by timing tiny differences in how long the processor takes, and so
 need a precise clock. Because applications share hardware, withholding a
 precise clock from all of them protects each one from the others.
 
-The clock is set when a request starts and each time the application resumes
-after waiting. Between those points every reading returns the same value, from
-`DateTime.UtcNow`, `Stopwatch` and `Environment.TickCount64` alike. Its
+The clock is set at the start of each [slice](#dispatches), and every reading
+within a slice returns the same value, from `DateTime.UtcNow`, `Stopwatch` and
+`Environment.TickCount64` alike. Its
 resolution is one millisecond, although `Stopwatch.IsHighResolution` still
 reports `true` and `Stopwatch.Frequency` still reports nanoseconds. Timers have
 the same resolution.
 
 Timers and cancellation tokens follow the same rule. A timer that comes due,
-or a cancellation token that is cancelled, while code runs is seen only after
-the application next waits. Checking a timer or `IsCancellationRequested` in a
+or a cancellation token that is cancelled, during a slice is seen only in the
+next one. Checking a timer or `IsCancellationRequested` in a
 loop that does not await never sees it change.
 
 What follows from that:
@@ -191,50 +230,32 @@ What follows from that:
 - `Stopwatch` cannot time a piece of computation, and a benchmark run inside
   the application measures nothing. Run benchmarks on ordinary .NET outside
   Isoplane.
-- Across an `await` that has to wait, `Stopwatch` measures from when the clock
-  was last set before you started it, at the start of the request or when the
-  application last resumed, to when the application resumes after the wait. That includes the wait and any computation since
-  that earlier point, so it is an upper bound on the wait, to the millisecond.
-  An `await` on something already complete does not advance it.
-- Timestamps the application takes without waiting in between are identical,
-  so log lines it stamps itself can all show the same time.
+- Across an `await` that has to wait, `Stopwatch` measures from the start of
+  the slice you started it in to the start of the slice you read it in. That
+  includes the wait and the computation earlier in the first slice, so it is an
+  upper bound on the wait, to the millisecond. An `await` on something already
+  complete does not end the slice, so it does not advance the clock.
+- Timestamps taken in the same slice are identical, so log lines the
+  application stamps itself can all show the same time.
 - A loop that computes and checks for its own deadline, whether by reading the
   clock, a timer or a cancellation token, never sees the deadline arrive. Split the work into parts
   and await something that waits between them, as
   [running time](execution-limits.md#running-time) describes.
-- A timeout fires only while the application is waiting. `Task.Delay`,
-  `CancellationTokenSource.CancelAfter` and `Timer` callbacks are delivered
-  when it next waits, not in the middle of a computation. One that comes due
-  between requests is delivered at the start of the next request, unless the
-  application [runs timers between requests](#run-timers-between-requests).
+- A timeout fires only between slices. `Task.Delay`,
+  `CancellationTokenSource.CancelAfter` and `Timer` callbacks are delivered in
+  the next slice, not in the middle of a computation. One that comes due while
+  the instance is idle is delivered at the start of its next request, unless
+  the application [runs timers between requests](#run-timers-between-requests).
 
-## When your code runs
+## Work after the response {#after-the-response}
 
-An application's code runs in three situations: while it starts up, while it
-handles a request, and, if the application asks for this, when Isoplane wakes
-it to run its timers. The rest of the time an instance sits idle, without
-occupying a worker thread or using any processor time, and Isoplane can set it
-aside or discard it whenever it needs the room.
-
-### How Isoplane accounts for work
-
-Isoplane counts and bills requests, and gives each one an allowance of
-[running time](execution-limits.md#running-time):
-the time its code spends running, not the time it spends waiting for a database
-or another service. A wake to run timers between requests counts as one
-request too. Code that runs at the start of a request because a timer came due
-uses that request's running time.
-
-Forward the request's cancellation token to the calls you await. That token is
-`HttpContext.RequestAborted`, or
-[`RequestHead.Aborted`](reference/sdk/Isoplane.Sdk/Isoplane/RequestHead/Aborted.md)
-without ASP.NET. It is cancelled when the client goes away or the request uses
-up its running time, so passing it on stops work that nobody is waiting for,
-and saves the running time that work would use.
+Once a dispatch has sent its response, Isoplane may set the instance aside or
+discard it. This section covers what that means for work that is still running
+or waiting, and for cleanup.
 
 ### What has to finish before the response? {#before-the-response}
 
-Everything the response depends on. Once the response is complete the request
+Everything the response depends on. Once the response is complete the dispatch
 is over, and an outbound call or name lookup that is still pending is cancelled
 and never completes. The instance is discarded along with it, because the code
 waiting on that call could never resume. The next request then starts from a
@@ -242,14 +263,14 @@ fresh copy of the template, which adds activation time to it, and nothing is
 reported.
 
 Other code that is ready to run when the response completes may still run while
-the request is within its limits, but nothing guarantees it. Do not leave saving
+the dispatch is within its limits, but nothing guarantees it. Do not leave saving
 data or releasing a resource to it. Work that has to happen after the response
 belongs in another service, such as a queue that something else reads.
 
 ### What can run between requests? {#between-requests}
 
-Timers can. A timer outlives the request that started it: when a request ends
-with a `Timer`, `Task.Delay` or `CancellationTokenSource.CancelAfter` still
+Timers can. A timer outlives the dispatch that started it: when a dispatch
+ends with a `Timer`, `Task.Delay` or `CancellationTokenSource.CancelAfter` still
 pending, Isoplane keeps the instance and the timer with it. Libraries that keep
 timers of their own, such as rate limiters, connection pools and telemetry
 exporters, therefore work without change.
@@ -260,16 +281,16 @@ request's own code; its callback runs until it returns or reaches its first
 `await`. A timer never runs if its instance is discarded
 first, and an idle instance can be discarded at any time. A task started and not
 awaited, such as `_ = SendEmailAsync()`, may therefore finish during a later
-request, or never: await the work the response depends on.
+dispatch, or never: await the work the response depends on.
 
 #### Running timers between requests {#run-timers-between-requests}
 
-An application can also have its timers run while it has no request to handle,
-at the cost of a request each time an instance is woken for them. Call
+An application can also have its timers run while it has no request to handle.
+Call
 [`Initialization.RunTimersBetweenRequests`](reference/sdk/Isoplane.Sdk/Isoplane/Initialization/RunTimersBetweenRequests.md)
-during initialization, and Isoplane wakes an idle instance to run the timers
-that have come due, no sooner than the minimum interval you give after its last
-request or wake ended. The interval must be at least 100 milliseconds:
+during initialization, and Isoplane gives an idle instance a dispatch to run
+the timers that have come due, no sooner than the minimum interval you give
+after its last dispatch ended. The interval must be at least 100 milliseconds:
 
 ```csharp
 Initialization.RunTimersBetweenRequests(minimumInterval: TimeSpan.FromMinutes(1));
@@ -301,13 +322,13 @@ scheduler or a queue service calls.
 anywhere else, including middleware code after `await next()` and the disposal
 of scoped services. There are two exceptions. Work in
 them that has to wait for I/O after the response is complete may not finish.
-And when Isoplane stops an instance because a request went over its
+And when Isoplane stops an instance because a dispatch went over its
 [limits](execution-limits.md), they do not run at all. Keep cleanup quick and
 independent of I/O after the response.
 
 With one thread there is no finalizer thread, so a finalizer runs on the
 application's thread during a garbage collection. That can be in a later
-request, whose running time it then uses, and a finalizer might not run at all
+dispatch, whose running time it then uses, and a finalizer might not run at all
 if the instance is discarded first. Release what matters with `Dispose`
 or `DisposeAsync`.
 
@@ -317,8 +338,8 @@ Isoplane decides how many instances of an application run, starting more as
 traffic grows and discarding them when they are idle or the memory is needed.
 Every instance starts from a copy of the application as it stood when
 initialization finished, so a new instance starts without running your startup
-code again. Successive requests can reach different
-instances, and any instance can be discarded after any request.
+code again. Successive requests can reach different instances, and any
+instance can be discarded after any dispatch.
 
 Treat an instance's memory as a cache. Static fields, `IMemoryCache` and
 in-memory session state belong to one instance and can disappear. Keep anything that
@@ -518,7 +539,7 @@ A client you construct yourself with `new HttpClient()` and keep for later
 requests keeps its idle connections open between requests, and they count
 toward the instance's
 [outbound connections](execution-limits.md#outbound-connections). The timer
-that removes them runs only during a request. Take the client from
+that removes them runs only during a dispatch. Take the client from
 `IHttpClientFactory` instead, or construct it with
 `new HttpClient(new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.Zero })`.
 A client created and disposed within one request reuses its connection for that
