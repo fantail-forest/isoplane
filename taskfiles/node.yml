@@ -47,6 +47,9 @@ tasks:
       DIRECTORY: '{{.ROOT_DIR}}/.build/linux-x64/node-runtimes'
     sources: ['{{.MODULES}}/runtime.json', '{{.ROOT_DIR}}/taskfiles/node.yml']
     generates: ['{{.DIRECTORY}}/inventory.json']
+    # A .build copied from another worktree keeps a link into that worktree.
+    status:
+      - test "$(readlink "{{.DIRECTORY}}/$(jq -er '.sdkVersion' "{{.MODULES}}/runtime.json")")" = "{{.MODULES}}"
     cmds:
       - |
         set -eu
