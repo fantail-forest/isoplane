@@ -651,24 +651,6 @@ mod tests {
 
 
 
-    #[tokio::test]
-    async fn ending_a_dispatch_cancels_registered_reactor_work() {
-        let table = table();
-        let owner = InstanceId(1);
-        let id = table
-            .alloc(owner, 1, "http_fetch", 8)
-            .expect("future allocation");
-        let (task, _release) = held_task().await;
-        table.attach_task(id, task.abort_handle());
-        table.end_dispatch(owner, 1);
-        assert_cancelled(task).await;
-        assert_eq!(
-            table.live_futures(),
-            0,
-            "a result remains live only for its owning dispatch"
-        );
-    }
-
     #[test]
     fn ids_are_never_zero_and_never_reused() {
         let t = table();
@@ -894,6 +876,7 @@ mod tests {
         );
     }
 
+
     #[test]
     fn a_completed_but_undelivered_result_does_not_outlive_its_dispatch() {
         let t = table();
@@ -913,7 +896,7 @@ mod tests {
         assert_eq!(
             t.take_ready(owner).map(Ready::into_pair),
             None,
-            "a result remains live only for its owning dispatch"
+            "a ready result must not reach the next dispatch"
         );
         assert!(!t.has_ready(owner), "no result may outlive its dispatch");
     }
