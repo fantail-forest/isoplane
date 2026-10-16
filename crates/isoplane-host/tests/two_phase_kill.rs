@@ -15,7 +15,6 @@ use isoplane_host::activator::EngineActivator;
 use isoplane_host::cell::{Cell, CellConfig, DispatchResult, Services, Target};
 use isoplane_host::egress::HostEgressPolicy;
 use isoplane_host::fakes::*;
-use isoplane_host::slot::EnterError;
 use isoplane_host::{ModuleId, Resolver};
 
 /// Large enough that the grace window takes its 10% branch rather than the
@@ -88,6 +87,16 @@ fn cell_with(
     (cell, module)
 }
 
+/// Whether `instance` has left the cell. The response precedes its release,
+/// so this waits for it, within a deadline.
+fn evicted(cell: &Cell, instance: isoplane_host::InstanceId) -> bool {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while cell.slot(instance).is_some() && std::time::Instant::now() < deadline {
+        std::thread::yield_now();
+    }
+    cell.slot(instance).is_none()
+}
+
 fn get(cell: &Cell, module: &ModuleId, path: &str) -> DispatchResult {
     let mut rec = cell.http_record(
         module,
@@ -110,10 +119,10 @@ fn get(cell: &Cell, module: &ModuleId, path: &str) -> DispatchResult {
     .expect("dispatch")
 }
 
-/// wasmtime does not poison a store after a budget trap, so the refusal has
-/// to come from the cell.
+/// wasmtime does not poison a store after a budget trap, so the cell has to
+/// make sure nothing calls into it again: it evicts the instance.
 #[test]
-fn conformance_1_kill_then_call_observes_refusal() {
+fn conformance_1_a_killed_instance_is_evicted_and_never_called_again() {
     let (cell, module) = rig(HandlerLifecycle::Reuse);
 
     let killed = get(&cell, &module, "/spin");
@@ -125,46 +134,31 @@ fn conformance_1_kill_then_call_observes_refusal() {
     );
     assert_eq!(killed.status, 503, "a hard kill is a 503");
 
-    let slot = cell
-        .slot(killed.instance)
-        .expect("the killed slot is still addressable");
-    assert!(slot.is_tombstoned(), "a hard kill must leave a tombstone");
-    assert_eq!(
-        slot.enter().err(),
-        Some(EnterError::Tombstoned),
-        "a tombstoned instance answered a host call"
-    );
-
     assert!(
-        !slot.is_capture_eligible(),
-        "deltas are never captured from a tombstone"
-    );
-    assert!(
-        slot.reset().is_err(),
-        "a tombstone is discarded, not reset back into the pool"
+        evicted(&cell, killed.instance),
+        "a hard-killed instance must be evicted"
     );
 
     let m = cell.metrics();
     assert_eq!(m.hard_kills, 1, "one hard kill");
     assert_eq!(m.clean_kills, 0, "no clean kill");
-    assert_eq!(m.tombstones, 1, "one tombstone");
 
     let ok = get(&cell, &module, "/ok");
     assert_eq!(
         ok.status, 200,
-        "a tombstone must not take the module down: {:?}",
+        "a killed instance must not take the module down: {:?}",
         ok.trap
     );
     assert_ne!(
         ok.instance, killed.instance,
-        "the tombstoned instance must never be reused"
+        "the killed instance must never be reused"
     );
 
     cell.shutdown();
 }
 
 #[test]
-fn a_clean_kill_is_recorded_without_tombstoning_the_instance() {
+fn a_clean_kill_is_recorded_without_evicting_the_instance() {
     let (cell, module) = cell_with(
         HandlerLifecycle::Reuse,
         Arc::new(FakeActivator::named(
@@ -176,13 +170,13 @@ fn a_clean_kill_is_recorded_without_tombstoning_the_instance() {
     assert_eq!(out.completion, Completion::CleanKill);
     assert_eq!(out.status, 503);
     assert_eq!(out.occupancy_ns, u64::from(B_MS) * 1_000_000 + 123);
-    if let Some(slot) = cell.slot(out.instance) {
-        assert!(!slot.is_tombstoned());
-    }
+    assert!(
+        cell.slot(out.instance).is_some(),
+        "a clean kill keeps its instance"
+    );
     let metrics = cell.metrics();
     assert_eq!(metrics.clean_kills, 1);
     assert_eq!(metrics.hard_kills, 0);
-    assert_eq!(metrics.tombstones, 0);
     assert_eq!(metrics.overage_ns, 123);
     let meters = cell.meters(&module).expect("tenant meters");
     assert_eq!(meters.occupancy_ns(), out.occupancy_ns);
@@ -235,8 +229,7 @@ fn negative_control_an_uncooperative_guest_cannot_reach_the_clean_path() {
             Completion::CleanKill,
             "{route} reached the clean path"
         );
-        let slot = cell.slot(out.instance).expect("addressable");
-        assert!(slot.is_tombstoned(), "{route} must tombstone");
+        assert!(evicted(&cell, out.instance), "{route} must be evicted");
     }
 
     let m = cell.metrics();
@@ -267,7 +260,6 @@ fn the_hang_breaker_counts_only_hard_kills() {
         assert_eq!(metrics.clean_kills, clean);
         assert_eq!(metrics.hard_kills, hard);
         assert_eq!(metrics.breaker_rejections, rejected);
-        assert_eq!(metrics.tombstones, hard);
         cell.shutdown();
     }
 }

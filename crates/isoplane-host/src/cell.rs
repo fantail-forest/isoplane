@@ -39,13 +39,13 @@ pub(crate) use queue::HttpDispatch;
 mod reclamation;
 mod registry;
 pub use reclamation::{ReclaimCandidate, ReclaimKind};
+mod recovery;
 mod timer_wakes;
-mod tombstone;
 mod wake;
 
 pub use dispatch_api::{DispatchResult, Target};
 
-use dispatch_api::{answer, ends_in_tombstone};
+use dispatch_api::{answer, ends_the_instance};
 
 use crate::{InstanceId, ModuleId};
 use completion::{DispatchCompletion, TerminalReason};
@@ -167,7 +167,6 @@ pub struct Cell {
     /// instance was killed" rather than "never heard of it". The engine would
     /// answer a call on a killed store, so the refusal has to outlive the
     /// instance.
-    tombstoned: Mutex<std::collections::VecDeque<Arc<Slot>>>,
     modules: RwLock<HashMap<ModuleId, Arc<ModuleEntry>>>,
     residents: Mutex<HashMap<InstanceId, Resident>>,
     active: ShardedMap<InstanceId, ActiveRequest>,
@@ -255,7 +254,6 @@ impl Cell {
             runtime: Some(runtime),
             queue,
             index,
-            tombstoned: Mutex::new(std::collections::VecDeque::new()),
             modules: RwLock::new(HashMap::new()),
             residents: Mutex::new(HashMap::new()),
             active: ShardedMap::new(ACTIVE_SHARDS),
@@ -291,8 +289,7 @@ impl Cell {
         self.metrics.snapshot()
     }
 
-    /// The live counters rather than a snapshot, for
-    /// [`Metrics::tombstone_invariant`], which is meaningful at rest.
+    /// The live counters rather than a snapshot.
     pub fn metrics_raw(&self) -> &Arc<Metrics> {
         &self.metrics
     }

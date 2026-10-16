@@ -22,8 +22,8 @@ pub enum CaptureRefused {
     /// An outbound HTTP operation or response body still owns a transport.
     OutboundHttp,
     /// The pre-capture gc hint did not return `done`. `Parked` means the
-    /// guest awaited inside the hint and stays resident; a completion that
-    /// tombstones means the instance has been destroyed.
+    /// guest awaited inside the hint and stays resident; any other
+    /// completion means the instance has been discarded.
     GcHintDidNotComplete(Completion),
     /// The hint completed but the instance is not at a serializable point.
     StackNotEmptyAfterHint,
@@ -145,11 +145,11 @@ fn capture_with<T>(
         }
         let elapsed_us = t_gc.elapsed().as_micros() as u64;
         if hint.completion != Completion::Done {
-            // A trap or hard kill inside the hint has tombstoned the engine's
+            // A trap or hard kill inside the hint has discarded the engine's
             // instance; the slot follows, so the sweep stops selecting it and
             // `Slot::enter` refuses. A guest that parked inside the hint is
             // consistent and stays as it is.
-            if hint.completion.tombstones() {
+            if !hint.completion.instance_survives() {
                 guard.destroy();
             }
             return Err(CaptureRefused::GcHintDidNotComplete(hint.completion));
@@ -202,10 +202,10 @@ mod tests {
     use crate::pool::InstancePool;
 
     /// A guest whose pre-capture gc hint ends however the test says and which,
-    /// like the engine, answers every later call with a trap once tombstoned.
+    /// like the engine, answers every later call with a trap once discarded.
     struct HintEndsIn {
         how: Completion,
-        tombstoned: bool,
+        discarded: bool,
         memory: Vec<u8>,
         gc_upload: Option<Arc<crate::bindings::request_body::RequestBodyScope>>,
         pending_upload: Option<crate::bindings::request_body::RequestRead>,
@@ -241,7 +241,7 @@ mod tests {
             _rec: &isoplane_abi::dispatch::DispatchRecord,
             _b: isoplane_engine::OccupancyBudget,
         ) -> isoplane_engine::DispatchOutcome {
-            if self.tombstoned {
+            if self.discarded {
                 return self.outcome(Completion::Trapped);
             }
             self.outcome(Completion::Done)
@@ -252,7 +252,7 @@ mod tests {
             _r: &isoplane_abi::result::ResultRecord,
             _b: isoplane_engine::OccupancyBudget,
         ) -> isoplane_engine::DispatchOutcome {
-            if self.tombstoned {
+            if self.discarded {
                 return self.outcome(Completion::Trapped);
             }
             self.outcome(Completion::Done)
@@ -262,23 +262,23 @@ mod tests {
                 self.pending_upload =
                     Some(upload.begin_read().expect("GC probe starts its EOF read"));
             }
-            if self.tombstoned {
+            if self.discarded {
                 return self.outcome(Completion::Trapped);
             }
-            if self.how.tombstones() {
-                self.tombstoned = true;
+            if !self.how.instance_survives() {
+                self.discarded = true;
             }
             self.outcome(self.how)
         }
         fn reset(&mut self) -> anyhow::Result<()> {
-            anyhow::ensure!(!self.tombstoned, "tombstoned");
+            anyhow::ensure!(!self.discarded, "discarded");
             Ok(())
         }
         fn is_parked(&self) -> bool {
-            !self.tombstoned
+            !self.discarded
         }
         fn is_capture_eligible(&self) -> bool {
-            !self.tombstoned
+            !self.discarded
         }
         fn memory(&mut self) -> &mut [u8] {
             &mut self.memory
@@ -290,7 +290,7 @@ mod tests {
             self.storage_failed
         }
         fn capture_mutable_state(&mut self) -> anyhow::Result<isoplane_engine::InstanceImage> {
-            anyhow::ensure!(!self.tombstoned, "tombstoned");
+            anyhow::ensure!(!self.discarded, "discarded");
             Ok(Default::default())
         }
         fn restore_mutable_state(
@@ -349,7 +349,7 @@ mod tests {
         ) -> anyhow::Result<Box<dyn isoplane_engine::InstanceOps + Send>> {
             Ok(Box::new(HintEndsIn {
                 how: self.how,
-                tombstoned: false,
+                discarded: false,
                 memory: (*self.template).clone(),
                 gc_upload: None,
                 pending_upload: None,
@@ -455,10 +455,10 @@ mod tests {
         );
     }
 
-    /// The engine's tombstone and the slot's must agree, or the idle sweep
+    /// The engine's discard and the slot's must agree, or the idle sweep
     /// re-selects a Parked slot every tick and re-enters a killed instance.
     #[test]
-    fn a_guest_that_traps_in_its_gc_hint_is_tombstoned_on_the_slot_too() {
+    fn a_guest_that_traps_in_its_gc_hint_is_discarded_on_the_slot_too() {
         for how in [Completion::Trapped, Completion::BudgetKill] {
             let (slot, act) = parked_slot(how);
 
@@ -473,12 +473,13 @@ mod tests {
             );
 
             assert!(
-                slot.is_tombstoned(),
-                "{how:?}: the engine tombstoned itself and the slot did not"
-            );
-            assert!(
-                matches!(slot.enter(), Err(crate::slot::EnterError::Tombstoned)),
-                "{how:?}: the front door must refuse"
+                matches!(
+                    slot.enter(),
+                    Err(crate::slot::EnterError::NotResident(
+                        crate::slot::LifecycleTier::Discarded
+                    ))
+                ),
+                "{how:?}: the engine discarded itself, so the slot's front door must refuse"
             );
             assert_ne!(
                 slot.state(),
@@ -502,7 +503,7 @@ mod tests {
             initial.ctx.clone(),
             Box::new(HintEndsIn {
                 how: Completion::Done,
-                tombstoned: false,
+                discarded: false,
                 memory: vec![0; isoplane_abi::PAGE_SIZE],
                 gc_upload: None,
                 pending_upload: None,
@@ -515,8 +516,9 @@ mod tests {
             Some(CaptureRefused::StorageFailed),
             "a snapshot read from failed storage must never be kept"
         );
-        assert!(
-            slot.is_tombstoned(),
+        assert_eq!(
+            slot.state(),
+            crate::slot::LifecycleTier::Discarded,
             "an instance whose memory read failed storage must not run again"
         );
     }
@@ -529,7 +531,11 @@ mod tests {
             Some(CaptureRefused::GcHintDidNotComplete(Completion::Parked)),
             "parking inside the hint refuses the capture"
         );
-        assert!(!slot.is_tombstoned(), "parking in the hint is not a fault");
+        assert_eq!(
+            slot.state(),
+            crate::slot::LifecycleTier::Parked,
+            "parking in the hint is not a fault"
+        );
         assert!(
             slot.is_capture_eligible(),
             "and the next sweep may try again"
@@ -601,7 +607,7 @@ mod tests {
             initial.ctx.clone(),
             Box::new(HintEndsIn {
                 how: Completion::Done,
-                tombstoned: false,
+                discarded: false,
                 memory: vec![0; isoplane_abi::PAGE_SIZE],
                 gc_upload: Some(source),
                 pending_upload: None,

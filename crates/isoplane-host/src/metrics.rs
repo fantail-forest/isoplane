@@ -93,18 +93,13 @@ pub struct Metrics {
     /// reused.
     pub clean_kills: AtomicU64,
     /// Dispatches still executing at the end of grace, terminated without
-    /// unwinding and tombstoned. The hang breaker counts these.
+    /// unwinding and discarded. The hang breaker counts these. Disjoint from
+    /// `traps`: a hard kill is not a trap.
     pub hard_kills: AtomicU64,
     /// Dispatches that crossed the budget at all.
     pub grace_entries: AtomicU64,
     /// Epoch ticks that found the unsafe-to-trap bit set and deferred grace.
     pub grace_deferrals: AtomicU64,
-    /// Equal to `hard_kills + traps`, which [`Metrics::tombstone_invariant`]
-    /// checks; the two terms are disjoint because a hard kill is not a trap.
-    pub tombstones: AtomicU64,
-    /// Host calls refused because the target was a tombstone. Counts refusals,
-    /// not tombstones: a cell never asked to call a killed instance reads zero.
-    pub tombstone_refusals: AtomicU64,
     /// occupancy recorded past the budget on kills of either phase; already inside
     /// the tenant's `occupancy_ns`.
     pub overage_ns: AtomicU64,
@@ -192,21 +187,6 @@ impl Metrics {
             .unwrap_or_default()
     }
 
-    /// `tombstones == hard_kills + traps`; meaningful at rest, because the
-    /// three counters are separate atomics.
-    pub fn tombstone_invariant(&self) -> Result<(), String> {
-        let l = |a: &AtomicU64| a.load(Ordering::Relaxed);
-        let (t, h, tr) = (l(&self.tombstones), l(&self.hard_kills), l(&self.traps));
-        if t == h + tr {
-            Ok(())
-        } else {
-            Err(format!(
-                "tombstones ({t}) != hard_kills ({h}) + traps ({tr}); if traps overshoots by \
-                 exactly hard_kills the two are sharing an increment again"
-            ))
-        }
-    }
-
     pub fn snapshot(&self) -> MetricsSnapshot {
         let l = |a: &AtomicU64| a.load(Ordering::Relaxed);
         MetricsSnapshot {
@@ -220,8 +200,6 @@ impl Metrics {
             hard_kills: l(&self.hard_kills),
             grace_entries: l(&self.grace_entries),
             grace_deferrals: l(&self.grace_deferrals),
-            tombstones: l(&self.tombstones),
-            tombstone_refusals: l(&self.tombstone_refusals),
             overage_ns: l(&self.overage_ns),
             // With no hard kills the ratio is reported as the clean count,
             // the most it can claim.
@@ -323,8 +301,6 @@ pub struct MetricsSnapshot {
     pub hard_kills: u64,
     pub grace_entries: u64,
     pub grace_deferrals: u64,
-    pub tombstones: u64,
-    pub tombstone_refusals: u64,
     pub overage_ns: u64,
     pub clean_hard_ratio: f64,
     pub shed: u64,
@@ -379,8 +355,6 @@ impl MetricsSnapshot {
             ("hard_kills", self.hard_kills.to_string()),
             ("grace_entries", self.grace_entries.to_string()),
             ("grace_deferrals", self.grace_deferrals.to_string()),
-            ("tombstones", self.tombstones.to_string()),
-            ("tombstone_refusals", self.tombstone_refusals.to_string()),
             ("overage_ms", format!("{:.3}", self.overage_ns as f64 / 1e6)),
             ("clean_hard_ratio", format!("{:.6}", self.clean_hard_ratio)),
             ("shed", self.shed.to_string()),
@@ -534,49 +508,6 @@ mod tests {
             0.0,
             "with no kills at all the ratio must not invent a healthy number"
         );
-    }
-
-    #[test]
-    fn the_tombstone_invariant_holds_and_can_fail() {
-        let m = Metrics::new();
-        for _ in 0..4 {
-            m.hard_kills.fetch_add(1, Ordering::Relaxed);
-            m.tombstones.fetch_add(1, Ordering::Relaxed);
-        }
-        for _ in 0..3 {
-            m.traps.fetch_add(1, Ordering::Relaxed);
-            m.tombstones.fetch_add(1, Ordering::Relaxed);
-        }
-        m.tombstone_invariant()
-            .expect("disjoint counters must satisfy the identity");
-        let s = m.snapshot();
-        assert_eq!(s.tombstones, 7, "four hard kills and three traps");
-        assert_eq!(
-            s.tombstones,
-            s.hard_kills + s.traps,
-            "the identity holds when the two terms are disjoint"
-        );
-
-        // A hard kill counted as a trap as well leaves `tombstones` correct
-        // and the sum inflated by exactly `hard_kills`.
-        let bug = Metrics::new();
-        for _ in 0..4 {
-            bug.hard_kills.fetch_add(1, Ordering::Relaxed);
-            bug.traps.fetch_add(1, Ordering::Relaxed);
-            bug.tombstones.fetch_add(1, Ordering::Relaxed);
-        }
-        let e = bug
-            .tombstone_invariant()
-            .expect_err("the shared increment must be caught");
-        assert!(
-            e.contains("tombstones (4)"),
-            "the report names the tombstones: {e}"
-        );
-        assert!(
-            e.contains("hard_kills (4)"),
-            "the report names the hard kills: {e}"
-        );
-        assert!(e.contains("traps (4)"), "the report names the traps: {e}");
     }
 
     #[test]

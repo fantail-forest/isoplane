@@ -74,7 +74,7 @@ async fn no_body_framing_completes_the_dispatch_before_returning_the_wire_respon
             let cell = &rig.node.real.as_ref().expect("real cells").cells()[0];
             assert_eq!(cell.futures().live_futures(), 0, "the wire response cannot complete while the guest retains a timer wake");
             assert_eq!(cell.metrics_raw().request_us.count(), 1, "the host must acknowledge one settled dispatch before returning the no-body response");
-            assert!(cell.tombstoned_instances().is_empty(), "no-body completion must not enter the guest's trapping wake");
+            assert_eq!(cell.metrics().traps, 0, "no-body completion must not enter the guest's trapping wake");
         }).await.expect("no-body completion must not await the unused guest timer");
         rig.shutdown().await;
     }
@@ -97,7 +97,7 @@ async fn a_same_slice_trap_cannot_be_hidden_by_no_body_response_headers() {
             "a failed no-body response must also wait for dispatch settlement"
         );
         assert_eq!(
-            cell.tombstoned_instances().len(),
+            cell.metrics().traps,
             1,
             "the original same-slice trap must remain visible to the host"
         );

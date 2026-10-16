@@ -374,12 +374,12 @@ async fn a_gc_hint_cannot_hide_a_new_fetch_from_capture() {
 }
 
 #[tokio::test]
-async fn a_tombstoned_slot_releases_its_body_while_its_context_remains_reachable() {
+async fn a_discarded_slot_releases_its_body_while_its_context_remains_reachable() {
     deadline(async {
         let mut server = Server::start().await;
         let svc = services(server.address);
         let activator = std::sync::Arc::new(isoplane_host::fakes::FakeActivator::named(
-            isoplane_host::ModuleId::new("outbound-tombstone", "v1"),
+            isoplane_host::ModuleId::new("outbound-discard", "v1"),
             isoplane_host::fakes::FakeBehaviour::program([
                 isoplane_host::fakes::Step::Fetch {
                     url: "http://upstream.test/".into(),
@@ -407,20 +407,16 @@ async fn a_tombstoned_slot_releases_its_body_while_its_context_remains_reachable
         assert_eq!(
             common::capture(&cell, instance).await,
             Err(isoplane_host::hibernate_policy::CaptureRefused::OutboundHttp),
-            "the body must be live before tombstoning"
+            "the body must be live before the discard"
         );
         let slot = cell
             .slot(instance)
             .expect("the body owner must be resident");
-        slot.tombstone();
+        slot.discard();
         assert_eq!(
             svc.egress.instance_connections(instance),
             0,
-            "a tombstone cannot retain the outbound transport in its surviving context"
-        );
-        assert!(
-            slot.is_tombstoned(),
-            "the disposed HTTP scope must belong to an irreversible tombstone"
+            "a discarded slot cannot retain the outbound transport in its surviving context"
         );
         cell.shutdown();
     })

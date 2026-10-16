@@ -997,7 +997,8 @@ fn activation_io_errors_keep_safe_typed_context_without_raw_error_text() {
     );
 }
 
-fn refused_wake(discard: bool) {
+#[test]
+fn a_discarded_wake_ends_its_owned_dispatch() {
     let events = Events::default();
     let _trace = events.install();
     let cell = cell(CellConfig {
@@ -1023,11 +1024,7 @@ fn refused_wake(discard: bool) {
         .active
         .with(&slot.id, |request| request.completion.usage().occupancy_ns)
         .expect("active owner usage");
-    if discard {
-        slot.discard();
-    } else {
-        slot.tombstone();
-    }
+    slot.discard();
     cell.run_wake(slot.clone());
     let result = response
         .recv_timeout(Duration::from_secs(10))
@@ -1061,16 +1058,6 @@ fn refused_wake(discard: bool) {
         "entry refusal must name the terminal boundary"
     );
     cell.shutdown();
-}
-
-#[test]
-fn a_tombstoned_wake_ends_its_owned_dispatch() {
-    refused_wake(false);
-}
-
-#[test]
-fn a_discarded_wake_ends_its_owned_dispatch() {
-    refused_wake(true);
 }
 
 #[tokio::test]

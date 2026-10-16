@@ -56,7 +56,7 @@ for artifact storage.
 
 ## Contain a panic to its dispatch
 
-Have the execution loop contain panics from host code around a dispatch, record them, tombstone the instance, and continue. Keep unwinding on in the release profile for this reason.
+Have the execution loop contain panics from host code around a dispatch, record them, discard the instance, and continue. Keep unwinding on in the release profile for this reason.
 
 **Not this:** Abort-on-panic plus a `panic!` on any host bookkeeping error.
 

@@ -1,5 +1,5 @@
 //! A live activation: the template mapped copy-on-write, its mutable globals
-//! and tables, and the tombstone.
+//! and tables, and whether it was discarded.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -44,10 +44,10 @@ pub struct Instance {
     // Unmap the live store before the template releases its storage leases.
     pub(crate) template: Arc<TemplateInner>,
     pub(crate) engine: Arc<EngineInner>,
-    /// Set when a call ended in a way [`Completion::tombstones`] says leaves
+    /// Set when a call ended in a way [`Completion::instance_survives`] says leaves
     /// the instance inconsistent. wasmtime does not poison a store after a
     /// trap, so every entry point checks this and refuses.
-    pub(crate) tombstone: Option<&'static str>,
+    pub(crate) discarded: Option<&'static str>,
     pub(crate) last: Option<Completion>,
     pub(crate) last_violation: Option<&'static str>,
 }
@@ -56,7 +56,7 @@ impl std::fmt::Debug for Instance {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Instance")
             .field("template", &self.template.memory_pages)
-            .field("tombstone", &self.tombstone)
+            .field("discarded", &self.discarded)
             .field("last", &self.last)
             .field("live", &self.live.is_some())
             .finish()
@@ -168,11 +168,11 @@ impl Instance {
     /// One hot interval: meter start, epoch deadline armed, synchronous call
     /// into the guest, meter stop.
     fn slice(&mut self, budget: OccupancyBudget, entry: Entry<'_>) -> DispatchOutcome {
-        if let Some(why) = self.tombstone {
+        if let Some(why) = self.discarded {
             return self.refuse(
-                TrapKind::Tombstoned,
+                TrapKind::Discarded,
                 format!(
-                    "`{}` called on a tombstoned instance, discarded because {why}",
+                    "`{}` called on a discarded instance, discarded because {why}",
                     entry.export_name()
                 ),
             );
@@ -353,8 +353,8 @@ impl Instance {
             self.last = Some(completion);
         }
         self.last_violation = violation;
-        if completion.tombstones() {
-            self.tombstone = Some(match completion {
+        if !completion.instance_survives() {
+            self.discarded = Some(match completion {
                 Completion::BudgetKill => {
                     "it was still executing at the B+G hard deadline and was terminated without \
                      unwinding"
@@ -405,7 +405,7 @@ pub trait InstanceOps {
     /// no wasm frame on the native stack.
     fn is_parked(&self) -> bool;
     /// True when the instance may be captured: the stack is empty, the last
-    /// call ended in a state the instance survives, and it is not tombstoned.
+    /// call ended in a state the instance survives, and it is not discarded.
     /// Weaker than [`InstanceOps::is_parked`] on purpose: an instance that
     /// returned `done` and went idle is the case hibernation is about.
     fn is_capture_eligible(&self) -> bool;
@@ -436,7 +436,7 @@ pub enum Completion {
     /// Guest fault. The instance is discarded.
     Trapped,
     /// Still executing at B+G and terminated without unwinding. The instance
-    /// is tombstoned: its memory is a state no execution produced.
+    /// is discarded: its memory is a state no execution produced.
     BudgetKill,
     /// Entered grace and returned inside it. The request still fails, but the
     /// instance is consistent and its slot reusable.
@@ -457,11 +457,6 @@ impl Completion {
             self,
             Completion::Done | Completion::Parked | Completion::CleanKill
         )
-    }
-    /// Whether the instance is tombstoned. wasmtime does not poison a store
-    /// after a trap, so the platform does.
-    pub fn tombstones(self) -> bool {
-        matches!(self, Completion::Trapped | Completion::BudgetKill)
     }
 }
 
@@ -489,9 +484,9 @@ impl InstanceOps for Instance {
     }
 
     fn reset(&mut self) -> Result<()> {
-        if let Some(why) = self.tombstone {
+        if let Some(why) = self.discarded {
             bail!(
-                "refusing to reset a tombstoned instance ({why}); drop it and activate a fresh one"
+                "refusing to reset a discarded instance ({why}); drop it and activate a fresh one"
             );
         }
         match crate::mapped::reset(self) {
@@ -502,7 +497,7 @@ impl InstanceOps for Instance {
             }
             Ok(false) => {}
             Err(error) => {
-                self.tombstone = Some("the retained mapping could not be reset");
+                self.discarded = Some("the retained mapping could not be reset");
                 return Err(error);
             }
         }
@@ -522,7 +517,7 @@ impl InstanceOps for Instance {
         match reset {
             Ok(live) => self.live = Some(live),
             Err(e) => {
-                self.tombstone = Some("the template could not be re-instantiated after a reset");
+                self.discarded = Some("the template could not be re-instantiated after a reset");
                 return Err(e);
             }
         }
@@ -537,7 +532,7 @@ impl InstanceOps for Instance {
         let Some(live) = self.live.as_ref() else {
             return false;
         };
-        self.tombstone.is_none()
+        self.discarded.is_none()
             && live.store.data().wasm_depth == 0
             && self.last == Some(Completion::Parked)
     }
@@ -546,7 +541,7 @@ impl InstanceOps for Instance {
         let Some(live) = self.live.as_ref() else {
             return false;
         };
-        self.tombstone.is_none()
+        self.discarded.is_none()
             && live.store.data().wasm_depth == 0
             && self.last.is_some_and(|c| c.instance_survives())
     }

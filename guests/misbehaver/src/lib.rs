@@ -154,7 +154,7 @@ async fn cooperative_spin() -> Response {
 /// mid-collection. The platform honours it for grace *entry* and ignores it at
 /// the hard deadline -- the difference between "do not interrupt me right now"
 /// and "do not interrupt me". This route asserts the second reading and must
-/// lose: hard kill at B+G and a tombstone, exactly like `/spin`.
+/// lose: hard kill at B+G and an evicted instance, exactly like `/spin`.
 fn gc_pin_spin() -> ! {
     let _pin = UnsafeToTrap::pin();
     spin_forever()

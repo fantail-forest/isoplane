@@ -183,7 +183,7 @@ pub(crate) fn trap_code_of_kind(k: TrapKind) -> TrapCode {
         TrapKind::OutOfMemory => TrapCode::OutOfMemory,
         TrapKind::CapabilityViolation => TrapCode::CapabilityViolation,
         TrapKind::BudgetExceeded
-        | TrapKind::Tombstoned
+        | TrapKind::Discarded
         | TrapKind::Sandbox
         | TrapKind::OccupancyClockUnavailable
         | TrapKind::StorageFault

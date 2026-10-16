@@ -16,11 +16,11 @@ Use the same engine version for pre-initialisation and execution. A template is 
 
 **Exception:** None.
 
-## Make a tombstone a state, not a panic
+## Make a killed instance a state, not a panic
 
-After a hard kill, move the instance to a state in which every further call returns an error. The engine does not poison a store after a trap, so the host must, and it must do so without taking the process down.
+After a trap or a hard kill, discard the instance: move it to a state in which every further call returns an error, and evict it. The engine does not poison a store after a trap, so the host must, and it must do so without taking the process down.
 
-**Not this:** `panic!` on a call into a tombstoned instance, in a binary built to abort on panic.
+**Not this:** `panic!` on a call into a discarded instance, in a binary built to abort on panic.
 
 **Exception:** None.
 

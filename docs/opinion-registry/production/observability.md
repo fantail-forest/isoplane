@@ -31,7 +31,7 @@ The execution boundary that catches a host panic owns the dispatch outcome; a co
 
 ## Emit lifecycle transitions as events with before and after
 
-When an instance changes tier (hot, parked, hibernated, tombstoned) or a version changes route state, emit a structured event with the previous state, the new state, the cause, and the identifiers. These are where investigations start.
+When an instance changes tier (hot, parked, hibernated, discarded) or a version changes route state, emit a structured event with the previous state, the new state, the cause, and the identifiers. These are where investigations start.
 
 **Not this:** Inferring a transition from a counter delta.
 

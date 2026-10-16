@@ -297,8 +297,8 @@ impl InstanceCtx {
     pub fn take_trap(&self) -> Option<TrapCode> {
         self.trap_latch.lock().take()
     }
-    /// Without consuming it: the cell decides whether a call ends in a
-    /// tombstone while it still holds the guard, and `take_trap` comes later.
+    /// Without consuming it: the cell decides whether a call ends the
+    /// instance while it still holds the guard, and `take_trap` comes later.
     pub fn has_trap(&self) -> bool {
         self.trap_latch.lock().is_some()
     }

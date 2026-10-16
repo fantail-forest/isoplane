@@ -162,7 +162,7 @@ Use the type system so that misuse is a compile error.
 | Files, modules, functions | snake_case                                          | `future_table.rs`                             |
 | Types, traits             | PascalCase, no `I` prefix                           | `Activator` ✓, `IActivator` ✗                 |
 | Numeric values            | unit in the name                                    | `budget_ms`, `delta_bytes` ✓, `budget` ✗      |
-| Tests                     | a sentence stating the behaviour                    | `a_tombstoned_instance_refuses_the_next_call` |
+| Tests                     | a sentence stating the behaviour                    | `a_discarded_instance_refuses_the_next_call` |
 | C#                        | .NET conventions; public API in `Isoplane.*` namespaces | `Isoplane.Sdk.Request`                            |
 
 ### Module Organization

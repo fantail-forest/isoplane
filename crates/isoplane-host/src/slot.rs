@@ -36,12 +36,11 @@ fn tier_from_u8(v: u8) -> LifecycleTier {
 pub enum EnterError {
     /// A previous call into this instance has not returned.
     Busy,
-    /// Hibernated or discarded: there is no memory here to call into.
+    /// Hibernated or discarded: there is no memory here to call into. A
+    /// hard-killed or trapped instance is discarded, because its memory may be
+    /// mid-collection or mid-frame and wasmtime would still answer a call on
+    /// the killed store.
     NotResident(LifecycleTier),
-    /// The instance was hard-killed or trapped, so its memory may be
-    /// mid-collection or mid-frame. wasmtime would still answer a call on the
-    /// killed store, so the refusal is the platform's to make.
-    Tombstoned,
 }
 
 impl std::fmt::Display for EnterError {
@@ -49,10 +48,6 @@ impl std::fmt::Display for EnterError {
         match self {
             EnterError::Busy => write!(f, "reentrant call refused"),
             EnterError::NotResident(s) => write!(f, "instance is {}", s.as_str()),
-            EnterError::Tombstoned => write!(
-                f,
-                "instance is a tombstone: it was hard-killed or trapped and refuses further calls"
-            ),
         }
     }
 }
@@ -73,14 +68,13 @@ impl CallGuard<'_> {
             .expect("a CallGuard holds its instance until destroy or Drop consumes it")
     }
     /// Terminates the instance instead of returning it, for traps and hard
-    /// kills. The tombstone is set while the guard is still held, so `Drop`
+    /// kills. The slot is discarded while the guard is still held, so `Drop`
     /// clears `in_call` on a slot that already refuses; a plain drop followed
-    /// by a tombstone would leave an instant in which another thread could
+    /// by a discard would leave an instant in which another thread could
     /// enter memory a trap abandoned.
     pub fn destroy(mut self) {
         self.inst = None;
-        self.slot.tombstone();
-        self.slot.set_state(LifecycleTier::Discarded);
+        self.slot.discard();
     }
 }
 
@@ -91,7 +85,6 @@ impl Drop for CallGuard<'_> {
         g.in_call = false;
         match inst {
             Some(_) if std::thread::panicking() => {
-                g.tombstoned = true;
                 g.state = LifecycleTier::Discarded;
                 g.resident = None;
                 self.slot.ctx.snapshot.lock().take();
@@ -127,10 +120,6 @@ struct SlotInner {
     parked_since_ms: Option<u64>,
     /// Set on entry or rehydration and cleared by reset.
     dirty: bool,
-    /// Once set, [`Slot::enter`] refuses. [`CallGuard::destroy`] sets it while
-    /// the guard is held; a site that drops the guard after a trap and
-    /// tombstones later leaves an instant in which another thread can enter.
-    tombstoned: bool,
 }
 
 pub struct Slot {
@@ -162,7 +151,6 @@ impl Slot {
                 in_call: false,
                 parked_since_ms: None,
                 dirty: false,
-                tombstoned: false,
             }),
             execution: Mutex::new(()),
             parked_ms_total: AtomicU64::new(0),
@@ -194,9 +182,6 @@ impl Slot {
     /// Take exclusive ownership of this slot's instance for a guest call.
     pub fn enter(&self) -> Result<CallGuard<'_>, EnterError> {
         let mut g = self.inner.lock();
-        if g.tombstoned {
-            return Err(EnterError::Tombstoned);
-        }
         if g.in_call {
             return Err(EnterError::Busy);
         }
@@ -235,22 +220,10 @@ impl Slot {
         self.parks.load(Ordering::Relaxed)
     }
 
-    /// Capture is eligible only when Parked and never from a tombstone.
+    /// Capture is eligible only when Parked.
     pub fn is_capture_eligible(&self) -> bool {
         let g = self.inner.lock();
-        !g.tombstoned && !g.in_call && g.state == LifecycleTier::Parked && g.resident.is_some()
-    }
-
-    /// Mark this slot as discarded, refusing further guest calls.
-    pub fn tombstone(&self) {
-        let mut g = self.inner.lock();
-        g.tombstoned = true;
-        self.ctx.end_http_dispatch();
-        self.ctx.snapshot.lock().take();
-    }
-
-    pub fn is_tombstoned(&self) -> bool {
-        self.inner.lock().tombstoned
+        !g.in_call && g.state == LifecycleTier::Parked && g.resident.is_some()
     }
 
     pub fn is_pristine(&self) -> bool {
@@ -266,12 +239,6 @@ impl Slot {
 
     pub fn parked_ms_total(&self) -> u64 {
         self.parked_ms_total.load(Ordering::Relaxed)
-    }
-
-    pub(crate) fn set_state(&self, s: LifecycleTier) {
-        let mut g = self.inner.lock();
-        g.state = s;
-        self.publish(&g);
     }
 
     pub fn park(&self, now_ms: u64) {
@@ -291,9 +258,6 @@ impl Slot {
     /// Releases guest pages after saving a local snapshot, retaining mappings when supported.
     pub fn hibernate(&self) -> Result<(), HibernateRefused> {
         let mut g = self.inner.lock();
-        if g.tombstoned {
-            return Err(HibernateRefused::Tombstoned);
-        }
         if g.in_call {
             return Err(HibernateRefused::Hot);
         }
@@ -319,7 +283,6 @@ impl Slot {
     /// Install the caller's restored instance and return the slot to parked.
     pub fn rehydrate(&self, inst: Box<dyn InstanceOps + Send>) {
         let mut g = self.inner.lock();
-        debug_assert!(!g.tombstoned, "a destroyed instance cannot be rehydrated");
         debug_assert_eq!(g.state, LifecycleTier::Hibernated);
         g.resident = Some(inst);
         g.state = LifecycleTier::Parked;
@@ -328,13 +291,14 @@ impl Slot {
         self.publish(&g);
     }
 
-    /// Reset to template contents. Refused for a tombstone, because an `Ok`
-    /// here is what pool acquisition takes as "reusable".
+    /// Reset to template contents. Refused for a discarded instance, because
+    /// an `Ok` here is what pool acquisition takes as "reusable".
     pub fn reset(&self) -> anyhow::Result<()> {
         let mut g = self.inner.lock();
-        if g.tombstoned {
+        if g.state == LifecycleTier::Discarded {
             anyhow::bail!(
-                "refusing to reset a tombstoned slot: a hard-killed instance is discarded"
+                "refusing to reset a discarded slot: a killed instance is not laundered back \
+                 into the pool"
             );
         }
         if g.in_call {
@@ -344,7 +308,6 @@ impl Slot {
         if let Some(i) = g.resident.as_mut() {
             if let Err(error) = i.reset() {
                 g.resident = None;
-                g.tombstoned = true;
                 g.state = LifecycleTier::Discarded;
                 self.ctx.release_native_resources();
                 self.publish(&g);
@@ -363,6 +326,7 @@ impl Slot {
         g.resident = None;
         g.dormant = None;
         self.ctx.snapshot.lock().take();
+        self.ctx.end_http_dispatch();
         self.ctx.release_native_resources();
         g.state = LifecycleTier::Discarded;
         g.parked_since_ms = None;
@@ -372,7 +336,6 @@ impl Slot {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HibernateRefused {
-    Tombstoned,
     /// A call is in flight, so the stack is not empty.
     Hot,
     NotParked(LifecycleTier),

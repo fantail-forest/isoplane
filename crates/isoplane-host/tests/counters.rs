@@ -11,7 +11,6 @@ use isoplane_abi::status::TrapCode;
 use isoplane_host::cell::{Cell, CellConfig, Services, Target};
 use isoplane_host::egress::HostEgressPolicy;
 use isoplane_host::fakes::*;
-use isoplane_host::slot::EnterError;
 use isoplane_host::{Activator, ModuleId, Resolver};
 
 const T: Duration = Duration::from_secs(10);
@@ -95,8 +94,7 @@ fn app(r: &Rig, name: &str, behaviour: FakeBehaviour) -> ModuleId {
     module
 }
 
-/// `tombstones == hard_kills + traps` is checkable only because the two terms
-/// are disjoint.
+/// A hard kill and a trap each end an instance, and are counted apart.
 #[test]
 fn a_hard_kill_is_not_counted_as_a_trap() {
     let r = rig(CellConfig {
@@ -146,25 +144,14 @@ fn a_hard_kill_is_not_counted_as_a_trap() {
         m.traps, 1,
         "the budget kill was counted as a trap as well as a kill"
     );
-    assert_eq!(m.tombstones, 2, "both events tombstone");
-    assert_eq!(
-        m.tombstones,
-        m.hard_kills + m.traps,
-        "the tombstone identity; `traps` overshooting by exactly `hard_kills` means the two \
-         share an increment"
-    );
-    r.cell
-        .metrics_raw()
-        .tombstone_invariant()
-        .expect("tombstone invariant");
 
     assert_eq!(m.tenants["acme"].traps, 2, "both are faults for the tenant");
     r.cell.shutdown();
 }
 
 #[test]
-fn a_host_call_into_a_tombstone_is_refused_and_counted() {
-    let r = rig(CellConfig::for_test("tombstone-refusal"));
+fn a_trapped_instance_is_evicted() {
+    let r = rig(CellConfig::for_test("trap-eviction"));
     let module = app(
         &r,
         "trapper",
@@ -184,47 +171,19 @@ fn a_host_call_into_a_tombstone_is_refused_and_counted() {
         )
         .unwrap();
     assert_eq!(out.status, 500, "a trap is a 500");
-    let killed = out.instance;
-    assert_eq!(
-        r.cell.tombstoned_instances(),
-        vec![killed],
-        "the kill left no tombstone to call"
-    );
-    assert_eq!(
-        r.cell.metrics().tombstone_refusals,
-        0,
-        "nothing has called it yet"
-    );
-
-    let refused = r.cell.with_instance(killed, |i| i.is_parked());
+    // The response precedes the instance's release.
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while r.cell.slot(out.instance).is_some() && std::time::Instant::now() < deadline {
+        std::thread::yield_now();
+    }
     assert!(
-        matches!(refused, Err(EnterError::Tombstoned)),
-        "got {refused:?}"
+        r.cell.slot(out.instance).is_none(),
+        "a trapped instance is no longer in the cell"
     );
     assert_eq!(
-        r.cell.metrics().tombstone_refusals,
-        1,
-        "the refusal happened and the negative control did not move"
-    );
-
-    let _ = r.cell.with_instance(killed, |i| i.is_parked());
-    assert_eq!(
-        r.cell.metrics().tombstone_refusals,
-        2,
-        "it counts refusals, not tombstones: asking twice is two refusals"
-    );
-
-    let missing = r
-        .cell
-        .with_instance(isoplane_host::InstanceId(u64::MAX), |i| i.is_parked());
-    assert!(
-        matches!(missing, Err(EnterError::NotResident(_))),
-        "got {missing:?}"
-    );
-    assert_eq!(
-        r.cell.metrics().tombstone_refusals,
-        2,
-        "a missing instance is not a tombstone"
+        r.cell.idle_instances(&module),
+        Some((0, 0)),
+        "and nothing of it is kept for reuse"
     );
     r.cell.shutdown();
 }

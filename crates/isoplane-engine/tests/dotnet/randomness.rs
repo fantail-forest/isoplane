@@ -142,7 +142,7 @@ in_mono_runtime! {
                 .store(true, std::sync::atomic::Ordering::Relaxed);
             let outcome = dispatch(&mut instance, path);
             assert!(
-                outcome.completion.tombstones(),
+                !outcome.completion.instance_survives(),
                 "a failed host entropy draw must terminate the guest: {outcome:?}"
             );
             assert!(

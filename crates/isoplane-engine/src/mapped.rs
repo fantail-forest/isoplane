@@ -49,7 +49,7 @@ impl IsoplaneEngine {
             engine: self.inner.clone(),
             template: template.inner.clone(),
             live: Some(live),
-            tombstone: None,
+            discarded: None,
             last: None,
             last_violation: None,
         };

@@ -269,7 +269,7 @@ mod tests {
                 assert_eq!(guest.memory()[0], 1, "cooperative cleanup executed");
                 guest.reset().expect("clean kill leaves reusable instance");
             } else {
-                assert!(guest.reset().is_err(), "hard kill tombstones instance");
+                assert!(guest.reset().is_err(), "a hard kill discards the instance");
             }
         }
     }
@@ -344,7 +344,7 @@ mod tests {
         );
         assert!(
             guest.reset().is_err(),
-            "execution interrupted by a clock failure must be tombstoned"
+            "execution interrupted by a clock failure must be discarded"
         );
     }
 

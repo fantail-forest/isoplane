@@ -5,7 +5,7 @@
 //!   |--------- normal execution ------|---- grace ------|
 //!                                     ^                 ^
 //!                                     |                 `- hard trap: no unwinding,
-//!                                     |                    instance tombstoned
+//!                                     |                    instance discarded
 //!                                     `- cancellation requested: from the
 //!                                        guest's next slice its imports
 //!                                        answer `Cancelled` and its
@@ -90,7 +90,7 @@ pub(crate) fn check_grace_deliverable(epoch_tick_us: u64) -> crate::Result<()> {
 pub enum KillPhase {
     /// Entered grace and returned before a hard-kill check.
     Clean,
-    /// A check observed B+G or more; terminated without unwinding and tombstoned.
+    /// A check observed B+G or more; terminated without unwinding and discarded.
     Hard,
 }
 
@@ -165,8 +165,8 @@ pub enum TrapKind {
     OutOfMemory,
     /// An undeclared import, or a forbidden one inside the init sandbox.
     CapabilityViolation,
-    /// A call into an instance that a previous kill or trap tombstoned.
-    Tombstoned,
+    /// A call into an instance a previous kill or trap discarded.
+    Discarded,
     /// A host occupancy clock read failed, so execution could not enforce its budget.
     OccupancyClockUnavailable,
     /// Storage beneath the instance's mapped template failed a read: the
@@ -183,7 +183,7 @@ impl TrapKind {
             TrapKind::Sandbox => "sandbox_violation",
             TrapKind::OutOfMemory => "out_of_memory",
             TrapKind::CapabilityViolation => "capability_violation",
-            TrapKind::Tombstoned => "tombstoned",
+            TrapKind::Discarded => "discarded",
             TrapKind::OccupancyClockUnavailable => "occupancy_clock_unavailable",
             TrapKind::StorageFault => "storage_fault",
             TrapKind::Other => "trap",

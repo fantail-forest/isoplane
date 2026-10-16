@@ -75,11 +75,12 @@ impl DispatchResult {
     }
 }
 
-/// Decided while the guard is still held, because it chooses between
-/// releasing the guard and destroying it, and a guard released before its
-/// tombstone lets another thread enter memory a trap abandoned. A latched trap
-/// counts: `settle` promotes it to `Completion::Trapped`.
-pub(super) fn ends_in_tombstone(out: &DispatchOutcome, slot: &Arc<Slot>) -> bool {
+/// Whether a call ends its instance. Decided while the guard is still held,
+/// because it chooses between releasing the guard and destroying it, and a
+/// guard released before the instance is discarded lets another thread enter
+/// memory a trap abandoned. A latched trap counts: `settle` promotes it to
+/// `Completion::Trapped`.
+pub(super) fn ends_the_instance(out: &DispatchOutcome, slot: &Arc<Slot>) -> bool {
     matches!(out.completion, Completion::Trapped | Completion::BudgetKill)
         || (matches!(out.completion, Completion::Done | Completion::Parked) && slot.ctx.has_trap())
 }

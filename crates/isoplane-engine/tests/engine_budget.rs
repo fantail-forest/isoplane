@@ -35,7 +35,7 @@ fn import(name: &str, params: &str, results: &str) -> String {
 /// The guest marks memory before it spins and would mark it again on the way
 /// out; a hard kill is not unwound, so the second marker never appears.
 #[test]
-fn an_uncooperative_spinner_is_hard_killed_and_tombstoned() {
+fn an_uncooperative_spinner_is_hard_killed_and_discarded() {
     let e = test_engine();
     let wasm = guest(
         4,
@@ -87,10 +87,10 @@ fn an_uncooperative_spinner_is_hard_killed_and_tombstoned() {
         "no `finally` may run after a hard budget kill"
     );
 
-    assert!(!i.is_parked(), "a tombstone is not parked");
+    assert!(!i.is_parked(), "a discarded instance is not parked");
     assert!(
         !i.is_capture_eligible(),
-        "a tombstone is never a capture candidate"
+        "a discarded instance is never a capture candidate"
     );
     assert!(
         i.reset().is_err(),
@@ -98,12 +98,12 @@ fn an_uncooperative_spinner_is_hard_killed_and_tombstoned() {
     );
     assert!(
         i.capture_mutable_state().is_err(),
-        "deltas are never captured from a tombstone"
+        "deltas are never captured from a discarded instance"
     );
 }
 
 #[test]
-fn a_tombstoned_instance_refuses_the_next_call() {
+fn a_discarded_instance_refuses_the_next_call() {
     let e = test_engine();
     let wasm = guest(4, "", SPIN, "(call $spin) (i64.const 0)", DONE);
     let t = e.load_template(&wasm).expect("template");
@@ -121,13 +121,13 @@ fn a_tombstoned_instance_refuses_the_next_call() {
     assert_eq!(
         refused.completion,
         Completion::Trapped,
-        "a call into a tombstone must not run the guest"
+        "a call into a discarded instance must not run the guest"
     );
     let trap = refused.trap.expect("the refusal is reported as a trap");
     assert_eq!(
         trap.kind,
-        TrapKind::Tombstoned,
-        "the refusal names the tombstone: {trap:?}"
+        TrapKind::Discarded,
+        "the refusal says the instance was discarded: {trap:?}"
     );
     assert_eq!(
         refused.occupancy_ns, 0,
@@ -137,8 +137,8 @@ fn a_tombstoned_instance_refuses_the_next_call() {
     let woke = i.wake(1, &ResultRecord::Ok(vec![]), b);
     assert_eq!(
         woke.trap.map(|t| t.kind),
-        Some(TrapKind::Tombstoned),
-        "a wake into a tombstone is refused too"
+        Some(TrapKind::Discarded),
+        "a wake into a discarded instance is refused too"
     );
 }
 
@@ -203,7 +203,7 @@ fn a_guest_abort_is_a_guest_panic_not_a_sandbox_violation() {
     );
     assert!(
         i.reset().is_err(),
-        "a trapped instance is tombstoned and cannot be reset"
+        "a trapped instance is discarded and cannot be reset"
     );
 }
 

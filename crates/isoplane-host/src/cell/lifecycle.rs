@@ -1,4 +1,4 @@
-//! One dispatch from admission to its final response: the request lifecycle across every slice, the outcome switch, and the books a tombstone keeps.
+//! One dispatch from admission to its final response: the request lifecycle across every slice, the outcome switch, and the books a killed instance keeps.
 
 use super::*;
 
@@ -146,7 +146,7 @@ impl Cell {
             drop(hot);
             job.completion.add_slice(&out);
             entry.meters.record_occupancy(&out);
-            if ends_in_tombstone(&out, &slot) {
+            if ends_the_instance(&out, &slot) {
                 guard.destroy();
             } else {
                 drop(guard);
@@ -248,7 +248,7 @@ impl Cell {
                     self.count_enter_refusal(EnterError::Busy);
                     return;
                 }
-                Err(error @ (EnterError::Tombstoned | EnterError::NotResident(_))) => {
+                Err(error @ EnterError::NotResident(_)) => {
                     self.count_enter_refusal(error);
                     owner.select(TerminalReason::EntryRefused, 409);
                     self.respond(slot, owner.failure_result(409, "instance_unavailable"));
@@ -280,7 +280,7 @@ impl Cell {
             drop(hot);
             owner.add_slice(&outcome);
             entry.meters.record_occupancy(&outcome);
-            if ends_in_tombstone(&outcome, slot) {
+            if ends_the_instance(&outcome, slot) {
                 guard.destroy();
             } else {
                 drop(guard);
@@ -477,13 +477,12 @@ impl Cell {
                     self.breaker.record_kill(&breaker_key, crate::now_ms());
                 } else {
                     entry.meters.record_trap();
-                    // A hard kill is not a trap, or `tombstones` would not
-                    // equal `hard_kills + traps`.
+                    // A hard kill is not also a trap.
                     self.metrics.traps.fetch_add(1, Ordering::Relaxed);
                 }
-                slot.tombstone();
-                self.metrics.tombstones.fetch_add(1, Ordering::Relaxed);
-                self.remember_tombstone(slot);
+                // Refuses entry from here; `finish_and_release` settles the
+                // pool's books.
+                slot.discard();
                 let msg = out
                     .trap
                     .as_ref()

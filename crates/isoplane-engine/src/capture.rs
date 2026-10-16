@@ -9,9 +9,9 @@ use crate::snapshot::GlobalValue;
 use crate::{InstanceImage, Result};
 
 pub(crate) fn capture_mutable_state(inst: &mut Instance) -> Result<InstanceImage> {
-    if let Some(why) = inst.tombstone {
+    if let Some(why) = inst.discarded {
         bail!(
-            "refusing to capture a tombstoned instance ({why}); its memory is a state no \
+            "refusing to capture a discarded instance ({why}); its memory is a state no \
              execution produced"
         );
     }
@@ -35,8 +35,8 @@ pub(crate) fn capture_mutable_state(inst: &mut Instance) -> Result<InstanceImage
 }
 
 pub(crate) fn restore_mutable_state(inst: &mut Instance, img: &InstanceImage) -> Result<()> {
-    if inst.tombstone.is_some() {
-        bail!("refusing to restore into a tombstoned instance");
+    if inst.discarded.is_some() {
+        bail!("refusing to restore into a discarded instance");
     }
     if !img.table_mutations.is_empty() {
         bail!("table mutations cannot be applied: wasmtime exposes no function-index to funcref mapping");

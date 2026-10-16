@@ -279,27 +279,9 @@ pub(super) mod cell_tests {
             "and it says what happened"
         );
 
-        let slot = cell
-            .slot(failed.instance)
-            .expect("the caught panic retains its slot for inspection");
-        let mut bindings = crate::bindings::CellBindings::new(slot.ctx.clone());
-        let payload = postcard::to_allocvec(&isoplane_abi::calls::FetchRequest {
-            method: "GET".into(),
-            url: "http://example.test/".into(),
-            headers: vec![],
-            body: vec![],
-        })
-        .expect("the probe request must encode");
-        use isoplane_engine::HostBindings;
-        let future = bindings.call_future(isoplane_engine::ImportCall {
-            import: "http_fetch",
-            payload: &payload,
-            scalars: [0; 3],
-        });
         assert!(
-            matches!(cell.futures().take_ready(failed.instance),
-            Some((id, isoplane_abi::result::ResultRecord::Err(isoplane_abi::result::FutureError::Cancelled))) if id == future),
-            "the caught panic must close its HTTP scope even while retaining the context"
+            cell.slot(failed.instance).is_none(),
+            "the caught panic evicts its instance"
         );
 
         let ok = cell
@@ -488,7 +470,7 @@ pub(super) mod cell_tests {
         entry
             .pool
             .release(candidate.clone(), crate::disposition::policy_reset());
-        candidate.tombstone();
+        candidate.discard();
         let (replacement, source) = cell.acquire_handler(&entry).expect("fallback activation");
         assert_eq!(
             source,

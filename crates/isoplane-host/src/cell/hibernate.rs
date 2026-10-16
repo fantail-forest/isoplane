@@ -53,9 +53,7 @@ impl Cell {
                 self.note_caught_panic("capture");
                 if let Some(owner) = owner {
                     self.end_failed_capture(slot, entry, &owner, TerminalReason::HostPanic);
-                } else if slot.is_tombstoned() {
-                    slot.discard();
-                    self.remember_tombstone(slot);
+                } else if slot.state() == LifecycleTier::Discarded {
                     self.forget(slot);
                 }
                 Err(hibernate_policy::CaptureRefused::Failed(
@@ -86,12 +84,12 @@ impl Cell {
                 return Err(hibernate_policy::CaptureRefused::SnapshotWrite(e));
             }
             Err(e) => {
-                // A tombstone raised inside the gc hint is nowhere near the
-                // dispatch path; `capture` made the slot match the engine and
-                // the books are this half.
+                // A kill inside the gc hint is nowhere near the dispatch path;
+                // `capture` made the slot match the engine and the books are
+                // this half.
                 if let hibernate_policy::CaptureRefused::GcHintDidNotComplete(c) = e {
-                    if c.tombstones() {
-                        self.record_offpath_tombstone(slot, entry, c);
+                    if !c.instance_survives() {
+                        self.record_offpath_kill(slot, entry, c);
                         if let Some(owner) = self
                             .active
                             .with(&slot.id, |request| request.completion.clone())

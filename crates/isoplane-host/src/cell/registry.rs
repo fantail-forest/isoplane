@@ -228,13 +228,8 @@ impl Cell {
         Ok((slot, src))
     }
 
-    /// Falls back to the tombstone ring, so a killed instance refuses rather
-    /// than reading as "no such instance".
     pub fn slot(&self, id: InstanceId) -> Option<Arc<Slot>> {
-        if let Some(s) = self.residents.lock().get(&id).map(|r| r.slot.clone()) {
-            return Some(s);
-        }
-        self.tombstoned.lock().iter().find(|s| s.id == id).cloned()
+        self.residents.lock().get(&id).map(|r| r.slot.clone())
     }
 
     pub fn module_tenant(&self, module: &ModuleId) -> Option<String> {
