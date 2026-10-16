@@ -51,9 +51,16 @@ fn fetching_guest(destination: SocketAddr) -> Vec<u8> {
           (func (export "isoplane_handle") (param i32 i32) (result i64)
             (drop (call $fetch (i32.const 1024) (i32.const {})))
             (i64.const {pending}))
-          (func (export "isoplane_wake") (param i64) (param $result i32) (param i32) (result i64)
+          ;; Steps past the wake record's dispatch, a varint, to its result.
+          (func $result (param $at i32) (result i32)
+            (block $end (loop $byte
+              (br_if $end (i32.eqz (i32.and (i32.load8_u (local.get $at)) (i32.const 128))))
+              (local.set $at (i32.add (local.get $at) (i32.const 1)))
+              (br $byte)))
+            (i32.add (local.get $at) (i32.const 1)))
+          (func (export "isoplane_wake") (param i64) (param $wake i32) (param i32) (result i64)
             (i64.shl (i64.extend_i32_u
-              (if (result i32) (i32.eq (i32.load8_u (local.get $result)) (i32.const {ok_tag}))
+              (if (result i32) (i32.eq (i32.load8_u (call $result (local.get $wake))) (i32.const {ok_tag}))
                 (then (call $response (i32.const 2048) (i32.const {})))
                 (else (call $response (i32.const 3072) (i32.const {})))))
               (i64.const 32))))"#,

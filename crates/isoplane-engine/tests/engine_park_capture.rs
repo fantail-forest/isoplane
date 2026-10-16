@@ -57,7 +57,7 @@ fn an_instance_is_parked_only_after_returning_pending() {
     );
     assert!(i.is_parked(), "an instance that returned pending is parked");
 
-    i.wake(1, &ResultRecord::Ok(vec![]), OccupancyBudget::default());
+    i.wake(1, 1, &ResultRecord::Ok(vec![]), OccupancyBudget::default());
     assert!(
         !i.is_parked(),
         "an instance that returned done is not parked"
@@ -208,7 +208,13 @@ fn aspnet_request_scopes_remain_isolated_after_restoring_guest_state() {
     };
     for _ in 0..2 {
         let result = instance.dispatch(&request, budget);
-        let result = acknowledge_response_writes(&mut instance, &recorder, result, budget);
+        let result = acknowledge_response_writes(
+            &mut instance,
+            &recorder,
+            request.dispatch_id,
+            result,
+            budget,
+        );
         assert!(
             matches!(result.status, PollStatus::Done { .. }),
             "a native ASP.NET request must dispose its scope before the next request: {result:?}"
@@ -227,7 +233,13 @@ fn aspnet_request_scopes_remain_isolated_after_restoring_guest_state() {
         .expect("ASP.NET state must restore in a new Store");
     restored.memory().copy_from_slice(&memory);
     let result = restored.dispatch(&request, budget);
-    let result = acknowledge_response_writes(&mut restored, &recorder, result, budget);
+    let result = acknowledge_response_writes(
+        &mut restored,
+        &recorder,
+        request.dispatch_id,
+        result,
+        budget,
+    );
     assert!(
         matches!(result.status, PollStatus::Done { .. }),
         "restored ASP.NET state must not retain a completed request scope: {result:?}"
@@ -270,11 +282,18 @@ fn aspnet_cancellation_after_restore_disposes_the_request_scope() {
         .expect("the suspended request state must restore");
     restored.memory().copy_from_slice(&memory);
     let result = restored.wake(
+        1,
         42,
         &ResultRecord::Err(isoplane_abi::result::FutureError::Cancelled),
         budget,
     );
-    let result = acknowledge_response_writes(&mut restored, &recorder, result, budget);
+    let result = acknowledge_response_writes(
+        &mut restored,
+        &recorder,
+        request.dispatch_id,
+        result,
+        budget,
+    );
     assert_eq!(
         result.completion,
         Completion::Done,
@@ -297,7 +316,13 @@ fn aspnet_cancellation_after_restore_disposes_the_request_scope() {
     request.dispatch_id += 1;
     request.cancel_future += 1;
     let result = restored.dispatch(&request, budget);
-    let result = acknowledge_response_writes(&mut restored, &recorder, result, budget);
+    let result = acknowledge_response_writes(
+        &mut restored,
+        &recorder,
+        request.dispatch_id,
+        result,
+        budget,
+    );
     assert_eq!(
         result.completion,
         Completion::Done,
@@ -318,6 +343,7 @@ fn aspnet_cancellation_after_restore_disposes_the_request_scope() {
 fn acknowledge_response_writes(
     instance: &mut Instance,
     recorder: &Recorder,
+    dispatch: u64,
     mut outcome: DispatchOutcome,
     budget: OccupancyBudget,
 ) -> DispatchOutcome {
@@ -327,6 +353,7 @@ fn acknowledge_response_writes(
         }
         let (future, bytes) = recorder.response_writes.lock().pop_front().expect("the parked ASP.NET fixture must be awaiting an explicit response write acknowledgement");
         outcome = instance.wake(
+            dispatch,
             future,
             &ResultRecord::Ok(postcard::to_allocvec(&bytes).expect("write byte count")),
             budget,

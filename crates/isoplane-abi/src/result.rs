@@ -2,9 +2,18 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Delivered to the guest via `isoplane_wake(future_id, result)`. The payload is
-/// opaque here; the guest SDK recorded which typed response the future expects
-/// when it issued the import call.
+/// What `isoplane_wake(future_id, record)` delivers: a completed future's
+/// result, and the dispatch whose slice the wake begins. The slice runs only
+/// that dispatch, and the status it returns is that dispatch's.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WakeRecord {
+    pub dispatch: u64,
+    pub result: ResultRecord,
+}
+
+/// How a host future completes. The payload is opaque here; the guest SDK
+/// recorded which typed response the future expects when it issued the import
+/// call.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ResultRecord {
     Ok(#[serde(with = "serde_bytes")] Vec<u8>),

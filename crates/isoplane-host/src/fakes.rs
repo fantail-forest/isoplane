@@ -408,6 +408,7 @@ impl InstanceOps for FakeInstance {
     }
     fn wake(
         &mut self,
+        _dispatch: u64,
         future: u64,
         res: &ResultRecord,
         budget: OccupancyBudget,

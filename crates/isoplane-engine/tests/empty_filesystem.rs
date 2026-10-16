@@ -215,6 +215,7 @@ fn filesystem_handles_survive_capture_in_guest_memory_alone() {
     restored.memory().copy_from_slice(&bytes);
     let result = restored.wake(
         1,
+        1,
         &isoplane_abi::result::ResultRecord::Ok(vec![]),
         OccupancyBudget::default(),
     );

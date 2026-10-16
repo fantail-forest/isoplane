@@ -584,7 +584,12 @@ impl ReturnedGuest {
                         .restore_mutable_state(&image)
                         .expect("the guest globals must restore");
                     instance.memory().copy_from_slice(&memory);
-                    let outcome = instance.wake(future, result, budget(&self.context));
+                    let outcome = instance.wake(
+                        self.context.dispatch_id(),
+                        future,
+                        result,
+                        budget(&self.context),
+                    );
                     let snapshot = capture(&mut instance, &outcome);
                     (outcome, snapshot)
                 })

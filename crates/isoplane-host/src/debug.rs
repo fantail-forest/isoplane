@@ -226,11 +226,12 @@ impl InstanceOps for DebugInstance {
     }
     fn wake(
         &mut self,
+        dispatch: u64,
         future: u64,
         result: &ResultRecord,
         budget: OccupancyBudget,
     ) -> DispatchOutcome {
-        let outcome = self.instance.wake(future, result, budget);
+        let outcome = self.instance.wake(dispatch, future, result, budget);
         if outcome.completion == Completion::Parked {
             return outcome;
         }
@@ -417,7 +418,12 @@ mod tests {
         );
         assert_eq!(
             instance
-                .wake(1, &ResultRecord::Ok(Vec::new()), OccupancyBudget::default())
+                .wake(
+                    1,
+                    1,
+                    &ResultRecord::Ok(Vec::new()),
+                    OccupancyBudget::default()
+                )
                 .completion,
             Completion::Parked,
             "an intermediate initialization wake must keep the dispatch pending"
@@ -429,7 +435,12 @@ mod tests {
         );
         assert_eq!(
             instance
-                .wake(2, &ResultRecord::Ok(Vec::new()), OccupancyBudget::default())
+                .wake(
+                    1,
+                    2,
+                    &ResultRecord::Ok(Vec::new()),
+                    OccupancyBudget::default()
+                )
                 .completion,
             Completion::Done,
             "the final initialization wake must run the original dispatch"
@@ -456,7 +467,12 @@ mod tests {
         );
         assert_eq!(
             instance
-                .wake(1, &ResultRecord::Ok(Vec::new()), OccupancyBudget::default())
+                .wake(
+                    1,
+                    1,
+                    &ResultRecord::Ok(Vec::new()),
+                    OccupancyBudget::default()
+                )
                 .completion,
             Completion::Trapped,
             "a failed initialization wake must end the dispatch"

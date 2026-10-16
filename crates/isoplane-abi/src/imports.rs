@@ -168,6 +168,11 @@ pub const IMPORTS: &[ImportDef] = &[
              byte length for a zero-length sizing probe; available during preparation and activation") }
     },
 
+    ImportDef { buf: BufSpec::None, ..imp!("dispatch_ready", Core, Sig { params: &[I64], results: &[I64] }, FUT,
+        "a host future owned by another dispatch in progress on the instance, completed once the current slice \
+         ends, so a slice that made that dispatch's work ready can have it run in a slice of its own; 0 when no \
+         such dispatch is in progress") },
+
     // ---- observability ----------------------------------------------------
     ImportDef { buf: BufSpec::In(1), init_visible: true, ..imp!("log_emit", Observe, Sig { params: &[I32, I32, I32], results: &[] }, SYNC,
         "structured log at `trace=0` .. `error=4`; worker occupancy counts against the dispatch budget, \

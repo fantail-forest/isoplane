@@ -9,7 +9,7 @@
 use isoplane_guest::isoplane_abi::dispatch::{
     DispatchKind, DispatchRecord, HttpRequest, TraceContext,
 };
-use isoplane_guest::isoplane_abi::result::ResultRecord;
+use isoplane_guest::isoplane_abi::result::{ResultRecord, WakeRecord};
 use isoplane_guest::isoplane_abi::status::PollStatus;
 use isoplane_guest::testing::{with_stub_host, RESP_HANDLE};
 use isoplane_guest::{Clock, Ctx, Handler, Request, Response};
@@ -29,6 +29,14 @@ impl Handler for Api {
 }
 
 isoplane_guest::export_handler!(Api);
+
+/// A wake for the dispatch `record` starts.
+fn wake(result: ResultRecord) -> WakeRecord {
+    WakeRecord {
+        dispatch: 7,
+        result,
+    }
+}
 
 fn record(path: &str) -> DispatchRecord {
     DispatchRecord {
@@ -82,7 +90,7 @@ fn a_dispatch_that_waits_parks_and_a_wake_completes_it() {
 
         // 2. The wake. A new slice, a fresh wasm stack.
         let res = ResultRecord::Ok(Vec::new());
-        let enc = postcard::to_allocvec(&res).unwrap();
+        let enc = postcard::to_allocvec(&wake(res)).unwrap();
         let (ptr, len) = handoff(&enc);
         let st = PollStatus::decode(isoplane_wake(fut_id, ptr, len));
 

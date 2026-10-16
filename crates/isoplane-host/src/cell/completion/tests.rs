@@ -55,6 +55,7 @@ impl isoplane_engine::InstanceOps for PanicsOnDispatch {
     }
     fn wake(
         &mut self,
+        _d: u64,
         _f: u64,
         _r: &isoplane_abi::result::ResultRecord,
         _b: OccupancyBudget,

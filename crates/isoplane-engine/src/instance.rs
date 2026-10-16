@@ -65,7 +65,8 @@ impl std::fmt::Debug for Instance {
 
 pub(crate) enum Entry<'a> {
     Handle(&'a DispatchRecord),
-    Wake(u64, &'a ResultRecord),
+    /// The dispatch the slice runs, the completed future and its result.
+    Wake(u64, u64, &'a ResultRecord),
     GcHint(u8),
     Initialize,
     InitializeRuntime,
@@ -393,9 +394,15 @@ pub trait InstanceOps {
     }
     /// Run a dispatch to completion, park, or kill.
     fn dispatch(&mut self, rec: &DispatchRecord, budget: OccupancyBudget) -> DispatchOutcome;
-    /// Deliver a completed host future.
-    fn wake(&mut self, future: u64, res: &ResultRecord, budget: OccupancyBudget)
-        -> DispatchOutcome;
+    /// Deliver a completed host future to the dispatch that owns it, in a
+    /// slice of that dispatch.
+    fn wake(
+        &mut self,
+        dispatch: u64,
+        future: u64,
+        res: &ResultRecord,
+        budget: OccupancyBudget,
+    ) -> DispatchOutcome;
     /// Called before hibernation capture so the guest GC can compact and zero
     /// the freed tail; zeroed pages compress out of the delta.
     fn gc_hint(&mut self, pressure: u8) -> DispatchOutcome;
@@ -470,11 +477,12 @@ impl InstanceOps for Instance {
 
     fn wake(
         &mut self,
+        dispatch: u64,
         future: u64,
         res: &ResultRecord,
         budget: OccupancyBudget,
     ) -> DispatchOutcome {
-        self.slice(budget, Entry::Wake(future, res))
+        self.slice(budget, Entry::Wake(dispatch, future, res))
     }
 
     fn gc_hint(&mut self, pressure: u8) -> DispatchOutcome {

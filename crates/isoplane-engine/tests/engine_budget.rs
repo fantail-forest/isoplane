@@ -134,7 +134,7 @@ fn a_discarded_instance_refuses_the_next_call() {
         "a refused call bills nothing, since nothing ran"
     );
 
-    let woke = i.wake(1, &ResultRecord::Ok(vec![]), b);
+    let woke = i.wake(1, 1, &ResultRecord::Ok(vec![]), b);
     assert_eq!(
         woke.trap.map(|t| t.kind),
         Some(TrapKind::Discarded),

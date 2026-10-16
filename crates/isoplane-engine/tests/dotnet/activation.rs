@@ -87,7 +87,7 @@ fn request_identifier(instance: &mut Instance, recorder: &Recorder) -> String {
             .pop_front()
             .expect("a parked ASP.NET response must be awaiting a write");
         let written = postcard::to_allocvec(&bytes).expect("encode the written byte count");
-        outcome = instance.wake(future, &ResultRecord::Ok(written), budget());
+        outcome = instance.wake(1, future, &ResultRecord::Ok(written), budget());
     }
     assert_eq!(
         outcome.completion,

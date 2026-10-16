@@ -315,8 +315,11 @@ impl Cell {
         let t0 = Instant::now();
         let hot = super::completion::HotSlice::new(&self.hot);
         owner.begin_slice();
-        let outcome = tracing::info_span!("guest_slice")
-            .in_scope(|| guard.instance().wake(ready.future, &ready.result, budget));
+        let outcome = tracing::info_span!("guest_slice").in_scope(|| {
+            guard
+                .instance()
+                .wake(ready.dispatch, ready.future, &ready.result, budget)
+        });
         drop(hot);
         owner.add_slice(&outcome);
         entry.meters.record_occupancy(&outcome);

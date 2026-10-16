@@ -236,6 +236,7 @@ mod tests {
         }
         fn wake(
             &mut self,
+            _d: u64,
             _f: u64,
             _r: &isoplane_abi::result::ResultRecord,
             _b: isoplane_engine::OccupancyBudget,

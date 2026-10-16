@@ -4,7 +4,7 @@ mod common;
 
 use isoplane_abi::config::Limits;
 use isoplane_abi::dispatch::HttpRequest;
-use isoplane_abi::result::{FutureError, ResultRecord};
+use isoplane_abi::result::{FutureError, ResultRecord, WakeRecord};
 use isoplane_engine::{Completion, EngineConfig, IsoplaneEngine};
 use isoplane_host::cell::{CellConfig, Target};
 use isoplane_host::{EngineActivator, ModuleId};
@@ -13,48 +13,10 @@ use std::time::Duration;
 
 #[test]
 fn request_body_reads_reject_zero_and_negative_sizes_through_the_real_import() {
-    let denied = postcard::to_allocvec(&ResultRecord::Err(FutureError::Denied(String::new())))
-        .expect("canonical denied result");
     for max_bytes in [0, -1] {
-        let wasm = wat::parse_str(format!(
-            r#"(module
-          (import "isoplane" "req_body_read" (func $read (param i32) (result i64)))
-          (memory (export "memory") 2 2)
-          (func (export "isoplane_alloc") (param i32 i32) (result i32) (i32.const 4096))
-          (func (export "isoplane_handle") (param i32 i32) (result i64)
-            (drop (call $read (i32.const {max_bytes}))) (i64.const 1))
-          (func (export "isoplane_wake") (param i64) (param $ptr i32) (param i32) (result i64)
-            (if (i32.ne (i32.load8_u (local.get $ptr)) (i32.const {})) (then unreachable))
-            (if (i32.ne (i32.load8_u offset=1 (local.get $ptr)) (i32.const {})) (then unreachable))
-            (i64.const 0))
-        )"#,
-            denied[0], denied[1]
-        ))
-        .expect("the hostile read-size fixture must encode");
-        let engine = Arc::new(
-            IsoplaneEngine::new(EngineConfig {
-                pooling: false,
-                ..Default::default()
-            })
-            .expect("real engine"),
-        );
         let module = ModuleId::new("read-size", "v1");
-        let activator = Arc::new(
-            EngineActivator::load(engine, module.clone(), &wasm)
-                .expect("optional request import must link"),
-        );
-        assert!(
-            activator.template().imports("isoplane", "req_body_read"),
-            "the compiled import must advertise upload delivery capability"
-        );
         let (cell, _) =
             common::rig_resolving(CellConfig::for_test("read-size"), "93.184.216.34:80");
-        cell.register_module(
-            "owner",
-            activator,
-            common::manifest("read-size", Limits::default()),
-        )
-        .expect("register hostile read guest");
         let request = cell.http_record(
             &module,
             HttpRequest {
@@ -66,6 +28,57 @@ fn request_body_reads_reject_zero_and_negative_sizes_through_the_real_import() {
                 body: vec![],
             },
         );
+        // The wake for the refused read must carry the canonical Denied
+        // result; its message, encoded last, is not compared.
+        let mut denied = postcard::to_allocvec(&WakeRecord {
+            dispatch: request.dispatch_id,
+            result: ResultRecord::Err(FutureError::Denied(String::new())),
+        })
+        .expect("canonical denied wake");
+        denied.pop();
+        let checks: String = denied
+            .iter()
+            .enumerate()
+            .map(|(offset, byte)| {
+                format!(
+                    "(if (i32.ne (i32.load8_u offset={offset} (local.get $ptr)) (i32.const {byte})) (then unreachable))"
+                )
+            })
+            .collect();
+        let wasm = wat::parse_str(format!(
+            r#"(module
+          (import "isoplane" "req_body_read" (func $read (param i32) (result i64)))
+          (memory (export "memory") 2 2)
+          (func (export "isoplane_alloc") (param i32 i32) (result i32) (i32.const 4096))
+          (func (export "isoplane_handle") (param i32 i32) (result i64)
+            (drop (call $read (i32.const {max_bytes}))) (i64.const 1))
+          (func (export "isoplane_wake") (param i64) (param $ptr i32) (param i32) (result i64)
+            {checks}
+            (i64.const 0))
+        )"#
+        ))
+        .expect("the hostile read-size fixture must encode");
+        let engine = Arc::new(
+            IsoplaneEngine::new(EngineConfig {
+                pooling: false,
+                ..Default::default()
+            })
+            .expect("real engine"),
+        );
+        let activator = Arc::new(
+            EngineActivator::load(engine, module.clone(), &wasm)
+                .expect("optional request import must link"),
+        );
+        assert!(
+            activator.template().imports("isoplane", "req_body_read"),
+            "the compiled import must advertise upload delivery capability"
+        );
+        cell.register_module(
+            "owner",
+            activator,
+            common::manifest("read-size", Limits::default()),
+        )
+        .expect("register hostile read guest");
         let result = cell
             .dispatch_blocking(
                 &module,

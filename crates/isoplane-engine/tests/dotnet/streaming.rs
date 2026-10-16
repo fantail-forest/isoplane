@@ -55,7 +55,7 @@ in_mono_runtime! {
                 .any(|call| call.starts_with("resp_finish(")),
             "completion while a write is pending must not finish the host response"
         );
-        let outcome = instance.wake(1, &ResultRecord::Ok(vec![1]), budget());
+        let outcome = instance.wake(1, 1, &ResultRecord::Ok(vec![1]), budget());
         assert_eq!(
             outcome.completion,
             Completion::Done,

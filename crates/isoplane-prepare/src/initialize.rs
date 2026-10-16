@@ -206,7 +206,9 @@ fn run_stage(
         usage.unoccupied_ns = usage
             .unoccupied_ns
             .saturating_add((wait_start.elapsed().as_nanos() as u64).saturating_sub(reactor_ns));
+        // Initialization is not a dispatch.
         outcome = instance.wake(
+            0,
             completion.0,
             &completion.1,
             initialization_budget(request, usage.occupancy_ns, start.elapsed())?,

@@ -20,10 +20,14 @@ pub(crate) fn call_entry(live: &mut Live, entry: Entry<'_>) -> wasmtime::Result<
             let f = live.f_handle.clone();
             Ok(f.call(&mut live.store, (ptr, len))? as u64)
         }
-        Entry::Wake(future, res) => {
-            let bytes = postcard::to_allocvec(res)
+        Entry::Wake(dispatch, future, res) => {
+            let record = isoplane_abi::result::WakeRecord {
+                dispatch,
+                result: res.clone(),
+            };
+            let bytes = postcard::to_allocvec(&record)
                 .map_err(wasmtime::Error::new)
-                .context("encoding result record")?;
+                .context("encoding wake record")?;
             let (ptr, len) = handoff(live, &bytes)?;
             let f = live.f_wake.clone();
             Ok(f.call(&mut live.store, (future as i64, ptr, len))? as u64)

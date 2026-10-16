@@ -44,6 +44,7 @@ pub const SCALARS: &[(&str, &[&str])] = &[
     ("log_emit", &["level"]),
     ("trace_span_end", &["span"]),
     ("clock_deadline_in", &["ms"]),
+    ("dispatch_ready", &["dispatch"]),
     ("timers_between_requests", &["minimum_interval_ms"]),
     ("resp_write", &["response_handle"]),
     ("resp_finish", &["response_handle"]),
@@ -89,8 +90,16 @@ impl CellBindings {
         import: &'static str,
         rearmable: bool,
     ) -> Option<u64> {
+        self.alloc_for(self.ctx.dispatch_id(), import, rearmable)
+    }
+
+    fn alloc_for(
+        &self,
+        dispatch: u64,
+        import: &'static str,
+        rearmable: bool,
+    ) -> Option<u64> {
         let rt = self.rt()?;
-        let dispatch = self.ctx.dispatch_id();
         let limit = self.ctx.limits.pending_futures_per_dispatch;
         let allocated = if rearmable {
             rt.futures
@@ -109,6 +118,19 @@ impl CellBindings {
                 self.ctx.latch_trap(TrapCode::TooManyFutures);
                 None
             }
+        }
+    }
+
+    /// A future owned by `dispatch`, already complete, so its wake gives that
+    /// dispatch a slice once the current one ends; 0 if `dispatch` is not in
+    /// progress on this instance.
+    fn dispatch_ready(&self, dispatch: u64) -> u64 {
+        if dispatch == 0 || self.ctx.dispatch(dispatch).is_none() {
+            return 0;
+        }
+        match self.alloc_for(dispatch, "dispatch_ready", false) {
+            Some(id) => self.settle_now(id, ResultRecord::Ok(Vec::new())),
+            None => INVALID_FUTURE,
         }
     }
 
@@ -226,6 +248,9 @@ impl HostBindings for CellBindings {
                 return INVALID_FUTURE;
             }
         };
+        if def.name == "dispatch_ready" {
+            return self.dispatch_ready(call.scalars[0]);
+        }
         let Some(id) = self.alloc(def.name, false) else {
             return INVALID_FUTURE;
         };

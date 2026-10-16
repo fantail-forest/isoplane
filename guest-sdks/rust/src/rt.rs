@@ -48,7 +48,7 @@ use core::pin::Pin;
 use core::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
 use isoplane_abi::dispatch::DispatchRecord;
-use isoplane_abi::result::ResultRecord;
+use isoplane_abi::result::{ResultRecord, WakeRecord};
 use isoplane_abi::status::{PollStatus, TrapCode};
 
 use std::alloc::{alloc as raw_alloc, dealloc as raw_dealloc};
@@ -75,14 +75,9 @@ struct Task {
 }
 
 /// One entry of the future table: a host future id, the task waiting on it,
-/// the dispatch that registered it, and the result once `isoplane_wake`
-/// delivers one.
+/// and the result once `isoplane_wake` delivers one.
 struct FutureSlot {
     owner: u32,
-    dispatch: u64,
-    /// The task stopped waiting; the slot stays only so a late wake still
-    /// knows its dispatch.
-    dropped: bool,
     result: Option<ResultRecord>,
 }
 
@@ -200,19 +195,15 @@ impl Runtime {
         if let Some(code) = self.trap.take() {
             return PollStatus::Trapped { code };
         }
-        let done = |rt: &mut Runtime, response| {
-            rt.futures.retain(|_, slot| slot.dispatch != dispatch);
-            PollStatus::Done { response }
-        };
         if let Some(r) = self.main_response.remove(&dispatch) {
-            return done(self, r);
+            return PollStatus::Done { response: r };
         }
         if self.live_tasks.contains_key(&dispatch) {
             self.parks += 1;
             PollStatus::Pending
         } else {
             // All the dispatch's tasks have finished.
-            done(self, 0)
+            PollStatus::Done { response: 0 }
         }
     }
 }
@@ -338,20 +329,18 @@ pub(crate) enum Registered {
 
 pub(crate) fn register(id: u64) -> Registered {
     with(|rt| {
-        if rt.futures.values().filter(|slot| !slot.dropped).count() >= MAX_PENDING_FUTURES {
+        if rt.futures.len() >= MAX_PENDING_FUTURES {
             rt.trap = Some(TrapCode::TooManyFutures);
             return Registered::TooMany;
         }
         let owner = rt.current;
-        let dispatch = rt.current_dispatch;
-        let slot = rt.futures.entry(id).or_insert(FutureSlot {
-            owner,
-            dispatch,
-            dropped: false,
-            result: None,
-        });
-        slot.owner = owner;
-        slot.dropped = false;
+        rt.futures
+            .entry(id)
+            .or_insert(FutureSlot {
+                owner,
+                result: None,
+            })
+            .owner = owner;
         Registered::Ok
     })
 }
@@ -368,37 +357,26 @@ pub(crate) fn take_result(id: u64) -> Option<ResultRecord> {
 /// until the dispatch ends. See guests/README.md.
 pub(crate) fn forget(id: u64) {
     with(|rt| {
-        if let Some(slot) = rt.futures.get_mut(&id) {
-            slot.dropped = true;
-            slot.result = None;
-        }
+        rt.futures.remove(&id);
     });
 }
 
-/// Delivers a result and returns the dispatch the wake's slice runs.
-pub(crate) fn deliver(id: u64, res: ResultRecord) -> u64 {
+pub(crate) fn deliver(id: u64, res: ResultRecord) {
     with(|rt| {
-        let Some(slot) = rt.futures.get_mut(&id) else {
-            return rt.current_dispatch;
-        };
-        let dispatch = slot.dispatch;
-        if slot.dropped {
-            // The guest dropped the future. Dropping the result is correct --
-            // there is nobody left to observe it.
-            rt.futures.remove(&id);
-        } else {
+        if let Some(slot) = rt.futures.get_mut(&id) {
             slot.result = Some(res);
             let owner = slot.owner;
             rt.mark_ready(owner);
         }
-        dispatch
-    })
+        // Unknown id: the guest dropped the future. Dropping the result is
+        // correct -- there is nobody left to observe it.
+    });
 }
 
 /// Futures registered and not yet delivered. Bounded by the plan's
 /// `pending_futures_per_dispatch`.
 pub fn pending_futures() -> usize {
-    with(|rt| rt.futures.values().filter(|slot| !slot.dropped).count())
+    with(|rt| rt.futures.len())
 }
 
 /// Test/telemetry hook: total `Future::poll` calls on top-level tasks.
@@ -465,12 +443,13 @@ pub fn export_handle(ptr: usize, len: usize, make: fn(DispatchRecord) -> BoxTask
     run(dispatch).encode()
 }
 
-/// `isoplane_wake(future, ptr, len) -> poll-status`.
+/// `isoplane_wake(future, ptr, len) -> poll-status`, for the dispatch the
+/// wake record names.
 pub fn export_wake(future: u64, ptr: usize, len: usize) -> u64 {
     #[cfg(target_arch = "wasm32")]
     crate::install_panic_hook();
     let bytes = unsafe { core::slice::from_raw_parts(ptr as *const u8, len) };
-    let res: ResultRecord = match postcard::from_bytes(bytes) {
+    let wake: WakeRecord = match postcard::from_bytes(bytes) {
         Ok(r) => r,
         Err(_) => {
             return PollStatus::Trapped {
@@ -480,8 +459,8 @@ pub fn export_wake(future: u64, ptr: usize, len: usize) -> u64 {
         }
     };
     free_host_buf(ptr);
-    let dispatch = deliver(future, res);
-    run(dispatch).encode()
+    deliver(future, wake.result);
+    run(wake.dispatch).encode()
 }
 
 /// Test support (non-wasm builds only): drop every task and future.
@@ -628,13 +607,13 @@ mod tests {
             spawn_main(2, waiting_on(b));
             assert_eq!(run(2), PollStatus::Pending, "the second dispatch parks");
 
-            assert_eq!(deliver(b, ResultRecord::Ok(Vec::new())), 2);
+            deliver(b, ResultRecord::Ok(Vec::new()));
             assert_eq!(
                 run(2),
                 PollStatus::Done { response: b as u32 },
                 "the second dispatch finishes while the first still waits"
             );
-            assert_eq!(deliver(a, ResultRecord::Ok(Vec::new())), 1);
+            deliver(a, ResultRecord::Ok(Vec::new()));
             assert_eq!(run(1), PollStatus::Done { response: a as u32 });
             assert_eq!(pending_futures(), 0, "the future table must not leak");
         });
