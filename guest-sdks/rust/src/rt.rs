@@ -36,6 +36,10 @@
 //!
 //! `debug_assert`s and the tests at the bottom of this file pin that down:
 //! a dispatch that parks must cost **exactly one** poll.
+//!
+//! An instance can have several dispatches in progress. Every task belongs to
+//! the dispatch it was spawned in, a slice polls only its own dispatch's
+//! tasks, and the status it returns is that dispatch's.
 
 use core::alloc::Layout;
 use core::cell::UnsafeCell;
@@ -65,12 +69,20 @@ pub type BoxTask = Pin<Box<dyn Future<Output = TaskOutcome> + 'static>>;
 
 struct Task {
     fut: BoxTask,
+    /// The dispatch the task belongs to; it runs only in that dispatch's
+    /// slices.
+    dispatch: u64,
 }
 
 /// One entry of the future table: a host future id, the task waiting on it,
-/// and the result once `isoplane_wake` delivers one.
+/// the dispatch that registered it, and the result once `isoplane_wake`
+/// delivers one.
 struct FutureSlot {
     owner: u32,
+    dispatch: u64,
+    /// The task stopped waiting; the slot stays only so a late wake still
+    /// knows its dispatch.
+    dropped: bool,
     result: Option<ResultRecord>,
 }
 
@@ -83,11 +95,14 @@ const MAX_PENDING_FUTURES: usize = 4096;
 pub(crate) struct Runtime {
     tasks: Vec<Option<Task>>,
     free_slots: Vec<u32>,
-    live_tasks: usize,
+    /// Unfinished tasks per dispatch.
+    live_tasks: BTreeMap<u64, usize>,
     ready: VecDeque<u32>,
     futures: BTreeMap<u64, FutureSlot>,
     current: u32,
-    main_response: Option<u32>,
+    /// The dispatch the current slice runs.
+    current_dispatch: u64,
+    main_response: BTreeMap<u64, u32>,
     trap: Option<TrapCode>,
     /// Buffers handed to the host by `isoplane_alloc`, freed once the host has
     /// handed them back in a `isoplane_handle` / `isoplane_wake` call.
@@ -103,11 +118,12 @@ impl Runtime {
         Runtime {
             tasks: Vec::new(),
             free_slots: Vec::new(),
-            live_tasks: 0,
+            live_tasks: BTreeMap::new(),
             ready: VecDeque::new(),
             futures: BTreeMap::new(),
             current: u32::MAX,
-            main_response: None,
+            current_dispatch: 0,
+            main_response: BTreeMap::new(),
             trap: None,
             host_bufs: Vec::new(),
             polls: 0,
@@ -116,6 +132,7 @@ impl Runtime {
     }
 
     fn insert_task(&mut self, t: Task) -> u32 {
+        *self.live_tasks.entry(t.dispatch).or_default() += 1;
         let id = match self.free_slots.pop() {
             Some(i) => {
                 self.tasks[i as usize] = Some(t);
@@ -126,7 +143,6 @@ impl Runtime {
                 (self.tasks.len() - 1) as u32
             }
         };
-        self.live_tasks += 1;
         self.ready.push_back(id);
         id
     }
@@ -142,15 +158,34 @@ impl Runtime {
     /// Note: the caller drops the finished `Task` *outside* the runtime
     /// borrow, because dropping it drops its `HostFuture`s, whose `Drop`
     /// re-enters the runtime to deregister.
-    fn finish_task(&mut self, id: u32, out: TaskOutcome) {
+    fn finish_task(&mut self, id: u32, dispatch: u64, out: TaskOutcome) {
         self.free_slots.push(id);
-        self.live_tasks -= 1;
+        if let Some(live) = self.live_tasks.get_mut(&dispatch) {
+            *live -= 1;
+            if *live == 0 {
+                self.live_tasks.remove(&dispatch);
+            }
+        }
         self.ready.retain(|&x| x != id);
         match out {
-            TaskOutcome::Response(h) => self.main_response = Some(h),
+            TaskOutcome::Response(h) => {
+                self.main_response.insert(dispatch, h);
+            }
             TaskOutcome::Trap(c) => self.trap = Some(c),
             TaskOutcome::Done => {}
         }
+    }
+
+    /// The next ready task of `dispatch`, skipping stale entries; tasks of
+    /// other dispatches stay queued for their own slices.
+    fn next_ready(&mut self, dispatch: u64) -> Option<u32> {
+        let position = self.ready.iter().position(|&id| {
+            self.tasks
+                .get(id as usize)
+                .and_then(Option::as_ref)
+                .is_none_or(|task| task.dispatch == dispatch)
+        })?;
+        self.ready.remove(position)
     }
 
     fn mark_ready(&mut self, id: u32) {
@@ -159,21 +194,25 @@ impl Runtime {
         }
     }
 
-    /// The only place a `PollStatus` is decided. Note that there is no branch
-    /// here that waits for anything.
-    fn status(&mut self) -> PollStatus {
+    /// The only place a `PollStatus` is decided, for the dispatch the slice
+    /// ran. Note that there is no branch here that waits for anything.
+    fn status(&mut self, dispatch: u64) -> PollStatus {
         if let Some(code) = self.trap.take() {
             return PollStatus::Trapped { code };
         }
-        if let Some(r) = self.main_response.take() {
-            return PollStatus::Done { response: r };
+        let done = |rt: &mut Runtime, response| {
+            rt.futures.retain(|_, slot| slot.dispatch != dispatch);
+            PollStatus::Done { response }
+        };
+        if let Some(r) = self.main_response.remove(&dispatch) {
+            return done(self, r);
         }
-        if self.live_tasks > 0 {
+        if self.live_tasks.contains_key(&dispatch) {
             self.parks += 1;
             PollStatus::Pending
         } else {
-            // All scheduled tasks have finished.
-            PollStatus::Done { response: 0 }
+            // All the dispatch's tasks have finished.
+            done(self, 0)
         }
     }
 }
@@ -242,8 +281,9 @@ fn waker_for(id: u32) -> Waker {
 /// The loop condition is "is anything ready", never "is anything finished".
 /// When nothing is ready the function returns and the wasm stack unwinds to
 /// nothing -- that return *is* the park.
-pub(crate) fn run() -> PollStatus {
-    while let Some(id) = with(|rt| rt.ready.pop_front()) {
+pub(crate) fn run(dispatch: u64) -> PollStatus {
+    with(|rt| rt.current_dispatch = dispatch);
+    while let Some(id) = with(|rt| rt.next_ready(dispatch)) {
         // A stale ready entry (its task already finished) is a permitted
         // spurious wakeup, not an error.
         let Some(mut task) = with(|rt| rt.take_task(id)) else {
@@ -258,12 +298,12 @@ pub(crate) fn run() -> PollStatus {
         match task.fut.as_mut().poll(&mut cx) {
             Poll::Pending => with(move |rt| rt.put_task(id, task)),
             Poll::Ready(out) => {
-                with(|rt| rt.finish_task(id, out));
+                with(|rt| rt.finish_task(id, task.dispatch, out));
                 drop(task); // outside `with`: HostFuture::drop re-enters
             }
         }
     }
-    with(|rt| rt.status())
+    with(|rt| rt.status(dispatch))
 }
 
 /// Schedule concurrent work within the active dispatch.
@@ -274,11 +314,17 @@ pub fn spawn(fut: impl Future<Output = ()> + 'static) {
         fut.await;
         TaskOutcome::Done
     });
-    with(|rt| rt.insert_task(Task { fut: boxed }));
+    with(|rt| {
+        let dispatch = rt.current_dispatch;
+        rt.insert_task(Task {
+            fut: boxed,
+            dispatch,
+        })
+    });
 }
 
-pub(crate) fn spawn_main(fut: BoxTask) {
-    with(|rt| rt.insert_task(Task { fut }));
+pub(crate) fn spawn_main(dispatch: u64, fut: BoxTask) {
+    with(|rt| rt.insert_task(Task { fut, dispatch }));
 }
 
 // ---------------------------------------------------------------------------
@@ -292,18 +338,20 @@ pub(crate) enum Registered {
 
 pub(crate) fn register(id: u64) -> Registered {
     with(|rt| {
-        if rt.futures.len() >= MAX_PENDING_FUTURES {
+        if rt.futures.values().filter(|slot| !slot.dropped).count() >= MAX_PENDING_FUTURES {
             rt.trap = Some(TrapCode::TooManyFutures);
             return Registered::TooMany;
         }
         let owner = rt.current;
-        rt.futures
-            .entry(id)
-            .or_insert(FutureSlot {
-                owner,
-                result: None,
-            })
-            .owner = owner;
+        let dispatch = rt.current_dispatch;
+        let slot = rt.futures.entry(id).or_insert(FutureSlot {
+            owner,
+            dispatch,
+            dropped: false,
+            result: None,
+        });
+        slot.owner = owner;
+        slot.dropped = false;
         Registered::Ok
     })
 }
@@ -320,26 +368,37 @@ pub(crate) fn take_result(id: u64) -> Option<ResultRecord> {
 /// until the dispatch ends. See guests/README.md.
 pub(crate) fn forget(id: u64) {
     with(|rt| {
-        rt.futures.remove(&id);
+        if let Some(slot) = rt.futures.get_mut(&id) {
+            slot.dropped = true;
+            slot.result = None;
+        }
     });
 }
 
-pub(crate) fn deliver(id: u64, res: ResultRecord) {
+/// Delivers a result and returns the dispatch the wake's slice runs.
+pub(crate) fn deliver(id: u64, res: ResultRecord) -> u64 {
     with(|rt| {
-        if let Some(slot) = rt.futures.get_mut(&id) {
+        let Some(slot) = rt.futures.get_mut(&id) else {
+            return rt.current_dispatch;
+        };
+        let dispatch = slot.dispatch;
+        if slot.dropped {
+            // The guest dropped the future. Dropping the result is correct --
+            // there is nobody left to observe it.
+            rt.futures.remove(&id);
+        } else {
             slot.result = Some(res);
             let owner = slot.owner;
             rt.mark_ready(owner);
         }
-        // Unknown id: the guest dropped the future. Dropping the result is
-        // correct -- there is nobody left to observe it.
-    });
+        dispatch
+    })
 }
 
 /// Futures registered and not yet delivered. Bounded by the plan's
 /// `pending_futures_per_dispatch`.
 pub fn pending_futures() -> usize {
-    with(|rt| rt.futures.len())
+    with(|rt| rt.futures.values().filter(|slot| !slot.dropped).count())
 }
 
 /// Test/telemetry hook: total `Future::poll` calls on top-level tasks.
@@ -401,8 +460,9 @@ pub fn export_handle(ptr: usize, len: usize, make: fn(DispatchRecord) -> BoxTask
         }
     };
     free_host_buf(ptr);
-    spawn_main(make(rec));
-    run().encode()
+    let dispatch = rec.dispatch_id;
+    spawn_main(dispatch, make(rec));
+    run(dispatch).encode()
 }
 
 /// `isoplane_wake(future, ptr, len) -> poll-status`.
@@ -420,8 +480,8 @@ pub fn export_wake(future: u64, ptr: usize, len: usize) -> u64 {
         }
     };
     free_host_buf(ptr);
-    deliver(future, res);
-    run().encode()
+    let dispatch = deliver(future, res);
+    run(dispatch).encode()
 }
 
 /// Test support (non-wasm builds only): drop every task and future.
@@ -449,12 +509,15 @@ mod tests {
             reset();
             let before = with(|rt| rt.polls);
             let id = host.next_future_id();
-            spawn_main(Box::pin(async move {
-                let f: HostFuture<()> = crate::future::new_unit(id);
-                let _ = f.await;
-                TaskOutcome::Response(0)
-            }));
-            let st = run();
+            spawn_main(
+                1,
+                Box::pin(async move {
+                    let f: HostFuture<()> = crate::future::new_unit(id);
+                    let _ = f.await;
+                    TaskOutcome::Response(0)
+                }),
+            );
+            let st = run(1);
             assert_eq!(st, PollStatus::Pending, "an awaited host future must park");
             assert_eq!(with(|rt| rt.polls) - before, 1, "parking must not re-poll");
             assert_eq!(pending_futures(), 1);
@@ -468,14 +531,17 @@ mod tests {
         testing::with_stub_host(|host| {
             reset();
             let id = host.next_future_id();
-            spawn_main(Box::pin(async move {
-                let f: HostFuture<()> = crate::future::new_unit(id);
-                f.await.unwrap();
-                TaskOutcome::Response(7)
-            }));
-            assert_eq!(run(), PollStatus::Pending);
+            spawn_main(
+                1,
+                Box::pin(async move {
+                    let f: HostFuture<()> = crate::future::new_unit(id);
+                    f.await.unwrap();
+                    TaskOutcome::Response(7)
+                }),
+            );
+            assert_eq!(run(1), PollStatus::Pending);
             deliver(id, ResultRecord::Ok(Vec::new()));
-            assert_eq!(run(), PollStatus::Done { response: 7 });
+            assert_eq!(run(1), PollStatus::Done { response: 7 });
             assert_eq!(pending_futures(), 0, "the future table must not leak");
         });
     }
@@ -488,15 +554,18 @@ mod tests {
         testing::with_stub_host(|host| {
             reset();
             let (a, b) = (host.next_future_id(), host.next_future_id());
-            spawn_main(Box::pin(async move {
-                let fa: HostFuture<()> = crate::future::new_unit(a);
-                let fb: HostFuture<()> = crate::future::new_unit(b);
-                let (ra, rb) = crate::future::join2(fa, fb).await;
-                ra.unwrap();
-                rb.unwrap();
-                TaskOutcome::Response(1)
-            }));
-            assert_eq!(run(), PollStatus::Pending);
+            spawn_main(
+                1,
+                Box::pin(async move {
+                    let fa: HostFuture<()> = crate::future::new_unit(a);
+                    let fb: HostFuture<()> = crate::future::new_unit(b);
+                    let (ra, rb) = crate::future::join2(fa, fb).await;
+                    ra.unwrap();
+                    rb.unwrap();
+                    TaskOutcome::Response(1)
+                }),
+            );
+            assert_eq!(run(1), PollStatus::Pending);
             assert_eq!(
                 pending_futures(),
                 2,
@@ -506,9 +575,9 @@ mod tests {
             assert_eq!(polls_after_park, 1);
 
             deliver(a, ResultRecord::Ok(Vec::new()));
-            assert_eq!(run(), PollStatus::Pending, "one of two is not done");
+            assert_eq!(run(1), PollStatus::Pending, "one of two is not done");
             deliver(b, ResultRecord::Ok(Vec::new()));
-            assert_eq!(run(), PollStatus::Done { response: 1 });
+            assert_eq!(run(1), PollStatus::Done { response: 1 });
             assert_eq!(with(|rt| rt.polls), 3, "one poll per wake, no spinning");
         });
     }
@@ -520,20 +589,54 @@ mod tests {
         testing::with_stub_host(|host| {
             reset();
             let id = host.next_future_id();
-            spawn_main(Box::pin(async move {
-                {
-                    let f: HostFuture<()> = crate::future::new_unit(id);
-                    let mut f = Box::pin(f);
-                    let w = waker_for(0);
-                    let mut cx = Context::from_waker(&w);
-                    assert!(f.as_mut().poll(&mut cx).is_pending());
-                } // dropped here
-                TaskOutcome::Response(0)
-            }));
-            assert_eq!(run(), PollStatus::Done { response: 0 });
+            spawn_main(
+                1,
+                Box::pin(async move {
+                    {
+                        let f: HostFuture<()> = crate::future::new_unit(id);
+                        let mut f = Box::pin(f);
+                        let w = waker_for(0);
+                        let mut cx = Context::from_waker(&w);
+                        assert!(f.as_mut().poll(&mut cx).is_pending());
+                    } // dropped here
+                    TaskOutcome::Response(0)
+                }),
+            );
+            assert_eq!(run(1), PollStatus::Done { response: 0 });
             assert_eq!(pending_futures(), 0);
             deliver(id, ResultRecord::Ok(Vec::new()));
-            assert_eq!(run(), PollStatus::Done { response: 0 });
+            assert_eq!(run(1), PollStatus::Done { response: 0 });
+        });
+    }
+
+    /// Two dispatches in progress at once: each slice runs and reports only
+    /// its own dispatch, so the second can finish while the first waits.
+    #[test]
+    fn dispatches_in_progress_finish_independently() {
+        testing::with_stub_host(|host| {
+            reset();
+            let (a, b) = (host.next_future_id(), host.next_future_id());
+            let waiting_on = |id| -> BoxTask {
+                Box::pin(async move {
+                    let f: HostFuture<()> = crate::future::new_unit(id);
+                    f.await.unwrap();
+                    TaskOutcome::Response(id as u32)
+                })
+            };
+            spawn_main(1, waiting_on(a));
+            assert_eq!(run(1), PollStatus::Pending, "the first dispatch parks");
+            spawn_main(2, waiting_on(b));
+            assert_eq!(run(2), PollStatus::Pending, "the second dispatch parks");
+
+            assert_eq!(deliver(b, ResultRecord::Ok(Vec::new())), 2);
+            assert_eq!(
+                run(2),
+                PollStatus::Done { response: b as u32 },
+                "the second dispatch finishes while the first still waits"
+            );
+            assert_eq!(deliver(a, ResultRecord::Ok(Vec::new())), 1);
+            assert_eq!(run(1), PollStatus::Done { response: a as u32 });
+            assert_eq!(pending_futures(), 0, "the future table must not leak");
         });
     }
 
