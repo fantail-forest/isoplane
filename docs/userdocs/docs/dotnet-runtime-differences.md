@@ -41,6 +41,27 @@ code awaits something that has to wait, or the dispatch finishes. Some
 things are fixed for the length of a slice, such as the [clock](#time) and
 whether the dispatch has been cancelled.
 
+The timeline below shows two instances of one application. Instance A
+handles request 1 in three slices, waiting twice in between, on a database
+query for example. Request 2 arrives while instance A is busy, so Isoplane
+delivers it to instance B. Later, while instance A is idle, one of its timers
+comes due, and because the application runs timers between requests, instance
+A runs it in a dispatch of its own. On any one instance, dispatches follow one
+another and never overlap.
+
+```text
+             time ──────────────────────────────────────────────────────────▶
+
+Instance A   ███·······██··███       ███····███            █████·····███
+             ╰── request 1 ──╯       ╰ timers ╯            ╰ request 3 ╯
+
+Instance B        ████·······███
+                  ╰ request 2 ─╯
+
+             ███ a slice: the instance is running
+             ··· the dispatch is waiting
+```
+
 Apart from initialization, an application's code runs only during dispatches.
 Initialization is not a dispatch: it runs during template preparation, before any
 instance exists. `Activation.Activated` callbacks run as part of an instance's
