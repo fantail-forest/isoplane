@@ -20,7 +20,7 @@ Use per-dispatch completion events and exported aggregates to assess resource us
 
 **Exception:** None.
 
-## Reclaim cached instances before parked requests
+## Reclaim cached instances before parked dispatches
 
 Use available memory across the host or VM, respecting container memory limits,
 rather than separate per-cell budgets. Retain instances while memory is available.
@@ -28,17 +28,17 @@ Under memory pressure, hibernate idle
 completed instances before parked in-flight instances, using least-recently-used
 order within each group and only capturing at an empty-stack boundary. Under
 storage pressure, discard idle hibernated instances in least-recently-used order;
-an unfinished request's continuation is protected from storage eviction.
+an unfinished dispatch's continuation is protected from storage eviction.
 
 Reserve the worst-case hibernation storage footprint before creating an instance,
 including encoding, compression expansion and encryption overhead. Refuse admission
 when that reservation cannot be secured. Keep host contexts and pending work alive
-across in-process hibernation; request deadlines and cancellation still apply.
+across in-process hibernation; dispatch deadlines and cancellation still apply.
 
-**Not this:** Discarding a parked request to recover disk space, or admitting a new
+**Not this:** Discarding a parked dispatch to recover disk space, or admitting a new
 instance because its expected compressed delta fits when its maximum does not.
 
-**Exception:** Explicit request termination releases its resources. Retention grants
+**Exception:** Explicit dispatch termination releases its resources. Retention grants
 neither post-response guest execution nor a guarantee of warm state to customers.
 
 ## Enforce limits where they are metered

@@ -152,9 +152,11 @@ operation completes.
 - Gives each ASP.NET request its own `HttpContext.TraceIdentifier`.
 - Cancels the request's token, `HttpContext.RequestAborted` or
   [`RequestHead.Aborted`](reference/sdk/Isoplane.Sdk/Isoplane/RequestHead/Aborted.md),
-  when the client goes away or the request has used its running time.
+  when the client goes away or the request's
+  [dispatch](dotnet-runtime-differences.md#units-of-work) has used its running
+  time.
 - Enforces the [execution limits](execution-limits.md), and stops an instance
-  whose request keeps running after its running time is used up.
+  whose dispatch keeps running after its running time is used up.
 - Cancels any outbound call or name lookup still pending when the response is
   complete, and then discards the instance, because the code waiting on that
   work could never resume. A timer still pending is kept with the instance and
@@ -182,8 +184,8 @@ operation completes.
 | The application throws an exception it does not handle | That request fails. Without ASP.NET, the client receives status 502. |
 | Code waits synchronously or starts a thread | The call throws `PlatformNotSupportedException` |
 | The client goes away | The request's token is cancelled |
-| The request uses up its running time | The token is cancelled. If the request has not finished shortly afterwards, Isoplane stops the instance and the request fails. |
-| The request has too many asynchronous operations pending at once | The request fails |
+| The dispatch uses up its running time | The token is cancelled. If the dispatch has not finished shortly afterwards, Isoplane stops the instance and the request fails. |
+| The dispatch has too many asynchronous operations pending at once | The request fails |
 | The response is complete while work is still pending | That work is cancelled and never finishes, and the instance is discarded: the next request starts from the template and pays for activation. No error is reported. |
 
 ## Between requests

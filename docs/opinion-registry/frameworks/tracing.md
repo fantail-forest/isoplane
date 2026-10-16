@@ -2,7 +2,7 @@
 
 ## Open a span at each stage of a dispatch and record one completion per dispatch
 
-Implement the [observability contract](../../../AGENTS.md#observability) with one tracing mechanism: nested stage spans explain where time went, and the wide completion event brings the final context together. Carry dispatch context across parks so a hot interval does not look like a complete request. See [completion ownership](../production/observability.md#make-completion-ownership-survive-handled-failures) for handled failures and delivery limits.
+Implement the [observability contract](../../../AGENTS.md#observability) with one tracing mechanism: nested stage spans explain where time went, and the wide completion event brings the final context together. Carry dispatch context across parks so a slice does not look like a complete dispatch. See [completion ownership](../production/observability.md#make-completion-ownership-survive-handled-failures) for handled failures and delivery limits.
 
 **Not this:** A bespoke timestamp-pool instrument with over a hundred labelled points, sampled one-in-N, whose only consumer is a benchmark and which runs in production anyway.
 

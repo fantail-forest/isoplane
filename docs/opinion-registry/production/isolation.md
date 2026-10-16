@@ -14,7 +14,7 @@ deployment. Reuse unaffected compilation outputs. A future layered template can
 regenerate from the affected layer forward; layering is not a prerequisite.
 
 Initialization-time access still goes through bounded host capabilities. This policy
-does not permit bypassing the sandbox or capturing a live invocation stack.
+does not permit bypassing the sandbox or capturing the native stack of a running slice.
 
 **Not this:** Refusing initialization-time secrets to claim templates cannot contain
 secrets, or changing settings beneath an instance that retains their previous values.
