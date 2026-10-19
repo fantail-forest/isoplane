@@ -288,6 +288,7 @@ public static unsafe class Exports<TRouter>
             return initialization.Exception is { } error ? Panic("pre-initialization", error.GetBaseException()) : PollStatus.Trapped(TrapCode.Panic);
         _initialization = null;
         RuntimeTimers.MarkInitialized();
+        CollectorTarget.Aim();
         return PollStatus.Done(0);
     }
 

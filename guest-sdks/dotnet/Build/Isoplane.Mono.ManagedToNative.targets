@@ -12,6 +12,8 @@
       <_WasmPInvokeModules Include="libSystem.Native;libSystem.IO.Compression.Native;libSystem.Globalization.Native" />
       <_WasmPInvokeModules Include="libSystem.Security.Cryptography.Native.OpenSsl" Condition="Exists('$(MicrosoftNetCoreAppRuntimePackRidNativeDir)libSystem.Security.Cryptography.Native.OpenSsl.a')" />
       <_WasmPInvokeModules Include="@(IsoplanePInvokeModule)" />
+      <!-- The SDK's calls into the runtime itself, such as setting the collector's soft heap limit. -->
+      <_WasmPInvokeModules Include="isoplane_runtime" />
       <_IsoplaneMscorlib Include="@(_WasmAssembliesInternal)" Condition="'%(Filename)%(Extension)' == 'mscorlib.dll'" />
     </ItemGroup>
     <PropertyGroup>
