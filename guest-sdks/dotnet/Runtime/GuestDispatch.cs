@@ -107,11 +107,15 @@ internal sealed class GuestDispatch
         }
     }
 
-    /// <summary>Ends the dispatch: its unfinished futures and cancellation go with it.</summary>
+    /// <summary>
+    /// Ends the dispatch: its unfinished futures and cancellation go with it,
+    /// and work it left behind continues as the instance's.
+    /// </summary>
     internal void End()
     {
         InProgress.Remove(Id);
         DispatchPartition.Close(Id);
+        Context.HandOver(IsoplaneSynchronizationContext.Instance);
         FutureTable.Forget(Id);
         _cancellation?.Dispose();
         if (Current == this)

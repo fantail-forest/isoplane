@@ -76,6 +76,9 @@ public static class CleanupProbe
                 case "/dns":
                     await Dns.GetHostAddressesAsync("pending.test").ConfigureAwait(false);
                     break;
+                case "/dns-on-context":
+                    await Dns.GetHostAddressesAsync("pending.test");
+                    break;
                 case "/socket":
                     using (var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp))
                         await socket.ConnectAsync(new IPEndPoint(IPAddress.Parse("93.184.216.34"), 80)).ConfigureAwait(false);

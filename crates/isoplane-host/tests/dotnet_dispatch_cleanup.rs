@@ -240,6 +240,11 @@ async fn a_lookup_left_pending_after_the_response_completes_on_its_instance() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn work_resuming_on_its_dispatch_context_after_the_response_completes_on_its_instance() {
+    check_work_after_the_response(GuestRuntime::Mono, "/dns-on-context").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_connection_left_pending_after_the_response_completes_on_its_instance() {
     check_work_after_the_response(GuestRuntime::Mono, "/socket").await;
 }
