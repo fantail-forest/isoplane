@@ -101,14 +101,16 @@ fn a_reused_instance_keeps_its_residue() {
 
 #[test]
 fn clones_of_one_template_never_share_entropy() {
-    // No idle instances, so every dispatch runs on a new clone of the template.
+    // No idle instances, so dispatches run on new clones of the template; one
+    // may also join an instance whose dispatch has answered but not yet ended,
+    // so every step draws.
     let r = rig(CellConfig {
         max_idle_per_module: 0,
         ..CellConfig::for_test("entropy")
     });
     let act = Arc::new(FakeActivator::named(
         ModuleId::new("rng", "v1"),
-        FakeBehaviour::program([Step::Entropy { bytes: 32 }]),
+        FakeBehaviour::program(vec![Step::Entropy { bytes: 32 }; 50]),
     ));
     let module = act.module().clone();
     r.cell

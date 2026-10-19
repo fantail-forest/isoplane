@@ -66,7 +66,12 @@ impl Default for Meter {
 }
 
 pub(crate) struct Limits {
+    /// The ceiling linear memory may grow to: the memory limit's ceiling,
+    /// within the engine's capacity and the module's declared maximum.
     pub max_memory_bytes: usize,
+    /// The memory limit the guest is told, so its runtime sizes itself for
+    /// the limit rather than the ceiling above it.
+    pub memory_limit_bytes: usize,
     pub max_tables: usize,
     pub max_table_elements: usize,
     pub oom: bool,
@@ -76,6 +81,7 @@ impl Limits {
     fn new(cfg: &EngineConfig) -> Self {
         Self {
             max_memory_bytes: cfg.max_memory_bytes as usize,
+            memory_limit_bytes: cfg.max_memory_bytes as usize,
             max_tables: cfg.max_tables_per_module as usize,
             max_table_elements: cfg.table_elements,
             oom: false,
@@ -92,6 +98,7 @@ impl ResourceLimiter for Limits {
     ) -> wasmtime::Result<bool> {
         if let Some(maximum) = maximum {
             self.max_memory_bytes = self.max_memory_bytes.min(maximum);
+            self.memory_limit_bytes = self.memory_limit_bytes.min(maximum);
         }
         let ok = desired <= self.max_memory_bytes;
         if !ok {
@@ -170,13 +177,20 @@ impl StoreState {
                 .unwrap_or(cfg.max_memory_bytes),
         };
         let mut state = Self::unbound(cfg, memory_limit);
+        // The room past the limit is for dispatches to finish in; what
+        // initialization leaves becomes every instance's starting point.
+        if bindings.is_init_sandbox() {
+            state.limits.max_memory_bytes = state.limits.memory_limit_bytes;
+        }
         state.bindings = Some(bindings);
         state
     }
 
     pub(crate) fn unbound(cfg: &EngineConfig, memory_limit: u64) -> Self {
         let mut limits = Limits::new(cfg);
-        limits.max_memory_bytes = memory_limit.min(cfg.max_memory_bytes) as usize;
+        limits.max_memory_bytes = isoplane_abi::config::memory_ceiling_bytes(memory_limit)
+            .min(cfg.max_memory_bytes) as usize;
+        limits.memory_limit_bytes = memory_limit.min(cfg.max_memory_bytes) as usize;
         Self {
             bindings: None,
             init_pal_calls: std::collections::BTreeMap::new(),

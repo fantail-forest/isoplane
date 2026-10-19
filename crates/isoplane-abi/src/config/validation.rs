@@ -53,8 +53,9 @@ impl Default for ValidationLimits {
 
 /// Default capacity for allocated engine instances, including retained mappings.
 pub const DEFAULT_MAX_INSTANCES: u32 = 10_000;
-/// Default engine ceiling on each instance's linear memory.
-pub const DEFAULT_ENGINE_MEMORY_BYTES: u64 = 128 << 20;
+/// Default largest application memory limit a node serves; engines size each
+/// instance for its ceiling (see [`super::memory_ceiling_bytes`]).
+pub const DEFAULT_MEMORY_LIMIT_BYTES: u64 = 128 << 20;
 /// Default inaccessible address space after each linear-memory slot.
 pub const DEFAULT_MEMORY_GUARD_BYTES: u64 = 32 << 20;
 /// Default metadata bytes in a pooled core-instance slot.

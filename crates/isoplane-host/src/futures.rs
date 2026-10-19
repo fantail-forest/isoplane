@@ -441,6 +441,25 @@ impl FutureTable {
         })
     }
 
+    /// `dispatch`'s pending futures that `import` created.
+    pub fn pending_of_dispatch(&self, owner: InstanceId, dispatch: u64, import: &str) -> Vec<u64> {
+        let Some(arc) = self.existing(owner) else {
+            return Vec::new();
+        };
+        let o = arc.inner.lock();
+        o.pending
+            .iter()
+            .copied()
+            .filter(|id| {
+                self.entries
+                    .read_sync(id, |_, entry| {
+                        entry.dispatch == dispatch && entry.import == import
+                    })
+                    .unwrap_or(false)
+            })
+            .collect()
+    }
+
     pub fn pending_total(&self, owner: InstanceId) -> usize {
         self.existing(owner)
             .map_or(0, |a| a.inner.lock().pending.len())

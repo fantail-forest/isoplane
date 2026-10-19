@@ -222,6 +222,7 @@ impl Cell {
             if ends_the_instance(&out, slot) {
                 guard.destroy();
             } else {
+                self.retire_past_memory_limit(slot, entry, guard.instance().memory_len());
                 drop(guard);
             }
             out
@@ -444,6 +445,7 @@ impl Cell {
         if ends_the_instance(&outcome, slot) {
             guard.destroy();
         } else {
+            self.retire_past_memory_limit(slot, entry, guard.instance().memory_len());
             drop(guard);
         }
         self.metrics.wake_us.record(t0.elapsed().as_micros() as u64);
@@ -658,6 +660,26 @@ impl Cell {
         }
     }
 
+    /// Retires an instance whose linear memory has passed its memory limit.
+    /// Memory never shrinks, so the instance would stay past it: it takes no
+    /// new dispatches, finishes those it has, and is then discarded, so the
+    /// next dispatch gets a fresh instance from the template.
+    fn retire_past_memory_limit(&self, slot: &Arc<Slot>, entry: &ModuleEntry, memory_bytes: usize) {
+        let limit = slot.ctx.limits.instance_memory_max;
+        if memory_bytes as u64 <= limit || !slot.retire() {
+            return;
+        }
+        self.metrics
+            .memory_limit_retirements
+            .fetch_add(1, Ordering::Relaxed);
+        entry.meters.record_memory_limit_retirement();
+        tracing::info!(
+            tenant = %entry.tenant, instance = %slot.id,
+            memory_mib = memory_bytes >> 20, limit_mib = limit >> 20,
+            "instance passed its memory limit: retiring it once its dispatches finish"
+        );
+    }
+
     /// Records how long a slice of `owner` waited for its instance's thread
     /// after it was ready to run.
     fn waited_for_thread(&self, owner: &DispatchCompletion, waited: Duration) {
@@ -677,10 +699,31 @@ impl Cell {
         did: u64,
         d: crate::disposition::Disposition,
     ) -> bool {
-        if d.is_warm() && self.rt.futures.dispatch_holds_guest_work(slot.id, did) {
-            return self.park_after_slice(slot);
+        if d.is_warm() {
+            self.end_request_body(slot, did);
+            if self.rt.futures.dispatch_holds_guest_work(slot.id, did) {
+                return self.park_after_slice(slot);
+            }
         }
         self.finish_and_release(slot, entry, did, d)
+    }
+
+    /// The response is complete, so the request is over: a read of its body
+    /// still pending can never be answered with data, and is failed so the
+    /// code waiting on it can finish.
+    fn end_request_body(&self, slot: &Slot, did: u64) {
+        for read in self
+            .rt
+            .futures
+            .pending_of_dispatch(slot.id, did, "req_body_read")
+        {
+            self.rt.settle_future(
+                read,
+                isoplane_abi::result::ResultRecord::Err(
+                    isoplane_abi::result::FutureError::Cancelled,
+                ),
+            );
+        }
     }
 
     /// The instance parks between slices. Returns whether the wake loop is
@@ -999,7 +1042,11 @@ impl Cell {
     ) -> bool {
         let generation = slot.ctx.dispatch_generation();
         let (req, remaining, abandoned_guest_work) = self.end_dispatch_books(slot, entry, did);
-        let d = if abandoned_guest_work { evict() } else { d };
+        let d = if abandoned_guest_work || (remaining == 0 && slot.is_retiring()) {
+            evict()
+        } else {
+            d
+        };
         let keeps_instance = d.is_warm();
         if remaining > 0 {
             if keeps_instance {

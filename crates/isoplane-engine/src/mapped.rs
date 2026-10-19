@@ -139,13 +139,15 @@ impl DormantInstance for Mapped {
         bindings.restore_prepared_resources(&instance.template.prepared_resources)?;
         let live = &mut instance.live;
         let mut data = StoreState::with_bindings(bindings, &instance.engine.cfg);
-        data.limits.max_memory_bytes = data
+        let retained = &live.store.data().limits;
+        data.limits.max_memory_bytes = data.limits.max_memory_bytes.min(retained.max_memory_bytes);
+        data.limits.memory_limit_bytes = data
             .limits
-            .max_memory_bytes
-            .min(live.store.data().limits.max_memory_bytes);
+            .memory_limit_bytes
+            .min(retained.memory_limit_bytes);
         ensure!(
-            live.memory.data_size(&live.store) <= data.limits.max_memory_bytes,
-            "retained memory exceeds instance limit"
+            live.memory.data_size(&live.store) <= data.limits.memory_limit_bytes,
+            "retained memory exceeds the instance's memory limit"
         );
         data.memory = Some(live.memory);
         data.platform_files = instance.template.filesystem_files.clone();

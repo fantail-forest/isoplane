@@ -35,7 +35,9 @@ pub fn engine_config(
         perf_jitdump: cfg.engine.perf_jitdump,
         max_instances: cfg.engine.max_instances,
         total_tables: cfg.engine.total_tables,
-        max_memory_bytes: cfg.engine.max_memory_mib << 20,
+        max_memory_bytes: isoplane_abi::config::memory_ceiling_bytes(
+            cfg.engine.memory_limit_mib << 20,
+        ),
         guard_size_bytes: cfg.engine.guard_mib << 20,
         max_core_instance_size_bytes: cfg.engine.max_core_instance_size_bytes,
         table_elements: cfg.engine.table_elements,

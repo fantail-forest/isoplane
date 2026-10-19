@@ -134,7 +134,7 @@ impl Cell {
             if joined.is_some() {
                 return true;
             }
-            if slot.state() == LifecycleTier::Discarded {
+            if slot.state() == LifecycleTier::Discarded || slot.is_retiring() {
                 return false;
             }
             // A slice may be running; one already waiting for the thread means
@@ -454,9 +454,9 @@ impl Cell {
         let (slot, src) = entry.pool.acquire_reserved(
             |id| {
                 let ctx = self.make_ctx(entry, id);
-                let maximum = entry
-                    .activator
-                    .snapshot_size_bound(ctx.limits.instance_memory_max)?;
+                let maximum = entry.activator.snapshot_size_bound(
+                    isoplane_abi::config::memory_ceiling_bytes(ctx.limits.instance_memory_max),
+                )?;
                 let reservation = tracing::info_span!(
                     "snapshot_reservation",
                     maximum_bytes = maximum

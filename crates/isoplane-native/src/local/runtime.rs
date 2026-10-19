@@ -147,7 +147,9 @@ fn debug_engine(project: &Project) -> anyhow::Result<Arc<isoplane_engine::Isopla
     Ok(Arc::new(isoplane_engine::IsoplaneEngine::new(
         isoplane_engine::EngineConfig {
             pooling: false,
-            max_memory_bytes: project.manifest.memory_max_bytes(),
+            max_memory_bytes: isoplane_abi::config::memory_ceiling_bytes(
+                project.manifest.memory_max_bytes(),
+            ),
             platform_files: project.served_files()?,
             ..Default::default()
         },
@@ -156,7 +158,9 @@ fn debug_engine(project: &Project) -> anyhow::Result<Arc<isoplane_engine::Isopla
 
 fn engine_configuration(project: &Project) -> isoplane_engine::EngineConfig {
     isoplane_engine::EngineConfig {
-        max_memory_bytes: project.manifest.memory_max_bytes(),
+        max_memory_bytes: isoplane_abi::config::memory_ceiling_bytes(
+            project.manifest.memory_max_bytes(),
+        ),
         platform_files: project.platform_files.clone(),
         ..Default::default()
     }
@@ -510,7 +514,9 @@ mod storage_tests {
                         (then unreachable))
                     i64.const 0)
                 (func (export "isoplane_wake") (param i64 i32 i32) (result i64) i64.const 1))"#,
-                over_limit_pages = limit / isoplane_abi::WASM_PAGE_SIZE as u64 - 2048,
+                over_limit_pages = isoplane_abi::config::memory_ceiling_bytes(limit)
+                    / isoplane_abi::WASM_PAGE_SIZE as u64
+                    - 2048,
             ))
             .unwrap();
             validate(&project, &wasm, false).unwrap();

@@ -107,6 +107,9 @@ pub struct Metrics {
     pub instance_hold_ms: Histogram,
     /// Activations made because the instances that had room were held.
     pub activations_for_holds: AtomicU64,
+    /// Instances whose memory passed their memory limit, retired once their
+    /// dispatches finished.
+    pub memory_limit_retirements: AtomicU64,
     /// Epoch ticks that found the unsafe-to-trap bit set and deferred grace.
     pub grace_deferrals: AtomicU64,
     /// occupancy recorded past the budget on kills of either phase; already inside
@@ -216,6 +219,7 @@ impl Metrics {
             instance_hold_p50_ms: self.instance_hold_ms.p50(),
             instance_hold_p99_ms: self.instance_hold_ms.p99(),
             activations_for_holds: l(&self.activations_for_holds),
+            memory_limit_retirements: l(&self.memory_limit_retirements),
             grace_deferrals: l(&self.grace_deferrals),
             overage_ns: l(&self.overage_ns),
             // With no kills the ratio is reported as the exit count, the most
@@ -325,6 +329,7 @@ pub struct MetricsSnapshot {
     pub instance_hold_p50_ms: u64,
     pub instance_hold_p99_ms: u64,
     pub activations_for_holds: u64,
+    pub memory_limit_retirements: u64,
     pub grace_deferrals: u64,
     pub overage_ns: u64,
     pub exit_kill_ratio: f64,
@@ -398,6 +403,10 @@ impl MetricsSnapshot {
             (
                 "activations_for_holds",
                 self.activations_for_holds.to_string(),
+            ),
+            (
+                "memory_limit_retirements",
+                self.memory_limit_retirements.to_string(),
             ),
             ("grace_deferrals", self.grace_deferrals.to_string()),
             ("overage_ms", format!("{:.3}", self.overage_ns as f64 / 1e6)),

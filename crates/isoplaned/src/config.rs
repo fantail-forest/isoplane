@@ -85,9 +85,11 @@ pub struct EngineLimits {
     /// Aggregate pooled table slots; omission follows the instance count.
     #[serde(default)]
     pub total_tables: Option<u32>,
-    /// Per-instance linear-memory ceiling.
-    #[serde(default = "default_max_memory_mib")]
-    pub max_memory_mib: u64,
+    /// The largest application memory limit this node serves. An instance may
+    /// grow a quarter past its limit before the host stops it, so each engine
+    /// slot is sized for that ceiling.
+    #[serde(default = "default_memory_limit_mib")]
+    pub memory_limit_mib: u64,
     /// The guard region after each memory, which lets Cranelift elide
     /// bounds checks. Address space, not memory.
     #[serde(default = "default_guard_mib")]
@@ -127,8 +129,8 @@ fn default_tables_per_module() -> u32 {
 fn default_max_instances() -> u32 {
     isoplane_abi::config::DEFAULT_MAX_INSTANCES
 }
-fn default_max_memory_mib() -> u64 {
-    isoplane_abi::config::DEFAULT_ENGINE_MEMORY_BYTES >> 20
+fn default_memory_limit_mib() -> u64 {
+    isoplane_abi::config::DEFAULT_MEMORY_LIMIT_BYTES >> 20
 }
 fn default_guard_mib() -> u64 {
     isoplane_abi::config::DEFAULT_MEMORY_GUARD_BYTES >> 20
@@ -149,9 +151,9 @@ impl EngineLimits {
             ));
         }
         let memory = self
-            .max_memory_mib
+            .memory_limit_mib
             .checked_mul(1 << 20)
-            .ok_or_else(|| ConfigError::InvalidEngine("max_memory_mib overflows bytes".into()))?;
+            .ok_or_else(|| ConfigError::InvalidEngine("memory_limit_mib overflows bytes".into()))?;
         isoplane_abi::config::GuestMemoryBytes::new(memory)
             .map_err(|error| ConfigError::InvalidEngine(error.to_string()))?;
         self.guard_mib
@@ -167,7 +169,7 @@ impl Default for EngineLimits {
             perf_jitdump: false,
             max_instances: default_max_instances(),
             total_tables: None,
-            max_memory_mib: default_max_memory_mib(),
+            memory_limit_mib: default_memory_limit_mib(),
             guard_mib: default_guard_mib(),
             max_core_instance_size_bytes: default_core_instance_bytes(),
             table_elements: default_table_elements(),

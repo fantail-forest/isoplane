@@ -264,10 +264,11 @@ pub(crate) fn validate(wasm: &[u8], request: &BuildRequest) -> anyhow::Result<Pr
         "preparation input identity mismatch"
     );
     anyhow::ensure!(
-        request
-            .guest_memory_bytes
-            .is_none_or(|limit| limit.get() <= request.engine.max_memory_bytes),
-        "guest memory budget exceeds the selected worker engine capacity"
+        request.guest_memory_bytes.is_none_or(|limit| {
+            isoplane_abi::config::memory_ceiling_bytes(limit.get())
+                <= request.engine.max_memory_bytes
+        }),
+        "the guest memory limit's ceiling exceeds the selected worker engine capacity"
     );
     isoplane_runtime::validate_with_limits(
         wasm,

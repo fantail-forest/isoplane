@@ -67,7 +67,9 @@ pub struct EngineConfig {
     pub max_instances: u32,
     /// Aggregate pooled table slots; omission follows the instance count.
     pub total_tables: Option<u32>,
-    /// Per-instance linear-memory ceiling.
+    /// Per-instance linear-memory capacity: the most memory any instance may
+    /// grow to, which must cover the ceiling of the largest memory limit the
+    /// engine serves (see [`isoplane_abi::config::memory_ceiling_bytes`]).
     pub max_memory_bytes: u64,
     /// Maximum metadata bytes retained by one pooled core instance.
     pub max_core_instance_size_bytes: usize,
@@ -107,7 +109,9 @@ impl Default for EngineConfig {
             perf_jitdump: false,
             max_instances: isoplane_abi::config::DEFAULT_MAX_INSTANCES,
             total_tables: None,
-            max_memory_bytes: isoplane_abi::config::DEFAULT_ENGINE_MEMORY_BYTES,
+            max_memory_bytes: isoplane_abi::config::memory_ceiling_bytes(
+                isoplane_abi::config::DEFAULT_MEMORY_LIMIT_BYTES,
+            ),
             max_core_instance_size_bytes: isoplane_abi::config::DEFAULT_CORE_INSTANCE_SIZE_BYTES,
             table_elements: isoplane_abi::config::DEFAULT_TABLE_ELEMENTS,
             max_tables_per_module: isoplane_abi::config::DEFAULT_TABLES_PER_MODULE,

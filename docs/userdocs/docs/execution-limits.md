@@ -11,9 +11,20 @@ These limits are enforced by the platform. They are separate from the ways
 
 ## Memory
 
-Each instance has a memory limit and cannot grow past it. The limit applies to
-the instance as a whole, so whatever startup loaded and whatever an in-memory
-cache holds counts alongside the request being handled.
+Each instance has a memory limit. The limit applies to the instance as a whole,
+so whatever startup loaded and whatever an in-memory cache holds counts
+alongside the requests being handled. An application whose startup alone leaves
+more in memory than the limit cannot start.
+
+An instance's memory never shrinks, so once it has grown past its limit,
+Isoplane sends it no new requests. It finishes the requests it is handling, and
+is then replaced by a fresh instance. While it finishes, it may grow up to a
+quarter past its limit and no further. Past that, an allocation fails with
+`OutOfMemoryException`, or, if the .NET runtime itself cannot allocate, the
+instance stops and every request it was handling fails.
+
+`GC.GetGCMemoryInfo().TotalAvailableMemoryBytes` reports the limit, so caches
+that trim themselves as memory runs short see it.
 
 To keep a large request or response out of memory, read and write it as a
 stream: [`StreamingRequest`](reference/sdk/Isoplane.Sdk/Isoplane/StreamingRequest.md)

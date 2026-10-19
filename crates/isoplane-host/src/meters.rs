@@ -31,6 +31,7 @@ pub struct Meters {
     instance_holds: AtomicU64,
     instance_hold_ms: AtomicU64,
     activations_for_holds: AtomicU64,
+    memory_limit_retirements: AtomicU64,
     budget_kills: AtomicU64,
     /// Occupancy past the budget, already included in `occupancy_ns`.
     overage_ns: AtomicU64,
@@ -105,6 +106,11 @@ impl Meters {
     pub fn record_activation_for_hold(&self) {
         self.activations_for_holds.fetch_add(1, Ordering::Relaxed);
     }
+    /// One of the module's instances passed its memory limit and was retired.
+    pub fn record_memory_limit_retirement(&self) {
+        self.memory_limit_retirements
+            .fetch_add(1, Ordering::Relaxed);
+    }
     pub fn record_shed(&self) {
         self.shed.fetch_add(1, Ordering::Relaxed);
     }
@@ -144,6 +150,9 @@ impl Meters {
     }
     pub fn instance_hold_ms(&self) -> u64 {
         self.instance_hold_ms.load(Ordering::Relaxed)
+    }
+    pub fn memory_limit_retirements(&self) -> u64 {
+        self.memory_limit_retirements.load(Ordering::Relaxed)
     }
     pub fn activations_for_holds(&self) -> u64 {
         self.activations_for_holds.load(Ordering::Relaxed)

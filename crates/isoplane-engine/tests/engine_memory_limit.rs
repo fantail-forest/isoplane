@@ -1,4 +1,5 @@
-//! The memory query and enforcement share the effective instance ceiling.
+//! The memory query reports the instance's memory limit, and initialization
+//! cannot grow past it.
 #[path = "common/bindings.rs"]
 mod bindings;
 
@@ -52,17 +53,23 @@ fn observed_limit(
             .activate(&template, Box::new(bindings))
             .expect("the memory query fixture must activate");
         let outcome = instance.run_initialize(OccupancyBudget::default());
-        assert_eq!(outcome.completion, Completion::Done,
-        "initialization must query its limit and survive growth refused by that same ceiling: {outcome:?}");
+        assert_eq!(
+            outcome.completion,
+            Completion::Done,
+            "initialization must query its limit and survive growth refused there: {outcome:?}"
+        );
         let reported =
             u64::from_le_bytes(instance.memory()[..8].try_into().expect("eight-byte limit"));
-        assert_eq!(reported, expected_pages * WASM_PAGE_SIZE as u64,
-        "the runtime must see the total enforceable memory ceiling before application initialization");
+        assert_eq!(
+            reported,
+            expected_pages * WASM_PAGE_SIZE as u64,
+            "the runtime must see its memory limit before application initialization"
+        );
     }
 }
 
 #[test]
-fn the_memory_query_observes_the_application_ceiling() {
+fn the_memory_query_observes_the_application_limit_and_initialization_stops_there() {
     observed_limit(Some(8), 16, Some(4), 4);
 }
 

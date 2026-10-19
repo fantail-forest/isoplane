@@ -36,6 +36,20 @@ impl GuestMemoryBytes {
         self.0
     }
 }
+
+/// The linear memory an instance whose memory limit is `limit_bytes` may grow
+/// to before the host stops it: a quarter more, rounded up to a whole page.
+/// Past the limit itself the instance takes no new dispatches and is retired
+/// once those it has finish, so the margin lets them finish rather than fail.
+pub fn memory_ceiling_bytes(limit_bytes: u64) -> u64 {
+    let page = crate::WASM_PAGE_SIZE as u64;
+    let ceiling = limit_bytes.saturating_add(limit_bytes / 4);
+    ceiling
+        .div_ceil(page)
+        .saturating_mul(page)
+        .min(WASM32_MEMORY_MAX_BYTES)
+}
+
 impl TryFrom<u64> for GuestMemoryBytes {
     type Error = InvalidGuestMemory;
     fn try_from(bytes: u64) -> Result<Self, Self::Error> {
@@ -71,6 +85,23 @@ mod tests {
                 "serialized input cannot bypass memory validation"
             );
         }
+    }
+
+    #[test]
+    fn an_instance_may_grow_a_quarter_past_its_memory_limit() {
+        for (limit_mib, ceiling_mib) in [(128, 160), (512, 640)] {
+            assert_eq!(memory_ceiling_bytes(limit_mib << 20), ceiling_mib << 20);
+        }
+        assert_eq!(
+            memory_ceiling_bytes(65_536 * 3),
+            65_536 * 4,
+            "the ceiling rounds up to a whole page"
+        );
+        assert_eq!(
+            memory_ceiling_bytes(WASM32_MEMORY_MAX_BYTES),
+            WASM32_MEMORY_MAX_BYTES,
+            "the ceiling never passes the wasm32 address range"
+        );
     }
 
     #[test]

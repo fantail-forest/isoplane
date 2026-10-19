@@ -26,7 +26,7 @@ fn config(dir: &std::path::Path) -> NodeConfig {
     cfg.data_dir = dir.to_path_buf();
     cfg.engine = isoplaned::config::EngineLimits {
         max_instances: 16,
-        max_memory_mib: 128,
+        memory_limit_mib: 128,
         guard_mib: 64,
         ..Default::default()
     };

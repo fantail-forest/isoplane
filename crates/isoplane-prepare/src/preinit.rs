@@ -172,6 +172,8 @@ impl PreInitializer {
         pool.install(|| {
             let configuration = EngineConfig {
                 pooling: false,
+                // Initialization runs within the limit itself; the ceiling past
+                // it is for dispatches.
                 max_memory_bytes: limit,
                 platform_files: self.platform_files.clone(),
                 ..self.engine.clone()

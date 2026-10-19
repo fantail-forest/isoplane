@@ -134,6 +134,9 @@ pub struct Slot {
     parked_since_hint: AtomicU64,
     last_used_ms: AtomicU64,
     parks: AtomicU64,
+    /// Set once the instance's memory has passed its limit: it takes no new
+    /// dispatches and is discarded when its last one ends.
+    retiring: std::sync::atomic::AtomicBool,
 }
 
 impl Slot {
@@ -155,6 +158,7 @@ impl Slot {
             parked_since_hint: AtomicU64::new(0),
             last_used_ms: AtomicU64::new(crate::now_ms()),
             parks: AtomicU64::new(0),
+            retiring: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -212,6 +216,15 @@ impl Slot {
 
     /// How many times the instance has parked. Unlike [`Self::last_used_ms`]
     /// it differs after every activity boundary, whatever the clock read.
+    /// Retires the instance; true if it was not already retiring.
+    pub(crate) fn retire(&self) -> bool {
+        !self.retiring.swap(true, Ordering::Relaxed)
+    }
+
+    pub fn is_retiring(&self) -> bool {
+        self.retiring.load(Ordering::Relaxed)
+    }
+
     pub fn parks(&self) -> u64 {
         self.parks.load(Ordering::Relaxed)
     }

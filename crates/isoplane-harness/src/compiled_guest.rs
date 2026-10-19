@@ -74,8 +74,8 @@ pub fn engine_configuration(files: PlatformFiles) -> EngineConfig {
     };
     assert_eq!(
         config.max_memory_bytes,
-        crate::GUEST_LIMITS.instance_memory_max,
-        "returned guests run under their plan's memory limit"
+        isoplane_abi::config::memory_ceiling_bytes(crate::GUEST_LIMITS.instance_memory_max),
+        "returned guests' engine holds their plan's memory ceiling"
     );
     config
 }

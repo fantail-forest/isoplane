@@ -5,7 +5,8 @@ use isoplane_prepare::Initialization;
 pub fn engine() -> IsoplaneEngine {
     IsoplaneEngine::new(EngineConfig {
         max_instances: 4,
-        max_memory_bytes: 4 << 20,
+        // The ceiling of a 4 MiB memory limit.
+        max_memory_bytes: isoplane_abi::config::memory_ceiling_bytes(4 << 20),
         guard_size_bytes: 2 << 20,
         ..EngineConfig::default()
     })

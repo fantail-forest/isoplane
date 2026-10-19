@@ -12,12 +12,14 @@ mod common;
 
 const PAGE: u64 = 65536;
 
-/// Grows a one-page guest by `grow_pages` and checks memory.grow's result.
+/// Grows a one-page guest by `grow_pages`, checks memory.grow's result, and
+/// how many instances were retired for passing their memory limit.
 fn dispatch_growth(
     memory_override: Option<u64>,
     engine_bytes: u64,
     grow_pages: u64,
     expected_growth: i32,
+    expected_retirements: u64,
 ) {
     let wasm = wat::parse_str(format!(
         r#"(module
@@ -99,6 +101,21 @@ fn dispatch_growth(
             Completion::Done,
             "memory.grow must observe the application ceiling under either allocator"
         );
+        assert_eq!(
+            cell.metrics().memory_limit_retirements,
+            expected_retirements,
+            "an instance is retired exactly when its memory passes its limit"
+        );
+        if expected_retirements > 0 {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while cell.slot(result.instance).is_some() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "a retired instance must be discarded once its dispatch ends"
+                );
+                std::thread::yield_now();
+            }
+        }
         drop(cell);
         snapshots
             .close()
@@ -107,8 +124,8 @@ fn dispatch_growth(
 }
 
 #[test]
-fn a_guest_without_a_declared_maximum_cannot_grow_past_its_plan() {
-    let ceiling = Limits {
+fn a_guest_without_a_declared_maximum_cannot_grow_past_its_limits_ceiling() {
+    let limit = Limits {
         module_bytes_compressed: 5242880,
         package_bytes: 52428800,
         instance_memory_max: 134217728,
@@ -117,8 +134,24 @@ fn a_guest_without_a_declared_maximum_cannot_grow_past_its_plan() {
         pending_futures_per_dispatch: 6,
     }
     .instance_memory_max;
-    // The engine could hold twice the plan's ceiling, so only the plan refuses.
-    dispatch_growth(None, 2 * ceiling, ceiling / PAGE, -1);
+    let ceiling = isoplane_abi::config::memory_ceiling_bytes(limit);
+    // The engine could hold twice the plan's limit, so only the ceiling refuses.
+    dispatch_growth(None, 2 * limit, ceiling / PAGE, -1, 0);
+}
+
+#[test]
+fn a_guest_may_grow_past_its_limit_up_to_its_ceiling_and_its_instance_is_retired() {
+    let limit = Limits {
+        module_bytes_compressed: 5242880,
+        package_bytes: 52428800,
+        instance_memory_max: 134217728,
+        occupancy_ms_per_dispatch: 100,
+        subrequests_per_dispatch: 20,
+        pending_futures_per_dispatch: 6,
+    }
+    .instance_memory_max;
+    let ceiling = isoplane_abi::config::memory_ceiling_bytes(limit);
+    dispatch_growth(None, 2 * limit, ceiling / PAGE - 1, 1, 1);
 }
 
 #[test]
@@ -132,7 +165,7 @@ fn an_operator_memory_override_allows_growth_above_the_plan_default() {
         pending_futures_per_dispatch: 6,
     }
     .instance_memory_max;
-    dispatch_growth(Some(2 * ceiling), 2 * ceiling, ceiling / PAGE, 1);
+    dispatch_growth(Some(2 * ceiling), 2 * ceiling, ceiling / PAGE, 1, 0);
 }
 
 #[test]
@@ -146,7 +179,7 @@ fn the_engine_capacity_still_bounds_a_larger_application_override() {
         pending_futures_per_dispatch: 6,
     }
     .instance_memory_max;
-    dispatch_growth(Some(2 * ceiling), ceiling, ceiling / PAGE, -1);
+    dispatch_growth(Some(2 * ceiling), ceiling, ceiling / PAGE, -1, 0);
 }
 
 #[test]
@@ -203,4 +236,61 @@ fn a_template_larger_than_the_application_budget_is_refused_at_activation() {
             "an oversized template cannot bypass the application's memory budget during activation"
         );
     }
+}
+
+#[test]
+fn a_dispatch_does_not_join_an_instance_past_its_memory_limit() {
+    let (cell, _) =
+        common::rig_resolving(CellConfig::for_test("memory-retiring"), "93.184.216.34:80");
+    // Four pages of memory against a one-page limit: past it from the first slice.
+    let mut behaviour =
+        isoplane_host::fakes::FakeBehaviour::program([isoplane_host::fakes::Step::Park {
+            imports: vec![("clock_deadline_in", 60_000)],
+        }]);
+    behaviour.memory_bytes = 4 * PAGE as usize;
+    let activator = Arc::new(isoplane_host::fakes::FakeActivator::new(behaviour));
+    let module = isoplane_host::Activator::module(&*activator).clone();
+    let mut manifest = common::manifest("memory-retiring", Limits::default());
+    manifest.guest_memory_bytes = Some(GuestMemoryBytes::new(PAGE).expect("one page"));
+    cell.register_module("tenant", activator, manifest)
+        .expect("application registers");
+    let submit = || {
+        let request = isoplane_abi::HttpRequest {
+            method: "GET".into(),
+            url: "http://app.example/".into(),
+            path: "/".into(),
+            query: vec![],
+            headers: vec![],
+            body: vec![],
+        };
+        cell.submit(
+            &module,
+            Target::Handler { route: "/".into() },
+            cell.http_record(&module, request),
+        )
+        .expect("the cell admits the dispatch")
+    };
+    let _first = submit();
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while cell.metrics().memory_limit_retirements == 0 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the first instance was never retired"
+        );
+        std::thread::yield_now();
+    }
+    let _second = submit();
+    while cell.metrics().served_activated < 2 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the second dispatch never got an instance"
+        );
+        std::thread::yield_now();
+    }
+    assert_eq!(
+        cell.metrics().served_shared,
+        0,
+        "a retiring instance takes no new dispatches"
+    );
+    cell.shutdown();
 }

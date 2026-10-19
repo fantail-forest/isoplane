@@ -364,7 +364,7 @@ mod tests {
         let mut config = crate::NodeConfig::dev_default();
         config.data_dir = directory.path().to_path_buf();
         config.engine.max_instances = 2;
-        config.engine.max_memory_mib = 16;
+        config.engine.memory_limit_mib = 16;
         config.engine.guard_mib = 16;
         config.host.hibernate.handler_after_ms = 0;
         let application = config.apps.remove(0);

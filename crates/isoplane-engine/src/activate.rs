@@ -234,6 +234,7 @@ pub(crate) fn instantiate(
         t.image.write_to(memory.data_mut(&mut store));
         restore_globals(&mut store, &globals, t)?;
     }
+    within_memory_limit(memory.data_size(&store) as u64, &store)?;
     let f_initialize = if t.has_initialize { f_initialize } else { None };
     drop(exports_stage);
     let table_baseline = tracing::info_span!("activation_table_baseline")
@@ -256,6 +257,20 @@ pub(crate) fn instantiate(
         tables,
         table_baseline,
     })
+}
+
+/// Refuses a template whose memory is already larger than the instance's
+/// memory limit. The ceiling above the limit is room for dispatches to finish
+/// in, not for the template, so no instance of it could start.
+fn within_memory_limit(bytes: u64, store: &Store<StoreState>) -> Result<()> {
+    let limit = store.data().limits.memory_limit_bytes as u64;
+    anyhow::ensure!(
+        bytes <= limit,
+        "initialization left {} MiB in memory, more than the application's memory limit of {} MiB",
+        bytes >> 20,
+        limit >> 20
+    );
+    Ok(())
 }
 
 pub(crate) fn restore_globals(

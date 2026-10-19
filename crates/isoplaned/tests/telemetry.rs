@@ -46,7 +46,7 @@ async fn an_actual_http_guest_completion_crosses_the_otlp_boundary() {
     let mut cfg = isoplaned::config::NodeConfig::dev_default();
     cfg.data_dir = directory.path().to_owned();
     cfg.engine.max_instances = 4;
-    cfg.engine.max_memory_mib = 128;
+    cfg.engine.memory_limit_mib = 128;
     cfg.engine.guard_mib = 64;
     let node = tokio::task::spawn_blocking(move || isoplaned::node::Node::build(cfg).unwrap())
         .await
