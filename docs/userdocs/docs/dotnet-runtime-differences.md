@@ -64,8 +64,6 @@ gantt
     slice : 45, 85
     slice : 170, 210
     slice : 295, 325
-    section Timers
-    slice : 90, 115
     section Request 3
     slice : 210, 250
     slice : 330, 360
@@ -84,8 +82,8 @@ Isoplane bills each dispatch as one request, whether it handles a request or
 runs timers, and gives each an allowance of
 [running time](execution-limits.md#running-time): the total length of its
 slices, not the time spent waiting for a database or another service between
-them. A timer that runs at the start of a request's dispatch uses that
-dispatch's running time.
+them. A timer callback runs in whichever slice the instance runs next once the
+timer is due, and uses the running time of that slice's dispatch.
 
 Forward the request's cancellation token to the calls you await. That token is
 `HttpContext.RequestAborted`, or
@@ -281,9 +279,10 @@ What follows from that:
   [running time](execution-limits.md#running-time) describes.
 - A timeout fires only between slices. `Task.Delay`,
   `CancellationTokenSource.CancelAfter` and `Timer` callbacks are delivered in
-  the next slice, not in the middle of a computation. One that comes due while
-  the instance is idle is delivered at the start of its next request, unless
-  the application [runs timers between requests](#run-timers-between-requests).
+  the next slice, not in the middle of a computation, whichever dispatch that
+  slice belongs to. One that comes due while the instance is idle is delivered
+  in the instance's next slice, when a request arrives, unless the application
+  [runs timers between requests](#run-timers-between-requests).
 
 ## Work after the response {#after-the-response}
 
@@ -296,9 +295,9 @@ or waiting, and for cleanup.
 Everything the response depends on. Once the response is complete the dispatch
 is over, and an outbound call or name lookup that is still pending is cancelled
 and never completes. The instance is discarded along with it, because the code
-waiting on that call could never resume. The next request then starts from a
-fresh copy of the template, which adds activation time to it, and nothing is
-reported.
+waiting on that call could never resume, and any other requests the instance is
+handling fail with it. The next request then starts from a fresh copy of the
+template, which adds activation time to it, and nothing is reported.
 
 Other code that is ready to run when the response completes may still run while
 the dispatch is within its limits, but nothing guarantees it. Do not leave saving
@@ -314,9 +313,11 @@ timers of their own, such as rate limiters, connection pools and telemetry
 exporters, therefore work without change.
 
 By default a timer that comes due while the instance is idle waits for the next
-request on that instance, and runs at the start of that request, before the
-request's own code; its callback runs until it returns or reaches its first
-`await`. A timer never runs if its instance is discarded
+request on that instance, and runs at the start of that request's first slice,
+before the request's own code. Its callback runs until it returns or reaches its
+first `await`, and uses that request's running time meanwhile. A timer that
+comes due while the instance is busy runs the same way, in the next slice of
+whichever request is running. A timer never runs if its instance is discarded
 first, and an idle instance can be discarded at any time. A task started and not
 awaited, such as `_ = SendEmailAsync()`, may therefore finish during a later
 dispatch, or never: await the work the response depends on.
@@ -328,7 +329,8 @@ Call
 [`Initialization.RunTimersBetweenRequests`](reference/sdk/Isoplane.Sdk/Isoplane/Initialization/RunTimersBetweenRequests.md)
 during initialization, and Isoplane gives an idle instance a dispatch to run
 the timers that have come due, no sooner than the minimum interval you give
-after its last dispatch ended. The interval must be at least 100 milliseconds:
+after its last dispatch ended. A timer gets a dispatch of its own only this way,
+when the instance has no request to run it in. The interval must be at least 100 milliseconds:
 
 ```csharp
 Initialization.RunTimersBetweenRequests(minimumInterval: TimeSpan.FromMinutes(1));
