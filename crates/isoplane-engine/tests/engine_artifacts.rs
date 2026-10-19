@@ -59,39 +59,8 @@ fn http_dispatch(id: u64) -> isoplane_abi::dispatch::DispatchRecord {
 }
 
 // ---------------------------------------------------------------------------
-// activation and reset
+// activation
 // ---------------------------------------------------------------------------
-
-#[test]
-fn reset_restores_template_contents_byte_exactly() {
-    let e = test_engine();
-    let t = e.load_template(&echo_guest()).expect("template");
-    let image = t.memory_image_arc().to_dense();
-
-    let mut i = activate(&e, &t);
-    assert_eq!(
-        i.memory(),
-        image.as_slice(),
-        "a fresh activation must equal the template"
-    );
-
-    for off in [0usize, 4096, 65536, 30 * 4096, 60 * 4096] {
-        i.memory()[off..off + 8].copy_from_slice(&[0xAB; 8]);
-    }
-    assert_ne!(
-        i.memory(),
-        image.as_slice(),
-        "the writes must have changed memory"
-    );
-
-    i.reset().expect("reset");
-
-    assert_eq!(
-        i.memory(),
-        image.as_slice(),
-        "reset must restore template contents byte for byte"
-    );
-}
 
 #[test]
 fn activation_seals_globals_and_tables_from_the_template() {
@@ -147,14 +116,6 @@ fn activation_seals_globals_and_tables_from_the_template() {
     assert!(
         fresh.table_mutations.is_empty(),
         "a fresh activation's table must match the template baseline"
-    );
-
-    a.reset().expect("reset");
-    let after = a.capture_mutable_state().expect("capture");
-    assert_eq!(
-        format!("{:?}", after.globals),
-        format!("{:?}", baseline.globals),
-        "reset must re-seal globals from the template"
     );
 }
 

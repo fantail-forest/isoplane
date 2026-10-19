@@ -139,7 +139,7 @@ fn capture_with<T>(
         }
         let elapsed_us = t_gc.elapsed().as_micros() as u64;
         if hint.completion != Completion::Done {
-            // A trap or hard kill inside the hint has discarded the engine's
+            // A trap or kill inside the hint has discarded the engine's
             // instance; the slot follows, so the sweep stops selecting it and
             // `Slot::enter` refuses. A guest that parked inside the hint is
             // consistent and stays as it is.
@@ -216,7 +216,7 @@ mod tests {
                 execution_limit: None,
                 wall_ns: 0,
                 trap: None,
-                kill: None,
+                grace_end: None,
                 overage_ns: 0,
                 grace_deferrals: 0,
             }
@@ -258,10 +258,6 @@ mod tests {
                 self.discarded = true;
             }
             self.outcome(self.how)
-        }
-        fn reset(&mut self) -> anyhow::Result<()> {
-            anyhow::ensure!(!self.discarded, "discarded");
-            Ok(())
         }
         fn is_parked(&self) -> bool {
             !self.discarded

@@ -51,8 +51,6 @@ pub trait Activator: Send + Sync + 'static {
 pub enum AcquireSource {
     /// A parked handler eligible for reuse.
     WarmParked,
-    /// A reset Handler instance from the pool.
-    PooledFresh,
     /// An instance woken from its hibernation delta with retained state.
     HibernationWake,
     /// A cold activation from the template.
@@ -65,7 +63,6 @@ impl AcquireSource {
     pub fn label(self) -> &'static str {
         match self {
             AcquireSource::WarmParked => "warm",
-            AcquireSource::PooledFresh => "pooled_fresh",
             AcquireSource::HibernationWake => "hibernation_wake",
             AcquireSource::Activated => "activated",
             AcquireSource::Shared => "shared",
@@ -78,7 +75,6 @@ pub struct InstancePool {
     pub module: ModuleId,
     activator: Arc<dyn Activator>,
     warm: Mutex<IdleList>,
-    reset_candidates: Mutex<IdleList>,
     max_idle: usize,
     mapped: Mutex<Option<Box<dyn isoplane_engine::DormantInstance>>>,
     live: AtomicU64,
@@ -133,7 +129,6 @@ impl InstancePool {
             module: activator.module().clone(),
             activator,
             warm: Mutex::new(IdleList::default()),
-            reset_candidates: Mutex::new(IdleList::default()),
             max_idle,
             mapped: Mutex::new(None),
             live: AtomicU64::new(0),
@@ -174,30 +169,24 @@ impl InstancePool {
         self.live.load(Ordering::Relaxed)
     }
 
-    /// Idle instance counts as `(warm, awaiting reset)`.
-    pub fn idle_counts(&self) -> (usize, usize) {
-        (
-            self.warm.lock().slots.len(),
-            self.reset_candidates.lock().slots.len(),
-        )
+    /// Warm instances waiting for a dispatch.
+    pub fn idle(&self) -> usize {
+        self.warm.lock().slots.len()
     }
 
     /// Removes an idle entry from acquisition until its claim is returned.
     pub(crate) fn claim_idle(&self, id: InstanceId) -> Option<IdleClaim<'_>> {
-        for list in [&self.warm, &self.reset_candidates] {
-            let mut entries = list.lock();
-            if let Some(index) = entries.slots.iter().position(|slot| slot.id == id) {
-                let slot = entries.slots.swap_remove(index);
-                entries.claimed += 1;
-                return Some(IdleClaim {
-                    list,
-                    live: &self.live,
-                    slot,
-                    generation: entries.generation.clone(),
-                });
-            }
-        }
-        None
+        let list = &self.warm;
+        let mut entries = list.lock();
+        let index = entries.slots.iter().position(|slot| slot.id == id)?;
+        let slot = entries.slots.swap_remove(index);
+        entries.claimed += 1;
+        Some(IdleClaim {
+            list,
+            live: &self.live,
+            slot,
+            generation: entries.generation.clone(),
+        })
     }
 
     /// Takes this warm instance for a dispatch, if it is still idle and
@@ -215,7 +204,7 @@ impl InstancePool {
         Some(warm.slots.swap_remove(index))
     }
 
-    /// Reuse a warm instance, reset a candidate for this acquisition, or activate.
+    /// Reuse a warm instance or activate.
     pub fn acquire<F>(&self, make_ctx: F) -> anyhow::Result<(Arc<Slot>, AcquireSource)>
     where
         F: FnOnce(InstanceId) -> Arc<InstanceCtx>,
@@ -278,30 +267,6 @@ impl InstancePool {
             };
             return Ok((slot, source));
         }
-        loop {
-            let candidate = self.reset_candidates.lock().slots.pop();
-            let Some(slot) = candidate else { break };
-            {
-                let _execution = slot.lock_execution();
-                if slot.state() == crate::LifecycleTier::Hibernated {
-                    if let Err(error) = restore(&slot) {
-                        slot.discard();
-                        self.live.fetch_sub(1, Ordering::Relaxed);
-                        discard(&slot);
-                        return Err(error);
-                    }
-                }
-                if let Err(error) = slot.reset() {
-                    tracing::warn!(module = %self.module, instance = %slot.id, %error,
-                        "pooled instance reset failed; discarding candidate");
-                    slot.discard();
-                    self.live.fetch_sub(1, Ordering::Relaxed);
-                    discard(&slot);
-                    continue;
-                }
-            }
-            return Ok((slot, AcquireSource::PooledFresh));
-        }
         let id = InstanceId::alloc();
         let ctx = make_ctx(id)?;
         let bindings = crate::bindings::CellBindings::boxed(ctx.clone());
@@ -326,20 +291,6 @@ impl InstancePool {
                     self.live.fetch_sub(1, Ordering::Relaxed);
                 }
             }
-            DispositionKind::Reset => {
-                slot.ctx.release_native_resources();
-                slot.park(crate::now_ms());
-                let mut candidates = self.reset_candidates.lock();
-                if !self.retired.load(Ordering::Acquire)
-                    && candidates.slots.len() + candidates.claimed < self.max_idle
-                {
-                    candidates.slots.push(slot);
-                } else {
-                    drop(candidates);
-                    slot.discard();
-                    self.live.fetch_sub(1, Ordering::Relaxed);
-                }
-            }
             DispositionKind::Discard => {
                 slot.discard();
                 self.live.fetch_sub(1, Ordering::Relaxed);
@@ -350,25 +301,18 @@ impl InstancePool {
     /// Discards available idle entries and invalidates outstanding idle claims.
     /// Returns the number discarded synchronously; claims discard on return.
     pub fn drain_idle(&self) -> usize {
-        let mut n = 0;
-        for list in [&self.warm, &self.reset_candidates] {
-            let slots = {
-                let mut list = list.lock();
-                list.generation = Arc::new(());
-                std::mem::take(&mut list.slots)
-            };
-            for slot in slots {
-                slot.discard();
-                self.live.fetch_sub(1, Ordering::Relaxed);
-                n += 1;
-            }
+        let slots = {
+            let mut list = self.warm.lock();
+            list.generation = Arc::new(());
+            std::mem::take(&mut list.slots)
+        };
+        for slot in &slots {
+            slot.discard();
+            self.live.fetch_sub(1, Ordering::Relaxed);
         }
-        n
+        slots.len()
     }
 }
-
-#[cfg(test)]
-mod reset_tests;
 
 #[cfg(test)]
 mod claim_tests;
@@ -376,7 +320,7 @@ mod claim_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::disposition::{decide, policy_reset, DispatchEnd};
+    use crate::disposition::{decide, DispatchEnd};
     use crate::fakes::{FakeActivator, FakeBehaviour};
     use isoplane_abi::config::Limits;
     use isoplane_engine::Completion;
@@ -399,8 +343,8 @@ mod tests {
         };
         p.release(slot.clone(), disposition);
         assert_eq!(
-            p.idle_counts(),
-            (0, 0),
+            p.idle(),
+            0,
             "a retired module must not pool a released instance"
         );
         assert_eq!(
@@ -411,68 +355,19 @@ mod tests {
     }
 
     #[test]
-    fn residue_in_a_reset_candidate_is_cleared_before_acquisition() {
-        let p = pool();
-        let (slot, _) = p.acquire(ctx_for).expect("activate");
-        slot.enter()
-            .expect("write dispatch residue")
-            .instance()
-            .memory()[0] = 99;
-        p.release(slot.clone(), policy_reset());
-        assert_eq!(
-            slot.enter()
-                .expect("inspect pending reset")
-                .instance()
-                .memory()[0],
-            99,
-            "release must not reset guest memory without a new dispatch"
-        );
-        let (reused, source) = p.acquire(ctx_for).expect("reset candidate");
-        assert_eq!(
-            source,
-            AcquireSource::PooledFresh,
-            "acquisition resets the candidate"
-        );
-        assert_eq!(
-            reused.id, slot.id,
-            "reset can preserve the existing slot identity"
-        );
-        assert!(
-            reused.is_pristine(),
-            "a reset acquisition must not carry dispatch residue"
-        );
-        assert_eq!(
-            reused
-                .enter()
-                .expect("inspect reset memory")
-                .instance()
-                .memory()[0],
-            0,
-            "reset must restore template memory before handing the slot to a dispatch"
-        );
-    }
-
-    #[test]
-    fn acquisition_prefers_warm_then_reset_then_activate() {
+    fn acquisition_prefers_warm_then_activate() {
         let p = pool();
         let (a, src) = p.acquire(ctx_for).expect("acquire");
         assert_eq!(src, AcquireSource::Activated, "an empty pool activates");
-        let (b, _) = p.acquire(ctx_for).expect("acquire");
         let warm_id = a.id;
-        let reset_id = b.id;
         let DispatchEnd::Disposed(warm) = decide(Completion::Done, false) else {
             panic!("a completed dispatch stays warm");
         };
         p.release(a, warm);
-        p.release(b, policy_reset());
 
         let (got, src) = p.acquire(ctx_for).expect("acquire");
         assert_eq!(src, AcquireSource::WarmParked, "warm first");
         assert_eq!(got.id, warm_id, "and it is the warm instance");
-
-        let (got, src) = p.acquire(ctx_for).expect("acquire");
-        assert_eq!(src, AcquireSource::PooledFresh, "then a reset candidate");
-        assert_eq!(got.id, reset_id, "and it is the reset instance");
 
         let (_, src) = p.acquire(ctx_for).expect("acquire");
         assert_eq!(src, AcquireSource::Activated, "then a cold activation");
@@ -486,7 +381,7 @@ mod tests {
             panic!("a kill is terminal")
         };
         p.release(a, d);
-        assert_eq!(p.idle_counts(), (0, 0), "a killed instance is not pooled");
+        assert_eq!(p.idle(), 0, "a killed instance is not pooled");
         assert_eq!(p.live(), 0, "and it is no longer live");
     }
 }

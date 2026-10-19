@@ -48,7 +48,7 @@ impl IsoplaneEngine {
         let mut instance = Instance {
             engine: self.inner.clone(),
             template: template.inner.clone(),
-            live: Some(live),
+            live,
             discarded: None,
             last: None,
             last_violation: None,
@@ -91,10 +91,7 @@ pub(crate) fn evict(instance: Instance) -> Option<Box<dyn DormantInstance>> {
 }
 
 fn discard_pages(instance: &mut Instance) -> Result<()> {
-    let live = instance
-        .live
-        .as_mut()
-        .context("instance has no live store")?;
+    let live = &mut instance.live;
     discard_linear_pages(live)?;
     live.store.data_mut().bindings = None;
     live.store.data_mut().scratch = Vec::new();
@@ -112,7 +109,7 @@ fn discard_linear_pages(live: &mut crate::instance::Live) -> Result<()> {
         if length != 0 {
             // SAFETY: exclusive ownership of the idle store excludes guest entry.
             // The full page-aligned range is owned by its private template mapping;
-            // callers either saved mutable state or deliberately reset to the template.
+            // callers have saved the mutable state they keep.
             let result = unsafe {
                 libc::madvise(
                     live.memory.data_ptr(&live.store).cast(),
@@ -140,7 +137,7 @@ impl DormantInstance for Mapped {
         );
         let mut bindings = Bindings::Runtime(bindings);
         bindings.restore_prepared_resources(&instance.template.prepared_resources)?;
-        let live = instance.live.as_mut().context("retained store missing")?;
+        let live = &mut instance.live;
         let mut data = StoreState::with_bindings(bindings, &instance.engine.cfg);
         data.limits.max_memory_bytes = data
             .limits
@@ -157,52 +154,5 @@ impl DormantInstance for Mapped {
         instance.last = None;
         instance.last_violation = None;
         Ok(Box::new(self.0))
-    }
-}
-
-pub(crate) fn reset(instance: &mut Instance) -> Result<bool> {
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = instance;
-        Ok(false)
-    }
-    #[cfg(target_os = "linux")]
-    {
-        if !instance.engine.cfg.pooling || instance.template.initialization_layer.is_none() {
-            return Ok(false);
-        }
-        if instance.template.storage_failed() {
-            return Err(crate::TemplateStorageFailed.into());
-        }
-        let live = instance
-            .live
-            .as_mut()
-            .context("instance has no live store")?;
-        if live.memory.size(&live.store) != u64::from(instance.template.memory_pages) {
-            return Ok(false);
-        }
-        match live
-            .table_baseline
-            .verify(&mut live.store, &live.tables, &instance.template)
-        {
-            Ok(()) => {}
-            Err(error)
-                if matches!(
-                    error.downcast_ref::<crate::snapshot::SnapshotError>(),
-                    Some(crate::snapshot::SnapshotError::TableMutation { .. })
-                ) =>
-            {
-                return Ok(false)
-            }
-            Err(error) => return Err(error),
-        }
-        if let Some(bindings) = live.store.data_mut().bindings.as_mut() {
-            bindings.reset_prepared_resources(&instance.template.prepared_resources)?;
-        }
-        discard_linear_pages(live)?;
-        live.store.data_mut().reset_execution();
-        live.store.data_mut().memory = Some(live.memory);
-        crate::activate::restore_globals(&mut live.store, &live.globals, &instance.template)?;
-        Ok(true)
     }
 }

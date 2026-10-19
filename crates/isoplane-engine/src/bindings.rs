@@ -32,14 +32,6 @@ pub trait HostBindings: Send + 'static {
         }
     }
 
-    /// Discard dispatch-owned resources and restore the template baseline for fresh reuse.
-    fn reset_prepared_resources(
-        &mut self,
-        resources: &isoplane_abi::native_io::PreparedResources,
-    ) -> Result<(), BindingError> {
-        self.restore_prepared_resources(resources)
-    }
-
     /// Per-instance linear-memory ceiling, bounded by the engine capacity.
     /// None uses the engine capacity.
     fn memory_limit_bytes(&self) -> Option<u64> {
@@ -181,16 +173,6 @@ impl Bindings {
     ) -> Result<(), BindingError> {
         match self {
             Self::Runtime(bindings) => bindings.restore_prepared_resources(resources),
-            Self::Initialization(_) => Ok(()),
-        }
-    }
-
-    pub fn reset_prepared_resources(
-        &mut self,
-        resources: &isoplane_abi::native_io::PreparedResources,
-    ) -> Result<(), BindingError> {
-        match self {
-            Self::Runtime(bindings) => bindings.reset_prepared_resources(resources),
             Self::Initialization(_) => Ok(()),
         }
     }

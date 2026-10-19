@@ -16,7 +16,7 @@ pub(crate) fn capture_mutable_state(inst: &mut Instance) -> Result<InstanceImage
         );
     }
     let template = inst.template.clone();
-    let live = anyhow::Context::context(inst.live.as_mut(), "instance has no live store")?;
+    let live = &mut inst.live;
 
     let mut globals = Vec::with_capacity(live.globals.len());
     for g in &live.globals {
@@ -41,7 +41,7 @@ pub(crate) fn restore_mutable_state(inst: &mut Instance, img: &InstanceImage) ->
     if !img.table_mutations.is_empty() {
         bail!("table mutations cannot be applied: wasmtime exposes no function-index to funcref mapping");
     }
-    let live = anyhow::Context::context(inst.live.as_mut(), "instance has no live store")?;
+    let live = &mut inst.live;
 
     // Grow first, so the delta pages `isoplane-hibernate` writes through
     // `memory()` have somewhere to land.

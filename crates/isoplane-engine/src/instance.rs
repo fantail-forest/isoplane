@@ -4,23 +4,20 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::bail;
 use wasmtime::{Global, Memory, Store, Table, TypedFunc};
 
 use isoplane_abi::dispatch::DispatchRecord;
 use isoplane_abi::result::ResultRecord;
 use isoplane_abi::status::PollStatus;
 
-use crate::budget::{ExecutionLimit, KillPhase, OccupancyBudget, OccupancyMeasurement, TrapKind};
+use crate::budget::{ExecutionLimit, GraceEnd, OccupancyBudget, OccupancyMeasurement, TrapKind};
 use crate::call::{call_entry, classify, trap_code_of_kind, trap_kind_of_code};
 use crate::meter::interval_occupancy_ns;
 use crate::state::{Meter, Reentrancy, StoreState};
 use crate::template::TemplateInner;
 use crate::{DispatchOutcome, EngineInner, InstanceImage, Result, TrapInfo};
 
-/// The wasmtime side of an activation. Separate from [`Instance`] so that
-/// `reset` can rebuild a changed memory or table shape while the caller's
-/// `Instance` stays valid. Unchanged shapes retain their mappings.
+/// The wasmtime side of an activation.
 pub(crate) struct Live {
     /// Watches memory mapped from the template's storage; declared first so
     /// the range is released before the store frees it.
@@ -40,7 +37,7 @@ pub(crate) struct Live {
 }
 
 pub struct Instance {
-    pub(crate) live: Option<Live>,
+    pub(crate) live: Live,
     // Unmap the live store before the template releases its storage leases.
     pub(crate) template: Arc<TemplateInner>,
     pub(crate) engine: Arc<EngineInner>,
@@ -58,7 +55,6 @@ impl std::fmt::Debug for Instance {
             .field("template", &self.template.memory_pages)
             .field("discarded", &self.discarded)
             .field("last", &self.last)
-            .field("live", &self.live.is_some())
             .finish()
     }
 }
@@ -102,10 +98,8 @@ impl Drop for HotSlice<'_> {
 impl Instance {
     /// Runtime capabilities answered during initialization, counted at the engine boundary.
     pub fn initialization_pal_calls(&self) -> Result<Vec<(String, u32)>> {
-        let live = self.live.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("initialization observations require a live instance")
-        })?;
-        Ok(live
+        Ok(self
+            .live
             .store
             .data()
             .init_pal_calls
@@ -138,9 +132,7 @@ impl Instance {
     /// Whether the guest exports `isoplane_initialize_runtime`, so that
     /// [`Instance::run_initialize_runtime`] runs guest code.
     pub fn has_initialize_runtime(&self) -> bool {
-        self.live
-            .as_ref()
-            .is_some_and(|live| live.f_initialize_runtime.is_some())
+        self.live.f_initialize_runtime.is_some()
     }
 
     /// Run `isoplane_gc_hint` under `budget`, which preparation charges to
@@ -160,7 +152,7 @@ impl Instance {
             execution_limit: None,
             wall_ns: 0,
             trap: Some(TrapInfo { kind, message: why }),
-            kill: None,
+            grace_end: None,
             overage_ns: 0,
             grace_deferrals: 0,
         }
@@ -178,12 +170,8 @@ impl Instance {
                 ),
             );
         }
-        if self.live.is_none() {
-            return self.refuse(TrapKind::Other, "instance has no live store".to_string());
-        }
-
         let engine = self.engine.clone();
-        let live = self.live.as_mut().expect("checked above");
+        let live = &mut self.live;
 
         // A reentrant call would corrupt the meter and the frozen clock.
         let depth = live.store.data().wasm_depth;
@@ -312,7 +300,7 @@ impl Instance {
         let grace_deferrals = live.store.data().grace_deferrals;
 
         // A `BudgetExceeded` trap comes only from the hard deadline. A slice
-        // that entered grace and returned `done` is a clean kill; one that
+        // that entered grace and returned `done` is an exit; one that
         // returned `pending` parked at an await and the wake that follows
         // carries `spent_ns`, so it is not classified yet.
         let hard_kill = matches!(
@@ -325,7 +313,7 @@ impl Instance {
         let in_grace = grace_at_ns.is_some() || dispatch_occupancy_ns >= budget.budget_ns();
         if let Some(bindings) = live.store.data_mut().bindings.as_mut() {
             // A slice can cross B between epoch ticks, so grace is entered here
-            // when no tick entered it. A hard kill has nothing left to cancel.
+            // when no tick entered it. A kill has nothing left to cancel.
             if in_grace && grace_at_ns.is_none() && !hard_kill {
                 bindings.enter_grace();
             }
@@ -335,13 +323,13 @@ impl Instance {
             Completion::BudgetKill
         } else {
             match Completion::from_status(status) {
-                Completion::Done if in_grace => Completion::CleanKill,
+                Completion::Done if in_grace => Completion::BudgetExit,
                 other => other,
             }
         };
-        let kill = match (hard_kill, completion) {
-            (true, _) => Some(KillPhase::Hard),
-            (false, Completion::CleanKill) => Some(KillPhase::Clean),
+        let grace_end = match (hard_kill, completion) {
+            (true, _) => Some(GraceEnd::Killed),
+            (false, Completion::BudgetExit) => Some(GraceEnd::Exited),
             _ => None,
         };
         let overage_ns = if in_grace || hard_kill {
@@ -372,12 +360,12 @@ impl Instance {
             execution_limit: match live.store.data().kill {
                 Some(crate::state::Kill::OccupancyHard) => Some(ExecutionLimit::Occupancy),
                 Some(crate::state::Kill::Wall) => Some(ExecutionLimit::Wall),
-                None if completion == Completion::CleanKill => Some(ExecutionLimit::Occupancy),
+                None if completion == Completion::BudgetExit => Some(ExecutionLimit::Occupancy),
                 None => None,
             },
             wall_ns,
             trap,
-            kill,
+            grace_end,
             overage_ns,
             grace_deferrals,
         }
@@ -406,8 +394,6 @@ pub trait InstanceOps {
     /// Called before hibernation capture so the guest GC can compact and zero
     /// the freed tail; zeroed pages compress out of the delta.
     fn gc_hint(&mut self, pressure: u8) -> DispatchOutcome;
-    /// Restore template state, retaining mappings when their shape is unchanged.
-    fn reset(&mut self) -> Result<()>;
     /// True only when the last slice returned `pending` and wasmtime reports
     /// no wasm frame on the native stack.
     fn is_parked(&self) -> bool;
@@ -416,7 +402,7 @@ pub trait InstanceOps {
     /// Weaker than [`InstanceOps::is_parked`] on purpose: an instance that
     /// returned `done` and went idle is the case hibernation is about.
     fn is_capture_eligible(&self) -> bool;
-    /// Linear memory; empty for an instance with no live store.
+    /// Linear memory.
     fn memory(&mut self) -> &mut [u8];
     /// Whether host code read storage beneath this instance after it failed,
     /// so its memory, or a comparison against its template, is no longer what
@@ -445,9 +431,9 @@ pub enum Completion {
     /// Still executing at B+G and terminated without unwinding. The instance
     /// is discarded: its memory is a state no execution produced.
     BudgetKill,
-    /// Entered grace and returned inside it. The dispatch still fails, but the
-    /// instance is consistent and its slot reusable.
-    CleanKill,
+    /// Entered grace and returned inside it. The dispatch still fails, but
+    /// nothing was killed: the instance is consistent and stays.
+    BudgetExit,
 }
 
 impl Completion {
@@ -462,7 +448,7 @@ impl Completion {
     pub fn instance_survives(self) -> bool {
         matches!(
             self,
-            Completion::Done | Completion::Parked | Completion::CleanKill
+            Completion::Done | Completion::Parked | Completion::BudgetExit
         )
     }
 }
@@ -491,66 +477,17 @@ impl InstanceOps for Instance {
         self.run_gc_hint(pressure, OccupancyBudget::default())
     }
 
-    fn reset(&mut self) -> Result<()> {
-        if let Some(why) = self.discarded {
-            bail!(
-                "refusing to reset a discarded instance ({why}); drop it and activate a fresh one"
-            );
-        }
-        match crate::mapped::reset(self) {
-            Ok(true) => {
-                self.last = None;
-                self.last_violation = None;
-                return Ok(());
-            }
-            Ok(false) => {}
-            Err(error) => {
-                self.discarded = Some("the retained mapping could not be reset");
-                return Err(error);
-            }
-        }
-        let live = anyhow::Context::context(self.live.take(), "instance has no live store")?;
-        // Released before the store frees the memory the next instance may reuse.
-        #[cfg(target_os = "linux")]
-        drop(live.storage);
-        let mut data = live.store.into_data();
-        data.reset_execution();
-
-        let reset = (|| {
-            if let Some(bindings) = data.bindings.as_mut() {
-                bindings.reset_prepared_resources(&self.template.prepared_resources)?;
-            }
-            crate::activate::instantiate(&self.engine, &self.template, data)
-        })();
-        match reset {
-            Ok(live) => self.live = Some(live),
-            Err(e) => {
-                self.discarded = Some("the template could not be re-instantiated after a reset");
-                return Err(e);
-            }
-        }
-        self.last = None;
-        self.last_violation = None;
-        Ok(())
-    }
-
     /// A guest that busy-waits never returns, so its frame never leaves the
     /// stack and it is never a capture candidate; it dies at its occupancy budget.
     fn is_parked(&self) -> bool {
-        let Some(live) = self.live.as_ref() else {
-            return false;
-        };
         self.discarded.is_none()
-            && live.store.data().wasm_depth == 0
+            && self.live.store.data().wasm_depth == 0
             && self.last == Some(Completion::Parked)
     }
 
     fn is_capture_eligible(&self) -> bool {
-        let Some(live) = self.live.as_ref() else {
-            return false;
-        };
         self.discarded.is_none()
-            && live.store.data().wasm_depth == 0
+            && self.live.store.data().wasm_depth == 0
             && self.last.is_some_and(|c| c.instance_survives())
     }
 
@@ -558,8 +495,8 @@ impl InstanceOps for Instance {
         #[cfg(target_os = "linux")]
         if self
             .live
+            .storage
             .as_ref()
-            .and_then(|live| live.storage.as_ref())
             .is_some_and(crate::storage_fault::Watch::faulted)
         {
             return true;
@@ -568,20 +505,12 @@ impl InstanceOps for Instance {
     }
 
     fn memory(&mut self) -> &mut [u8] {
-        match self.live.as_mut() {
-            Some(live) => {
-                let mem = live.memory;
-                mem.data_mut(&mut live.store)
-            }
-            None => &mut [],
-        }
+        let live = &mut self.live;
+        live.memory.data_mut(&mut live.store)
     }
 
     fn memory_len(&self) -> usize {
-        self.live
-            .as_ref()
-            .map(|l| l.memory.data_size(&l.store))
-            .unwrap_or(0)
+        self.live.memory.data_size(&self.live.store)
     }
 
     fn changed_ranges(&mut self) -> Option<Vec<std::ops::Range<u64>>> {
@@ -589,7 +518,7 @@ impl InstanceOps for Instance {
         // a page the guest never wrote still reads the template.
         #[cfg(target_os = "linux")]
         if self.template.initialization_layer.is_some() {
-            let live = self.live.as_ref()?;
+            let live = &self.live;
             let address = live.memory.data_ptr(&live.store) as usize;
             let length_bytes = live.memory.data_size(&live.store);
             match crate::pagemap::ranges(address, length_bytes, crate::pagemap::private_copy) {

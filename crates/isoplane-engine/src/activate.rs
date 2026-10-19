@@ -40,7 +40,7 @@ impl IsoplaneEngine {
         Ok(Instance {
             engine: self.inner.clone(),
             template: t.inner.clone(),
-            live: Some(live),
+            live,
             discarded: None,
             last: None,
             last_violation: None,

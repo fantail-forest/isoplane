@@ -1,8 +1,8 @@
 //! The two-phase kill through a real cell with a real wasm guest,
 //! `guests/misbehaver`: `/cooperative` awaits between chunks of work and
 //! unwinds on the cancellation it sees at its next slice, `/spin` never awaits
-//! and is hard-killed, and `/gc_pin` pins the unsafe-to-trap bit and is
-//! hard-killed anyway.
+//! and is killed, and `/gc_pin` pins the unsafe-to-trap bit and is
+//! killed anyway.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -128,16 +128,16 @@ fn conformance_1_a_killed_instance_is_evicted_and_never_called_again() {
         "trap: {:?}",
         killed.trap
     );
-    assert_eq!(killed.status, 503, "a hard kill is a 503");
+    assert_eq!(killed.status, 503, "a kill is a 503");
 
     assert!(
         evicted(&cell, killed.instance),
-        "a hard-killed instance must be evicted"
+        "a killed instance must be evicted"
     );
 
     let m = cell.metrics();
-    assert_eq!(m.hard_kills, 1, "one hard kill");
-    assert_eq!(m.clean_kills, 0, "no clean kill");
+    assert_eq!(m.budget_kills, 1, "one kill");
+    assert_eq!(m.budget_exits, 0, "no exit");
 
     let ok = get(&cell, &module, "/ok");
     assert_eq!(
@@ -154,59 +154,73 @@ fn conformance_1_a_killed_instance_is_evicted_and_never_called_again() {
 }
 
 #[test]
-fn a_clean_kill_is_recorded_without_evicting_the_instance() {
+fn a_budget_exit_is_recorded_and_its_instance_serves_the_next_dispatch_warm() {
     let (cell, module) = cell_with(Arc::new(FakeActivator::named(
         ModuleId::new("misbehaver", "v1"),
-        FakeBehaviour::program([Step::CleanKill { overage_ns: 123 }]),
+        FakeBehaviour::program([Step::BudgetExit { overage_ns: 123 }]),
     )));
     let out = get(&cell, &module, "/cooperative");
-    assert_eq!(out.completion, Completion::CleanKill);
+    assert_eq!(out.completion, Completion::BudgetExit);
     assert_eq!(out.status, 503);
     assert_eq!(out.occupancy_ns, u64::from(B_MS) * 1_000_000 + 123);
     assert!(
         cell.slot(out.instance).is_some(),
-        "a clean kill keeps its instance"
+        "a budget exit keeps its instance"
     );
     let metrics = cell.metrics();
-    assert_eq!(metrics.clean_kills, 1);
-    assert_eq!(metrics.hard_kills, 0);
+    assert_eq!(metrics.budget_exits, 1);
+    assert_eq!(metrics.budget_kills, 0);
     assert_eq!(metrics.overage_ns, 123);
     let meters = cell.meters(&module).expect("tenant meters");
     assert_eq!(meters.occupancy_ns(), out.occupancy_ns);
-    assert_eq!(meters.clean_kills(), 1);
-    assert_eq!(meters.hard_kills(), 0);
+    assert_eq!(meters.budget_exits(), 1);
+    assert_eq!(meters.budget_kills(), 0);
     assert_eq!(meters.overage_ns(), 123);
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while cell.idle_instances(&module) != Some(1) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the exited instance must return to the pool"
+        );
+        std::thread::yield_now();
+    }
+    let next = get(&cell, &module, "/ok");
+    assert_eq!(
+        (next.status, next.instance, next.acquired),
+        (200, out.instance, "warm"),
+        "the next dispatch must run on the exited instance as it was left"
+    );
     cell.shutdown();
 }
 
 #[test]
-fn a_guest_that_awaits_between_chunks_unwinds_on_its_cancellation_and_takes_the_clean_kill() {
+fn a_guest_that_awaits_between_chunks_unwinds_on_its_cancellation_and_exits() {
     TestLogCapture::global();
     let (cell, module) = rig();
     let out = get(&cell, &module, "/cooperative");
     assert_eq!(
         (out.completion, out.status),
-        (Completion::CleanKill, 503),
+        (Completion::BudgetExit, 503),
         "trap: {:?}",
         out.trap
     );
     let finally_ran = cell
         .slot(out.instance)
-        .expect("a clean kill keeps its instance")
+        .expect("a budget exit keeps its instance")
         .ctx
         .emitted_logs()
         .iter()
         .any(|log| log.fields.contains("finally ran"));
-    assert!(finally_ran, "the guest's Drop must run on a clean kill");
+    assert!(finally_ran, "the guest's Drop must run before it exits");
     let metrics = cell.metrics();
-    assert_eq!((metrics.clean_kills, metrics.hard_kills), (1, 0));
+    assert_eq!((metrics.budget_exits, metrics.budget_kills), (1, 0));
     cell.shutdown();
 }
 
-/// If `/spin` ever came back clean, the grace window would be a budget
-/// extension for everybody.
+/// If `/spin` ever exited, the grace window would be a budget extension for
+/// everybody.
 #[test]
-fn negative_control_an_uncooperative_guest_cannot_reach_the_clean_path() {
+fn negative_control_an_uncooperative_guest_cannot_exit() {
     let (cell, module) = rig();
 
     for route in ["/spin", "/gc_pin"] {
@@ -214,41 +228,37 @@ fn negative_control_an_uncooperative_guest_cannot_reach_the_clean_path() {
         assert_eq!(
             out.completion,
             Completion::BudgetKill,
-            "{route} was let onto the clean path; trap: {:?}",
+            "{route} was let exit; trap: {:?}",
             out.trap
         );
-        assert_ne!(
-            out.completion,
-            Completion::CleanKill,
-            "{route} reached the clean path"
-        );
+        assert_ne!(out.completion, Completion::BudgetExit, "{route} exited");
         assert!(evicted(&cell, out.instance), "{route} must be evicted");
     }
 
     let m = cell.metrics();
-    assert_eq!(m.hard_kills, 2, "both routes were hard-killed");
-    assert_eq!(m.clean_kills, 0, "no clean kill");
-    assert_eq!(m.clean_hard_ratio, 0.0, "the ratio reads unhealthy");
+    assert_eq!(m.budget_kills, 2, "both routes were killed");
+    assert_eq!(m.budget_exits, 0, "no exit");
+    assert_eq!(m.exit_kill_ratio, 0.0, "the ratio reads unhealthy");
 
     cell.shutdown();
 }
 
 #[test]
-fn the_hang_breaker_counts_only_hard_kills() {
-    for (step, clean, hard, rejected) in [
-        (Step::CleanKill { overage_ns: 123 }, 6, 0, 0),
+fn the_hang_breaker_counts_only_budget_kills() {
+    for (step, exits, kills, rejected) in [
+        (Step::BudgetExit { overage_ns: 123 }, 6, 0, 0),
         (Step::HardKill, 0, 3, 3),
     ] {
         let (cell, module) = cell_with(Arc::new(FakeActivator::named(
             ModuleId::new("misbehaver", "v1"),
-            FakeBehaviour::program([step]),
+            FakeBehaviour::program(vec![step; 6]),
         )));
         for _ in 0..6 {
             get(&cell, &module, "/budget");
         }
         let metrics = cell.metrics();
-        assert_eq!(metrics.clean_kills, clean);
-        assert_eq!(metrics.hard_kills, hard);
+        assert_eq!(metrics.budget_exits, exits);
+        assert_eq!(metrics.budget_kills, kills);
         assert_eq!(metrics.breaker_rejections, rejected);
         cell.shutdown();
     }

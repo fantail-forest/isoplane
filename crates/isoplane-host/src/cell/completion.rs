@@ -76,7 +76,7 @@ pub(super) struct Usage {
     in_slice: bool,
     overage_ns: u64,
     limit: Option<isoplane_engine::ExecutionLimit>,
-    kill_phase: Option<isoplane_engine::KillPhase>,
+    grace_end: Option<isoplane_engine::GraceEnd>,
     capture_hint_occupancy_ns: u64,
     capture_hint_wall_ns: u64,
     capture_hints: u32,
@@ -195,7 +195,7 @@ impl DispatchCompletion {
             outcome.occupancy_measurement == isoplane_engine::OccupancyMeasurement::Incomplete;
         usage.overage_ns = outcome.overage_ns;
         usage.limit = outcome.execution_limit;
-        usage.kill_phase = outcome.kill;
+        usage.grace_end = outcome.grace_end;
         usage.trap_kind = outcome.trap.as_ref().map(|trap| trap.kind);
         if outcome
             .trap
@@ -304,7 +304,7 @@ impl DispatchCompletion {
         let reason = match result.completion {
             Completion::Done => TerminalReason::Success,
             Completion::Trapped => TerminalReason::GuestTrap,
-            Completion::BudgetKill | Completion::CleanKill => match state.usage.limit {
+            Completion::BudgetKill | Completion::BudgetExit => match state.usage.limit {
                 Some(isoplane_engine::ExecutionLimit::Wall) => TerminalReason::WallLimit,
                 Some(isoplane_engine::ExecutionLimit::Occupancy) | None => {
                     TerminalReason::OccupancyLimit
@@ -399,7 +399,7 @@ impl DispatchCompletion {
             total_wall_ns, total_wall_complete = total_wall_ns.is_some(),
             slices = usage.slices, occupancy_budget_ns = self.budget.budget_ns(),
             slice_wall_cap_ns = u64::from(self.budget.slice_wall_ms_cap) * 1_000_000,
-            overage_ns = usage.overage_ns, kill_phase = usage.kill_phase.map(|phase| phase.as_str()),
+            overage_ns = usage.overage_ns, grace_end = usage.grace_end.map(|phase| phase.as_str()),
             "dispatch completed"
         ));
     }

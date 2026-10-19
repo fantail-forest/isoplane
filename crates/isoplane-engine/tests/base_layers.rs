@@ -230,25 +230,6 @@ fn distinct_layers_keep_their_mappings_and_release_private_pages_across_eviction
                 mappings,
                 "activation must preserve template backing mappings"
             );
-            instance.memory()[70000] = 255;
-            instance
-                .reset()
-                .expect("fresh reset in the existing mapping");
-            assert_eq!(
-                instance.memory()[70000],
-                marker,
-                "fresh reset must discard private writes"
-            );
-            assert_eq!(
-                instance.memory().as_ptr() as usize,
-                address,
-                "fresh reset must retain the address space"
-            );
-            assert_eq!(
-                mapping_lines(),
-                mappings,
-                "fresh reset must retain the template mappings"
-            );
         }
     }
 }

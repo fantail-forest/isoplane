@@ -87,15 +87,13 @@ pub struct Metrics {
     /// that is never answered; for a discarded one it is the correct outcome.
     pub wakes_dropped: AtomicU64,
     pub traps: AtomicU64,
-    /// Every occupancy-budget kill, clean and hard.
-    pub budget_kills: AtomicU64,
-    /// Dispatches that entered grace and returned inside it; the slot was
-    /// reused.
-    pub clean_kills: AtomicU64,
+    /// Dispatches that entered grace and returned inside it; the instance
+    /// stayed.
+    pub budget_exits: AtomicU64,
     /// Dispatches still executing at the end of grace, terminated without
     /// unwinding and discarded. The hang breaker counts these. Disjoint from
-    /// `traps`: a hard kill is not a trap.
-    pub hard_kills: AtomicU64,
+    /// `traps`: a kill is not a trap.
+    pub budget_kills: AtomicU64,
     /// Dispatches that crossed the budget at all.
     pub grace_entries: AtomicU64,
     /// Epoch ticks that found the unsafe-to-trap bit set and deferred grace.
@@ -151,7 +149,6 @@ pub struct Metrics {
     /// exhaustive over admitted dispatches: their sum is `dispatches`.
     pub served_warm: AtomicU64,
     pub served_shared: AtomicU64,
-    pub served_pooled_fresh: AtomicU64,
     pub served_hibernation_wake: AtomicU64,
     pub served_activated: AtomicU64,
 
@@ -196,16 +193,15 @@ impl Metrics {
             in_cell_wakes: l(&self.in_cell_wakes),
             wakes_dropped: l(&self.wakes_dropped),
             traps: l(&self.traps),
+            budget_exits: l(&self.budget_exits),
             budget_kills: l(&self.budget_kills),
-            clean_kills: l(&self.clean_kills),
-            hard_kills: l(&self.hard_kills),
             grace_entries: l(&self.grace_entries),
             grace_deferrals: l(&self.grace_deferrals),
             overage_ns: l(&self.overage_ns),
-            // With no hard kills the ratio is reported as the clean count,
-            // the most it can claim.
-            clean_hard_ratio: {
-                let (c, h) = (l(&self.clean_kills), l(&self.hard_kills));
+            // With no kills the ratio is reported as the exit count, the most
+            // it can claim.
+            exit_kill_ratio: {
+                let (c, h) = (l(&self.budget_exits), l(&self.budget_kills));
                 if h == 0 {
                     c as f64
                 } else {
@@ -231,7 +227,6 @@ impl Metrics {
             futures_buffered: l(&self.futures_buffered),
             served_warm: l(&self.served_warm),
             served_shared: l(&self.served_shared),
-            served_pooled_fresh: l(&self.served_pooled_fresh),
             served_hibernation_wake: l(&self.served_hibernation_wake),
             served_activated: l(&self.served_activated),
             activation_p50_us: self.activation_us.p50(),
@@ -298,13 +293,12 @@ pub struct MetricsSnapshot {
     pub in_cell_wakes: u64,
     pub wakes_dropped: u64,
     pub traps: u64,
+    pub budget_exits: u64,
     pub budget_kills: u64,
-    pub clean_kills: u64,
-    pub hard_kills: u64,
     pub grace_entries: u64,
     pub grace_deferrals: u64,
     pub overage_ns: u64,
-    pub clean_hard_ratio: f64,
+    pub exit_kill_ratio: f64,
     pub shed: u64,
     pub breaker_rejections: u64,
     pub reentrancy_refusals: u64,
@@ -324,7 +318,6 @@ pub struct MetricsSnapshot {
     pub futures_buffered: u64,
     pub served_warm: u64,
     pub served_shared: u64,
-    pub served_pooled_fresh: u64,
     pub served_hibernation_wake: u64,
     pub served_activated: u64,
     pub activation_p50_us: u64,
@@ -353,13 +346,12 @@ impl MetricsSnapshot {
             ("in_cell_wakes", self.in_cell_wakes.to_string()),
             ("wakes_dropped", self.wakes_dropped.to_string()),
             ("traps", self.traps.to_string()),
+            ("budget_exits", self.budget_exits.to_string()),
             ("budget_kills", self.budget_kills.to_string()),
-            ("clean_kills", self.clean_kills.to_string()),
-            ("hard_kills", self.hard_kills.to_string()),
             ("grace_entries", self.grace_entries.to_string()),
             ("grace_deferrals", self.grace_deferrals.to_string()),
             ("overage_ms", format!("{:.3}", self.overage_ns as f64 / 1e6)),
-            ("clean_hard_ratio", format!("{:.6}", self.clean_hard_ratio)),
+            ("exit_kill_ratio", format!("{:.6}", self.exit_kill_ratio)),
             ("shed", self.shed.to_string()),
             ("breaker_rejections", self.breaker_rejections.to_string()),
             ("reentrancy_refusals", self.reentrancy_refusals.to_string()),
@@ -388,7 +380,6 @@ impl MetricsSnapshot {
             ("futures_buffered", self.futures_buffered.to_string()),
             ("served_warm", self.served_warm.to_string()),
             ("served_shared", self.served_shared.to_string()),
-            ("served_pooled_fresh", self.served_pooled_fresh.to_string()),
             (
                 "served_hibernation_wake",
                 self.served_hibernation_wake.to_string(),
@@ -472,43 +463,43 @@ mod tests {
     }
 
     #[test]
-    fn the_clean_hard_ratio_is_a_scraped_metric() {
+    fn the_exit_kill_ratio_is_a_scraped_metric() {
         let m = Metrics::new();
         for _ in 0..3_000 {
-            m.clean_kills.fetch_add(1, Ordering::Relaxed);
+            m.budget_exits.fetch_add(1, Ordering::Relaxed);
         }
-        m.hard_kills.fetch_add(1, Ordering::Relaxed);
+        m.budget_kills.fetch_add(1, Ordering::Relaxed);
         let s = m.snapshot();
         assert_eq!(
-            s.clean_hard_ratio, 3_000.0,
-            "3,000 clean against 1 hard is 3,000"
+            s.exit_kill_ratio, 3_000.0,
+            "3,000 exits against 1 kill is 3,000"
         );
         assert!(
             m.to_text()
-                .contains("isoplane_cell_clean_hard_ratio 3000.000000"),
+                .contains("isoplane_cell_exit_kill_ratio 3000.000000"),
             "the ratio is on the text scrape"
         );
         let json: serde_json::Value = serde_json::from_str(&m.to_json()).expect("json");
         assert_eq!(
-            json["clean_kills"], 3_000,
-            "the clean count is on the json scrape"
+            json["budget_exits"], 3_000,
+            "the exit count is on the json scrape"
         );
-        assert_eq!(json["hard_kills"], 1, "so is the hard count");
+        assert_eq!(json["budget_kills"], 1, "so is the kill count");
     }
 
     #[test]
-    fn the_clean_hard_ratio_can_report_an_unhealthy_fleet() {
+    fn the_exit_kill_ratio_can_report_an_unhealthy_fleet() {
         let m = Metrics::new();
-        m.clean_kills.fetch_add(1, Ordering::Relaxed);
+        m.budget_exits.fetch_add(1, Ordering::Relaxed);
         for _ in 0..1_000 {
-            m.hard_kills.fetch_add(1, Ordering::Relaxed);
+            m.budget_kills.fetch_add(1, Ordering::Relaxed);
         }
         assert!(
-            m.snapshot().clean_hard_ratio < 0.01,
-            "a fleet that is all hard kills must read as such, not as healthy"
+            m.snapshot().exit_kill_ratio < 0.01,
+            "a fleet that is all kills must read as such, not as healthy"
         );
         assert_eq!(
-            Metrics::new().snapshot().clean_hard_ratio,
+            Metrics::new().snapshot().exit_kill_ratio,
             0.0,
             "with no kills at all the ratio must not invent a healthy number"
         );

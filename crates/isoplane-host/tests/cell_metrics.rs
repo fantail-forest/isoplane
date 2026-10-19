@@ -71,9 +71,7 @@ fn the_metrics_endpoint_decomposes_the_lifecycle() {
         // second activation; waiting for the pool measures the steady state.
         assert!(
             wait_for(
-                || r.cell
-                    .idle_instances(&module)
-                    .is_some_and(|(w, f)| w + f >= 1),
+                || r.cell.idle_instances(&module).is_some_and(|idle| idle >= 1),
                 Duration::from_secs(5)
             ),
             "the instance never returned to the pool after dispatch {i}"

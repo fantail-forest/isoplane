@@ -191,8 +191,8 @@ mod tests {
     }
 
     #[test]
-    fn controlled_occupancy_drives_real_guest_grace_and_hard_kill() {
-        use crate::{Completion, KillPhase};
+    fn controlled_occupancy_drives_real_guest_grace_exit_and_kill() {
+        use crate::{Completion, GraceEnd};
         use std::sync::Arc;
 
         struct Advance {
@@ -227,14 +227,14 @@ mod tests {
         for (elapsed_ns, completion, phase, grace_calls) in [
             (
                 budget.budget_ns() + 1,
-                Completion::CleanKill,
-                KillPhase::Clean,
+                Completion::BudgetExit,
+                GraceEnd::Exited,
                 1,
             ),
             (
                 budget.hard_ns() + 1,
                 Completion::BudgetKill,
-                KillPhase::Hard,
+                GraceEnd::Killed,
                 0,
             ),
         ] {
@@ -262,14 +262,14 @@ mod tests {
                 .expect("install engine once");
             let outcome = guest.run_initialize(budget);
             assert_eq!(outcome.completion, completion, "{:?}", outcome.trap);
-            assert_eq!(outcome.kill, Some(phase));
+            assert_eq!(outcome.grace_end, Some(phase));
             assert_eq!(outcome.occupancy_ns, elapsed_ns);
             assert_eq!(observed_grace.load(Ordering::Relaxed), grace_calls);
-            if phase == KillPhase::Clean {
+            if phase == GraceEnd::Exited {
                 assert_eq!(guest.memory()[0], 1, "cooperative cleanup executed");
-                guest.reset().expect("clean kill leaves reusable instance");
+                assert!(guest.discarded.is_none(), "an exit keeps the instance");
             } else {
-                assert!(guest.reset().is_err(), "a hard kill discards the instance");
+                assert!(guest.discarded.is_some(), "a kill discards the instance");
             }
         }
     }
@@ -343,7 +343,7 @@ mod tests {
             "a missing clock must preserve its typed host-fault reason"
         );
         assert!(
-            guest.reset().is_err(),
+            guest.discarded.is_some(),
             "execution interrupted by a clock failure must be discarded"
         );
     }

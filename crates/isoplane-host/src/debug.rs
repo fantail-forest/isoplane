@@ -27,7 +27,7 @@ pub enum DebugError {
 }
 
 /// Loads fresh raw instances; initialization executes inside the first accounted dispatch.
-/// Instances refuse reset and capture, including capture after an ordinary await.
+/// Instances refuse capture, including capture after an ordinary await.
 pub struct DebugActivator {
     engine: EngineActivator,
     stopped: Arc<AtomicBool>,
@@ -248,9 +248,6 @@ impl InstanceOps for DebugInstance {
     fn gc_hint(&mut self, _: u8) -> DispatchOutcome {
         unsupported("local debugger maintenance execution is unsupported")
     }
-    fn reset(&mut self) -> anyhow::Result<()> {
-        anyhow::bail!("local debugger instances cannot be reset")
-    }
     fn is_parked(&self) -> bool {
         self.instance.is_parked()
     }
@@ -288,7 +285,7 @@ fn unsupported(message: &'static str) -> DispatchOutcome {
             kind: isoplane_engine::TrapKind::CapabilityViolation,
             message: message.into(),
         }),
-        kill: None,
+        grace_end: None,
         overage_ns: 0,
         grace_deferrals: 0,
     }
@@ -488,7 +485,7 @@ mod tests {
     }
 
     #[test]
-    fn debugger_instances_refuse_capture_reset_and_a_second_dispatch() {
+    fn debugger_instances_refuse_capture_and_a_second_dispatch() {
         let mut instance = instance("i32.const 42 global.set $initialized");
         let result = instance.dispatch(&record(), OccupancyBudget::default());
         assert_eq!(
@@ -503,10 +500,6 @@ mod tests {
         assert!(
             instance.capture_mutable_state().is_err(),
             "direct capture must also refuse debugger state"
-        );
-        assert!(
-            instance.reset().is_err(),
-            "a debug connection cannot be cloned through reset"
         );
         assert_eq!(
             instance

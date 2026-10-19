@@ -370,10 +370,7 @@ async fn trial(
 
 async fn wait_idle(cell: &Arc<Cell>, module: &ModuleId) -> anyhow::Result<()> {
     tokio::time::timeout(Duration::from_secs(30), async {
-        while !cell
-            .idle_instances(module)
-            .is_some_and(|(warm, _)| warm == 1)
-        {
+        while !cell.idle_instances(module).is_some_and(|warm| warm == 1) {
             tokio::task::yield_now().await;
         }
     })

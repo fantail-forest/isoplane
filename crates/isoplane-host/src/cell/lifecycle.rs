@@ -232,7 +232,6 @@ impl Cell {
     fn note_acquired(&self, src: AcquireSource, took: Duration) {
         match src {
             AcquireSource::WarmParked => &self.metrics.served_warm,
-            AcquireSource::PooledFresh => &self.metrics.served_pooled_fresh,
             AcquireSource::HibernationWake => {
                 self.metrics
                     .hibernation_wake_us
@@ -450,7 +449,7 @@ impl Cell {
         );
 
         // A latched trap becomes a trap here, before the guest proceeds as
-        // though the import had succeeded. A clean kill is left alone: its
+        // though the import had succeeded. An exit is left alone: its
         // latched code is almost always a poisoned import the guest ignored
         // on its way out, and its slot is consistent.
         let latched = slot.ctx.take_trap();
@@ -553,15 +552,14 @@ impl Cell {
                     DispatchEnd::Parked => self.park_after_slice(slot),
                 }
             }
-            // The dispatch still fails with `budget_exceeded`, but the
-            // instance is consistent, its slot is reused, and the breaker
-            // records neither a kill nor a success: a clean kill is the budget
-            // working as designed.
-            Completion::CleanKill => {
+            // The dispatch still fails with `budget_exceeded`, but nothing was
+            // killed: the instance stays warm, and the breaker records neither
+            // a kill nor a success, since an exit is the budget working as
+            // designed.
+            Completion::BudgetExit => {
                 let overage = out.overage_ns;
-                entry.meters.record_budget_kill(KillPhase::Clean, overage);
-                self.metrics.budget_kills.fetch_add(1, Ordering::Relaxed);
-                self.metrics.clean_kills.fetch_add(1, Ordering::Relaxed);
+                entry.meters.record_grace_end(GraceEnd::Exited, overage);
+                self.metrics.budget_exits.fetch_add(1, Ordering::Relaxed);
                 self.metrics.grace_entries.fetch_add(1, Ordering::Relaxed);
                 self.metrics
                     .overage_ns
@@ -569,10 +567,10 @@ impl Cell {
                 tracing::info!(
                     tenant = %entry.tenant, instance = %slot.id,
                     overage_us = overage / 1_000,
-                    "clean kill: dispatch unwound inside its grace window"
+                    "budget exit: dispatch returned inside its grace window"
                 );
                 let msg = format!(
-                    "budget_exceeded: occupancy budget elapsed; the dispatch unwound cleanly inside its \
+                    "budget_exceeded: occupancy budget elapsed; the dispatch returned inside its \
                      grace window with {:.3} ms of recorded overage",
                     overage as f64 / 1e6
                 );
@@ -597,19 +595,18 @@ impl Cell {
                 if killed {
                     entry
                         .meters
-                        .record_budget_kill(KillPhase::Hard, out.overage_ns);
+                        .record_grace_end(GraceEnd::Killed, out.overage_ns);
                     self.metrics.budget_kills.fetch_add(1, Ordering::Relaxed);
-                    self.metrics.hard_kills.fetch_add(1, Ordering::Relaxed);
                     self.metrics
                         .overage_ns
                         .fetch_add(out.overage_ns, Ordering::Relaxed);
-                    if out.kill.is_some() {
+                    if out.grace_end.is_some() {
                         self.metrics.grace_entries.fetch_add(1, Ordering::Relaxed);
                     }
                     self.breaker.record_kill(&breaker_key, crate::now_ms());
                 } else {
                     entry.meters.record_trap();
-                    // A hard kill is not also a trap.
+                    // A kill is not also a trap.
                     self.metrics.traps.fetch_add(1, Ordering::Relaxed);
                 }
                 // Refuses entry from here; `finish_and_release` settles the
@@ -820,8 +817,7 @@ impl Cell {
         let generation = slot.ctx.dispatch_generation();
         let (req, remaining, abandoned_guest_work) = self.end_dispatch_books(slot, entry, did);
         let d = if abandoned_guest_work { evict() } else { d };
-        let keeps_instance =
-            d.is_warm() || matches!(d.kind(), crate::disposition::DispositionKind::Reset);
+        let keeps_instance = d.is_warm();
         if remaining > 0 {
             if keeps_instance {
                 return self.park_after_slice(slot);

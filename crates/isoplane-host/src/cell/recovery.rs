@@ -14,9 +14,8 @@ impl Cell {
         completion: Completion,
     ) {
         if completion == Completion::BudgetKill {
-            entry.meters.record_budget_kill(KillPhase::Hard, 0);
+            entry.meters.record_grace_end(GraceEnd::Killed, 0);
             self.metrics.budget_kills.fetch_add(1, Ordering::Relaxed);
-            self.metrics.hard_kills.fetch_add(1, Ordering::Relaxed);
         } else {
             entry.meters.record_trap();
             self.metrics.traps.fetch_add(1, Ordering::Relaxed);

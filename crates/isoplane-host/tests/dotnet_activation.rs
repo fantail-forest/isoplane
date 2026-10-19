@@ -93,7 +93,7 @@ async fn activation_finishes_before_dispatch(runtime: GuestRuntime) {
             "both requests must exercise the same activated instance"
         );
         tokio::time::timeout(Duration::from_secs(60), async {
-            while cell.idle_instances(&module) != Some((1, 0)) {
+            while cell.idle_instances(&module) != Some(1) {
                 tokio::task::yield_now().await;
             }
         })

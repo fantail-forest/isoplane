@@ -226,8 +226,8 @@ fn a_pal_trap_on_call_stub_traps_rather_than_answering() {
         "the trap must name the import and say why: {msg}"
     );
     assert!(
-        i.reset().is_err(),
-        "a trapped instance is discarded, not reset"
+        i.capture_mutable_state().is_err(),
+        "a trapped instance is discarded"
     );
 }
 

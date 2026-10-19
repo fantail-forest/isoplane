@@ -45,7 +45,7 @@ pub enum Step {
     /// Report a hard budget kill without running an actual busy loop.
     HardKill,
     /// Report a cooperative budget kill with prescribed overage.
-    CleanKill {
+    BudgetExit {
         overage_ns: u64,
     },
     /// Touch `pages` pages of linear memory.
@@ -118,7 +118,6 @@ pub struct FakeInstance {
     /// [`FakeActivator`] so a test asserts what the guest observed.
     pub wakes_seen: Arc<Mutex<Vec<(u64, ResultRecord)>>>,
     bindings: Box<dyn HostBindings>,
-    template: Arc<Vec<u8>>,
     memory: Vec<u8>,
     program: VecDeque<Step>,
     behaviour: FakeBehaviour,
@@ -288,8 +287,8 @@ impl FakeInstance {
                 });
                 PollStatus::Done { response }
             }
-            Step::HardKill | Step::CleanKill { .. } => {
-                let (cooperative, overage_ns) = if let Step::CleanKill { overage_ns } = step {
+            Step::HardKill | Step::BudgetExit { .. } => {
+                let (cooperative, overage_ns) = if let Step::BudgetExit { overage_ns } = step {
                     (true, overage_ns)
                 } else {
                     (false, budget.grace_ns())
@@ -307,13 +306,13 @@ impl FakeInstance {
                     self.survived_last_call = true;
                     return DispatchOutcome {
                         status: PollStatus::Done { response: 0 },
-                        completion: Completion::CleanKill,
+                        completion: Completion::BudgetExit,
                         occupancy_ns,
                         occupancy_measurement: isoplane_engine::OccupancyMeasurement::Complete,
                         execution_limit: None,
                         wall_ns: wall.elapsed().as_nanos() as u64,
                         trap: None,
-                        kill: Some(isoplane_engine::KillPhase::Clean),
+                        grace_end: Some(isoplane_engine::GraceEnd::Exited),
                         overage_ns,
                         grace_deferrals: 0,
                     };
@@ -334,7 +333,7 @@ impl FakeInstance {
                                   without unwinding"
                             .into(),
                     }),
-                    kill: Some(isoplane_engine::KillPhase::Hard),
+                    grace_end: Some(isoplane_engine::GraceEnd::Killed),
                     overage_ns,
                     grace_deferrals: 0,
                 };
@@ -362,7 +361,7 @@ impl FakeInstance {
                 }),
                 _ => None,
             },
-            kill: None,
+            grace_end: None,
             overage_ns: 0,
             grace_deferrals: 0,
         }
@@ -431,19 +430,10 @@ impl InstanceOps for FakeInstance {
             execution_limit: None,
             wall_ns: 0,
             trap: None,
-            kill: None,
+            grace_end: None,
             overage_ns: 0,
             grace_deferrals: 0,
         }
-    }
-    fn reset(&mut self) -> anyhow::Result<()> {
-        self.memory.clear();
-        self.memory.extend_from_slice(&self.template);
-        self.memory.resize(self.behaviour.memory_bytes, 0);
-        self.program = self.behaviour.program.clone().into();
-        self.image = InstanceImage::default();
-        self.dirty_pages = 0;
-        Ok(())
     }
     fn is_parked(&self) -> bool {
         self.stack_empty && self.last_parked
@@ -557,7 +547,6 @@ impl Activator for FakeActivator {
             entropy: self.entropy.clone(),
             wakes_seen: self.wakes_seen.clone(),
             bindings,
-            template: self.template.clone(),
             memory,
             program: self.behaviour.program.clone().into(),
             behaviour: self.behaviour.clone(),

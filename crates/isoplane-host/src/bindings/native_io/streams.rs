@@ -519,15 +519,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resetting_a_slot_closes_its_real_socket_and_cancels_pending_input() {
-        host_cleanup_closes_the_socket_and_returns_its_permit(|slot| {
-            slot.reset()
-                .expect("reset must return an idle slot to its template")
-        })
-        .await;
-    }
-
-    #[tokio::test]
     async fn evicting_a_slot_closes_its_real_socket_and_returns_its_permit() {
         host_cleanup_closes_the_socket_and_returns_its_permit(crate::slot::Slot::discard).await;
     }

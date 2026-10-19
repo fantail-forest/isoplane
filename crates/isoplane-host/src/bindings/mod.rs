@@ -187,14 +187,6 @@ impl HostBindings for CellBindings {
         })
     }
 
-    fn reset_prepared_resources(
-        &mut self,
-        prepared: &isoplane_abi::native_io::PreparedResources,
-    ) -> Result<(), isoplane_engine::bindings::BindingError> {
-        self.ctx.release_native_resources();
-        self.restore_prepared_resources(prepared)
-    }
-
     fn memory_limit_bytes(&self) -> Option<u64> {
         Some(self.ctx.limits.instance_memory_max)
     }

@@ -1,9 +1,8 @@
 //! The sandbox boundary: everything that touches wasmtime. Templates are
 //! pre-initialised memory images mapped copy-on-write by wasmtime's pooling
 //! allocator; an activation is a `Store` plus `Linker::instantiate` into a
-//! pre-reserved slot. Captured images can retain their mappings across reset
-//! and hibernation. A
-//! dispatch is a synchronous call on the caller's thread, metered by the
+//! pre-reserved slot. Captured images can retain their mappings across
+//! hibernation. A dispatch is a synchronous call on the caller's thread, metered by the
 //! worker occupancy clock and killed through the epoch counter.
 
 use std::sync::Arc;
@@ -39,7 +38,7 @@ mod wtconfig;
 pub use artifact::{ArtifactPaths, CompilationCache};
 pub use bindings::{HostBindings, ImportCall};
 pub use budget::{
-    DispatchOutcome, ExecutionLimit, KillPhase, OccupancyBudget, OccupancyMeasurement, TrapInfo,
+    DispatchOutcome, ExecutionLimit, GraceEnd, OccupancyBudget, OccupancyMeasurement, TrapInfo,
     TrapKind,
 };
 pub use compiler::COMPILER_STACK_BYTES;

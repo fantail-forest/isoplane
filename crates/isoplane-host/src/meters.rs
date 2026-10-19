@@ -27,9 +27,8 @@ pub struct Meters {
     /// Already inside `occupancy_ns`; broken out so the share is visible.
     log_occupancy_ns: AtomicU64,
     trapped: AtomicU64,
+    budget_exits: AtomicU64,
     budget_kills: AtomicU64,
-    clean_kills: AtomicU64,
-    hard_kills: AtomicU64,
     /// Occupancy past the budget, already included in `occupancy_ns`.
     overage_ns: AtomicU64,
     shed: AtomicU64,
@@ -83,11 +82,10 @@ impl Meters {
     pub fn record_trap(&self) {
         self.trapped.fetch_add(1, Ordering::Relaxed);
     }
-    pub fn record_budget_kill(&self, phase: isoplane_engine::KillPhase, overage_ns: u64) {
-        self.budget_kills.fetch_add(1, Ordering::Relaxed);
+    pub fn record_grace_end(&self, phase: isoplane_engine::GraceEnd, overage_ns: u64) {
         match phase {
-            isoplane_engine::KillPhase::Clean => &self.clean_kills,
-            isoplane_engine::KillPhase::Hard => &self.hard_kills,
+            isoplane_engine::GraceEnd::Exited => &self.budget_exits,
+            isoplane_engine::GraceEnd::Killed => &self.budget_kills,
         }
         .fetch_add(1, Ordering::Relaxed);
         self.overage_ns.fetch_add(overage_ns, Ordering::Relaxed);
@@ -126,14 +124,11 @@ impl Meters {
     pub fn trapped(&self) -> u64 {
         self.trapped.load(Ordering::Relaxed)
     }
+    pub fn budget_exits(&self) -> u64 {
+        self.budget_exits.load(Ordering::Relaxed)
+    }
     pub fn budget_kills(&self) -> u64 {
         self.budget_kills.load(Ordering::Relaxed)
-    }
-    pub fn clean_kills(&self) -> u64 {
-        self.clean_kills.load(Ordering::Relaxed)
-    }
-    pub fn hard_kills(&self) -> u64 {
-        self.hard_kills.load(Ordering::Relaxed)
     }
     /// A subset of [`Meters::occupancy_ns`], never an addition to it.
     pub fn overage_ns(&self) -> u64 {
@@ -162,35 +157,34 @@ mod tests {
             execution_limit: None,
             wall_ns,
             trap: None,
-            kill: None,
+            grace_end: None,
             overage_ns: 0,
             grace_deferrals: 0,
         }
     }
 
     #[test]
-    fn a_clean_kill_records_the_overage_rather_than_discarding_it() {
+    fn a_budget_exit_records_the_overage_rather_than_discarding_it() {
         let m = Meters::new();
         let out = DispatchOutcome {
             status: PollStatus::Done { response: 0 },
-            completion: Completion::CleanKill,
+            completion: Completion::BudgetExit,
             occupancy_ns: 53_000_000,
             occupancy_measurement: isoplane_engine::OccupancyMeasurement::Complete,
             execution_limit: None,
             wall_ns: 53_500_000,
             trap: None,
-            kill: Some(isoplane_engine::KillPhase::Clean),
+            grace_end: Some(isoplane_engine::GraceEnd::Exited),
             overage_ns: 3_000_000,
             grace_deferrals: 0,
         };
         m.record_occupancy(&out);
-        m.record_budget_kill(isoplane_engine::KillPhase::Clean, out.overage_ns);
+        m.record_grace_end(isoplane_engine::GraceEnd::Exited, out.overage_ns);
 
         assert_eq!(m.occupancy_ns(), 53_000_000, "the meter must not stop at B");
         assert_eq!(m.overage_ns(), 3_000_000, "the overage share is visible");
-        assert_eq!(m.clean_kills(), 1, "a clean kill is counted as one");
-        assert_eq!(m.hard_kills(), 0, "and not as a hard kill");
-        assert_eq!(m.budget_kills(), 1, "both phases count as budget kills");
+        assert_eq!(m.budget_exits(), 1, "an exit is counted as one");
+        assert_eq!(m.budget_kills(), 0, "and not as a kill");
     }
 
     #[test]
@@ -200,18 +194,18 @@ mod tests {
         for over in [1_000_000u64, 2_500_000, 4_900_000] {
             let out = DispatchOutcome {
                 status: PollStatus::Done { response: 0 },
-                completion: Completion::CleanKill,
+                completion: Completion::BudgetExit,
                 occupancy_ns: budget_ns + over,
                 occupancy_measurement: isoplane_engine::OccupancyMeasurement::Complete,
                 execution_limit: None,
                 wall_ns: 0,
                 trap: None,
-                kill: Some(isoplane_engine::KillPhase::Clean),
+                grace_end: Some(isoplane_engine::GraceEnd::Exited),
                 overage_ns: over,
                 grace_deferrals: 0,
             };
             m.record_occupancy(&out);
-            m.record_budget_kill(isoplane_engine::KillPhase::Clean, out.overage_ns);
+            m.record_grace_end(isoplane_engine::GraceEnd::Exited, out.overage_ns);
         }
         assert_eq!(m.overage_ns(), 8_400_000, "every overage is summed");
         assert!(

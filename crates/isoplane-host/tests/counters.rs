@@ -91,7 +91,7 @@ fn app(r: &Rig, name: &str, behaviour: FakeBehaviour) -> ModuleId {
     module
 }
 
-/// A hard kill and a trap each end an instance, and are counted apart.
+/// A kill and a trap each end an instance, and are counted apart.
 #[test]
 fn a_hard_kill_is_not_counted_as_a_trap() {
     let r = rig(CellConfig {
@@ -136,7 +136,7 @@ fn a_hard_kill_is_not_counted_as_a_trap() {
     assert_eq!(out.status, 503, "a hard budget kill is a 503");
 
     let m = r.cell.metrics();
-    assert_eq!(m.hard_kills, 1, "the spin was hard-killed");
+    assert_eq!(m.budget_kills, 1, "the spin was killed");
     assert_eq!(
         m.traps, 1,
         "the budget kill was counted as a trap as well as a kill"
@@ -179,7 +179,7 @@ fn a_trapped_instance_is_evicted() {
     );
     assert_eq!(
         r.cell.idle_instances(&module),
-        Some((0, 0)),
+        Some(0),
         "and nothing of it is kept for reuse"
     );
     r.cell.shutdown();

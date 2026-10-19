@@ -165,7 +165,7 @@ fn a_retired_module_refuses_new_work_and_discards_its_idle_instances() {
         "the module must serve before it retires"
     );
     let deadline = std::time::Instant::now() + T;
-    while r.cell.idle_instances(&module) != Some((1, 0)) {
+    while r.cell.idle_instances(&module) != Some(1) {
         assert!(
             std::time::Instant::now() < deadline,
             "the served instance must return to the pool"

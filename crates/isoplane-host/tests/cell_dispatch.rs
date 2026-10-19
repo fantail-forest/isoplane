@@ -118,7 +118,7 @@ fn a_budget_killed_spinner_does_not_block_another_tenants_wake() {
             Completion::BudgetKill,
             "the spinner was not killed at its budget"
         );
-        assert_eq!(out.status, 503, "a hard kill is a 503");
+        assert_eq!(out.status, 503, "a kill is a 503");
         let trap = out.trap.expect("a kill names its trap");
         assert!(trap.starts_with("budget_exceeded"), "wrong trap: {trap}");
         assert!(

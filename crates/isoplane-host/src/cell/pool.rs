@@ -439,102 +439,35 @@ pub(super) mod cell_tests {
     }
 
     #[test]
-    fn a_queued_wake_after_reset_leaves_the_pooled_instance_pristine() {
+    fn a_discarded_idle_instance_leaves_the_index_when_acquisition_skips_it() {
         let cell = cell(CellConfig {
             exec_threads: 0,
-            ..CellConfig::for_test("stale-reset-wake")
-        });
-        let act = Arc::new(FakeActivator::new(
-            FakeBehaviour::done().with_lazy_init_probe(),
-        ));
-        let module = act.module().clone();
-        cell.register_module("acme", act, manifest("stale-reset-wake"))
-            .expect("register");
-        let run = |id| {
-            let (responder, rx) = std::sync::mpsc::sync_channel(1);
-            cell.run_dispatch(DispatchJob {
-                stream: None,
-                upload: None,
-                module: module.clone(),
-                target: Target::Handler {
-                    route: "/go".into(),
-                }
-                .into(),
-                rec: http(id),
-                responder: responder.into(),
-                completion: cell
-                    .completion_owner(&module, &http(id))
-                    .expect("registered dispatch owner"),
-            });
-            rx.recv_timeout(Duration::from_secs(10))
-                .expect("dispatch answered")
-        };
-        let first = run(1);
-        let entry = cell.modules.read().get(&module).cloned().unwrap();
-        let (warm, _) = cell.acquire_handler(&entry).expect("warm instance");
-        assert_eq!(warm.id, first.instance, "the completed instance stays warm");
-        entry
-            .pool
-            .release(warm.clone(), crate::disposition::policy_reset());
-        assert!(
-            !warm.is_pristine(),
-            "a policy reset must wait for acquisition before resetting"
-        );
-        let (slot, _) = cell.acquire_handler(&entry).expect("reset candidate");
-        assert!(slot.is_pristine(), "acquisition must reset the candidate");
-        cell.run_wake(slot.clone());
-        assert!(
-            slot.is_pristine(),
-            "a stale wake must not enter reset guest memory"
-        );
-        entry.pool.release(slot, crate::disposition::policy_reset());
-        let next = run(2);
-        assert_eq!(
-            next.instance, first.instance,
-            "the reset instance remains reusable"
-        );
-        assert_eq!(
-            next.acquired, "pooled_fresh",
-            "the dispatch uses the hygienic pool"
-        );
-        assert_eq!(
-            next.body,
-            vec![0],
-            "the next dispatch observes template state"
-        );
-        cell.shutdown();
-    }
-
-    #[test]
-    fn a_failed_deferred_reset_removes_the_discarded_resident() {
-        let cell = cell(CellConfig {
-            exec_threads: 0,
-            ..CellConfig::for_test("reset-failure-cleanup")
+            ..CellConfig::for_test("discarded-idle-cleanup")
         });
         let act = Arc::new(FakeActivator::new(FakeBehaviour::done()));
         let module = act.module().clone();
-        cell.register_module("acme", act, manifest("reset-failure-cleanup"))
+        cell.register_module("acme", act, manifest("discarded-idle-cleanup"))
             .expect("register");
         let entry = cell.modules.read().get(&module).cloned().unwrap();
         let (candidate, _) = cell.acquire_handler(&entry).expect("initial activation");
         entry
             .pool
-            .release(candidate.clone(), crate::disposition::policy_reset());
+            .release(candidate.clone(), crate::disposition::warm());
         candidate.discard();
         let (replacement, source) = cell.acquire_handler(&entry).expect("fallback activation");
         assert_eq!(
             source,
             AcquireSource::Activated,
-            "a refused reset requires activation"
+            "a discarded idle instance requires activation"
         );
         assert!(
             !cell.index.lock().contains_key(&candidate.id),
-            "discarded reset candidates must leave the instance index"
+            "a discarded idle instance must leave the instance index"
         );
         let residents = cell.residents.lock();
         assert!(
             !residents.contains_key(&candidate.id),
-            "discarded reset candidates must not retain resident metadata"
+            "a discarded idle instance must not retain resident metadata"
         );
         assert!(
             residents.contains_key(&replacement.id),

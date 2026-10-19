@@ -158,41 +158,6 @@ fn a_pre_mapped_guest_still_enforces_its_activation_memory_limit() {
     );
 }
 
-#[cfg(target_os = "linux")]
-#[test]
-fn a_fresh_reset_restores_globals_without_replacing_the_layer_mapping() {
-    let engine = test_engine();
-    let (_, source) = source(&engine, "i64.const 73 global.set $calls i64.const 0");
-    let mut instance = initialize(&engine, &source);
-    let product = capture(&engine, &source, &mut instance);
-    drop(instance);
-    let template = engine.load_prepared_product(&product).expect("load layer");
-    let mut instance = activate(&engine, &template);
-    let address = instance.memory().as_ptr();
-    let original = instance.capture_mutable_state().expect("template globals");
-    let mut changed = original.clone();
-    for value in &mut changed.globals {
-        if let isoplane_engine::snapshot::GlobalValue::I64(value) = value {
-            *value = 99;
-        }
-    }
-    instance
-        .restore_mutable_state(&changed)
-        .expect("change globals");
-    instance.reset().expect("reset fresh instance");
-    assert_eq!(
-        instance.memory().as_ptr(),
-        address,
-        "fresh reset must retain the mapped address"
-    );
-    assert_eq!(
-        postcard::to_allocvec(&instance.capture_mutable_state().expect("reset globals"))
-            .expect("encode"),
-        postcard::to_allocvec(&original).expect("encode"),
-        "fresh reset must restore captured globals as well as linear memory"
-    );
-}
-
 #[test]
 fn layer_private_writes_do_not_survive_pool_slot_reuse() {
     let engine = IsoplaneEngine::new(isoplane_engine::EngineConfig {

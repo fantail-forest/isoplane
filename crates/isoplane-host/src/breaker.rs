@@ -93,7 +93,7 @@ impl HangBreaker {
         Err(e.open_until_ms)
     }
 
-    /// A dispatch was hard-killed at its CPU budget.
+    /// A dispatch was killed at its CPU budget.
     pub fn record_kill(&self, key: &BreakerKey, now_ms: u64) {
         let mut g = self.entries.lock();
         let e = g.entry(key.clone()).or_default();

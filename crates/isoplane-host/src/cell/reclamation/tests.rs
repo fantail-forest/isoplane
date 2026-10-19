@@ -358,39 +358,6 @@ fn a_snapshot_that_fails_its_checksum_restores_from_the_template() {
 }
 
 #[test]
-fn a_hibernated_reset_candidate_is_reset_before_the_next_dispatch() {
-    let cell = test_cell(Storage::new(1), 0);
-    let module = register(&cell, "reset", FakeBehaviour::done().with_lazy_init_probe());
-    let first = completed(&cell, &module, 1);
-    let entry = cell
-        .modules
-        .read()
-        .get(&module)
-        .cloned()
-        .expect("registered module");
-    let (warm, _) = cell.acquire_handler(&entry).expect("warm instance");
-    entry.pool.release(warm, crate::disposition::policy_reset());
-    assert!(
-        cell.reclaim_candidate(candidate(&cell, first.instance))
-            .expect("reset candidate capture"),
-        "the reset candidate must hibernate before reset"
-    );
-    let second = completed(&cell, &module, 2);
-    assert_eq!(
-        second.acquired, "pooled_fresh",
-        "acquisition must perform the deferred reset after restoration"
-    );
-    assert_eq!(
-        second.instance, first.instance,
-        "reset must reuse the hibernated candidate's slot"
-    );
-    assert_eq!(
-        second.body, first.body,
-        "a reset acquisition must clear prior dispatch initialization residue"
-    );
-}
-
-#[test]
 fn memory_recovery_stops_the_sweep_before_an_active_dispatch_is_captured() {
     let cell = test_cell(Storage::new(2), 0);
     let (active, _response) = active(&cell, "active", 1);

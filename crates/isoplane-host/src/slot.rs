@@ -37,7 +37,7 @@ pub enum EnterError {
     /// A previous call into this instance has not returned.
     Busy,
     /// Hibernated or discarded: there is no memory here to call into. A
-    /// hard-killed or trapped instance is discarded, because its memory may be
+    /// killed or trapped instance is discarded, because its memory may be
     /// mid-collection or mid-frame and wasmtime would still answer a call on
     /// the killed store.
     NotResident(LifecycleTier),
@@ -118,8 +118,6 @@ struct SlotInner {
     dormant: Option<Box<dyn isoplane_engine::DormantInstance>>,
     in_call: bool,
     parked_since_ms: Option<u64>,
-    /// Set on entry or rehydration and cleared by reset.
-    dirty: bool,
 }
 
 pub struct Slot {
@@ -150,7 +148,6 @@ impl Slot {
                 dormant: None,
                 in_call: false,
                 parked_since_ms: None,
-                dirty: false,
             }),
             execution: Mutex::new(()),
             parked_ms_total: AtomicU64::new(0),
@@ -169,7 +166,7 @@ impl Slot {
     }
 
     /// Serializes a dispatch slice with its settlement and pool release, so
-    /// a queued wake cannot enter between a guest return and its reset.
+    /// a queued wake cannot enter between a guest return and its release.
     pub(crate) fn lock_execution(&self) -> parking_lot::MutexGuard<'_, ()> {
         self.execution.lock()
     }
@@ -189,7 +186,6 @@ impl Slot {
             return Err(EnterError::NotResident(g.state));
         };
         g.in_call = true;
-        g.dirty = true;
         if let Some(since) = g.parked_since_ms.take() {
             let now = crate::now_ms();
             self.parked_ms_total
@@ -224,10 +220,6 @@ impl Slot {
     pub fn is_capture_eligible(&self) -> bool {
         let g = self.inner.lock();
         !g.in_call && g.state == LifecycleTier::Parked && g.resident.is_some()
-    }
-
-    pub fn is_pristine(&self) -> bool {
-        !self.inner.lock().dirty
     }
 
     pub fn parked_since_ms(&self) -> Option<u64> {
@@ -287,38 +279,7 @@ impl Slot {
         g.resident = Some(inst);
         g.state = LifecycleTier::Parked;
         g.dormant = None;
-        g.dirty = true;
         self.publish(&g);
-    }
-
-    /// Reset to template contents. Refused for a discarded instance, because
-    /// an `Ok` here is what pool acquisition takes as "reusable".
-    pub fn reset(&self) -> anyhow::Result<()> {
-        let mut g = self.inner.lock();
-        if g.state == LifecycleTier::Discarded {
-            anyhow::bail!(
-                "refusing to reset a discarded slot: a killed instance is not laundered back \
-                 into the pool"
-            );
-        }
-        if g.in_call {
-            anyhow::bail!("cannot reset an instance with a call in flight");
-        }
-        self.ctx.release_native_resources();
-        if let Some(i) = g.resident.as_mut() {
-            if let Err(error) = i.reset() {
-                g.resident = None;
-                g.state = LifecycleTier::Discarded;
-                self.ctx.release_native_resources();
-                self.publish(&g);
-                return Err(error);
-            }
-        }
-        g.dirty = false;
-        g.parked_since_ms = None;
-        g.state = LifecycleTier::Parked;
-        self.publish(&g);
-        Ok(())
     }
 
     pub fn discard(&self) {
@@ -422,75 +383,6 @@ mod tests {
         (engine, template, ctx, instance)
     }
 
-    fn assert_prepared_native_baseline(slot: &Slot) {
-        use isoplane_engine::HostBindings;
-        let outcome = slot.enter().unwrap().instance().gc_hint(0);
-        assert_eq!(
-            outcome.completion,
-            isoplane_engine::Completion::Done,
-            "the fresh guest must resolve its captured network handle on its first entry"
-        );
-        let mut bindings = crate::bindings::CellBindings::new(slot.ctx.clone());
-        assert!(
-            matches!(
-                bindings.native_io(isoplane_abi::native_io::Request::Network),
-                Ok(isoplane_abi::native_io::Response::Handle(
-                    isoplane_abi::native_io::ResourceHandle(3)
-                ))
-            ),
-            "fresh guest memory must retain its prepared network authority"
-        );
-        assert!(
-            matches!(
-                bindings.native_io(isoplane_abi::native_io::Request::Ready(
-                    isoplane_abi::native_io::ResourceHandle(4)
-                )),
-                Ok(isoplane_abi::native_io::Response::Ready(true))
-            ),
-            "a reset must restore the guest-cached inert pollable"
-        );
-        assert_eq!(
-            pollable(slot).0,
-            5,
-            "a reset must restart allocation at the captured next handle"
-        );
-    }
-
-    #[test]
-    fn slot_reset_releases_old_resources_before_restoring_the_prepared_baseline() {
-        let (_engine, _template, ctx, instance) = prepared_native_instance();
-        let slot = Slot::new(ctx.instance, ctx, Box::new(instance));
-        assert_prepared_native_baseline(&slot);
-        let retired = pollable(&slot);
-        slot.reset()
-            .expect("a reset must restore native authority before the first guest entry");
-        assert_pollable_released(&slot, retired);
-        assert_prepared_native_baseline(&slot);
-    }
-
-    #[test]
-    fn direct_engine_reset_restores_native_resources_without_slot_cleanup() {
-        let (_engine, _template, ctx, mut instance) = prepared_native_instance();
-        use isoplane_engine::HostBindings;
-        let mut bindings = crate::bindings::CellBindings::new(ctx.clone());
-        bindings
-            .native_io(isoplane_abi::native_io::Request::Timer(
-                isoplane_abi::native_io::DurationNanos(0),
-            ))
-            .unwrap();
-        bindings
-            .native_io(isoplane_abi::native_io::Request::Drop {
-                handle: isoplane_abi::native_io::ResourceHandle(4),
-                kind: isoplane_abi::native_io::ResourceKind::Pollable,
-            })
-            .unwrap();
-        instance.reset().expect(
-            "the engine reset must release host resources before restoring template authority",
-        );
-        let slot = Slot::new(ctx.instance, ctx, Box::new(instance));
-        assert_prepared_native_baseline(&slot);
-    }
-
     #[test]
     fn replacing_a_store_preserves_retained_native_resources_and_allocation_progress() {
         let (engine, template, ctx, instance) = prepared_native_instance();
@@ -514,16 +406,6 @@ mod tests {
             "a replacement Store must not rewind native handle allocation"
         );
         drop(replacement);
-    }
-
-    #[test]
-    fn resetting_to_pristine_memory_releases_native_resources() {
-        let pool = pool();
-        let (slot, _) = pool.acquire(ctx_for).expect("the slot must activate");
-        let handle = pollable(&slot);
-        slot.reset()
-            .expect("the idle slot must reset to its template");
-        assert_pollable_released(&slot, handle);
     }
 
     #[test]

@@ -65,9 +65,6 @@ impl isoplane_engine::InstanceOps for PanicsOnDispatch {
     fn gc_hint(&mut self, _p: u8) -> isoplane_engine::DispatchOutcome {
         unreachable!("this fixture never reaches the hibernation path")
     }
-    fn reset(&mut self) -> anyhow::Result<()> {
-        Ok(())
-    }
     fn is_parked(&self) -> bool {
         self.first
             .as_ref()

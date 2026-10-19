@@ -108,7 +108,7 @@ async fn wait_until_idle(cell: &Arc<Cell>, module: &ModuleId) {
     // The response precedes release into the warm pool. Observe that boundary
     // before inspecting cleanup or dispatching onto the same instance again.
     tokio::time::timeout(Duration::from_secs(60), async {
-        while cell.idle_instances(module) != Some((1, 0)) {
+        while cell.idle_instances(module) != Some(1) {
             tokio::task::yield_now().await;
         }
     })
@@ -123,7 +123,7 @@ async fn dispatch_and_discard(
 ) -> isoplane_host::DispatchResult {
     let result = dispatch_request(cell, module, path);
     tokio::time::timeout(Duration::from_secs(10), async {
-        while cell.slot(result.instance).is_some() || cell.idle_instances(module) != Some((0, 0)) {
+        while cell.slot(result.instance).is_some() || cell.idle_instances(module) != Some(0) {
             tokio::task::yield_now().await;
         }
     })

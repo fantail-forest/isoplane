@@ -14,7 +14,7 @@ use parking_lot::{Mutex, RwLock};
 use isoplane_abi::config::{AppManifest, Limits};
 use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, TraceContext};
 use isoplane_abi::status::{PollStatus, TrapCode};
-use isoplane_engine::{Completion, DispatchOutcome, KillPhase, OccupancyBudget};
+use isoplane_engine::{Completion, DispatchOutcome, GraceEnd, OccupancyBudget};
 
 use crate::bindings::Tenancy;
 use crate::bindings::{CellRuntime, InstanceCtx, WakeSink};
@@ -332,9 +332,9 @@ impl Cell {
             }
         }
         for m in self.modules.read().values() {
-            let (w, f) = m.pool.idle_counts();
-            parked += (w + f) as u64;
-            live += (w + f) as u64;
+            let idle = m.pool.idle() as u64;
+            parked += idle;
+            live += idle;
         }
         self.metrics.live.store(live, Ordering::Relaxed);
         self.metrics.parked.store(parked, Ordering::Relaxed);
@@ -346,14 +346,11 @@ impl Cell {
         self.breaker.clear_module(module);
     }
 
-    /// `(warm, awaiting reset)`. An instance is Parked from the moment the guest
-    /// returns but acquirable only once `finish_and_release` pools it, and the
-    /// response leaves before that.
-    pub fn idle_instances(&self, module: &ModuleId) -> Option<(usize, usize)> {
-        self.modules
-            .read()
-            .get(module)
-            .map(|e| e.pool.idle_counts())
+    /// Warm instances waiting for a dispatch. An instance is Parked from the
+    /// moment the guest returns but acquirable only once `finish_and_release`
+    /// pools it, and the response leaves before that.
+    pub fn idle_instances(&self, module: &ModuleId) -> Option<usize> {
+        self.modules.read().get(module).map(|e| e.pool.idle())
     }
 
     /// Queued work, across every lane.

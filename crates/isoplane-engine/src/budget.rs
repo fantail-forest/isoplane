@@ -4,7 +4,7 @@
 //!   0                                B                 B+G
 //!   |--------- normal execution ------|---- grace ------|
 //!                                     ^                 ^
-//!                                     |                 `- hard trap: no unwinding,
+//!                                     |                 `- kill: no unwinding,
 //!                                     |                    instance discarded
 //!                                     `- cancellation requested: from the
 //!                                        guest's next slice its imports
@@ -13,8 +13,8 @@
 //! ```
 //!
 //! `G = max(2 ms, 10% of B)`. A dispatch that returns inside the grace window
-//! takes a clean kill: the instance is consistent and its overage is recorded.
-//! A check observing B+G or more takes the hard kill. Checks are best effort;
+//! exits: the dispatch fails, the instance is consistent and stays, and its
+//! overage is recorded. A check observing B+G or more kills it. Checks are best effort;
 //! scheduler delays can skip grace or delay termination.
 
 use anyhow::bail;
@@ -90,18 +90,18 @@ pub(crate) fn check_grace_deliverable(epoch_tick_us: u64) -> crate::Result<()> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum KillPhase {
-    /// Entered grace and returned before a hard-kill check.
-    Clean,
+pub enum GraceEnd {
+    /// Entered grace and returned before a kill check.
+    Exited,
     /// A check observed B+G or more; terminated without unwinding and discarded.
-    Hard,
+    Killed,
 }
 
-impl KillPhase {
+impl GraceEnd {
     pub fn as_str(self) -> &'static str {
         match self {
-            KillPhase::Clean => "clean",
-            KillPhase::Hard => "hard",
+            GraceEnd::Exited => "exited",
+            GraceEnd::Killed => "killed",
         }
     }
 }
@@ -141,7 +141,7 @@ pub struct DispatchOutcome {
     pub wall_ns: u64,
     pub trap: Option<TrapInfo>,
     /// `Some` when this slice ended a dispatch that entered grace.
-    pub kill: Option<KillPhase>,
+    pub grace_end: Option<GraceEnd>,
     /// Worker occupancy burned past B, broken out so the meter can report it apart
     /// from the budget.
     pub overage_ns: u64,
@@ -158,7 +158,7 @@ pub struct TrapInfo {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrapKind {
-    /// The hard kill. A clean kill is a return, not a trap.
+    /// The kill at B+G. An exit inside grace is a return, not a trap.
     BudgetExceeded,
     /// Guest called `abort` or panicked.
     GuestPanic,

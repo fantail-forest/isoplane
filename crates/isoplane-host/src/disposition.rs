@@ -6,12 +6,10 @@ use isoplane_engine::Completion;
 pub enum DispositionKind {
     /// Keep the instance with its residue.
     Warm,
-    /// Back to template contents, then pooled.
-    Reset,
     Discard,
 }
 
-/// Constructible only by [`decide`], [`evict`], [`warm`] and [`policy_reset`].
+/// Constructible only by [`decide`], [`evict`] and [`warm`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[must_use = "an undisposed instance would never return to its pool"]
 pub struct Disposition(DispositionKind);
@@ -26,7 +24,6 @@ impl Disposition {
     pub fn label(self) -> &'static str {
         match self.0 {
             DispositionKind::Warm => "warm",
-            DispositionKind::Reset => "reset",
             DispositionKind::Discard => "discard",
         }
     }
@@ -41,18 +38,18 @@ pub enum DispatchEnd {
     Disposed(Disposition),
 }
 
-/// The disposition table. A trapped or killed instance is discarded, a
-/// cleanly killed one is reset, and a completed one stays warm.
+/// The disposition table. A trapped or killed instance is discarded; one whose
+/// dispatch completed or exited after cancellation stays warm.
 pub fn decide(completion: Completion, streaming_open: bool) -> DispatchEnd {
     match completion {
         Completion::Parked => DispatchEnd::Parked,
         Completion::Trapped | Completion::BudgetKill => {
             DispatchEnd::Disposed(Disposition(DispositionKind::Discard))
         }
-        // Cooperative termination resets dispatch state.
-        Completion::CleanKill => DispatchEnd::Disposed(Disposition(DispositionKind::Reset)),
         Completion::Done if streaming_open => DispatchEnd::RetainedForStreaming,
-        Completion::Done => DispatchEnd::Disposed(Disposition(DispositionKind::Warm)),
+        Completion::Done | Completion::BudgetExit => {
+            DispatchEnd::Disposed(Disposition(DispositionKind::Warm))
+        }
     }
 }
 
@@ -64,11 +61,6 @@ pub fn evict() -> Disposition {
 /// never ran.
 pub fn warm() -> Disposition {
     Disposition(DispositionKind::Warm)
-}
-
-/// A reset requested by policy rather than by the end of a dispatch.
-pub fn policy_reset() -> Disposition {
-    Disposition(DispositionKind::Reset)
 }
 
 #[cfg(test)]
@@ -89,9 +81,9 @@ mod tests {
             "an unfinished streaming response retains its dispatch"
         );
         assert_eq!(
-            decide(CleanKill, false),
-            DispatchEnd::Disposed(Disposition(DispositionKind::Reset)),
-            "a cleanly killed instance is reset before reuse"
+            decide(BudgetExit, false),
+            DispatchEnd::Disposed(Disposition(DispositionKind::Warm)),
+            "an instance whose dispatch exited after cancellation stays warm"
         );
         assert_eq!(
             decide(BudgetKill, false),

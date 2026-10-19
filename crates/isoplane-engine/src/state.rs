@@ -13,9 +13,9 @@ use crate::EngineConfig;
 /// inferred from the error chain, so classification is exact.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Kill {
-    /// Worker occupancy passed B+G and the epoch callback trapped. There is no
-    /// `Clean` variant: a clean kill is the guest returning, and leaves a
-    /// `grace_at_ns` record rather than an error.
+    /// Worker occupancy passed B+G and the epoch callback trapped. An exit
+    /// inside grace is the guest returning, and leaves a `grace_at_ns` record
+    /// rather than an error.
     OccupancyHard,
     /// The independent elapsed-time backstop for one slice. Bypasses grace.
     Wall,
@@ -217,19 +217,6 @@ impl StoreState {
         Ok(())
     }
 
-    pub(crate) fn reset_execution(&mut self) {
-        self.memory = None;
-        self.wasm_depth = 0;
-        self.kill = None;
-        self.grace_at_ns = None;
-        self.unsafe_to_trap = false;
-        self.grace_deferrals = 0;
-        self.violation = None;
-        self.abort_msg = None;
-        self.limits.oom = false;
-        self.scratch.clear();
-    }
-
     pub(crate) fn begin_slice(&mut self, clock_ms: u64, meter: Meter) {
         self.clock_ms = clock_ms;
         self.meter = meter;
@@ -272,7 +259,7 @@ impl StoreState {
     }
 }
 
-/// The hard kill, raised when an epoch callback observes B+G or more. The message
+/// The kill, raised when an epoch callback observes B+G or more. The message
 /// names both numbers so a tenant can tell "my code is slow" from "my code
 /// cannot be interrupted".
 #[derive(Debug, thiserror::Error)]
@@ -426,7 +413,7 @@ mod occupancy_tests {
         assert_eq!(state.grace_at_ns, None);
         state
             .check_occupancy(1_090)
-            .expect_err("pinned bit cannot prevent hard kill");
+            .expect_err("pinned bit cannot prevent kill");
         assert_eq!(calls.load(Ordering::Relaxed), 0);
         assert_eq!(state.kill, Some(Kill::OccupancyHard));
     }

@@ -135,12 +135,6 @@ fn application_content_survives_store_recreation_and_mutable_state_restore() {
         b"retained",
         "restored instance must retain its application namespace"
     );
-    restored.reset().expect("reset Store");
-    assert_eq!(
-        result(&mut restored, 0),
-        b"retained",
-        "Store reset must rebuild the same application namespace"
-    );
 }
 
 #[test]

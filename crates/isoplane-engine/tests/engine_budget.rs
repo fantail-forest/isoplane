@@ -8,7 +8,7 @@ mod dispatch;
 use common::*;
 use dispatch::http_dispatch;
 use isoplane_abi::result::ResultRecord;
-use isoplane_engine::{Completion, InstanceOps, KillPhase, OccupancyBudget, TrapKind};
+use isoplane_engine::{Completion, GraceEnd, InstanceOps, OccupancyBudget, TrapKind};
 
 fn read_u64(m: &[u8], off: usize) -> u64 {
     u64::from_le_bytes(m[off..off + 8].try_into().expect("8 bytes"))
@@ -33,7 +33,7 @@ fn import(name: &str, params: &str, results: &str) -> String {
 // ---------------------------------------------------------------------------
 
 /// The guest marks memory before it spins and would mark it again on the way
-/// out; a hard kill is not unwound, so the second marker never appears.
+/// out; a kill is not unwound, so the second marker never appears.
 #[test]
 fn an_uncooperative_spinner_is_hard_killed_and_discarded() {
     let e = test_engine();
@@ -63,9 +63,13 @@ fn an_uncooperative_spinner_is_hard_killed_and_discarded() {
     assert_eq!(
         out.completion,
         Completion::BudgetKill,
-        "a spinner takes the hard kill"
+        "a spinner takes the kill"
     );
-    assert_eq!(out.kill, Some(KillPhase::Hard), "the phase is hard");
+    assert_eq!(
+        out.grace_end,
+        Some(GraceEnd::Killed),
+        "the dispatch was killed"
+    );
     assert!(
         out.occupancy_ns >= b.hard_ns(),
         "the kill lands at B+G, not before: {} ns against {} ns",
@@ -93,10 +97,6 @@ fn an_uncooperative_spinner_is_hard_killed_and_discarded() {
         "a discarded instance is never a capture candidate"
     );
     assert!(
-        i.reset().is_err(),
-        "a hard-killed instance must not be reset back into the pool"
-    );
-    assert!(
         i.capture_mutable_state().is_err(),
         "deltas are never captured from a discarded instance"
     );
@@ -114,7 +114,7 @@ fn a_discarded_instance_refuses_the_next_call() {
     assert_eq!(
         out.completion,
         Completion::BudgetKill,
-        "the spinner must be hard-killed"
+        "the spinner must be killed"
     );
 
     let refused = i.dispatch(&http_dispatch(2), b);
@@ -162,16 +162,20 @@ fn a_spinner_with_the_unsafe_to_trap_bit_pinned_is_still_hard_killed() {
     assert_eq!(
         out.completion,
         Completion::BudgetKill,
-        "a pinned bit does not prevent the hard kill"
+        "a pinned bit does not prevent the kill"
     );
-    assert_eq!(out.kill, Some(KillPhase::Hard), "the phase is hard");
+    assert_eq!(
+        out.grace_end,
+        Some(GraceEnd::Killed),
+        "the dispatch was killed"
+    );
     assert!(
         out.occupancy_ns >= b.hard_ns(),
         "the kill still lands at B+G, not before"
     );
     assert!(
         !i.is_capture_eligible(),
-        "a hard-killed instance is never a capture candidate"
+        "a killed instance is never a capture candidate"
     );
 }
 
@@ -202,8 +206,8 @@ fn a_guest_abort_is_a_guest_panic_not_a_sandbox_violation() {
         trap.message
     );
     assert!(
-        i.reset().is_err(),
-        "a trapped instance is discarded and cannot be reset"
+        i.capture_mutable_state().is_err(),
+        "a trapped instance is discarded"
     );
 }
 
