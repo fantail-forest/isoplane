@@ -116,60 +116,39 @@ async fn wait_until_idle(cell: &Arc<Cell>, module: &ModuleId) {
     .expect("the completed guest must return to the warm pool");
 }
 
-async fn dispatch_and_discard(
-    cell: &Arc<Cell>,
-    module: &ModuleId,
-    path: &str,
-) -> isoplane_host::DispatchResult {
-    let result = dispatch_request(cell, module, path);
-    tokio::time::timeout(Duration::from_secs(10), async {
-        while cell.slot(result.instance).is_some() || cell.idle_instances(module) != Some(0) {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("an instance with abandoned guest work must be discarded, not pooled");
-    result
-}
-
-async fn check_managed_cleanup(runtime: GuestRuntime, operation: &str) {
+async fn check_work_after_the_response(runtime: GuestRuntime, operation: &str) {
     let work = Arc::new(PendingWork::default());
     let (cell, module) = cleanup_cell(runtime, work.clone(), operation);
-    let armed = dispatch_and_discard(&cell, &module, operation).await;
+    let armed = dispatch_request(&cell, &module, operation);
     assert_eq!(
         armed.body, b"armed",
-        "the guest must execute the abandoned-operation branch"
+        "the client is answered while the guest's operation is still pending"
+    );
+    assert!(
+        cell.slot(armed.instance).is_some() && cell.idle_instances(&module) == Some(0),
+        "the dispatch stays open on its instance while its work is pending"
+    );
+    assert_eq!(
+        cell.metrics_raw().dispatch_us.count(),
+        0,
+        "a dispatch with work pending is not finished"
+    );
+
+    work.release.notify_one();
+    wait_until_idle(&cell, &module).await;
+    let observed = dispatch_at_idle(&cell, &module, "/observe").await;
+    assert_eq!(
+        observed.instance, armed.instance,
+        "work left after the response must not cost its instance"
+    );
+    assert_eq!(
+        observed.body, b"2:1",
+        "the left-behind work must have run to completion on the instance"
     );
     assert_eq!(
         cell.futures().live_futures(),
         0,
-        "the production dispatch boundary must cancel pending managed work without test cleanup"
-    );
-    tokio::time::timeout(Duration::from_secs(60), work.cancelled.notified())
-        .await
-        .expect("dispatch completion must cancel the pending host operation");
-    let replacement = dispatch_at_idle(&cell, &module, "/observe").await;
-    assert_ne!(
-        replacement.instance, armed.instance,
-        "abandoned async work must prevent reuse of the affected guest"
-    );
-    assert_eq!(
-        replacement.body, b"1:0",
-        "the replacement must start with clean managed state"
-    );
-    let reused = dispatch_at_idle(&cell, &module, "/observe").await;
-    assert_eq!(
-        reused.instance, replacement.instance,
-        "a clean replacement must remain eligible for warm reuse"
-    );
-    assert_eq!(
-        reused.body, b"2:0",
-        "clean reuse must preserve application state"
-    );
-    assert_eq!(
-        cell.futures().live_futures(),
-        0,
-        "later dispatches must not re-arm an abandoned dispatch's future"
+        "the finished work must leave no host futures behind"
     );
     cell.shutdown();
 }
@@ -177,23 +156,16 @@ async fn check_managed_cleanup(runtime: GuestRuntime, operation: &str) {
 #[derive(Default)]
 struct PendingWork {
     started: tokio::sync::Notify,
-    cancelled: tokio::sync::Notify,
+    release: tokio::sync::Notify,
     clock_barrier: tokio::sync::Notify,
     release_clock: tokio::sync::Notify,
 }
 
-struct CancellationObserved(Arc<PendingWork>);
-impl Drop for CancellationObserved {
-    fn drop(&mut self) {
-        self.0.cancelled.notify_one();
-    }
-}
-
 impl PendingWork {
+    /// Holds the operation until the test releases it.
     async fn wait(self: &Arc<Self>) {
-        let _cancelled = CancellationObserved(self.clone());
         self.started.notify_one();
-        std::future::pending::<()>().await;
+        self.release.notified().await;
     }
 }
 
@@ -232,7 +204,7 @@ impl isoplane_host::egress::ConnectionFactory for PendingConnection {
             "the fixture must request its explicitly controlled peer"
         );
         self.0.wait().await;
-        unreachable!("the pending connection must be cancelled, never completed")
+        Err(std::io::ErrorKind::ConnectionRefused.into())
     }
 }
 
@@ -263,13 +235,13 @@ async fn a_timer_left_pending_keeps_its_instance() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_cell_cancels_an_abandoned_interpreted_dns_and_discards_only_the_affected_guest() {
-    check_managed_cleanup(GuestRuntime::Mono, "/dns").await;
+async fn a_lookup_left_pending_after_the_response_completes_on_its_instance() {
+    check_work_after_the_response(GuestRuntime::Mono, "/dns").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_cell_cancels_an_abandoned_interpreted_socket_and_discards_only_the_affected_guest() {
-    check_managed_cleanup(GuestRuntime::Mono, "/socket").await;
+async fn a_connection_left_pending_after_the_response_completes_on_its_instance() {
+    check_work_after_the_response(GuestRuntime::Mono, "/socket").await;
 }
 
 async fn check_guest_timer_after_clock_advances(runtime: GuestRuntime) {

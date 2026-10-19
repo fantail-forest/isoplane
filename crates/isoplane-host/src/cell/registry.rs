@@ -139,13 +139,11 @@ impl Cell {
             }
             // A slice may be running; one already waiting for the thread means
             // the instance is behind, and a new dispatch would wait too.
-            if self.rt.futures.has_ready(slot.id) || self.starts.contains_key(&slot.id) {
-                return true;
-            }
+            let behind = self.rt.futures.has_ready(slot.id) || self.starts.contains_key(&slot.id);
             let reserved = self.active.with_mut(&slot.id, |active| {
                 let room = active.count() < DISPATCHES_PER_INSTANCE;
                 held |= room && active.held_since.is_some();
-                let join = room && active.held_since.is_none();
+                let join = room && active.held_since.is_none() && !behind;
                 if join {
                     active.joining += 1;
                 }

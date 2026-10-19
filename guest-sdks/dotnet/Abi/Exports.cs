@@ -173,9 +173,18 @@ public static unsafe class Exports<TRouter>
                 FutureTable.Complete(future, wake.Result);
                 return SettleInitialization();
             }
-            // The host wakes only a dispatch in progress.
             if (GuestDispatch.Resume(wake.Dispatch) is not { } dispatch)
-                return PollStatus.Trapped(TrapCode.Protocol);
+            {
+                // A dispatch that has returned its response stays open on the
+                // host while work it started, such as an outbound call, is
+                // still pending. That work runs as the instance's, and the host
+                // ends the dispatch once none of it is left.
+                GuestDispatch.EnterFinished();
+                FutureTable.Complete(future, wake.Result);
+                ManagedWork.Drain();
+                GuestDispatch.RequestSlicesForOthers();
+                return PollStatus.Done(0);
+            }
             FutureTable.Complete(future, wake.Result);
             return Settle(dispatch);
         }

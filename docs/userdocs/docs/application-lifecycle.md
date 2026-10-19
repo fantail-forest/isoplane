@@ -159,10 +159,11 @@ operation completes.
   whose dispatch keeps running after its running time is used up, or has not
   [finished 5 seconds after its token was cancelled](execution-limits.md#after-cancellation),
   and the other requests on that instance fail with it.
-- Cancels any outbound call or name lookup still pending when the response is
-  complete, and then discards the instance, because the code waiting on that
-  work could never resume. A timer still pending is kept with the instance and
-  runs when it is due, at the start of a later request; see
+- Keeps a request's dispatch open after its response while an outbound call or
+  name lookup it started is still pending, and ends it once that work completes;
+  see [What has to finish before the response?](dotnet-runtime-differences.md#before-the-response).
+  A timer still pending is kept with the instance and runs when it is due, in a
+  later slice; see
   [What can run between requests?](dotnet-runtime-differences.md#between-requests).
 
 **Your application**

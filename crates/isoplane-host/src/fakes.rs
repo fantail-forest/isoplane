@@ -66,6 +66,11 @@ pub enum Step {
     Entropy {
         bytes: usize,
     },
+    /// Issue these `(import, scalars[0])` calls, then respond and return
+    /// `done` with their futures still pending: work left after the response.
+    RespondLeaving {
+        imports: Vec<(&'static str, u64)>,
+    },
     /// Return the received dispatch record as the response body.
     EchoRecord,
 }
@@ -253,6 +258,23 @@ impl FakeInstance {
                     });
                 }
                 PollStatus::Pending
+            }
+            Step::RespondLeaving { imports } => {
+                for (name, scalar) in imports {
+                    let payload = fake_payload_for(name);
+                    self.bindings.call_future(ImportCall {
+                        import: name,
+                        payload: &payload,
+                        scalars: [scalar, 0, 0],
+                    });
+                }
+                let h = self.respond(isoplane_abi::dispatch::ResponseHead {
+                    status: 200,
+                    headers: vec![],
+                    body: b"responded".to_vec(),
+                    streaming: false,
+                });
+                PollStatus::Done { response: h }
             }
             Step::EchoRecord => {
                 let body = rec

@@ -26,6 +26,12 @@ internal static class DispatchPartition
         if (OperatingSystem.IsWasi()) Enter(null, (long)dispatch);
     }
 
+    /// <summary>Begins a slice of no dispatch: only instance work is runnable.</summary>
+    internal static void EnterInstance()
+    {
+        if (OperatingSystem.IsWasi()) Enter(null, 0);
+    }
+
     /// <summary>Whether work queued in another slice is waiting for the dispatch.</summary>
     internal static bool HasWaiting(ulong dispatch) =>
         OperatingSystem.IsWasi() && HasWaiting(null, (long)dispatch);

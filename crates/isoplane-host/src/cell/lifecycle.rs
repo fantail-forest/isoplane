@@ -572,7 +572,7 @@ impl Cell {
                     }
                     DispatchEnd::Disposed(d) => {
                         self.breaker.record_success(&breaker_key);
-                        self.finish_and_release(slot, entry, did, d)
+                        self.finish_unless_working(slot, entry, did, d)
                     }
                     DispatchEnd::Parked => self.park_after_slice(slot),
                 }
@@ -609,7 +609,7 @@ impl Cell {
                 );
                 self.respond(slot, did, result);
                 match decide(completion, false) {
-                    DispatchEnd::Disposed(d) => self.finish_and_release(slot, entry, did, d),
+                    DispatchEnd::Disposed(d) => self.finish_unless_working(slot, entry, did, d),
                     DispatchEnd::Parked | DispatchEnd::RetainedForStreaming => {
                         self.park_after_slice(slot)
                     }
@@ -665,6 +665,22 @@ impl Cell {
         self.metrics
             .thread_wait_us
             .record(waited.as_micros() as u64);
+    }
+
+    /// Ends a dispatch whose guest has returned, unless it still waits on a
+    /// future of its own, such as an outbound call: then it is not finished,
+    /// and stays open, governed by its budget, until that work completes.
+    fn finish_unless_working(
+        self: &Arc<Self>,
+        slot: &Arc<Slot>,
+        entry: &Arc<ModuleEntry>,
+        did: u64,
+        d: crate::disposition::Disposition,
+    ) -> bool {
+        if d.is_warm() && self.rt.futures.dispatch_holds_guest_work(slot.id, did) {
+            return self.park_after_slice(slot);
+        }
+        self.finish_and_release(slot, entry, did, d)
     }
 
     /// The instance parks between slices. Returns whether the wake loop is
@@ -789,7 +805,13 @@ impl Cell {
         }
         drop(dispatch);
         match completion {
-            Some(Completion::Done) => self.finish_and_release(slot, entry, did, warm()),
+            Some(Completion::Done) if !self.rt.futures.dispatch_holds_guest_work(slot.id, did) => {
+                self.finish_and_release(slot, entry, did, warm())
+            }
+            Some(Completion::Done) => {
+                self.arm_grace(slot, did);
+                false
+            }
             Some(Completion::Parked) | None => {
                 self.arm_grace(slot, did);
                 false

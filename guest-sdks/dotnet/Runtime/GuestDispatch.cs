@@ -57,6 +57,18 @@ internal sealed class GuestDispatch
         return dispatch;
     }
 
+    /// <summary>
+    /// Begins a slice for a dispatch this instance has finished but the host
+    /// keeps open for work it left behind, which now belongs to the instance.
+    /// </summary>
+    internal static void EnterFinished()
+    {
+        Current = null;
+        DispatchPartition.EnterInstance();
+        if (OperatingSystem.IsWasi())
+            SynchronizationContext.SetSynchronizationContext(IsoplaneSynchronizationContext.Instance);
+    }
+
     private void Enter()
     {
         Current = this;

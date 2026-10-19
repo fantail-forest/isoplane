@@ -425,6 +425,22 @@ impl FutureTable {
         })
     }
 
+    /// Whether `dispatch` has a pending or undelivered future the guest is
+    /// waiting on, so the dispatch is not finished even if its response is.
+    pub fn dispatch_holds_guest_work(&self, owner: InstanceId, dispatch: u64) -> bool {
+        let Some(arc) = self.existing(owner) else {
+            return false;
+        };
+        let o = arc.inner.lock();
+        o.pending.iter().chain(o.ready.iter()).any(|id| {
+            self.entries
+                .read_sync(id, |_, entry| {
+                    entry.dispatch == dispatch && entry.is_guest_work()
+                })
+                .unwrap_or(false)
+        })
+    }
+
     pub fn pending_total(&self, owner: InstanceId) -> usize {
         self.existing(owner)
             .map_or(0, |a| a.inner.lock().pending.len())

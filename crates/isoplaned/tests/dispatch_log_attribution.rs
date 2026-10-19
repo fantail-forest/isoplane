@@ -10,7 +10,7 @@ pub mod otlp;
 use isoplane_abi::config::InitSandbox;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "unfixed: a timer left by one dispatch runs in the next dispatch's slices, so its logs carry the wrong dispatch; per-dispatch slices fix this"]
+#[ignore = "unfixed: timers do not keep their dispatch open, so work a dispatch leaves waiting on a timer runs in whichever dispatch's slice comes next and logs as that dispatch"]
 async fn a_dispatchs_unawaited_work_logs_as_that_dispatch() {
     let output = otlp::output::LogOutput::default();
     let writer = output.clone();

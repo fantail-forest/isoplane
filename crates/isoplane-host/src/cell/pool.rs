@@ -888,10 +888,9 @@ pub(super) mod cell_tests {
                 Step::Park {
                     imports: vec![("clock_deadline_in", 60_000)],
                 },
-                Step::Park {
-                    imports: vec![("clock_deadline_in", 60_000)],
-                },
-                // The second dispatch, told its client has gone, stops.
+                // The second dispatch waits for nothing but its cancellation.
+                Step::Park { imports: vec![] },
+                // Told its client has gone, it stops.
                 Step::Done {
                     status: 200,
                     body: vec![],

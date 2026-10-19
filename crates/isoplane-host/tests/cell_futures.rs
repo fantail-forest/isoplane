@@ -217,6 +217,57 @@ async fn wait_until_fails_the_dispatch_and_releases_its_work() {
     r.cell.shutdown();
 }
 
+#[tokio::test]
+async fn work_left_after_the_response_keeps_its_dispatch_open_and_its_instance() {
+    let r = rig(CellConfig::for_test("leftover"));
+    let act = Arc::new(FakeActivator::named(
+        ModuleId::new("leftover", "v1"),
+        FakeBehaviour::program([Step::RespondLeaving {
+            imports: vec![("clock_deadline_in", 1_000)],
+        }]),
+    ));
+    let module = act.module().clone();
+    r.cell
+        .register_module("acme", act, manifest("leftover", Limits::default()))
+        .unwrap();
+
+    let rec = http(&r.cell, &module, "/leftover");
+    let out = r
+        .cell
+        .dispatch_blocking(
+            &module,
+            Target::Handler {
+                route: "/leftover".into(),
+            },
+            rec,
+            T,
+        )
+        .unwrap();
+    assert_eq!(
+        (out.status, out.body.as_slice()),
+        (200, b"responded".as_slice()),
+        "the client is answered when the response is complete"
+    );
+    assert_eq!(
+        r.cell.metrics_raw().dispatch_us.count(),
+        0,
+        "the dispatch is not finished while its work is pending"
+    );
+    tokio::time::timeout(T, async {
+        while r.cell.metrics_raw().dispatch_us.count() == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the dispatch must end once its work completes");
+    assert!(
+        r.cell.slot(out.instance).is_some(),
+        "work left after the response must not cost its instance"
+    );
+    assert_eq!(r.cell.futures().live_futures(), 0);
+    r.cell.shutdown();
+}
+
 #[test]
 fn entering_grace_wakes_the_dispatch_cancellation_future() {
     let rig = rig(CellConfig::for_test("cancellation"));

@@ -286,23 +286,26 @@ What follows from that:
 
 ## Work after the response {#after-the-response}
 
-Once a dispatch has sent its response, Isoplane may set the instance aside or
-discard it. This section covers what that means for work that is still running
-or waiting, and for cleanup.
+Once a dispatch has sent its response and has no work left, Isoplane may set
+its instance aside or discard it. This section covers what that means for work
+that is still running or waiting, and for cleanup.
 
 ### What has to finish before the response? {#before-the-response}
 
-Everything the response depends on. Once the response is complete the dispatch
-is over, and an outbound call or name lookup that is still pending is cancelled
-and never completes. The instance is discarded along with it, because the code
-waiting on that call could never resume, and any other requests the instance is
-handling fail with it. The next request then starts from a fresh copy of the
-template, which adds activation time to it, and nothing is reported.
+Everything the response depends on. The client receives the response as soon
+as it is complete, but the request's dispatch is not over while work it started
+is still pending, such as an outbound call or a name lookup started and not
+awaited. That work goes on running, and the dispatch ends once it completes.
+Until then it uses the request's [running time](execution-limits.md#running-time),
+and the request's cancellation token and the
+[5 seconds to finish after cancellation](execution-limits.md#after-cancellation)
+apply to it as they do before the response.
 
-Other code that is ready to run when the response completes may still run while
-the dispatch is within its limits, but nothing guarantees it. Do not leave saving
-data or releasing a resource to it. Work that has to happen after the response
-belongs in another service, such as a queue that something else reads.
+Nothing guarantees that such work completes, though: an instance can be stopped
+at any time, for example for going over its limits. Do not leave saving data or
+releasing a resource to work after the response. Work that has to happen after
+the response belongs in another service, such as a queue that something else
+reads.
 
 ### What can run between requests? {#between-requests}
 
@@ -360,11 +363,9 @@ scheduler or a queue service calls.
 
 `finally` blocks and disposal run as the awaited code unwinds, as they do
 anywhere else, including middleware code after `await next()` and the disposal
-of scoped services. There are two exceptions. Work in
-them that has to wait for I/O after the response is complete may not finish.
-And when Isoplane stops an instance because a dispatch went over its
-[limits](execution-limits.md), they do not run at all. Keep cleanup quick and
-independent of I/O after the response.
+of scoped services. The exception is when Isoplane stops an instance because a
+dispatch went over its [limits](execution-limits.md): then they do not run at
+all. Keep cleanup quick, so that it finishes well inside those limits.
 
 With one thread there is no finalizer thread, so a finalizer runs on the
 application's thread during a garbage collection. That can be in a later
