@@ -22,6 +22,9 @@ pub struct Recorder {
 pub struct TestBindings {
     pub rec: Recorder,
     pub init_sandbox: bool,
+    /// When set, whether the bindings are in the initialization sandbox,
+    /// switchable after the instance is made.
+    pub sandbox_switch: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     pub memory_limit_bytes: Option<u64>,
     pub next_future: u64,
     pub(crate) next_response: i64,
@@ -39,6 +42,7 @@ impl TestBindings {
         Self {
             rec,
             init_sandbox: false,
+            sandbox_switch: None,
             memory_limit_bytes: None,
             next_future: 1,
             next_response: 1,
@@ -129,6 +133,10 @@ impl HostBindings for TestBindings {
     }
 
     fn is_init_sandbox(&self) -> bool {
-        self.init_sandbox
+        self.sandbox_switch
+            .as_ref()
+            .map_or(self.init_sandbox, |switch| {
+                switch.load(std::sync::atomic::Ordering::Relaxed)
+            })
     }
 }

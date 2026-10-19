@@ -66,12 +66,19 @@ impl Default for Meter {
 }
 
 pub(crate) struct Limits {
-    /// The ceiling linear memory may grow to: the memory limit's ceiling,
-    /// within the engine's capacity and the module's declared maximum.
-    pub max_memory_bytes: usize,
+    /// The ceiling linear memory may grow to outside initialization: the
+    /// memory limit's ceiling, within the engine's capacity and the module's
+    /// declared maximum.
+    pub ceiling_bytes: usize,
     /// The memory limit the guest is told, so its runtime sizes itself for
     /// the limit rather than the ceiling above it.
     pub memory_limit_bytes: usize,
+    /// Whether the guest is initializing, which grows only to the limit: the
+    /// room past it is for dispatches to finish in, and what initialization
+    /// leaves is every instance's starting point. Set from the bindings when
+    /// the store is made and at every slice, since an instance can be made
+    /// before initialization and run dispatches after it.
+    pub initializing: bool,
     pub max_tables: usize,
     pub max_table_elements: usize,
     pub oom: bool,
@@ -80,8 +87,9 @@ pub(crate) struct Limits {
 impl Limits {
     fn new(cfg: &EngineConfig) -> Self {
         Self {
-            max_memory_bytes: cfg.max_memory_bytes as usize,
+            ceiling_bytes: cfg.max_memory_bytes as usize,
             memory_limit_bytes: cfg.max_memory_bytes as usize,
+            initializing: false,
             max_tables: cfg.max_tables_per_module as usize,
             max_table_elements: cfg.table_elements,
             oom: false,
@@ -97,10 +105,15 @@ impl ResourceLimiter for Limits {
         maximum: Option<usize>,
     ) -> wasmtime::Result<bool> {
         if let Some(maximum) = maximum {
-            self.max_memory_bytes = self.max_memory_bytes.min(maximum);
+            self.ceiling_bytes = self.ceiling_bytes.min(maximum);
             self.memory_limit_bytes = self.memory_limit_bytes.min(maximum);
         }
-        let ok = desired <= self.max_memory_bytes;
+        let cap = if self.initializing {
+            self.memory_limit_bytes
+        } else {
+            self.ceiling_bytes
+        };
+        let ok = desired <= cap;
         if !ok {
             // `memory.grow` returns -1 rather than trapping, so the fault
             // surfaces later; remembered so it classifies as `OutOfMemory`.
@@ -177,18 +190,14 @@ impl StoreState {
                 .unwrap_or(cfg.max_memory_bytes),
         };
         let mut state = Self::unbound(cfg, memory_limit);
-        // The room past the limit is for dispatches to finish in; what
-        // initialization leaves becomes every instance's starting point.
-        if bindings.is_init_sandbox() {
-            state.limits.max_memory_bytes = state.limits.memory_limit_bytes;
-        }
+        state.limits.initializing = bindings.is_init_sandbox();
         state.bindings = Some(bindings);
         state
     }
 
     pub(crate) fn unbound(cfg: &EngineConfig, memory_limit: u64) -> Self {
         let mut limits = Limits::new(cfg);
-        limits.max_memory_bytes = isoplane_abi::config::memory_ceiling_bytes(memory_limit)
+        limits.ceiling_bytes = isoplane_abi::config::memory_ceiling_bytes(memory_limit)
             .min(cfg.max_memory_bytes) as usize;
         limits.memory_limit_bytes = memory_limit.min(cfg.max_memory_bytes) as usize;
         Self {
@@ -232,6 +241,9 @@ impl StoreState {
     }
 
     pub(crate) fn begin_slice(&mut self, clock_ms: u64, meter: Meter) {
+        if let Some(bindings) = &self.bindings {
+            self.limits.initializing = bindings.is_init_sandbox();
+        }
         self.clock_ms = clock_ms;
         self.meter = meter;
         self.kill = None;

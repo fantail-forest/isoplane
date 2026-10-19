@@ -39,7 +39,7 @@ impl IsoplaneEngine {
         let mut live = live;
         #[cfg(target_os = "linux")]
         {
-            let ceiling_bytes = live.store.data().limits.max_memory_bytes;
+            let ceiling_bytes = live.store.data().limits.ceiling_bytes;
             live.memory
                 .prepare_growth(&mut live.store, ceiling_bytes)
                 .map_err(anyhow::Error::from)
@@ -140,7 +140,7 @@ impl DormantInstance for Mapped {
         let live = &mut instance.live;
         let mut data = StoreState::with_bindings(bindings, &instance.engine.cfg);
         let retained = &live.store.data().limits;
-        data.limits.max_memory_bytes = data.limits.max_memory_bytes.min(retained.max_memory_bytes);
+        data.limits.ceiling_bytes = data.limits.ceiling_bytes.min(retained.ceiling_bytes);
         data.limits.memory_limit_bytes = data
             .limits
             .memory_limit_bytes

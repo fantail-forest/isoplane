@@ -2,6 +2,8 @@
 //! cannot grow past it.
 #[path = "common/bindings.rs"]
 mod bindings;
+#[path = "common/dispatch.rs"]
+mod dispatch;
 
 use bindings::{Recorder, TestBindings};
 use isoplane_abi::WASM_PAGE_SIZE;
@@ -86,4 +88,54 @@ fn the_memory_query_observes_a_lower_module_maximum() {
 #[test]
 fn an_unbounded_module_reports_the_engine_capacity() {
     observed_limit(None, 8, None, 8);
+}
+
+#[test]
+fn an_instance_made_while_initializing_grows_to_its_ceiling_once_it_serves_dispatches() {
+    // A four-page limit, whose ceiling is five pages.
+    let wasm = wat::parse_str(
+        r#"(module
+        (memory (export "memory") 1)
+        (func (export "isoplane_alloc") (param i32 i32) (result i32) i32.const 4096)
+        (func (export "isoplane_handle") (param i32 i32) (result i64)
+            (if (i32.ne (memory.grow (i32.const 1)) (i32.const 4)) (then unreachable))
+            (if (i32.ne (memory.grow (i32.const 1)) (i32.const -1)) (then unreachable))
+            i64.const 0)
+        (func (export "isoplane_wake") (param i64 i32 i32) (result i64) i64.const 0)
+        (func (export "isoplane_initialize") (result i64)
+            (if (i32.ne (memory.grow (i32.const 3)) (i32.const 1)) (then unreachable))
+            (if (i32.ne (memory.grow (i32.const 1)) (i32.const -1)) (then unreachable))
+            i64.const 0))"#,
+    )
+    .expect("the growth fixture must assemble");
+    let engine = IsoplaneEngine::new(EngineConfig {
+        max_instances: 1,
+        max_memory_bytes: 16 * WASM_PAGE_SIZE as u64,
+        pooling: false,
+        ..EngineConfig::default()
+    })
+    .expect("the growth engine must start");
+    let template = engine
+        .load_template(&wasm)
+        .expect("the growth fixture must load");
+    let initializing = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let mut bindings = TestBindings::new(Recorder::default());
+    bindings.sandbox_switch = Some(initializing.clone());
+    bindings.memory_limit_bytes = Some(4 * WASM_PAGE_SIZE as u64);
+    let mut instance = engine
+        .activate(&template, Box::new(bindings))
+        .expect("the growth fixture must activate");
+    let initialized = instance.run_initialize(OccupancyBudget::default());
+    assert_eq!(
+        initialized.completion,
+        Completion::Done,
+        "initialization grows to the limit and no further: {initialized:?}"
+    );
+    initializing.store(false, std::sync::atomic::Ordering::Relaxed);
+    let served = instance.dispatch(&dispatch::http_dispatch(1), OccupancyBudget::default());
+    assert_eq!(
+        served.completion,
+        Completion::Done,
+        "a dispatch grows past the limit to its ceiling and no further: {served:?}"
+    );
 }
