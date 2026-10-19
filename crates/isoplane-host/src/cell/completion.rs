@@ -42,6 +42,8 @@ pub(super) enum TerminalReason {
     CellStopped,
     /// Another dispatch on the same instance ended it.
     InstanceDiscarded,
+    /// It had not finished when the grace after its cancellation ran out.
+    CancellationGraceExpired,
 }
 
 impl TerminalReason {
@@ -62,6 +64,7 @@ impl TerminalReason {
             Self::OccupancyClockUnavailable => "occupancy_clock_unavailable",
             Self::CellStopped => "cell_stopped",
             Self::InstanceDiscarded => "instance_discarded",
+            Self::CancellationGraceExpired => "cancellation_grace_expired",
         }
     }
 }
@@ -374,7 +377,8 @@ impl DispatchCompletion {
             | TerminalReason::HostPanic
             | TerminalReason::OccupancyClockUnavailable
             | TerminalReason::CellStopped
-            | TerminalReason::InstanceDiscarded => (Some(reason.label()), true),
+            | TerminalReason::InstanceDiscarded
+            | TerminalReason::CancellationGraceExpired => (Some(reason.label()), true),
         };
         drop(state);
         let total_wall_ns = self.total_wall_ns();

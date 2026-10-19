@@ -96,6 +96,9 @@ pub struct Metrics {
     pub budget_kills: AtomicU64,
     /// Dispatches that crossed the budget at all.
     pub grace_entries: AtomicU64,
+    /// Dispatches still in progress when the grace after their cancellation
+    /// ran out; each evicted its instance.
+    pub cancellation_grace_kills: AtomicU64,
     /// Epoch ticks that found the unsafe-to-trap bit set and deferred grace.
     pub grace_deferrals: AtomicU64,
     /// occupancy recorded past the budget on kills of either phase; already inside
@@ -196,6 +199,7 @@ impl Metrics {
             budget_exits: l(&self.budget_exits),
             budget_kills: l(&self.budget_kills),
             grace_entries: l(&self.grace_entries),
+            cancellation_grace_kills: l(&self.cancellation_grace_kills),
             grace_deferrals: l(&self.grace_deferrals),
             overage_ns: l(&self.overage_ns),
             // With no kills the ratio is reported as the exit count, the most
@@ -296,6 +300,7 @@ pub struct MetricsSnapshot {
     pub budget_exits: u64,
     pub budget_kills: u64,
     pub grace_entries: u64,
+    pub cancellation_grace_kills: u64,
     pub grace_deferrals: u64,
     pub overage_ns: u64,
     pub exit_kill_ratio: f64,
@@ -349,6 +354,10 @@ impl MetricsSnapshot {
             ("budget_exits", self.budget_exits.to_string()),
             ("budget_kills", self.budget_kills.to_string()),
             ("grace_entries", self.grace_entries.to_string()),
+            (
+                "cancellation_grace_kills",
+                self.cancellation_grace_kills.to_string(),
+            ),
             ("grace_deferrals", self.grace_deferrals.to_string()),
             ("overage_ms", format!("{:.3}", self.overage_ns as f64 / 1e6)),
             ("exit_kill_ratio", format!("{:.6}", self.exit_kill_ratio)),

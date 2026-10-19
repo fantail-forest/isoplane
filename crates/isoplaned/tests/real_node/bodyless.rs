@@ -1,4 +1,4 @@
-//! No-body framing waits for real dispatch settlement and never resumes guest work.
+//! No-body framing sends the response at once; the guest is then told to stop.
 
 use std::time::Duration;
 
@@ -29,7 +29,7 @@ fn guest(status: u16, after_headers: &str) -> Vec<u8> {
         (func (export "isoplane_handle") (param i32 i32) (result i64)
             (drop (call $response (i32.const 1024) (i32.const {})))
             {after_headers})
-        (func (export "isoplane_wake") (param i64 i32 i32) (result i64) unreachable)
+        (func (export "isoplane_wake") (param i64 i32 i32) (result i64) (i64.const 0))
     )"#,
         head.len()
     ))
@@ -50,7 +50,7 @@ async fn request(rig: &common::Rig, method: Method) -> common::Resp {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn no_body_framing_completes_the_dispatch_before_returning_the_wire_response() {
+async fn no_body_framing_returns_the_wire_response_and_lets_the_guest_stop() {
     for (method, status) in [
         (Method::GET, 204),
         (Method::GET, 205),
@@ -72,10 +72,12 @@ async fn no_body_framing_completes_the_dispatch_before_returning_the_wire_respon
             assert_eq!(response.status.as_u16(), status, "{method}/{status} must finish successfully rather than being classified as requester cancellation");
             assert!(response.body.is_empty(), "HTTP no-body framing must suppress the guest's queued payload");
             let cell = &rig.node.real.as_ref().expect("real cells").cells()[0];
-            assert_eq!(cell.futures().live_futures(), 0, "the wire response cannot complete while the guest retains a timer wake");
-            assert_eq!(cell.metrics_raw().dispatch_us.count(), 1, "the host must acknowledge one settled dispatch before returning the no-body response");
-            assert_eq!(cell.metrics().traps, 0, "no-body completion must not enter the guest's trapping wake");
-        }).await.expect("no-body completion must not await the unused guest timer");
+            while cell.metrics_raw().dispatch_us.count() == 0 {
+                tokio::task::yield_now().await;
+            }
+            assert_eq!(cell.futures().live_futures(), 0, "the guest's cancellation must end its unused timer wake");
+            assert_eq!(cell.metrics().traps, 0, "a guest that stops when told must not trap");
+        }).await.expect("the guest must stop once told, without awaiting its unused timer");
         rig.shutdown().await;
     }
 }

@@ -112,9 +112,7 @@ impl InstanceCtx {
     /// The current dispatch's cancellation future, exactly once per requested
     /// cancellation, after the slice it was requested in has ended.
     pub(crate) fn take_undelivered_cancellation(&self) -> Option<u64> {
-        let current = self.current();
-        (current.cancellation().take_undelivered() && current.cancel_future() != 0)
-            .then(|| current.cancel_future())
+        self.current().take_undelivered_cancellation()
     }
 
     /// When the guest's current slice began, if one has.

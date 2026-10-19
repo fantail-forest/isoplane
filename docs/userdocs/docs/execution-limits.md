@@ -30,9 +30,10 @@ database or another service, does not count.
 When the allowance runs out, the request's cancellation token is cancelled:
 `HttpContext.RequestAborted`, or
 [`RequestHead.Aborted`](reference/sdk/Isoplane.Sdk/Isoplane/RequestHead/Aborted.md)
-without ASP.NET. The dispatch then has a short further period in which to finish.
-If it does not, Isoplane stops the instance, and `finally` blocks in the
-dispatch's code do not run.
+without ASP.NET. The dispatch then has a short further period of running time in
+which to finish. If it is still running at the end of it, Isoplane stops the
+instance, `finally` blocks in the dispatch's code do not run, and every other
+dispatch the instance was running fails too.
 
 Cancellation reaches the application only when it awaits. Like the
 [clock](dotnet-runtime-differences.md#time), the token stands still while code
@@ -43,6 +44,28 @@ period ends. To stop a long computation cleanly, split it into parts and, betwee
 them, await something that waits, such as `await Task.Delay(1, cancellationToken)`.
 `await Task.Yield()` is not enough: the code after it runs before the application
 waits.
+
+## Finishing after cancellation {#after-cancellation}
+
+The request's cancellation token is also cancelled when the client goes away.
+Whichever way it is cancelled, the dispatch then has 5 seconds, by the clock, to
+finish. This counts time spent waiting, which running time does not. A dispatch
+that finishes in time, whether it returns a response or throws, leaves its
+instance as it was, ready for the next request. A dispatch still running or
+waiting when the 5 seconds are up is stopped, and its instance with it.
+
+An instance handles several requests at once, so stopping it fails every
+request it was handling, not only the one that ignored its token. Handling
+cancellation promptly protects those other requests:
+
+- Pass the token to every call you await, such as outbound HTTP calls, database
+  commands and `Task.Delay`.
+- Give a wait for an asynchronous lock a timeout or the token, for example
+  `await gate.WaitAsync(TimeSpan.FromSeconds(1), cancellationToken)`. A wait
+  with neither does not notice the cancellation, and lasts as long as the
+  request holding the lock does.
+- Let `OperationCanceledException` end the request. Catching it and starting
+  more work uses up the 5 seconds.
 
 ## Pending operations
 

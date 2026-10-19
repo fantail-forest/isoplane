@@ -155,8 +155,10 @@ operation completes.
   when the client goes away or the request's
   [dispatch](dotnet-runtime-differences.md#units-of-work) has used its running
   time.
-- Enforces the [execution limits](execution-limits.md), and stops an instance
-  whose dispatch keeps running after its running time is used up.
+- Enforces the [execution limits](execution-limits.md). It stops an instance
+  whose dispatch keeps running after its running time is used up, or has not
+  [finished 5 seconds after its token was cancelled](execution-limits.md#after-cancellation),
+  and the other requests on that instance fail with it.
 - Cancels any outbound call or name lookup still pending when the response is
   complete, and then discards the instance, because the code waiting on that
   work could never resume. A timer still pending is kept with the instance and

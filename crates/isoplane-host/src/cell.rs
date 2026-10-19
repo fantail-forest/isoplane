@@ -20,7 +20,7 @@ use crate::bindings::Tenancy;
 use crate::bindings::{CellRuntime, InstanceCtx, WakeSink};
 pub use crate::bindings::{Fetcher, Services};
 use crate::breaker::{BreakerConfig, BreakerKey, HangBreaker};
-use crate::disposition::{decide, evict, DispatchEnd};
+use crate::disposition::{decide, evict, warm, DispatchEnd};
 use crate::futures::FutureTable;
 use crate::hibernate_policy::{self, HibernateConfig};
 use crate::meters::Meters;
@@ -72,8 +72,12 @@ pub struct CellConfig {
     /// This does not limit the total size of a response.
     #[serde(skip)]
     pub response_queue_bytes: usize,
-    /// Wall-clock backstop for a dispatch; reported separately from active execution time.
+    /// Wall-clock backstop for one slice; reported separately from active execution time.
     pub slice_wall_ms_cap: u32,
+    /// How long a dispatch has to finish once its cancellation is requested,
+    /// by its CPU budget or its client going away, before the host kills it,
+    /// evicting its instance and failing every dispatch on it.
+    pub cancellation_grace_ms: u64,
     /// Host resources retained on behalf of each guest instance.
     pub guest_resources: crate::bindings::GuestResourceLimits,
     pub hibernate: HibernateConfig,
@@ -98,6 +102,7 @@ impl Default for CellConfig {
             max_idle_per_module: 64,
             response_queue_bytes: isoplane_abi::host::DEFAULT_RESPONSE_QUEUE_BYTES,
             slice_wall_ms_cap: 30_000,
+            cancellation_grace_ms: 5_000,
             guest_resources: Default::default(),
             hibernate: HibernateConfig::default(),
             breaker: BreakerConfig::default(),
@@ -136,6 +141,10 @@ impl CellConfig {
         anyhow::ensure!(
             self.timer_wake_idle_limit_ms > 0,
             "timer_wake_idle_limit_ms must be positive"
+        );
+        anyhow::ensure!(
+            self.cancellation_grace_ms > 0,
+            "cancellation_grace_ms must be positive"
         );
         Ok(())
     }

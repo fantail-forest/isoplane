@@ -651,8 +651,9 @@ async fn ended_real_guest_response(transport_failure: bool) {
         if transport_failure { 502 } else { 499 },
         "the terminal transport producer must determine the response status"
     );
-    cell.shutdown();
+    // The client is answered at once; the dispatch ends when its guest stops.
     let records = events.completed(1);
+    cell.shutdown();
     assert_eq!(
         records.len(),
         1,

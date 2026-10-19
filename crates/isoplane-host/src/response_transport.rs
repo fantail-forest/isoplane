@@ -161,7 +161,9 @@ impl ResponseTransport {
     }
 
     fn fail_locked(state: &mut State, error: String) -> bool {
-        if state.failure.is_none() {
+        // Settlement fixes the response's outcome; a failure after it, such as
+        // the guest trapping once a no-body response was final, cannot change it.
+        if state.failure.is_none() && !state.settled {
             state.failure = Some(error);
         }
         state.finished = true;

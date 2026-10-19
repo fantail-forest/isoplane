@@ -34,6 +34,12 @@ impl Cancellation {
         !self.requested.swap(true, Ordering::AcqRel)
     }
 
+    /// Whether cancellation has been requested, for the host. The guest reads
+    /// [`Cancellation::observed`] instead.
+    pub(crate) fn is_requested(&self) -> bool {
+        self.requested.load(Ordering::Acquire)
+    }
+
     /// The only place what the guest observes changes: as the engine enters
     /// the guest for a slice of this dispatch.
     pub(crate) fn begin_slice(&self) {

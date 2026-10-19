@@ -29,6 +29,9 @@ pub(super) struct ActiveDispatch {
     /// For a dispatch that runs an idle instance's timers, when the instance
     /// stops unless a request arrives first.
     pub(super) idle_stop_at: Option<tokio::time::Instant>,
+    /// Set when the host first sees the dispatch's cancellation request: the
+    /// dispatch is killed if it is still here then.
+    pub(super) grace_deadline: Option<tokio::time::Instant>,
     pub(super) responder: Option<super::dispatch_api::Responder>,
     pub(super) completion: Arc<DispatchCompletion>,
 }

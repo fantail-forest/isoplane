@@ -62,6 +62,17 @@ impl DispatchState {
         self.cancellation.request()
     }
 
+    pub(crate) fn cancellation_requested(&self) -> bool {
+        self.cancellation.is_requested()
+    }
+
+    /// Once a slice has ended, the cancellation future to complete if the
+    /// request has not yet reached the guest.
+    pub(crate) fn take_undelivered_cancellation(&self) -> Option<u64> {
+        (self.cancellation.take_undelivered() && self.cancel_future() != 0)
+            .then(|| self.cancel_future())
+    }
+
     pub(super) fn cancellation(&self) -> &Cancellation {
         &self.cancellation
     }

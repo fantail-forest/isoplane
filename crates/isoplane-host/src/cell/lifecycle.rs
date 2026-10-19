@@ -91,12 +91,6 @@ impl Cell {
         }
         let acquired = src.label();
         job.completion.acquired(slot.id, acquired);
-        // A local debugger instance runs initialization inside its one
-        // dispatch, and accepts no other.
-        if matches!(job.target, Delivery::Handler { .. }) && entry.debug_occupancy_ms.is_none() {
-            self.share(entry, slot);
-        }
-
         let budget = OccupancyBudget {
             occupancy_ms: job.rec.occupancy_budget_ms,
             slice_wall_ms_cap: self.cfg.slice_wall_ms_cap,
@@ -123,11 +117,19 @@ impl Cell {
                     Delivery::Handler { .. } => None,
                     Delivery::IdleTimers { stop_at, .. } => Some(*stop_at),
                 },
+                grace_deadline: None,
                 responder: Some(job.responder),
                 completion: job.completion.clone(),
             },
             joined,
         );
+        // Offered only once the dispatch is tracked: a dispatch that tried to
+        // join before then would find the instance idle and drop it. A local
+        // debugger instance runs initialization inside its one dispatch, and
+        // accepts no other.
+        if matches!(job.target, Delivery::Handler { .. }) && entry.debug_occupancy_ms.is_none() {
+            self.share(entry, slot);
+        }
 
         entry.meters.record_dispatch();
         self.metrics.dispatches.fetch_add(1, Ordering::Relaxed);
@@ -150,6 +152,7 @@ impl Cell {
             let owner = Arc::downgrade(slot);
             let cancelled = Arc::downgrade(&dispatch);
             let response = Arc::downgrade(stream);
+            let did = job.rec.dispatch_id;
             stream.on_end_requested(Box::new(move || {
                 if let (Some(cell), Some(slot), Some(response)) =
                     (cell.upgrade(), owner.upgrade(), response.upgrade())
@@ -158,6 +161,7 @@ impl Cell {
                         if let Some(dispatch) = cancelled.upgrade() {
                             dispatch.request_cancellation();
                         }
+                        cell.arm_grace(&slot, did);
                     }
                     cell.queue_wake(slot);
                 }
@@ -294,6 +298,9 @@ impl Cell {
         else {
             return true;
         };
+        if self.kill_after_grace(&slot, &entry) {
+            return true;
+        }
         for dispatch in self.active_dispatch_ids(slot.id) {
             if self.end_stream_at_boundary(&slot, &entry, dispatch, None)
                 && !self.active.contains_key(&slot.id)
@@ -442,6 +449,7 @@ impl Cell {
                 .grace_deferrals
                 .fetch_add(out.grace_deferrals, Ordering::Relaxed);
         }
+        self.arm_grace(slot, did);
         self.metrics.record_tenant(
             &entry.tenant,
             out.occupancy_ns,
@@ -671,6 +679,11 @@ impl Cell {
         }
     }
 
+    /// Answers a dispatch whose response the front end has ended: its client
+    /// went away, its transport failed, or it sent a head that has no body.
+    /// The guest is asked to stop and keeps its grace to finish; a dispatch
+    /// that has already finished is released. Returns true when the dispatch
+    /// has ended.
     fn end_stream_at_boundary(
         self: &Arc<Self>,
         slot: &Arc<Slot>,
@@ -689,41 +702,172 @@ impl Cell {
             return false;
         };
         let failure = stream.failure();
-        if !stream.is_cancelled() && failure.is_none() {
-            let Some((status, headers)) = stream.no_body_head() else {
+        let ended_by_client = stream.is_cancelled() || failure.is_some();
+        let head = if ended_by_client {
+            None
+        } else {
+            let Some(head) = stream.no_body_head() else {
                 return false;
             };
+            // A trap in the same slice is the dispatch's outcome, not the head.
             if completion.is_some_and(|completion| {
                 !matches!(completion, Completion::Done | Completion::Parked)
             }) {
                 return false;
             }
-            dispatch.request_cancellation();
-            let result = owner.result(slot.id, status, headers, vec![], Completion::Done, None);
+            Some(head)
+        };
+        let unanswered = self
+            .with_active(slot.id, did, |active| active.responder.is_some())
+            .unwrap_or(false);
+        if unanswered {
+            let result = match head {
+                Some((status, headers)) => {
+                    owner.result(slot.id, status, headers, vec![], Completion::Done, None)
+                }
+                None => {
+                    let status = if failure.is_some() { 502 } else { 499 };
+                    let terminal = if failure.is_some() {
+                        TerminalReason::TransportFailure
+                    } else {
+                        TerminalReason::RequestCancelled
+                    };
+                    owner.select(terminal, status);
+                    let reason = failure.unwrap_or_else(|| "request_cancelled".into());
+                    owner.result(
+                        slot.id,
+                        status,
+                        vec![],
+                        vec![],
+                        Completion::Trapped,
+                        Some(reason),
+                    )
+                }
+            };
             self.respond(slot, did, result);
-            self.finish_and_release(slot, entry, did, evict());
-            return true;
+            // The response is final: the front end sends it now, whatever the
+            // guest does next.
+            drop(stream.clone().settlement());
         }
         dispatch.request_cancellation();
-        let status = if failure.is_some() { 502 } else { 499 };
-        let terminal = if failure.is_some() {
-            TerminalReason::TransportFailure
-        } else {
-            TerminalReason::RequestCancelled
+        // The guest may be parked with nothing else to wake it, and no slice
+        // is running, so the request reaches it now rather than at the end of
+        // a slice.
+        if let Some(cancel) = dispatch.take_undelivered_cancellation() {
+            self.rt.settle_future(
+                cancel,
+                isoplane_abi::result::ResultRecord::Err(
+                    isoplane_abi::result::FutureError::Cancelled,
+                ),
+            );
+        }
+        drop(dispatch);
+        match completion {
+            Some(Completion::Done) => self.finish_and_release(slot, entry, did, warm()),
+            Some(Completion::Parked) | None => {
+                self.arm_grace(slot, did);
+                false
+            }
+            Some(Completion::Trapped | Completion::BudgetKill | Completion::BudgetExit) => false,
+        }
+    }
+
+    /// Starts the grace of a dispatch whose cancellation has been requested,
+    /// once: when it runs out, a wake finds the dispatch and kills it if it
+    /// is still in progress.
+    pub(super) fn arm_grace(self: &Arc<Self>, slot: &Arc<Slot>, did: u64) {
+        if !slot
+            .ctx
+            .dispatch(did)
+            .is_some_and(|dispatch| dispatch.cancellation_requested())
+        {
+            return;
+        }
+        let deadline =
+            tokio::time::Instant::now() + Duration::from_millis(self.cfg.cancellation_grace_ms);
+        let armed = self
+            .with_active_mut(slot.id, did, |dispatch| match dispatch.grace_deadline {
+                Some(_) => false,
+                None => {
+                    dispatch.grace_deadline = Some(deadline);
+                    true
+                }
+            })
+            .unwrap_or(false);
+        if !armed {
+            return;
+        }
+        let cell = Arc::downgrade(self);
+        let watched = Arc::downgrade(slot);
+        self.rt.reactor.spawn(async move {
+            tokio::time::sleep_until(deadline).await;
+            let (Some(cell), Some(slot)) = (cell.upgrade(), watched.upgrade()) else {
+                return;
+            };
+            if cell.with_active(slot.id, did, |_| ()).is_some() {
+                cell.queue_wake(slot);
+            }
+        });
+    }
+
+    /// Kills the dispatches whose grace has run out, evicting the instance
+    /// and failing every other dispatch on it. Returns true if it did.
+    fn kill_after_grace(self: &Arc<Self>, slot: &Arc<Slot>, entry: &Arc<ModuleEntry>) -> bool {
+        let now = tokio::time::Instant::now();
+        let (expired, others): (Vec<_>, Vec<_>) = self
+            .active
+            .with(&slot.id, |active| {
+                active
+                    .iter()
+                    .map(|dispatch| {
+                        let expired = dispatch.grace_deadline.is_some_and(|at| at <= now);
+                        (dispatch.dispatch_id, expired)
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+            .into_iter()
+            .partition(|(_, expired)| *expired);
+        let Some(((last, _), expired)) = expired.split_last() else {
+            return false;
         };
-        owner.select(terminal, status);
-        let reason = failure.unwrap_or_else(|| "request_cancelled".into());
-        let result = owner.result(
-            slot.id,
-            status,
-            vec![],
-            vec![],
-            Completion::Trapped,
-            Some(reason),
+        tracing::warn!(
+            tenant = %entry.tenant, instance = %slot.id,
+            dispatches = ?expired.iter().map(|(id, _)| *id).chain([*last]).collect::<Vec<_>>(),
+            grace_ms = self.cfg.cancellation_grace_ms,
+            "dispatch still in progress after the grace for its cancellation: killing its instance"
         );
-        self.respond(slot, did, result);
-        self.finish_and_release(slot, entry, did, evict());
+        for (dispatch, _) in others {
+            self.fail_dispatch(
+                slot,
+                dispatch,
+                TerminalReason::InstanceDiscarded,
+                503,
+                "instance_discarded",
+            );
+            self.end_dispatch_books(slot, entry, dispatch);
+        }
+        for &(dispatch, _) in expired {
+            self.fail_grace_expired(slot, dispatch);
+            self.end_dispatch_books(slot, entry, dispatch);
+        }
+        self.fail_grace_expired(slot, *last);
+        slot.discard();
+        self.finish_and_release(slot, entry, *last, evict());
         true
+    }
+
+    fn fail_grace_expired(&self, slot: &Arc<Slot>, dispatch: u64) {
+        self.metrics
+            .cancellation_grace_kills
+            .fetch_add(1, Ordering::Relaxed);
+        self.fail_dispatch(
+            slot,
+            dispatch,
+            TerminalReason::CancellationGraceExpired,
+            503,
+            "cancellation_grace_expired",
+        );
     }
 
     /// Fails every dispatch in progress on an instance that cannot continue,

@@ -874,4 +874,105 @@ pub(super) mod cell_tests {
         );
         cell.shutdown();
     }
+
+    #[tokio::test]
+    async fn a_client_going_away_leaves_the_other_dispatches_on_its_instance_running() {
+        let cell = cell(
+            CellConfig::for_test("client-gone"),
+            Arc::new(FakeHibernator),
+        );
+        let module = app(
+            &cell,
+            "client-gone",
+            FakeBehaviour::program([
+                Step::Park {
+                    imports: vec![("clock_deadline_in", 60_000)],
+                },
+                Step::Park {
+                    imports: vec![("clock_deadline_in", 60_000)],
+                },
+                // The second dispatch, told its client has gone, stops.
+                Step::Done {
+                    status: 200,
+                    body: vec![],
+                },
+            ]),
+        );
+        let parked_after = |parks: u64| {
+            let cell = cell.clone();
+            async move {
+                tokio::time::timeout(Duration::from_secs(10), async {
+                    loop {
+                        if let [id] = cell.resident_ids()[..] {
+                            if cell.slot(id).is_some_and(|slot| {
+                                slot.parks() >= parks && slot.state() == LifecycleTier::Parked
+                            }) {
+                                return id;
+                            }
+                        }
+                        tokio::task::yield_now().await;
+                    }
+                })
+                .await
+                .expect("the instance must park")
+            }
+        };
+        let waiting = cell
+            .submit(
+                &module,
+                Target::Handler {
+                    route: "/go".into(),
+                },
+                http(1),
+            )
+            .expect("admit the waiting dispatch");
+        let instance = parked_after(1).await;
+        let stream = crate::response_transport::ResponseTransport::new(1);
+        let gone = {
+            let cell = cell.clone();
+            let module = module.clone();
+            let stream = stream.clone();
+            tokio::task::spawn_blocking(move || {
+                cell.dispatch_with_stream(
+                    &module,
+                    Target::Handler {
+                        route: "/go".into(),
+                    },
+                    http(2),
+                    Duration::from_secs(10),
+                    Some(stream),
+                )
+            })
+        };
+        assert_eq!(
+            parked_after(2).await,
+            instance,
+            "the dispatches share one instance"
+        );
+        stream.fail("client went away".into());
+        let gone = gone
+            .await
+            .expect("dispatch task")
+            .expect("the client is answered");
+        assert_eq!(gone.status, 502, "the client is answered for its transport");
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while cell.metrics_raw().dispatch_us.count() == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the abandoned dispatch must end once its guest stops");
+        assert!(
+            cell.slot(instance).is_some(),
+            "a dispatch whose client went away must not take its instance with it"
+        );
+        assert!(
+            matches!(
+                waiting.try_recv(),
+                Err(std::sync::mpsc::TryRecvError::Empty)
+            ),
+            "the other dispatch must still be waiting"
+        );
+        cell.shutdown();
+    }
 }
