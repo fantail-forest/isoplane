@@ -1,3 +1,10 @@
 # The 128 MiB ceiling supplies the guest fixture limit.
+#
+# The host restores a guest's globals only through their exports, and V1
+# rejects a mutable global the module does not export. `__stack_pointer` is the
+# only mutable global the Rust toolchain emits.
 [target.wasm32-unknown-unknown]
-rustflags = ["-C", "link-arg=--max-memory=134217728"]
+rustflags = [
+  "-C", "link-arg=--max-memory=134217728",
+  "-C", "link-arg=--export=__stack_pointer",
+]

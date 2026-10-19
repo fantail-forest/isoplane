@@ -31,7 +31,7 @@ pub fn guest_with_handle(imports: &str, init: &str, handle: &str) -> Vec<u8> {
     wat::parse_str(format!(
         r#"(module {imports}
       (memory (export "memory") 1 64)
-      (global $state (mut i32) (i32.const 1))
+      (global $state (export "state") (mut i32) (i32.const 1))
       (table (export "table") 1 funcref)
       (elem (i32.const 0) $function)
       (func $function)

@@ -5,8 +5,8 @@ pub fn staged_guest(imports: &str, runtime: &str, init: &str) -> Vec<u8> {
     wat::parse_str(format!(
         r#"(module {imports}
       (memory (export "memory") 2 64)
-      (global $runtime_booted (mut i32) (i32.const 0))
-      (global $state (mut i32) (i32.const 1))
+      (global $runtime_booted (export "runtime_booted") (mut i32) (i32.const 0))
+      (global $state (export "state") (mut i32) (i32.const 1))
       (func $boot_runtime
         (if (i32.eqz (global.get $runtime_booted))
           (then {runtime} (global.set $runtime_booted (i32.const 1)))))

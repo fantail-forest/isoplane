@@ -14,7 +14,7 @@ use wasmparser::{Validator, WasmFeatures};
 pub use checks::limits;
 pub use report::{ValidationReport, Violation, ViolationCode};
 
-use checks::{check_bombs, check_exports, check_imports, check_memory};
+use checks::{check_bombs, check_exports, check_globals, check_imports, check_memory};
 use scan::scan;
 
 /// The WebAssembly proposals the platform speaks, enforced here as V2 and
@@ -166,6 +166,7 @@ fn validate_for_execution(
 
             check_imports(&scan, &mut report, &mut v, limits);
             check_exports(&scan, &mut report, &mut v, limits);
+            check_globals(&scan, &mut v);
             check_memory(
                 &scan,
                 memory.map_or(

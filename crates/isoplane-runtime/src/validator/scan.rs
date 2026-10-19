@@ -1,7 +1,12 @@
 //! One pass over the wasm binary that every V1-V4 check reads from.
 
+use std::collections::BTreeMap;
+
 use isoplane_abi::imports::{Sig, Ty};
-use wasmparser::{CompositeInnerType, ExternalKind, MemoryType, Parser, Payload, TypeRef, ValType};
+use wasmparser::{
+    CompositeInnerType, ExternalKind, KnownCustom, MemoryType, Name, Parser, Payload, TypeRef,
+    ValType,
+};
 
 #[derive(Default)]
 pub(super) struct Scan {
@@ -13,6 +18,10 @@ pub(super) struct Scan {
     /// Type index of every function in index-space order, imports first, so
     /// an export named by index can be type-checked.
     pub(super) func_type_of: Vec<u32>,
+    /// Mutability of every global in index-space order, imports first.
+    pub(super) global_mutable: Vec<bool>,
+    /// Global names from the `name` section, by global index.
+    pub(super) global_names: BTreeMap<u32, String>,
     pub(super) imported_funcs: u32,
     pub(super) defined_funcs: u32,
     pub(super) table_elements: u64,
@@ -60,8 +69,10 @@ pub(super) fn scan(wasm: &[u8]) -> anyhow::Result<Scan> {
                         s.imported_funcs += 1;
                         s.func_type_of.push(t);
                     }
-                    if let TypeRef::Memory(m) = imp.ty {
-                        s.memories.push(m);
+                    match imp.ty {
+                        TypeRef::Memory(m) => s.memories.push(m),
+                        TypeRef::Global(g) => s.global_mutable.push(g.mutable),
+                        _ => {}
                     }
                     s.imports
                         .push((imp.module.to_string(), imp.name.to_string(), imp.ty));
@@ -76,6 +87,11 @@ pub(super) fn scan(wasm: &[u8]) -> anyhow::Result<Scan> {
             Payload::MemorySection(r) => {
                 for m in r {
                     s.memories.push(m?);
+                }
+            }
+            Payload::GlobalSection(r) => {
+                for g in r {
+                    s.global_mutable.push(g?.ty.mutable);
                 }
             }
             Payload::TableSection(r) => {
@@ -106,6 +122,9 @@ pub(super) fn scan(wasm: &[u8]) -> anyhow::Result<Scan> {
             }
             Payload::CustomSection(c) => {
                 s.local_debug |= c.name() == isoplane_abi::LOCAL_DEBUG_SECTION;
+                if let KnownCustom::Name(names) = c.as_known() {
+                    s.global_names = global_names(names);
+                }
                 s.custom_section_bytes += c.data().len() as u64;
                 if c.data().len() as u64 > s.largest_custom.1 {
                     s.largest_custom = (c.name().to_string(), c.data().len() as u64);
@@ -116,6 +135,21 @@ pub(super) fn scan(wasm: &[u8]) -> anyhow::Result<Scan> {
         }
     }
     Ok(s)
+}
+
+/// Engines ignore a malformed `name` section, and the names only label
+/// violations, so a subsection that fails to parse contributes no names.
+fn global_names(names: wasmparser::NameSectionReader<'_>) -> BTreeMap<u32, String> {
+    names
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter_map(|name| match name {
+            Name::Global(map) => Some(map),
+            _ => None,
+        })
+        .flat_map(|map| map.into_iter().map_while(Result::ok))
+        .map(|naming| (naming.index, naming.name.to_string()))
+        .collect()
 }
 
 pub(super) fn func_type_index(t: &TypeRef) -> Option<u32> {

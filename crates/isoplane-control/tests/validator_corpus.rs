@@ -163,6 +163,23 @@ fn v1_missing_exports() {
     );
 }
 
+/// **V1.** A guest that keeps a request counter in a mutable global it does
+/// not export, where a reset or hibernation capture cannot reach it.
+#[test]
+fn v1_hidden_mutable_global() {
+    assert_violates(
+        "counter-in-an-unexported-global",
+        &clean_wat().replace(
+            "(func $use",
+            "(global $served (mut i64) (i64.const 0))
+  (func $count (global.set $served (i64.add (global.get $served) (i64.const 1))))
+  (func $use",
+        ),
+        Limits::default(),
+        V::V1MissingExport,
+    );
+}
+
 /// Required exports must have the declared host-interface types.
 #[test]
 fn v1_export_with_the_wrong_signature() {

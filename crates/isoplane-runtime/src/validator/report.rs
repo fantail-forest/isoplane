@@ -10,7 +10,8 @@ pub enum ViolationCode {
     /// **V1** — component types fail to match the declared world, or any
     /// import lies outside the world's allowlist.
     V1UndeclaredImport,
-    /// **V1** — a required guest export is missing.
+    /// **V1** — a required guest export is missing, or a mutable global is
+    /// not exported, which leaves it outside what the host restores.
     V1MissingExport,
     /// **V1** — a declared import, or a required export, has the wrong
     /// signature. Name-only matching would be theatre: the world is a set of

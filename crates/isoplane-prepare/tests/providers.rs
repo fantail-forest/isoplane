@@ -34,7 +34,7 @@ fn file_imports() -> String {
     }
     imports.push_str(
         r#"(data (i32.const 8000) "config.json")
-        (global $files_heap (mut i32) (i32.const 4096))
+        (global $files_heap (export "files_heap") (mut i32) (i32.const 4096))
         (func (export "cabi_realloc") (param i32 i32 i32) (param $size i32) (result i32)
             (local $old i32)
             (local.set $old (global.get $files_heap))

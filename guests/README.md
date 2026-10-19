@@ -26,7 +26,8 @@ Tests read those artifacts through `isoplane-fixtures`; they do not invoke build
 module with threads, shared memory, atomics, relaxed SIMD and exceptions disabled.
 
 Each Rust module declares one linear memory with a 128 MiB maximum, set by `--max-memory` in `guests/.cargo/config.toml`; Rust's linker
-emits no maximum by default.
+emits no maximum by default. The same file exports `__stack_pointer`, because the
+validator rejects a mutable global the module does not export.
 
 ## The Rust guests
 

@@ -1,4 +1,5 @@
-//! The V1-V4 checks: imports, exports, memory shape, and structural resource-bomb limits.
+//! The V1-V4 checks: imports, exports, global visibility, memory shape, and structural
+//! resource-bomb limits.
 
 use std::collections::BTreeSet;
 
@@ -264,6 +265,36 @@ pub(super) fn check_exports(
     }
 }
 
+/// The host reads and restores globals only through exports, so an unexported
+/// mutable global would be state that neither a reset to the template nor a
+/// hibernation capture can see.
+pub(super) fn check_globals(s: &Scan, v: &mut Vec<Violation>) {
+    let exported: BTreeSet<u32> = s
+        .exports
+        .iter()
+        .filter(|(_, kind, _)| *kind == ExternalKind::Global)
+        .map(|(_, _, index)| *index)
+        .collect();
+    for (index, _) in (0u32..)
+        .zip(&s.global_mutable)
+        .filter(|(index, mutable)| **mutable && !exported.contains(index))
+    {
+        let global = match s.global_names.get(&index) {
+            Some(name) => format!("global {index} (`{name}`)"),
+            None => format!("global {index}"),
+        };
+        v.push(Violation::about(
+            ViolationCode::V1MissingExport,
+            global.clone(),
+            format!(
+                "mutable {global} is not exported; the host restores a reset or hibernated \
+                 instance's globals only through their exports, so a reset would not clear \
+                 this global and hibernation would not capture it"
+            ),
+        ));
+    }
+}
+
 pub(super) fn check_memory(
     s: &Scan,
     ceiling_bytes: u64,
@@ -421,4 +452,78 @@ pub mod limits {
         isoplane_abi::config::ValidationLimits::DEFAULT.max_element_segments;
     pub const MAX_DATA_SEGMENTS: u32 =
         isoplane_abi::config::ValidationLimits::DEFAULT.max_data_segments;
+}
+
+#[cfg(test)]
+mod tests {
+    use isoplane_abi::config::Limits;
+
+    use crate::validator::{validate, Violation, ViolationCode};
+
+    fn guest(globals: &str) -> Vec<u8> {
+        wat::parse_str(format!(
+            r#"(module
+  {globals}
+  (memory (export "memory") 1 2)
+  (func (export "isoplane_alloc") (param i32 i32) (result i32) (i32.const 0))
+  (func (export "isoplane_handle") (param i32 i32) (result i64) (i64.const 1))
+  (func (export "isoplane_wake") (param i64 i32 i32) (result i64) (i64.const 1)))"#
+        ))
+        .expect("the global fixture must assemble")
+    }
+
+    fn missing_global_exports(wasm: &[u8]) -> Vec<(ViolationCode, Option<String>)> {
+        validate(wasm, Limits::default())
+            .err()
+            .unwrap_or_default()
+            .iter()
+            .map(Violation::parts)
+            .filter(|(_, subject, _)| subject.is_some_and(|s| s.starts_with("global ")))
+            .map(|(code, subject, _)| (code, subject.map(str::to_string)))
+            .collect()
+    }
+
+    #[test]
+    fn an_unexported_mutable_global_is_rejected_by_name() {
+        let wasm = guest("(global $counter (mut i64) (i64.const 0))");
+        let violations = validate(&wasm, Limits::default())
+            .expect_err("an unexported mutable global must be rejected");
+        assert_eq!(
+            violations
+                .iter()
+                .map(|v| (v.code, v.subject.as_deref()))
+                .collect::<Vec<_>>(),
+            vec![(ViolationCode::V1MissingExport, Some("global 0 (`counter`)"))],
+        );
+        assert!(
+            violations[0].detail.contains("only through their exports"),
+            "the detail says why: {}",
+            violations[0].detail
+        );
+    }
+
+    #[test]
+    fn an_exported_mutable_global_is_admitted() {
+        let wasm = guest(r#"(global $counter (export "counter") (mut i64) (i64.const 0))"#);
+        validate(&wasm, Limits::default()).expect("an exported mutable global is restorable");
+    }
+
+    #[test]
+    fn an_unexported_immutable_global_is_admitted() {
+        let wasm = guest("(global $limit i64 (i64.const 0))");
+        validate(&wasm, Limits::default()).expect("an immutable global holds no state");
+    }
+
+    #[test]
+    fn global_indices_count_imported_globals_first() {
+        let wasm = guest(
+            r#"(import "env" "base" (global i32))
+  (global i32 (i32.const 0))
+  (global (mut i32) (i32.const 0))"#,
+        );
+        assert_eq!(
+            missing_global_exports(&wasm),
+            vec![(ViolationCode::V1MissingExport, Some("global 2".to_string()))],
+        );
+    }
 }
