@@ -138,9 +138,6 @@ impl DormantInstance for Mapped {
             !instance.template.storage_failed(),
             "retained template storage failed"
         );
-        if let Some(payloads) = &instance.template.activation_prefetch {
-            payloads.read_all()?;
-        }
         let mut bindings = Bindings::Runtime(bindings);
         bindings.restore_prepared_resources(&instance.template.prepared_resources)?;
         let live = instance.live.as_mut().context("retained store missing")?;

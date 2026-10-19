@@ -556,6 +556,7 @@ impl IsoplaneEngine {
             None
         };
         let activation_prefetch = activation_prefetch.select(&state.prefetch)?;
+        activation_prefetch.warm()?;
         let template = self.finish_prepared(native, &manifest, state, image)?;
         #[cfg(target_os = "linux")]
         let template = {

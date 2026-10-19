@@ -188,6 +188,17 @@ impl Template {
             .any(|import| import.module() == module && import.name() == name)
     }
 
+    /// Brings the template's initialization working set into the page cache,
+    /// so a new instance's first faults on it hit memory. Cheap when it is
+    /// already resident; call it off the dispatch path, at load and while the
+    /// template is in use, since memory pressure can evict it.
+    pub fn warm_page_cache(&self) -> Result<()> {
+        if let Some(payloads) = &self.inner.activation_prefetch {
+            payloads.warm()?;
+        }
+        Ok(())
+    }
+
     /// Whether a read of this template's mapped storage failed. It then refuses
     /// activation, and a hibernation delta compared against it is wrong.
     pub fn storage_failed(&self) -> bool {

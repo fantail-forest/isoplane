@@ -104,7 +104,6 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for Profile {
         if !matches!(
             phase,
             "snapshot_reservation"
-                | "template_prefetch"
                 | "activation_store"
                 | "activation_instantiate"
                 | "activation_layer_restore"

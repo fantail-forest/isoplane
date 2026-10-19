@@ -34,6 +34,12 @@ pub trait Activator: Send + Sync + 'static {
 
     /// The baseline hibernation diffs against.
     fn template_image(&self) -> Arc<isoplane_engine::MemoryImage>;
+    /// Brings the template's working set into the page cache, so instances
+    /// activated from it fault in memory rather than storage. An activator
+    /// with no template files has nothing to warm.
+    fn warm_page_cache(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
     fn activate(
         &self,
         bindings: Box<dyn isoplane_engine::HostBindings>,

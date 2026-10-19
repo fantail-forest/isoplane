@@ -1,4 +1,6 @@
-//! Bounded reads of the initialization working set from verified template files.
+//! Warming the page cache with the initialization working set of verified
+//! template files, so a new instance's first faults on the mapped template
+//! hit memory rather than storage.
 
 use std::fs::File;
 use std::io;
@@ -6,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use super::{PreparedError, Result, PAYLOAD_NAMES};
 
-/// Retained payload files for activation prefetch. A payload is absent when
+/// Retained payload files for page-cache warming. A payload is absent when
 /// the engine holds it in memory, as it does native code.
 pub(crate) struct Payloads(Vec<Option<Payload>>);
 
@@ -82,17 +84,60 @@ impl Payloads {
         Ok(self)
     }
 
-    pub(crate) fn read_all(&self) -> Result<()> {
-        let total_bytes: u64 = self
-            .0
-            .iter()
-            .flatten()
-            .flat_map(|p| &p.ranges)
-            .map(|r| r.end - r.start)
-            .sum();
-        let _span = tracing::info_span!("template_prefetch", total_bytes, mode = "file_range_read")
-            .entered();
-        // Bounded scratch space warms the file cache without retaining a second template copy.
+    /// Asks the kernel to bring the learned ranges into the page cache. It
+    /// reads ahead asynchronously and skips pages already resident, so warming
+    /// a resident template costs microseconds and copies nothing.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn warm(&self) -> Result<()> {
+        use std::os::fd::AsRawFd;
+        let _span = tracing::info_span!(
+            "template_warm",
+            total_bytes = self.total_bytes(),
+            mode = "fadvise_willneed"
+        )
+        .entered();
+        for payload in self.0.iter().flatten() {
+            for range in &payload.ranges {
+                let (Ok(offset), Ok(length)) = (
+                    libc::off_t::try_from(range.start),
+                    libc::off_t::try_from(range.end - range.start),
+                ) else {
+                    return Err(PreparedError::Invalid(
+                        "learned prefetch exceeds platform limit",
+                    ));
+                };
+                // SAFETY: the descriptor is retained and the range was checked
+                // against the payload's recorded length in `select`.
+                let result = unsafe {
+                    libc::posix_fadvise(
+                        payload.file.as_raw_fd(),
+                        offset,
+                        length,
+                        libc::POSIX_FADV_WILLNEED,
+                    )
+                };
+                if result != 0 {
+                    return Err(PreparedError::Io {
+                        operation: "advise payload read-ahead",
+                        path: payload.path.clone(),
+                        source: io::Error::from_raw_os_error(result),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Reads the learned ranges through a bounded scratch buffer, which warms
+    /// the file cache on a platform with no read-ahead advice.
+    #[cfg(not(target_os = "linux"))]
+    pub(crate) fn warm(&self) -> Result<()> {
+        let _span = tracing::info_span!(
+            "template_warm",
+            total_bytes = self.total_bytes(),
+            mode = "file_range_read"
+        )
+        .entered();
         let mut scratch = vec![0; 64 * 1024];
         for payload in self.0.iter().flatten() {
             for range in &payload.ranges {
@@ -107,6 +152,15 @@ impl Payloads {
         }
         Ok(())
     }
+
+    fn total_bytes(&self) -> u64 {
+        self.0
+            .iter()
+            .flatten()
+            .flat_map(|p| &p.ranges)
+            .map(|r| r.end - r.start)
+            .sum()
+    }
 }
 
 #[cfg(test)]
@@ -114,6 +168,7 @@ fn read_payload(file: &File, length_bytes: u64, scratch: &mut [u8]) -> io::Resul
     read_range(file, 0..length_bytes, scratch)
 }
 
+#[cfg(any(test, not(target_os = "linux")))]
 fn read_range(file: &File, range: std::ops::Range<u64>, scratch: &mut [u8]) -> io::Result<()> {
     #[cfg(windows)]
     let reader = independent_reader(file)?;
@@ -311,7 +366,7 @@ mod tests {
             payload.file.set_len(0).expect("remove unselected payload");
         }
         selected
-            .read_all()
-            .expect("prefetch must not read unselected payloads or suffix bytes");
+            .warm()
+            .expect("warming must not touch unselected payloads or suffix bytes");
     }
 }

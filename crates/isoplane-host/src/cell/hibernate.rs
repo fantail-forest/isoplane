@@ -9,6 +9,43 @@ impl Cell {
     /// instance is supposed to cost no CPU.
     pub(super) fn sweep_idle(self: &Arc<Self>) {
         self.sweep_handler_pressure();
+        self.warm_templates_in_use();
+    }
+
+    /// Re-warms the templates of modules with resident instances, every
+    /// [`TEMPLATE_WARM_INTERVAL_MS`], since memory pressure can evict them
+    /// from the page cache between activations. A module with no instances
+    /// is left to the kernel: keeping every template resident would cost the
+    /// memory density scaling to zero is for.
+    fn warm_templates_in_use(&self) {
+        let now_ms = crate::now_ms();
+        let last_ms = self.templates_warmed_ms.load(Ordering::Relaxed);
+        if now_ms.saturating_sub(last_ms) < TEMPLATE_WARM_INTERVAL_MS {
+            return;
+        }
+        let in_use: std::collections::HashSet<ModuleId> = self
+            .residents
+            .lock()
+            .values()
+            .map(|resident| resident.module.clone())
+            .collect();
+        if in_use.is_empty() {
+            return;
+        }
+        self.templates_warmed_ms.store(now_ms, Ordering::Relaxed);
+        let entries: Vec<Arc<ModuleEntry>> = {
+            let modules = self.modules.read();
+            in_use
+                .iter()
+                .filter_map(|module| modules.get(module).cloned())
+                .collect()
+        };
+        for entry in entries {
+            if let Err(error) = entry.activator.warm_page_cache() {
+                tracing::warn!(cell = %self.cfg.name, module = %entry.activator.module(), %error,
+                    "could not warm the template's page cache");
+            }
+        }
     }
 
     pub(super) fn capture_env<'a>(

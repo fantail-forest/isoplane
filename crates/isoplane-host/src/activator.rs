@@ -141,6 +141,9 @@ impl Activator for EngineActivator {
     fn template_image(&self) -> Arc<MemoryImage> {
         self.template.read().memory_image_arc()
     }
+    fn warm_page_cache(&self) -> anyhow::Result<()> {
+        self.template.read().warm_page_cache()
+    }
     fn snapshot_size_bound(&self, max_memory_bytes: u64) -> anyhow::Result<u64> {
         isoplane_hibernate::local::size_bound(isoplane_hibernate::local::SnapshotShape {
             max_memory_bytes: max_memory_bytes.min(self.engine.configuration().max_memory_bytes),

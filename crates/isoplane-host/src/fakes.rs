@@ -481,6 +481,8 @@ pub struct FakeActivator {
     template: Arc<Vec<u8>>,
     behaviour: FakeBehaviour,
     pub activations: AtomicU64,
+    /// How many times the host asked to warm the template's page cache.
+    pub warmed: AtomicU64,
     pub wakes_seen: Arc<Mutex<Vec<(u64, ResultRecord)>>>,
     pub entropy: Arc<Mutex<Vec<Vec<u8>>>>,
 }
@@ -508,6 +510,7 @@ impl FakeActivator {
                 ..behaviour
             },
             activations: AtomicU64::new(0),
+            warmed: AtomicU64::new(0),
             wakes_seen: Arc::new(Mutex::new(Vec::new())),
             entropy: Arc::new(Mutex::new(Vec::new())),
         }
@@ -532,6 +535,10 @@ impl Activator for FakeActivator {
     }
     fn template_image(&self) -> Arc<isoplane_engine::MemoryImage> {
         Arc::new(isoplane_engine::MemoryImage::from_dense(&self.template))
+    }
+    fn warm_page_cache(&self) -> anyhow::Result<()> {
+        self.warmed.fetch_add(1, Ordering::Relaxed);
+        Ok(())
     }
     fn snapshot_size_bound(&self, _max_memory_bytes: u64) -> anyhow::Result<u64> {
         isoplane_hibernate::local::size_bound(isoplane_hibernate::local::SnapshotShape {

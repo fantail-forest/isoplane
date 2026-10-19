@@ -259,6 +259,46 @@ pub(super) mod cell_tests {
         false
     }
 
+    #[test]
+    fn the_sweeper_warms_a_template_only_while_its_module_has_instances() {
+        let cell = cell(
+            CellConfig::for_test("template-warm"),
+            Arc::new(FakeHibernator),
+        );
+        let act = Arc::new(FakeActivator::named(
+            ModuleId::new("warm", "v1"),
+            FakeBehaviour::done(),
+        ));
+        let module = act.module().clone();
+        cell.register_module("acme", act.clone(), manifest("warm"))
+            .expect("register");
+        cell.sweep_idle();
+        assert_eq!(
+            act.warmed.load(Ordering::Relaxed),
+            0,
+            "a module with no instances leaves its template to the kernel"
+        );
+
+        let done = cell
+            .dispatch_blocking(
+                &module,
+                Target::Handler {
+                    route: "/go".into(),
+                },
+                http(1),
+                Duration::from_secs(10),
+            )
+            .expect("the dispatch must finish");
+        assert_eq!(done.status, 200, "the dispatch must succeed: {done:?}");
+        assert!(
+            wait_for(
+                || act.warmed.load(Ordering::Relaxed) > 0,
+                Duration::from_secs(10)
+            ),
+            "a module with a resident instance has its template warmed"
+        );
+    }
+
     /// One execution thread, so there is no second one to hide the loss. The
     /// panic's backtrace on stderr is intended: a caught host panic is a host
     /// bug and stays loud.

@@ -73,6 +73,9 @@ impl Activator for DebugActivator {
     fn template_image(&self) -> Arc<MemoryImage> {
         self.engine.template_image()
     }
+    fn warm_page_cache(&self) -> anyhow::Result<()> {
+        self.engine.warm_page_cache()
+    }
     fn snapshot_size_bound(&self, max_memory_bytes: u64) -> anyhow::Result<u64> {
         self.engine.snapshot_size_bound(max_memory_bytes)
     }

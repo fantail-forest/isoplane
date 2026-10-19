@@ -21,9 +21,6 @@ impl IsoplaneEngine {
         if t.inner.storage_failed() {
             return Err(crate::TemplateStorageFailed.into());
         }
-        if let Some(payloads) = &t.inner.activation_prefetch {
-            payloads.read_all()?;
-        }
         self.activate_with(t, Bindings::Runtime(b))
     }
 
