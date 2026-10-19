@@ -160,7 +160,10 @@ itself forever elsewhere; here it throws `PlatformNotSupportedException`.
 A lock therefore never makes other work in the same instance wait, and code
 that takes locks needs no change to run here. To keep other asynchronous work
 out of a section that awaits, use `SemaphoreSlim` with `await WaitAsync()`, as
-you would on any platform, since no lock can be held across an `await`.
+you would on any platform, since no lock can be held across an `await`. Give
+that wait a timeout or the request's cancellation token, so that a request
+waiting behind another can still
+[finish after cancellation](execution-limits.md#after-cancellation).
 
 ## Waits, delays and timers {#waits}
 
@@ -377,6 +380,9 @@ or `DisposeAsync`.
 
 Isoplane decides how many instances of an application run, starting more as
 traffic grows and discarding them when they are idle or the memory is needed.
+An instance whose memory grows past its
+[memory limit](execution-limits.md#memory) takes no more requests, and is
+replaced once it has finished the ones it has.
 Every instance starts from a copy of the application as it stood when
 initialization finished, so a new instance starts without running your startup
 code again. Successive requests can reach different instances, and any

@@ -504,8 +504,8 @@ Size of the change: small.
 
 [`UseRateLimiter`][UseRateLimiter] works, and its limits hold for one
 instance. The middleware's timer, which ticks every 100 ms to refill permits
-and tidy up, runs at the start of the instance's next request, unless the
-application runs timers between requests; see
+and tidy up, runs during whichever request the instance handles next, unless
+the application runs timers between requests; see
 [What can run between requests?](dotnet-runtime-differences.md#between-requests).
 
 ```csharp
@@ -890,7 +890,11 @@ between requests.
 Finish or roll back a transaction before another connection uses the same
 tables. A command that finds them locked fails with
 `PlatformNotSupportedException` instead of waiting, because
-`Microsoft.Data.Sqlite` retries after [`Thread.Sleep`][Thread.Sleep].
+`Microsoft.Data.Sqlite` retries after [`Thread.Sleep`][Thread.Sleep]. An
+instance handles several requests at once, taking turns whenever one awaits, so
+a transaction that stays open across an `await` can make another request's
+command on the same tables fail. Keep transactions short, and await no other
+work, such as an outbound call, while one is open.
 
 Extension loading, including SpatiaLite, is not available. The runtime's SQLite
 serves the `SQLitePCLRaw` provider that `Microsoft.Data.Sqlite` uses by default,
