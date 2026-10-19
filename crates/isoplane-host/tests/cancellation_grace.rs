@@ -21,9 +21,13 @@ const GRACE_MS: u64 = 200;
 const WAIT_MS: u64 = 60_000;
 
 fn rig(program: Vec<Step>) -> (Arc<Cell>, ModuleId) {
+    rig_with_grace(program, GRACE_MS)
+}
+
+fn rig_with_grace(program: Vec<Step>, grace_ms: u64) -> (Arc<Cell>, ModuleId) {
     let (cell, _) = common::rig_resolving(
         CellConfig {
-            cancellation_grace_ms: GRACE_MS,
+            cancellation_grace_ms: grace_ms,
             ..CellConfig::for_test("cancellation-grace")
         },
         "93.184.216.34:80",
@@ -147,5 +151,58 @@ fn a_dispatch_that_finishes_inside_its_grace_keeps_its_instance() {
         "the instance must outlive a grace its dispatch finished inside"
     );
     assert_eq!(cell.metrics().cancellation_grace_kills, 0);
+    let metrics = cell.metrics();
+    assert_eq!(
+        (metrics.instance_holds, metrics.activations_for_holds),
+        (1, 0),
+        "the grace held the instance until its dispatch finished"
+    );
+    cell.shutdown();
+}
+
+#[test]
+fn a_dispatch_goes_to_another_instance_while_one_in_its_grace_holds_the_first() {
+    // Long enough that nothing is killed while the test looks.
+    let (cell, module) = rig_with_grace(
+        vec![Step::EnterGrace, Step::Park { imports: vec![] }],
+        WAIT_MS,
+    );
+    let _ignoring = submit(&cell, &module);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while cell.metrics().instance_holds == 0 {
+        assert!(
+            Instant::now() < deadline,
+            "the dispatch never entered its grace"
+        );
+        std::thread::yield_now();
+    }
+    let held = cell.resident_ids()[0];
+    let _next = submit(&cell, &module);
+    while cell.metrics().served_activated < 2 {
+        assert!(
+            Instant::now() < deadline,
+            "the next dispatch never got an instance"
+        );
+        std::thread::yield_now();
+    }
+    let metrics = cell.metrics();
+    assert_eq!(
+        (metrics.served_shared, metrics.activations_for_holds),
+        (0, 1),
+        "the next dispatch must not join the held instance"
+    );
+    assert_eq!(
+        cell.resident_ids()
+            .into_iter()
+            .filter(|id| *id != held)
+            .count(),
+        1,
+        "the next dispatch runs on a second instance"
+    );
+    let meters = cell.meters(&module).expect("module meters");
+    assert_eq!(
+        (meters.instance_holds(), meters.activations_for_holds()),
+        (1, 1)
+    );
     cell.shutdown();
 }

@@ -55,8 +55,10 @@ instance as it was, ready for the next request. A dispatch still running or
 waiting when the 5 seconds are up is stopped, and its instance with it.
 
 An instance handles several requests at once, so stopping it fails every
-request it was handling, not only the one that ignored its token. Handling
-cancellation promptly protects those other requests:
+request it was handling, not only the one that ignored its token. While a
+request is finishing after cancellation, Isoplane sends no new requests to its
+instance, so only the requests already there are at risk. Handling cancellation
+promptly protects them:
 
 - Pass the token to every call you await, such as outbound HTTP calls, database
   commands and `Task.Delay`.

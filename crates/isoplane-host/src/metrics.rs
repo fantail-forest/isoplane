@@ -99,6 +99,14 @@ pub struct Metrics {
     /// Dispatches still in progress when the grace after their cancellation
     /// ran out; each evicted its instance.
     pub cancellation_grace_kills: AtomicU64,
+    /// Times an instance stopped taking new dispatches because one of its
+    /// dispatches entered the grace after its cancellation.
+    pub instance_holds: AtomicU64,
+    /// How long each such hold lasted, until no dispatch on the instance was
+    /// in its grace.
+    pub instance_hold_ms: Histogram,
+    /// Activations made because the instances that had room were held.
+    pub activations_for_holds: AtomicU64,
     /// Epoch ticks that found the unsafe-to-trap bit set and deferred grace.
     pub grace_deferrals: AtomicU64,
     /// occupancy recorded past the budget on kills of either phase; already inside
@@ -200,6 +208,10 @@ impl Metrics {
             budget_kills: l(&self.budget_kills),
             grace_entries: l(&self.grace_entries),
             cancellation_grace_kills: l(&self.cancellation_grace_kills),
+            instance_holds: l(&self.instance_holds),
+            instance_hold_p50_ms: self.instance_hold_ms.p50(),
+            instance_hold_p99_ms: self.instance_hold_ms.p99(),
+            activations_for_holds: l(&self.activations_for_holds),
             grace_deferrals: l(&self.grace_deferrals),
             overage_ns: l(&self.overage_ns),
             // With no kills the ratio is reported as the exit count, the most
@@ -301,6 +313,10 @@ pub struct MetricsSnapshot {
     pub budget_kills: u64,
     pub grace_entries: u64,
     pub cancellation_grace_kills: u64,
+    pub instance_holds: u64,
+    pub instance_hold_p50_ms: u64,
+    pub instance_hold_p99_ms: u64,
+    pub activations_for_holds: u64,
     pub grace_deferrals: u64,
     pub overage_ns: u64,
     pub exit_kill_ratio: f64,
@@ -357,6 +373,19 @@ impl MetricsSnapshot {
             (
                 "cancellation_grace_kills",
                 self.cancellation_grace_kills.to_string(),
+            ),
+            ("instance_holds", self.instance_holds.to_string()),
+            (
+                "instance_hold_p50_ms",
+                self.instance_hold_p50_ms.to_string(),
+            ),
+            (
+                "instance_hold_p99_ms",
+                self.instance_hold_p99_ms.to_string(),
+            ),
+            (
+                "activations_for_holds",
+                self.activations_for_holds.to_string(),
             ),
             ("grace_deferrals", self.grace_deferrals.to_string()),
             ("overage_ms", format!("{:.3}", self.overage_ns as f64 / 1e6)),

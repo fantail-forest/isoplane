@@ -70,7 +70,8 @@ fn waiting(cell: &Cell, module: &ModuleId) -> Receiver<DispatchResult> {
 }
 
 /// Waits, within a deadline that fails a hung test, until `admitted`
-/// dispatches have their instances and every resident instance is parked.
+/// dispatches have their instances and every resident instance has run a
+/// slice and parked.
 fn until_parked(cell: &Cell, admitted: u64) -> Vec<InstanceId> {
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
@@ -78,7 +79,7 @@ fn until_parked(cell: &Cell, admitted: u64) -> Vec<InstanceId> {
         let ids = cell.resident_ids();
         let parked = ids.iter().all(|id| {
             cell.slot(*id)
-                .is_some_and(|slot| slot.state() == LifecycleTier::Parked)
+                .is_some_and(|slot| slot.parks() > 0 && slot.state() == LifecycleTier::Parked)
         });
         if metrics.served_activated + metrics.served_shared == admitted && parked {
             return ids;

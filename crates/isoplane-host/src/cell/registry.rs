@@ -44,30 +44,49 @@ pub(super) const DISPATCHES_PER_INSTANCE: usize = 8;
 /// The dispatches in progress on one instance, and the ones that have joined
 /// it and wait for their first slice.
 #[derive(Default)]
-pub(super) struct ActiveDispatches(Vec<ActiveDispatch>, usize);
+pub(super) struct ActiveDispatches {
+    dispatches: Vec<ActiveDispatch>,
+    joining: usize,
+    /// Since when one of the dispatches has been in the grace after its
+    /// cancellation. The instance takes no new dispatches meanwhile, since a
+    /// kill at the end of the grace would fail them too.
+    held_since: Option<Instant>,
+}
 
 impl ActiveDispatches {
     pub(super) fn get(&self, dispatch: u64) -> Option<&ActiveDispatch> {
-        self.0.iter().find(|active| active.dispatch_id == dispatch)
+        self.dispatches
+            .iter()
+            .find(|active| active.dispatch_id == dispatch)
     }
 
     pub(super) fn get_mut(&mut self, dispatch: u64) -> Option<&mut ActiveDispatch> {
-        self.0
+        self.dispatches
             .iter_mut()
             .find(|active| active.dispatch_id == dispatch)
     }
 
     pub(super) fn iter(&self) -> impl Iterator<Item = &ActiveDispatch> {
-        self.0.iter()
+        self.dispatches.iter()
     }
 
     pub(super) fn into_inner(self) -> Vec<ActiveDispatch> {
-        self.0
+        self.dispatches
     }
 
     fn count(&self) -> usize {
-        self.0.len() + self.1
+        self.dispatches.len() + self.joining
     }
+}
+
+/// Whether a dispatch found an instance already running others to join.
+pub(super) enum Join {
+    Joined(Arc<Slot>),
+    /// None had room. `held` is whether one would have, but for a dispatch
+    /// in its grace.
+    Unavailable {
+        held: bool,
+    },
 }
 
 impl Cell {
@@ -80,9 +99,9 @@ impl Cell {
         joined: bool,
     ) {
         self.active.upsert(instance, |active| {
-            active.0.push(dispatch);
+            active.dispatches.push(dispatch);
             if joined {
-                active.1 -= 1;
+                active.joining -= 1;
             }
         });
     }
@@ -93,7 +112,7 @@ impl Cell {
             .with_mut_or_remove(
                 &instance,
                 |active| {
-                    active.1 -= 1;
+                    active.joining -= 1;
                     active.count()
                 },
                 |active| active.count() == 0,
@@ -103,10 +122,11 @@ impl Cell {
 
     /// An instance of `entry` that already has dispatches in progress and room
     /// for another, with a place reserved for it, so the instance is not
-    /// released before the dispatch begins.
-    pub(super) fn join_shared(&self, entry: &ModuleEntry) -> Option<Arc<Slot>> {
+    /// released before the dispatch begins. Instances are tried oldest first.
+    pub(super) fn join_shared(&self, entry: &ModuleEntry) -> Join {
         let mut shared = entry.shared.lock();
         let mut joined = None;
+        let mut held = false;
         shared.retain(|candidate| {
             let Some(slot) = candidate.upgrade() else {
                 return false;
@@ -119,10 +139,12 @@ impl Cell {
             }
             let reserved = self.active.with_mut(&slot.id, |active| {
                 let room = active.count() < DISPATCHES_PER_INSTANCE;
-                if room {
-                    active.1 += 1;
+                held |= room && active.held_since.is_some();
+                let join = room && active.held_since.is_none();
+                if join {
+                    active.joining += 1;
                 }
-                room
+                join
             });
             match reserved {
                 None => false,
@@ -133,7 +155,43 @@ impl Cell {
                 Some(false) => true,
             }
         });
-        joined
+        match joined {
+            Some(slot) => Join::Joined(slot),
+            None => Join::Unavailable { held },
+        }
+    }
+
+    /// Starts a dispatch's grace, once, holding its instance from new
+    /// dispatches. Returns whether this call started it.
+    pub(super) fn start_grace(
+        &self,
+        instance: InstanceId,
+        dispatch: u64,
+        deadline: tokio::time::Instant,
+    ) -> bool {
+        self.active
+            .with_mut(&instance, |active| {
+                let Some(started) =
+                    active
+                        .get_mut(dispatch)
+                        .and_then(|dispatch| match dispatch.grace_deadline {
+                            Some(_) => None,
+                            None => {
+                                dispatch.grace_deadline = Some(deadline);
+                                Some(dispatch.completion.entry.meters.clone())
+                            }
+                        })
+                else {
+                    return false;
+                };
+                if active.held_since.is_none() {
+                    active.held_since = Some(Instant::now());
+                    self.metrics.instance_holds.fetch_add(1, Ordering::Relaxed);
+                    started.record_instance_hold();
+                }
+                true
+            })
+            .unwrap_or(false)
     }
 
     /// Offers an instance that has begun a dispatch to later dispatches.
@@ -201,10 +259,22 @@ impl Cell {
                 &instance,
                 |active| {
                     let removed = active
-                        .0
+                        .dispatches
                         .iter()
                         .position(|candidate| candidate.dispatch_id == dispatch)
-                        .map(|index| active.0.remove(index));
+                        .map(|index| active.dispatches.remove(index));
+                    if let (Some(removed), Some(since)) = (&removed, active.held_since) {
+                        if active.iter().all(|other| other.grace_deadline.is_none()) {
+                            active.held_since = None;
+                            let held_ms = since.elapsed().as_millis() as u64;
+                            self.metrics.instance_hold_ms.record(held_ms);
+                            removed
+                                .completion
+                                .entry
+                                .meters
+                                .record_instance_hold_ms(held_ms);
+                        }
+                    }
                     (removed, active.count())
                 },
                 |active| active.count() == 0,

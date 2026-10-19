@@ -28,6 +28,9 @@ pub struct Meters {
     log_occupancy_ns: AtomicU64,
     trapped: AtomicU64,
     budget_exits: AtomicU64,
+    instance_holds: AtomicU64,
+    instance_hold_ms: AtomicU64,
+    activations_for_holds: AtomicU64,
     budget_kills: AtomicU64,
     /// Occupancy past the budget, already included in `occupancy_ns`.
     overage_ns: AtomicU64,
@@ -90,6 +93,18 @@ impl Meters {
         .fetch_add(1, Ordering::Relaxed);
         self.overage_ns.fetch_add(overage_ns, Ordering::Relaxed);
     }
+    /// One of the module's instances stopped taking new dispatches while a
+    /// dispatch on it was in the grace after its cancellation.
+    pub fn record_instance_hold(&self) {
+        self.instance_holds.fetch_add(1, Ordering::Relaxed);
+    }
+    pub fn record_instance_hold_ms(&self, ms: u64) {
+        self.instance_hold_ms.fetch_add(ms, Ordering::Relaxed);
+    }
+    /// An activation made because the module's instances with room were held.
+    pub fn record_activation_for_hold(&self) {
+        self.activations_for_holds.fetch_add(1, Ordering::Relaxed);
+    }
     pub fn record_shed(&self) {
         self.shed.fetch_add(1, Ordering::Relaxed);
     }
@@ -123,6 +138,15 @@ impl Meters {
     }
     pub fn trapped(&self) -> u64 {
         self.trapped.load(Ordering::Relaxed)
+    }
+    pub fn instance_holds(&self) -> u64 {
+        self.instance_holds.load(Ordering::Relaxed)
+    }
+    pub fn instance_hold_ms(&self) -> u64 {
+        self.instance_hold_ms.load(Ordering::Relaxed)
+    }
+    pub fn activations_for_holds(&self) -> u64 {
+        self.activations_for_holds.load(Ordering::Relaxed)
     }
     pub fn budget_exits(&self) -> u64 {
         self.budget_exits.load(Ordering::Relaxed)

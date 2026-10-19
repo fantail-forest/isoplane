@@ -91,6 +91,9 @@ pub(super) struct Usage {
 struct State {
     instance: Option<InstanceId>,
     acquired: Option<&'static str>,
+    /// The dispatch activated an instance because the ones with room were
+    /// held by dispatches in their grace.
+    activated_for_hold: bool,
     usage: Usage,
     outcome: Option<(TerminalReason, u16)>,
     emitted: bool,
@@ -145,6 +148,7 @@ impl DispatchCompletion {
             state: Mutex::new(State {
                 instance: None,
                 acquired: None,
+                activated_for_hold: false,
                 usage: Usage::default(),
                 outcome: None,
                 emitted: false,
@@ -180,6 +184,10 @@ impl DispatchCompletion {
         state.acquired = Some(source);
         self.span
             .record("instance", tracing::field::display(instance));
+    }
+
+    pub(super) fn activated_for_hold(&self) {
+        self.state.lock().activated_for_hold = true;
     }
 
     pub(super) fn begin_slice(&self) {
@@ -348,6 +356,7 @@ impl DispatchCompletion {
         let usage = state.usage;
         let instance = state.instance.map(|id| id.0);
         let acquired = state.acquired;
+        let activated_for_hold = state.activated_for_hold;
         let io_kind = state.io_kind.map(|kind| format!("{kind:?}"));
         let os_error = state.os_error;
         let guest_trap_code = state.guest_trap_code.map(|code| format!("{code:?}"));
@@ -386,7 +395,7 @@ impl DispatchCompletion {
             event = "dispatch_completed", tenant = %self.tenant,
             app = %self.module.app, version = %self.module.version,
             dispatch_token = self.token.0, dispatch_id = self.dispatch_id, dispatch_kind = self.kind,
-            instance, acquired, outcome = reason.label(), status,
+            instance, acquired, activated_for_hold, outcome = reason.label(), status,
             error_kind, error_classification_complete, io_kind, os_error, guest_trap_code,
             occupancy_scope = "dispatch_slices_and_reactor_polls", activation_occupancy_included = false,
             slice_occupancy_ns = usage.occupancy_ns.saturating_sub(usage.reactor_occupancy_ns),

@@ -14,22 +14,26 @@ impl Cell {
         let entry = job.completion.entry.clone();
 
         let t0 = Instant::now();
+        let mut held = false;
         if matches!(job.target, Delivery::Handler { .. }) {
-            if let Some(slot) = self.join_shared(&entry) {
-                self.note_acquired(AcquireSource::Shared, t0.elapsed());
-                let execution = slot.try_lock_execution();
-                match execution {
-                    Some(_execution) => {
-                        self.begin_dispatch(&slot, &entry, job, AcquireSource::Shared)
+            match self.join_shared(&entry) {
+                registry::Join::Unavailable { held: h } => held = h,
+                registry::Join::Joined(slot) => {
+                    self.note_acquired(AcquireSource::Shared, t0.elapsed());
+                    let execution = slot.try_lock_execution();
+                    match execution {
+                        Some(_execution) => {
+                            self.begin_dispatch(&slot, &entry, job, AcquireSource::Shared)
+                        }
+                        // Another dispatch's slice is running; this one begins
+                        // between slices, from the wake lane.
+                        None => {
+                            self.starts.upsert(slot.id, |starts| starts.push_back(job));
+                            self.queue_wake(slot.clone());
+                        }
                     }
-                    // Another dispatch's slice is running; this one begins
-                    // between slices, from the wake lane.
-                    None => {
-                        self.starts.upsert(slot.id, |starts| starts.push_back(job));
-                        self.queue_wake(slot.clone());
-                    }
+                    return;
                 }
-                return;
             }
         }
         let acquired = tracing::info_span!("acquire").in_scope(|| match &job.target {
@@ -58,6 +62,13 @@ impl Cell {
         };
         let _execution = slot.lock_execution();
         self.note_acquired(src, t0.elapsed());
+        if held && src == AcquireSource::Activated {
+            self.metrics
+                .activations_for_holds
+                .fetch_add(1, Ordering::Relaxed);
+            entry.meters.record_activation_for_hold();
+            job.completion.activated_for_hold();
+        }
         self.begin_dispatch(&slot, &entry, job, src);
     }
 
@@ -785,16 +796,7 @@ impl Cell {
         }
         let deadline =
             tokio::time::Instant::now() + Duration::from_millis(self.cfg.cancellation_grace_ms);
-        let armed = self
-            .with_active_mut(slot.id, did, |dispatch| match dispatch.grace_deadline {
-                Some(_) => false,
-                None => {
-                    dispatch.grace_deadline = Some(deadline);
-                    true
-                }
-            })
-            .unwrap_or(false);
-        if !armed {
+        if !self.start_grace(slot.id, did, deadline) {
             return;
         }
         let cell = Arc::downgrade(self);
