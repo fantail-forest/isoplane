@@ -135,7 +135,7 @@ impl Cell {
             Self::cancel_queued_dispatch(job);
         }
         for (_, starts) in self.starts.drain() {
-            for job in starts {
+            for (_, job) in starts {
                 Self::cancel_queued_dispatch(job);
             }
         }
@@ -972,6 +972,97 @@ pub(super) mod cell_tests {
                 Err(std::sync::mpsc::TryRecvError::Empty)
             ),
             "the other dispatch must still be waiting"
+        );
+        cell.shutdown();
+    }
+
+    #[test]
+    fn a_dispatch_joins_only_an_instance_with_nothing_waiting_for_its_thread() {
+        let cell = cell(CellConfig::for_test("join-rule"), Arc::new(FakeHibernator));
+        let module = app(
+            &cell,
+            "join-rule",
+            FakeBehaviour::program([Step::Park {
+                imports: vec![("clock_deadline_in", 60_000)],
+            }]),
+        );
+        let _waiting = cell
+            .submit(
+                &module,
+                Target::Handler {
+                    route: "/go".into(),
+                },
+                http(1),
+            )
+            .expect("admit the waiting dispatch");
+        let parked = || {
+            let [id] = cell.resident_ids()[..] else {
+                return None;
+            };
+            cell.slot(id)
+                .filter(|slot| slot.parks() > 0 && slot.state() == LifecycleTier::Parked)
+        };
+        assert!(
+            wait_for(|| parked().is_some(), Duration::from_secs(10)),
+            "the first dispatch must park"
+        );
+        let slot = parked().expect("parked instance");
+        let entry = cell.modules.read().get(&module).cloned().expect("entry");
+
+        let job = |id: u64| {
+            let (responder, answer) = std::sync::mpsc::sync_channel(1);
+            let job = DispatchJob {
+                stream: None,
+                upload: None,
+                module: module.clone(),
+                target: Target::Handler {
+                    route: "/go".into(),
+                }
+                .into(),
+                rec: http(id),
+                responder: responder.into(),
+                completion: cell
+                    .completion_owner(&module, &http(id))
+                    .expect("registered dispatch owner"),
+            };
+            (job, answer)
+        };
+        let (waiting_start, _) = job(2);
+        cell.starts.upsert(slot.id, |starts| {
+            starts.push_back((Instant::now(), waiting_start))
+        });
+        assert!(
+            matches!(
+                cell.join_shared(&entry),
+                registry::Join::Unavailable { held: false }
+            ),
+            "a dispatch waiting to start means the instance is behind"
+        );
+        let (_, waiting_start) = cell
+            .starts
+            .with_mut_or_remove(&slot.id, VecDeque::pop_front, VecDeque::is_empty)
+            .flatten()
+            .expect("the queued start");
+        Cell::cancel_queued_dispatch(waiting_start);
+
+        let registry::Join::Joined(joined) = cell.join_shared(&entry) else {
+            panic!("an instance with nothing waiting for its thread must take a dispatch")
+        };
+        assert_eq!(joined.id, slot.id, "the parked instance takes the dispatch");
+        // As a dispatch that joined while a slice ran: it starts from the wake.
+        let (start, answer) = job(3);
+        cell.starts.upsert(slot.id, |starts| {
+            starts.push_back((Instant::now() - Duration::from_millis(5), start))
+        });
+        cell.run_wake(joined);
+        let joined = answer
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the joined dispatch must be answered");
+        assert_eq!(joined.status, 200);
+        assert_eq!(
+            cell.metrics_raw().thread_wait_us.count(),
+            1,
+            "the joined dispatch's wait for the thread must be measured"
         );
         cell.shutdown();
     }

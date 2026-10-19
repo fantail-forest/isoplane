@@ -187,7 +187,9 @@ pub struct Cell {
     active: ShardedMap<InstanceId, registry::ActiveDispatches>,
     /// Dispatches that joined an instance while another dispatch's slice ran,
     /// waiting to begin between slices.
-    starts: ShardedMap<InstanceId, VecDeque<DispatchJob>>,
+    /// Dispatches that joined an instance while a slice ran, with when they
+    /// began waiting for its thread.
+    starts: ShardedMap<InstanceId, VecDeque<(Instant, DispatchJob)>>,
     completion_clock: RwLock<completion::CompletionClock>,
     snapshots: Arc<dyn isoplane_hibernate::snapshot::SnapshotStorage>,
     memory_pressure: RwLock<Arc<dyn crate::memory_pressure::MemoryPressureSource>>,

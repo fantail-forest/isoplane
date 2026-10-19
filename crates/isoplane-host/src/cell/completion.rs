@@ -74,6 +74,11 @@ pub(super) struct Usage {
     pub(super) occupancy_ns: u64,
     reactor_occupancy_ns: u64,
     pub(super) slice_wall_ns: u64,
+    /// The longest of the dispatch's slices.
+    slice_wall_max_ns: u64,
+    /// Time the dispatch's slices spent ready to run, waiting for the
+    /// instance's thread while other dispatches' slices ran.
+    thread_wait_ns: u64,
     pub(super) slices: u32,
     incomplete: bool,
     in_slice: bool,
@@ -186,6 +191,14 @@ impl DispatchCompletion {
             .record("instance", tracing::field::display(instance));
     }
 
+    pub(super) fn add_thread_wait(&self, waited: std::time::Duration) {
+        let mut state = self.state.lock();
+        state.usage.thread_wait_ns = state
+            .usage
+            .thread_wait_ns
+            .saturating_add(waited.as_nanos() as u64);
+    }
+
     pub(super) fn activated_for_hold(&self) {
         self.state.lock().activated_for_hold = true;
     }
@@ -202,6 +215,7 @@ impl DispatchCompletion {
         usage.in_slice = false;
         usage.occupancy_ns = usage.occupancy_ns.saturating_add(outcome.occupancy_ns);
         usage.slice_wall_ns = usage.slice_wall_ns.saturating_add(outcome.wall_ns);
+        usage.slice_wall_max_ns = usage.slice_wall_max_ns.max(outcome.wall_ns);
         usage.incomplete |=
             outcome.occupancy_measurement == isoplane_engine::OccupancyMeasurement::Incomplete;
         usage.overage_ns = outcome.overage_ns;
@@ -402,6 +416,8 @@ impl DispatchCompletion {
             reactor_occupancy_ns = usage.reactor_occupancy_ns,
             occupancy_ns = usage.occupancy_ns, occupancy_complete = !usage.incomplete && !usage.in_slice,
             slice_wall_ns = usage.slice_wall_ns,
+            slice_wall_max_ns = usage.slice_wall_max_ns,
+            thread_wait_ns = usage.thread_wait_ns,
             slice_wall_complete = !usage.in_slice,
             capture_hint_occupancy_ns = usage.capture_hint_occupancy_ns,
             capture_hint_wall_ns = usage.capture_hint_wall_ns,

@@ -71,6 +71,9 @@ struct Entry {
     result: Option<ResultRecord>,
     task: Option<tokio::task::AbortHandle>,
     waiting: Option<PendingWait>,
+    /// When the result became deliverable, so its slice can say how long it
+    /// waited for the instance's thread.
+    ready_at: Option<std::time::Instant>,
 }
 
 impl Drop for Entry {
@@ -281,6 +284,7 @@ impl FutureTable {
                     ),
                     outcome: "discarded",
                 }),
+                ready_at: None,
             },
         );
         Ok(id)
@@ -312,6 +316,7 @@ impl FutureTable {
                 result: None,
                 task: None,
                 waiting: None,
+                ready_at: None,
             },
         );
         id
@@ -326,6 +331,7 @@ impl FutureTable {
             }
             e.state = State::Ready;
             e.result = result.take();
+            e.ready_at = Some(std::time::Instant::now());
             e.finish_wait("ready");
             Ok((e.owner.clone(), e.dispatch))
         });
@@ -367,9 +373,9 @@ impl FutureTable {
         let mut o = arc.inner.lock();
         loop {
             let id = o.ready.pop_front()?;
-            let Some((dispatch, result)) = self.entries.update_sync(&id, |_, e| {
+            let Some((dispatch, result, ready_at)) = self.entries.update_sync(&id, |_, e| {
                 e.state = State::Delivered;
-                (e.dispatch, e.result.take())
+                (e.dispatch, e.result.take(), e.ready_at)
             }) else {
                 continue;
             };
@@ -379,6 +385,7 @@ impl FutureTable {
                 future: id,
                 dispatch,
                 result,
+                waited: ready_at.map(|at| at.elapsed()),
             });
         }
     }
@@ -517,6 +524,8 @@ pub struct Ready {
     pub future: u64,
     pub dispatch: u64,
     pub result: ResultRecord,
+    /// Duration since the result became ready, when a timestamp is available.
+    pub waited: Option<std::time::Duration>,
 }
 
 impl Ready {

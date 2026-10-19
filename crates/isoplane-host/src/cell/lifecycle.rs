@@ -28,7 +28,8 @@ impl Cell {
                         // Another dispatch's slice is running; this one begins
                         // between slices, from the wake lane.
                         None => {
-                            self.starts.upsert(slot.id, |starts| starts.push_back(job));
+                            self.starts
+                                .upsert(slot.id, |starts| starts.push_back((Instant::now(), job)));
                             self.queue_wake(slot.clone());
                         }
                     }
@@ -286,12 +287,13 @@ impl Cell {
     /// Begins the dispatches that joined the instance while another
     /// dispatch's slice ran.
     fn begin_joined(self: &Arc<Self>, slot: &Arc<Slot>) {
-        while let Some(job) = self
+        while let Some((queued, job)) = self
             .starts
             .with_mut_or_remove(&slot.id, VecDeque::pop_front, VecDeque::is_empty)
             .flatten()
         {
             let owner = job.completion.clone();
+            self.waited_for_thread(&owner, queued.elapsed());
             IN_FLIGHT.replace(Some(Arc::downgrade(&owner)));
             let entry = owner.entry.clone();
             owner.in_scope(|| self.begin_dispatch(slot, &entry, job, AcquireSource::Shared));
@@ -423,6 +425,9 @@ impl Cell {
         // slices burned; otherwise a guest could park and wake indefinitely on
         // a fresh budget each time.
         let budget = owner.next_budget();
+        if let Some(waited) = ready.waited {
+            self.waited_for_thread(owner, waited);
+        }
         slot.ctx.begin_slice(crate::now_ms(), ready.dispatch);
 
         let t0 = Instant::now();
@@ -461,6 +466,7 @@ impl Cell {
                 .fetch_add(out.grace_deferrals, Ordering::Relaxed);
         }
         self.arm_grace(slot, did);
+        self.metrics.slice_us.record(out.wall_ns / 1_000);
         self.metrics.record_tenant(
             &entry.tenant,
             out.occupancy_ns,
@@ -650,6 +656,15 @@ impl Cell {
                 self.finish_and_release(slot, entry, did, evict())
             }
         }
+    }
+
+    /// Records how long a slice of `owner` waited for its instance's thread
+    /// after it was ready to run.
+    fn waited_for_thread(&self, owner: &DispatchCompletion, waited: Duration) {
+        owner.add_thread_wait(waited);
+        self.metrics
+            .thread_wait_us
+            .record(waited.as_micros() as u64);
     }
 
     /// The instance parks between slices. Returns whether the wake loop is

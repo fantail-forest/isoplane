@@ -152,6 +152,10 @@ pub struct Metrics {
     /// Admission to final response.
     pub dispatch_us: Histogram,
     pub park_ms: Histogram,
+    /// Each slice's wall time.
+    pub slice_us: Histogram,
+    /// How long each slice waited for its instance's thread once ready.
+    pub thread_wait_us: Histogram,
     pub dirty_pages: Histogram,
     /// The pre-capture gc hint.
     pub gc_hint_us: Histogram,
@@ -258,6 +262,10 @@ impl Metrics {
             dirty_pages_p50: self.dirty_pages.p50(),
             dirty_pages_p99: self.dirty_pages.p99(),
             park_p50_ms: self.park_ms.p50(),
+            slice_p50_us: self.slice_us.p50(),
+            slice_p99_us: self.slice_us.p99(),
+            thread_wait_p50_us: self.thread_wait_us.p50(),
+            thread_wait_p99_us: self.thread_wait_us.p99(),
             // Process-wide, and both crates' clocks: the engine's is where the
             // recorded `occupancy_ns` comes from, this crate's is the log-occupancy share.
             clock_read_failures: crate::meters::clock_read_failures()
@@ -354,6 +362,10 @@ pub struct MetricsSnapshot {
     pub dirty_pages_p50: u64,
     pub dirty_pages_p99: u64,
     pub park_p50_ms: u64,
+    pub slice_p50_us: u64,
+    pub slice_p99_us: u64,
+    pub thread_wait_p50_us: u64,
+    pub thread_wait_p99_us: u64,
     pub clock_read_failures: u64,
     pub trap_rate: f64,
     pub tenants: BTreeMap<String, TenantCounters>,
@@ -442,6 +454,10 @@ impl MetricsSnapshot {
             ("dirty_pages_p50", self.dirty_pages_p50.to_string()),
             ("dirty_pages_p99", self.dirty_pages_p99.to_string()),
             ("park_p50_ms", self.park_p50_ms.to_string()),
+            ("slice_p50_us", self.slice_p50_us.to_string()),
+            ("slice_p99_us", self.slice_p99_us.to_string()),
+            ("thread_wait_p50_us", self.thread_wait_p50_us.to_string()),
+            ("thread_wait_p99_us", self.thread_wait_p99_us.to_string()),
             ("clock_read_failures", self.clock_read_failures.to_string()),
             ("trap_rate", format!("{:.6}", self.trap_rate)),
         ]
