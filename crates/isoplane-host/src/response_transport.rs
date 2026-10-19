@@ -21,6 +21,8 @@ struct State {
     queued_peak_bytes: usize,
     pending_peak_bytes: usize,
     finished: bool,
+    /// The requester has read the end of the body.
+    read_to_end: bool,
     closing: bool,
     write_turn: u64,
     cancelled: bool,
@@ -28,6 +30,14 @@ struct State {
     settled: bool,
     failure: Option<String>,
     initial_write: Option<tokio::task::AbortHandle>,
+}
+
+impl State {
+    /// Whether the requester has the whole response: it read the end of the
+    /// body, or every byte of a body whose length it was told.
+    fn delivered(&self) -> bool {
+        self.read_to_end || self.remaining_bytes == Some(0)
+    }
 }
 
 pub(crate) struct ResponseTransport {
@@ -190,7 +200,9 @@ impl ResponseTransport {
 
     fn cancel(&self) {
         let mut state = self.state.lock();
-        if state.cancelled {
+        // Letting go of a response it already has ends nothing: work the
+        // dispatch left running after its response carries on.
+        if state.cancelled || state.delivered() {
             return;
         }
         let notify_owner = !state.settled && (!state.finished || state.disposition.is_some());
@@ -399,6 +411,7 @@ impl HttpBody for StreamingBody {
                 }
                 anyhow::ensure!(!state.cancelled, "response cancelled");
                 if state.finished {
+                    state.read_to_end = true;
                     return Ok(None);
                 }
             }
@@ -638,6 +651,66 @@ mod tests {
             stream.state.lock().pending_bytes,
             0,
             "cancelled write payloads must release their ownership"
+        );
+    }
+
+    #[tokio::test]
+    async fn letting_go_of_a_body_read_to_its_end_cancels_nothing() {
+        let stream = stream(16);
+        let ended = Arc::new(AtomicU64::new(0));
+        let signal = ended.clone();
+        stream.on_end_requested(Box::new(move || {
+            signal.fetch_add(1, Ordering::Relaxed);
+        }));
+        let mut response = stream.exchange().await.expect("response headers");
+        stream
+            .prepare(b"body".to_vec())
+            .send()
+            .await
+            .expect("the body must be accepted");
+        stream.finish();
+        assert_eq!(
+            response.body.read().await.expect("body chunk"),
+            Some(b"body".to_vec())
+        );
+        assert_eq!(response.body.read().await.expect("end of body"), None);
+        drop(response);
+        assert!(
+            !stream.is_cancelled(),
+            "a requester with the whole response has not cancelled it"
+        );
+        assert_eq!(
+            ended.load(Ordering::Relaxed),
+            0,
+            "the dispatch must not be asked to end"
+        );
+    }
+
+    #[tokio::test]
+    async fn letting_go_of_every_byte_of_a_sized_body_cancels_nothing() {
+        let stream = ResponseTransport::new(16);
+        stream
+            .start(&ResponseHead {
+                status: 200,
+                headers: vec![],
+                body: b"sized".to_vec(),
+                streaming: false,
+            })
+            .expect("the fixture response must start");
+        let mut response = stream.exchange().await.expect("response headers");
+        stream
+            .prepare(b"sized".to_vec())
+            .send()
+            .await
+            .expect("the body must be accepted");
+        assert_eq!(
+            response.body.read().await.expect("body"),
+            Some(b"sized".to_vec())
+        );
+        drop(response);
+        assert!(
+            !stream.is_cancelled(),
+            "a requester that read every byte it was told of has the whole response"
         );
     }
 
