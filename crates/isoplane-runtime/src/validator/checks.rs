@@ -265,9 +265,9 @@ pub(super) fn check_exports(
     }
 }
 
-/// The host reads and restores globals only through exports, so an unexported
-/// mutable global would be state that neither a reset to the template nor a
-/// hibernation capture can see.
+/// The host captures globals only through exports, both into a template after
+/// initialization and from a hibernating instance, so an unexported mutable
+/// global would lose its value in either while the memory beside it kept its own.
 pub(super) fn check_globals(s: &Scan, v: &mut Vec<Violation>) {
     let exported: BTreeSet<u32> = s
         .exports
@@ -287,9 +287,9 @@ pub(super) fn check_globals(s: &Scan, v: &mut Vec<Violation>) {
             ViolationCode::V1MissingExport,
             global.clone(),
             format!(
-                "mutable {global} is not exported; the host restores a reset or hibernated \
-                 instance's globals only through their exports, so a reset would not clear \
-                 this global and hibernation would not capture it"
+                "mutable {global} is not exported; the host captures globals only through \
+                 their exports, so neither a template nor a hibernated instance would keep \
+                 this global's value"
             ),
         ));
     }
