@@ -40,6 +40,12 @@ impl From<u64> for FutureId {
     }
 }
 
+impl FutureId {
+    pub(crate) fn value(self) -> u64 {
+        self.0
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PendingCapError {
     pub limit: u32,
@@ -618,14 +624,22 @@ impl FutureTable {
         let Some(arc) = self.by_instance.remove_sync(&owner).map(|(_, a)| a) else {
             return;
         };
+        // Aborting a task can drop what it holds on another thread at once, so
+        // abort only after the entries are gone: whoever observes the drop
+        // then sees the future released too.
+        let mut tasks = Vec::new();
         self.entries.retain_sync(|_, entry| {
             if Arc::ptr_eq(&entry.owner, &arc) {
-                entry.cancel_task();
+                entry.finish_wait("cancelled");
+                tasks.extend(entry.task.take());
                 false
             } else {
                 true
             }
         });
+        for task in tasks {
+            task.abort();
+        }
     }
 
 
