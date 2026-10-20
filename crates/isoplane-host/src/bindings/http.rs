@@ -103,7 +103,7 @@ impl CellBindings {
                         .settle_now(id, ResultRecord::Err(FutureError::Io(error.to_string())))
                 }
             };
-        let scope = self.ctx.current().http.clone();
+        let scope = self.ctx.http.clone();
         let operation = match scope.begin_fetch() {
             Ok(operation) => operation,
             Err(error) => return self.settle_now(id, ResultRecord::Err(error)),
@@ -160,7 +160,7 @@ impl CellBindings {
     pub(super) fn http_body_read(&self, rt: Arc<CellRuntime>, id: u64, scalars: [u64; 3]) -> u64 {
         let handle = scalars[0] as u32;
         let max = scalars[1] as usize;
-        let scope = self.ctx.current().http.clone();
+        let scope = self.ctx.http.clone();
         let (operation, body) = match scope.begin_read(handle) {
             Ok(read) => read,
             Err(error) => return self.settle_now(id, ResultRecord::Err(error)),

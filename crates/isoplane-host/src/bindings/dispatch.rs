@@ -8,7 +8,6 @@ use std::sync::{Arc, Weak};
 use parking_lot::Mutex;
 
 use super::cancellation::Cancellation;
-use super::http_scope::HttpScope;
 use super::request_body::RequestBodyScope;
 use crate::response_transport::ResponseTransport;
 
@@ -24,7 +23,6 @@ pub(crate) struct DispatchState {
     /// The dispatch's implicit cancellation future; the host cancels by
     /// completing it, never by entering the instance.
     cancel_future: AtomicU64,
-    pub(super) http: Arc<HttpScope>,
     pub(crate) request_body: Mutex<Option<Arc<RequestBodyScope>>>,
     pub(crate) reactor_observer: Mutex<Option<Weak<dyn crate::reactor_accounting::Observer>>>,
     /// Where a streaming response for this dispatch goes, when its caller
@@ -41,7 +39,6 @@ impl DispatchState {
             cancellation: Cancellation::default(),
             responded: AtomicBool::new(false),
             cancel_future: AtomicU64::new(0),
-            http: HttpScope::new(),
             request_body: Mutex::new(None),
             reactor_observer: Mutex::new(None),
             transport: Mutex::new(None),
@@ -94,14 +91,8 @@ impl DispatchState {
         self.subrequests.load(Ordering::Relaxed)
     }
 
-    pub(crate) fn has_outbound_http(&self) -> bool {
-        self.http.is_active()
-    }
-
-    /// Releases what the dispatch held open: its outbound HTTP bodies and its
-    /// request body.
+    /// Releases the incoming request body.
     pub(super) fn close(&self) {
-        self.http.close();
         if let Some(body) = self.request_body.lock().take() {
             body.close();
         }

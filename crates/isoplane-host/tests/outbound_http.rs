@@ -1,11 +1,11 @@
-//! Outbound bodies belong to one dispatch through the real HTTP bindings.
+//! Outbound operations and bodies belong to their instance through the real HTTP bindings.
 #[path = "common/outbound_http.rs"]
 mod common;
 
 use bytes::Bytes;
 use common::{deadline, services, Rig, Server};
 use hyper::body::Frame;
-use isoplane_abi::result::{BodyChunk, FutureError};
+use isoplane_abi::result::{BodyChunk, FutureError, ResultRecord};
 use isoplane_host::InstanceId;
 
 #[tokio::test]
@@ -127,7 +127,7 @@ async fn a_retained_http_body_cannot_be_read_by_another_tenant_or_instance() {
 }
 
 #[tokio::test]
-async fn reusing_a_context_releases_bodies_without_reassigning_their_handles() {
+async fn reusing_an_instance_preserves_bodies_until_eof_without_reassigning_handles() {
     deadline(async {
         let mut server = Server::start().await;
         let svc = services(server.address);
@@ -146,9 +146,22 @@ async fn reusing_a_context_releases_bodies_without_reassigning_their_handles() {
         rig.ctx.begin_dispatch(0, 1);
         assert_eq!(
             svc.egress.instance_connections(InstanceId(1)),
-            0,
-            "reusing the context must synchronously release the previous scope's permit"
+            1,
+            "request completion preserves the instance's unread body"
         );
+        drop(first.frames);
+        loop {
+            let read = rig.read(old, 8);
+            if rig
+                .result::<BodyChunk>(read)
+                .await
+                .expect("retained body remains readable")
+                .eof
+            {
+                break;
+            }
+        }
+        assert_eq!(svc.egress.instance_connections(InstanceId(1)), 0);
         let fetch = rig.fetch();
         let second = server
             .requests
@@ -212,7 +225,7 @@ async fn a_body_transport_error_releases_its_connection_permit() {
 }
 
 #[tokio::test]
-async fn completing_a_cell_dispatch_releases_its_unread_outbound_body() {
+async fn completing_a_cell_dispatch_preserves_its_body_until_instance_discard() {
     deadline(async {
         let mut server = Server::start().await;
         let svc = services(server.address);
@@ -238,13 +251,17 @@ async fn completing_a_cell_dispatch_releases_its_unread_outbound_body() {
             result.status, 200,
             "the guest must complete after receiving headers"
         );
-        common::capture(&cell, result.instance)
-            .await
-            .expect("dispatch finalization must release capture-blocking outbound ownership");
+        assert_eq!(
+            common::capture(&cell, result.instance).await,
+            Err(isoplane_host::hibernate_policy::CaptureRefused::OutboundHttp)
+        );
+        assert_eq!(svc.egress.instance_connections(result.instance), 1);
+        cell.discard_instance(result.instance)
+            .expect("discard idle owner");
         assert_eq!(
             svc.egress.instance_connections(result.instance),
             0,
-            "dispatch completion must release an unread response's permit"
+            "instance discard must release the retained response's permit"
         );
         cell.shutdown();
     })
@@ -328,9 +345,13 @@ async fn capture_refuses_pending_fetches_retained_bodies_and_inflight_reads() {
         while slot.state() != isoplane_host::LifecycleTier::Parked {
             tokio::task::yield_now().await;
         }
-        common::capture(&cell, instance)
-            .await
-            .expect("ending outbound ownership must make the idle instance capturable");
+        assert_eq!(
+            common::capture(&cell, instance).await,
+            Err(isoplane_host::hibernate_policy::CaptureRefused::OutboundHttp),
+            "a partially read body remains instance-owned after request completion"
+        );
+        cell.discard_instance(instance)
+            .expect("discard idle HTTP owner");
         assert_eq!(
             svc.egress.instance_connections(instance),
             0,
@@ -419,6 +440,71 @@ async fn a_discarded_slot_releases_its_body_while_its_context_remains_reachable(
             "a discarded slot cannot retain the outbound transport in its surviving context"
         );
         cell.shutdown();
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_pending_fetch_survives_handover_and_request_state_cleanup() {
+    deadline(async {
+        let mut server = Server::start().await;
+        let svc = services(server.address);
+        let mut rig = Rig::new(svc.clone(), "tenant", InstanceId(1));
+        let fetch = rig.fetch();
+        let exchange = server
+            .requests
+            .recv()
+            .await
+            .expect("pending fetch reached peer");
+        assert_eq!(
+            rig.runtime.futures.hand_to_instance(
+                rig.ctx.instance,
+                1,
+                isoplane_host::futures::Handover::All
+            ),
+            1
+        );
+        assert!(!rig.runtime.futures.end_dispatch(rig.ctx.instance, 1));
+        rig.ctx.begin_dispatch(0, 1);
+        exchange
+            .headers
+            .send(())
+            .expect("handed-over fetch remains live");
+        let ready = loop {
+            if let Some(ready) = rig
+                .runtime
+                .futures
+                .take_ready_for(rig.ctx.instance, Some(1))
+            {
+                break ready;
+            }
+            tokio::task::yield_now().await;
+        };
+        assert_eq!(ready.future, fetch);
+        let ResultRecord::Ok(bytes) = ready.result else {
+            panic!("fetch must succeed after handover")
+        };
+        let head: isoplane_abi::result::FetchResponse =
+            postcard::from_bytes(&bytes).expect("response head");
+        exchange
+            .frames
+            .send(Ok(Frame::data(Bytes::from_static(b"handed over"))))
+            .expect("body remains open");
+        drop(exchange.frames);
+        let mut received = Vec::new();
+        loop {
+            let read = rig.read(head.body_handle, 32);
+            let chunk = rig
+                .result::<BodyChunk>(read)
+                .await
+                .expect("handed-over body");
+            received.extend(chunk.data);
+            if chunk.eof {
+                break;
+            }
+        }
+        assert_eq!(received, b"handed over");
+        assert_eq!(svc.egress.instance_connections(rig.ctx.instance), 0);
     })
     .await;
 }

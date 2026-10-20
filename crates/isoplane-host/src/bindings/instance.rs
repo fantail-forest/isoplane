@@ -88,6 +88,7 @@ pub struct InstanceCtx {
     /// the call.
     pub(super) out_buffer: Mutex<Vec<u8>>,
     pub responses: Mutex<ResponseTable>,
+    pub(super) http: Arc<super::http_scope::HttpScope>,
     pub(super) spans: Mutex<HashMap<i32, (String, u64)>>,
     pub(super) next_span: AtomicU32,
     pub(super) native_io: Mutex<super::native_io::Resources>,
@@ -132,6 +133,7 @@ impl InstanceCtx {
     }
 
     pub(crate) fn release_native_resources(&self) {
+        self.http.close();
         self.native_io.lock().clear();
         for dispatch in self.dispatches.lock().values() {
             dispatch.close();
@@ -147,10 +149,7 @@ impl InstanceCtx {
     }
 
     pub(crate) fn has_outbound_http(&self) -> bool {
-        self.dispatches
-            .lock()
-            .values()
-            .any(|dispatch| dispatch.has_outbound_http())
+        self.http.is_active()
     }
 
     /// Whether any dispatch in progress is still reading its request body.
@@ -204,6 +203,7 @@ impl InstanceCtx {
             dispatch_generation: AtomicU64::new(0),
             out_buffer: Mutex::new(Vec::new()),
             responses: Mutex::new(ResponseTable::default()),
+            http: super::http_scope::HttpScope::new(),
             spans: Mutex::new(HashMap::new()),
             next_span: AtomicU32::new(1),
             native_io: Mutex::new(super::native_io::Resources::new(
@@ -345,5 +345,11 @@ impl InstanceCtx {
     }
     pub fn take_out_buffer(&self) -> Vec<u8> {
         std::mem::take(&mut self.out_buffer.lock())
+    }
+}
+
+impl Drop for InstanceCtx {
+    fn drop(&mut self) {
+        self.http.close();
     }
 }

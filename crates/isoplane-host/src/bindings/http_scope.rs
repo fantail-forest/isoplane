@@ -1,4 +1,4 @@
-//! Dispatch ownership for outbound HTTP operations and their retained bodies.
+//! Instance ownership for outbound HTTP operations and their retained bodies.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
