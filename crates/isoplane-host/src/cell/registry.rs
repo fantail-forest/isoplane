@@ -32,6 +32,10 @@ pub(super) struct ActiveDispatch {
     /// Set when the host first sees the dispatch's cancellation request: the
     /// dispatch is killed if it is still here then.
     pub(super) grace_deadline: Option<tokio::time::Instant>,
+    /// Set when the response is complete and work the dispatch started is
+    /// still pending: the dispatch hands that work to the instance and ends
+    /// then.
+    pub(super) release_at: Option<tokio::time::Instant>,
     pub(super) responder: Option<super::dispatch_api::Responder>,
     pub(super) completion: Arc<DispatchCompletion>,
 }
@@ -139,7 +143,7 @@ impl Cell {
             }
             // A slice may be running; one already waiting for the thread means
             // the instance is behind, and a new dispatch would wait too.
-            let behind = self.rt.futures.has_ready(slot.id) || self.starts.contains_key(&slot.id);
+            let behind = self.has_runnable(&slot) || self.starts.contains_key(&slot.id);
             let reserved = self.active.with_mut(&slot.id, |active| {
                 let room = active.count() < DISPATCHES_PER_INSTANCE;
                 held |= room && active.held_since.is_some();

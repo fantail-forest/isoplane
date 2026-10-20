@@ -301,6 +301,7 @@ impl Slot {
         g.dormant = None;
         self.ctx.snapshot.lock().take();
         self.ctx.release_native_resources();
+        self.ctx.release_futures();
         g.state = LifecycleTier::Discarded;
         g.parked_since_ms = None;
         self.publish(&g);

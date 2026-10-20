@@ -130,6 +130,7 @@ impl Cell {
                     Delivery::IdleTimers { stop_at, .. } => Some(*stop_at),
                 },
                 grace_deadline: None,
+                release_at: None,
                 responder: Some(job.responder),
                 completion: job.completion.clone(),
             },
@@ -315,6 +316,9 @@ impl Cell {
         if self.kill_after_grace(&slot, &entry) {
             return true;
         }
+        if self.release_after_response(&slot, &entry) {
+            return true;
+        }
         for dispatch in self.active_dispatch_ids(slot.id) {
             if self.end_stream_at_boundary(&slot, &entry, dispatch, None)
                 && !self.active.contains_key(&slot.id)
@@ -348,8 +352,9 @@ impl Cell {
                     return true;
                 }
             };
-            let Some(ready) = self.rt.futures.take_ready(slot.id) else {
-                // The first wake's loop drained every completion.
+            let host = self.instance_host(&slot);
+            let Some(ready) = self.rt.futures.take_ready_for(slot.id, host) else {
+                // The first wake's loop drained every completion it can run.
                 return true;
             };
             let Some(owner) = self.with_active(slot.id, ready.dispatch, |dispatch| {
@@ -570,7 +575,7 @@ impl Cell {
                 match decide(completion, streaming_open) {
                     DispatchEnd::RetainedForStreaming => {
                         slot.park(crate::now_ms());
-                        !self.rt.futures.has_ready(slot.id)
+                        !self.has_runnable(slot)
                     }
                     DispatchEnd::Disposed(d) => {
                         self.breaker.record_success(&breaker_key);
@@ -702,6 +707,7 @@ impl Cell {
         if d.is_warm() {
             self.end_request_body(slot, did);
             if self.rt.futures.dispatch_holds_guest_work(slot.id, did) {
+                self.leave_running_after_response(slot, did);
                 return self.park_after_slice(slot);
             }
         }
@@ -731,7 +737,108 @@ impl Cell {
     fn park_after_slice(&self, slot: &Arc<Slot>) -> bool {
         slot.park(crate::now_ms());
         // A completion that landed while Hot is drained now.
-        !self.rt.futures.has_ready(slot.id)
+        !self.has_runnable(slot)
+    }
+
+    /// Whether the instance has a result it can run now.
+    pub(super) fn has_runnable(&self, slot: &Slot) -> bool {
+        self.rt
+            .futures
+            .has_runnable(slot.id, self.instance_host(slot).is_some())
+    }
+
+    /// The dispatch whose slice runs the instance's work: one in progress that
+    /// has neither finished its response nor been cancelled. Without one, that
+    /// work waits, so it never gives a dispatch slices after its response.
+    pub(super) fn instance_host(&self, slot: &Slot) -> Option<u64> {
+        self.active
+            .with(&slot.id, |active| {
+                active
+                    .iter()
+                    .find(|dispatch| {
+                        dispatch.grace_deadline.is_none()
+                            && !slot
+                                .ctx
+                                .dispatch(dispatch.dispatch_id)
+                                .is_some_and(|state| state.has_responded())
+                    })
+                    .map(|dispatch| dispatch.dispatch_id)
+            })
+            .flatten()
+    }
+
+    /// Starts, once, the window in which a dispatch whose response is complete
+    /// keeps the work it left running. Its timers become the instance's now,
+    /// so they give it no slices of their own after its response.
+    fn leave_running_after_response(self: &Arc<Self>, slot: &Arc<Slot>, did: u64) {
+        if !slot
+            .ctx
+            .dispatch(did)
+            .is_some_and(|state| state.mark_responded())
+        {
+            return;
+        }
+        self.rt
+            .futures
+            .hand_to_instance(slot.id, did, Handover::Rearmable);
+        let deadline =
+            tokio::time::Instant::now() + Duration::from_millis(self.cfg.after_response_ms);
+        self.active.with_mut(&slot.id, |active| {
+            if let Some(dispatch) = active.get_mut(did) {
+                dispatch.release_at = Some(deadline);
+            }
+        });
+        let cell = Arc::downgrade(self);
+        let watched = Arc::downgrade(slot);
+        self.rt.reactor.spawn(async move {
+            tokio::time::sleep_until(deadline).await;
+            let (Some(cell), Some(slot)) = (cell.upgrade(), watched.upgrade()) else {
+                return;
+            };
+            if cell.with_active(slot.id, did, |_| ()).is_some() {
+                cell.queue_wake(slot);
+            }
+        });
+    }
+
+    /// Ends the dispatches whose window after the response has run out,
+    /// handing what they still had pending to the instance. Returns true when
+    /// no dispatch remains on the instance.
+    fn release_after_response(
+        self: &Arc<Self>,
+        slot: &Arc<Slot>,
+        entry: &Arc<ModuleEntry>,
+    ) -> bool {
+        let now = tokio::time::Instant::now();
+        let due: Vec<u64> = self
+            .active
+            .with(&slot.id, |active| {
+                active
+                    .iter()
+                    .filter(|dispatch| dispatch.release_at.is_some_and(|at| at <= now))
+                    .map(|dispatch| dispatch.dispatch_id)
+                    .collect()
+            })
+            .unwrap_or_default();
+        if due.is_empty() {
+            return false;
+        }
+        for did in due {
+            let handed = self
+                .rt
+                .futures
+                .hand_to_instance(slot.id, did, Handover::All);
+            self.metrics
+                .work_handed_to_instance
+                .fetch_add(1, Ordering::Relaxed);
+            tracing::debug!(
+                tenant = %entry.tenant, instance = %slot.id, dispatch = did, futures = handed,
+                after_response_ms = self.cfg.after_response_ms,
+                "work left after the response became the instance's"
+            );
+            self.finish_and_release(slot, entry, did, warm());
+        }
+        !self.active.contains_key(&slot.id)
     }
 
     fn respond(&self, slot: &Arc<Slot>, did: u64, result: DispatchResult) {
@@ -1064,10 +1171,12 @@ impl Cell {
             }
         }
 
-        if !keeps_instance {
+        if keeps_instance {
+            self.rt.futures.release_idle(slot.id);
+        } else {
             self.forget(slot);
+            self.rt.futures.release_instance(slot.id);
         }
-        self.rt.futures.release_instance(slot.id);
         let warm = d.is_warm();
         entry.pool.release(slot.clone(), d);
         if slot.state() == LifecycleTier::Discarded {

@@ -14,6 +14,22 @@ use crate::InstanceId;
 /// that ignores the failure gets no wake rather than someone else's.
 pub const INVALID_FUTURE: u64 = 0;
 
+/// The owner of work no dispatch owns any more: what a dispatch still had
+/// pending when its window after the response ran out, and timers armed
+/// after a dispatch's response. Its results run in a slice of a dispatch that
+/// has not finished its response, and wait while there is none, so nothing
+/// runs between requests on their account.
+pub const INSTANCE_WORK: u64 = u64::MAX;
+
+/// Which of a dispatch's futures [`FutureTable::hand_to_instance`] moves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Handover {
+    /// Wakes the host can recreate, such as timers.
+    Rearmable,
+    /// Everything but the dispatch's own cancellation.
+    All,
+}
+
 /// Identity of host reactor work, converted from the raw guest ABI at allocation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FutureId(u64);
@@ -365,17 +381,37 @@ impl FutureTable {
     }
 
     /// The next deliverable result for `owner`, with the dispatch that owns
-    /// it; called while the instance's [`crate::CallGuard`] is held, so a
-    /// completion that landed mid-slice is delivered after the slice returns
-    /// rather than reentrantly.
+    /// it. The instance's work is not delivered: see [`FutureTable::take_ready_for`].
     pub fn take_ready(&self, owner: InstanceId) -> Option<Ready> {
+        self.take_ready_for(owner, None)
+    }
+
+    /// The next deliverable result for `owner`, with the dispatch whose slice
+    /// runs it: its own, or `host` for the instance's work, which waits in
+    /// order while there is no host. Called while the instance's
+    /// [`crate::CallGuard`] is held, so a completion that landed mid-slice is
+    /// delivered after the slice returns rather than reentrantly.
+    pub fn take_ready_for(&self, owner: InstanceId, host: Option<u64>) -> Option<Ready> {
         let arc = self.existing(owner)?;
         let mut o = arc.inner.lock();
-        loop {
-            let id = o.ready.pop_front()?;
-            let Some((dispatch, result, ready_at)) = self.entries.update_sync(&id, |_, e| {
+        let mut index = 0;
+        while let Some(&id) = o.ready.get(index) {
+            let Some(dispatch) = self.entries.read_sync(&id, |_, e| e.dispatch) else {
+                o.ready.remove(index);
+                continue;
+            };
+            let runs_in = match (dispatch, host) {
+                (INSTANCE_WORK, Some(host)) => host,
+                (INSTANCE_WORK, None) => {
+                    index += 1;
+                    continue;
+                }
+                (dispatch, _) => dispatch,
+            };
+            o.ready.remove(index);
+            let Some((result, ready_at)) = self.entries.update_sync(&id, |_, e| {
                 e.state = State::Delivered;
-                (e.dispatch, e.result.take(), e.ready_at)
+                (e.result.take(), e.ready_at)
             }) else {
                 continue;
             };
@@ -383,16 +419,69 @@ impl FutureTable {
             self.entries.remove_sync(&id);
             return Some(Ready {
                 future: id,
-                dispatch,
+                dispatch: runs_in,
                 result,
                 waited: ready_at.map(|at| at.elapsed()),
             });
         }
+        None
     }
 
     pub fn has_ready(&self, owner: InstanceId) -> bool {
         self.existing(owner)
             .is_some_and(|a| !a.inner.lock().ready.is_empty())
+    }
+
+    /// Whether `owner` has a result to run: one of a dispatch's, or the
+    /// instance's when a dispatch is there to host it.
+    pub fn has_runnable(&self, owner: InstanceId, host_available: bool) -> bool {
+        let Some(arc) = self.existing(owner) else {
+            return false;
+        };
+        let o = arc.inner.lock();
+        (host_available && !o.ready.is_empty())
+            || o.ready.iter().any(|id| {
+                self.entries
+                    .read_sync(id, |_, entry| entry.dispatch != INSTANCE_WORK)
+                    .unwrap_or(false)
+            })
+    }
+
+    /// Makes `dispatch`'s futures the instance's, pending or undelivered, and
+    /// returns how many moved. Moving them does not touch their reactor work.
+    pub fn hand_to_instance(&self, owner: InstanceId, dispatch: u64, which: Handover) -> usize {
+        let Some(arc) = self.existing(owner) else {
+            return 0;
+        };
+        let mut o = arc.inner.lock();
+        let ids: Vec<u64> = o.pending.iter().chain(o.ready.iter()).copied().collect();
+        let mut moved = 0;
+        for id in ids {
+            let pending = o.pending.contains(&id);
+            let handed = self
+                .entries
+                .update_sync(&id, |_, e| {
+                    let wanted = e.dispatch == dispatch
+                        && e.import != "ctx_cancel"
+                        && (which == Handover::All || e.rearmable);
+                    if wanted {
+                        e.dispatch = INSTANCE_WORK;
+                    }
+                    wanted
+                })
+                .unwrap_or(false);
+            if !handed {
+                continue;
+            }
+            moved += 1;
+            if pending {
+                if let Some(count) = o.per_dispatch.get_mut(&dispatch) {
+                    *count = count.saturating_sub(1);
+                }
+                *o.per_dispatch.entry(INSTANCE_WORK).or_insert(0) += 1;
+            }
+        }
+        moved
     }
 
     /// The owner's pending futures that `import` created.
@@ -412,7 +501,7 @@ impl FutureTable {
     }
 
     /// Whether the owner has a pending or undelivered future the guest is
-    /// waiting on.
+    /// waiting on, other than the instance's work, which no dispatch waits for.
     pub fn holds_guest_work(&self, owner: InstanceId) -> bool {
         let Some(arc) = self.existing(owner) else {
             return false;
@@ -420,7 +509,9 @@ impl FutureTable {
         let o = arc.inner.lock();
         o.pending.iter().chain(o.ready.iter()).any(|id| {
             self.entries
-                .read_sync(id, |_, entry| entry.is_guest_work())
+                .read_sync(id, |_, entry| {
+                    entry.is_guest_work() && entry.dispatch != INSTANCE_WORK
+                })
                 .unwrap_or(false)
         })
     }
@@ -502,6 +593,23 @@ impl FutureTable {
             o.ready.retain(|r| *r != id);
         }
         abandoned_guest_work
+    }
+
+    /// An instance going idle: its futures are released, unless some are the
+    /// instance's work, which stays pending, with its reactor work, for a later
+    /// dispatch to run. Discarding the instance releases those.
+    pub fn release_idle(&self, owner: InstanceId) {
+        let holds_instance_work = self.existing(owner).is_some_and(|arc| {
+            let o = arc.inner.lock();
+            o.pending.iter().chain(o.ready.iter()).any(|id| {
+                self.entries
+                    .read_sync(id, |_, entry| entry.dispatch == INSTANCE_WORK)
+                    .unwrap_or(false)
+            })
+        });
+        if !holds_instance_work {
+            self.release_instance(owner);
+        }
     }
 
     /// Instance death: every future the instance held is reclaimed. A whole
@@ -858,6 +966,108 @@ mod tests {
             "with the first completion's value, not the duplicate's"
         );
         assert!(t.take_ready(a).is_none(), "nothing else is ready");
+    }
+
+    #[test]
+    fn the_instances_work_waits_for_a_host_and_runs_in_its_slice() {
+        let t = table();
+        let owner = InstanceId(1);
+        let left = t.alloc(owner, 1, "clock_deadline_in", 8).expect("alloc");
+        let own = t.alloc(owner, 2, "clock_deadline_in", 8).expect("alloc");
+        assert_eq!(t.hand_to_instance(owner, 1, Handover::All), 1);
+        assert!(
+            !t.dispatch_holds_guest_work(owner, 1),
+            "the handed work belongs to no dispatch"
+        );
+        t.complete(left, ResultRecord::Ok(vec![]));
+        assert!(
+            !t.has_runnable(owner, false),
+            "the instance's work has nothing to run in without a host"
+        );
+        assert!(
+            t.take_ready_for(owner, None).is_none(),
+            "and is not delivered without one"
+        );
+        t.complete(own, ResultRecord::Ok(vec![]));
+        assert!(
+            t.holds_guest_work(owner),
+            "a dispatch's own undelivered result is still its work"
+        );
+        let first = t
+            .take_ready_for(owner, None)
+            .expect("a dispatch's own result");
+        assert_eq!(
+            (first.future, first.dispatch),
+            (own, 2),
+            "a dispatch's own result is not held up behind the instance's"
+        );
+        assert!(
+            !t.holds_guest_work(owner),
+            "no dispatch waits for the instance's work"
+        );
+        assert!(t.has_runnable(owner, true));
+        let hosted = t
+            .take_ready_for(owner, Some(7))
+            .expect("the instance's result");
+        assert_eq!(
+            (hosted.future, hosted.dispatch),
+            (left, 7),
+            "the instance's work runs in its host's slice"
+        );
+    }
+
+    #[test]
+    fn a_handover_moves_only_what_it_names() {
+        let t = table();
+        let owner = InstanceId(1);
+        let work = t.alloc(owner, 1, "clock_deadline_in", 8).expect("alloc");
+        t.alloc_rearmable(owner, 1, "poll_call", 8)
+            .expect("alloc");
+        t.alloc_cancellation(owner, 1);
+        assert_eq!(
+            t.hand_to_instance(owner, 1, Handover::Rearmable),
+            1,
+            "only the timer moves at the response"
+        );
+        assert!(
+            t.dispatch_holds_guest_work(owner, 1),
+            "the dispatch keeps its own work"
+        );
+        assert_eq!(
+            t.hand_to_instance(owner, 1, Handover::All),
+            1,
+            "its work moves when the window ends, its cancellation stays"
+        );
+        assert!(
+            !t.end_dispatch(owner, 1),
+            "nothing is abandoned when it ends"
+        );
+        t.complete(work, ResultRecord::Ok(vec![]));
+        assert!(t.take_ready_for(owner, Some(3)).is_some());
+    }
+
+    #[test]
+    fn an_idle_instance_keeps_only_its_own_work() {
+        let t = table();
+        let owner = InstanceId(1);
+        t.alloc(owner, 1, "clock_deadline_in", 8).expect("alloc");
+        t.release_idle(owner);
+        assert_eq!(
+            t.live_futures(),
+            0,
+            "a finished dispatch leaves nothing behind"
+        );
+
+        let kept = t.alloc(owner, 2, "clock_deadline_in", 8).expect("alloc");
+        t.hand_to_instance(owner, 2, Handover::All);
+        t.release_idle(owner);
+        assert_eq!(
+            t.live_future_ids(),
+            vec![kept],
+            "the instance's work waits for a later dispatch"
+        );
+        t.release_instance(owner);
+        assert_eq!(t.live_futures(), 0, "discarding the instance releases it");
     }
 
 

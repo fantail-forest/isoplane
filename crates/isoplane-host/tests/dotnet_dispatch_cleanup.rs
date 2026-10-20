@@ -33,6 +33,20 @@ fn cleanup_cell(
     work: Arc<PendingWork>,
     operation: &str,
 ) -> (Arc<Cell>, ModuleId) {
+    cleanup_cell_with(
+        CellConfig::for_test("managed-cleanup"),
+        runtime,
+        work,
+        operation,
+    )
+}
+
+fn cleanup_cell_with(
+    config: CellConfig,
+    runtime: GuestRuntime,
+    work: Arc<PendingWork>,
+    operation: &str,
+) -> (Arc<Cell>, ModuleId) {
     let GuestRuntime::Mono = runtime;
     let (engine, template) = shared_runtime();
     let module = ModuleId::new("managed-cleanup", "v1");
@@ -42,7 +56,7 @@ fn cleanup_cell(
         .expect("the cleanup fixture must bind its application files");
     let activator = EngineActivator::new(engine.clone(), template, module.clone());
     let cell = if operation == "/timer" {
-        common::rig_resolving(CellConfig::for_test("managed-cleanup"), "93.184.216.34:80").0
+        common::rig_resolving(config, "93.184.216.34:80").0
     } else {
         let egress = isoplane_host::egress::HostEgressPolicy::new(
             Box::new(PendingResolver(work.clone())),
@@ -53,8 +67,7 @@ fn cleanup_cell(
             fetcher: Arc::new(isoplane_host::fakes::FakeFetcher::default()),
             egress: Arc::new(egress),
         });
-        Cell::new(CellConfig::for_test("managed-cleanup"), services)
-            .expect("the production cell must start")
+        Cell::new(config, services).expect("the production cell must start")
     };
     cell.register_module(
         "tenant",
@@ -242,6 +255,53 @@ async fn a_lookup_left_pending_after_the_response_completes_on_its_instance() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn work_resuming_on_its_dispatch_context_after_the_response_completes_on_its_instance() {
     check_work_after_the_response(GuestRuntime::Mono, "/dns-on-context").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_lookup_still_pending_after_the_window_finishes_in_a_later_dispatch() {
+    let work = Arc::new(PendingWork::default());
+    let (cell, module) = cleanup_cell_with(
+        CellConfig {
+            after_response_ms: 100,
+            ..CellConfig::for_test("managed-cleanup")
+        },
+        GuestRuntime::Mono,
+        work.clone(),
+        "/dns",
+    );
+    let armed = dispatch_request(&cell, &module, "/dns");
+    assert_eq!(armed.body, b"armed");
+    wait_until_idle(&cell, &module).await;
+    assert_eq!(
+        (
+            cell.metrics_raw().dispatch_us.count(),
+            cell.metrics().work_handed_to_instance
+        ),
+        (1, 1),
+        "step 1: the dispatch ends when its window runs out, handing its lookup to the instance"
+    );
+
+    work.release.notify_one();
+    tokio::time::timeout(Duration::from_secs(60), async {
+        while !cell.futures().has_ready(armed.instance) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("step 2: the lookup must complete");
+    assert_eq!(
+        cell.idle_instances(&module),
+        Some(1),
+        "step 2: its completion gives the idle instance no slice"
+    );
+
+    let observed = dispatch_at_idle(&cell, &module, "/observe").await;
+    assert_eq!(
+        (observed.instance, observed.body.as_slice()),
+        (armed.instance, &b"2:1"[..]),
+        "step 3: the lookup finishes in the next dispatch's slice, as the instance's work"
+    );
+    cell.shutdown();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

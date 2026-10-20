@@ -21,7 +21,7 @@ use crate::bindings::{CellRuntime, InstanceCtx, WakeSink};
 pub use crate::bindings::{Fetcher, Services};
 use crate::breaker::{BreakerConfig, BreakerKey, HangBreaker};
 use crate::disposition::{decide, evict, warm, DispatchEnd};
-use crate::futures::FutureTable;
+use crate::futures::{FutureTable, Handover};
 use crate::hibernate_policy::{self, HibernateConfig};
 use crate::meters::Meters;
 use crate::metrics::{Metrics, MetricsSnapshot};
@@ -78,6 +78,10 @@ pub struct CellConfig {
     /// by its CPU budget or its client going away, before the host kills it,
     /// evicting its instance and failing every dispatch on it.
     pub cancellation_grace_ms: u64,
+    /// How long a dispatch whose response is complete keeps the work it left
+    /// running. What is still pending then becomes the instance's, and the
+    /// dispatch ends.
+    pub after_response_ms: u64,
     /// Host resources retained on behalf of each guest instance.
     pub guest_resources: crate::bindings::GuestResourceLimits,
     pub hibernate: HibernateConfig,
@@ -103,6 +107,7 @@ impl Default for CellConfig {
             response_queue_bytes: isoplane_abi::host::DEFAULT_RESPONSE_QUEUE_BYTES,
             slice_wall_ms_cap: 30_000,
             cancellation_grace_ms: 5_000,
+            after_response_ms: 30_000,
             guest_resources: Default::default(),
             hibernate: HibernateConfig::default(),
             breaker: BreakerConfig::default(),
@@ -145,6 +150,10 @@ impl CellConfig {
         anyhow::ensure!(
             self.cancellation_grace_ms > 0,
             "cancellation_grace_ms must be positive"
+        );
+        anyhow::ensure!(
+            self.after_response_ms > 0,
+            "after_response_ms must be positive"
         );
         Ok(())
     }

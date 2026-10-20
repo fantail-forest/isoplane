@@ -101,6 +101,18 @@ impl CellBindings {
     ) -> Option<u64> {
         let rt = self.rt()?;
         let limit = self.ctx.limits.pending_futures_per_dispatch;
+        // A timer armed once the response is complete is the instance's, so it
+        // gives the dispatch no slices of its own after its response.
+        let dispatch = if rearmable
+            && self
+                .ctx
+                .dispatch(dispatch)
+                .is_some_and(|state| state.has_responded())
+        {
+            crate::futures::INSTANCE_WORK
+        } else {
+            dispatch
+        };
         let allocated = if rearmable {
             rt.futures
                 .alloc_rearmable(self.ctx.instance, dispatch, import, limit)

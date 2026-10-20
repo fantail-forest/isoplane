@@ -1777,6 +1777,43 @@ mod timer_tests {
         );
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn a_timer_armed_after_its_dispatchs_response_is_the_instances() {
+        let (context, woken) = reactor_bindings();
+        let bindings = CellBindings::new(context.clone());
+        let futures = context.rt.as_ref().expect("reactor").futures.clone();
+        context
+            .dispatch(1)
+            .expect("the dispatch must be in progress")
+            .mark_responded();
+        let mut resources = Resources::new(ResourceLimits {
+            handles: ResourceCount(1),
+        });
+        let Ok(Response::Handle(_)) =
+            resources.call(Request::Timer(DurationNanos(10_000_000)), &bindings)
+        else {
+            panic!("a 10 ms timer must be created")
+        };
+        assert!(
+            !futures.end_dispatch(context.instance, 1) && futures.live_futures() == 1,
+            "the timer's wake is not the dispatch's, so it outlives it"
+        );
+        tokio::time::advance(std::time::Duration::from_millis(20)).await;
+        tokio::task::yield_now().await;
+        assert_eq!(*woken.0.lock(), vec![context.instance]);
+        assert!(
+            futures.take_ready(context.instance).is_none(),
+            "it gives no dispatch a slice of its own"
+        );
+        assert_eq!(
+            futures
+                .take_ready_for(context.instance, Some(9))
+                .map(|ready| ready.dispatch),
+            Some(9),
+            "it runs in a slice of the dispatch hosting the instance's work"
+        );
+    }
+
     #[test]
     fn cancellation_refuses_new_deadlines_but_allows_polling_and_disposal() {
         use isoplane_engine::HostBindings;

@@ -309,7 +309,7 @@ impl Cell {
             .hibernation_wakes
             .fetch_add(1, Ordering::Relaxed);
         entry.meters.record_hibernation_wake();
-        if self.rt.futures.has_ready(slot.id) {
+        if self.has_runnable(&slot) {
             self.queue_wake(slot.clone());
         }
         Ok(())

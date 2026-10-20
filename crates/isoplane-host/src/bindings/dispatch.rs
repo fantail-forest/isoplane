@@ -2,7 +2,7 @@
 //! several dispatches in progress; each slice runs exactly one of them, and the
 //! imports it calls act on that dispatch's state.
 
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 
 use parking_lot::Mutex;
@@ -18,6 +18,9 @@ pub(crate) struct DispatchState {
     /// Bounds log volume independently of its occupied-worker cost.
     pub(super) log_bytes: AtomicU32,
     cancellation: Cancellation,
+    /// Set once the dispatch's response is complete and it runs only the work
+    /// it left behind.
+    responded: AtomicBool,
     /// The dispatch's implicit cancellation future; the host cancels by
     /// completing it, never by entering the instance.
     cancel_future: AtomicU64,
@@ -36,6 +39,7 @@ impl DispatchState {
             subrequests: AtomicU32::new(0),
             log_bytes: AtomicU32::new(0),
             cancellation: Cancellation::default(),
+            responded: AtomicBool::new(false),
             cancel_future: AtomicU64::new(0),
             http: HttpScope::new(),
             request_body: Mutex::new(None),
@@ -64,6 +68,15 @@ impl DispatchState {
 
     pub(crate) fn cancellation_requested(&self) -> bool {
         self.cancellation.is_requested()
+    }
+
+    /// Records that the response is complete. Returns false if it already was.
+    pub(crate) fn mark_responded(&self) -> bool {
+        !self.responded.swap(true, Ordering::AcqRel)
+    }
+
+    pub(crate) fn has_responded(&self) -> bool {
+        self.responded.load(Ordering::Acquire)
     }
 
     /// Once a slice has ended, the cancellation future to complete if the

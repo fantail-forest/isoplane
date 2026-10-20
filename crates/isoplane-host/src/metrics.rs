@@ -110,6 +110,9 @@ pub struct Metrics {
     /// Instances whose memory passed their memory limit, retired once their
     /// dispatches finished.
     pub memory_limit_retirements: AtomicU64,
+    /// Dispatches that still had work pending when their window after the
+    /// response ran out, and handed it to their instance.
+    pub work_handed_to_instance: AtomicU64,
     /// Epoch ticks that found the unsafe-to-trap bit set and deferred grace.
     pub grace_deferrals: AtomicU64,
     /// occupancy recorded past the budget on kills of either phase; already inside
@@ -220,6 +223,7 @@ impl Metrics {
             instance_hold_p99_ms: self.instance_hold_ms.p99(),
             activations_for_holds: l(&self.activations_for_holds),
             memory_limit_retirements: l(&self.memory_limit_retirements),
+            work_handed_to_instance: l(&self.work_handed_to_instance),
             grace_deferrals: l(&self.grace_deferrals),
             overage_ns: l(&self.overage_ns),
             // With no kills the ratio is reported as the exit count, the most
@@ -330,6 +334,7 @@ pub struct MetricsSnapshot {
     pub instance_hold_p99_ms: u64,
     pub activations_for_holds: u64,
     pub memory_limit_retirements: u64,
+    pub work_handed_to_instance: u64,
     pub grace_deferrals: u64,
     pub overage_ns: u64,
     pub exit_kill_ratio: f64,
@@ -407,6 +412,10 @@ impl MetricsSnapshot {
             (
                 "memory_limit_retirements",
                 self.memory_limit_retirements.to_string(),
+            ),
+            (
+                "work_handed_to_instance",
+                self.work_handed_to_instance.to_string(),
             ),
             ("grace_deferrals", self.grace_deferrals.to_string()),
             ("overage_ms", format!("{:.3}", self.overage_ns as f64 / 1e6)),

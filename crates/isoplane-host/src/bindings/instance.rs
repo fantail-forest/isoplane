@@ -137,6 +137,14 @@ impl InstanceCtx {
         }
     }
 
+    /// Reclaims every host future the instance held, including work it kept
+    /// pending while idle.
+    pub(crate) fn release_futures(&self) {
+        if let Some(rt) = &self.rt {
+            rt.futures.release_instance(self.instance);
+        }
+    }
+
     pub(crate) fn has_outbound_http(&self) -> bool {
         self.dispatches
             .lock()

@@ -217,6 +217,115 @@ async fn work_left_after_the_response_keeps_its_dispatch_open_and_its_instance()
     r.cell.shutdown();
 }
 
+/// A window after the response short enough that a test sees it run out.
+fn short_window(name: &str) -> CellConfig {
+    CellConfig {
+        after_response_ms: 50,
+        ..CellConfig::for_test(name)
+    }
+}
+
+#[test]
+fn work_still_pending_when_the_window_after_the_response_ends_becomes_the_instances() {
+    let r = rig(short_window("window"));
+    let act = Arc::new(FakeActivator::named(
+        ModuleId::new("window", "v1"),
+        FakeBehaviour::program([Step::RespondLeaving {
+            imports: vec![("clock_deadline_in", PARK_MS)],
+        }]),
+    ));
+    let module = act.module().clone();
+    r.cell
+        .register_module("acme", act, manifest("window", Limits::default()))
+        .unwrap();
+
+    let out = r
+        .cell
+        .dispatch_blocking(
+            &module,
+            Target::Handler {
+                route: "/window".into(),
+            },
+            http(&r.cell, &module, "/window"),
+            T,
+        )
+        .unwrap();
+    assert_eq!(out.status, 200);
+    assert!(
+        wait_for(|| r.cell.metrics_raw().dispatch_us.count() == 1, T),
+        "the dispatch must end once its window runs out, though its work never completes"
+    );
+    assert_eq!(r.cell.metrics().work_handed_to_instance, 1);
+    assert_eq!(
+        r.cell.idle_instances(&module),
+        Some(1),
+        "the instance is kept, idle, for later dispatches"
+    );
+    assert_eq!(
+        r.cell.futures().live_futures(),
+        1,
+        "the work is kept as the instance's, not cancelled"
+    );
+    r.cell.shutdown();
+}
+
+#[test]
+fn the_instances_work_waits_while_it_is_idle_and_runs_in_a_later_dispatch() {
+    let r = rig(short_window("hosted"));
+    let act = Arc::new(FakeActivator::named(
+        ModuleId::new("hosted", "v1"),
+        FakeBehaviour::program([
+            Step::RespondLeaving {
+                imports: vec![("clock_deadline_in", 200)],
+            },
+            Step::Park {
+                imports: vec![("clock_deadline_in", PARK_MS)],
+            },
+            Step::Done {
+                status: 200,
+                body: b"hosted".to_vec(),
+            },
+        ]),
+    ));
+    let module = act.module().clone();
+    r.cell
+        .register_module("acme", act, manifest("hosted", Limits::default()))
+        .unwrap();
+    let send = |path: &str| {
+        r.cell
+            .dispatch_blocking(
+                &module,
+                Target::Handler { route: path.into() },
+                http(&r.cell, &module, path),
+                T,
+            )
+            .unwrap()
+    };
+
+    let first = send("/leave");
+    assert!(
+        wait_for(|| r.cell.metrics().work_handed_to_instance == 1, T),
+        "step 1: the first dispatch hands its work to the instance"
+    );
+    assert!(
+        wait_for(|| r.cell.futures().has_ready(first.instance), T),
+        "step 2: the work completes while no dispatch is in progress"
+    );
+    assert_eq!(
+        r.cell.idle_instances(&module),
+        Some(1),
+        "step 2: and its result waits rather than giving the idle instance a slice"
+    );
+
+    let second = send("/host");
+    assert_eq!(
+        (second.instance, second.status, second.body.as_slice()),
+        (first.instance, 200, b"hosted".as_slice()),
+        "step 3: the waiting result runs in a slice of the next dispatch, which it answers from"
+    );
+    r.cell.shutdown();
+}
+
 #[test]
 fn entering_grace_wakes_the_dispatch_cancellation_future() {
     let rig = rig(CellConfig::for_test("cancellation"));
