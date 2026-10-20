@@ -414,3 +414,97 @@ async fn check_idle_socket_reuse(runtime: GuestRuntime) {
 async fn an_idle_interpreted_socket_does_not_prevent_clean_guest_reuse() {
     check_idle_socket_reuse(GuestRuntime::Mono).await;
 }
+
+fn upload_cell() -> (Arc<Cell>, ModuleId) {
+    let (engine, template) = shared_runtime();
+    let module = ModuleId::new("managed-upload", "v1");
+    let template = template
+        .clone()
+        .with_application_files(managed::files("isoplane_guest_dotnet_upload"))
+        .expect("the upload fixture must bind its application files");
+    let activator = EngineActivator::new(engine.clone(), template, module.clone());
+    let (cell, _) =
+        common::rig_resolving(CellConfig::for_test("managed-upload"), "93.184.216.34:80");
+    cell.register_module(
+        "tenant",
+        Arc::new(activator),
+        common::manifest("managed-upload", Limits::default()),
+    )
+    .expect("the upload module must register");
+    (cell, module)
+}
+
+/// An upload whose next bytes never arrive.
+struct StalledUpload;
+#[async_trait::async_trait]
+impl isoplane_abi::host::HttpBody for StalledUpload {
+    async fn read(&mut self) -> anyhow::Result<Option<Vec<u8>>> {
+        std::future::pending().await
+    }
+}
+
+/// An upload with no bytes.
+struct EmptyUpload;
+#[async_trait::async_trait]
+impl isoplane_abi::host::HttpBody for EmptyUpload {
+    async fn read(&mut self) -> anyhow::Result<Option<Vec<u8>>> {
+        Ok(None)
+    }
+}
+
+async fn upload(
+    cell: &Arc<Cell>,
+    path: &str,
+    body: Box<dyn isoplane_abi::host::HttpBody>,
+) -> String {
+    use isoplane_abi::host::{CodeTier, Dispatcher, HttpUpload, RouteTarget};
+    let target = RouteTarget {
+        app: "managed-upload".into(),
+        version: "v1".into(),
+        tenant: "tenant".into(),
+
+        tier: CodeTier::Fast,
+    };
+    let request = HttpRequest {
+        method: "POST".into(),
+        url: format!("https://upload.test{path}"),
+        path: path.into(),
+        query: vec![],
+        headers: vec![],
+        body: vec![],
+    };
+    let mut response = cell
+        .dispatch_http_upload(
+            &target,
+            HttpUpload {
+                request,
+                body,
+                can_have_body: true,
+            },
+        )
+        .await
+        .expect("the upload dispatch must answer");
+    assert_eq!(response.status, 200, "{path} must complete normally");
+    let mut text = Vec::new();
+    while let Some(chunk) = response.body.read().await.expect("the response body") {
+        text.extend(chunk);
+    }
+    String::from_utf8(text).expect("a text response")
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_request_body_read_left_after_the_response_fails_instead_of_waiting_forever() {
+    let (cell, module) = upload_cell();
+    assert_eq!(
+        upload(&cell, "/leave-read", Box::new(StalledUpload)).await,
+        "left",
+        "the handler responds while its read of the upload is pending"
+    );
+    wait_until_idle(&cell, &module).await;
+    assert_eq!(
+        upload(&cell, "/left-read", Box::new(EmptyUpload)).await,
+        "failed",
+        "a read the response has ended must fail, so the code awaiting it can finish"
+    );
+    cell.shutdown();
+}

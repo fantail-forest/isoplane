@@ -74,17 +74,6 @@ internal static class FutureTable
         }
         return owned;
     }
-
-    /// <summary>Drops a dispatch's futures; the host cancels them as the dispatch ends.</summary>
-    internal static void Forget(ulong dispatch)
-    {
-        var owned = new List<ulong>();
-        foreach (var (id, entry) in Pending)
-        {
-            if (entry.Dispatch == dispatch) owned.Add(id);
-        }
-        foreach (ulong id in owned) Pending.Remove(id);
-    }
 }
 
 internal sealed class TooManyFuturesException : Exception { }
