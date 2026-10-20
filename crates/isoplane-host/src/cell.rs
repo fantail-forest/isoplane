@@ -30,6 +30,7 @@ use crate::sharded_map::ShardedMap;
 use crate::slot::{EnterError, LifecycleTier, Slot};
 
 mod completion;
+mod connections;
 mod dispatch_api;
 mod hibernate;
 mod lifecycle;
@@ -82,6 +83,9 @@ pub struct CellConfig {
     /// running. What is still pending then becomes the instance's, and the
     /// dispatch ends.
     pub after_response_ms: u64,
+    /// How long a connection may carry no bytes before the host closes it,
+    /// unless the dispatch that last used it is still in progress.
+    pub idle_connection_ms: u64,
     /// Host resources retained on behalf of each guest instance.
     pub guest_resources: crate::bindings::GuestResourceLimits,
     pub hibernate: HibernateConfig,
@@ -108,6 +112,7 @@ impl Default for CellConfig {
             slice_wall_ms_cap: 30_000,
             cancellation_grace_ms: 5_000,
             after_response_ms: 30_000,
+            idle_connection_ms: 30_000,
             guest_resources: Default::default(),
             hibernate: HibernateConfig::default(),
             breaker: BreakerConfig::default(),
@@ -154,6 +159,10 @@ impl CellConfig {
         anyhow::ensure!(
             self.after_response_ms > 0,
             "after_response_ms must be positive"
+        );
+        anyhow::ensure!(
+            self.idle_connection_ms > 0,
+            "idle_connection_ms must be positive"
         );
         Ok(())
     }

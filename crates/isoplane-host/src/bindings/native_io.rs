@@ -51,6 +51,15 @@ impl ReactorWork {
     fn is_pending(&self) -> bool {
         self.table.is_pending(self.owner, self.future)
     }
+
+    /// Stops the work, returning its future for the caller to complete so
+    /// that whoever waits on it looks at the resource again.
+    fn stop_for_wake(&self) -> Option<u64> {
+        self.is_pending().then(|| {
+            self.task.abort();
+            self.future.value()
+        })
+    }
 }
 
 #[cfg(test)]
@@ -163,10 +172,9 @@ mod tests {
                 keep_alive: Arc::default(),
                 buffer_sizes: Arc::default(),
                 streams_taken: false,
-                state: Arc::new(Mutex::new(SocketState::Connected(Arc::new(Connection {
-                    stream: stream.clone(),
-                    _permit: permit,
-                })))),
+                state: Arc::new(Mutex::new(SocketState::Connected(Arc::new(
+                    Connection::new(stream.clone(), permit, 1),
+                )))),
                 task: None,
             }))
             .unwrap();
@@ -663,6 +671,41 @@ impl Default for ResourceLimits {
 struct Connection {
     stream: Arc<TcpStream>,
     _permit: ConnectionPermit,
+    used: Mutex<LastUse>,
+}
+
+/// When bytes last moved over a connection, and in which dispatch's slice.
+#[derive(Clone, Copy)]
+struct LastUse {
+    at: tokio::time::Instant,
+    dispatch: u64,
+}
+
+impl Connection {
+    fn new(stream: Arc<TcpStream>, permit: ConnectionPermit, dispatch: u64) -> Self {
+        Self {
+            stream,
+            _permit: permit,
+            used: Mutex::new(LastUse {
+                at: tokio::time::Instant::now(),
+                dispatch,
+            }),
+        }
+    }
+
+    fn record_use(&self, bindings: &dyn Context) {
+        let Some(runtime) = bindings.runtime() else {
+            return;
+        };
+        *self.used.lock() = LastUse {
+            at: reactor_now_on(&runtime.reactor),
+            dispatch: bindings.dispatch(),
+        };
+    }
+
+    fn last_use(&self) -> LastUse {
+        *self.used.lock()
+    }
 }
 
 enum SocketState {
@@ -739,7 +782,12 @@ fn quantized(duration: isoplane_abi::native_io::DurationNanos) -> std::time::Dur
 }
 
 pub(crate) fn reactor_now(runtime: &Runtime) -> tokio::time::Instant {
-    let _reactor = runtime.reactor.enter();
+    reactor_now_on(&runtime.reactor)
+}
+
+/// Now, on the reactor's clock, which tests pause and advance.
+pub(crate) fn reactor_now_on(reactor: &tokio::runtime::Handle) -> tokio::time::Instant {
+    let _reactor = reactor.enter();
     tokio::time::Instant::now()
 }
 
@@ -848,6 +896,56 @@ impl Resources {
             minimum_interval: std::time::Duration::from_millis(minimum_interval_ms),
             earliest_deadline,
         })
+    }
+
+    /// Closes the connections that have carried no bytes since `idle_before`
+    /// and whose last user is not in `in_progress`, reporting each to the
+    /// guest as an aborted connection. Returns how many it closed, and the
+    /// futures to complete so that anything waiting on them finds out.
+    pub(crate) fn close_idle(
+        &mut self,
+        idle_before: tokio::time::Instant,
+        in_progress: &[u64],
+        idle_ms: u64,
+    ) -> (usize, Vec<u64>) {
+        let mut closed: Vec<Arc<Mutex<SocketState>>> = Vec::new();
+        for resource in self.entries.values() {
+            let state = match resource {
+                Resource::Socket(socket) => &socket.state,
+                Resource::Input(input) => input.state(),
+                Resource::Output(output) => output.state(),
+                _ => continue,
+            };
+            if closed.iter().any(|done| Arc::ptr_eq(done, state)) {
+                continue;
+            }
+            let mut current = state.lock();
+            let SocketState::Connected(connection) = &*current else {
+                continue;
+            };
+            let last = connection.last_use();
+            if last.at > idle_before || in_progress.contains(&last.dispatch) {
+                continue;
+            }
+            *current = SocketState::Failed(Error::Connection {
+                kind: std::io::ErrorKind::ConnectionAborted,
+                message: format!("closed by the host after {idle_ms} ms without use"),
+            });
+            drop(current);
+            closed.push(state.clone());
+        }
+        let mut wakes = Vec::new();
+        for resource in self.entries.values() {
+            let (state, task) = match resource {
+                Resource::Input(input) => (input.state(), input.task()),
+                Resource::Output(output) => (output.state(), output.task()),
+                _ => continue,
+            };
+            if closed.iter().any(|done| Arc::ptr_eq(done, state)) {
+                wakes.extend(task.and_then(ReactorWork::stop_for_wake));
+            }
+        }
+        (closed.len(), wakes)
     }
 
     pub(crate) fn clear(&mut self) {
@@ -1531,6 +1629,7 @@ impl Resources {
         }
         let socket = self.tcp(handle)?;
         let state = socket.state.clone();
+        let dispatch = bindings.dispatch();
         let no_delay = socket.no_delay.clone();
         let keep_alive = socket.keep_alive.clone();
         let buffer_sizes = socket.buffer_sizes.clone();
@@ -1585,10 +1684,11 @@ impl Resources {
                 // connection is established or fails.
                 let attempt = policy.begin_connect(owner).await.map_err(Error::from)?;
                 let stream = attempt.connect(destination).await.map_err(Error::from)?;
-                Ok(Connection {
-                    stream: Arc::new(stream),
-                    _permit: attempt.established(),
-                })
+                Ok(Connection::new(
+                    Arc::new(stream),
+                    attempt.established(),
+                    dispatch,
+                ))
             }
             .await;
             {
