@@ -14,6 +14,7 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 struct StorageState {
     reservations: AtomicUsize,
     fail_save: AtomicBool,
+    fail_read: AtomicBool,
     /// Flips the last saved byte, as a page the kernel lost would read back.
     corrupt_save: AtomicBool,
 }
@@ -93,6 +94,13 @@ impl SnapshotReservation for Reservation {
         offset: u64,
         parts: &mut [std::io::IoSliceMut<'_>],
     ) -> Result<(), SnapshotError> {
+        if self.state.fail_read.load(Ordering::Relaxed) {
+            return Err(SnapshotError::Io {
+                operation: "read",
+                path: "test-storage".into(),
+                source: std::io::ErrorKind::Interrupted.into(),
+            });
+        }
         let saved = self.saved.as_ref().ok_or(SnapshotError::Empty)?;
         let mut at = offset as usize;
         for part in parts {
@@ -335,7 +343,7 @@ fn an_idle_reuse_handler_restores_its_snapshot_through_pool_acquisition() {
 }
 
 #[test]
-fn a_snapshot_that_fails_its_checksum_restores_from_the_template() {
+fn a_corrupt_snapshot_is_replaced_with_a_fresh_instance_and_host_context() {
     let storage = Storage::new(1);
     let cell = test_cell(storage.clone(), 0);
     let module = register(
@@ -344,6 +352,14 @@ fn a_snapshot_that_fails_its_checksum_restores_from_the_template() {
         FakeBehaviour::done().with_lazy_init_probe(),
     );
     let first = completed(&cell, &module, 1);
+    let old = cell.slot(first.instance).expect("old instance");
+    use isoplane_engine::HostBindings;
+    crate::bindings::CellBindings::new(old.ctx.clone())
+        .native_io(isoplane_abi::native_io::Request::Timer(
+            isoplane_abi::native_io::DurationNanos(0),
+        ))
+        .expect("retained native timer");
+    assert_eq!(old.ctx.native_timers(), 1);
     storage.state.corrupt_save.store(true, Ordering::Relaxed);
     assert!(
         cell.reclaim_candidate(candidate(&cell, first.instance))
@@ -352,6 +368,16 @@ fn a_snapshot_that_fails_its_checksum_restores_from_the_template() {
     );
     let second = completed(&cell, &module, 2);
     assert_eq!(second.status, 200, "the dispatch must still be served");
+    assert_ne!(second.instance, first.instance);
+    assert_eq!(second.acquired, "activated");
+    assert_eq!(old.state(), LifecycleTier::Discarded);
+    assert!(old.ctx.snapshot.lock().is_none());
+    assert!(old.ctx.admission.lock().is_none());
+    assert!(cell.slot(first.instance).is_none());
+    let fresh = cell.slot(second.instance).expect("fresh instance");
+    assert!(!Arc::ptr_eq(&old.ctx, &fresh.ctx));
+    assert_eq!(old.ctx.native_timers(), 0);
+    assert_eq!(fresh.ctx.native_timers(), 0);
     assert_eq!(
         second.body, first.body,
         "a corrupt snapshot must not leave its pages in the instance"
@@ -693,4 +719,34 @@ fn background_boundaries_invalidate_capture_without_refreshing_request_recency()
         .reclaim_candidate(candidate(&cell, slot.id))
         .expect("a fresh capture remains eligible"));
     cell.shutdown();
+}
+
+#[test]
+fn a_temporary_snapshot_read_failure_preserves_the_original_instance_for_retry() {
+    let storage = Storage::new(1);
+    let cell = test_cell(storage.clone(), 0);
+    let module = register(
+        &cell,
+        "read-error",
+        FakeBehaviour::done().with_lazy_init_probe(),
+    );
+    let first = completed(&cell, &module, 1);
+    assert!(cell
+        .reclaim_candidate(candidate(&cell, first.instance))
+        .expect("capture"));
+    storage.state.fail_read.store(true, Ordering::Relaxed);
+    let failed = completed(&cell, &module, 2);
+    assert_eq!(failed.status, 500);
+    assert_eq!(
+        cell.instance_state(first.instance),
+        Some(LifecycleTier::Hibernated)
+    );
+    assert_eq!(storage.state.reservations.load(Ordering::Relaxed), 1);
+    assert_eq!(cell.metrics().delta_fallbacks, 0);
+    storage.state.fail_read.store(false, Ordering::Relaxed);
+    let restored = completed(&cell, &module, 3);
+    assert_eq!(restored.status, 200);
+    assert_eq!(restored.instance, first.instance);
+    assert_eq!(restored.acquired, "hibernation_wake");
+    assert_ne!(restored.body, first.body);
 }

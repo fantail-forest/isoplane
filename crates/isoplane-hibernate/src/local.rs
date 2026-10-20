@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use isoplane_engine::{InstanceImage, MemoryImage};
 
 use crate::delta::{Binding, PAGE};
-use crate::snapshot::SnapshotReservation;
+use crate::snapshot::{SnapshotError, SnapshotReservation};
 use crate::{wake_error, Result, WakeFallback};
 
 /// The guest shape a reservation has to hold.
@@ -149,14 +149,18 @@ impl Snapshot {
     /// or whose header fails its checksum, fails with its [`WakeFallback`].
     pub fn open(reservation: &mut dyn SnapshotReservation, expect: Binding) -> Result<Self> {
         let mut prefix = [0; PREFIX_BYTES];
-        reservation.read_exact_at(0, &mut [IoSliceMut::new(&mut prefix)])?;
+        reservation
+            .read_exact_at(0, &mut [IoSliceMut::new(&mut prefix)])
+            .map_err(snapshot_read_error)?;
         let [l0, l1, l2, l3, c0, c1, c2, c3] = prefix;
         let length = u64::from(u32::from_le_bytes([l0, l1, l2, l3]));
         if length > reservation.reserved_bytes().0 {
             return Err(wake_error(WakeFallback::Corrupt));
         }
         let mut encoded = vec![0; length as usize];
-        reservation.read_exact_at(PREFIX_BYTES as u64, &mut [IoSliceMut::new(&mut encoded)])?;
+        reservation
+            .read_exact_at(PREFIX_BYTES as u64, &mut [IoSliceMut::new(&mut encoded)])
+            .map_err(snapshot_read_error)?;
         if crc32fast::hash(&encoded) != u32::from_le_bytes([c0, c1, c2, c3]) {
             return Err(wake_error(WakeFallback::Corrupt));
         }
@@ -192,12 +196,9 @@ impl Snapshot {
         let mut consumed = 0;
         for run in &self.header.runs {
             let bytes = run.bytes();
-            ensure!(
-                bytes.start >= consumed && bytes.end - consumed <= memory.len(),
-                "snapshot run at page {} is out of order or past the {}-byte memory",
-                run.first_page,
-                consumed + memory.len()
-            );
+            if bytes.start < consumed || bytes.end - consumed > memory.len() {
+                return Err(wake_error(WakeFallback::Corrupt));
+            }
             let (_, rest) = std::mem::take(&mut memory).split_at_mut(bytes.start - consumed);
             let (target, rest) = rest.split_at_mut(bytes.len());
             memory = rest;
@@ -208,7 +209,9 @@ impl Snapshot {
                 parts.push(IoSliceMut::new(target));
             }
         }
-        reservation.read_exact_at(self.payload_offset, &mut parts)?;
+        reservation
+            .read_exact_at(self.payload_offset, &mut parts)
+            .map_err(snapshot_read_error)?;
         let mut payload = crc32fast::Hasher::new();
         for part in &parts {
             payload.update(part);
@@ -217,6 +220,21 @@ impl Snapshot {
             return Err(wake_error(WakeFallback::Corrupt));
         }
         Ok(())
+    }
+}
+
+fn snapshot_read_error(error: SnapshotError) -> anyhow::Error {
+    match error {
+        SnapshotError::Empty => wake_error(WakeFallback::NotFound),
+        SnapshotError::BeyondSnapshot { .. } => wake_error(WakeFallback::Corrupt),
+        SnapshotError::Io { ref source, .. }
+            if source.kind() == std::io::ErrorKind::UnexpectedEof =>
+        {
+            wake_error(WakeFallback::Corrupt)
+        }
+        SnapshotError::Io { .. }
+        | SnapshotError::Unreserved { .. }
+        | SnapshotError::TooLarge { .. } => error.into(),
     }
 }
 
@@ -504,6 +522,31 @@ mod tests {
         let error = Snapshot::open(&mut storage, binding())
             .err()
             .expect("an altered header must not be used");
+        assert_eq!(
+            error.downcast_ref::<WakeFallback>(),
+            Some(&WakeFallback::Corrupt)
+        );
+    }
+
+    #[test]
+    fn truncated_snapshot_headers_and_payloads_are_corrupt() {
+        for keep in [4, PREFIX_BYTES + 1] {
+            let (mut storage, _) = saved_with_a_changed_page();
+            storage.bytes.truncate(keep);
+            let error = Snapshot::open(&mut storage, binding())
+                .err()
+                .expect("truncated header");
+            assert_eq!(
+                error.downcast_ref::<WakeFallback>(),
+                Some(&WakeFallback::Corrupt)
+            );
+        }
+        let (mut storage, base) = saved_with_a_changed_page();
+        let snapshot = Snapshot::open(&mut storage, binding()).expect("intact header");
+        storage.bytes.pop();
+        let error = snapshot
+            .apply(&mut storage, &mut base.clone())
+            .expect_err("truncated payload");
         assert_eq!(
             error.downcast_ref::<WakeFallback>(),
             Some(&WakeFallback::Corrupt)

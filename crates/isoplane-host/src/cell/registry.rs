@@ -467,6 +467,7 @@ impl Cell {
         self: &Arc<Self>,
         entry: &Arc<ModuleEntry>,
     ) -> crate::Result<(Arc<Slot>, AcquireSource)> {
+        let mut replacing_snapshot = false;
         let (slot, src) = entry.pool.acquire_reserved(
             |id| {
                 let admission = entry.instances.reserve(crate::admission::InstanceLimit(
@@ -488,8 +489,17 @@ impl Cell {
                 Ok(ctx)
             },
             |slot| self.forget(slot),
-            |slot| self.wake(slot, entry),
+            |slot| {
+                let result = self.wake(slot, entry);
+                replacing_snapshot |= result
+                    .as_ref()
+                    .is_err_and(|error| error.is::<isoplane_hibernate::WakeFallback>());
+                result
+            },
         )?;
+        if replacing_snapshot {
+            self.metrics.delta_fallbacks.fetch_add(1, Ordering::Relaxed);
+        }
         self.index.lock().insert(slot.id, Arc::downgrade(&slot));
         let mut residents = self.residents.lock();
         residents.entry(slot.id).or_insert_with(|| Resident {

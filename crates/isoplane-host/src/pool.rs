@@ -254,9 +254,23 @@ impl InstancePool {
                     }
                     crate::LifecycleTier::Hibernated => {
                         if let Err(error) = restore(&slot) {
-                            slot.discard();
-                            self.live.fetch_sub(1, Ordering::Relaxed);
-                            discard(&slot);
+                            if error.is::<isoplane_hibernate::WakeFallback>() {
+                                tracing::warn!(instance = %slot.id, tenant = %slot.ctx.tenant,
+                                    %error, "snapshot unusable; discarding instance before replacement");
+                                slot.discard();
+                                self.live.fetch_sub(1, Ordering::Relaxed);
+                                discard(&slot);
+                                continue;
+                            }
+                            let mut warm = self.warm.lock();
+                            if self.retired.load(Ordering::Acquire) {
+                                drop(warm);
+                                slot.discard();
+                                self.live.fetch_sub(1, Ordering::Relaxed);
+                                discard(&slot);
+                            } else {
+                                warm.slots.push(slot.clone());
+                            }
                             return Err(error);
                         }
                         AcquireSource::HibernationWake

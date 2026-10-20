@@ -229,30 +229,14 @@ impl Cell {
                 Err(e)
             }
         };
-        let mut fell_back = false;
-        let inst = match restored {
-            Ok(inst) => {
-                inst
-            }
-            Err(e) => {
-                if self.active.contains_key(&slot.id) {
-                    return Err(e.context("a pending dispatch requires its captured continuation"));
-                }
-                tracing::warn!(instance = %slot.id, error = %e, "delta unusable; falling back to template");
-                fell_back = true;
-                activate(None)?
-            }
-        };
-        if fell_back {
-            self.metrics.delta_fallbacks.fetch_add(1, Ordering::Relaxed);
-        }
+        let inst = restored?;
 
         slot.rehydrate(inst);
         tracing::info!(target: "isoplane_host::cell::transition",
             event = "instance_transition", tenant = %entry.tenant,
             app = %entry.activator.module().app, version = %entry.activator.module().version,
             instance = slot.id.0, previous = "hibernated", current = "parked",
-            cause = if fell_back { "template_fallback" } else { "restore" });
+            cause = "restore");
         Ok(())
     }
 
