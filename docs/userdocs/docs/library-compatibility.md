@@ -55,7 +55,7 @@ entry says otherwise.
 | Sqlite | [SQLite, including its Entity Framework Core provider](#sqlite) | In-memory databases work, created once the application has started. A database file needs a different database, such as PostgreSQL |
 | MongoDB.Driver | [MongoDB](#mongodb) | Not supported yet for most deployments: waits on the driver. A load-balanced deployment works with two settings |
 | StackExchange.Redis | [Redis, including the Redis distributed cache](#redis) | Small change: reference the stable 3.x client and call it asynchronously |
-| OpenTelemetry | [OpenTelemetry SDK](#opentelemetry) | Large change, traces only: collect spans with .NET's tracing API and send them before each request ends |
+| OpenTelemetry | [OpenTelemetry SDK](#opentelemetry) | Small change, traces only: use the exporter Isoplane provides |
 | ModelContextProtocol | [An MCP server that tracks sessions](#mcp-sessions) | Small change: use stateless mode |
 
 The sections below give each package's full name.
@@ -1043,285 +1043,62 @@ builder.Services.AddOpenTelemetry()
         .AddOtlpExporter());   // nothing arrives at the collector
 ```
 
-The SDK starts two delays of its own for the code above, and like any timer
-they [run during requests](dotnet-runtime-differences.md#between-requests),
-unless the application runs timers between requests:
-
-- A delay of 10 s awaited by the SDK's self-diagnostics, which look for a
-  configuration file.
-- A delay of 5 s awaited by the batch exporter. A metrics reader has one of
-  60 s in its place.
-
 Typically used for sending traces, metrics and logs to a collector. We ran
-OpenTelemetry 1.19.1.
+OpenTelemetry 1.20.0.
 
-#### Workaround: collect spans with .NET's tracing API, and send them before the request ends
+#### Workaround: send traces with Isoplane.OpenTelemetry
 
-The OpenTelemetry SDK is built on tracing types that are part of .NET, and
-those work in the sandbox. An [`ActivitySource`][ActivitySource] starts spans,
-an [`ActivityListener`][ActivityListener] is handed each one as it ends, and
-libraries with an activity source of their own, such as `HttpClient`, Npgsql,
-MySqlConnector and MongoDB.Driver, produce spans with no SDK installed.
-Collecting those spans yourself and sending them before each request ends gets
-traces to a collector.
+`Isoplane.OpenTelemetry` exports traces with the SDK's own OTLP exporter, and
+sends each request's spans after its response. Add the package, and call
+`AddIsoplaneOtlpExporter` in place of `AddOtlpExporter`:
 
-That replaces only part of the SDK. Without it, you write the rest yourself or
-go without:
-
-- **Exporting.** The code below sends each request's spans in one export, on a
-  new connection, and the response waits for it: a collector that takes a
-  second to answer adds a second to every request. An export that fails drops
-  its spans, with a message in the log. It sends OTLP's JSON encoding, which
-  the [specification][otlp-spec] asks receivers to accept but does not
-  require: the OpenTelemetry Collector accepts it, and a backend may not. There
-  is no protobuf or gRPC encoding, and no vendor exporter or distribution, such
-  as Azure Monitor's, since those are built on the SDK.
-- **Instrumentation packages.** Their spans carry the attributes, error status
-  and exception events that tracing backends expect, and for some libraries
-  they are the only source of spans: Entity Framework Core and
-  StackExchange.Redis have no activity source, and their packages build spans
-  from EF Core's diagnostic events and the Redis client's profiling hooks.
-  Without them, you set attributes yourself, as the code below does for the
-  request's own span.
-- **Sampling, resource detection and configuration.** Every span is kept, and
-  the service is named by the string you pass. The SDK's samplers, resource
-  detectors and `OTEL_*` settings have no equivalent here. Trace context needs
-  no SDK: an incoming `traceparent` header is honoured.
-- **Metrics and logs.** This covers traces only.
-
-The collecting and sending are the same in any application:
-
-```csharp
-using System.Diagnostics;
-using System.Text;
-
-/// Keeps each span as it ends, and sends the spans it has kept to a collector.
-static class Spans
-{
-    // Spans that have ended and not been sent yet.
-    static readonly List<Activity> finished = [];
-
-    /// Starts keeping the spans of the named activity sources.
-    public static void Collect(params string[] sources) =>
-        ActivitySource.AddActivityListener(new ActivityListener
-        {
-            ShouldListenTo = source => sources.Contains(source.Name),
-            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
-            ActivityStopped = finished.Add,
-        });
-
-    /// Sends the kept spans as OTLP over HTTP in its JSON encoding, to an endpoint such as
-    /// http://collector:4318/v1/traces. Spans that fail to send are not kept for another try.
-    public static async Task SendAsync(string endpoint, string service, CancellationToken cancellation)
-    {
-        if (finished.Count == 0) return;
-        var spans = finished.ToArray();
-        finished.Clear();
-
-        // Created and disposed within the request, so that nothing is left pending when it ends.
-        using var client = new HttpClient();
-        using var content = new StringContent(OtlpJson.Encode(spans, service), Encoding.UTF8, "application/json");
-        using var response = await client.PostAsync(endpoint, content, cancellation);
-        response.EnsureSuccessStatusCode();
-    }
-}
+```bash
+dotnet add package Isoplane.OpenTelemetry
 ```
 
-<details>
-<summary>The <code>OtlpJson</code> encoder used by <code>Spans</code></summary>
-
 ```csharp
-using System.Diagnostics;
-using System.Text.Json.Nodes;
+using Isoplane.OpenTelemetry;
+using OpenTelemetry.Trace;
 
-/// The OTLP/HTTP JSON encoding of a batch of spans.
-static class OtlpJson
-{
-    public static string Encode(IEnumerable<Activity> spans, string service)
-    {
-        var encoded = new JsonArray();
-        foreach (var activity in spans)
-        {
-            var attributes = new JsonArray();
-            foreach (var tag in activity.TagObjects) attributes.Add(Attribute(tag.Key, tag.Value));
-            var span = new JsonObject
-            {
-                ["traceId"] = activity.TraceId.ToHexString(),
-                ["spanId"] = activity.SpanId.ToHexString(),
-                ["name"] = activity.DisplayName,
-                ["kind"] = (int)activity.Kind + 1,
-                ["startTimeUnixNano"] = Nanos(activity.StartTimeUtc),
-                ["endTimeUnixNano"] = Nanos(activity.StartTimeUtc + activity.Duration),
-                ["attributes"] = attributes,
-                ["status"] = new JsonObject { ["code"] = (int)activity.Status },
-            };
-            if (activity.ParentSpanId != default) span["parentSpanId"] = activity.ParentSpanId.ToHexString();
-            encoded.Add(span);
-        }
-        return new JsonObject
-        {
-            ["resourceSpans"] = new JsonArray(new JsonObject
-            {
-                ["resource"] = new JsonObject { ["attributes"] = new JsonArray(Attribute("service.name", service)) },
-                ["scopeSpans"] = new JsonArray(new JsonObject { ["scope"] = new JsonObject { ["name"] = service }, ["spans"] = encoded }),
-            }),
-        }.ToJsonString();
-    }
-
-    static string Nanos(DateTime utc) => ((utc - DateTime.UnixEpoch).Ticks * 100).ToString();
-
-    static JsonNode Attribute(string key, object? value) => new JsonObject
-    {
-        ["key"] = key,
-        ["value"] = value switch
-        {
-            bool flag => new JsonObject { ["boolValue"] = flag },
-            int or long or short or byte => new JsonObject { ["intValue"] = Convert.ToInt64(value).ToString() },
-            float or double => new JsonObject { ["doubleValue"] = Convert.ToDouble(value) },
-            _ => new JsonObject { ["stringValue"] = value?.ToString() ?? "" },
-        },
-    };
-}
+builder.Services.AddOpenTelemetry()
+    .WithTracing(tracing => tracing
+        .AddAspNetCoreInstrumentation()
+        .AddIsoplaneOtlpExporter());
 ```
 
-</details>
+It reads the same [`OTEL_EXPORTER_OTLP_*` settings][otlp-exporter-settings]
+from the application's configuration as `AddOtlpExporter`, such as
+`OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_EXPORTER_OTLP_PROTOCOL`, and takes the
+same options in code. As with `AddOtlpExporter`, the default is gRPC to
+`http://localhost:4317`; set `OTEL_EXPORTER_OTLP_PROTOCOL` to `http/protobuf`
+for an endpoint that takes OTLP over HTTP.
 
-Where a request ends depends on how the application handles requests.
-
-##### In an ASP.NET Core application
-
-ASP.NET Core starts an [`Activity`][Activity] for each request and reads its
-`traceparent` header. A middleware ends that activity and sends the spans:
+The spans of a request are held in the instance's memory until the request's
+own span ends, then encoded and sent while the client already has the
+response. Sending them is work the request left running, so its time counts
+toward that request. A request that produces many spans can send the ones that
+have ended sooner, and learn whether the endpoint accepted them:
 
 ```csharp
-using System.Diagnostics;
-using Microsoft.AspNetCore.Http.Features;
-
-var endpoint = builder.Configuration["Otlp:Endpoint"]!;   // for example http://collector:4318/v1/traces
-Spans.Collect("Microsoft.AspNetCore", "MyApp");
-
-var app = builder.Build();
-
-app.Use(async (context, next) =>
+app.MapPost("/import", async (TraceExport traces) =>
 {
-    try
-    {
-        await next(context);
-    }
-    finally
-    {
-        // ASP.NET Core ends the request's own span after the response is complete, which is too
-        // late to send it. End it here, with the name and attributes it would be given then.
-        if (context.Features.Get<IHttpActivityFeature>()?.Activity is { } server)
-        {
-            var route = (context.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText;
-            server.DisplayName = route is null ? context.Request.Method : $"{context.Request.Method} {route}";
-            server.SetTag("http.request.method", context.Request.Method);
-            server.SetTag("url.path", context.Request.Path.Value);
-            if (route is not null) server.SetTag("http.route", route);
-            server.SetTag("http.response.status_code", context.Response.StatusCode);
-            if (context.Response.StatusCode >= 500) server.SetStatus(ActivityStatusCode.Error);
-            server.Stop();
-        }
-
-        try
-        {
-            await Spans.SendAsync(endpoint, "my-app", context.RequestAborted);
-        }
-        catch (Exception error)
-        {
-            app.Logger.LogWarning(error, "Spans were not exported");
-        }
-    }
+    // ... work that ends many spans ...
+    await traces.FlushAsync();
 });
 ```
 
-##### In an application without ASP.NET Core
+What it does not do:
 
-An application that [handles requests without ASP.NET](handle-requests-without-aspnet.md)
-starts the request's span itself, continuing the caller's trace with
-[`ActivityContext.TryParse`][ActivityContext.TryParse]:
+- **Keep spans the instance loses.** Spans not yet sent when an instance is
+  stopped are lost.
+- **Retry.** An export the endpoint refuses, or that fails to send, is logged
+  and dropped.
+- **Metrics and logs.** It covers traces only; the SDK's metrics and logs
+  exporters still deliver nothing.
 
-```csharp
-using System.Diagnostics;
-using Isoplane;
+We ran it against the OpenTelemetry Collector over HTTP and over gRPC.
 
-public static class Handler
-{
-    static readonly ActivitySource source = new("MyApp");
-    static string endpoint = "";
-
-    [Initializer]
-    public static Task InitializeAsync()
-    {
-        endpoint = RuntimeConfiguration.ReadValues()["Otlp:Endpoint"];   // for example http://collector:4318/v1/traces
-        Spans.Collect("MyApp");
-        return Task.CompletedTask;
-    }
-
-    [HttpHandler]
-    public static async Task<Response> HandleAsync(Request request)
-    {
-        // Continue the caller's trace, if it sent one.
-        ActivityContext.TryParse(Header(request, "traceparent"), Header(request, "tracestate"), out var caller);
-        Response response;
-        using (var server = source.StartActivity(request.Method, ActivityKind.Server, caller))
-        {
-            server?.SetTag("http.request.method", request.Method);
-            server?.SetTag("url.path", request.Path);
-            try
-            {
-                response = await RouteAsync(request);
-            }
-            catch (Exception error)
-            {
-                server?.SetStatus(ActivityStatusCode.Error, error.Message);
-                throw;
-            }
-            finally
-            {
-                // The span ends here, so that it is among the spans sent below.
-                server?.Stop();
-                try
-                {
-                    await Spans.SendAsync(endpoint, "my-app", request.Aborted);
-                }
-                catch (Exception error)
-                {
-                    Console.WriteLine($"Spans were not exported: {error.Message}");
-                }
-            }
-        }
-        return response;
-    }
-
-    static string? Header(Request request, string name) =>
-        request.Headers.FirstOrDefault(header => string.Equals(header.Key, name, StringComparison.OrdinalIgnoreCase)).Value;
-
-    // RouteAsync is the application's own request handling.
-}
-```
-
-We ran both against a receiver that records what it is sent, not against a
-collector.
-
-Size of the change: large.
-
-#### Looking ahead
-
-The SDK is close. Its maintainers already support single-threaded WebAssembly
-in the browser: the batch exporter and the metrics reader have
-[task-based forms for it][otel-6379], and the OTLP exporter was
-[adjusted for it in 1.19.0][otel-7708]. The SDK picks those forms whenever the
-thread pool has only one thread, so it already uses them on Isoplane; their waits
-are the 5 s and 60 s delays above. What remains is an export that does not
-send synchronously, which the maintainers have so far left out, and somewhere
-for those delays to run between requests.
-
-Isoplane can also close the gap from its own side, with an exporter that
-collects spans and sends them before the response completes, or hands them to
-the host to send in batches outside the request. Which of these comes first is
-not yet known.
+Size of the change: small.
 
 ## Model Context Protocol
 
@@ -1450,10 +1227,6 @@ to try, not a verdict: it flags an assembly for a call anywhere inside it, and
 that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 
 [Activation.Activated]: reference/sdk/Isoplane.Sdk/Isoplane/Activation/Activated.md
-[Activity]: https://learn.microsoft.com/dotnet/api/system.diagnostics.activity
-[ActivityContext.TryParse]: https://learn.microsoft.com/dotnet/api/system.diagnostics.activitycontext.tryparse
-[ActivityListener]: https://learn.microsoft.com/dotnet/api/system.diagnostics.activitylistener
-[ActivitySource]: https://learn.microsoft.com/dotnet/api/system.diagnostics.activitysource
 [AddAzureAppConfiguration]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.configuration.azureappconfigurationextensions.addazureappconfiguration
 [AddAzureKeyVault]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.configuration.azurekeyvaultconfigurationextensions.addazurekeyvault
 [AddConsole]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.logging.consoleloggerextensions.addconsole
@@ -1533,9 +1306,6 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [nuget-mcp]: https://www.nuget.org/packages/ModelContextProtocol.AspNetCore
 [nuget-newtonsoft]: https://www.nuget.org/packages/Microsoft.AspNetCore.Mvc.NewtonsoftJson
 [nuget-sqlclient]: https://www.nuget.org/packages/Microsoft.Data.SqlClient
-[otel-6379]: https://github.com/open-telemetry/opentelemetry-dotnet/pull/6379
-[otel-7708]: https://github.com/open-telemetry/opentelemetry-dotnet/issues/7708
-[otlp-spec]: https://opentelemetry.io/docs/specs/otlp/
 [OutputFormatterMemoryBufferThreshold]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.mvc.mvcnewtonsoftjsonoptions.outputformattermemorybufferthreshold
 [PersistKeysToDbContext]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.dataprotection.entityframeworkcoredataprotectionextensions.persistkeystodbcontext
 [PersistKeysToFileSystem]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.dataprotection.dataprotectionbuilderextensions.persistkeystofilesystem
@@ -1580,3 +1350,4 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [XmlReaderSettings.Async]: https://learn.microsoft.com/dotnet/api/system.xml.xmlreadersettings.async
 [XmlSerializer]: https://learn.microsoft.com/dotnet/api/system.xml.serialization.xmlserializer
 [XmlWriter]: https://learn.microsoft.com/dotnet/api/system.xml.xmlwriter
+[otlp-exporter-settings]: https://opentelemetry.io/docs/specs/otel/protocol/exporter/

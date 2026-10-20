@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <PackageReadmeFile>PackageReadme.md</PackageReadmeFile>
+    <PackageId>Isoplane.OpenTelemetry</PackageId>
+    <Description>Sends an Isoplane application's OpenTelemetry traces to an OTLP endpoint after each response.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.20.0" />
+    <None Update="PackageReadme.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+  <Import Project="../../../licenses/SdkPackage.props" />
+</Project>

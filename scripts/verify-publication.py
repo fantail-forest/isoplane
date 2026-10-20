@@ -20,7 +20,7 @@ def require(condition, message):
 
 
 def package_ids():
-    return ('Isoplane.Sdk', 'Isoplane.AspNetCore', 'Isoplane.AspNetCore.DataProtection.EntityFrameworkCore', 'Isoplane.Templates',
+    return ('Isoplane.Sdk', 'Isoplane.AspNetCore', 'Isoplane.AspNetCore.DataProtection.EntityFrameworkCore', 'Isoplane.OpenTelemetry', 'Isoplane.Templates',
             'Isoplane.Native', 'Isoplane.Testing', 'Isoplane.Cli')
 
 

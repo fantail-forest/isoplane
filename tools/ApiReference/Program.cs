@@ -57,8 +57,8 @@ internal static class Reference
     private static readonly Regex GuideLink = new(@"\]\(https://isoplane\.dev/docs/([^)#]+)(#[^)]*)?\)", RegexOptions.CultureInvariant);
     private static readonly Regex ErrorCode = new(@"ISOPLANE\d{4}", RegexOptions.CultureInvariant);
     private static readonly Regex ErrorCodeSection = new(@"^### (ISOPLANE\d{4})$", RegexOptions.CultureInvariant | RegexOptions.Multiline);
-    private static readonly Assembly[] Assemblies = [typeof(Isoplane.Request).Assembly, typeof(Isoplane.AspNetCore.IsoplaneHosting).Assembly, typeof(Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.DataProtectionDbContextKeys).Assembly, typeof(Isoplane.Testing.IsoplaneApplication).Assembly];
-    private static readonly HashSet<string> Namespaces = ["Isoplane", "Isoplane.AspNetCore", "Isoplane.AspNetCore.DataProtection.EntityFrameworkCore", "Isoplane.Testing"];
+    private static readonly Assembly[] Assemblies = [typeof(Isoplane.Request).Assembly, typeof(Isoplane.AspNetCore.IsoplaneHosting).Assembly, typeof(Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.DataProtectionDbContextKeys).Assembly, typeof(Isoplane.OpenTelemetry.TraceExport).Assembly, typeof(Isoplane.Testing.IsoplaneApplication).Assembly];
+    private static readonly HashSet<string> Namespaces = ["Isoplane", "Isoplane.AspNetCore", "Isoplane.AspNetCore.DataProtection.EntityFrameworkCore", "Isoplane.OpenTelemetry", "Isoplane.Testing"];
 
     internal static Dictionary<string, string> Generate(string temporary)
     {
@@ -320,6 +320,7 @@ An application is written in one of two ways, and tested with a third package.
 Other packages each adapt one library an ASP.NET application may use. They are separate so that an application without that library never restores it.
 
 - **[Isoplane.AspNetCore.DataProtection.EntityFrameworkCore](sdk/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.md)** keeps the Data Protection keys in the application's Entity Framework Core database: [`UseKeysFromDbContext`](sdk/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore/DataProtectionDbContextKeys/UseKeysFromDbContext.md). Start with [Keep Data Protection keys across builds](../dotnet-runtime-differences.md#keep-data-protection-keys-across-builds).
+- **[Isoplane.OpenTelemetry](sdk/Isoplane.OpenTelemetry/Isoplane.OpenTelemetry.md)** sends OpenTelemetry traces to an OTLP endpoint after each response: [`AddIsoplaneOtlpExporter`](sdk/Isoplane.OpenTelemetry/Isoplane.OpenTelemetry/IsoplaneOtlpExporterExtensions/AddIsoplaneOtlpExporter.md). Start with [OpenTelemetry](../library-compatibility.md#opentelemetry).
 
 ## Words these pages use
 

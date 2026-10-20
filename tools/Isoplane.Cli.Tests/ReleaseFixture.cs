@@ -10,7 +10,7 @@ internal sealed class ReleaseFixture : IDisposable
 {
     internal const string Version = "0.1.0-preview.1";
     internal const string Revision = "0123456789abcdef0123456789abcdef01234567";
-    internal static readonly string[] PackageIds = ["Isoplane.Cli", "Isoplane.Native", "Isoplane.Testing", "Isoplane.Sdk", "Isoplane.AspNetCore", "Isoplane.AspNetCore.DataProtection.EntityFrameworkCore", "Isoplane.Templates"];
+    internal static readonly string[] PackageIds = ["Isoplane.Cli", "Isoplane.Native", "Isoplane.Testing", "Isoplane.Sdk", "Isoplane.AspNetCore", "Isoplane.AspNetCore.DataProtection.EntityFrameworkCore", "Isoplane.OpenTelemetry", "Isoplane.Templates"];
 
     internal string Root { get; } = Directory.CreateTempSubdirectory("isoplane-release-test-").FullName;
     internal string Release => Path.Combine(Root, "release");
