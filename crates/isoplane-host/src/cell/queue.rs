@@ -1,4 +1,4 @@
-//! The cell's work queue: two lanes per execution thread, wakes ahead of
+//! The cell's work queue: alternating wake and dispatch lanes per thread, with
 //! dispatches, new work placed on the less loaded of two lanes drawn at
 //! random.
 
@@ -69,9 +69,8 @@ pub(super) struct DispatchJob {
     pub(super) completion: Arc<super::DispatchCompletion>,
 }
 
-/// Two lanes per worker. Wakes jump ahead of new dispatches, and only a
-/// dispatch is ever shed, so work already in flight keeps making progress
-/// while a saturated cell refuses new work.
+/// Two lanes per worker, alternating when both contain work. Only new
+/// dispatches are shed; repeated wake notifications coalesce per instance.
 pub(super) struct WorkQueue {
     lanes: Box<[Lane]>,
     /// The dispatch depth of one lane.
@@ -95,6 +94,7 @@ struct QueueInner {
     wakes: std::collections::VecDeque<QueuedWake>,
     dispatches: std::collections::VecDeque<QueuedDispatch>,
     closed: bool,
+    last_was_wake: bool,
 }
 
 struct QueuedDispatch {
@@ -104,6 +104,7 @@ struct QueuedDispatch {
 
 struct QueuedWake {
     item: WakeItem,
+    _reservation: crate::slot::WakeReservation,
     _waiting: tracing::Span,
 }
 
@@ -196,6 +197,9 @@ impl WorkQueue {
 
     /// A wake is never shed, so it is placed regardless of the lane's depth.
     pub(super) fn push_wake(&self, item: WakeItem) {
+        let Some(reservation) = item.slot.reserve_wake() else {
+            return;
+        };
         let lane = &self.lanes[self.pick()];
         let mut g = lane.inner.lock();
         if g.closed {
@@ -211,6 +215,7 @@ impl WorkQueue {
         );
         g.wakes.push_back(QueuedWake {
             item,
+            _reservation: reservation,
             _waiting: waiting,
         });
         lane.load.fetch_add(1, Ordering::Relaxed);
@@ -220,17 +225,21 @@ impl WorkQueue {
 
     /// The next job for `worker`, from its own lane only: a stealing scan
     /// would put every idle worker back on every other worker's lock. Wakes
-    /// come out before dispatches. `None` once the queue is closed and the
+    /// alternate with dispatches. `None` once the queue is closed and the
     /// lane drained.
     pub(super) fn pop(&self, worker: usize) -> Option<Job> {
         let lane = &self.lanes[worker % self.lanes.len()];
         let mut g = lane.inner.lock();
         loop {
-            if let Some(s) = g.wakes.pop_front() {
-                return Some(Job::Wake(s.item));
+            if !g.last_was_wake || g.dispatches.is_empty() {
+                if let Some(wake) = g.wakes.pop_front() {
+                    g.last_was_wake = true;
+                    return Some(Job::Wake(wake.item));
+                }
             }
-            if let Some(d) = g.dispatches.pop_front() {
-                return Some(Job::Dispatch(d.job));
+            if let Some(dispatch) = g.dispatches.pop_front() {
+                g.last_was_wake = false;
+                return Some(Job::Dispatch(dispatch.job));
             }
             if g.closed {
                 return None;
@@ -488,7 +497,7 @@ mod queue_tests {
     }
 
     #[test]
-    fn queued_wakes_count_toward_the_lane_that_is_holding_them() {
+    fn repeated_wakes_coalesce_into_one_queued_notification() {
         let q = WorkQueue::new(8, 4);
         let slot = a_slot();
         for _ in 0..400 {
@@ -501,8 +510,27 @@ mod queue_tests {
             .collect();
         assert_eq!(
             loads.iter().sum::<usize>(),
-            400,
-            "400 wakes are queued and the lanes report {loads:?}"
+            1,
+            "one instance needs one notification and the lanes report {loads:?}"
+        );
+    }
+
+    #[test]
+    fn continued_wakes_requeue_behind_a_waiting_dispatch_without_losing_notifications() {
+        let slot = a_slot();
+        let q = WorkQueue::new(8, 1);
+        assert!(q.push_dispatch(job()).is_ok());
+        q.push_wake(wake_of(&slot));
+        assert!(matches!(q.pop(0), Some(Job::Wake(_))));
+        q.push_wake(wake_of(&slot));
+        assert!(matches!(q.pop(0), Some(Job::Dispatch(_))));
+        assert!(matches!(q.pop(0), Some(Job::Wake(_))));
+        assert_eq!(q.depth(), 0);
+        q.close();
+        q.push_wake(wake_of(&slot));
+        assert!(
+            slot.reserve_wake().is_some(),
+            "closed queues release reservations"
         );
     }
 

@@ -120,11 +120,20 @@ struct SlotInner {
     parked_since_ms: Option<u64>,
 }
 
+pub(crate) struct WakeReservation(Arc<Slot>);
+
+impl Drop for WakeReservation {
+    fn drop(&mut self) {
+        self.0.wake_queued.store(false, Ordering::Release);
+    }
+}
+
 pub struct Slot {
     pub id: InstanceId,
     pub ctx: Arc<InstanceCtx>,
     inner: Mutex<SlotInner>,
     execution: Mutex<()>,
+    wake_queued: std::sync::atomic::AtomicBool,
     /// Accumulated parked time, reported separately from active execution time.
     parked_ms_total: AtomicU64,
     /// Lock-free mirrors of `inner.state` and `inner.parked_since_ms`, written
@@ -153,6 +162,7 @@ impl Slot {
                 parked_since_ms: None,
             }),
             execution: Mutex::new(()),
+            wake_queued: std::sync::atomic::AtomicBool::new(false),
             parked_ms_total: AtomicU64::new(0),
             state_hint: AtomicU8::new(tier_as_u8(LifecycleTier::Parked)),
             parked_since_hint: AtomicU64::new(0),
@@ -160,6 +170,14 @@ impl Slot {
             parks: AtomicU64::new(0),
             retiring: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    /// Coalesces notifications without consuming their separately stored results.
+    pub(crate) fn reserve_wake(self: &Arc<Self>) -> Option<WakeReservation> {
+        self.wake_queued
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| WakeReservation(self.clone()))
     }
 
     fn publish(&self, g: &SlotInner) {

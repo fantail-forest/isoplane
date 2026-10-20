@@ -276,33 +276,35 @@ impl Cell {
         self.queue.push_wake(WakeItem { slot });
     }
 
-    /// One woken slice, and every further slice the instance can take without
-    /// going back through a lane. Each slice runs the dispatch that owns the
-    /// future it delivers.
+    /// Runs one guest slice, then returns remaining work to the queue.
     pub(super) fn run_wake(self: &Arc<Self>, slot: Arc<Slot>) {
         let _execution = slot.lock_execution();
-        loop {
-            self.begin_joined(&slot);
-            if self.run_woken(&slot) && !self.has_starts(slot.id) {
-                return;
-            }
+        let ran_joined = self.begin_joined(&slot);
+        let done = if ran_joined {
+            !self.has_runnable(&slot)
+        } else {
+            self.run_woken(&slot)
+        };
+        if !done || self.has_starts(slot.id) {
+            self.queue_wake(slot.clone());
         }
     }
 
-    /// Begins the dispatches that joined the instance while another
-    /// dispatch's slice ran.
-    fn begin_joined(self: &Arc<Self>, slot: &Arc<Slot>) {
-        while let Some((queued, job)) = self
+    /// Begins one dispatch that joined while another slice held the instance.
+    fn begin_joined(self: &Arc<Self>, slot: &Arc<Slot>) -> bool {
+        let Some((queued, job)) = self
             .starts
             .with_mut_or_remove(&slot.id, VecDeque::pop_front, VecDeque::is_empty)
             .flatten()
-        {
-            let owner = job.completion.clone();
-            self.waited_for_thread(&owner, queued.elapsed());
-            IN_FLIGHT.replace(Some(Arc::downgrade(&owner)));
-            let entry = owner.entry.clone();
-            owner.in_scope(|| self.begin_dispatch(slot, &entry, job, AcquireSource::Shared));
-        }
+        else {
+            return false;
+        };
+        let owner = job.completion.clone();
+        self.waited_for_thread(&owner, queued.elapsed());
+        IN_FLIGHT.replace(Some(Arc::downgrade(&owner)));
+        let entry = owner.entry.clone();
+        owner.in_scope(|| self.begin_dispatch(slot, &entry, job, AcquireSource::Shared));
+        true
     }
 
     fn has_starts(&self, instance: InstanceId) -> bool {
@@ -368,10 +370,7 @@ impl Cell {
                 continue;
             };
             IN_FLIGHT.replace(Some(Arc::downgrade(&owner)));
-            let done = owner.in_scope(|| self.run_woken_slice(&slot, &entry, guard, ready, &owner));
-            if done {
-                return true;
-            }
+            return owner.in_scope(|| self.run_woken_slice(&slot, &entry, guard, ready, &owner));
         }
     }
 
@@ -1237,6 +1236,89 @@ mod tests {
     use super::*;
     use crate::cell::pool::cell_tests::{app, cell, http, wait_for};
     use crate::fakes::{FakeBehaviour, Step};
+
+    #[test]
+    fn a_wake_visit_runs_one_slice_and_requeues_remaining_completions() {
+        let storage = tempfile::tempdir().expect("snapshot directory");
+        let cell = Cell::build(
+            CellConfig {
+                exec_threads: 1,
+                ..CellConfig::for_test("bounded-wake")
+            },
+            crate::cell::pool::cell_tests::services(),
+            Arc::new(FakeHibernator),
+            Arc::new(
+                isoplane_hibernate::snapshot::LocalSnapshotStorage::new(storage.path())
+                    .expect("snapshot storage"),
+            ),
+        )
+        .expect("cell without worker threads");
+        let module = app(
+            &cell,
+            "bounded-wake",
+            FakeBehaviour::program([
+                Step::Park {
+                    imports: vec![("clock_deadline_in", 60_000), ("clock_deadline_in", 60_000)],
+                },
+                Step::Park { imports: vec![] },
+                Step::Done {
+                    status: 200,
+                    body: b"done".to_vec(),
+                },
+            ]),
+        );
+        let rec = http(1);
+        let owner = cell
+            .completion_owner(&module, &rec)
+            .expect("dispatch owner");
+        let (sender, response) = std::sync::mpsc::sync_channel(1);
+        cell.run_dispatch(DispatchJob {
+            module,
+            target: Target::Handler { route: "/".into() }.into(),
+            rec,
+            responder: sender.into(),
+            stream: None,
+            upload: None,
+            completion: owner.clone(),
+        });
+        let slot = cell
+            .slot(owner.instance().expect("instance acquired"))
+            .expect("resident");
+        let futures = cell
+            .rt
+            .futures
+            .pending_of_dispatch(slot.id, 1, "clock_deadline_in");
+        assert_eq!(futures.len(), 2);
+        for future in futures {
+            cell.rt
+                .settle_future(future, isoplane_abi::result::ResultRecord::Ok(vec![]));
+        }
+        assert_eq!(cell.queue.depth(), 1);
+        let Job::Wake(wake) = cell.queue.pop(0).expect("first wake") else {
+            panic!("wake expected")
+        };
+        cell.run_wake(wake.slot);
+        assert_eq!(
+            owner.usage().slices,
+            2,
+            "initial dispatch plus one wake slice"
+        );
+        assert_eq!(
+            response.try_recv().unwrap_err(),
+            std::sync::mpsc::TryRecvError::Empty
+        );
+        assert_eq!(cell.queue.depth(), 1, "remaining completion is requeued");
+        let Job::Wake(wake) = cell.queue.pop(0).expect("second wake") else {
+            panic!("wake expected")
+        };
+        cell.run_wake(wake.slot);
+        assert_eq!(owner.usage().slices, 3);
+        assert_eq!(
+            response.try_recv().expect("completed response").body,
+            b"done"
+        );
+        cell.shutdown();
+    }
 
     #[test]
     fn only_request_dispatches_refresh_instance_demand() {
