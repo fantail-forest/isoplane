@@ -239,16 +239,18 @@ impl Cell {
             upload,
             completion,
         });
+        self.queue_dispatch(job);
+        Ok(())
+    }
+
+    pub(super) fn queue_dispatch(&self, job: Box<DispatchJob>) {
         if let Err(job) = self.queue.push_dispatch(job) {
             job.completion
                 .reject(super::completion::AdmissionRejection::QueueUnavailable);
             self.metrics.shed.fetch_add(1, Ordering::Relaxed);
-            if let Some(m) = self.meters(module) {
-                m.record_shed();
-            }
-            answer(&job.responder, DispatchResult::shed(dispatch_id));
+            job.completion.entry.meters.record_shed();
+            answer(&job.responder, DispatchResult::shed(job.rec.dispatch_id));
         }
-        Ok(())
     }
 
     async fn dispatch_resources_async(

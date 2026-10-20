@@ -19,7 +19,6 @@ impl Cell {
             match self.join_shared(&entry) {
                 registry::Join::Unavailable { held: h } => held = h,
                 registry::Join::Joined(slot) => {
-                    self.note_acquired(AcquireSource::Shared, t0.elapsed());
                     let execution = slot.try_lock_execution();
                     match execution {
                         Some(_execution) => {
@@ -101,6 +100,23 @@ impl Cell {
                 },
             );
             return;
+        }
+        if joined && !slot.has_memory_for_join() {
+            if self.release_reservation(slot.id) == 0 {
+                if slot.is_retiring() {
+                    self.forget(slot);
+                    self.rt.futures.release_instance(slot.id);
+                    entry.pool.release(slot.clone(), evict());
+                } else {
+                    entry.pool.release(slot.clone(), warm());
+                    self.watch_idle_timers(slot, entry);
+                }
+            }
+            self.queue_dispatch(Box::new(job));
+            return;
+        }
+        if joined {
+            self.note_acquired(AcquireSource::Shared, Duration::ZERO);
         }
         let acquired = src.label();
         job.completion.acquired(slot.id, acquired);
@@ -1135,6 +1151,121 @@ mod tests {
     use super::*;
     use crate::cell::pool::cell_tests::{app, cell, http, wait_for};
     use crate::fakes::{FakeBehaviour, Step};
+
+    #[test]
+    fn a_queued_join_rechecks_memory_before_starting() {
+        let storage = tempfile::tempdir().expect("snapshot directory");
+        let cell = Cell::build(
+            CellConfig {
+                exec_threads: 1,
+                ..CellConfig::for_test("join-recheck")
+            },
+            crate::cell::pool::cell_tests::services(),
+            Arc::new(FakeHibernator),
+            Arc::new(
+                isoplane_hibernate::snapshot::LocalSnapshotStorage::new(storage.path())
+                    .expect("snapshot storage"),
+            ),
+        )
+        .expect("cell without workers");
+        let wasm = wat::parse_str(
+            r#"(module
+            (memory (export "memory") 1)
+            (func (export "isoplane_alloc") (param i32 i32) (result i32) i32.const 4096)
+            (func (export "isoplane_handle") (param i32 i32) (result i64) i64.const 1)
+            (func (export "isoplane_wake") (param i64 i32 i32) (result i64)
+                (drop (memory.grow (i32.const 1))) i64.const 1))"#,
+        )
+        .expect("memory growth guest");
+        let engine = Arc::new(
+            isoplane_engine::IsoplaneEngine::new(isoplane_engine::EngineConfig {
+                max_instances: 2,
+                max_memory_bytes: 4 * isoplane_abi::WASM_PAGE_SIZE as u64,
+                ..Default::default()
+            })
+            .expect("engine"),
+        );
+        let module = ModuleId::new("join-recheck", "v1");
+        let mut manifest = crate::cell::pool::cell_tests::manifest("join-recheck");
+        manifest.guest_memory_bytes = Some(
+            isoplane_abi::config::GuestMemoryBytes::new(2 * isoplane_abi::WASM_PAGE_SIZE as u64)
+                .expect("two pages"),
+        );
+        cell.register_module(
+            "tenant",
+            Arc::new(
+                crate::EngineActivator::load(engine, module.clone(), &wasm).expect("template"),
+            ),
+            manifest,
+        )
+        .expect("register");
+        let make_job = |did| {
+            let rec = http(did);
+            let owner = cell.completion_owner(&module, &rec).expect("completion");
+            let (sender, _) = std::sync::mpsc::sync_channel(1);
+            DispatchJob {
+                module: module.clone(),
+                target: Target::Handler { route: "/".into() }.into(),
+                rec,
+                responder: sender.into(),
+                stream: None,
+                upload: None,
+                completion: owner,
+            }
+        };
+        cell.run_dispatch(make_job(1));
+        let slot = cell.slot(cell.resident_ids()[0]).expect("first instance");
+        let entry = cell.modules.read()[&module].clone();
+        let execution = slot.lock_execution();
+        assert!(slot.has_memory_for_join());
+        cell.run_dispatch(make_job(2));
+        assert!(cell.has_starts(slot.id), "join waits for the running slice");
+        {
+            let mut guard = slot.enter().expect("memory growth slice");
+            let result = guard.instance().wake(
+                1,
+                0,
+                &isoplane_abi::result::ResultRecord::Ok(vec![]),
+                OccupancyBudget::default(),
+            );
+            assert_eq!(result.completion, Completion::Parked);
+        }
+        assert!(!slot.has_memory_for_join());
+        drop(execution);
+        cell.run_wake(slot.clone());
+        assert_eq!(
+            cell.active_dispatch_ids(slot.id),
+            vec![1],
+            "the join did not start"
+        );
+        cell.queue.close();
+        let mut rerouted = cell.queue.drain_stopped();
+        assert_eq!(
+            rerouted.len(),
+            1,
+            "the original job returns to admission once"
+        );
+        let job = rerouted.pop().expect("one rerouted job");
+        let owner = job.completion.clone();
+        cell.run_dispatch(job);
+        assert_ne!(
+            owner.instance(),
+            Some(slot.id),
+            "another instance handles the request"
+        );
+        assert_eq!(
+            cell.metrics().served_shared,
+            0,
+            "a rerouted reservation is not served"
+        );
+        cell.finish_and_release(&slot, &entry, 1, warm());
+        assert_eq!(
+            cell.idle_instances(&module),
+            Some(1),
+            "the join reservation was released"
+        );
+        cell.shutdown();
+    }
 
     #[test]
     fn a_wake_visit_runs_one_slice_and_requeues_remaining_completions() {
