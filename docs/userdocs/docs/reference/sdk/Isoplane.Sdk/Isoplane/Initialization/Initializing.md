@@ -15,7 +15,7 @@ public static event Func<Task>? Initializing;
 
 Subscribe in `Program.cs` before `await app.RunAsync()`. The callbacks run once `RunAsync` has started the application, so its services and routes are available to them. They are awaited one at a time, in the order they subscribed.
 
-A callback may make network calls, for example to load data or apply database migrations. Await all I/O, and dispose connections, streams and timers before the callback returns: an open connection cannot be saved in the template. Do not start background work or keep request-scoped services. An exception stops the application from being prepared, so it does not start.
+A callback may make network calls, for example to load data or apply database migrations. Await network work and dispose connections and streams before the callback returns: an open connection cannot be saved in the template. Timers may remain registered; their countdown starts at activation. Do not retain request-scoped services. An exception stops the application from being prepared, so it does not start.
 
 Everything the callbacks leave in memory is identical in every instance. Create what must differ between instances, such as a random identifier, in an [`Activated`](../Activation/Activated.md) callback.
 

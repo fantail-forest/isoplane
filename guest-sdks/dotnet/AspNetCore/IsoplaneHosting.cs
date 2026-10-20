@@ -314,18 +314,8 @@ public static class IsoplaneHosting
             services.RemoveAll<IHostLifetime>();
             services.AddSingleton<IHostLifetime, IsoplaneLifetime>();
             services.AddHostedService<BackgroundWorkGuard>();
-            // A pooled connection stays open after its call. One left by a call during
-            // initialization or warm-up stops the template being captured, and those kept between
-            // requests count against the instance's outbound connections. A connection lifetime
-            // of zero closes each connection once its response is read; an idle timeout of zero
-            // would instead leave each one open in a pool nothing visits again. With no connection
-            // to go stale, replacing the handler periodically would only cost work.
             services.ConfigureHttpClientDefaults(client => client
-                .SetHandlerLifetime(Timeout.InfiniteTimeSpan)
-                .ConfigurePrimaryHttpMessageHandler((handler, _) =>
-                {
-                    if (handler is SocketsHttpHandler sockets) sockets.PooledConnectionLifetime = TimeSpan.Zero;
-                }));
+                .AddHttpMessageHandler(() => new InitializationHttpHandler()));
         });
     }
 }

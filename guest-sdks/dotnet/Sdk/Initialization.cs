@@ -35,10 +35,10 @@ public static class Initialization
     /// </para>
     /// <para>
     /// A callback may make network calls, for example to load data or apply database migrations.
-    /// Await all I/O, and dispose connections, streams and timers before the callback returns: an open
-    /// connection cannot be saved in the template. Do not start background work or keep
-    /// request-scoped services. An exception stops the application from being prepared, so it does
-    /// not start.
+    /// Await network work and dispose connections and streams before the callback returns: an open
+    /// connection cannot be saved in the template. Timers may remain registered; their countdown
+    /// starts at activation. Do not retain request-scoped services. An exception stops the
+    /// application from being prepared, so it does not start.
     /// </para>
     /// <para>
     /// Everything the callbacks leave in memory is identical in every instance. Create what must
@@ -69,6 +69,8 @@ public static class Initialization
 
     /// <summary>Raised after every <see cref="Initializing"/> subscriber has finished, before the template is captured.</summary>
     internal static event Func<Task>? Completing;
+
+    internal static bool IsCompleted => Hook.IsCompleted;
 
     internal static Task EnterAsync() => Hook.EnterAsync(RunStagesAsync);
 

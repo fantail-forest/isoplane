@@ -499,7 +499,7 @@ fn calling_request(runtime: &[u8], peer: std::net::SocketAddr) -> BuildRequest {
     request
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_aspnet_request_that_calls_out_through_a_factory_client_leaves_its_instance_reusable() {
     let peer = http_peers::http_peer().await;
     let runtime = isoplane_fixtures::mono_runtime();
@@ -519,42 +519,66 @@ async fn an_aspnet_request_that_calls_out_through_a_factory_client_leaves_its_in
             Box::new(fixed_dns::FixedDns(vec![peer.address.ip()])),
         ),
     );
-    let mut guest = {
-        // SAFETY: The private decode helper receives only products from this test module's local preparation paths.
-        unsafe { ReturnedGuest::prepared(decode(&product, &request), &reactor) }
-    };
+    let module = isoplane_host::ModuleId::new("http-pooling", "v1");
+    let services = reactor.runtime().services.clone();
+    let cell = prepared_cell(
+        &product,
+        &request,
+        &module,
+        isoplane_host::CellConfig::for_test("http-pooling"),
+        services.clone(),
+    );
+    let mut instance = None;
     for dispatch in 1..=2u64 {
-        reactor.context.begin_dispatch(1, dispatch);
-        let body = guest.answer(&reactor, "/outbound", 32).await;
+        let request = isoplane_abi::dispatch::HttpRequest {
+            method: "GET".into(),
+            url: "https://web.test/outbound".into(),
+            path: "/outbound".into(),
+            query: vec![],
+            headers: vec![],
+            body: vec![],
+        };
+        let response = cell
+            .dispatch(
+                &module,
+                isoplane_host::cell::Target::Handler {
+                    route: "/outbound".into(),
+                },
+                cell.http_record(&module, request),
+                std::time::Duration::from_secs(60),
+            )
+            .await
+            .expect("the factory client request must complete");
+        assert_eq!(response.status, 200);
         assert_eq!(
-            body,
-            format!("hello from peer|hello from peer; calls={}", dispatch + 1),
+            response.body,
+            format!("hello from peer|hello from peer; calls={}", dispatch + 1).as_bytes(),
             "request {dispatch} must follow the warm-up on the same application state"
         );
-        assert!(
-            !reactor
-                .futures
-                .end_dispatch(reactor.context.instance, dispatch),
-            "request {dispatch} must leave no read pending, or the cell discards its instance"
+        if let Some(previous) = instance {
+            assert_eq!(
+                response.instance, previous,
+                "requests reuse the same instance"
+            );
+        }
+        instance = Some(response.instance);
+        wait_until(
+            "the request must hand remaining work to its instance",
+            || cell.idle_instances(&module) == Some(1),
+        )
+        .await;
+        assert_eq!(
+            services.egress.instance_connections(response.instance),
+            1,
+            "request {dispatch} retains its pooled connection"
         );
-        // Closing a socket aborts the reactor tasks waiting on it, which let
-        // go of the connection when the reactor next runs.
-        let egress = reactor.runtime().services.egress.clone();
-        tokio::time::timeout(std::time::Duration::from_secs(10), async {
-            while egress.instance_connections(reactor.context.instance) != 0 {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .unwrap_or_else(|_| {
-            panic!("request {dispatch} must close every connection its calls opened")
-        });
     }
     assert_eq!(
         (warmed, peer.connections() - warmed),
-        (2, 4),
-        "every call must open its own connection rather than keep one idle"
+        (2, 1),
+        "warm-up closes its connections; all later calls reuse one pooled connection"
     );
+    cell.shutdown();
 }
 
 /// One browser's visits to the `session` package, prepared with `settings`,
@@ -992,6 +1016,33 @@ fn serving_cell(
     module: &isoplane_host::ModuleId,
     background_idle_limit_ms: u64,
 ) -> Arc<isoplane_host::cell::Cell> {
+    let services = Arc::new(isoplane_host::cell::Services {
+        fetcher: Arc::new(isoplane_host::fakes::FakeFetcher::default()),
+        hibernation: Arc::new(isoplane_host::fakes::FakeHibernationStore::default()),
+        egress: Arc::new(isoplane_host::egress::HostEgressPolicy::new(
+            Box::new(fixed_dns::FixedDns(vec![])),
+            isoplane_host::egress::ConnectionLimits::uniform(8).expect("connection limits"),
+        )),
+    });
+    prepared_cell(
+        product,
+        request,
+        module,
+        isoplane_host::CellConfig {
+            background_idle_limit_ms,
+            ..isoplane_host::CellConfig::for_test("timer-wakes")
+        },
+        services,
+    )
+}
+
+fn prepared_cell(
+    product: &BuildProduct,
+    request: &BuildRequest,
+    module: &isoplane_host::ModuleId,
+    config: isoplane_host::CellConfig,
+    services: Arc<isoplane_host::cell::Services>,
+) -> Arc<isoplane_host::cell::Cell> {
     let engine = Arc::new(
         IsoplaneEngine::new(engine_configuration(PlatformFiles::default()))
             .expect("the serving engine must initialize"),
@@ -1001,19 +1052,8 @@ fn serving_cell(
         unsafe { engine.load_prepared_product(&decode(product, request)) }
     }
     .expect("the prepared template must load");
-    let services = Arc::new(isoplane_host::cell::Services {
-        fetcher: Arc::new(isoplane_host::fakes::FakeFetcher::default()),
-        hibernation: Arc::new(isoplane_host::fakes::FakeHibernationStore::default()),
-        egress: Arc::new(isoplane_host::egress::HostEgressPolicy::new(
-            Box::new(fixed_dns::FixedDns(vec![])),
-            isoplane_host::egress::ConnectionLimits::uniform(8).expect("connection limits"),
-        )),
-    });
     let cell = isoplane_host::cell::Cell::new(
-        isoplane_host::CellConfig {
-            background_idle_limit_ms,
-            ..isoplane_host::CellConfig::for_test("timer-wakes")
-        },
+        config,
         services,
         Arc::new(isoplane_host::fakes::FakeHibernator),
     )

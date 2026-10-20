@@ -431,28 +431,6 @@ public sealed class HostingTests
     }
 
     [Fact]
-    public async Task a_client_from_the_factory_keeps_its_handler()
-    {
-        var builder = Builder();
-        builder.Services.AddHttpClient("webhook");
-        await using var app = builder.Build();
-        var options = app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptionsMonitor<Microsoft.Extensions.Http.HttpClientFactoryOptions>>();
-        Assert.Equal(Timeout.InfiniteTimeSpan, options.Get("webhook").HandlerLifetime);
-    }
-
-    [Fact]
-    public async Task a_client_from_the_factory_keeps_no_idle_connection()
-    {
-        var builder = Builder();
-        builder.Services.AddHttpClient("webhook");
-        await using var app = builder.Build();
-        var handler = app.Services.GetRequiredService<IHttpMessageHandlerFactory>().CreateHandler("webhook");
-        while (handler is DelegatingHandler outer) handler = outer.InnerHandler!;
-        // An idle connection left by a call during warm-up would stop the template being captured.
-        Assert.Equal(TimeSpan.Zero, Assert.IsType<SocketsHttpHandler>(handler).PooledConnectionLifetime);
-    }
-
-    [Fact]
     public async Task the_data_protection_key_exists_once_the_host_has_started()
     {
         var keys = Directory.CreateTempSubdirectory("isoplane-data-protection-");
