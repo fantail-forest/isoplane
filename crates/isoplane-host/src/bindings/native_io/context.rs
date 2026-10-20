@@ -42,8 +42,6 @@ pub(crate) trait Context {
     fn runtime(&self) -> Option<Runtime>;
     fn tenant(&self) -> &str;
     fn instance(&self) -> InstanceId;
-    /// The dispatch the current slice runs; 0 outside any dispatch.
-    fn dispatch(&self) -> u64;
     fn reach(&self) -> crate::egress::Reach<'_>;
     fn connection_owner(&self) -> std::io::Result<crate::egress::ConnectionOwner>;
     fn alloc(&self, import: &'static str) -> Option<u64>;
@@ -69,9 +67,6 @@ impl Context for CellBindings {
     }
     fn instance(&self) -> InstanceId {
         self.ctx.instance
-    }
-    fn dispatch(&self) -> u64 {
-        self.ctx.dispatch_id()
     }
     fn reach(&self) -> crate::egress::Reach<'_> {
         crate::egress::Reach {

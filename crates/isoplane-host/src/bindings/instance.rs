@@ -137,20 +137,6 @@ impl InstanceCtx {
         }
     }
 
-    /// Closes the instance's connections that have carried nothing since
-    /// `idle_before` and that no dispatch in progress last used; see
-    /// [`super::native_io::Resources::close_idle`].
-    pub(crate) fn close_idle_connections(
-        &self,
-        idle_before: tokio::time::Instant,
-        in_progress: &[u64],
-        idle_ms: u64,
-    ) -> (usize, Vec<u64>) {
-        self.native_io
-            .lock()
-            .close_idle(idle_before, in_progress, idle_ms)
-    }
-
     /// Reclaims every host future the instance held, including work it kept
     /// pending while idle.
     pub(crate) fn release_futures(&self) {

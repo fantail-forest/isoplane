@@ -73,14 +73,6 @@ impl Input {
         Self { state, task: None }
     }
 
-    pub(super) fn state(&self) -> &Arc<Mutex<SocketState>> {
-        &self.state
-    }
-
-    pub(super) fn task(&self) -> Option<&ReactorWork> {
-        self.task.as_ref()
-    }
-
     pub(super) fn ready(&self) -> Result<bool, Error> {
         let Some(stream) = live_connection(&self.state)? else {
             return Ok(true);
@@ -111,7 +103,6 @@ impl Input {
         match stream.stream.try_read(&mut bytes) {
             Ok(0) => Ok(Response::Closed),
             Ok(count) => {
-                stream.record_use(bindings);
                 bytes.truncate(count);
                 Ok(Response::Bytes(bytes))
             }
@@ -145,14 +136,6 @@ impl Output {
         Self { state, task: None }
     }
 
-    pub(super) fn state(&self) -> &Arc<Mutex<SocketState>> {
-        &self.state
-    }
-
-    pub(super) fn task(&self) -> Option<&ReactorWork> {
-        self.task.as_ref()
-    }
-
     pub(super) fn ready(&self) -> Result<bool, Error> {
         let Some(stream) = live_connection(&self.state)? else {
             return Ok(true);
@@ -170,12 +153,7 @@ impl Output {
     pub(super) fn send(&mut self, bytes: &[u8], bindings: &dyn Context) -> Result<Response, Error> {
         let stream = connection(&self.state)?;
         match stream.stream.try_write(bytes) {
-            Ok(count) => {
-                if count > 0 {
-                    stream.record_use(bindings);
-                }
-                Ok(Response::Capacity(ByteCount(count as u64)))
-            }
+            Ok(count) => Ok(Response::Capacity(ByteCount(count as u64))),
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 self.arm(bindings)?;
                 Err(Error::WouldBlock)
@@ -292,7 +270,6 @@ mod tests {
             Connection::new(
                 Arc::new(client.expect("the controlled socket must connect")),
                 permit,
-                1,
             ),
         ))));
         (
@@ -301,87 +278,6 @@ mod tests {
             CellBindings::new(Arc::new(context)),
             wake,
         )
-    }
-
-    #[tokio::test]
-    async fn a_connection_left_idle_is_closed_and_its_waiting_read_is_woken() {
-        use super::super::{Request, ResourceCount, ResourceLimits, Resources};
-        let (state, mut peer, bindings, _wake) = connected().await;
-        let mut resources = Resources::new(ResourceLimits {
-            handles: ResourceCount(4),
-        });
-        let input = resources
-            .insert(Resource::Input(Input::new(state)))
-            .expect("the test input must fit its resource budget");
-        assert!(
-            matches!(
-                resources.call(Request::Read { stream: input, length: ByteCount(8) }, &bindings),
-                Ok(Response::Bytes(bytes)) if bytes.is_empty()
-            ),
-            "the read must find nothing and leave a wake armed"
-        );
-        let runtime = bindings.rt().expect("the stream test must have a reactor");
-        let later = reactor_now_on(&runtime.reactor) + std::time::Duration::from_secs(1);
-        let earlier = reactor_now_on(&runtime.reactor) - std::time::Duration::from_secs(1);
-
-        assert_eq!(
-            resources.close_idle(later, &[1], 30_000).0,
-            0,
-            "a connection whose last user is still in progress stays open"
-        );
-        assert_eq!(
-            resources.close_idle(earlier, &[], 30_000).0,
-            0,
-            "a connection used since the cut-off stays open"
-        );
-        let (closed, wakes) = resources.close_idle(later, &[], 30_000);
-        assert_eq!(
-            (closed, wakes.len()),
-            (1, 1),
-            "an unused connection nobody in progress holds is closed, and its waiting read woken"
-        );
-        let Ok(Response::Handle(subscription)) =
-            resources.call(Request::Subscribe(input), &bindings)
-        else {
-            panic!("the closed stream must still be subscribable")
-        };
-        assert!(
-            matches!(
-                resources.call(Request::Ready(subscription), &bindings),
-                Ok(Response::Ready(true))
-            ),
-            "the closed stream is ready, so the guest reads it and learns of the closure"
-        );
-        let Ok(Response::StreamError(failure)) = resources.call(
-            Request::Read {
-                stream: input,
-                length: ByteCount(8),
-            },
-            &bindings,
-        ) else {
-            panic!("a read after the closure must fail the stream")
-        };
-        assert!(
-            matches!(
-                resources.call(Request::ErrorCode(failure), &bindings),
-                Ok(Response::ErrorCode(
-                    isoplane_abi::native_io::network_error::NetworkErrorCode::ConnectionAborted
-                ))
-            ),
-            "the guest sees the closure as an aborted connection"
-        );
-        let mut rest = Vec::new();
-        assert_eq!(
-            tokio::time::timeout(
-                std::time::Duration::from_secs(30),
-                peer.read_to_end(&mut rest)
-            )
-            .await
-            .expect("the peer must see the connection end")
-            .expect("the peer's read must succeed"),
-            0,
-            "the connection itself is closed, so the peer sees it end"
-        );
     }
 
     #[tokio::test]

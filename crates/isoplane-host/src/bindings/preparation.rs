@@ -143,9 +143,6 @@ impl Context for PreparationIo {
     fn instance(&self) -> InstanceId {
         self.config.owner.instance()
     }
-    fn dispatch(&self) -> u64 {
-        0
-    }
     fn reach(&self) -> crate::egress::Reach<'_> {
         crate::egress::Reach {
             allowlist: self.config.allowlist.as_deref(),

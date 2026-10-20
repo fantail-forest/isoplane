@@ -17,7 +17,7 @@ mod runtime_configuration;
 pub use http_scope::{OutboundBody, OutboundResponse, ResponseBody};
 pub(crate) use instance::DispatchGeneration;
 pub use instance::{GuestResourceLimits, InstanceCtx, Tenancy};
-pub(crate) use native_io::{reactor_now_on, IdleTimers};
+pub(crate) use native_io::IdleTimers;
 pub use preparation::{PreparationIo, PreparationIoConfig};
 pub use runtime::{CellRuntime, Fetcher, Services, WakeSink};
 pub use runtime_configuration::{

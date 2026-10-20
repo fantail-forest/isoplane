@@ -603,9 +603,8 @@ A client you construct yourself with `new HttpClient()` and keep for later
 requests keeps its idle connections open between requests, and they count
 toward the instance's
 [outbound connections](execution-limits.md#outbound-connections) until
-Isoplane closes them after 30 seconds without use; the client's own timer for
-removing them runs only during a dispatch. The client opens a new connection
-when its next call finds one closed. To keep no idle connections at all, take
+the client or peer closes them, or the instance is discarded. Isoplane does not
+close an individual connection solely because it has carried no bytes. To keep no idle connections at all, take
 the client from `IHttpClientFactory` instead, or construct it with
 `new HttpClient(new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.Zero })`.
 A client created and disposed within one request reuses its connection for that

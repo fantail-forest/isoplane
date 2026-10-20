@@ -10,7 +10,6 @@ impl Cell {
     pub(super) fn sweep_idle(self: &Arc<Self>) {
         self.sweep_handler_pressure();
         self.warm_templates_in_use();
-        self.close_idle_connections();
     }
 
     /// Re-warms the templates of modules with resident instances, every

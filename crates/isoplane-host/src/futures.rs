@@ -40,12 +40,6 @@ impl From<u64> for FutureId {
     }
 }
 
-impl FutureId {
-    pub(crate) fn value(self) -> u64 {
-        self.0
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PendingCapError {
     pub limit: u32,
