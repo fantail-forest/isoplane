@@ -142,6 +142,7 @@ pub struct Slot {
     state_hint: AtomicU8,
     parked_since_hint: AtomicU64,
     last_used_ms: AtomicU64,
+    memory_bytes: AtomicU64,
     parks: AtomicU64,
     /// Set once the instance's memory has passed its limit: it takes no new
     /// dispatches and is discarded when its last one ends.
@@ -150,6 +151,7 @@ pub struct Slot {
 
 impl Slot {
     pub fn new(id: InstanceId, ctx: Arc<InstanceCtx>, inst: Box<dyn InstanceOps + Send>) -> Self {
+        let memory_bytes = inst.memory_len() as u64;
         Self {
             id,
             ctx,
@@ -167,6 +169,7 @@ impl Slot {
             state_hint: AtomicU8::new(tier_as_u8(LifecycleTier::Parked)),
             parked_since_hint: AtomicU64::new(0),
             last_used_ms: AtomicU64::new(0),
+            memory_bytes: AtomicU64::new(memory_bytes),
             parks: AtomicU64::new(0),
             retiring: std::sync::atomic::AtomicBool::new(false),
         }
@@ -181,6 +184,10 @@ impl Slot {
     }
 
     fn publish(&self, g: &SlotInner) {
+        if let Some(instance) = &g.resident {
+            self.memory_bytes
+                .store(instance.memory_len() as u64, Ordering::Relaxed);
+        }
         self.state_hint
             .store(tier_as_u8(g.state), Ordering::Relaxed);
         self.parked_since_hint
@@ -230,6 +237,11 @@ impl Slot {
     /// Most recent request arrival, retained while the instance is hibernated.
     pub fn last_used_ms(&self) -> u64 {
         self.last_used_ms.load(Ordering::Relaxed)
+    }
+
+    /// Uses the last empty-stack reading; admitted work may still grow memory.
+    pub(crate) fn has_memory_for_join(&self) -> bool {
+        self.memory_bytes.load(Ordering::Relaxed) < self.ctx.limits.instance_memory_max
     }
 
     /// Retires the instance; true if it was not already retiring.

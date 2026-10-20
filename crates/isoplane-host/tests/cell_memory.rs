@@ -246,15 +246,15 @@ fn a_template_larger_than_the_application_budget_is_refused_at_activation() {
 }
 
 #[test]
-fn a_dispatch_does_not_join_an_instance_past_its_memory_limit() {
+fn a_dispatch_does_not_join_an_instance_at_its_memory_limit() {
     let (cell, _) =
         common::rig_resolving(CellConfig::for_test("memory-retiring"), "93.184.216.34:80");
-    // Four pages of memory against a one-page limit: past it from the first slice.
+    // Activation at the soft limit still serves a request, but has no join headroom.
     let mut behaviour =
         isoplane_host::fakes::FakeBehaviour::program([isoplane_host::fakes::Step::Park {
             imports: vec![("clock_deadline_in", 60_000)],
         }]);
-    behaviour.memory_bytes = 4 * PAGE as usize;
+    behaviour.memory_bytes = PAGE as usize;
     let activator = Arc::new(isoplane_host::fakes::FakeActivator::new(behaviour));
     let module = isoplane_host::Activator::module(&*activator).clone();
     let mut manifest = common::manifest("memory-retiring", Limits::default());
@@ -279,10 +279,14 @@ fn a_dispatch_does_not_join_an_instance_past_its_memory_limit() {
     };
     let _first = submit();
     let deadline = std::time::Instant::now() + Duration::from_secs(30);
-    while cell.metrics().memory_limit_retirements == 0 {
+    while !cell
+        .resident_ids()
+        .into_iter()
+        .any(|id| cell.slot(id).is_some_and(|slot| slot.parks() > 0))
+    {
         assert!(
             std::time::Instant::now() < deadline,
-            "the first instance was never retired"
+            "the first request never parked"
         );
         std::thread::yield_now();
     }
@@ -297,7 +301,7 @@ fn a_dispatch_does_not_join_an_instance_past_its_memory_limit() {
     assert_eq!(
         cell.metrics().served_shared,
         0,
-        "a retiring instance takes no new dispatches"
+        "an instance at its soft limit takes no additional dispatches"
     );
     cell.shutdown();
 }

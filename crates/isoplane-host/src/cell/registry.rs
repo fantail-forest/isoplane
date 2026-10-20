@@ -154,7 +154,8 @@ impl Cell {
             let reserved = self.active.with_mut(&slot.id, |active| {
                 let room = active.count() < DISPATCHES_PER_INSTANCE;
                 held |= room && active.held_since.is_some();
-                let join = room && active.held_since.is_none() && !behind;
+                let join =
+                    room && active.held_since.is_none() && !behind && slot.has_memory_for_join();
                 if join {
                     active.joining += 1;
                 }
