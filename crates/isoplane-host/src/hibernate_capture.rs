@@ -58,7 +58,6 @@ pub struct CaptureEnv<'a> {
 }
 
 
-
 /// What an in-process capture saved.
 pub struct LocalCapture {
     pub saved: isoplane_hibernate::local::Saved,
@@ -527,6 +526,20 @@ mod tests {
         assert!(slot.enter().is_ok(), "the instance is still callable");
     }
 
+    #[test]
+    fn an_eof_upload_stays_locally_capturable() {
+        use crate::bindings::request_body::RequestBodyScope;
+        let (slot, _) = parked_slot(Completion::Done);
+        *slot.ctx.start_dispatch(1, 1).request_body.lock() =
+            Some(RequestBodyScope::new(None, true));
+        let mut concrete = HintActivator::new(Completion::Done);
+        concrete.upload_capable = true;
+        let act: Arc<dyn Activator> = Arc::new(concrete);
+        assert!(
+            try_capture(&slot, &act).is_ok(),
+            "EOF upload metadata must not veto local capture"
+        );
+    }
     #[tokio::test]
     async fn upload_eof_ready_before_delivery_survives_capture_and_repeated_reads() {
         use crate::bindings::request_body::RequestBodyScope;

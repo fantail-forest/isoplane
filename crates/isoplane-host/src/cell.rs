@@ -211,8 +211,6 @@ pub struct Cell {
     metrics: Arc<Metrics>,
     hot: AtomicUsize,
     next_dispatch: AtomicU64,
-    /// Tenants moved to a quarantine cell, no longer admitted here.
-    quarantined: Mutex<Vec<String>>,
     shutdown: Arc<AtomicBool>,
     workers: Mutex<Vec<std::thread::JoinHandle<()>>>,
     caught_panics: AtomicU64,
@@ -298,7 +296,6 @@ impl Cell {
             metrics,
             hot: AtomicUsize::new(0),
             next_dispatch: AtomicU64::new(1),
-            quarantined: Mutex::new(Vec::new()),
             shutdown: Arc::new(AtomicBool::new(false)),
             workers: Mutex::new(Vec::new()),
             caught_panics: AtomicU64::new(0),

@@ -1,7 +1,7 @@
 //! Pressure thresholds for handler reclamation.
 
 pub use crate::hibernate_capture::{
-    apply_delta, capture, delta_key, CaptureEnv, CaptureObserver, CaptureRefused, CaptureResult,
+    capture, delta_key, CaptureEnv, CaptureObserver, CaptureRefused, CaptureResult,
     GC_HINT_SNAPSHOT,
 };
 

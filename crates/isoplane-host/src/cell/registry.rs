@@ -319,11 +319,6 @@ impl Cell {
         })
     }
 
-    /// Whether this owner is permitted by the cell's quarantine state.
-    pub fn admits(&self, tenant: &str) -> bool {
-        !self.quarantined.lock().iter().any(|t| t == tenant)
-    }
-
     pub fn register_module(
         self: &Arc<Self>,
         tenant: &str,
@@ -380,12 +375,6 @@ impl Cell {
             "module registration requires tenant identity"
         );
         let limits = manifest.limits;
-        if !self.admits(tenant) {
-            anyhow::bail!(
-                "cell `{}` refuses quarantined tenant `{tenant}`",
-                self.cfg.name
-            );
-        }
         let module = activator.module().clone();
         let entry = ModuleEntry {
             shared: Mutex::new(Vec::new()),

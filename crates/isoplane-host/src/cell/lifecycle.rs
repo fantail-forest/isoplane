@@ -1252,6 +1252,10 @@ mod tests {
             .expect("request response");
         let slot = cell.slot(result.instance).expect("request instance");
         assert_eq!(slot.last_used_ms(), 10);
+        assert!(wait_for(
+            || cell.modules.read()[&module].pool.idle() == 1,
+            Duration::from_secs(10),
+        ));
         let mut timer = http(2);
         timer.kind = DispatchKind::Timers;
         timer.now_ms = 100;

@@ -163,14 +163,6 @@ impl InstanceCtx {
         })
     }
 
-    /// Whether any dispatch in progress has a request body at all.
-    pub(crate) fn has_request_body(&self) -> bool {
-        self.dispatches
-            .lock()
-            .values()
-            .any(|dispatch| dispatch.request_body.lock().is_some())
-    }
-
     /// Whether any dispatch in progress has started streaming its response.
     pub(crate) fn has_open_transport(&self) -> bool {
         self.dispatches.lock().values().any(|dispatch| {
