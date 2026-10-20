@@ -347,7 +347,6 @@ impl HostBindings for CellBindings {
             "resp_new" => self.resp_new(call.payload),
             "resp_finish" => self.resp_finish(call.scalars),
 
-
             // Answered by the engine before reaching this vtable; an engine
             // that does not intercept them gets "budget untouched, bit clear"
             // rather than a capability violation for a declared import.

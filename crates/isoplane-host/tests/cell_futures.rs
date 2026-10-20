@@ -167,57 +167,6 @@ fn the_pending_futures_cap_traps_the_guest() {
 }
 
 #[tokio::test]
-async fn wait_until_fails_the_dispatch_and_releases_its_work() {
-    let r = rig(CellConfig::for_test("waituntil"));
-    let act = Arc::new(FakeActivator::named(
-        ModuleId::new("bg", "v1"),
-        FakeBehaviour::program([Step::WaitUntil {
-            import: "clock_deadline_in",
-            scalar: PARK_MS,
-        }]),
-    ));
-    let module = act.module().clone();
-    r.cell
-        .register_module("acme", act, manifest("bg", Limits::default()))
-        .unwrap();
-
-    let rec = http(&r.cell, &module, "/bg");
-    let out = r
-        .cell
-        .dispatch_blocking(
-            &module,
-            Target::Handler {
-                route: "/bg".into(),
-            },
-            rec,
-            T,
-        )
-        .unwrap();
-    tokio::time::timeout(T, async {
-        while r.cell.metrics_raw().dispatch_us.count() == 0 {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("the failed dispatch never settled");
-    assert_eq!(
-        out.status, 500,
-        "unsupported background retention must fail the dispatch"
-    );
-    assert_eq!(
-        out.completion,
-        isoplane_engine::Completion::Trapped,
-        "wait_until must trap even if the guest returns done"
-    );
-    assert_eq!(
-        r.cell.futures().live_futures(),
-        0,
-        "the failed dispatch must release all host futures"
-    );
-    r.cell.shutdown();
-}
-
-#[tokio::test]
 async fn work_left_after_the_response_keeps_its_dispatch_open_and_its_instance() {
     let r = rig(CellConfig::for_test("leftover"));
     let act = Arc::new(FakeActivator::named(

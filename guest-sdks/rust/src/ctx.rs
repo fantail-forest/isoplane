@@ -31,7 +31,6 @@ impl Ctx {
         }
     }
 
-
     /// Schedule concurrent work during the active dispatch.
     /// The response does not wait for this task; arrange to await its result
     /// before completing. Host futures are cancelled when the dispatch ends.

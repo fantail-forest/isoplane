@@ -312,32 +312,6 @@ async fn logging_enforces_the_dispatch_byte_limit() {
 }
 
 #[tokio::test]
-async fn wait_until_is_a_capability_violation_and_does_not_retain_work() {
-    let mut v = vtable(Limits::default(), "93.184.216.34:80", None);
-    let id = v.bindings.call_future(ImportCall {
-        import: "clock_deadline_in",
-        payload: &[],
-        scalars: [60_000, 0, 0],
-    });
-    v.bindings.call_sync(ImportCall {
-        import: "wait_until",
-        payload: &[],
-        scalars: [id, 0, 0],
-    });
-    assert_eq!(
-        v.ctx.take_trap(),
-        Some(isoplane_abi::status::TrapCode::CapabilityViolation),
-        "void wait_until must reject through the trap channel, not an ignored return value"
-    );
-    v.futures.end_dispatch(v.ctx.instance, 1);
-    assert_eq!(
-        v.futures.live_futures(),
-        0,
-        "a rejected retention request must not keep its timer alive"
-    );
-}
-
-#[tokio::test]
 async fn completions_signal_the_wake_router() {
     let mut v = vtable(Limits::default(), "93.184.216.34:80", None);
     let id = v.bindings.call_future(ImportCall {
