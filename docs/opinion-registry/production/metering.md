@@ -39,7 +39,8 @@ across in-process hibernation; dispatch deadlines and cancellation still apply.
 instance because its expected compressed delta fits when its maximum does not.
 
 **Exception:** Explicit dispatch termination releases its resources. Retention grants
-neither post-response guest execution nor a guarantee of warm state to customers.
+no guarantee of warm state or completion of background work. Background execution
+uses a separate bounded instance allowance and does not count as a request.
 
 ## Enforce limits where they are metered
 

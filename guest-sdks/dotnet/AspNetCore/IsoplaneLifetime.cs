@@ -29,7 +29,7 @@ internal sealed class BackgroundWorkGuard(IServiceProvider services) : IHostedLi
             .Where(service => service.ExecuteTask is { IsCompleted: false })
             .Select(service => service.GetType().FullName).ToArray();
         if (running.Length != 0)
-            throw new NotSupportedException("Isoplane suspends an application between requests, so background work cannot continue after startup. " +
+            throw new NotSupportedException("Isoplane does not support hosted background services that remain running after startup. " +
                 $"Still running once the application had started: {string.Join(", ", running)}. " +
                 "Do the work while handling a request, or in a hosted service whose StartAsync completes it.");
         return Task.CompletedTask;

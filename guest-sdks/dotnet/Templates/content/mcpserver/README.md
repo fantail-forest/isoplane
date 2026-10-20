@@ -78,9 +78,8 @@ dotnet test
 
 - **The server is stateless.** Each request stands alone and the server keeps
   no session. On Isoplane successive requests can reach different instances,
-  and an instance does not run between requests, so there is nowhere for a
-  session to live. A stateless server answers calls and cannot begin an exchange
-  itself: sampling, elicitation and unsolicited notifications are unavailable.
+  and an instance may be discarded, so session continuity is not guaranteed.
+  A stateless server answers calls and cannot begin an exchange itself: sampling, elicitation and unsolicited notifications are unavailable.
 - **The handbook is loaded during initialization.** `Program.cs` runs up
   to `RunAsync`, before Isoplane captures the template that every instance
   starts from. The articles it reads are already in memory when an instance

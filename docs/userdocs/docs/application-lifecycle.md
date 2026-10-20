@@ -70,7 +70,7 @@ await app.RunAsync();
   in memory, including a random value or an identifier in a static field, is the
   same in every instance.
 - May leave timers running. A timer with 30 s left when initialization ends
-  first fires 30 s after an instance starts, at the start of a request, as
+  becomes eligible 30 s after an instance starts, as
   [What can run between requests?](dotnet-runtime-differences.md#between-requests)
   describes.
 - Starts no background work.
@@ -189,31 +189,26 @@ operation completes.
 | The client goes away before it has the whole response | The request's token is cancelled |
 | The dispatch uses up its running time | The token is cancelled. If the dispatch has not finished shortly afterwards, Isoplane stops the instance and the request fails. |
 | The dispatch has too many asynchronous operations pending at once | The request fails |
-| The response is complete while work the request started is still pending | That work goes on running, and the request is not over until it finishes, for up to 30 seconds; after that it continues as the instance's, in later requests. See [What has to finish before the response?](dotnet-runtime-differences.md#before-the-response). It is lost if the instance is stopped first, and a read of the request body still waiting fails. |
+| The response is complete while work the request started is still pending | The request ends at the empty-stack boundary and the work transfers to the instance's background allowance. A pending request-body read fails. See [Work after the response](dotnet-runtime-differences.md#before-the-response). |
 
 ## Between requests
 
-An instance with no request does not run at all, unless the application asked
-for its timers to run between requests. Isoplane may keep it for the next
-request, or discard it. Successive requests can reach different instances.
+An instance may run background callbacks and retain connections between requests.
+Isoplane may hibernate or discard it. Successive requests can reach different
+instances.
 
 **Isoplane**
 
-- Decides how many instances run and which one gets a request.
-- Discards an instance whenever it chooses, without notice. No shutdown event is
-  raised and no cleanup code runs.
-- Keeps a timer that is still pending with its instance. A timer that comes due
-  while the instance is idle runs at the start of the instance's next request,
-  before the request's own code. Work a request left running more than 30
-  seconds after its response is kept the same way.
-- Closes a connection that has carried nothing for 30 seconds.
-- Wakes an idle instance to run the timers that have come due, if the
-  application called
-  [`Initialization.RunTimersBetweenRequests`](reference/sdk/Isoplane.Sdk/Isoplane/Initialization/RunTimersBetweenRequests.md)
-  during initialization. An instance that has had no request for five minutes
-  is stopped instead. An instance Isoplane
-  has set aside to save memory is not woken: its timers run when its next
-  request arrives.
+- Decides how many instances run and which one gets a request, within the
+  application's instance limit, including instances finishing cancelled requests.
+- Discards instances without a shutdown callback or guest cleanup.
+- Runs ready background work under an instance allowance. Exhausted allowance
+  delays that work.
+- Retains connections until the application, peer or instance cleanup closes
+  them. Retained connections still count against instance limits.
+- Stops an idle instance with background work or open connections after five
+  minutes without a request. Only requests refresh this deadline and demand
+  recency. Hibernated instances are not woken just to run background work.
 
 **Your application**
 
@@ -233,7 +228,7 @@ request, or discard it. Successive requests can reach different instances.
 | --- | --- |
 | Isoplane discards the instance | Nothing is reported. Its memory is gone, and the next request reaches an instance that starts from the template. |
 | A connection kept from an earlier request has gone stale | Its next use fails as a dropped connection does anywhere. Open a new one. |
-| A timer comes due while the instance is idle | It runs at the start of the instance's next request, or at a wake if the application [runs timers between requests](dotnet-runtime-differences.md#run-timers-between-requests). It never runs if the instance is discarded first. |
+| A timer comes due while the instance is idle | It becomes eligible for a [background slice](dotnet-runtime-differences.md#run-timers-between-requests), subject to allowance and instance residency. It never runs if the instance is discarded first. |
 
 ## A new build or changed settings
 

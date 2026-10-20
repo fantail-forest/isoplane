@@ -26,8 +26,8 @@ public static class IsoplaneOtlpExporterExtensions
     /// <para>
     /// Spans are held in the instance's memory until a span with no parent in the application
     /// ends, which for a web request is the request's own span. They are then encoded and sent
-    /// while the client already has the response, as work the request left running, and their
-    /// sending counts toward that request. <see cref="TraceExport.FlushAsync"/> sends them sooner.
+    /// while the client already has the response. Work remaining after response completion uses
+    /// the instance's background allowance. <see cref="TraceExport.FlushAsync"/> sends them sooner.
     /// </para>
     /// <para>
     /// Spans still held when the instance is stopped are lost, and an export the endpoint refuses

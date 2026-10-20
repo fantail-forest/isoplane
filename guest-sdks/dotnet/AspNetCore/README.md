@@ -70,8 +70,8 @@ handlers can read and respond before the client finishes its upload. A file
 response is read from the application package and written as the body, so static
 files are served. Connection upgrades are unsupported.
 
-Cancellation is checked before each upload read; it cannot interrupt a pending
-host read or an individual response write awaiting acknowledgement. Disposing
+Cancellation interrupts a pending upload read and releases its host operation.
+An individual response write awaiting acknowledgement follows transport cancellation. Disposing
 an upload prevents new reads, while its host transport remains owned until the
 dispatch settles. An early response releases unread content without background
 draining. Streaming also does not yet impose a byte

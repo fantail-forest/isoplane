@@ -29,7 +29,7 @@ public static TracerProviderBuilder AddIsoplaneOtlpExporter(this TracerProviderB
 
 ## Remarks
 
-Spans are held in the instance's memory until a span with no parent in the application ends, which for a web request is the request's own span. They are then encoded and sent while the client already has the response, as work the request left running, and their sending counts toward that request. [`FlushAsync`](../TraceExport/FlushAsync.md) sends them sooner.
+Spans are held in the instance's memory until a span with no parent in the application ends, which for a web request is the request's own span. They are then encoded and sent while the client already has the response. Work remaining after response completion uses the instance's background allowance. [`FlushAsync`](../TraceExport/FlushAsync.md) sends them sooner.
 
 Spans still held when the instance is stopped are lost, and an export the endpoint refuses is logged and not retried. ExportProcessorType is ignored; BatchExportProcessorOptions sets how many spans are held and how many go in one export.
 

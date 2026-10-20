@@ -41,7 +41,7 @@ application.
 
 ## Running time
 
-Each dispatch has an allowance of running time. Running time is the time the
+Each request has an allowance of running time. Running time is the time the
 dispatch spends executing. Time spent waiting for something it awaits, such as a
 database or another service, does not count.
 
@@ -60,8 +60,9 @@ answer from when the application last resumed, so a loop that checks them
 without awaiting never sees the token cancel, and is stopped when the further
 period ends. To stop a long computation cleanly, split it into parts and, between
 them, await something that waits, such as `await Task.Delay(1, cancellationToken)`.
-`await Task.Yield()` is not enough: the code after it runs before the application
-waits.
+`await Task.Yield()` queues a continuation; it may still run in the same slice.
+The runtime bounds callback batches, but a single callback must return before
+that cooperative boundary can be reached.
 
 ## Finishing after cancellation {#after-cancellation}
 
@@ -90,18 +91,36 @@ promptly protects them:
 
 ## Work after the response {#after-the-response}
 
-Work a request started and left running after its response, such as an
-outbound call that was not awaited, keeps the request's dispatch going for up
-to 30 seconds after the response. Whatever is still pending then is not
-stopped: the dispatch ends, and the work continues as the instance's. When it
-completes, it runs in the next request the instance handles. See
-[Work after the response](dotnet-runtime-differences.md#after-the-response).
+At the empty-stack boundary after response completion, remaining operations and
+callbacks transfer to the instance's background allowance. The request releases
+its concurrency slot; unused measured request running time is donated once to
+the allowance.
+
+Each instance starts with 5 seconds of background running time, replenishes 5
+seconds per 30 seconds of elapsed host time, and holds at most 30 seconds.
+Donations also replenish it. Actual execution is charged, including any overrun;
+once exhausted, the pool must rebuild 5 seconds of credit before background
+execution resumes. Time refill and donations both count toward that threshold.
+Background slices use the engine's existing grace margin and hard execution
+limit. A callback that fails to return can still cause the instance to be stopped.
+
+Timers and I/O completions do not create credit. Replacement instances start
+with the initial allowance. Background activity does not keep an instance alive:
+retained work and connections arm a five-minute stop without a new request.
+See [Work after the response](dotnet-runtime-differences.md#after-the-response).
 
 ## Pending operations
 
-Each dispatch can have only so many asynchronous operations waiting at once, such
-as outbound calls and timers. A dispatch that goes over that number fails. When a
-dispatch fans out over many items, start them in batches and await each batch.
+Each request has its own pending-operation cap. Shared native handles and
+connections have instance caps. The aggregate retained-future cap is the
+native-handle limit plus eight requests' pending-operation limits; handing work
+over or completing it does not free capacity until its result is delivered or
+the operation is released.
+
+Undelivered future payloads share a 256 KiB instance budget, including while the
+instance is resident. A result that exceeds the remaining capacity returns a
+buffer-limit error. An application should consume results promptly and bound
+its fan-out.
 
 ## Timers
 

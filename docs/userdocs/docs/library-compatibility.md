@@ -5,7 +5,7 @@ title: Library compatibility
 Most NuGet packages run on Isoplane unchanged. The ones that do not fail for a
 handful of reasons, all of which follow from
 [how .NET differs on Isoplane](dotnet-runtime-differences.md): something waits
-synchronously, starts a thread, relies on a timer firing between requests,
+synchronously, starts a thread, requires continuous background execution,
 writes a file, or loads a native library. That page also explains what each
 of those limits gives you.
 
@@ -504,8 +504,7 @@ Size of the change: small.
 
 [`UseRateLimiter`][UseRateLimiter] works, and its limits hold for one
 instance. The middleware's timer, which ticks every 100 ms to refill permits
-and tidy up, runs during whichever request the instance handles next, unless
-the application runs timers between requests; see
+and tidy up, runs under the instance's background allowance; see
 [What can run between requests?](dotnet-runtime-differences.md#between-requests).
 
 ```csharp
@@ -615,9 +614,9 @@ complete.
   service and in its clients. Whether HTTP/2 can be supported is not known
   yet.
 - **A [`BackgroundService`][BackgroundService] that keeps running**, a
-  scheduled job or a queue consumer has nothing to run on between requests.
-  Timers can run between requests, but only best effort. Work that must keep
-  running or keep a schedule needs an external scheduler. Doing that work
+  scheduled job or a queue consumer cannot rely on continuous execution.
+  Background callbacks have a bounded allowance and stop after five minutes
+  without requests. A hosted `BackgroundService` still running at startup is refused. Doing that work
   while a request is handled is a large change. See
   [What has nowhere to run?](dotnet-runtime-differences.md#nowhere-to-run)
 
@@ -1008,23 +1007,21 @@ What to know before relying on it:
 - **Use the asynchronous methods only.** `ConnectionMultiplexer.Connect`, the
   synchronous `IDistributedCache` methods and synchronous commands such as
   `db.StringGet(...)` throw `PlatformNotSupportedException`.
-- **A client kept between requests keeps its first request open.** A
-  connected client always has a read waiting on its connection, so the request
-  that connected it is
-  [not over for 30 seconds after its response](dotnet-runtime-differences.md#before-the-response),
-  after which the read becomes the instance's. Later requests use the client
-  as usual meanwhile. Isoplane closes the connection once it has carried
-  nothing for [30 seconds](execution-limits.md#outbound-connections), and the
-  client reconnects when it is next used. We ran a kept client used directly;
-  connecting within each request instead added about 25 ms to each request
-  here.
+- **A kept client retains instance resources.** Its outstanding read transfers
+  to background accounting when the request completes, without keeping the
+  request open. Later requests can reuse the client. The connection counts
+  against the instance's connection limit until closed; reconnect if its peer,
+  network or instance lifecycle closes it. Background allowance exhaustion can
+  delay maintenance and completions.
 - **Connect inside a request, not during initialization.** A connected client
   holds a socket, and initialization refuses an open socket.
-- **The Redis output cache store does not start**
-  ([`AddStackExchangeRedisOutputCache`][AddStackExchangeRedisOutputCache]): it
-  runs a clean-up loop on a timer from start-up.
+- **The Redis output cache works with the same client override.** We ran
+  `Microsoft.AspNetCore.OutputCaching.StackExchangeRedis` 10.0.13 with
+  [`AddStackExchangeRedisOutputCache`][AddStackExchangeRedisOutputCache],
+  asynchronous store operations and cache hits through the output-cache middleware.
 
-We ran this against Redis 7 without TLS or authentication. Clusters, sentinel
+We ran these paths against Redis 7 without TLS or authentication, retaining the
+clients across completed responses and subsequent requests on the same instance. Clusters, sentinel
 and [`PersistKeysToStackExchangeRedis`][PersistKeysToStackExchangeRedis] were
 not run.
 
@@ -1076,11 +1073,11 @@ same options in code. As with `AddOtlpExporter`, the default is gRPC to
 for an endpoint that takes OTLP over HTTP.
 
 The spans of a request are held in the instance's memory until the request's
-own span ends, then encoded and sent while the client already has the
-response. Sending them is work the request left running, so its time counts
-toward that request, for up to
-[30 seconds after the response](execution-limits.md#after-the-response). A request that produces many spans can send the ones that
-have ended sooner, and learn whether the endpoint accepted them:
+own span ends, then encoded and sent while the client already has the response.
+Work retained after response completion uses the instance's
+[background allowance](execution-limits.md#after-the-response).
+A request that produces many spans can send the ones that have ended sooner,
+and learn whether the endpoint accepted them:
 
 ```csharp
 app.MapPost("/import", async (TraceExport traces) =>
@@ -1099,7 +1096,10 @@ What it does not do:
 - **Metrics and logs.** It covers traces only; the SDK's metrics and logs
   exporters still deliver nothing.
 
-We ran it against the OpenTelemetry Collector over HTTP and over gRPC.
+We ran it against the OpenTelemetry Collector over HTTP and over gRPC. The
+background-execution check also held an HTTP collector response open past the
+application response, then accepted further exports and Redis requests on the
+same instance.
 
 Size of the change: small.
 

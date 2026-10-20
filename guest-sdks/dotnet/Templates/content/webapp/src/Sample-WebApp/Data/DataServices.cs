@@ -16,7 +16,7 @@ public static class DataServices
                 ?? throw new InvalidOperationException("Set ConnectionStrings:Database. See README.md for the local database."))
             {
                 // Isoplane decides how many instances run and may capture or discard any of them
-                // between requests, so a pool inside one instance cannot keep a connection open.
+                // between requests. A local pool cannot bound connections across all instances.
                 // Use the database provider's own pooler to share connections across instances.
                 Pooling = false
             };

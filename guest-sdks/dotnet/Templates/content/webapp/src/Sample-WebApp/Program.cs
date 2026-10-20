@@ -61,8 +61,8 @@ builder.Services.AddAppDatabase(builder.Configuration);
 // https://isoplane.dev/docs/dotnet-runtime-differences#keep-data-protection-keys-across-builds
 builder.Services.AddDataProtection().UseKeysFromDbContext<AppDbContext>();
 
-// Not here: a BackgroundService that keeps running. Isoplane suspends an
-// application between requests, so the application refuses to start with one.
+// Not here: a BackgroundService that keeps running. Background execution is
+// bounded; continuously running hosted services are refused at startup.
 // Do the work while handling a request, or in a hosted service whose
 // StartAsync completes it.
 

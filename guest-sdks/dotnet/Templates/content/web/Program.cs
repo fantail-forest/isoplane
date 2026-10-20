@@ -36,9 +36,9 @@ var builder = IsoplaneHosting.CreateBuilder(args);
 //   builder.Services.AddHttpClient();
 //
 // One kind of service does not fit: a BackgroundService that keeps running.
-// Isoplane suspends an application between requests, so the application refuses
-// to start with one. Do the work while handling a request, or in a hosted
-// service whose StartAsync completes it.
+// Isoplane refuses continuously running hosted services at startup. Do the
+// work while handling a request, or in a hosted service whose StartAsync
+// completes it.
 
 var app = builder.Build();
 

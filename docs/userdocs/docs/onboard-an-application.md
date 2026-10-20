@@ -67,8 +67,8 @@ choose the environment while developing.
 
 Use asynchronous I/O and await request work before returning the response.
 
-Isoplane suspends an application between requests, so background work cannot
-continue after startup. An application whose `BackgroundService` is still running
+Background callbacks have a bounded allowance and an idle lifetime. Hosted
+services that run continuously are unsupported: a `BackgroundService` still running
 once the host has started fails to start, with an error that names the service;
 this includes services a library registers. An `IHostedService` may perform
 bounded asynchronous startup work in `StartAsync`, and a `BackgroundService` that

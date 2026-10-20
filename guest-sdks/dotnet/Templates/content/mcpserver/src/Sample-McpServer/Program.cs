@@ -52,7 +52,7 @@ builder.Services
     })
     // Stateless: every request stands alone, and the server keeps no session
     // between them. That suits Isoplane, where successive requests can reach
-    // different instances and an instance does not run between requests. It is
+    // different instances and an instance may be discarded. It is
     // this package version's default; saying so keeps it if the default moves.
     //
     // A stateless server answers calls and cannot start an exchange of its own,

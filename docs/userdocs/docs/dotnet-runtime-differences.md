@@ -28,17 +28,15 @@ see [execution limits](execution-limits.md).
 Isoplane divides the work it gives an instance into two units: dispatches and
 slices.
 
-A *dispatch* is the unit of work Isoplane delivers to an instance. Most
-dispatches handle one HTTP request. If the application
-[runs timers between requests](#run-timers-between-requests), a dispatch can
-also run timers that have come due. An instance can have several dispatches in
+A *dispatch* is the unit of work Isoplane delivers to an instance. Request dispatches handle HTTP requests; background dispatches run instance
+callbacks and retained operations, including timers. An instance can have several dispatches in
 progress at once.
 
 A *slice* is a period of time in which code from one dispatch is running on a
 worker thread. An instance has at most one slice running at any moment, so
 dispatches in progress on the same instance interleave, one slice at a time.
-Slices do not preempt one another: a slice ends only when its code awaits
-something that is not ready yet, or its dispatch finishes. The [clock](#time),
+Slices do not preempt one another: a slice returns when its work awaits
+something not ready, its bounded callback batch ends, or its dispatch finishes. The [clock](#time),
 and whether the dispatch has been cancelled, stay fixed for the length of a
 slice.
 
@@ -78,12 +76,14 @@ discard it whenever it needs the room.
 
 ### Running time {#resource-usage}
 
-Isoplane bills each dispatch as one request, whether it handles a request or
-runs timers, and gives each an allowance of
-[running time](execution-limits.md#running-time): the total length of its
-slices, not the time spent waiting for a database or another service between
-them. A timer callback runs in whichever slice the instance runs next once the
-timer is due, and uses the running time of that slice's dispatch.
+Each HTTP request has a
+[running-time allowance](execution-limits.md#running-time). Instance background
+work uses a separate [allowance](execution-limits.md#after-the-response), which
+is replenished by elapsed host time and unused request time. A wake does not
+create a fresh background budget.
+
+Both allowances charge occupied execution and reactor workers. Time parked on
+I/O, waiting in a queue or waiting for background credit is excluded.
 
 Forward the request's cancellation token to the calls you await. That token is
 `HttpContext.RequestAborted`, or
@@ -282,96 +282,60 @@ What follows from that:
   and await something that waits between them, as
   [running time](execution-limits.md#running-time) describes.
 - A timeout fires only between slices. `Task.Delay`,
-  `CancellationTokenSource.CancelAfter` and `Timer` callbacks are delivered in
-  the next slice, not in the middle of a computation, whichever dispatch that
-  slice belongs to. One that comes due while the instance is idle is delivered
-  in the instance's next slice, when a request arrives, unless the application
-  [runs timers between requests](#run-timers-between-requests).
+  `CancellationTokenSource.CancelAfter` and `Timer` callbacks are delivered
+  between calls into the guest, never in the middle of a computation.
+  Request continuations run in their request's slices; instance callbacks run
+  in background slices with their own allowance.
 
 ## Work after the response {#after-the-response}
 
-Once a dispatch has sent its response and has no work left, Isoplane may set
-its instance aside or discard it. This section covers what that means for work
-that is still running or waiting, and for cleanup.
+An instance can retain connections, timers and asynchronous operations after a
+request finishes. Isoplane can still hibernate or discard the instance.
 
 ### What has to finish before the response? {#before-the-response}
 
-Everything the response depends on. The client receives the response as soon
-as it is complete, but the request's dispatch is not over while work it started
-is still pending, such as an outbound call or a name lookup started and not
-awaited. That work goes on running, for up to
-[30 seconds after the response](execution-limits.md#after-the-response), and
-the dispatch ends once it completes. Until then it uses the request's
-[running time](execution-limits.md#running-time), and the request's
-cancellation token and the
-[5 seconds to finish after cancellation](execution-limits.md#after-cancellation)
-apply to it as they do before the response. A client that goes away once it
-has the whole response does not cancel it. A read of the request body that is
-still waiting when the response is complete fails with an `IOException`, since
-nothing more of the body is read.
+Everything the response depends on. At the empty-stack boundary after response
+completion, remaining work becomes the instance's background work. The request
+releases its concurrency slot and donates its unused running-time allowance to
+the instance's [background allowance](execution-limits.md#after-the-response).
+A request-body read still waiting fails because the request body is closed.
 
-Work still pending 30 seconds after the response is not stopped. The dispatch
-ends, and the work becomes the instance's: when it completes, it runs in the
-next request the instance handles, the way a timer that comes due between
-requests does. A client library that always has a read waiting on a kept
-connection, as a Redis client does, ends up this way, and keeps working.
+The handover includes host operations and their accounting. A pending Redis read
+or telemetry export can complete later without keeping the original request
+open or charging an unrelated request. A client disconnect after a complete
+response does not cancel that work. Cancellation already requested while a
+handler is still running retains its [grace deadline](execution-limits.md#after-cancellation).
 
-Nothing guarantees that such work completes, though: an instance can be stopped
-at any time, for example for going over its limits. Do not leave saving data or
-releasing a resource to work after the response. Work that has to happen after
-the response belongs in another service, such as a queue that something else
-reads.
+An instance can be stopped before background work finishes. Save data required
+by the response before responding; use an external durable queue for work that
+must survive the instance.
 
 ### What can run between requests? {#between-requests}
 
-Timers can. A timer outlives the dispatch that started it: when a dispatch
-ends with a `Timer`, `Task.Delay` or `CancellationTokenSource.CancelAfter` still
-pending, Isoplane keeps the instance and the timer with it. Libraries that keep
-timers of their own, such as rate limiters and connection pools, therefore work
-without change.
-
-By default a timer that comes due while the instance is idle waits for the next
-request on that instance, and runs at the start of that request's first slice,
-before the request's own code. Its callback runs until it returns or reaches its
-first `await`, and uses that request's running time meanwhile. A timer that
-comes due while the instance is busy runs the same way, in the next slice of
-whichever request is running. A timer never runs if its instance is discarded
-first, and an idle instance can be discarded at any time. A task started and not
-awaited that waits on a timer, such as a retry after `Task.Delay`, may therefore
-finish during a later dispatch, or never: await the work the response depends
-on. Work a request left pending more than
-[30 seconds after its response](#before-the-response) is kept the same way,
-and runs when it completes in the next slice of a request on that instance.
+Timers, retained operations and queued callbacks can run in background slices.
+No opt-in is required. The host alternates ready request and background slices;
+background work waits when its allowance is exhausted. A timer remains attached
+to its instance, including when no request is running.
 
 #### Running timers between requests {#run-timers-between-requests}
 
-An application can also have its timers run while it has no request to handle.
-Call
-[`Initialization.RunTimersBetweenRequests`](reference/sdk/Isoplane.Sdk/Isoplane/Initialization/RunTimersBetweenRequests.md)
-during initialization, and Isoplane gives an idle instance a dispatch to run
-the timers that have come due, no sooner than the minimum interval you give
-after its last dispatch ended. A timer gets a dispatch of its own only this way,
-when the instance has no request to run it in. The interval must be at least 100 milliseconds:
+Background dispatches use the instance's
+background allowance, including donated unused request time. This also applies
+to timers maintained by libraries such as connection pools.
 
-```csharp
-Initialization.RunTimersBetweenRequests(minimumInterval: TimeSpan.FromMinutes(1));
-```
-
-An instance
-that has had no request for five minutes is stopped rather than woken again,
-and an instance Isoplane has set aside to save memory runs its timers only when
-its next request arrives. Use it for upkeep, such as sending telemetry that
-would otherwise wait for the next request, and not for work that has to happen
-on schedule.
+An idle instance with background work or open connections is stopped after five
+minutes without a request. Background activity does not extend that deadline or
+make the instance appear recently requested. Hibernated instances are not woken
+solely for background work. Timers resume when the instance becomes resident
+again; do not depend on a timer firing on schedule.
 
 ### What has nowhere to run? {#nowhere-to-run}
 
 Work that is meant to run continuously, or on a fixed schedule, such as
 a loop in a `BackgroundService`, a queue consumer, or a job scheduler. Timer
 wakes are best effort and stop once an instance has gone five minutes without
-a request, so they can't be relied on for such work, and nothing else runs between
-requests. An application whose `BackgroundService` is still running once the
-host has started is refused, with an error that names the service. Bounded
+a request, so they cannot provide continuous execution. An application whose
+`BackgroundService` is still running once the host has started is refused, with an error that names the service. Bounded
 asynchronous work in `IHostedService.StartAsync` is accepted.
 
 Start such work from a request instead: for example, from an endpoint that a
@@ -408,9 +372,8 @@ in-memory session state belong to one instance and can disappear. Keep anything 
 must last in a database or another external service.
 
 A connection kept from an earlier request may be stale, even after a request
-that completed normally. Isoplane closes a connection that has carried nothing
-for [30 seconds](execution-limits.md#outbound-connections), and the server or
-the network between may close one sooner. Be ready to open a new one when it
+that completed normally. The server or network can close it, and instance
+cleanup closes all its connections. Be ready to open a new one when it
 fails, as a connection pool would anywhere.
 
 `Program.cs` runs up to `RunAsync` while Isoplane prepares the
@@ -582,33 +545,23 @@ Setting or reading the hop limit (`Socket.Ttl`) throws `SocketException` with
 
 ### HTTP clients and connection reuse {#http-clients}
 
-A client from `IHttpClientFactory` opens a connection for each call and closes
-it once the response has been read, so it keeps no connection between calls.
-Elsewhere a client keeps idle connections for its next calls. Isoplane switches
-that off because a connection still open when
-[initialization](application-lifecycle.md#initialization) ends prevents the
-application from starting, and connections kept between requests count toward the
-instance's [outbound connections](execution-limits.md#outbound-connections).
-The cost is a new connection, and over HTTPS a new TLS handshake, for each
-call, including calls a request makes one after another to the same host.
+`IHttpClientFactory` uses normal .NET connection pooling and handler lifetimes.
+A connection can serve multiple outbound calls within a request and across
+later requests on the same instance. Its retained connections count toward the
+instance's [outbound connection limit](execution-limits.md#outbound-connections).
 
-To keep idle connections, set `PooledConnectionLifetime` on the client's
-`SocketsHttpHandler` to anything other than zero, or supply a primary handler of your own with
-`ConfigurePrimaryHttpMessageHandler`. If you supply your own handler and don't
-want idle connections, set its `PooledConnectionLifetime` to `TimeSpan.Zero`. A `PooledConnectionIdleTimeout` of
-zero is no substitute: it leaves each connection open, and calls fail once the
-application has used up its outbound connections.
+During [initialization](application-lifecycle.md#initialization), factory
+requests send `Connection: close` so HTTP/1.1 warm-up calls do not leave pooled
+sockets in the template. Initialization still refuses any connection left open;
+for a custom handler or protocol that does not honor connection closure, disable
+its pooling for initialization or dispose its connections explicitly.
 
-A client you construct yourself with `new HttpClient()` and keep for later
-requests keeps its idle connections open between requests, and they count
-toward the instance's
-[outbound connections](execution-limits.md#outbound-connections) until
-the client or peer closes them, or the instance is discarded. Isoplane does not
-close an individual connection solely because it has carried no bytes. To keep no idle connections at all, take
-the client from `IHttpClientFactory` instead, or construct it with
-`new HttpClient(new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.Zero })`.
-A client created and disposed within one request reuses its connection for that
-request's calls and closes it when it is disposed.
+Clients you construct yourself with `new HttpClient()` also pool connections.
+Dispose short-lived clients when finished, or retain a client for reuse. The
+application, peer or instance cleanup closes connections; Isoplane does not
+close an individual connection solely because it has carried no bytes.
+To opt out of connection reuse, configure the client's `SocketsHttpHandler`
+with `PooledConnectionLifetime = TimeSpan.Zero`.
 
 ## File system {#file-system}
 
