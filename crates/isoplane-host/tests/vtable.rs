@@ -62,7 +62,7 @@ fn vtable_with_resolver(
         egress,
         fetcher: fetcher.clone(),
     });
-    let futures = Arc::new(FutureTable::new());
+    let futures = Arc::new(FutureTable::new(256 * 1024));
     let wake = Arc::new(RecordingWake::default());
     let meters = Arc::new(Meters::new());
     let rt = Arc::new(CellRuntime {

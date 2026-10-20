@@ -28,6 +28,8 @@ pub enum FutureError {
     Denied(String),
     NotFound,
     Io(String),
+    /// The instance cannot retain this result within its buffered-result byte limit.
+    BufferLimit,
 }
 
 
@@ -38,6 +40,7 @@ impl std::fmt::Display for FutureError {
             FutureError::Denied(why) => write!(f, "capability denied: {why}"),
             FutureError::NotFound => write!(f, "not found"),
             FutureError::Io(e) => write!(f, "io error: {e}"),
+            FutureError::BufferLimit => write!(f, "instance buffered-result byte limit exceeded"),
         }
     }
 }

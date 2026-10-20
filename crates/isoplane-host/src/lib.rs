@@ -24,6 +24,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 pub mod activator;
 mod admission;
+mod background;
 pub mod bindings;
 pub mod breaker;
 pub mod cell;
@@ -126,3 +127,6 @@ pub fn mono_ns() -> Option<u64> {
 
 /// Monotonic timestamp for measuring active worker intervals.
 pub use meters::read_occupancy_ns as occupancy_ns;
+
+/// Maximum simultaneous request dispatches sharing one instance.
+pub(crate) const DISPATCHES_PER_INSTANCE: usize = 8;

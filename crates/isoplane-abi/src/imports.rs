@@ -39,9 +39,6 @@ pub enum BufSpec {
 /// the host allocate on its behalf.
 pub const MAX_OUT_BUFFER_BYTES: usize = 1 << 20;
 
-/// The least interval `timers_between_requests` accepts.
-pub const MIN_TIMERS_BETWEEN_REQUESTS_MS: u64 = 100;
-
 /// Maximum encoded activation configuration size, bounded by the output-buffer limit.
 pub const MAX_RUNTIME_CONFIGURATION_BYTES: usize = MAX_OUT_BUFFER_BYTES;
 
@@ -177,9 +174,6 @@ pub const IMPORTS: &[ImportDef] = &[
     ImportDef { buf: BufSpec::In(1), init_visible: true, ..imp!("log_emit", Observe, Sig { params: &[I32, I32, I32], results: &[] }, SYNC,
         "structured log at `trace=0` .. `error=4`; worker occupancy counts against the dispatch budget, \
          which is what stops log-as-compute abuse") },
-    ImportDef { buf: BufSpec::None, ..imp!("development_notices", Observe, Sig { params: &[], results: &[I64] }, SYNC,
-        "non-zero where the host shows guests' development notices, such as what their timers will cost: in local \
-         development and tests, never in a deployment") },
     imp!("trace_span_begin", Observe, BUF_TO_I32, SYNC,
         "opens a trace span and returns its id, for correlating work inside one dispatch"),
     ImportDef { buf: BufSpec::None, ..imp!("trace_span_end", Observe, Sig { params: &[I32], results: &[] }, SYNC,
@@ -189,11 +183,6 @@ pub const IMPORTS: &[ImportDef] = &[
     // Not init-visible: a static initialiser that reads the clock is impure.
     ImportDef { buf: BufSpec::None, ..imp!("clock_now_coarse", Clock, Sig { params: &[], results: &[I64] }, SYNC,
         "Reads the host coarse clock; use host deadline futures to wait.") },
-    ImportDef { init_visible: true, buf: BufSpec::None,
-        ..imp!("timers_between_requests", Core, Sig { params: &[I64], results: &[I64] }, SYNC,
-        "opts the application's instances in to being woken while idle to run due timers, at most once per the given \
-         number of milliseconds, which is at least MIN_TIMERS_BETWEEN_REQUESTS_MS; \
-         only during initialization, and non-zero after it") },
     ImportDef { buf: BufSpec::None, ..imp!("clock_deadline_in", Clock, Sig { params: &[I64], results: &[I64] }, FUT,
         "a timer as a host future, so waiting is never a guest loop burning budget") },
     ImportDef { buf: BufSpec::Out(0), ..imp!("entropy_fill", Entropy, BUF_TO_VOID, SYNC,

@@ -60,6 +60,7 @@ public static class CleanupProbe
             Task completion = AfterSignalAsync();
             _signal.SetResult();
             await completion.ConfigureAwait(false);
+            for (int callback = 0; callback < 160; callback++) await Task.Yield();
             return Response.Text($"{_requests}:{_callbacks}");
         }
         if (path == "/drive-timer")
@@ -80,6 +81,7 @@ public static class CleanupProbe
     {
         await _signal.Task.ConfigureAwait(false);
         _callbacks++;
+        Console.WriteLine("retained-promise-completed");
     }
 
     private static async Task AbandonAsync(string operation)
@@ -108,6 +110,7 @@ public static class CleanupProbe
         finally
         {
             _callbacks++;
+            Console.WriteLine("retained-operation-completed");
         }
     }
 }

@@ -142,7 +142,9 @@ impl Reactor {
         let fetcher = PinnedHttpFetcher::new(
             isoplane_runtime::network::NetworkLimits::default().inline_response_bytes,
         );
-        let futures = Arc::new(FutureTable::new());
+        let futures = Arc::new(FutureTable::new(
+            isoplane_host::CellConfig::default().buffered_future_bytes,
+        ));
         let wake = Arc::new(Wake(tokio::sync::Notify::new()));
         let runtime = Arc::new(CellRuntime {
             runtime_configuration: Default::default(),
@@ -674,7 +676,7 @@ mod completion_tests {
 
     #[test]
     fn coalesced_notifications_do_not_hide_a_second_ready_completion() {
-        let table = FutureTable::new();
+        let table = FutureTable::new(isoplane_host::CellConfig::default().buffered_future_bytes);
         let owner = InstanceId(1);
         let wake = tokio::sync::Notify::new();
         let first = alloc(&table, owner);
@@ -695,7 +697,7 @@ mod completion_tests {
 
     #[test]
     fn a_cancelled_completion_notification_does_not_disrupt_the_next_completion() {
-        let table = FutureTable::new();
+        let table = FutureTable::new(isoplane_host::CellConfig::default().buffered_future_bytes);
         let owner = InstanceId(1);
         let wake = tokio::sync::Notify::new();
         let cancelled = alloc(&table, owner);

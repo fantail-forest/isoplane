@@ -138,7 +138,7 @@ impl Rig {
         let runtime = Arc::new(CellRuntime {
             runtime_configuration: Default::default(),
             services,
-            futures: Arc::new(FutureTable::new()),
+            futures: Arc::new(FutureTable::new(256 * 1024)),
             metrics: Arc::new(Metrics::new()),
             wake: wake.clone(),
             reactor: tokio::runtime::Handle::current(),

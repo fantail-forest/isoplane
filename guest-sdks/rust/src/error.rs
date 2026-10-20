@@ -13,6 +13,8 @@ pub enum IsoplaneError {
     Denied(String),
     NotFound,
     Io(String),
+    /// The host cannot retain the result within the instance byte limit.
+    BufferLimit,
     /// The host sent something this SDK could not decode. Distinct from the
     /// above because it means the ABI, not the world, is broken.
     Protocol(String),
@@ -32,6 +34,7 @@ impl From<FutureError> for IsoplaneError {
             FutureError::Denied(s) => IsoplaneError::Denied(s),
             FutureError::NotFound => IsoplaneError::NotFound,
             FutureError::Io(s) => IsoplaneError::Io(s),
+            FutureError::BufferLimit => IsoplaneError::BufferLimit,
         }
     }
 }
@@ -43,6 +46,7 @@ impl fmt::Display for IsoplaneError {
             IsoplaneError::Denied(s) => write!(f, "denied: {s}"),
             IsoplaneError::NotFound => write!(f, "not found"),
             IsoplaneError::Io(s) => write!(f, "io: {s}"),
+            IsoplaneError::BufferLimit => write!(f, "instance buffered-result byte limit exceeded"),
             IsoplaneError::Protocol(s) => write!(f, "protocol: {s}"),
         }
     }

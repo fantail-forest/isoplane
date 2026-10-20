@@ -442,7 +442,6 @@ pub(crate) fn initialize_with_cache(
             })?
             .unwrap_or_default();
         let prepared_resources = isoplane_abi::native_io::PreparedResources {
-            timers_between_requests_ms: state.lock().timers_between_requests_ms,
             ..prepared_resources
         };
         let deferred: Vec<_> = deferred.into_iter().collect();
@@ -769,7 +768,6 @@ struct Sandbox {
     logs: Vec<GuestLog>,
     remaining_log_bytes: usize,
     seed_reads: u32,
-    timers_between_requests_ms: Option<u64>,
 }
 
 impl Sandbox {
@@ -786,7 +784,6 @@ impl Sandbox {
             logs: Vec::new(),
             remaining_log_bytes: request.log_bytes,
             seed_reads: 0,
-            timers_between_requests_ms: None,
         }
     }
 }
@@ -860,19 +857,6 @@ impl isoplane_engine::bindings::InitializationBindings for Bindings {
                 }
                 Ok(i64::from(deferred))
             }
-            "timers_between_requests" => match call.scalars[0] {
-                minimum_interval_ms
-                    if minimum_interval_ms < isoplane_abi::imports::MIN_TIMERS_BETWEEN_REQUESTS_MS =>
-                {
-                    Err(isoplane_engine::bindings::BindingError::InvalidRequest(
-                        "the least time between timer wakes is below the platform's minimum of 100 ms",
-                    ))
-                }
-                minimum_interval_ms => {
-                    state.timers_between_requests_ms = Some(minimum_interval_ms);
-                    Ok(0)
-                }
-            },
             "log_emit" => {
                 let length = call.payload.len().min(state.remaining_log_bytes);
                 if length > 0 {

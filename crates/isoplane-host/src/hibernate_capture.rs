@@ -390,7 +390,7 @@ mod tests {
     fn in_process_capture_preserves_pending_host_work() {
         use isoplane_abi::result::ResultRecord;
         let (slot, act) = parked_slot(Completion::Done);
-        let futures = Arc::new(FutureTable::new());
+        let futures = Arc::new(FutureTable::new(64 * 1024));
         let id = futures
             .alloc(slot.id, 1, "http_body_read", 8)
             .expect("the request must own a pending future");
@@ -415,10 +415,10 @@ mod tests {
     }
 
     #[test]
-    fn in_process_capture_retains_ready_results() {
+    fn in_process_capture_retains_ready_results_within_the_instance_buffer_budget() {
         use isoplane_abi::result::ResultRecord;
         let (slot, act) = parked_slot(Completion::Done);
-        let futures = Arc::new(FutureTable::new());
+        let futures = Arc::new(FutureTable::new(64 * 1024));
         let id = futures
             .alloc(slot.id, 1, "clock_deadline_in", 8)
             .expect("the request must own its result");
@@ -434,7 +434,7 @@ mod tests {
         .expect("a host-resident result must not prevent local capture");
         assert!(
             matches!(futures.take_ready(slot.id).map(crate::futures::Ready::into_pair), Some((ready, ResultRecord::Ok(bytes))) if ready == id && bytes == vec![42; 32]),
-            "local capture must preserve the exact ready result"
+            "capture must preserve the exact result"
         );
     }
 
@@ -548,7 +548,7 @@ mod tests {
         let (slot, act) = parked_slot(Completion::Done);
         let source = RequestBodyScope::new(None, true);
         *slot.ctx.start_dispatch(1, 1).request_body.lock() = Some(source.clone());
-        let futures = Arc::new(FutureTable::new());
+        let futures = Arc::new(FutureTable::new(64 * 1024));
         let id = futures
             .alloc(slot.id, 1, "req_body_read", 8)
             .expect("allocate EOF read");

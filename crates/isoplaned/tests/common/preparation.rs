@@ -119,5 +119,6 @@ pub fn network(tenant: &str, manifest: &AppManifest) -> isoplane_prepare::Initia
         limits: Default::default(),
         native_handles: host.guest_resources.native_handles,
         pending_futures: manifest.effective_limits().pending_futures_per_dispatch,
+        buffered_bytes: host.buffered_future_bytes,
     }
 }

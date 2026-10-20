@@ -1,6 +1,7 @@
 //! Module registration and the resident-instance bookkeeping tables.
 
 use super::*;
+use crate::DISPATCHES_PER_INSTANCE;
 
 #[derive(Hash, PartialEq, Eq)]
 pub(super) struct ApplicationKey {
@@ -33,24 +34,12 @@ pub(super) struct ActiveDispatch {
     pub(super) dispatch_id: u64,
     pub(super) module: ModuleId,
     pub(super) route: String,
-    /// For a dispatch that runs an idle instance's timers, when the instance
-    /// stops unless a request arrives first.
-    pub(super) idle_stop_at: Option<tokio::time::Instant>,
     /// Set when the host first sees the dispatch's cancellation request: the
     /// dispatch is killed if it is still here then.
     pub(super) grace_deadline: Option<tokio::time::Instant>,
-    /// Set when the response is complete and work the dispatch started is
-    /// still pending: the dispatch hands that work to the instance and ends
-    /// then.
-    pub(super) release_at: Option<tokio::time::Instant>,
     pub(super) responder: Option<super::dispatch_api::Responder>,
     pub(super) completion: Arc<DispatchCompletion>,
 }
-
-/// How many dispatches an instance runs at once. An instance runs one slice at
-/// a time, so dispatches that mostly wait share it well and ones that mostly
-/// compute delay each other; past this a dispatch gets another instance.
-pub(super) const DISPATCHES_PER_INSTANCE: usize = 8;
 
 /// The dispatches in progress on one instance, and the ones that have joined
 /// it and wait for their first slice.
@@ -152,7 +141,13 @@ impl Cell {
             // the instance is behind, and a new dispatch would wait too.
             let behind = self.has_runnable(&slot) || self.starts.contains_key(&slot.id);
             let reserved = self.active.with_mut(&slot.id, |active| {
-                let room = active.count() < DISPATCHES_PER_INSTANCE;
+                let room = active
+                    .dispatches
+                    .iter()
+                    .filter(|dispatch| dispatch.dispatch_id != crate::futures::INSTANCE_WORK)
+                    .count()
+                    + active.joining
+                    < DISPATCHES_PER_INSTANCE;
                 held |= room && active.held_since.is_some();
                 let join =
                     room && active.held_since.is_none() && !behind && slot.has_memory_for_join();
@@ -459,7 +454,6 @@ impl Cell {
         );
         context.limits = entry.manifest.effective_limits();
         context.endpoint_exceptions = entry.endpoint_exceptions.clone();
-        context.development_notices = self.cfg.development_notices;
         context.configure_resources(self.cfg.guest_resources);
         Arc::new(context)
     }

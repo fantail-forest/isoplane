@@ -41,7 +41,7 @@ public sealed class DispatchRecord
                 d.Headers = r.StringPairs();
                 d.Body = r.Bytes().ToArray();
                 break;
-            case DispatchKind.Timers:
+            case DispatchKind.Background:
                 break;
             default:
                 throw new PostcardException();
@@ -68,8 +68,8 @@ public enum DispatchKind : uint
     /// </summary>
     Http = 0,
 
-    /// <summary>Runs the timers that came due while the instance was idle, and nothing else.</summary>
-    Timers = 1,
+    /// <summary>Instance work metered against the background allowance.</summary>
+    Background = 1,
 }
 
 /// <summary>
@@ -120,4 +120,5 @@ internal enum FutureError : uint
     Denied = 1,
     NotFound = 2,
     Io = 3,
+    BufferLimit = 4,
 }

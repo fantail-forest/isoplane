@@ -108,6 +108,7 @@ struct State {
     emitted: bool,
     finish_requested: bool,
     reactor_polls: usize,
+    donation: Option<std::sync::Weak<crate::background::Background>>,
     responded: bool,
     io_kind: Option<std::io::ErrorKind>,
     os_error: Option<i32>,
@@ -163,6 +164,7 @@ impl DispatchCompletion {
                 emitted: false,
                 finish_requested: false,
                 reactor_polls: 0,
+                donation: None,
                 responded: false,
                 io_kind: None,
                 os_error: None,
@@ -367,6 +369,10 @@ impl DispatchCompletion {
             .and_then(|(start, end)| end.checked_sub(start))
     }
 
+    pub(super) fn donate_to(&self, background: &Arc<crate::background::Background>) {
+        self.state.lock().donation = Some(Arc::downgrade(background));
+    }
+
     pub(super) fn finish(&self) {
         let mut state = self.state.lock();
         state.finish_requested = true;
@@ -418,7 +424,15 @@ impl DispatchCompletion {
             | TerminalReason::InstanceDiscarded
             | TerminalReason::CancellationGraceExpired => (Some(reason.label()), true),
         };
+        let donation = state.donation.take().and_then(|pool| pool.upgrade());
         drop(state);
+        if !usage.incomplete && !usage.in_slice {
+            if let Some(pool) = donation {
+                pool.donate(Duration::from_nanos(
+                    self.budget.budget_ns().saturating_sub(usage.occupancy_ns),
+                ));
+            }
+        }
         let total_wall_ns = self.total_wall_ns();
         self.in_scope(|| tracing::info!(
             event = "dispatch_completed", tenant = %self.tenant,

@@ -205,6 +205,7 @@ fn initialization_network(
         limits,
         native_handles: host.guest_resources.native_handles,
         pending_futures: manifest.effective_limits().pending_futures_per_dispatch,
+        buffered_bytes: host.buffered_future_bytes,
     }
 }
 
@@ -216,6 +217,7 @@ mod engine_policy_tests {
         config.network.instance_pending_connections = 1;
         config.network.instance_open_connections = 2;
         config.host.guest_resources.native_handles = 7;
+        config.host.buffered_future_bytes = 4096;
         let manifest: isoplane_abi::config::AppManifest = toml::from_str(
             "name='app'\n[bindings]\nfetch_allowlist=['db.example:5432']\n[resource_limits]\npending_futures_per_dispatch=2",
         ).expect("application policy");
@@ -253,6 +255,10 @@ mod engine_policy_tests {
         assert_eq!(
             policy.native_handles, 7,
             "initialization must obey the host native resource limit"
+        );
+        assert_eq!(
+            policy.buffered_bytes, 4096,
+            "initialization must obey the host buffering limit"
         );
         assert_eq!(
             policy.pending_futures, 2,

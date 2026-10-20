@@ -34,19 +34,12 @@ pub(crate) struct HttpDispatch {
 pub(super) enum Delivery {
     /// Any instance of the module.
     Handler { route: String },
-    /// This instance, taken idle from its pool, to run its due timers. It
-    /// stops at `stop_at` unless a request arrives first.
-    IdleTimers {
-        slot: Arc<Slot>,
-        stop_at: tokio::time::Instant,
-    },
 }
 
 impl Delivery {
     pub(super) fn route(&self) -> String {
         match self {
             Delivery::Handler { route } => route.clone(),
-            Delivery::IdleTimers { .. } => String::new(),
         }
     }
 }
@@ -197,6 +190,15 @@ impl WorkQueue {
 
     /// A wake is never shed, so it is placed regardless of the lane's depth.
     pub(super) fn push_wake(&self, item: WakeItem) {
+        let ctx = &item.slot.ctx;
+        if ctx.background.requested.load(Ordering::Acquire)
+            || ctx
+                .rt
+                .as_ref()
+                .is_some_and(|rt| rt.futures.has_background_ready(item.slot.id))
+        {
+            ctx.background.queued();
+        }
         let Some(reservation) = item.slot.reserve_wake() else {
             return;
         };

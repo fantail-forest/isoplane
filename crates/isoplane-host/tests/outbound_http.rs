@@ -456,14 +456,7 @@ async fn a_pending_fetch_survives_handover_and_request_state_cleanup() {
             .recv()
             .await
             .expect("pending fetch reached peer");
-        assert_eq!(
-            rig.runtime.futures.hand_to_instance(
-                rig.ctx.instance,
-                1,
-                isoplane_host::futures::Handover::All
-            ),
-            1
-        );
+        assert_eq!(rig.runtime.futures.hand_to_instance(rig.ctx.instance, 1), 1);
         assert!(!rig.runtime.futures.end_dispatch(rig.ctx.instance, 1));
         rig.ctx.begin_dispatch(0, 1);
         exchange
@@ -471,11 +464,7 @@ async fn a_pending_fetch_survives_handover_and_request_state_cleanup() {
             .send(())
             .expect("handed-over fetch remains live");
         let ready = loop {
-            if let Some(ready) = rig
-                .runtime
-                .futures
-                .take_ready_for(rig.ctx.instance, Some(1))
-            {
+            if let Some(ready) = rig.runtime.futures.take_background_ready(rig.ctx.instance) {
                 break ready;
             }
             tokio::task::yield_now().await;

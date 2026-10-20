@@ -19,6 +19,7 @@ fn request() -> Initialization {
         limits: Default::default(),
         native_handles: 16,
         pending_futures: 4,
+        buffered_bytes: 1024,
     });
     request
 }

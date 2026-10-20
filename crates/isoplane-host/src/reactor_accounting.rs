@@ -1,14 +1,20 @@
 //! Attributes active reactor polls through a shared, transferable execution scope.
 
 use std::future::{poll_fn, Future};
-use std::pin::pin;
+use std::pin::{pin, Pin};
 use std::sync::{Arc, Weak};
 
 use parking_lot::Mutex;
 
 use crate::meters::{Meters, OccupancyInterval};
 
+pub(crate) type AllowanceWait = Pin<Box<dyn Future<Output = ()> + Send>>;
+
 pub(crate) trait Observer: Send + Sync {
+    /// Request polls run immediately; background observers can defer until credit returns.
+    fn wait_for_allowance(self: Arc<Self>) -> Option<AllowanceWait> {
+        None
+    }
     fn started(&self);
     fn interval(&self, ns: Option<u64>);
     fn finished(&self);
@@ -71,13 +77,31 @@ impl TaskUsage {
         CURRENT
             .scope(self.clone(), async {
                 let mut future = pin!(future);
-                poll_fn(|context| {
+                let mut waiting: Option<AllowanceWait> = None;
+                poll_fn(|context| loop {
+                    if let Some(wait) = &mut waiting {
+                        if wait.as_mut().poll(context).is_pending() {
+                            return std::task::Poll::Pending;
+                        }
+                        waiting = None;
+                    }
+                    let observer = self.attribution.begin_poll();
+                    if let Some(wait) = observer
+                        .as_ref()
+                        .and_then(|owner| owner.clone().wait_for_allowance())
+                    {
+                        if let Some(owner) = observer {
+                            owner.finished();
+                        }
+                        waiting = Some(wait);
+                        continue;
+                    }
                     let _interval = PollUsage {
                         meters: &self.meters,
-                        observer: self.attribution.begin_poll(),
+                        observer,
                         interval: OccupancyInterval::start(),
                     };
-                    future.as_mut().poll(context)
+                    return future.as_mut().poll(context);
                 })
                 .await;
             })

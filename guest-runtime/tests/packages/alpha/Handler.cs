@@ -70,12 +70,10 @@ public static class Handler
     }
 
     /// <summary>
-    /// A method of the right shape to be recorded as the initializer, which opts in to running
-    /// timers between requests and leaves a frequent periodic timer running.
+    /// A method of the right shape to be recorded as the initializer, which leaves a frequent periodic timer running.
     /// </summary>
-    public static Task RunTimersBetweenRequestsAsync()
+    public static Task StartHeartbeatAsync()
     {
-        Initialization.RunTimersBetweenRequests(minimumInterval: TimeSpan.FromMilliseconds(100));
         heartbeat = new Timer(LoggedBeat, null, TimeSpan.FromMilliseconds(20), TimeSpan.FromMilliseconds(20));
         return Task.CompletedTask;
     }

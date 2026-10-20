@@ -53,6 +53,7 @@ impl Default for GuestResourceLimits {
 /// freeze the clock, read the trap latch and collect the response for an
 /// instance whose bindings it no longer owns.
 pub struct InstanceCtx {
+    pub(crate) background: Arc<crate::background::Background>,
     pub(crate) admission: Mutex<Option<crate::admission::InstanceReservation>>,
     pub(crate) snapshot: Mutex<Option<Box<dyn isoplane_hibernate::snapshot::SnapshotReservation>>>,
     pub instance: InstanceId,
@@ -63,8 +64,6 @@ pub struct InstanceCtx {
     pub allowlist: Option<Vec<String>>,
     /// Exact peers an operator lets this application reach where the node's policy refuses.
     pub endpoint_exceptions: Arc<[std::net::SocketAddr]>,
-    /// Whether the guest may show notices meant only for local development.
-    pub development_notices: bool,
     pub meters: Arc<Meters>,
     /// `None` in tests that exercise the slot machinery without a cell.
     pub rt: Option<Arc<CellRuntime>>,
@@ -95,6 +94,14 @@ pub struct InstanceCtx {
 }
 
 impl InstanceCtx {
+    pub(crate) fn report_background(&self) {
+        let connections = self.rt.as_ref().map_or(0, |rt| {
+            rt.services.egress.instance_connections(self.instance)
+        });
+        self.background
+            .report(&self.tenant, &self.module, connections);
+    }
+
     pub(crate) fn configure_resources(&mut self, limits: GuestResourceLimits) {
         self.guest_resources = limits;
         self.native_io = Mutex::new(super::native_io::Resources::new(
@@ -181,7 +188,9 @@ impl InstanceCtx {
         rt: Option<Arc<CellRuntime>>,
     ) -> Self {
         let no_dispatch = DispatchState::new(0);
+        let background = Arc::new(crate::background::Background::new(instance, rt.as_deref()));
         Self {
+            background,
             admission: Mutex::new(None),
             snapshot: Mutex::new(None),
             instance,
@@ -191,7 +200,6 @@ impl InstanceCtx {
             guest_resources: GuestResourceLimits::default(),
             allowlist: tenancy.allowlist,
             endpoint_exceptions: Arc::new([]),
-            development_notices: false,
             meters,
             rt,
             clock_ms: AtomicU64::new(0),
@@ -269,6 +277,8 @@ impl InstanceCtx {
     /// Ends a dispatch's state, closing what it held open.
     pub(crate) fn end_dispatch(&self, dispatch: u64) {
         if let Some(state) = self.dispatches.lock().remove(&dispatch) {
+            let background: Arc<dyn crate::reactor_accounting::Observer> = self.background.clone();
+            state.reactor_attribution.set(Some(&background));
             state.close();
         }
         let mut current = self.current.lock();

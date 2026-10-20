@@ -282,7 +282,8 @@ impl Slot {
                 self.last_used_ms
                     .fetch_max(record.now_ms, Ordering::Relaxed);
             }
-            isoplane_abi::DispatchKind::CronTick { .. } | isoplane_abi::DispatchKind::Timers => {}
+            isoplane_abi::DispatchKind::CronTick { .. }
+            | isoplane_abi::DispatchKind::Background => {}
         }
     }
 
@@ -403,7 +404,7 @@ mod tests {
         let prepared = isoplane_abi::native_io::PreparedResources {
             ready_pollables: vec![isoplane_abi::native_io::ResourceHandle(4)],
             pending_timers: Vec::new(),
-            timers_between_requests_ms: None,
+
             network: Some(isoplane_abi::native_io::ResourceHandle(3)),
             next_handle: 5,
         };

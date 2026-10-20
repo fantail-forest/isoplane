@@ -26,6 +26,14 @@ async fn response(after_finish: &str) -> (Arc<Cell>, HttpExchange) {
 }
 
 async fn response_program(handle: &str, wake: &str) -> (Arc<Cell>, HttpExchange) {
+    response_program_with(CellConfig::for_test("response-boundary"), handle, wake).await
+}
+
+async fn response_program_with(
+    config: CellConfig,
+    handle: &str,
+    wake: &str,
+) -> (Arc<Cell>, HttpExchange) {
     let head = postcard::to_allocvec(&ResponseHead {
         status: 200,
         headers: vec![],
@@ -60,10 +68,7 @@ async fn response_program(handle: &str, wake: &str) -> (Arc<Cell>, HttpExchange)
     let module = ModuleId::new("response", "v1");
     let activator =
         Arc::new(EngineActivator::load(engine, module, &wasm).expect("real response guest"));
-    let (cell, _) = common::rig_resolving(
-        CellConfig::for_test("response-boundary"),
-        "93.184.216.34:80",
-    );
+    let (cell, _) = common::rig_resolving(config, "93.184.216.34:80");
     cell.register_module(
         "owner",
         activator,
@@ -95,16 +100,18 @@ async fn response_program(handle: &str, wake: &str) -> (Arc<Cell>, HttpExchange)
 }
 
 #[tokio::test]
-async fn finishing_a_response_then_parking_cannot_resume_guest_work() {
+async fn finishing_a_response_hands_pending_work_to_background() {
     tokio::time::timeout(Duration::from_secs(10), async {
-        let (cell, mut response) =
-            response("(drop (call $timer (i64.const 0))) (i64.const 1)").await;
+        let (cell, mut response) = response_program(
+            "(call $finish (call $start (i32.const 1024) (i32.const {head_len}))) (drop (call $timer (i64.const 0))) (i64.const 1)",
+            "(i64.const 0)",
+        ).await;
         let mut body = vec![];
         while let Some(chunk) = response
             .body
             .read()
             .await
-            .expect("the finished response must not enter the trapping wake")
+            .expect("the response must settle independently of the background wake")
         {
             body.extend(chunk);
         }
@@ -112,14 +119,15 @@ async fn finishing_a_response_then_parking_cannot_resume_guest_work() {
             body, b"A",
             "the completed response must deliver its initial body"
         );
-        while cell.metrics_raw().dispatch_us.count() == 0 {
+        while cell.metrics_raw().dispatch_us.count() < 2 {
             tokio::task::yield_now().await;
         }
         assert_eq!(
             cell.futures().live_futures(),
             0,
-            "response settlement must cancel the unused timer before any wake"
+            "the background wake must consume the retained timer"
         );
+        assert_eq!(cell.resident_ids().len(), 1, "background completion keeps the instance warm");
         cell.shutdown();
     })
     .await
@@ -179,4 +187,29 @@ async fn suppressing_a_response_body_keeps_leftover_work_running() {
     })
     .await
     .expect("bodyless response and leftover work must settle");
+}
+
+#[tokio::test]
+async fn a_nonreturning_background_callback_is_killed_after_its_request_completes() {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let config = CellConfig {
+            slice_wall_ms_cap: 50,
+            ..CellConfig::for_test("background-hard-stop")
+        };
+        let (cell, mut response) = response_program_with(config,
+            "(call $finish (call $start (i32.const 1024) (i32.const {head_len}))) (drop (call $timer (i64.const 0))) (i64.const 1)",
+            "(loop $spin (br $spin)) (i64.const 0)",
+        ).await;
+        let mut body = Vec::new();
+        while let Some(chunk) = response.body.read().await.expect("completed response") {
+            body.extend(chunk);
+        }
+        assert_eq!(body, b"A");
+        while !cell.resident_ids().is_empty() {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(cell.metrics().budget_kills, 1);
+        assert_eq!(cell.futures().live_futures(), 0);
+        cell.shutdown();
+    }).await.expect("the background hard stop must evict the spinning instance");
 }

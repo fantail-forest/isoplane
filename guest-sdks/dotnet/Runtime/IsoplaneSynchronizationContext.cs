@@ -9,8 +9,7 @@ namespace Isoplane.Runtime;
 /// guest memory. Each dispatch has its own, so a continuation runs in a slice
 /// of the dispatch that awaited; <see cref="Instance"/> serves code outside any
 /// dispatch, and takes over a dispatch's continuations once it ends. The export
-/// driver drains the current dispatch's queue during each slice, then returns
-/// when no runnable work remains. This scheduler does not
+/// driver runs a bounded batch from the current dispatch's queue per slice. This scheduler does not
 /// intercept awaiters that bypass context capture or prove that an incomplete
 /// task has a completion source.
 /// </summary>
@@ -58,12 +57,11 @@ internal sealed class IsoplaneSynchronizationContext : SynchronizationContext
     }
 
     /// <summary>
-    /// Runs queued continuations until the queue drains, including any they
-    /// enqueue.
+    /// Runs at most one callback batch, preserving the remaining queue for another slice.
     /// </summary>
     internal void Drain()
     {
-        while (_queue.Count > 0)
+        for (int remaining = 64; remaining > 0 && _queue.Count > 0; remaining--)
         {
             Work w = _queue.Dequeue();
             w.Callback(w.State);

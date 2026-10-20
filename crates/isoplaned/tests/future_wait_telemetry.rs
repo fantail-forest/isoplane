@@ -22,7 +22,7 @@ async fn host_future_waits_export_one_terminal_outcome() {
     .expect("logging task");
     for outcome in ["ready", "cancelled", "lost", "discarded"] {
         tracing::info_span!(target: "isoplane_test", "operation", outcome).in_scope(|| {
-            let table = FutureTable::new();
+            let table = FutureTable::new(1024);
             let owner = InstanceId(1);
             let id = table
                 .alloc(owner, 1, "test_operation", 4)

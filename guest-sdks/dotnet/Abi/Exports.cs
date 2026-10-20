@@ -36,7 +36,6 @@ public static unsafe class Exports<TRouter>
     {
         if (_runtimeBooted) return;
         GuestConsole.Install();
-        TimerNotices.Install();
         SynchronizationContext.SetSynchronizationContext(IsoplaneSynchronizationContext.Instance);
         _runtimeBooted = true;
     }
@@ -116,13 +115,8 @@ public static unsafe class Exports<TRouter>
             // Before any timer can run, so those initialization left count
             // from this instance's activation.
             RuntimeTimers.CountFromActivation();
-            TimerNotices.Activate();
-            // Timers that came due while the instance was idle run first, each
-            // until it returns or awaits, so the dispatch's own work sees the
-            // state they bring up to date.
-            ManagedWork.Drain(dispatch);
 
-            if (dispatch.Kind != DispatchKind.Timers)
+            if (dispatch.Kind != DispatchKind.Background)
             {
                 using (DispatchPartition.Mark(dispatch.Id))
                     dispatch.Root = RequestDispatch.RouteAsync(_router!, d);
@@ -175,14 +169,11 @@ public static unsafe class Exports<TRouter>
             }
             if (GuestDispatch.Resume(wake.Dispatch) is not { } dispatch)
             {
-                // A dispatch that has returned its response stays open on the
-                // host while work it started, such as an outbound call, is
-                // still pending. That work runs as the instance's, and the host
-                // ends the dispatch once none of it is left.
+                // Instance work has its own slices after its originating request ends.
                 GuestDispatch.EnterFinished();
                 FutureTable.Complete(future, wake.Result);
                 ManagedWork.Drain();
-                GuestDispatch.RequestSlicesForOthers();
+                GuestDispatch.RequestSlices();
                 return PollStatus.Done(0);
             }
             FutureTable.Complete(future, wake.Result);
@@ -247,10 +238,10 @@ public static unsafe class Exports<TRouter>
     private static long Settle(GuestDispatch dispatch)
     {
         ManagedWork.Drain(dispatch);
-        GuestDispatch.RequestSlicesForOthers();
 
         if (dispatch.Root is not { } root)
         {
+            GuestDispatch.RequestSlices();
             if (FutureTable.Owned(dispatch.Id) > 0) return PollStatus.Pending();
             dispatch.End();
             return PollStatus.Done(0);
@@ -258,11 +249,13 @@ public static unsafe class Exports<TRouter>
 
         if (!root.IsCompleted)
         {
+            GuestDispatch.RequestSlices();
             Log(1, "parking: pending futures=" + FutureTable.Count.ToString());
             return PollStatus.Pending();
         }
 
         dispatch.End();
+        GuestDispatch.RequestSlices();
 
         if (root.IsCanceled) return PollStatus.Cancelled();
 

@@ -337,7 +337,15 @@ mod tests {
     fn keep_alive_requested_before_connecting_is_held_for_the_connection() {
         use isoplane_abi::native_io::DurationNanos;
         let (mut resources, bindings) = resources(1);
+        assert!(resources.idle_timers().is_none());
         let socket = created(&mut resources, &bindings);
+        assert_eq!(
+            resources
+                .idle_timers()
+                .expect("an idle socket arms the stop")
+                .earliest_deadline,
+            None
+        );
         let initial = keep_alive(&mut resources, &bindings, socket, None)
             .expect("an unconnected socket must report its settings");
         assert!(!initial.enabled, "keep-alive must start disabled");
@@ -508,6 +516,7 @@ mod tests {
                 &bindings,
             )
             .expect("dropping the owned socket must release its resource slot");
+        assert!(resources.idle_timers().is_none());
         let replacement = created(&mut resources, &bindings);
         assert_ne!(
             socket, replacement,
@@ -813,7 +822,6 @@ pub(crate) struct Resources {
 /// waiting for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct IdleTimers {
-    pub(crate) minimum_interval: std::time::Duration,
     /// The earliest deadline of a timer still pending, if one is.
     pub(crate) earliest_deadline: Option<tokio::time::Instant>,
 }
@@ -845,7 +853,6 @@ impl Resources {
     }
 
     pub(crate) fn idle_timers(&self) -> Option<IdleTimers> {
-        let minimum_interval_ms = self.prepared.as_ref()?.timers_between_requests_ms?;
         // A timer the guest already saw as ready has been handled or ignored.
         let earliest_deadline = self
             .entries
@@ -857,10 +864,17 @@ impl Resources {
                 _ => None,
             })
             .min();
-        Some(IdleTimers {
-            minimum_interval: std::time::Duration::from_millis(minimum_interval_ms),
-            earliest_deadline,
-        })
+        if earliest_deadline.is_none()
+            && !self.entries.values().any(|resource| {
+                matches!(
+                    resource,
+                    Resource::Socket(_) | Resource::Input(_) | Resource::Output(_)
+                )
+            })
+        {
+            return None;
+        }
+        Some(IdleTimers { earliest_deadline })
     }
 
     pub(crate) fn clear(&mut self) {
@@ -944,7 +958,6 @@ impl Resources {
             network: self.network,
             ready_pollables,
             pending_timers,
-            timers_between_requests_ms: None,
         })
     }
 
@@ -1690,7 +1703,7 @@ mod timer_tests {
                 ),
                 fetcher: Arc::new(crate::fakes::FakeFetcher::default()),
             }),
-            futures: Arc::new(FutureTable::new()),
+            futures: Arc::new(FutureTable::new(1 << 20)),
             metrics: Arc::new(crate::metrics::Metrics::new()),
             wake: woken.clone(),
             reactor: tokio::runtime::Handle::current(),
@@ -1791,14 +1804,12 @@ mod timer_tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn a_timer_armed_after_its_dispatchs_response_is_the_instances() {
+    async fn a_background_timer_wakes_only_background_execution() {
         let (context, woken) = reactor_bindings();
+        context.begin_dispatch(0, crate::futures::INSTANCE_WORK);
         let bindings = CellBindings::new(context.clone());
         let futures = context.rt.as_ref().expect("reactor").futures.clone();
-        context
-            .dispatch(1)
-            .expect("the dispatch must be in progress")
-            .mark_responded();
+
         let mut resources = Resources::new(ResourceLimits {
             handles: ResourceCount(1),
         });
@@ -1820,10 +1831,10 @@ mod timer_tests {
         );
         assert_eq!(
             futures
-                .take_ready_for(context.instance, Some(9))
+                .take_background_ready(context.instance)
                 .map(|ready| ready.dispatch),
-            Some(9),
-            "it runs in a slice of the dispatch hosting the instance's work"
+            Some(crate::futures::INSTANCE_WORK),
+            "it retains background execution identity"
         );
     }
 

@@ -20,9 +20,8 @@ pub struct DispatchRecord {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DispatchKind {
     Http(HttpRequest),
-    /// Runs the timers that came due while the instance was idle, and nothing
-    /// else; the host sends it only to an application that opted in.
-    Timers,
+    /// Instance work metered against its background allowance.
+    Background,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -59,7 +58,7 @@ impl DispatchKind {
     pub fn label(&self) -> &'static str {
         match self {
             DispatchKind::Http(_) => "http",
-            DispatchKind::Timers => "timers",
+            DispatchKind::Background => "background",
         }
     }
 }

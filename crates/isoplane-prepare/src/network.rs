@@ -24,6 +24,8 @@ pub struct InitializationNetwork {
     pub native_handles: usize,
     /// Maximum pending native futures.
     pub pending_futures: u32,
+    /// Maximum buffered future-result bytes.
+    pub buffered_bytes: usize,
 }
 
 /// The destination policy initialization shares with the application's execution.
@@ -69,6 +71,7 @@ impl InitializationNetwork {
                 allowlist: self.allowlist.clone(),
                 pending_futures: self.pending_futures,
                 native_handles: self.native_handles,
+                buffered_bytes: self.buffered_bytes,
             },
             reactor,
         ))

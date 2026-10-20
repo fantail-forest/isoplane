@@ -260,7 +260,7 @@ mod tests {
                 egress: policy,
                 fetcher: Arc::new(FakeFetcher::default()),
             }),
-            futures: Arc::new(FutureTable::new()),
+            futures: Arc::new(FutureTable::new(1 << 20)),
             metrics: Arc::new(crate::metrics::Metrics::new()),
             wake: wake.clone(),
             reactor: tokio::runtime::Handle::current(),

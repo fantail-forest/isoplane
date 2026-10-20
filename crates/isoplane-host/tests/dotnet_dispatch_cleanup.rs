@@ -7,6 +7,7 @@ use isoplane_abi::config::Limits;
 use isoplane_abi::dispatch::HttpRequest;
 use isoplane_engine::IsoplaneEngine;
 use isoplane_fixtures::GuestRuntime;
+use isoplane_harness::EmittedGuestLogs as _;
 use isoplane_host::activator::EngineActivator;
 use isoplane_host::cell::{Cell, CellConfig, Target};
 use isoplane_host::ModuleId;
@@ -130,6 +131,7 @@ async fn wait_until_idle(cell: &Arc<Cell>, module: &ModuleId) {
 }
 
 async fn check_work_after_the_response(runtime: GuestRuntime, operation: &str) {
+    isoplane_harness::LogCapture::global();
     let work = Arc::new(PendingWork::default());
     let (cell, module) = cleanup_cell(runtime, work.clone(), operation);
     let armed = dispatch_request(&cell, &module, operation);
@@ -137,17 +139,31 @@ async fn check_work_after_the_response(runtime: GuestRuntime, operation: &str) {
         armed.body, b"armed",
         "the client is answered while the guest's operation is still pending"
     );
-    assert!(
-        cell.slot(armed.instance).is_some() && cell.idle_instances(&module) == Some(0),
-        "the dispatch stays open on its instance while its work is pending"
-    );
+    wait_until_idle(&cell, &module).await;
     assert_eq!(
         cell.metrics_raw().dispatch_us.count(),
-        0,
-        "a dispatch with work pending is not finished"
+        1,
+        "request completion does not wait for the pending operation"
     );
-
     work.release.notify_one();
+    let callback = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if let Some(record) = cell
+                .slot(armed.instance)
+                .expect("retained instance")
+                .ctx
+                .emitted_logs()
+                .into_iter()
+                .find(|record| record.fields.contains("retained-operation-completed"))
+            {
+                break record;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("background work must finish without a later request");
+    assert_eq!(callback.dispatch, isoplane_host::futures::INSTANCE_WORK);
     wait_until_idle(&cell, &module).await;
     let observed = dispatch_at_idle(&cell, &module, "/observe").await;
     assert_eq!(
@@ -375,9 +391,15 @@ async fn a_timer_left_pending_keeps_its_instance() {
         "step 1: the guest must leave a timer pending"
     );
     assert_eq!(
-        cell.futures().live_futures(),
-        0,
-        "step 1: the pending timer's wake must end with its dispatch"
+        cell.futures()
+            .pending_of_dispatch(
+                long.instance,
+                isoplane_host::futures::INSTANCE_WORK,
+                "poll_call"
+            )
+            .len(),
+        1,
+        "step 1: the pending timer wake transfers to background ownership"
     );
     let waiting = dispatch_at_idle(&cell, &module, "/observe").await;
     assert_eq!(
@@ -396,53 +418,6 @@ async fn a_lookup_left_pending_after_the_response_completes_on_its_instance() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn work_resuming_on_its_dispatch_context_after_the_response_completes_on_its_instance() {
     check_work_after_the_response(GuestRuntime::Mono, "/dns-on-context").await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_lookup_still_pending_after_the_window_finishes_in_a_later_dispatch() {
-    let work = Arc::new(PendingWork::default());
-    let (cell, module) = cleanup_cell_with(
-        CellConfig {
-            after_response_ms: 100,
-            ..CellConfig::for_test("managed-cleanup")
-        },
-        GuestRuntime::Mono,
-        work.clone(),
-        "/dns",
-    );
-    let armed = dispatch_request(&cell, &module, "/dns");
-    assert_eq!(armed.body, b"armed");
-    wait_until_idle(&cell, &module).await;
-    assert_eq!(
-        (
-            cell.metrics_raw().dispatch_us.count(),
-            cell.metrics().work_handed_to_instance
-        ),
-        (1, 1),
-        "step 1: the dispatch ends when its window runs out, handing its lookup to the instance"
-    );
-
-    work.release.notify_one();
-    tokio::time::timeout(Duration::from_secs(60), async {
-        while !cell.futures().has_ready(armed.instance) {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("step 2: the lookup must complete");
-    assert_eq!(
-        cell.idle_instances(&module),
-        Some(1),
-        "step 2: its completion gives the idle instance no slice"
-    );
-
-    let observed = dispatch_at_idle(&cell, &module, "/observe").await;
-    assert_eq!(
-        (observed.instance, observed.body.as_slice()),
-        (armed.instance, &b"2:1"[..]),
-        "step 3: the lookup finishes in the next dispatch's slice, as the instance's work"
-    );
-    cell.shutdown();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -518,6 +493,7 @@ async fn a_clean_interpreted_guest_drives_its_timer_after_clock_advances() {
 }
 
 async fn check_dormant_promise(runtime: GuestRuntime) {
+    isoplane_harness::LogCapture::global();
     let (cell, module) = cleanup_cell(runtime, Arc::new(PendingWork::default()), "/timer");
     let armed = dispatch_at_idle(&cell, &module, "/promise-arm").await;
     assert_eq!(
@@ -538,6 +514,28 @@ async fn check_dormant_promise(runtime: GuestRuntime) {
         signalled.body, b"signalled",
         "the later dispatch must complete the managed promise"
     );
+    let callback = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if let Some(record) = cell
+                .slot(armed.instance)
+                .expect("retained instance")
+                .ctx
+                .emitted_logs()
+                .into_iter()
+                .find(|record| record.fields.contains("retained-promise-completed"))
+            {
+                break record;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the retained continuation must run");
+    assert_eq!(
+        callback.dispatch,
+        isoplane_host::futures::INSTANCE_WORK,
+        "the signalling request must not execute the retained callback"
+    );
     let observed = dispatch_at_idle(&cell, &module, "/observe").await;
     assert_eq!(
         observed.instance, armed.instance,
@@ -554,6 +552,10 @@ async fn check_dormant_promise(runtime: GuestRuntime) {
 async fn check_same_dispatch_promise(runtime: GuestRuntime) {
     let (cell, module) = cleanup_cell(runtime, Arc::new(PendingWork::default()), "/timer");
     let completed = dispatch_at_idle(&cell, &module, "/promise-complete").await;
+    assert!(
+        completed.slices > 1,
+        "a callback chain must yield between bounded batches"
+    );
     assert_eq!(
         String::from_utf8_lossy(&completed.body),
         "1:1",

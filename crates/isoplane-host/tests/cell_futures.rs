@@ -1,4 +1,4 @@
-//! The pending-futures cap and post-response work rejection.
+//! Request future limits and response-completion handover.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -13,6 +13,7 @@ use isoplane_host::{Activator, ModuleId};
 
 mod common;
 use common::manifest;
+use isoplane_harness::EmittedGuestLogs as _;
 
 struct Rig {
     cell: Arc<Cell>,
@@ -168,162 +169,80 @@ fn the_pending_futures_cap_traps_the_guest() {
     paid.cell.shutdown();
 }
 
-#[tokio::test]
-async fn work_left_after_the_response_keeps_its_dispatch_open_and_its_instance() {
-    let r = rig(CellConfig::for_test("leftover"));
-    let act = Arc::new(FakeActivator::named(
-        ModuleId::new("leftover", "v1"),
-        FakeBehaviour::program([Step::RespondLeaving {
-            imports: vec![("clock_deadline_in", 1_000)],
-        }]),
-    ));
-    let module = act.module().clone();
-    r.cell
-        .register_module("acme", act, manifest("leftover", Limits::default()))
-        .unwrap();
-
-    let rec = http(&r.cell, &module, "/leftover");
-    let out = r
-        .cell
-        .dispatch_blocking(
-            &module,
-            Target::Handler {
-                route: "/leftover".into(),
-            },
-            rec,
-            T,
-        )
-        .unwrap();
-    assert_eq!(
-        (out.status, out.body.as_slice()),
-        (200, b"responded".as_slice()),
-        "the client is answered when the response is complete"
-    );
-    assert_eq!(
-        r.cell.metrics_raw().dispatch_us.count(),
-        0,
-        "the dispatch is not finished while its work is pending"
-    );
-    tokio::time::timeout(T, async {
-        while r.cell.metrics_raw().dispatch_us.count() == 0 {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("the dispatch must end once its work completes");
-    assert!(
-        r.cell.slot(out.instance).is_some(),
-        "work left after the response must not cost its instance"
-    );
-    assert_eq!(r.cell.futures().live_futures(), 0);
-    r.cell.shutdown();
-}
-
-/// A window after the response short enough that a test sees it run out.
-fn short_window(name: &str) -> CellConfig {
-    CellConfig {
-        after_response_ms: 50,
-        ..CellConfig::for_test(name)
-    }
-}
-
 #[test]
-fn work_still_pending_when_the_window_after_the_response_ends_becomes_the_instances() {
-    let r = rig(short_window("window"));
+fn response_completion_hands_work_to_background_without_holding_the_request_open() {
+    isoplane_harness::LogCapture::global();
+    let r = rig(CellConfig::for_test("handover"));
     let act = Arc::new(FakeActivator::named(
-        ModuleId::new("window", "v1"),
-        FakeBehaviour::program([Step::RespondLeaving {
-            imports: vec![("clock_deadline_in", PARK_MS)],
-        }]),
-    ));
-    let module = act.module().clone();
-    r.cell
-        .register_module("acme", act, manifest("window", Limits::default()))
-        .unwrap();
-
-    let out = r
-        .cell
-        .dispatch_blocking(
-            &module,
-            Target::Handler {
-                route: "/window".into(),
-            },
-            http(&r.cell, &module, "/window"),
-            T,
-        )
-        .unwrap();
-    assert_eq!(out.status, 200);
-    assert!(
-        wait_for(|| r.cell.metrics_raw().dispatch_us.count() == 1, T),
-        "the dispatch must end once its window runs out, though its work never completes"
-    );
-    assert_eq!(r.cell.metrics().work_handed_to_instance, 1);
-    assert_eq!(
-        r.cell.idle_instances(&module),
-        Some(1),
-        "the instance is kept, idle, for later dispatches"
-    );
-    assert_eq!(
-        r.cell.futures().live_futures(),
-        1,
-        "the work is kept as the instance's, not cancelled"
-    );
-    r.cell.shutdown();
-}
-
-#[test]
-fn the_instances_work_waits_while_it_is_idle_and_runs_in_a_later_dispatch() {
-    let r = rig(short_window("hosted"));
-    let act = Arc::new(FakeActivator::named(
-        ModuleId::new("hosted", "v1"),
+        ModuleId::new("handover", "v1"),
         FakeBehaviour::program([
             Step::RespondLeaving {
-                imports: vec![("clock_deadline_in", 200)],
-            },
-            Step::Park {
                 imports: vec![("clock_deadline_in", PARK_MS)],
             },
+            Step::Log { bytes: 1, times: 1 },
             Step::Done {
                 status: 200,
-                body: b"hosted".to_vec(),
+                body: b"warm".to_vec(),
             },
         ]),
     ));
     let module = act.module().clone();
     r.cell
-        .register_module("acme", act, manifest("hosted", Limits::default()))
+        .register_module("acme", act, manifest("handover", Limits::default()))
         .unwrap();
-    let send = |path: &str| {
+    let send = || {
         r.cell
             .dispatch_blocking(
                 &module,
-                Target::Handler { route: path.into() },
-                http(&r.cell, &module, path),
+                Target::Handler { route: "/".into() },
+                http(&r.cell, &module, "/"),
                 T,
             )
             .unwrap()
     };
-
-    let first = send("/leave");
-    assert!(
-        wait_for(|| r.cell.metrics().work_handed_to_instance == 1, T),
-        "step 1: the first dispatch hands its work to the instance"
+    let first = send();
+    assert_eq!(
+        (first.status, first.body.as_slice()),
+        (200, b"responded".as_slice())
     );
     assert!(
-        wait_for(|| r.cell.futures().has_ready(first.instance), T),
-        "step 2: the work completes while no dispatch is in progress"
+        wait_for(
+            || r.cell.metrics_raw().dispatch_us.count() == 1
+                && r.cell.idle_instances(&module) == Some(1),
+            T
+        ),
+        "the request ends while its operation is still pending"
+    );
+    assert_eq!(r.cell.metrics().work_handed_to_instance, 1);
+    assert_eq!(r.cell.futures().live_futures(), 1);
+    let future = r.cell.futures().live_future_ids()[0];
+    r.cell
+        .complete_future(future, isoplane_abi::result::ResultRecord::Ok(vec![]));
+    assert!(
+        wait_for(
+            || r.cell.metrics_raw().dispatch_us.count() == 2
+                && r.cell.idle_instances(&module) == Some(1),
+            T
+        ),
+        "background work runs without a new request"
+    );
+    let slot = r
+        .cell
+        .slot(first.instance)
+        .expect("the instance remains warm");
+    assert_eq!(
+        slot.ctx.emitted_logs()[0].dispatch,
+        isoplane_host::futures::INSTANCE_WORK
     );
     assert_eq!(
-        r.cell.idle_instances(&module),
-        Some(1),
-        "step 2: and its result waits rather than giving the idle instance a slice"
+        r.cell.meters(&module).unwrap().dispatches(),
+        1,
+        "background execution is not a request"
     );
-
-    let second = send("/host");
+    let second = send();
     assert_eq!(
         (second.instance, second.status, second.body.as_slice()),
-        (first.instance, 200, b"hosted".as_slice()),
-        "step 3: the waiting result runs in a slice of the next dispatch, which it answers from"
+        (first.instance, 200, b"warm".as_slice())
     );
     r.cell.shutdown();
 }

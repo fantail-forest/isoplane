@@ -261,10 +261,7 @@ pub(super) mod cell_tests {
 
     #[test]
     fn the_sweeper_warms_a_template_only_while_its_module_has_instances() {
-        let cell = cell(
-            CellConfig::for_test("template-warm"),
-            Arc::new(FakeHibernator),
-        );
+        let cell = cell(CellConfig::for_test("template-warm"));
         let act = Arc::new(FakeActivator::named(
             ModuleId::new("warm", "v1"),
             FakeBehaviour::done(),
@@ -854,13 +851,28 @@ pub(super) mod cell_tests {
         .expect("dispatch cleanup must settle");
         let records = events.completed(1);
         assert_eq!(records[0]["slice_occupancy_ns"], 33);
+        let slot = cell
+            .slot(result.instance)
+            .expect("streaming instance retained");
+        assert!(
+            wait_for(
+                || {
+                    !cell.active.contains_key(&slot.id)
+                        && !slot.ctx.background.has_work()
+                        && cell.futures().pending_total(slot.id) == 0
+                },
+                Duration::from_secs(10)
+            ),
+            "background polls settle"
+        );
         let meters = cell.meters(&module).expect("module meters");
         assert_eq!(
             meters.occupancy_ns(),
             records[0]["occupancy_ns"]
                 .as_u64()
-                .expect("final occupancy"),
-            "streaming must record each hot slice exactly once"
+                .expect("final occupancy")
+                + slot.ctx.background.consumed_ns(),
+            "application usage includes request execution and transferred work exactly once"
         );
         assert_eq!(
             meters.dispatches(),
@@ -877,10 +889,7 @@ pub(super) mod cell_tests {
 
     #[tokio::test]
     async fn a_client_going_away_leaves_the_other_dispatches_on_its_instance_running() {
-        let cell = cell(
-            CellConfig::for_test("client-gone"),
-            Arc::new(FakeHibernator),
-        );
+        let cell = cell(CellConfig::for_test("client-gone"));
         let module = app(
             &cell,
             "client-gone",
@@ -977,7 +986,7 @@ pub(super) mod cell_tests {
 
     #[test]
     fn a_dispatch_joins_only_an_instance_with_nothing_waiting_for_its_thread() {
-        let cell = cell(CellConfig::for_test("join-rule"), Arc::new(FakeHibernator));
+        let cell = cell(CellConfig::for_test("join-rule"));
         let module = app(
             &cell,
             "join-rule",

@@ -21,7 +21,7 @@ use crate::bindings::{CellRuntime, InstanceCtx, WakeSink};
 pub use crate::bindings::{Fetcher, Services};
 use crate::breaker::{BreakerConfig, BreakerKey, HangBreaker};
 use crate::disposition::{decide, evict, warm, DispatchEnd};
-use crate::futures::{FutureTable, Handover};
+use crate::futures::FutureTable;
 use crate::hibernate_policy::{self, HibernateConfig};
 use crate::meters::Meters;
 use crate::metrics::{Metrics, MetricsSnapshot};
@@ -29,6 +29,7 @@ use crate::pool::{AcquireSource, Activator, InstancePool};
 use crate::sharded_map::ShardedMap;
 use crate::slot::{EnterError, LifecycleTier, Slot};
 
+mod background;
 mod completion;
 mod dispatch_api;
 mod hibernate;
@@ -68,6 +69,8 @@ pub struct CellConfig {
     /// `exec_threads` times this.
     pub queue_depth_per_worker: usize,
     pub max_idle_per_module: usize,
+    /// Per-instance byte cap for undelivered future payloads, resident or hibernated.
+    pub buffered_future_bytes: usize,
     /// High-water mark for queued HTTP response bytes; writes wait for readers.
     /// This does not limit the total size of a response.
     #[serde(skip)]
@@ -78,21 +81,14 @@ pub struct CellConfig {
     /// by its CPU budget or its client going away, before the host kills it,
     /// evicting its instance and failing every dispatch on it.
     pub cancellation_grace_ms: u64,
-    /// How long a dispatch whose response is complete keeps the work it left
-    /// running. What is still pending then becomes the instance's, and the
-    /// dispatch ends.
-    pub after_response_ms: u64,
     /// Host resources retained on behalf of each guest instance.
     pub guest_resources: crate::bindings::GuestResourceLimits,
     pub hibernate: HibernateConfig,
     pub breaker: BreakerConfig,
     pub sweep_interval_ms: u64,
-    /// How long an instance whose application runs timers between requests
-    /// may go without a request before it is stopped rather than woken again.
-    pub timer_wake_idle_limit_ms: u64,
-    /// Whether guests may show the developer notices meant only for local
-    /// development and tests, such as what their timers will cost.
-    pub development_notices: bool,
+    /// How long an instance retaining background work or connections may go
+    /// without a request before it is stopped.
+    pub background_idle_limit_ms: u64,
 }
 
 impl Default for CellConfig {
@@ -104,16 +100,15 @@ impl Default for CellConfig {
             reactor_threads: threads.reactor,
             queue_depth_per_worker: 64,
             max_idle_per_module: 64,
+            buffered_future_bytes: 256 * 1024,
             response_queue_bytes: isoplane_abi::host::DEFAULT_RESPONSE_QUEUE_BYTES,
             slice_wall_ms_cap: 30_000,
             cancellation_grace_ms: 5_000,
-            after_response_ms: 30_000,
             guest_resources: Default::default(),
             hibernate: HibernateConfig::default(),
             breaker: BreakerConfig::default(),
             sweep_interval_ms: 250,
-            timer_wake_idle_limit_ms: 5 * 60 * 1000,
-            development_notices: false,
+            background_idle_limit_ms: 5 * 60 * 1000,
         }
     }
 }
@@ -125,7 +120,6 @@ impl CellConfig {
         Self {
             exec_threads: threads.execution,
             reactor_threads: threads.reactor,
-            development_notices: true,
             ..Self::default()
         }
     }
@@ -144,16 +138,12 @@ impl CellConfig {
             "sweep_interval_ms must be positive"
         );
         anyhow::ensure!(
-            self.timer_wake_idle_limit_ms > 0,
-            "timer_wake_idle_limit_ms must be positive"
+            self.background_idle_limit_ms > 0,
+            "background_idle_limit_ms must be positive"
         );
         anyhow::ensure!(
             self.cancellation_grace_ms > 0,
             "cancellation_grace_ms must be positive"
-        );
-        anyhow::ensure!(
-            self.after_response_ms > 0,
-            "after_response_ms must be positive"
         );
         Ok(())
     }
@@ -262,7 +252,7 @@ impl Cell {
         let queue = Arc::new(WorkQueue::new(cfg.queue_depth_per_worker, cfg.exec_threads));
         let index: Arc<Mutex<HashMap<InstanceId, Weak<Slot>>>> =
             Arc::new(Mutex::new(HashMap::new()));
-        let futures = Arc::new(FutureTable::new());
+        let futures = Arc::new(FutureTable::new(cfg.buffered_future_bytes));
 
         let rt = Arc::new(CellRuntime {
             runtime_configuration: Default::default(),

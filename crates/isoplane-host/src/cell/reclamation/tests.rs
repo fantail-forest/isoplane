@@ -706,7 +706,7 @@ fn background_boundaries_invalidate_capture_without_refreshing_request_recency()
     let slot = idle(&cell, "background-recency", 10);
     let stale = candidate(&cell, slot.id);
     let mut timer = http(2);
-    timer.kind = DispatchKind::Timers;
+    timer.kind = DispatchKind::Background;
     timer.now_ms = 105;
     slot.record_dispatch(&timer);
     slot.park(105);

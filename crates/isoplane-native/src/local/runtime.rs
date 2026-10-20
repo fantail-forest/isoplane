@@ -265,6 +265,7 @@ fn initialization_network(project: &Project) -> isoplane_prepare::Initialization
             .manifest
             .effective_limits()
             .pending_futures_per_dispatch,
+        buffered_bytes: host.buffered_future_bytes,
     }
 }
 

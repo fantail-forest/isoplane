@@ -23,6 +23,7 @@ internal sealed class GuestDispatch
     internal Task<Response>? Root;
     /// <summary>A slice of this dispatch has been asked for and has not begun.</summary>
     private bool _sliceRequested;
+    private static bool _backgroundSliceRequested;
 
     private GuestDispatch(DispatchRecord record)
     {
@@ -58,12 +59,12 @@ internal sealed class GuestDispatch
     }
 
     /// <summary>
-    /// Begins a slice for a dispatch this instance has finished but the host
-    /// keeps open for work it left behind, which now belongs to the instance.
+    /// Begins an instance-background slice without borrowing a request identity.
     /// </summary>
     internal static void EnterFinished()
     {
         Current = null;
+        _backgroundSliceRequested = false;
         DispatchPartition.EnterInstance();
         if (OperatingSystem.IsWasi())
             SynchronizationContext.SetSynchronizationContext(IsoplaneSynchronizationContext.Instance);
@@ -92,18 +93,22 @@ internal sealed class GuestDispatch
     }
 
     /// <summary>
-    /// Asks the host for a slice of every other dispatch that has work this
-    /// slice made ready, or whose result is waiting to be reported.
+    /// Asks for slices of runnable request and background work, coalescing requests.
     /// </summary>
-    internal static void RequestSlicesForOthers()
+    internal static void RequestSlices()
     {
         foreach (var dispatch in InProgress.Values)
         {
-            if (dispatch == Current || dispatch._sliceRequested) continue;
+            if (dispatch._sliceRequested) continue;
             if (!dispatch.Context.HasWork && !DispatchPartition.HasWaiting(dispatch.Id)
-                && dispatch.Root is not { IsCompleted: true }) continue;
+                && (dispatch == Current || dispatch.Root is not { IsCompleted: true })) continue;
             dispatch._sliceRequested = true;
             H.DispatchReady((long)dispatch.Id);
+        }
+        if (!_backgroundSliceRequested && (IsoplaneSynchronizationContext.Instance.HasWork || DispatchPartition.HasWaiting(0)))
+        {
+            _backgroundSliceRequested = true;
+            H.DispatchReady(-1);
         }
     }
 
