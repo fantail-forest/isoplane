@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using Isoplane.Abi;
 
@@ -49,6 +50,22 @@ internal static class FutureTable
         var tcs = new TaskCompletionSource<ResultRecord>(TaskCreationOptions.RunContinuationsAsynchronously);
         Pending[id] = new Entry(tcs, dispatch);
         return tcs.Task;
+    }
+
+    /// <summary>Cancels both the await and its host operation when the token is cancelled.</summary>
+    internal static async Task<ResultRecord> Register(long futureId, CancellationToken cancellationToken)
+    {
+        var pending = Register(futureId);
+        try
+        {
+            return await pending.WaitAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            Pending.Remove((ulong)futureId);
+            H.FutureCancel(futureId);
+            throw;
+        }
     }
 
     /// <summary>

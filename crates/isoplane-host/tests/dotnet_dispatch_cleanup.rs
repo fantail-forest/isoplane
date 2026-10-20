@@ -709,3 +709,50 @@ async fn a_request_body_read_left_after_the_response_fails_instead_of_waiting_fo
     );
     cell.shutdown();
 }
+
+struct ObservedUploadDrop(Option<tokio::sync::oneshot::Sender<()>>);
+
+#[async_trait::async_trait]
+impl isoplane_abi::host::HttpBody for ObservedUploadDrop {
+    async fn read(&mut self) -> anyhow::Result<Option<Vec<u8>>> {
+        std::future::pending().await
+    }
+}
+
+impl Drop for ObservedUploadDrop {
+    fn drop(&mut self) {
+        if let Some(sender) = self.0.take() {
+            sender
+                .send(())
+                .expect("the test still waits for upload release");
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancelling_a_pending_managed_upload_read_releases_the_operation_and_keeps_the_instance() {
+    let (cell, module) = upload_cell();
+    let (dropped, released) = tokio::sync::oneshot::channel();
+    let response = tokio::time::timeout(
+        Duration::from_secs(30),
+        upload(
+            &cell,
+            "/cancel-read",
+            Box::new(ObservedUploadDrop(Some(dropped))),
+        ),
+    )
+    .await
+    .expect("cancellation must settle the pending read");
+    assert_eq!(response, "cancelled");
+    tokio::time::timeout(Duration::from_secs(30), released)
+        .await
+        .expect("the cancelled upload must be released")
+        .expect("upload release signal");
+    wait_until_idle(&cell, &module).await;
+    let before = cell.resident_ids();
+    assert_eq!(before.len(), 1);
+    assert_eq!(upload(&cell, "/", Box::new(EmptyUpload)).await, "stream:");
+    wait_until_idle(&cell, &module).await;
+    assert_eq!(cell.resident_ids(), before);
+    cell.shutdown();
+}

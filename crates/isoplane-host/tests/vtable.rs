@@ -407,6 +407,31 @@ async fn an_http_dns_failure_is_io_and_does_not_count_as_a_policy_denial() {
     );
 }
 
+#[tokio::test]
+async fn cancelling_a_future_through_the_import_cannot_affect_another_instance() {
+    let mut owner = vtable(Limits::default(), "93.184.216.34:80", None);
+    let future = owner.bindings.call_future(ImportCall {
+        import: "clock_deadline_in",
+        payload: &[],
+        scalars: [60_000, 0, 0],
+    });
+    let mut other_context = InstanceCtx::for_test(InstanceId(2), Limits::default());
+    other_context.rt = owner.ctx.rt.clone();
+    let mut other = CellBindings::new(Arc::new(other_context));
+    let cancel = || ImportCall {
+        import: "future_cancel",
+        payload: &[],
+        scalars: [future, 0, 0],
+    };
+    other.call_sync(cancel());
+    assert_eq!(owner.futures.pending_total(owner.ctx.instance), 1);
+    owner.bindings.call_sync(cancel());
+    assert_eq!(owner.futures.pending_total(owner.ctx.instance), 0);
+    owner.bindings.call_sync(cancel());
+    assert_eq!(owner.futures.pending_total(owner.ctx.instance), 0);
+    assert_eq!(owner.ctx.take_trap(), None);
+}
+
 #[derive(Clone, Default)]
 struct TestLogCapture(Arc<std::sync::Mutex<Vec<u8>>>);
 

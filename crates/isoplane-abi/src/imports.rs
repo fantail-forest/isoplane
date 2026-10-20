@@ -205,6 +205,9 @@ pub const IMPORTS: &[ImportDef] = &[
     ImportDef { buf: BufSpec::None, ..imp!("http_body_read", Http, Sig { params: &[I32, I32], results: &[I64] }, FUT,
         "Reads the next chunk of a response body through a host-owned future.") },
 
+    ImportDef { buf: BufSpec::None, ..imp!("future_cancel", Core, Sig { params: &[I64], results: &[] }, SYNC,
+        "releases this instance's future and aborts its host operation; unknown, completed, or foreign-instance ids have no effect") },
+
     // ---- inbound request --------------------------------------------------
     ImportDef { buf: BufSpec::None, ..imp!("req_body_read", Http, Sig { params: &[I32], results: &[I64] }, FUT,
         "reads at most max bytes from this dispatch's upload; max is positive, empty bytes mean EOF; declaring this capability permits inline body bytes followed by a host-owned upload") },

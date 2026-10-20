@@ -49,6 +49,7 @@ pub const SCALARS: &[(&str, &[&str])] = &[
     ("resp_write", &["response_handle"]),
     ("resp_finish", &["response_handle"]),
     ("http_body_read", &["body_handle", "max_len"]),
+    ("future_cancel", &["future"]),
     ("req_body_read", &["max_bytes"]),
     ("init_unit_begin", &["unit"]),
     ("init_unit_deferred", &["unit"]),
@@ -355,6 +356,13 @@ impl HostBindings for CellBindings {
                 -1
             }
 
+            "future_cancel" => {
+                if let Some(rt) = &ctx.rt {
+                    rt.futures
+                        .cancel_owned(ctx.instance, call.scalars[0].into());
+                }
+                0
+            }
             "req_body_can_have_body" => self.req_body_can_have_body(),
             "resp_new" => self.resp_new(call.payload),
             "resp_finish" => self.resp_finish(call.scalars),

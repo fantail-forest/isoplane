@@ -50,7 +50,8 @@ internal sealed class RequestStream(ReadOnlyMemory<byte> prefix, bool canHaveBod
         reading = true;
         try
         {
-            ResultRecord result = await FutureTable.Register(H.ReqBodyRead(buffer.Length));
+            ResultRecord result = await FutureTable.Register(H.ReqBodyRead(buffer.Length), cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
             if (!result.IsOk) throw new IOException($"The request body could not be read: the host reported {result.Error}.");
             if (result.Payload.Length > buffer.Length) throw new IOException("The host returned more request bytes than requested.");
             result.Payload.AsMemory().CopyTo(buffer);

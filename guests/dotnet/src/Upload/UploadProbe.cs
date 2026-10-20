@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using Isoplane;
 
@@ -18,6 +19,21 @@ public static class UploadProbe
     [HttpHandler]
     public static async Task<Response> HandleAsync(StreamingRequest request)
     {
+        if (request.Path == "/cancel-read")
+        {
+            using var cancellation = new CancellationTokenSource();
+            var read = request.Body.ReadAsync(new byte[16], cancellation.Token);
+            cancellation.Cancel();
+            try
+            {
+                await read;
+                return Response.Text("read was not cancelled");
+            }
+            catch (OperationCanceledException)
+            {
+                return Response.Text("cancelled");
+            }
+        }
         if (request.Path == "/leave-read")
         {
             _leftRead = "pending";

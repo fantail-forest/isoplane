@@ -42,6 +42,10 @@ internal static unsafe partial class H
     internal static extern void LogEmit(int level, byte* ptr, int len);
 
     [WasmImportLinkage]
+    [DllImport("isoplane", EntryPoint = "future_cancel")]
+    internal static extern void FutureCancel(long future);
+
+    [WasmImportLinkage]
     [DllImport("isoplane", EntryPoint = "req_body_read")]
     internal static extern long ReqBodyRead(int maxBytes);
 
