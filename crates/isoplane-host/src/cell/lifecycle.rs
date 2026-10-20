@@ -154,7 +154,7 @@ impl Cell {
             .ctx
             .start_dispatch(crate::now_ms(), job.rec.dispatch_id);
         let observer: Arc<dyn crate::reactor_accounting::Observer> = job.completion.clone();
-        *dispatch.reactor_observer.lock() = Some(Arc::downgrade(&observer));
+        dispatch.reactor_attribution.set(Some(&observer));
         dispatch.set_cancel_future(job.rec.cancel_future);
         if let isoplane_abi::dispatch::DispatchKind::Http(request) = &job.rec.kind {
             *dispatch.request_body.lock() = Some(job.upload.clone().unwrap_or_else(|| {

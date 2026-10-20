@@ -17,8 +17,7 @@ pub(crate) struct Runtime {
     pub metrics: Arc<Metrics>,
     pub wake: Arc<dyn WakeSink>,
     pub reactor: tokio::runtime::Handle,
-    pub meters: Arc<crate::meters::Meters>,
-    pub observer: Option<std::sync::Weak<dyn crate::reactor_accounting::Observer>>,
+    pub usage: crate::reactor_accounting::TaskUsage,
 }
 
 impl Runtime {
@@ -26,9 +25,7 @@ impl Runtime {
         &self,
         future: impl std::future::Future<Output = ()> + Send + 'static,
     ) -> tokio::task::JoinHandle<()> {
-        let observer = self.observer.as_ref().and_then(std::sync::Weak::upgrade);
-        let usage = crate::reactor_accounting::TaskUsage::new(self.meters.clone(), observer);
-        self.reactor.spawn(usage.measure(future))
+        self.reactor.spawn(self.usage.clone().measure(future))
     }
 
     pub fn settle_future(&self, id: u64, result: ResultRecord) {
@@ -58,8 +55,7 @@ impl Context for CellBindings {
             metrics: runtime.metrics.clone(),
             wake: runtime.wake.clone(),
             reactor: runtime.reactor.clone(),
-            meters: self.ctx.meters.clone(),
-            observer: self.ctx.current().reactor_observer.lock().clone(),
+            usage: self.ctx.reactor_usage(),
         })
     }
     fn tenant(&self) -> &str {

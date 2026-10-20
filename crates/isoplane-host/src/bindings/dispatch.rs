@@ -3,7 +3,7 @@
 //! imports it calls act on that dispatch's state.
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 
 use parking_lot::Mutex;
 
@@ -24,7 +24,7 @@ pub(crate) struct DispatchState {
     /// completing it, never by entering the instance.
     cancel_future: AtomicU64,
     pub(crate) request_body: Mutex<Option<Arc<RequestBodyScope>>>,
-    pub(crate) reactor_observer: Mutex<Option<Weak<dyn crate::reactor_accounting::Observer>>>,
+    pub(crate) reactor_attribution: crate::reactor_accounting::Attribution,
     /// Where a streaming response for this dispatch goes, when its caller
     /// streams.
     pub(crate) transport: Mutex<Option<Arc<ResponseTransport>>>,
@@ -40,7 +40,7 @@ impl DispatchState {
             responded: AtomicBool::new(false),
             cancel_future: AtomicU64::new(0),
             request_body: Mutex::new(None),
-            reactor_observer: Mutex::new(None),
+            reactor_attribution: crate::reactor_accounting::Attribution::default(),
             transport: Mutex::new(None),
         })
     }
@@ -93,6 +93,7 @@ impl DispatchState {
 
     /// Releases the incoming request body.
     pub(super) fn close(&self) {
+        self.reactor_attribution.set(None);
         if let Some(body) = self.request_body.lock().take() {
             body.close();
         }

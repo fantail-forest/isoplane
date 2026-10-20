@@ -288,13 +288,10 @@ impl InstanceCtx {
     }
 
     pub(crate) fn reactor_usage(&self) -> crate::reactor_accounting::TaskUsage {
-        let observer = self
-            .current()
-            .reactor_observer
-            .lock()
-            .as_ref()
-            .and_then(std::sync::Weak::upgrade);
-        crate::reactor_accounting::TaskUsage::new(self.meters.clone(), observer)
+        crate::reactor_accounting::TaskUsage::new(
+            self.meters.clone(),
+            self.current().reactor_attribution.clone(),
+        )
     }
 
     pub(crate) fn spawn(

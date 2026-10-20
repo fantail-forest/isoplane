@@ -107,7 +107,7 @@ struct State {
     outcome: Option<(TerminalReason, u16)>,
     emitted: bool,
     finish_requested: bool,
-    reactor_tasks: usize,
+    reactor_polls: usize,
     responded: bool,
     io_kind: Option<std::io::ErrorKind>,
     os_error: Option<i32>,
@@ -162,7 +162,7 @@ impl DispatchCompletion {
                 outcome: None,
                 emitted: false,
                 finish_requested: false,
-                reactor_tasks: 0,
+                reactor_polls: 0,
                 responded: false,
                 io_kind: None,
                 os_error: None,
@@ -370,7 +370,7 @@ impl DispatchCompletion {
     pub(super) fn finish(&self) {
         let mut state = self.state.lock();
         state.finish_requested = true;
-        if state.reactor_tasks != 0 {
+        if state.reactor_polls != 0 {
             return;
         }
         if state.emitted {
@@ -455,7 +455,7 @@ impl DispatchCompletion {
 
 impl crate::reactor_accounting::Observer for DispatchCompletion {
     fn started(&self) {
-        self.state.lock().reactor_tasks += 1;
+        self.state.lock().reactor_polls += 1;
     }
 
     fn interval(&self, ns: Option<u64>) {
@@ -472,8 +472,8 @@ impl crate::reactor_accounting::Observer for DispatchCompletion {
 
     fn finished(&self) {
         let mut state = self.state.lock();
-        state.reactor_tasks -= 1;
-        let finish = state.finish_requested && state.reactor_tasks == 0;
+        state.reactor_polls -= 1;
+        let finish = state.finish_requested && state.reactor_polls == 0;
         drop(state);
         if finish {
             self.finish();

@@ -1098,7 +1098,7 @@ fn a_clock_entry_refusal_reports_no_guest_execution() {
 }
 
 #[test]
-fn completion_includes_the_final_reactor_poll_even_when_that_poll_finishes_the_dispatch() {
+fn completion_waits_for_the_active_poll_but_not_transferred_operations_or_children() {
     use std::future::Future;
     use std::task::{Context, Poll, Waker};
     let cell = cell(CellConfig {
@@ -1111,29 +1111,63 @@ fn completion_includes_the_final_reactor_poll_even_when_that_poll_finishes_the_d
         .scope(|| cell.completion_owner(&module, &http(1)))
         .expect("completion owner");
     let meters = cell.meters(&module).expect("tenant meters");
-    let task = crate::reactor_accounting::TaskUsage::new(meters.clone(), Some(owner.clone()));
+    let attribution = crate::reactor_accounting::Attribution::default();
+    let observer: Arc<dyn crate::reactor_accounting::Observer> = owner.clone();
+    attribution.set(Some(&observer));
+    let task = crate::reactor_accounting::TaskUsage::new(meters.clone(), attribution.clone());
+    let mut child = None;
     let mut future = Box::pin(task.measure(async {
+        child = Some(Box::pin(crate::reactor_accounting::inherit(
+            std::future::pending(),
+        )));
+        attribution.set(None);
         owner.select(TerminalReason::Success, 200);
         owner.finish();
         assert!(
             events.records().is_empty(),
             "the current reactor poll is not accounted yet"
         );
+        std::future::pending::<()>().await;
     }));
     crate::occupancy_clock::with_readings([100, 150], || {
         assert_eq!(
             future
                 .as_mut()
                 .poll(&mut Context::from_waker(Waker::noop())),
-            Poll::Ready(())
+            Poll::Pending
         );
     });
-    drop(future);
     let records = events.completed(1);
     assert_eq!(records[0]["occupancy_ns"], 50);
     assert_eq!(records[0]["reactor_occupancy_ns"], 50);
     assert_eq!(records[0]["slice_occupancy_ns"], 0);
     assert_eq!(meters.occupancy_ns(), 50);
+    crate::occupancy_clock::with_readings([200, 230], || {
+        assert_eq!(
+            future
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Pending
+        );
+    });
+    drop(future);
+    let mut child = child.expect("operation spawned a transport child");
+    crate::occupancy_clock::with_readings([300, 320], || {
+        assert_eq!(
+            child.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Pending
+        );
+    });
+    assert_eq!(
+        meters.occupancy_ns(),
+        100,
+        "later polls remain attributed to the application"
+    );
+    assert_eq!(
+        owner.usage().occupancy_ns,
+        50,
+        "later polls are no longer attributed to the request"
+    );
     owner.finish();
     assert_eq!(events.records().len(), 1);
     cell.shutdown();
