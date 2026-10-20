@@ -2,7 +2,7 @@
 //! `isoplane_handle` and `isoplane_wake` need no out-parameter:
 //!
 //! ```text
-//!   bits  0..32   tag      0 = done, 1 = pending, 2 = trapped
+//!   bits  0..32   tag      0 = done, 1 = pending, 2 = trapped, 3 = cancelled, 4 = failed
 //!   bits 32..64   payload  done -> response handle (0 = no response)
 //!                          trapped -> trap code
 //! ```
@@ -14,6 +14,10 @@ pub enum PollStatus {
     /// Guest returned with an empty invocation stack to await a host-owned wake.
     /// Host-owned I/O and other resources may remain live.
     Pending,
+    /// The dispatch cooperatively cancelled. The instance remains reusable.
+    Cancelled,
+    /// An application exception failed this dispatch; the instance remains reusable.
+    Failed,
     /// Guest fault. The instance is discarded.
     Trapped { code: TrapCode },
 }
@@ -49,12 +53,16 @@ impl TrapCode {
 const TAG_DONE: u32 = 0;
 const TAG_PENDING: u32 = 1;
 const TAG_TRAPPED: u32 = 2;
+const TAG_CANCELLED: u32 = 3;
+const TAG_FAILED: u32 = 4;
 
 impl PollStatus {
     pub fn encode(self) -> u64 {
         let (tag, payload) = match self {
             PollStatus::Done { response } => (TAG_DONE, response),
             PollStatus::Pending => (TAG_PENDING, 0),
+            PollStatus::Cancelled => (TAG_CANCELLED, 0),
+            PollStatus::Failed => (TAG_FAILED, 0),
             PollStatus::Trapped { code } => (TAG_TRAPPED, code as u32),
         };
         (tag as u64) | ((payload as u64) << 32)
@@ -66,6 +74,8 @@ impl PollStatus {
         match tag {
             TAG_DONE => PollStatus::Done { response: payload },
             TAG_PENDING => PollStatus::Pending,
+            TAG_CANCELLED => PollStatus::Cancelled,
+            TAG_FAILED => PollStatus::Failed,
             _ => PollStatus::Trapped {
                 code: TrapCode::from_u32(payload),
             },
@@ -85,6 +95,8 @@ mod tests {
                 response: 0xDEAD_BEEF,
             },
             PollStatus::Pending,
+            PollStatus::Cancelled,
+            PollStatus::Failed,
             PollStatus::Trapped {
                 code: TrapCode::CapabilityViolation,
             },

@@ -144,6 +144,7 @@ impl Cell {
             self.share(entry, slot);
         }
 
+        slot.record_dispatch(&job.rec);
         entry.meters.record_dispatch();
         self.metrics.dispatches.fetch_add(1, Ordering::Relaxed);
 
@@ -487,7 +488,15 @@ impl Cell {
         let latched = slot.ctx.take_trap();
         let mut latched_msg = None;
         let completion = match latched {
-            Some(code) if matches!(out.completion, Completion::Done | Completion::Parked) => {
+            Some(code)
+                if matches!(
+                    out.completion,
+                    Completion::Done
+                        | Completion::Cancelled
+                        | Completion::Failed
+                        | Completion::Parked
+                ) =>
+            {
                 if code == TrapCode::TooManyFutures {
                     self.metrics
                         .pending_cap_rejections
@@ -537,6 +546,23 @@ impl Cell {
 
         match completion {
             Completion::Parked => self.park_after_slice(slot),
+            Completion::Cancelled | Completion::Failed => {
+                let (status, reason) = if completion == Completion::Cancelled {
+                    (499, "request_cancelled")
+                } else {
+                    (500, "request_failed")
+                };
+                let result = owner.result(
+                    slot.id,
+                    status,
+                    vec![],
+                    vec![],
+                    completion,
+                    Some(reason.into()),
+                );
+                self.respond(slot, did, result);
+                self.finish_unless_working(slot, entry, did, warm())
+            }
             Completion::Done => {
                 // Open response handles retain the active dispatch. A streaming
                 // caller consumes the transport; buffered callers keep their
@@ -873,9 +899,9 @@ impl Cell {
 
     /// Answers a dispatch whose response the front end has ended: its client
     /// went away, its transport failed, or it sent a head that has no body.
-    /// The guest is asked to stop and keeps its grace to finish; a dispatch
-    /// that has already finished is released. Returns true when the dispatch
-    /// has ended.
+    /// A bodyless response settles successfully without cancelling guest work.
+    /// Transport failure or requester loss asks the guest to stop within grace.
+    /// Returns true when the dispatch has ended.
     fn end_stream_at_boundary(
         self: &Arc<Self>,
         slot: &Arc<Slot>,
@@ -941,6 +967,9 @@ impl Cell {
             // guest does next.
             drop(stream.clone().settlement());
         }
+        if !ended_by_client {
+            return false;
+        }
         dispatch.request_cancellation();
         // The guest may be parked with nothing else to wake it, and no slice
         // is running, so the request reaches it now rather than at the end of
@@ -955,10 +984,12 @@ impl Cell {
         }
         drop(dispatch);
         match completion {
-            Some(Completion::Done) if !self.rt.futures.dispatch_holds_guest_work(slot.id, did) => {
+            Some(Completion::Done | Completion::Cancelled | Completion::Failed)
+                if !self.rt.futures.dispatch_holds_guest_work(slot.id, did) =>
+            {
                 self.finish_and_release(slot, entry, did, warm())
             }
-            Some(Completion::Done) => {
+            Some(Completion::Done | Completion::Cancelled | Completion::Failed) => {
                 self.arm_grace(slot, did);
                 false
             }
@@ -1047,6 +1078,12 @@ impl Cell {
     }
 
     fn fail_grace_expired(&self, slot: &Arc<Slot>, dispatch: u64) {
+        if let Some(key) = self.with_active(slot.id, dispatch, |active| BreakerKey {
+            module: active.module.clone(),
+            route: active.route.clone(),
+        }) {
+            self.breaker.record_kill(&key, crate::now_ms());
+        }
         self.metrics
             .cancellation_grace_kills
             .fetch_add(1, Ordering::Relaxed);
@@ -1190,5 +1227,146 @@ impl Cell {
             );
         }
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cell::pool::cell_tests::{app, cell, http, wait_for};
+    use crate::fakes::{FakeBehaviour, Step};
+
+    #[test]
+    fn only_request_dispatches_refresh_instance_demand() {
+        let cell = cell(CellConfig::for_test("demand-recency"));
+        let module = app(&cell, "demand-recency", FakeBehaviour::done());
+        let mut request = http(1);
+        request.now_ms = 10;
+        let result = cell
+            .dispatch_blocking(
+                &module,
+                Target::Handler { route: "/".into() },
+                request,
+                Duration::from_secs(10),
+            )
+            .expect("request response");
+        let slot = cell.slot(result.instance).expect("request instance");
+        assert_eq!(slot.last_used_ms(), 10);
+        let mut timer = http(2);
+        timer.kind = DispatchKind::Timers;
+        timer.now_ms = 100;
+        let result = cell
+            .dispatch_blocking(
+                &module,
+                Target::Handler { route: "/".into() },
+                timer,
+                Duration::from_secs(10),
+            )
+            .expect("timer result");
+        assert_eq!(result.instance, slot.id);
+        assert_eq!(slot.last_used_ms(), 10);
+        cell.shutdown();
+    }
+
+    #[test]
+    fn a_grace_kill_opens_only_the_responsible_routes_breaker() {
+        let cell = cell(CellConfig {
+            breaker: BreakerConfig {
+                kill_threshold: 1,
+                ..Default::default()
+            },
+            ..CellConfig::for_test("grace-breaker")
+        });
+        let module = app(
+            &cell,
+            "grace-breaker",
+            FakeBehaviour::program([
+                Step::Park { imports: vec![] },
+                Step::Park { imports: vec![] },
+            ]),
+        );
+        let waiting = cell
+            .submit(
+                &module,
+                Target::Handler {
+                    route: "/waiting".into(),
+                },
+                http(1),
+            )
+            .expect("first request");
+        assert!(wait_for(
+            || cell
+                .resident_ids()
+                .first()
+                .and_then(|id| cell.slot(*id))
+                .is_some_and(|slot| slot.parks() == 1),
+            Duration::from_secs(10)
+        ));
+        let slot = cell.slot(cell.resident_ids()[0]).expect("parked instance");
+        let ignoring = cell
+            .submit(
+                &module,
+                Target::Handler {
+                    route: "/ignoring".into(),
+                },
+                http(2),
+            )
+            .expect("second request");
+        assert!(wait_for(|| slot.parks() == 2, Duration::from_secs(10)));
+        let entry = cell
+            .modules
+            .read()
+            .get(&module)
+            .cloned()
+            .expect("registered module");
+        {
+            let _execution = slot.lock_execution();
+            assert!(cell.start_grace(slot.id, 2, tokio::time::Instant::now()));
+            assert!(cell.kill_after_grace(&slot, &entry));
+        }
+        assert_eq!(
+            ignoring
+                .recv_timeout(Duration::from_secs(10))
+                .expect("grace result")
+                .trap
+                .as_deref(),
+            Some("cancellation_grace_expired")
+        );
+        assert_eq!(
+            waiting
+                .recv_timeout(Duration::from_secs(10))
+                .expect("collateral result")
+                .trap
+                .as_deref(),
+            Some("instance_discarded")
+        );
+        let refused = cell
+            .submit(
+                &module,
+                Target::Handler {
+                    route: "/ignoring".into(),
+                },
+                http(3),
+            )
+            .expect("breaker response");
+        assert_eq!(
+            refused
+                .recv_timeout(Duration::from_secs(10))
+                .expect("refused request")
+                .trap
+                .as_deref(),
+            Some("breaker_open")
+        );
+        assert!(cell
+            .breaker
+            .check(
+                &BreakerKey {
+                    module,
+                    route: "/waiting".into()
+                },
+                crate::now_ms()
+            )
+            .is_ok());
+        cell.shutdown();
     }
 }

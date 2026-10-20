@@ -156,7 +156,7 @@ impl Slot {
             parked_ms_total: AtomicU64::new(0),
             state_hint: AtomicU8::new(tier_as_u8(LifecycleTier::Parked)),
             parked_since_hint: AtomicU64::new(0),
-            last_used_ms: AtomicU64::new(crate::now_ms()),
+            last_used_ms: AtomicU64::new(0),
             parks: AtomicU64::new(0),
             retiring: std::sync::atomic::AtomicBool::new(false),
         }
@@ -209,13 +209,11 @@ impl Slot {
         tier_from_u8(self.state_hint.load(Ordering::Relaxed))
     }
 
-    /// Most recent activity boundary, retained while the instance is hibernated.
+    /// Most recent request arrival, retained while the instance is hibernated.
     pub fn last_used_ms(&self) -> u64 {
         self.last_used_ms.load(Ordering::Relaxed)
     }
 
-    /// How many times the instance has parked. Unlike [`Self::last_used_ms`]
-    /// it differs after every activity boundary, whatever the clock read.
     /// Retires the instance; true if it was not already retiring.
     pub(crate) fn retire(&self) -> bool {
         !self.retiring.swap(true, Ordering::Relaxed)
@@ -225,6 +223,7 @@ impl Slot {
         self.retiring.load(Ordering::Relaxed)
     }
 
+    /// Number of empty-stack boundaries; changes even without new request demand.
     pub fn parks(&self) -> u64 {
         self.parks.load(Ordering::Relaxed)
     }
@@ -246,8 +245,18 @@ impl Slot {
         self.parked_ms_total.load(Ordering::Relaxed)
     }
 
+    /// Records demand from requests without treating other dispatches as demand.
+    pub(crate) fn record_dispatch(&self, record: &isoplane_abi::DispatchRecord) {
+        match record.kind {
+            isoplane_abi::DispatchKind::Http(_) => {
+                self.last_used_ms
+                    .fetch_max(record.now_ms, Ordering::Relaxed);
+            }
+            isoplane_abi::DispatchKind::CronTick { .. } | isoplane_abi::DispatchKind::Timers => {}
+        }
+    }
+
     pub fn park(&self, now_ms: u64) {
-        self.last_used_ms.store(now_ms, Ordering::Relaxed);
         self.parks.fetch_add(1, Ordering::Relaxed);
         let mut g = self.inner.lock();
         debug_assert!(

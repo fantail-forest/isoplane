@@ -184,7 +184,7 @@ operation completes.
 
 | Condition | What happens |
 | --- | --- |
-| The application throws an exception it does not handle | That request fails. Without ASP.NET, the client receives status 502. |
+| An ordinary handler exception is not handled | That request receives status 500 if its response has not started; otherwise its response is aborted. The instance and other requests remain available. |
 | Code waits synchronously or starts a thread | The call throws `PlatformNotSupportedException` |
 | The client goes away before it has the whole response | The request's token is cancelled |
 | The dispatch uses up its running time | The token is cancelled. If the dispatch has not finished shortly afterwards, Isoplane stops the instance and the request fails. |

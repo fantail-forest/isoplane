@@ -82,7 +82,10 @@ impl DispatchResult {
 /// `Completion::Trapped`.
 pub(super) fn ends_the_instance(out: &DispatchOutcome, slot: &Arc<Slot>) -> bool {
     matches!(out.completion, Completion::Trapped | Completion::BudgetKill)
-        || (matches!(out.completion, Completion::Done | Completion::Parked) && slot.ctx.has_trap())
+        || (matches!(
+            out.completion,
+            Completion::Done | Completion::Cancelled | Completion::Failed | Completion::Parked
+        ) && slot.ctx.has_trap())
 }
 
 #[derive(Clone)]

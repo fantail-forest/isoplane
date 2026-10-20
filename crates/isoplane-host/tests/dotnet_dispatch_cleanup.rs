@@ -222,6 +222,147 @@ impl isoplane_host::egress::ConnectionFactory for PendingConnection {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_cancelled_managed_request_runs_cleanup_and_keeps_its_instance() {
+    let (cell, module) = cleanup_cell(
+        GuestRuntime::Mono,
+        Arc::new(PendingWork::default()),
+        "/timer",
+    );
+    let before = dispatch_at_idle(&cell, &module, "/observe").await;
+    let request = HttpRequest {
+        method: "GET".into(),
+        url: "https://cleanup.test/cleanup/cancel".into(),
+        path: "/cleanup/cancel".into(),
+        query: vec![],
+        headers: vec![],
+        body: vec![],
+    };
+    let cancelled = cell
+        .dispatch(
+            &module,
+            Target::Handler {
+                route: request.path.clone(),
+            },
+            cell.http_record(&module, request),
+            Duration::from_secs(60),
+        )
+        .await
+        .expect("the cancelled request must settle");
+    assert_eq!(cancelled.status, 499);
+    assert_eq!(cancelled.completion, isoplane_engine::Completion::Cancelled);
+    assert_eq!(cancelled.instance, before.instance);
+    wait_until_idle(&cell, &module).await;
+    let after = dispatch_at_idle(&cell, &module, "/observe").await;
+    assert_eq!(after.instance, before.instance);
+    assert_eq!(
+        after.body, b"3:1",
+        "cancellation must run finally and preserve instance state"
+    );
+    assert_eq!(cell.metrics().cancellation_grace_kills, 0);
+    cell.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn managed_request_failures_leave_other_requests_and_instance_state_intact() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        for (path, status, completion) in [
+            ("/cleanup/throw", 500, isoplane_engine::Completion::Failed),
+            (
+                "/cleanup/cancel",
+                499,
+                isoplane_engine::Completion::Cancelled,
+            ),
+        ] {
+            let work = Arc::new(PendingWork::default());
+            let (cell, module) = cleanup_cell(GuestRuntime::Mono, work.clone(), "/dns");
+            let request = |path: &str| HttpRequest {
+                method: "GET".into(),
+                url: format!("https://cleanup.test{path}"),
+                path: path.into(),
+                query: vec![],
+                headers: vec![],
+                body: vec![],
+            };
+            let waiting_cell = cell.clone();
+            let waiting_module = module.clone();
+            let waiting_request = request("/cleanup/wait");
+            let waiting = tokio::spawn(async move {
+                waiting_cell
+                    .dispatch(
+                        &waiting_module,
+                        Target::Handler {
+                            route: waiting_request.path.clone(),
+                        },
+                        waiting_cell.http_record(&waiting_module, waiting_request),
+                        Duration::from_secs(60),
+                    )
+                    .await
+                    .expect("the concurrent request must complete")
+            });
+            work.started.notified().await;
+            let instances = cell.resident_ids();
+            assert_eq!(instances.len(), 1);
+            let failed_request = request(path);
+            let failure = cell
+                .dispatch(
+                    &module,
+                    Target::Handler { route: path.into() },
+                    cell.http_record(&module, failed_request),
+                    Duration::from_secs(60),
+                )
+                .await
+                .expect("the failing handler must settle");
+            assert_eq!(
+                failure.instance, instances[0],
+                "the requests must share their instance"
+            );
+            assert_eq!((failure.status, failure.completion), (status, completion));
+            work.release.notify_one();
+            let success = waiting
+                .await
+                .expect("the waiting request task must not panic");
+            assert_eq!(success.instance, failure.instance);
+            assert_eq!(success.status, 200);
+            assert_eq!(success.body, b"released");
+            wait_until_idle(&cell, &module).await;
+            let next = dispatch_at_idle(&cell, &module, "/observe").await;
+            assert_eq!(next.instance, failure.instance);
+            assert_eq!(next.body, if status == 499 { b"3:1" } else { b"3:0" });
+            if status == 500 {
+                use isoplane_abi::host::{CodeTier, Dispatcher, RouteTarget};
+                let mut response = cell
+                    .dispatch_http_stream(
+                        &RouteTarget {
+                            app: module.app.clone(),
+                            version: module.version.clone(),
+                            tenant: "tenant".into(),
+
+                            tier: CodeTier::Fast,
+                        },
+                        request(path),
+                    )
+                    .await
+                    .expect("a handler failure must produce an HTTP response");
+                assert_eq!(response.status, 500);
+                assert_eq!(
+                    response
+                        .body
+                        .read()
+                        .await
+                        .expect("a complete error response"),
+                    None
+                );
+                wait_until_idle(&cell, &module).await;
+                assert!(cell.slot(failure.instance).is_some());
+            }
+            cell.shutdown();
+        }
+    })
+    .await
+    .expect("request failures must not strand concurrent work");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_timer_left_pending_keeps_its_instance() {
     let (cell, module) = cleanup_cell(
         GuestRuntime::Mono,

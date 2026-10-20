@@ -28,6 +28,7 @@ pub(super) type CompletionClock = Arc<dyn Fn() -> Option<u64> + Send + Sync>;
 pub(super) enum TerminalReason {
     Success,
     GuestTrap,
+    RequestFailed,
     OccupancyLimit,
     WallLimit,
     RequestCancelled,
@@ -51,6 +52,7 @@ impl TerminalReason {
         match self {
             Self::Success => "success",
             Self::GuestTrap => "guest_trap",
+            Self::RequestFailed => "request_failed",
             Self::OccupancyLimit => "occupancy_limit",
             Self::WallLimit => "execution_wall_limit",
             Self::RequestCancelled => "request_cancelled",
@@ -328,6 +330,8 @@ impl DispatchCompletion {
         }
         let reason = match result.completion {
             Completion::Done => TerminalReason::Success,
+            Completion::Cancelled => TerminalReason::RequestCancelled,
+            Completion::Failed => TerminalReason::RequestFailed,
             Completion::Trapped => TerminalReason::GuestTrap,
             Completion::BudgetKill | Completion::BudgetExit => match state.usage.limit {
                 Some(isoplane_engine::ExecutionLimit::Wall) => TerminalReason::WallLimit,
@@ -395,6 +399,7 @@ impl DispatchCompletion {
             | TerminalReason::SnapshotCapacityUnavailable
             | TerminalReason::WallLimit
             | TerminalReason::RequestCancelled
+            | TerminalReason::RequestFailed
             | TerminalReason::TransportFailure
             | TerminalReason::EntryRefused
             | TerminalReason::HostPanic

@@ -1,6 +1,7 @@
 using System;
 using System.Net;
 using System.Net.Sockets;
+using System.Threading;
 using System.Threading.Tasks;
 using Isoplane;
 
@@ -18,6 +19,23 @@ public static class CleanupProbe
     public static async Task<Response> HandleAsync(string path)
     {
         _requests++;
+        if (path == "/throw") throw new InvalidOperationException("handler failure probe");
+        if (path == "/wait")
+        {
+            await Dns.GetHostAddressesAsync("pending.test");
+            return Response.Text("released");
+        }
+        if (path == "/cancel")
+        {
+            try
+            {
+                await Task.FromCanceled(new CancellationToken(canceled: true));
+            }
+            finally
+            {
+                _callbacks++;
+            }
+        }
         if (path == "/idle-socket")
         {
             _idleSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);

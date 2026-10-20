@@ -30,7 +30,7 @@ pub enum BreakerState {
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct BreakerConfig {
-    /// Consecutive budget kills before the breaker opens.
+    /// Consecutive budget or cancellation-grace kills before the breaker opens.
     pub kill_threshold: u32,
     /// Window over which kills count as consecutive.
     pub window_ms: u64,
@@ -93,7 +93,7 @@ impl HangBreaker {
         Err(e.open_until_ms)
     }
 
-    /// A dispatch was killed at its CPU budget.
+    /// A dispatch exceeded its hard CPU budget or cancellation grace.
     pub fn record_kill(&self, key: &BreakerKey, now_ms: u64) {
         let mut g = self.entries.lock();
         let e = g.entry(key.clone()).or_default();

@@ -9,7 +9,7 @@ namespace Isoplane.Abi;
 /// <c>isoplane-abi::status::PollStatus</c>.
 ///
 /// <code>
-///   bits  0..32   tag      0 = done, 1 = pending, 2 = trapped
+///   bits  0..32   tag      0 = done, 1 = pending, 2 = trapped, 3 = cancelled, 4 = failed
 ///   bits 32..64   payload  done -> response handle (0 = none)
 ///                          trapped -> trap code
 /// </code>
@@ -23,9 +23,13 @@ internal static class PollStatus
     private const uint TagDone = 0;
     private const uint TagPending = 1;
     private const uint TagTrapped = 2;
+    private const uint TagCancelled = 3;
+    private const uint TagFailed = 4;
 
     internal static long Done(uint responseHandle) => Pack(TagDone, responseHandle);
     internal static long Pending() => Pack(TagPending, 0);
+    internal static long Cancelled() => Pack(TagCancelled, 0);
+    internal static long Failed() => Pack(TagFailed, 0);
     internal static long Trapped(TrapCode code) => Pack(TagTrapped, (uint)code);
 
     [MethodImpl(MethodImplOptions.NoInlining)]

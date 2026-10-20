@@ -186,6 +186,9 @@ fn idle(cell: &Arc<Cell>, name: &str, last_used_ms: u64) -> Arc<Slot> {
     let slot = cell
         .slot(result.instance)
         .expect("completed handler resident");
+    let mut request = http(2);
+    request.now_ms = last_used_ms;
+    slot.record_dispatch(&request);
     slot.park(last_used_ms);
     slot
 }
@@ -213,6 +216,9 @@ fn active(
         .expect("parked handler resident")
         .slot
         .clone();
+    let mut request = http(2);
+    request.now_ms = last_used_ms;
+    slot.record_dispatch(&request);
     slot.park(last_used_ms);
     (slot, response)
 }
@@ -666,4 +672,25 @@ impl TransitionJournal {
             })
             .collect()
     }
+}
+
+#[test]
+fn background_boundaries_invalidate_capture_without_refreshing_request_recency() {
+    let cell = test_cell(Storage::new(1), 100);
+    let slot = idle(&cell, "background-recency", 10);
+    let stale = candidate(&cell, slot.id);
+    let mut timer = http(2);
+    timer.kind = DispatchKind::Timers;
+    timer.now_ms = 105;
+    slot.record_dispatch(&timer);
+    slot.park(105);
+    assert_eq!(slot.last_used_ms(), 10);
+    assert!(!cell
+        .reclaim_candidate(stale)
+        .expect("stale capture must be refused"));
+    assert_eq!(cell.reclamation_candidates(110)[0].instance, slot.id);
+    assert!(cell
+        .reclaim_candidate(candidate(&cell, slot.id))
+        .expect("a fresh capture remains eligible"));
+    cell.shutdown();
 }

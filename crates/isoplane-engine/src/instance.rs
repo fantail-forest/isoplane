@@ -323,7 +323,9 @@ impl Instance {
             Completion::BudgetKill
         } else {
             match Completion::from_status(status) {
-                Completion::Done if in_grace => Completion::BudgetExit,
+                Completion::Done | Completion::Cancelled | Completion::Failed if in_grace => {
+                    Completion::BudgetExit
+                }
                 other => other,
             }
         };
@@ -424,6 +426,10 @@ pub trait InstanceOps {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Completion {
     Done,
+    /// The dispatch cooperatively cancelled, leaving a reusable instance.
+    Cancelled,
+    /// An application exception failed the dispatch, leaving a reusable instance.
+    Failed,
     /// Returned `pending`: empty stack, futures registered.
     Parked,
     /// Guest fault. The instance is discarded.
@@ -440,6 +446,8 @@ impl Completion {
     pub fn from_status(s: PollStatus) -> Self {
         match s {
             PollStatus::Done { .. } => Completion::Done,
+            PollStatus::Cancelled => Completion::Cancelled,
+            PollStatus::Failed => Completion::Failed,
             PollStatus::Pending => Completion::Parked,
             PollStatus::Trapped { .. } => Completion::Trapped,
         }
@@ -448,7 +456,11 @@ impl Completion {
     pub fn instance_survives(self) -> bool {
         matches!(
             self,
-            Completion::Done | Completion::Parked | Completion::BudgetExit
+            Completion::Done
+                | Completion::Cancelled
+                | Completion::Failed
+                | Completion::Parked
+                | Completion::BudgetExit
         )
     }
 }

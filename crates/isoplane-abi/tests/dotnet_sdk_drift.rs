@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use isoplane_abi::dispatch::{DispatchKind, HttpRequest};
 use isoplane_abi::imports::{self, Ty};
 use isoplane_abi::result::{FutureError, };
-use isoplane_abi::status::TrapCode;
+use isoplane_abi::status::{PollStatus, TrapCode};
 
 fn sdk_file(name: &str) -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -185,6 +185,41 @@ fn future_error_in_records_cs_mirrors_the_rust_enum() {
             ("Io", FutureError::Io(String::new())),
         ],
     );
+}
+
+#[test]
+fn poll_status_tags_match_the_managed_boundary() {
+    let source = sdk_file("PollStatus.cs");
+    let managed: BTreeMap<String, u32> = source
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("private const uint Tag"))
+        .map(|line| {
+            let (name, value) = line.split_once(" = ").expect("status tag declaration");
+            (
+                name.to_owned(),
+                value
+                    .trim_end_matches(';')
+                    .parse()
+                    .expect("numeric status tag"),
+            )
+        })
+        .collect();
+    let native = [
+        ("Done", PollStatus::Done { response: 0 }),
+        ("Pending", PollStatus::Pending),
+        (
+            "Trapped",
+            PollStatus::Trapped {
+                code: TrapCode::Panic,
+            },
+        ),
+        ("Cancelled", PollStatus::Cancelled),
+        ("Failed", PollStatus::Failed),
+    ]
+    .into_iter()
+    .map(|(name, status)| (name.to_owned(), status.encode() as u32))
+    .collect();
+    assert_eq!(managed, native);
 }
 
 #[test]

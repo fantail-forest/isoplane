@@ -10,8 +10,8 @@ namespace Isoplane.Abi;
 
 /// <summary>
 /// Managed bodies behind the native Mono entrypoints, parameterized by the
-/// application's router. Dispatch and initialization failures are logged and
-/// converted to <see cref="PollStatus.Trapped"/> before returning to the host.
+/// application's router. Handler failures end their request; runtime and
+/// initialization failures trap the instance.
 /// </summary>
 public static unsafe class Exports<TRouter>
     where TRouter : IIsoplaneRouter, new()
@@ -90,7 +90,7 @@ public static unsafe class Exports<TRouter>
     }
 
     /// <summary>
-    /// A new dispatch. Returns <c>done</c>, <c>pending</c> or <c>trapped</c>.
+    /// Starts a dispatch and returns its packed completion or pending status.
     /// </summary>
     public static long Handle(int ptr, int len)
     {
@@ -264,10 +264,16 @@ public static unsafe class Exports<TRouter>
 
         dispatch.End();
 
-        if (root.IsFaulted || root.IsCanceled)
+        if (root.IsCanceled) return PollStatus.Cancelled();
+
+        if (root.IsFaulted)
         {
             Exception? inner = root.Exception?.GetBaseException();
-            return inner is null ? PollStatus.Trapped(TrapCode.Panic) : Panic(inner);
+            if (inner is OutOfMemoryException) return PollStatus.Trapped(TrapCode.OutOfMemory);
+            if (inner is TooManyFuturesException) return PollStatus.Trapped(TrapCode.TooManyFutures);
+            if (inner is PostcardException) return PollStatus.Trapped(TrapCode.Protocol);
+            if (inner is not null) Log(3, "request failed: " + inner.GetType().FullName + ": " + inner.Message);
+            return PollStatus.Failed();
         }
 
         Response resp = root.Result;

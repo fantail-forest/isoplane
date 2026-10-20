@@ -10,12 +10,22 @@ use std::time::Duration;
 
 use isoplane_abi::config::Limits;
 use isoplane_abi::dispatch::{HttpRequest, ResponseHead};
-use isoplane_abi::host::{CodeTier, Dispatcher, HttpExchange, RouteTarget};
+use isoplane_abi::host::{CodeTier, Dispatcher, HttpExchange, ResponseDisposition, RouteTarget};
 use isoplane_engine::{EngineConfig, IsoplaneEngine};
 use isoplane_host::cell::{Cell, CellConfig};
 use isoplane_host::{EngineActivator, ModuleId};
 
 async fn response(after_finish: &str) -> (Arc<Cell>, HttpExchange) {
+    response_program(
+        &format!(
+            "(call $finish (call $start (i32.const 1024) (i32.const {{head_len}}))) {after_finish}"
+        ),
+        "unreachable",
+    )
+    .await
+}
+
+async fn response_program(handle: &str, wake: &str) -> (Arc<Cell>, HttpExchange) {
     let head = postcard::to_allocvec(&ResponseHead {
         status: 200,
         headers: vec![],
@@ -24,20 +34,20 @@ async fn response(after_finish: &str) -> (Arc<Cell>, HttpExchange) {
     })
     .expect("the response head must encode");
     let encoded: String = head.iter().map(|byte| format!("\\{byte:02x}")).collect();
+    let handle = handle.replace("{head_len}", &head.len().to_string());
     let wasm = wat::parse_str(format!(
         r#"(module
         (import "isoplane" "resp_new" (func $start (param i32 i32) (result i32)))
         (import "isoplane" "resp_finish" (func $finish (param i32)))
         (import "isoplane" "clock_deadline_in" (func $timer (param i64) (result i64)))
         (memory (export "memory") 2 2)
+        (global $timer_id (mut i64) (i64.const 0))
         (data (i32.const 1024) "{encoded}")
         (func (export "isoplane_alloc") (param i32 i32) (result i32) (i32.const 4096))
         (func (export "isoplane_handle") (param i32 i32) (result i64)
-            (call $finish (call $start (i32.const 1024) (i32.const {})))
-            {after_finish})
-        (func (export "isoplane_wake") (param i64 i32 i32) (result i64) unreachable)
-    )"#,
-        head.len()
+            {handle})
+        (func (export "isoplane_wake") (param $id i64) (param i32 i32) (result i64) {wake})
+    )"#
     ))
     .expect("the fixture must encode canonical imports");
     let engine = Arc::new(
@@ -129,4 +139,44 @@ async fn a_trap_after_finish_in_the_same_hot_slice_cannot_publish_successful_eof
         }
         cell.shutdown();
     }).await.expect("the trapping response must not hang");
+}
+
+#[tokio::test]
+async fn suppressing_a_response_body_keeps_leftover_work_running() {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let (cell, response) = response_program(
+            "(drop (call $start (i32.const 1024) (i32.const {head_len})))
+             (global.set $timer_id (call $timer (i64.const 600000))) (i64.const 1)",
+            "(if (i64.ne (local.get $id) (global.get $timer_id)) (then unreachable))
+             (i64.const 0)",
+        )
+        .await;
+        response
+            .body
+            .finish(ResponseDisposition::NoBody)
+            .await
+            .expect("successful body suppression");
+        let ids = cell.resident_ids();
+        assert_eq!(ids.len(), 1);
+        let instance = ids[0];
+        let slot = cell.slot(instance).expect("response instance");
+        let dispatch = slot.ctx.dispatch_id();
+        let timers = cell
+            .futures()
+            .pending_of_dispatch(instance, dispatch, "clock_deadline_in");
+        assert_eq!(timers.len(), 1);
+        cell.complete_future(timers[0], isoplane_abi::result::ResultRecord::Ok(vec![]));
+        while cell.metrics_raw().dispatch_us.count() == 0 {
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            cell.slot(instance).is_some(),
+            "body suppression must not cancel the guest and trigger its trapping cancellation wake"
+        );
+        assert_eq!(cell.metrics().cancellation_grace_kills, 0);
+        assert_eq!(cell.futures().live_futures(), 0);
+        cell.shutdown();
+    })
+    .await
+    .expect("bodyless response and leftover work must settle");
 }

@@ -34,9 +34,11 @@ struct State {
 
 impl State {
     /// Whether the requester has the whole response: it read the end of the
-    /// body, or every byte of a body whose length it was told.
+    /// body, every byte of a known-length body, or a settled bodyless response.
     fn delivered(&self) -> bool {
-        self.read_to_end || self.remaining_bytes == Some(0)
+        self.read_to_end
+            || self.remaining_bytes == Some(0)
+            || (self.disposition.is_some() && self.settled && self.failure.is_none())
     }
 }
 
@@ -481,6 +483,15 @@ mod tests {
         );
         drop(stream.clone().settlement());
         finish.await.expect("bodyless dispatch completed normally");
+        assert!(
+            !stream.is_cancelled(),
+            "successful body suppression is not cancellation"
+        );
+        assert_eq!(
+            stream.prepare(b"later".to_vec()).send().await,
+            Ok(5),
+            "writes after body suppression must still succeed"
+        );
         assert!(
             stream.failure().is_none(),
             "discarding protocol-forbidden bytes must not become a response write failure"

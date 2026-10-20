@@ -25,7 +25,7 @@ pub use status::{PollStatus, TrapCode};
 pub const LOCAL_DEBUG_SECTION: &str = "isoplane.local-debug";
 
 /// The version of the guest host-interface contract.
-pub const ABI_REV: u32 = 2;
+pub const ABI_REV: u32 = 3;
 
 /// The unit of copy-on-write sharing and of the hibernation page diff.
 pub const PAGE_SIZE: usize = 4096;

@@ -47,7 +47,7 @@ pub fn decide(completion: Completion, streaming_open: bool) -> DispatchEnd {
             DispatchEnd::Disposed(Disposition(DispositionKind::Discard))
         }
         Completion::Done if streaming_open => DispatchEnd::RetainedForStreaming,
-        Completion::Done | Completion::BudgetExit => {
+        Completion::Done | Completion::Cancelled | Completion::Failed | Completion::BudgetExit => {
             DispatchEnd::Disposed(Disposition(DispositionKind::Warm))
         }
     }
