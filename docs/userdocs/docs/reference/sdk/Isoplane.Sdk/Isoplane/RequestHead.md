@@ -15,7 +15,7 @@ public class RequestHead
 
 | name | description |
 | --- | --- |
-| [Aborted](RequestHead/Aborted.md) { get; } | Cancelled when the request's dispatch should stop: the client has gone away, or the dispatch has used up its running time. |
+| [Aborted](RequestHead/Aborted.md) { get; } | Cancelled when the request's dispatch should stop: the client has gone away before it had the whole response, or the dispatch has used up its running time. |
 | [Headers](RequestHead/Headers.md) { get; } | The request headers as name and value pairs. |
 | [Method](RequestHead/Method.md) { get; } | The HTTP method, such as `GET` or `POST`. Standard methods are in upper case. |
 | [Path](RequestHead/Path.md) { get; } | The path the client asked for, without the query string. It begins with a slash. |

@@ -88,9 +88,10 @@ timer is due, and uses the running time of that slice's dispatch.
 Forward the request's cancellation token to the calls you await. That token is
 `HttpContext.RequestAborted`, or
 [`RequestHead.Aborted`](reference/sdk/Isoplane.Sdk/Isoplane/RequestHead/Aborted.md)
-without ASP.NET. It is cancelled when the client goes away or the dispatch uses
-up its running time, so passing it on stops work that nobody is waiting for,
-and saves the running time that work would use.
+without ASP.NET. It is cancelled when the client goes away before it has the
+whole response, or the dispatch uses up its running time, so passing it on
+stops work that nobody is waiting for, and saves the running time that work
+would use.
 
 ## A single-threaded instance {#single-threaded}
 
@@ -302,7 +303,10 @@ awaited. That work goes on running, and the dispatch ends once it completes.
 Until then it uses the request's [running time](execution-limits.md#running-time),
 and the request's cancellation token and the
 [5 seconds to finish after cancellation](execution-limits.md#after-cancellation)
-apply to it as they do before the response.
+apply to it as they do before the response. A client that goes away once it
+has the whole response does not cancel it. A read of the request body that is
+still waiting when the response is complete fails with an `IOException`, since
+nothing more of the body is read.
 
 Nothing guarantees that such work completes, though: an instance can be stopped
 at any time, for example for going over its limits. Do not leave saving data or
@@ -315,8 +319,8 @@ reads.
 Timers can. A timer outlives the dispatch that started it: when a dispatch
 ends with a `Timer`, `Task.Delay` or `CancellationTokenSource.CancelAfter` still
 pending, Isoplane keeps the instance and the timer with it. Libraries that keep
-timers of their own, such as rate limiters, connection pools and telemetry
-exporters, therefore work without change.
+timers of their own, such as rate limiters and connection pools, therefore work
+without change.
 
 By default a timer that comes due while the instance is idle waits for the next
 request on that instance, and runs at the start of that request's first slice,
@@ -325,8 +329,9 @@ first `await`, and uses that request's running time meanwhile. A timer that
 comes due while the instance is busy runs the same way, in the next slice of
 whichever request is running. A timer never runs if its instance is discarded
 first, and an idle instance can be discarded at any time. A task started and not
-awaited, such as `_ = SendEmailAsync()`, may therefore finish during a later
-dispatch, or never: await the work the response depends on.
+awaited that waits on a timer, such as a retry after `Task.Delay`, may therefore
+finish during a later dispatch, or never: await the work the response depends
+on.
 
 #### Running timers between requests {#run-timers-between-requests}
 

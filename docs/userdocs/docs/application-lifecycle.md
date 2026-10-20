@@ -152,7 +152,7 @@ operation completes.
 - Gives each ASP.NET request its own `HttpContext.TraceIdentifier`.
 - Cancels the request's token, `HttpContext.RequestAborted` or
   [`RequestHead.Aborted`](reference/sdk/Isoplane.Sdk/Isoplane/RequestHead/Aborted.md),
-  when the client goes away or the request's
+  when the client goes away before it has the whole response, or the request's
   [dispatch](dotnet-runtime-differences.md#units-of-work) has used its running
   time.
 - Enforces the [execution limits](execution-limits.md). It stops an instance
@@ -186,10 +186,10 @@ operation completes.
 | --- | --- |
 | The application throws an exception it does not handle | That request fails. Without ASP.NET, the client receives status 502. |
 | Code waits synchronously or starts a thread | The call throws `PlatformNotSupportedException` |
-| The client goes away | The request's token is cancelled |
+| The client goes away before it has the whole response | The request's token is cancelled |
 | The dispatch uses up its running time | The token is cancelled. If the dispatch has not finished shortly afterwards, Isoplane stops the instance and the request fails. |
 | The dispatch has too many asynchronous operations pending at once | The request fails |
-| The response is complete while work is still pending | That work is cancelled and never finishes, and the instance is discarded: the next request starts from the template and pays for activation. No error is reported. |
+| The response is complete while work the request started is still pending | That work goes on running, and the request is not over until it finishes; see [What has to finish before the response?](dotnet-runtime-differences.md#before-the-response). It is lost if the instance is stopped first, and a read of the request body still waiting fails. |
 
 ## Between requests
 

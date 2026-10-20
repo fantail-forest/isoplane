@@ -5,7 +5,7 @@ mdx:
 
 # RequestHead.Aborted property
 
-Cancelled when the request's dispatch should stop: the client has gone away, or the dispatch has used up its running time.
+Cancelled when the request's dispatch should stop: the client has gone away before it had the whole response, or the dispatch has used up its running time.
 
 ```csharp
 public CancellationToken Aborted { get; }

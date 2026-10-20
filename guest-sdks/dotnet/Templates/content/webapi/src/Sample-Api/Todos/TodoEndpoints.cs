@@ -54,8 +54,9 @@ public static class TodoEndpoints
         var completed = request.IsComplete && todo.Complete(clock.GetUtcNow());
         if (!request.IsComplete) todo.Reopen();
         await db.SaveChangesAsync(cancellation);
-        // Work a request starts is awaited before it responds: nothing runs in an
-        // instance after its response, so a fire-and-forget task may never finish.
+        // Work a request starts is awaited before it responds: work left running after
+        // the response is lost if the instance is stopped, so a fire-and-forget task
+        // may never finish.
         if (completed) await notifier.NotifyAsync(todo, cancellation);
         return TypedResults.Ok(TodoResponse.From(todo));
     }

@@ -58,7 +58,8 @@ waits.
 
 ## Finishing after cancellation {#after-cancellation}
 
-The request's cancellation token is also cancelled when the client goes away.
+The request's cancellation token is also cancelled when the client goes away
+before it has the whole response.
 Whichever way it is cancelled, the dispatch then has 5 seconds, by the clock, to
 finish. This counts time spent waiting, which running time does not. A dispatch
 that finishes in time, whether it returns a response or throws, leaves its

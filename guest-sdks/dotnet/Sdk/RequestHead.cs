@@ -66,8 +66,8 @@ public class RequestHead
     public IReadOnlyList<KeyValuePair<string, string>> Headers { get; }
 
     /// <summary>
-    /// Cancelled when the request's dispatch should stop: the client has gone away, or the dispatch has
-    /// used up its running time.
+    /// Cancelled when the request's dispatch should stop: the client has gone away before it had the
+    /// whole response, or the dispatch has used up its running time.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -137,7 +137,7 @@ public sealed class StreamingRequest : RequestHead
     /// </para>
     /// <para>
     /// The handler need not read the whole body. Content it has not read when it returns its response
-    /// is not read at all.
+    /// is not read at all, and a read still waiting then throws <c>IOException</c>.
     /// </para>
     /// </remarks>
     public Stream Body { get; }
