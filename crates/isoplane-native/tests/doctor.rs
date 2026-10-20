@@ -370,6 +370,7 @@ fn doctor_fails_a_module_the_manifest_alone_would_pass() {
             "memory",
         ],
         Some(pages(Limits {
+            instances_per_application: 16,
             module_bytes_compressed: 52428800,
             package_bytes: 52428800,
             instance_memory_max: 536870912,
@@ -439,6 +440,7 @@ fn doctor_takes_the_memory_ceiling_from_its_flag() {
                 "memory",
             ],
             Some(pages(Limits {
+                instances_per_application: 16,
                 module_bytes_compressed: 52428800,
                 package_bytes: 52428800,
                 instance_memory_max: 536870912,

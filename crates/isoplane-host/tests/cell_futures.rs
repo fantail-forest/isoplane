@@ -62,6 +62,7 @@ fn the_pending_futures_cap_traps_the_guest() {
     let paid = rig(CellConfig::for_test("cap-paid"));
     let r = &free;
     let limit = Limits {
+        instances_per_application: 3,
         module_bytes_compressed: 5242880,
         package_bytes: 52428800,
         instance_memory_max: 134217728,
@@ -88,6 +89,7 @@ fn the_pending_futures_cap_traps_the_guest() {
             manifest(
                 "greedy",
                 Limits {
+                    instances_per_application: 3,
                     module_bytes_compressed: 5242880,
                     package_bytes: 52428800,
                     instance_memory_max: 134217728,

@@ -262,6 +262,7 @@ fn structural_admission_policy_binds_preparation_identity_and_is_enforced() {
 #[test]
 fn initialization_without_a_memory_maximum_obeys_the_application_budget() {
     let budget_bytes = isoplane_abi::config::Limits {
+        instances_per_application: 3,
         module_bytes_compressed: 5242880,
         package_bytes: 52428800,
         instance_memory_max: 134217728,
@@ -285,6 +286,7 @@ fn initialization_without_a_memory_maximum_obeys_the_application_budget() {
     let mut input = request(&wasm);
     input.engine.max_memory_bytes = 2 * budget_bytes;
     input.limits = isoplane_abi::config::Limits {
+        instances_per_application: 3,
         module_bytes_compressed: 5242880,
         package_bytes: 52428800,
         instance_memory_max: 134217728,
@@ -304,6 +306,7 @@ fn preparation_identity_binds_the_plan_memory_default() {
     let mut input = request(&wasm);
     let standard = input.identity().expect("standard identity");
     input.limits = isoplane_abi::config::Limits {
+        instances_per_application: 3,
         module_bytes_compressed: 5242880,
         package_bytes: 52428800,
         instance_memory_max: 134217728,

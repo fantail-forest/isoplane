@@ -35,6 +35,7 @@ pub(super) enum TerminalReason {
     TransportFailure,
     AcquisitionFailed,
     SnapshotCapacityUnavailable,
+    InstanceCapacityUnavailable,
     EntryRefused,
     RestoreFailed,
     CaptureFailed,
@@ -59,6 +60,7 @@ impl TerminalReason {
             Self::TransportFailure => "transport_failure",
             Self::AcquisitionFailed => "acquisition_failed",
             Self::SnapshotCapacityUnavailable => "snapshot_capacity_unavailable",
+            Self::InstanceCapacityUnavailable => "instance_capacity_unavailable",
             Self::EntryRefused => "entry_refused",
             Self::RestoreFailed => "restore_failed",
             Self::CaptureFailed => "capture_failed",
@@ -292,9 +294,16 @@ impl DispatchCompletion {
         let exhausted = error
             .downcast_ref::<isoplane_hibernate::snapshot::SnapshotError>()
             .is_some_and(isoplane_hibernate::snapshot::SnapshotError::is_capacity_exhausted);
-        let status = if exhausted { 503 } else { 500 };
+        let instance_limit = error.is::<crate::admission::InstanceLimitReached>();
+        let status = if exhausted || instance_limit {
+            503
+        } else {
+            500
+        };
         state.outcome = Some((
-            if exhausted {
+            if instance_limit {
+                TerminalReason::InstanceCapacityUnavailable
+            } else if exhausted {
                 TerminalReason::SnapshotCapacityUnavailable
             } else {
                 TerminalReason::AcquisitionFailed
@@ -396,6 +405,7 @@ impl DispatchCompletion {
                 }
             }
             TerminalReason::OccupancyLimit
+            | TerminalReason::InstanceCapacityUnavailable
             | TerminalReason::SnapshotCapacityUnavailable
             | TerminalReason::WallLimit
             | TerminalReason::RequestCancelled

@@ -190,6 +190,7 @@ async fn a_host_off_the_allowlist_is_refused() {
 async fn the_subrequest_cap_is_per_dispatch() {
     let mut v = vtable(
         Limits {
+            instances_per_application: 3,
             module_bytes_compressed: 5242880,
             package_bytes: 52428800,
             instance_memory_max: 134217728,
@@ -201,6 +202,7 @@ async fn the_subrequest_cap_is_per_dispatch() {
         None,
     );
     let cap = Limits {
+        instances_per_application: 3,
         module_bytes_compressed: 5242880,
         package_bytes: 52428800,
         instance_memory_max: 134217728,
@@ -213,6 +215,7 @@ async fn the_subrequest_cap_is_per_dispatch() {
 
     assert_eq!(
         Limits {
+            instances_per_application: 3,
             module_bytes_compressed: 5242880,
             package_bytes: 52428800,
             instance_memory_max: 134217728,

@@ -317,7 +317,7 @@ mod tests {
         let root = installation(&["1.0.0"]);
         let runtimes = Runtimes::load(root.path()).expect("loads");
         let free: isoplane_abi::config::AppManifest =
-            toml::from_str("name = \"app\"\nlimits.module_bytes_compressed = 5242880\nlimits.package_bytes = 52428800\nlimits.instance_memory_max = 134217728\nlimits.occupancy_ms_per_dispatch = 100\nlimits.subrequests_per_dispatch = 20\nlimits.pending_futures_per_dispatch = 6").expect("an explicit small-budget manifest");
+            toml::from_str("name = \"app\"\nlimits.instances_per_application = 3\nlimits.module_bytes_compressed = 5242880\nlimits.package_bytes = 52428800\nlimits.instance_memory_max = 134217728\nlimits.occupancy_ms_per_dispatch = 100\nlimits.subrequests_per_dispatch = 20\nlimits.pending_futures_per_dispatch = 6").expect("an explicit small-budget manifest");
         let limits = isoplane_prepare::package::PackageLimits::of(&free);
         let maximum_package_bytes = 50 << 20;
         let identity = identity_json("1.0.0", MODULE);

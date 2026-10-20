@@ -15,6 +15,7 @@ use std::sync::{Arc, Barrier};
 use std::time::Instant;
 
 const PLAN: Limits = Limits {
+    instances_per_application: 16,
     module_bytes_compressed: 52428800,
     package_bytes: 52428800,
     instance_memory_max: 536870912,

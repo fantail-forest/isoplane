@@ -50,7 +50,9 @@ impl Cell {
                     &job.responder,
                     DispatchResult {
                         status,
-                        body: if status == 503 {
+                        body: if e.is::<crate::admission::InstanceLimitReached>() {
+                            b"instance_capacity_unavailable".to_vec()
+                        } else if status == 503 {
                             b"snapshot_capacity_unavailable".to_vec()
                         } else {
                             e.to_string().into_bytes()

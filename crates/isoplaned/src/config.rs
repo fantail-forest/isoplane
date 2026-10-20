@@ -582,6 +582,7 @@ name = "cell-1"
 [[apps]]
 name = "a"
 tenant = "t1"
+limits.instances_per_application = 8
 limits.module_bytes_compressed = 52428800
 limits.package_bytes = 52428800
 limits.instance_memory_max = 134217728
@@ -594,6 +595,7 @@ versions = [{{ id = "v1" }}]
 [[apps]]
 name = "b"
 tenant = "t2"
+limits.instances_per_application = 8
 limits.module_bytes_compressed = 52428800
 limits.package_bytes = 52428800
 limits.instance_memory_max = 134217728
@@ -616,6 +618,7 @@ name = "cell-2"
 [[apps]]
 name = "a"
 tenant = "bank"
+limits.instances_per_application = 16
 limits.module_bytes_compressed = 52428800
 limits.package_bytes = 52428800
 limits.instance_memory_max = 536870912
@@ -628,6 +631,7 @@ versions = [{ id = "v1" }]
 [[apps]]
 name = "b"
 tenant = "bank"
+limits.instances_per_application = 16
 limits.module_bytes_compressed = 52428800
 limits.package_bytes = 52428800
 limits.instance_memory_max = 536870912
@@ -647,6 +651,7 @@ versions = [{ id = "v1" }]
 [[apps]]
 name = "a"
 tenant = "t"
+limits.instances_per_application = 8
 limits.module_bytes_compressed = 52428800
 limits.package_bytes = 52428800
 limits.instance_memory_max = 134217728
@@ -692,6 +697,7 @@ name = "c"
 [[apps]]
 name = "a"
 tenant = "t"
+limits.instances_per_application = 8
 limits.module_bytes_compressed = 52428800
 limits.package_bytes = 52428800
 limits.instance_memory_max = 134217728

@@ -314,6 +314,7 @@ mod queue_tests {
             crate::fakes::FakeBehaviour::done(),
         ));
         let entry = Arc::new(super::super::ModuleEntry {
+            instances: Arc::default(),
             shared: Mutex::new(Vec::new()),
             tenant: "queue-test".into(),
             debug_occupancy_ms: None,

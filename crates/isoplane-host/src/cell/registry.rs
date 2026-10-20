@@ -2,7 +2,14 @@
 
 use super::*;
 
+#[derive(Hash, PartialEq, Eq)]
+pub(super) struct ApplicationKey {
+    tenant: String,
+    app: String,
+}
+
 pub(super) struct ModuleEntry {
+    pub(super) instances: Arc<crate::admission::ApplicationInstances>,
     /// Instances that have had dispatches in progress, which a new dispatch
     /// may join; pruned as they are found to have none.
     pub(super) shared: Mutex<Vec<Weak<Slot>>>,
@@ -376,7 +383,23 @@ impl Cell {
         );
         let limits = manifest.limits;
         let module = activator.module().clone();
+        let instances = {
+            let mut applications = self.applications.lock();
+            applications.retain(|_, instances| instances.strong_count() > 0);
+            let key = ApplicationKey {
+                tenant: tenant.to_owned(),
+                app: module.app.clone(),
+            };
+            if let Some(instances) = applications.get(&key).and_then(Weak::upgrade) {
+                instances
+            } else {
+                let instances = Arc::new(crate::admission::ApplicationInstances::default());
+                applications.insert(key, Arc::downgrade(&instances));
+                instances
+            }
+        };
         let entry = ModuleEntry {
+            instances,
             shared: Mutex::new(Vec::new()),
             tenant: tenant.to_string(),
             limits,
@@ -446,7 +469,11 @@ impl Cell {
     ) -> crate::Result<(Arc<Slot>, AcquireSource)> {
         let (slot, src) = entry.pool.acquire_reserved(
             |id| {
+                let admission = entry.instances.reserve(crate::admission::InstanceLimit(
+                    entry.manifest.effective_limits().instances_per_application,
+                ))?;
                 let ctx = self.make_ctx(entry, id);
+                *ctx.admission.lock() = Some(admission);
                 let maximum = entry.activator.snapshot_size_bound(
                     isoplane_abi::config::memory_ceiling_bytes(ctx.limits.instance_memory_max),
                 )?;
@@ -494,5 +521,84 @@ impl Cell {
         let r = g.get(&id)?;
         let t = r.slot.ctx.responses.lock();
         t.get(handle).map(|resp| resp.body())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cell::pool::cell_tests::{cell, http, manifest};
+    use crate::fakes::{FakeActivator, FakeBehaviour};
+
+    #[test]
+    fn application_admission_counts_versions_and_releases_discarded_instances() {
+        let cell = cell(CellConfig::for_test("app-cap"));
+        let register = |tenant: &str, app: &str, version: &str| {
+            let module = ModuleId::new(app, version);
+            let mut manifest = manifest(app);
+            manifest.resource_limits.instances_per_application = Some(2);
+            cell.register_module(
+                tenant,
+                Arc::new(FakeActivator::named(module.clone(), FakeBehaviour::done())),
+                manifest,
+            )
+            .expect("register application");
+            let entry = cell.modules.read()[&module].clone();
+            entry
+        };
+        let old = register("tenant", "app", "v1");
+        let (first, _) = cell.acquire_handler(&old).expect("first activation");
+        let (second, _) = cell.acquire_handler(&old).expect("second activation");
+        cell.retire_module(old.activator.module());
+        let new = register("tenant", "app", "v2");
+        let failure = cell
+            .acquire_handler(&new)
+            .err()
+            .expect("draining versions count");
+        assert!(failure.is::<crate::admission::InstanceLimitReached>());
+        let independent = register("other-tenant", "other-app", "v1");
+        assert!(cell.acquire_handler(&independent).is_ok());
+        let retained_context = first.ctx.clone();
+        cell.forget(&first);
+        old.pool.release(first, evict());
+        let (replacement, _) = cell.acquire_handler(&new).expect("discard frees capacity");
+        assert_ne!(replacement.id, retained_context.instance);
+        new.pool.release(replacement.clone(), warm());
+        let (reused, source) = cell
+            .acquire_handler(&new)
+            .expect("warm reuse needs no reservation");
+        assert_eq!(source, AcquireSource::WarmParked);
+        assert_eq!(reused.id, replacement.id);
+        assert!(cell.acquire_handler(&new).is_err());
+        cell.forget(&second);
+        old.pool.release(second, evict());
+        assert!(cell.acquire_handler(&new).is_ok());
+        cell.shutdown();
+    }
+
+    #[test]
+    fn a_request_at_the_application_instance_cap_receives_service_unavailable() {
+        let cell = cell(CellConfig::for_test("app-refusal"));
+        let module = ModuleId::new("app", "v1");
+        let mut manifest = manifest("app");
+        manifest.resource_limits.instances_per_application = Some(0);
+        cell.register_module(
+            "tenant",
+            Arc::new(FakeActivator::named(module.clone(), FakeBehaviour::done())),
+            manifest,
+        )
+        .expect("register denied application");
+        let response = cell
+            .dispatch_blocking(
+                &module,
+                Target::Handler { route: "/".into() },
+                http(1),
+                Duration::from_secs(10),
+            )
+            .expect("bounded admission response");
+        assert_eq!(response.status, 503);
+        assert_eq!(response.body, b"instance_capacity_unavailable");
+        assert!(cell.resident_ids().is_empty());
+        cell.shutdown();
     }
 }

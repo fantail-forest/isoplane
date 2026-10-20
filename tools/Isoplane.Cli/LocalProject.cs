@@ -69,6 +69,7 @@ internal sealed class LocalProject(string directory, string? targetDirectory)
     {
         Dictionary<string, object?> manifest = new() { ["name"] = name, ["limits"] = new Dictionary<string, object>
             {
+                ["instances_per_application"] = 16UL,
                 ["module_bytes_compressed"] = 52428800UL,
                 ["package_bytes"] = 52428800UL,
                 ["instance_memory_max"] = 536870912UL,

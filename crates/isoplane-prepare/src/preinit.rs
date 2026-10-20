@@ -204,6 +204,7 @@ impl PreInitializer {
                 application_files: PlatformFiles::default(),
                 runtime: self.runtime.clone(),
                 limits: Limits {
+                    instances_per_application: 16,
                     module_bytes_compressed: 52428800,
                     package_bytes: 52428800,
                     instance_memory_max: 536870912,

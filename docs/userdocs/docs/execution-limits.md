@@ -9,6 +9,13 @@ a piece of work Isoplane gives an instance, usually one HTTP request to handle.
 These limits are enforced by the platform. They are separate from the ways
 [.NET itself behaves differently](dotnet-runtime-differences.md) in the sandbox.
 
+## Application instances
+
+Each application has a limit on live instances. Instances finishing cancelled
+requests or draining an older application version still count, as do hibernated
+instances. Requests can share an existing eligible instance; when another
+instance is needed and the limit is reached, the request receives HTTP 503.
+
 ## Memory
 
 Each instance has a memory limit. The limit applies to the instance as a whole,
@@ -111,11 +118,8 @@ until the application closes or disposes of it, including while the instance is
 idle between dispatches, so the connections a connection pool keeps open count
 too.
 
-Isoplane closes a connection that has sent and received nothing for 30
-seconds, unless the request that last used it is still in progress. The
-application sees the connection aborted when it next uses it, as it would if
-the server had closed it, and a client library opens a new one. This applies
-to every outbound connection and cannot be changed.
+Connections remain open until the application, its peer, or instance cleanup
+closes them. An idle connection still counts toward the instance's limit.
 
 An instance can also have six outbound connections being opened at once. A
 further connection does not fail: it waits, in order, until one of the six is

@@ -19,6 +19,7 @@ name = "cell-1"
 [[apps]]
 name = "freebie"
 tenant = "student"
+limits.instances_per_application = 3
 limits.module_bytes_compressed = 5242880
 limits.package_bytes = 52428800
 limits.instance_memory_max = 134217728
@@ -31,6 +32,7 @@ versions = [{ id = "v1" }]
 [[apps]]
 name = "paying"
 tenant = "bigco"
+limits.instances_per_application = 8
 limits.module_bytes_compressed = 52428800
 limits.package_bytes = 52428800
 limits.instance_memory_max = 134217728

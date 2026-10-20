@@ -65,6 +65,7 @@ fn every_module_build_sh_writes_draws_the_verdict_recorded_for_it() {
         let free_v = verdict(
             &wasm,
             Limits {
+                instances_per_application: 3,
                 module_bytes_compressed: 5242880,
                 package_bytes: 52428800,
                 instance_memory_max: 134217728,

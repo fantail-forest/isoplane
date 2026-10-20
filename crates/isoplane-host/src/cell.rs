@@ -192,6 +192,8 @@ pub struct Cell {
     queue: Arc<WorkQueue>,
     index: Arc<Mutex<HashMap<InstanceId, Weak<Slot>>>>,
     modules: RwLock<HashMap<ModuleId, Arc<ModuleEntry>>>,
+    applications:
+        Mutex<HashMap<registry::ApplicationKey, Weak<crate::admission::ApplicationInstances>>>,
     residents: Mutex<HashMap<InstanceId, Resident>>,
     active: ShardedMap<InstanceId, registry::ActiveDispatches>,
     /// Dispatches that joined an instance while another dispatch's slice ran,
@@ -284,6 +286,7 @@ impl Cell {
             queue,
             index,
             modules: RwLock::new(HashMap::new()),
+            applications: Mutex::new(HashMap::new()),
             residents: Mutex::new(HashMap::new()),
             active: ShardedMap::new(ACTIVE_SHARDS),
             starts: ShardedMap::new(ACTIVE_SHARDS),

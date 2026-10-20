@@ -38,6 +38,7 @@ pub const WAKE_DEADLINE: Duration = Duration::from_secs(60);
 
 /// The production plan used for preparation and execution of returned guests.
 pub const GUEST_LIMITS: Limits = Limits {
+    instances_per_application: 8,
     module_bytes_compressed: 52428800,
     package_bytes: 52428800,
     instance_memory_max: 134217728,

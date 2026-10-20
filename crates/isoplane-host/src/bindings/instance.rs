@@ -53,6 +53,7 @@ impl Default for GuestResourceLimits {
 /// freeze the clock, read the trap latch and collect the response for an
 /// instance whose bindings it no longer owns.
 pub struct InstanceCtx {
+    pub(crate) admission: Mutex<Option<crate::admission::InstanceReservation>>,
     pub(crate) snapshot: Mutex<Option<Box<dyn isoplane_hibernate::snapshot::SnapshotReservation>>>,
     pub instance: InstanceId,
     pub module: ModuleId,
@@ -182,6 +183,7 @@ impl InstanceCtx {
     ) -> Self {
         let no_dispatch = DispatchState::new(0);
         Self {
+            admission: Mutex::new(None),
             snapshot: Mutex::new(None),
             instance,
             module: tenancy.module,
