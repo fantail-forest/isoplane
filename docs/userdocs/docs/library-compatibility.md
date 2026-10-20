@@ -1008,14 +1008,16 @@ What to know before relying on it:
 - **Use the asynchronous methods only.** `ConnectionMultiplexer.Connect`, the
   synchronous `IDistributedCache` methods and synchronous commands such as
   `db.StringGet(...)` throw `PlatformNotSupportedException`.
-- **A client kept between requests costs the instance.** A connected client
-  keeps a read waiting on its connection, and a request that ends with a
-  network operation still pending is
-  [followed by a fresh instance](dotnet-runtime-differences.md#before-the-response),
-  which adds about a third of a second to the next request here. The cache
-  keeps its client, so every request that uses the cache costs its instance.
-  Connecting and disposing the client within the request, as above, keeps the
-  instance, at the cost of a connection for each request.
+- **A client kept between requests keeps its first request open.** A
+  connected client always has a read waiting on its connection, so the request
+  that connected it is
+  [not over for 30 seconds after its response](dotnet-runtime-differences.md#before-the-response),
+  after which the read becomes the instance's. Later requests use the client
+  as usual meanwhile. Isoplane closes the connection once it has carried
+  nothing for [30 seconds](execution-limits.md#outbound-connections), and the
+  client reconnects when it is next used. We ran a kept client used directly;
+  connecting within each request instead added about 25 ms to each request
+  here.
 - **Connect inside a request, not during initialization.** A connected client
   holds a socket, and initialization refuses an open socket.
 - **The Redis output cache store does not start**
@@ -1076,7 +1078,8 @@ for an endpoint that takes OTLP over HTTP.
 The spans of a request are held in the instance's memory until the request's
 own span ends, then encoded and sent while the client already has the
 response. Sending them is work the request left running, so its time counts
-toward that request. A request that produces many spans can send the ones that
+toward that request, for up to
+[30 seconds after the response](execution-limits.md#after-the-response). A request that produces many spans can send the ones that
 have ended sooner, and learn whether the endpoint accepted them:
 
 ```csharp

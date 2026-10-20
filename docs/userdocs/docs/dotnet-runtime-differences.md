@@ -299,14 +299,22 @@ that is still running or waiting, and for cleanup.
 Everything the response depends on. The client receives the response as soon
 as it is complete, but the request's dispatch is not over while work it started
 is still pending, such as an outbound call or a name lookup started and not
-awaited. That work goes on running, and the dispatch ends once it completes.
-Until then it uses the request's [running time](execution-limits.md#running-time),
-and the request's cancellation token and the
+awaited. That work goes on running, for up to
+[30 seconds after the response](execution-limits.md#after-the-response), and
+the dispatch ends once it completes. Until then it uses the request's
+[running time](execution-limits.md#running-time), and the request's
+cancellation token and the
 [5 seconds to finish after cancellation](execution-limits.md#after-cancellation)
 apply to it as they do before the response. A client that goes away once it
 has the whole response does not cancel it. A read of the request body that is
 still waiting when the response is complete fails with an `IOException`, since
 nothing more of the body is read.
+
+Work still pending 30 seconds after the response is not stopped. The dispatch
+ends, and the work becomes the instance's: when it completes, it runs in the
+next request the instance handles, the way a timer that comes due between
+requests does. A client library that always has a read waiting on a kept
+connection, as a Redis client does, ends up this way, and keeps working.
 
 Nothing guarantees that such work completes, though: an instance can be stopped
 at any time, for example for going over its limits. Do not leave saving data or
@@ -331,7 +339,9 @@ whichever request is running. A timer never runs if its instance is discarded
 first, and an idle instance can be discarded at any time. A task started and not
 awaited that waits on a timer, such as a retry after `Task.Delay`, may therefore
 finish during a later dispatch, or never: await the work the response depends
-on.
+on. Work a request left pending more than
+[30 seconds after its response](#before-the-response) is kept the same way,
+and runs when it completes in the next slice of a request on that instance.
 
 #### Running timers between requests {#run-timers-between-requests}
 
@@ -398,8 +408,10 @@ in-memory session state belong to one instance and can disappear. Keep anything 
 must last in a database or another external service.
 
 A connection kept from an earlier request may be stale, even after a request
-that completed normally. Be ready to open a new one when it fails, as a
-connection pool would anywhere.
+that completed normally. Isoplane closes a connection that has carried nothing
+for [30 seconds](execution-limits.md#outbound-connections), and the server or
+the network between may close one sooner. Be ready to open a new one when it
+fails, as a connection pool would anywhere.
 
 `Program.cs` runs up to `RunAsync` while Isoplane prepares the
 application, and every instance starts from a copy of the memory it leaves
@@ -590,9 +602,11 @@ application has used up its outbound connections.
 A client you construct yourself with `new HttpClient()` and keep for later
 requests keeps its idle connections open between requests, and they count
 toward the instance's
-[outbound connections](execution-limits.md#outbound-connections). The timer
-that removes them runs only during a dispatch. Take the client from
-`IHttpClientFactory` instead, or construct it with
+[outbound connections](execution-limits.md#outbound-connections) until
+Isoplane closes them after 30 seconds without use; the client's own timer for
+removing them runs only during a dispatch. The client opens a new connection
+when its next call finds one closed. To keep no idle connections at all, take
+the client from `IHttpClientFactory` instead, or construct it with
 `new HttpClient(new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.Zero })`.
 A client created and disposed within one request reuses its connection for that
 request's calls and closes it when it is disposed.

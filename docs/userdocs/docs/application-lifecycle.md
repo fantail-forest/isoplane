@@ -189,7 +189,7 @@ operation completes.
 | The client goes away before it has the whole response | The request's token is cancelled |
 | The dispatch uses up its running time | The token is cancelled. If the dispatch has not finished shortly afterwards, Isoplane stops the instance and the request fails. |
 | The dispatch has too many asynchronous operations pending at once | The request fails |
-| The response is complete while work the request started is still pending | That work goes on running, and the request is not over until it finishes; see [What has to finish before the response?](dotnet-runtime-differences.md#before-the-response). It is lost if the instance is stopped first, and a read of the request body still waiting fails. |
+| The response is complete while work the request started is still pending | That work goes on running, and the request is not over until it finishes, for up to 30 seconds; after that it continues as the instance's, in later requests. See [What has to finish before the response?](dotnet-runtime-differences.md#before-the-response). It is lost if the instance is stopped first, and a read of the request body still waiting fails. |
 
 ## Between requests
 
@@ -204,7 +204,9 @@ request, or discard it. Successive requests can reach different instances.
   raised and no cleanup code runs.
 - Keeps a timer that is still pending with its instance. A timer that comes due
   while the instance is idle runs at the start of the instance's next request,
-  before the request's own code.
+  before the request's own code. Work a request left running more than 30
+  seconds after its response is kept the same way.
+- Closes a connection that has carried nothing for 30 seconds.
 - Wakes an idle instance to run the timers that have come due, if the
   application called
   [`Initialization.RunTimersBetweenRequests`](reference/sdk/Isoplane.Sdk/Isoplane/Initialization/RunTimersBetweenRequests.md)

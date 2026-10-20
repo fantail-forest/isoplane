@@ -81,6 +81,15 @@ promptly protects them:
 - Let `OperationCanceledException` end the request. Catching it and starting
   more work uses up the 5 seconds.
 
+## Work after the response {#after-the-response}
+
+Work a request started and left running after its response, such as an
+outbound call that was not awaited, keeps the request's dispatch going for up
+to 30 seconds after the response. Whatever is still pending then is not
+stopped: the dispatch ends, and the work continues as the instance's. When it
+completes, it runs in the next request the instance handles. See
+[Work after the response](dotnet-runtime-differences.md#after-the-response).
+
 ## Pending operations
 
 Each dispatch can have only so many asynchronous operations waiting at once, such
@@ -101,6 +110,12 @@ that fails with a socket error. A connection counts from when it starts to open
 until the application closes or disposes of it, including while the instance is
 idle between dispatches, so the connections a connection pool keeps open count
 too.
+
+Isoplane closes a connection that has sent and received nothing for 30
+seconds, unless the request that last used it is still in progress. The
+application sees the connection aborted when it next uses it, as it would if
+the server had closed it, and a client library opens a new one. This applies
+to every outbound connection and cannot be changed.
 
 An instance can also have six outbound connections being opened at once. A
 further connection does not fail: it waits, in order, until one of the six is
