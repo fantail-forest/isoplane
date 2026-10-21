@@ -188,7 +188,8 @@ occupying a worker thread.
 | Code waits synchronously or starts a thread | The call throws `PlatformNotSupportedException` |
 | The client goes away before it has the whole response | The request's token is cancelled |
 | The dispatch uses up its running time | The token is cancelled. If the dispatch has not finished shortly afterwards, Isoplane stops the instance and the request fails. |
-| The dispatch has too many asynchronous operations pending at once | The request fails |
+| The dispatch exceeds its own pending-operation cap | The instance traps; all its requests fail |
+| Retained work fills the instance-wide future cap | Starting another operation fails; consuming or releasing existing work frees capacity |
 | The response is complete while work the request started is still pending | The request ends at the empty-stack boundary and the work transfers to the instance's background allowance. A pending request-body read fails. See [Work after the response](dotnet-runtime-differences.md#before-the-response). |
 
 ## Between requests
@@ -207,8 +208,9 @@ instances.
 - Retains connections until the application, peer or instance cleanup closes
   them. Retained connections still count against instance limits.
 - Stops an idle instance with background work or open connections after five
-  minutes without a request. Only requests refresh this deadline and demand
-  recency. Hibernated instances are not woken just to run background work.
+  minutes after the last active request finishes, unless another request arrives.
+  Only request arrivals refresh demand recency. The idle stop also releases
+  hibernated instances without waking them to run background work.
 
 **Your application**
 

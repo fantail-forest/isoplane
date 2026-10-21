@@ -603,6 +603,13 @@ makes the change smaller, as it does for
 
 ### Connections and background work {#connections-and-background-work}
 
+Retained Redis connections work across requests, including with
+`Microsoft.Extensions.Caching.StackExchangeRedis`. A request awaiting a shared
+connection's background work can stall when the instance exhausts its background
+allowance and fail with a Redis timeout. The client's timeout detection may also
+be delayed until background execution resumes. See
+[background limits](execution-limits.md#after-the-response).
+
 These are described on other pages and listed here so that this page is
 complete.
 

@@ -69,7 +69,9 @@ pub struct CellConfig {
     /// `exec_threads` times this.
     pub queue_depth_per_worker: usize,
     pub max_idle_per_module: usize,
-    /// Per-instance byte cap for undelivered future payloads, resident or hibernated.
+    /// Per-instance byte cap for undelivered future payloads and read reservations.
+    /// Reads wait for capacity; zero refuses nonempty results. Transport buffers
+    /// and the guest heap are excluded.
     pub buffered_future_bytes: usize,
     /// High-water mark for queued HTTP response bytes; writes wait for readers.
     /// This does not limit the total size of a response.
@@ -86,8 +88,8 @@ pub struct CellConfig {
     pub hibernate: HibernateConfig,
     pub breaker: BreakerConfig,
     pub sweep_interval_ms: u64,
-    /// How long an instance retaining background work or connections may go
-    /// without a request before it is stopped.
+    /// Idle time after the last active HTTP request finishes before an instance
+    /// retaining background work or connections is stopped.
     pub background_idle_limit_ms: u64,
 }
 

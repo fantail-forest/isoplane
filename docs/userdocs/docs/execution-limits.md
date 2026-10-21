@@ -14,7 +14,11 @@ These limits are enforced by the platform. They are separate from the ways
 Each application has a limit on live instances. Instances finishing cancelled
 requests or draining an older application version still count, as do hibernated
 instances. Requests can share an existing eligible instance; when another
-instance is needed and the limit is reached, the request receives HTTP 503.
+instance is needed and usable capacity is exhausted, the request receives HTTP
+503 with `Retry-After: 1`; it is not placed in an application admission queue.
+The default per-application cap is eight live instances,
+with at most eight active requests per instance. An open streaming response
+continues to occupy a request slot.
 
 ## Memory
 
@@ -126,19 +130,25 @@ Each request has its own pending-operation cap. Shared native handles and
 connections have instance caps. The aggregate retained-future cap is the
 native-handle limit plus eight requests' pending-operation limits; handing work
 over or completing it does not free capacity until its result is delivered or
-the operation is released.
+the operation is released. Filling this shared cap refuses a new operation
+without discarding the instance. Exceeding a dispatch's own pending-operation
+cap remains a trap.
 
 Undelivered future payloads share a 256 KiB instance budget, including while the
-instance is resident. A result that exceeds the remaining capacity returns a
-buffer-limit error. An application should consume results promptly and bound
-its fan-out.
+instance is resident. Upload reads wait for result space before copying available
+transport data into a result; large reads may return fewer bytes. Delivery or
+cancellation frees that space. Other completions that exceed available space
+return a buffer-limit error. This budget does not include transport buffers,
+response queues or the guest heap.
 
 ## Timers
 
-An instance can hold 16 timers at once. .NET keeps every `Timer`, `Task.Delay`
-and `CancellationTokenSource.CancelAfter` of an application behind a single one,
-so this limit is reached only by native code that creates timers of its own.
-Creating a seventeenth stops the instance.
+An instance can hold 16 host timers at once. .NET groups `Timer`, `Task.Delay`
+and `CancellationTokenSource.CancelAfter` by their owning request, with a separate
+group for retained background timers. Each group shares a host timer; individual
+managed timers do not each consume a host timer. Request timers continue under
+their request's allowance when background execution is throttled.
+Creating a seventeenth host timer stops the instance.
 
 ## Outbound connections
 

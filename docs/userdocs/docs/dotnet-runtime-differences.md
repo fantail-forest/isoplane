@@ -325,7 +325,8 @@ background allowance, including donated unused request time. This also applies
 to timers maintained by libraries such as connection pools.
 
 An idle instance with background work or open connections is stopped after five
-minutes without a request. Background activity does not extend that deadline or
+minutes after the last active request finishes, unless another request arrives.
+Background activity does not extend that deadline or
 make the instance appear recently requested. Hibernated instances are not woken
 solely for background work. Timers resume when the instance becomes resident
 again; do not depend on a timer firing on schedule.
