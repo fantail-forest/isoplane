@@ -137,7 +137,7 @@ mod tests {
                     .expect("hibernate retained work");
                 assert_eq!(slot.state(), LifecycleTier::Hibernated);
             }
-            slot.ctx.background.request_arrived(Duration::ZERO);
+            slot.ctx.background.request_finished(Duration::ZERO);
             let entry = cell.modules.read()[&module].clone();
             cell.watch_idle_timers(&slot, &entry);
             assert!(wait_for(

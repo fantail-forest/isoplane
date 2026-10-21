@@ -111,7 +111,7 @@ impl Background {
         }
     }
 
-    pub(crate) fn request_arrived(&self, idle_limit: Duration) {
+    pub(crate) fn request_finished(&self, idle_limit: Duration) {
         self.credit.lock().idle_stop_at = Some(self.now() + idle_limit);
     }
 
@@ -259,6 +259,22 @@ impl Drop for Background {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn request_completion_starts_a_fresh_idle_window() {
+        let pool = Background::new(InstanceId(1), None);
+        let limit = Duration::from_secs(300);
+        pool.request_finished(limit);
+        tokio::time::advance(Duration::from_secs(600)).await;
+        pool.request_finished(limit);
+        assert_eq!(pool.idle_stop_at(), Some(Instant::now() + limit));
+        pool.charge(Duration::from_millis(10));
+        tokio::time::advance(Duration::from_secs(1)).await;
+        assert_eq!(
+            pool.idle_stop_at(),
+            Some(Instant::now() + limit - Duration::from_secs(1))
+        );
+    }
 
     #[tokio::test(start_paused = true)]
     async fn refill_and_donations_repay_debt_without_exceeding_the_credit_cap() {

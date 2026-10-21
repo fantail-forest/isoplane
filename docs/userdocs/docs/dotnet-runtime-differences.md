@@ -334,8 +334,8 @@ again; do not depend on a timer firing on schedule.
 
 Work that is meant to run continuously, or on a fixed schedule, such as
 a loop in a `BackgroundService`, a queue consumer, or a job scheduler. Timer
-wakes are best effort and stop once an instance has gone five minutes without
-a request, so they cannot provide continuous execution. An application whose
+wakes are best effort and stop five minutes after the last active request
+finishes, unless another request arrives, so they cannot provide continuous execution. An application whose
 `BackgroundService` is still running once the host has started is refused, with an error that names the service. Bounded
 asynchronous work in `IHostedService.StartAsync` is accepted.
 

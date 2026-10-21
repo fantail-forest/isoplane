@@ -174,17 +174,10 @@ impl Cell {
         module: &ModuleId,
         target: Target,
         rec: DispatchRecord,
-        timeout: Duration,
-        http: super::HttpDispatch,
+        http: Option<super::HttpDispatch>,
     ) -> crate::Result<DispatchResult> {
-        self.dispatch_resources_async(
-            module,
-            target,
-            rec,
-            timeout,
-            Some(DispatchResources::Http(http)),
-        )
-        .await
+        self.dispatch_resources_async(module, target, rec, None, http.map(DispatchResources::Http))
+            .await
     }
 
     fn dispatch_with_resources(
@@ -261,7 +254,7 @@ impl Cell {
         module: &ModuleId,
         target: Target,
         rec: DispatchRecord,
-        timeout: Duration,
+        timeout: Option<Duration>,
         resources: Option<DispatchResources>,
     ) -> crate::Result<DispatchResult> {
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -272,10 +265,13 @@ impl Cell {
             resources,
             Responder::Async(Arc::new(Mutex::new(Some(tx)))),
         )?;
-        tokio::time::timeout(timeout, rx)
-            .await
-            .map_err(|_| anyhow::anyhow!("dispatch did not complete within {timeout:?}"))?
-            .map_err(|_| anyhow::anyhow!("dispatch response channel closed before completion"))
+        let response = match timeout {
+            Some(timeout) => tokio::time::timeout(timeout, rx)
+                .await
+                .map_err(|_| anyhow::anyhow!("dispatch did not complete within {timeout:?}"))?,
+            None => rx.await,
+        };
+        response.map_err(|_| anyhow::anyhow!("dispatch response channel closed before completion"))
     }
 
     /// Submits without waiting; `None` if the cell shed at admission.
@@ -359,7 +355,7 @@ impl Cell {
         rec: DispatchRecord,
         timeout: Duration,
     ) -> crate::Result<DispatchResult> {
-        self.dispatch_resources_async(module, target, rec, timeout, None)
+        self.dispatch_resources_async(module, target, rec, Some(timeout), None)
             .await
     }
 
@@ -385,5 +381,69 @@ impl Cell {
             occupancy_budget_ms,
             now_ms: crate::now_ms(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cell::pool::cell_tests::{app, cell, http};
+    use crate::fakes::{FakeBehaviour, Step};
+    use std::future::Future;
+    use std::task::{Context, Poll, Waker};
+
+    #[tokio::test(start_paused = true)]
+    async fn http_waits_through_long_parks_and_arms_idle_cleanup_on_completion() {
+        let cell = cell(CellConfig {
+            exec_threads: 0,
+            ..CellConfig::for_test("long-http")
+        });
+        let module = app(
+            &cell,
+            "long-http",
+            FakeBehaviour::program([
+                Step::Park {
+                    imports: vec![("clock_deadline_in", 600_000)],
+                },
+                Step::Done {
+                    status: 200,
+                    body: vec![],
+                },
+            ]),
+        );
+        let request = cell.dispatch_http_async(
+            &module,
+            Target::Handler { route: "/".into() },
+            http(1),
+            None,
+        );
+        let mut request = std::pin::pin!(request);
+        let mut context = Context::from_waker(Waker::noop());
+        assert!(request.as_mut().poll(&mut context).is_pending());
+        let Job::Dispatch(job) = cell.queue.pop(0).expect("queued request") else {
+            panic!("expected request");
+        };
+        cell.run_dispatch(*job);
+        cell.queue.job_done(0);
+        let slot = cell.slot(cell.resident_ids()[0]).expect("parked instance");
+        assert_eq!(slot.ctx.background.idle_stop_at(), None);
+        tokio::time::advance(Duration::from_secs(600)).await;
+        assert!(request.as_mut().poll(&mut context).is_pending());
+        let future = cell
+            .rt
+            .futures
+            .pending_of_dispatch(slot.id, 1, "clock_deadline_in")[0];
+        cell.complete_future(future, isoplane_abi::result::ResultRecord::Ok(vec![]));
+        let Job::Wake(wake) = cell.queue.pop(0).expect("queued completion") else {
+            panic!("expected wake");
+        };
+        cell.run_wake(wake.slot);
+        cell.queue.job_done(0);
+        let Poll::Ready(result) = request.as_mut().poll(&mut context) else {
+            panic!("completed request must answer");
+        };
+        assert_eq!(result.expect("response").status, 200);
+        assert!(slot.ctx.background.idle_stop_at().is_some());
+        cell.shutdown();
     }
 }

@@ -159,9 +159,6 @@ impl Cell {
 
         slot.record_dispatch(&job.rec);
         if matches!(job.rec.kind, DispatchKind::Http(_)) {
-            slot.ctx
-                .background
-                .request_arrived(Duration::from_millis(self.cfg.background_idle_limit_ms));
             entry.meters.record_dispatch();
         }
         self.metrics.dispatches.fetch_add(1, Ordering::Relaxed);
@@ -1088,6 +1085,11 @@ impl Cell {
         slot.ctx.responses.lock().end_dispatch(did);
         let mut abandoned_guest_work = false;
         if let Some(r) = &req {
+            if r.completion.is_http {
+                slot.ctx
+                    .background
+                    .request_finished(Duration::from_millis(self.cfg.background_idle_limit_ms));
+            }
             if did != crate::futures::INSTANCE_WORK {
                 r.completion.donate_to(&slot.ctx.background);
                 abandoned_guest_work = self.rt.futures.end_dispatch(slot.id, did);

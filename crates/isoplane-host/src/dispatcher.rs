@@ -1,7 +1,5 @@
 //! Adapts HTTP requests to cell dispatches.
 
-use std::time::Duration;
-
 use async_trait::async_trait;
 use isoplane_abi::dispatch::{DispatchRecord, HttpRequest};
 use isoplane_abi::host::{Dispatcher, HttpExchange, HttpReply, HttpUpload, RouteTarget};
@@ -10,12 +8,6 @@ use tracing::Instrument;
 
 use crate::cell::{Cell, DispatchResult, Target};
 use crate::ModuleId;
-
-/// The wall cap plus a margin: the budget and the wall cap fire inside the
-/// cell, and this only keeps a caller from waiting forever on a cell bug.
-fn deadline(cell: &Cell) -> Duration {
-    Duration::from_millis(cell.cfg.slice_wall_ms_cap as u64 + 5_000)
-}
 
 impl Cell {
     async fn run_http_exchange(
@@ -34,7 +26,6 @@ impl Cell {
         let transport =
             crate::response_transport::ResponseTransport::new(self.cfg.response_queue_bytes);
         let output = transport.clone();
-        let timeout = deadline(self);
         let exchange_task = async move {
             let stream = output.clone();
             let result = cell
@@ -42,11 +33,10 @@ impl Cell {
                     &module,
                     Target::Handler { route },
                     record,
-                    timeout,
-                    crate::cell::HttpDispatch {
+                    Some(crate::cell::HttpDispatch {
                         response: stream,
                         upload,
-                    },
+                    }),
                 )
                 .await;
             match result {
@@ -122,8 +112,7 @@ impl Cell {
         let me = self
             .me()
             .ok_or_else(|| anyhow::anyhow!("cell `{}` is shutting down", self.cfg.name))?;
-        let timeout = deadline(self);
-        me.dispatch(&module, target, rec, timeout).await
+        me.dispatch_http_async(&module, target, rec, None).await
     }
 }
 

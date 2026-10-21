@@ -615,8 +615,8 @@ complete.
   yet.
 - **A [`BackgroundService`][BackgroundService] that keeps running**, a
   scheduled job or a queue consumer cannot rely on continuous execution.
-  Background callbacks have a bounded allowance and stop after five minutes
-  without requests. A hosted `BackgroundService` still running at startup is refused. Doing that work
+  Background callbacks have a bounded allowance and stop five minutes after
+  the last active request finishes, unless another request arrives. A hosted `BackgroundService` still running at startup is refused. Doing that work
   while a request is handled is a large change. See
   [What has nowhere to run?](dotnet-runtime-differences.md#nowhere-to-run)
 
