@@ -110,6 +110,7 @@ struct State {
     reactor_polls: usize,
     donation: Option<std::sync::Weak<crate::background::Background>>,
     responded: bool,
+    breaker_probe: Option<crate::breaker::BreakerProbe>,
     io_kind: Option<std::io::ErrorKind>,
     os_error: Option<i32>,
     guest_trap_code: Option<TrapCode>,
@@ -166,6 +167,7 @@ impl DispatchCompletion {
                 reactor_polls: 0,
                 donation: None,
                 responded: false,
+                breaker_probe: None,
                 io_kind: None,
                 os_error: None,
                 guest_trap_code: None,
@@ -173,7 +175,12 @@ impl DispatchCompletion {
         }))
     }
 
+    pub(super) fn hold_breaker_probe(&self, probe: Option<crate::breaker::BreakerProbe>) {
+        self.state.lock().breaker_probe = probe;
+    }
+
     pub(super) fn reject(&self, reason: AdmissionRejection) {
+        self.state.lock().breaker_probe.take();
         let reason = match reason {
             AdmissionRejection::QueueUnavailable => "queue_unavailable",
             AdmissionRejection::BreakerOpen => "breaker_open",
@@ -376,6 +383,7 @@ impl DispatchCompletion {
     pub(super) fn finish(&self) {
         let mut state = self.state.lock();
         state.finish_requested = true;
+        state.breaker_probe.take();
         if state.reactor_polls != 0 {
             return;
         }

@@ -5,6 +5,7 @@
 //! thing again.
 
 use std::collections::HashMap;
+use std::sync::{Arc, Weak};
 
 use parking_lot::Mutex;
 
@@ -55,7 +56,12 @@ struct Entry {
     open_until_ms: u64,
     /// Set while the single probe dispatch after a cooldown is in flight, so a
     /// flood does not all get through at once.
-    probing: bool,
+    probing: Option<Weak<()>>,
+}
+
+/// Keeps the single probe admitted after cooldown in flight.
+pub struct BreakerProbe {
+    _in_flight: Arc<()>,
 }
 
 pub struct HangBreaker {
@@ -73,22 +79,25 @@ impl HangBreaker {
 
     /// `Err(until_ms)` means fail fast: the dispatch never reaches an
     /// execution-pool thread.
-    pub fn check(&self, key: &BreakerKey, now_ms: u64) -> Result<(), u64> {
+    pub fn check(&self, key: &BreakerKey, now_ms: u64) -> Result<Option<BreakerProbe>, u64> {
         let mut g = self.entries.lock();
         let Some(e) = g.get_mut(key) else {
-            return Ok(());
+            return Ok(None);
         };
         if e.open_until_ms == 0 {
-            return Ok(());
+            return Ok(None);
         }
         if now_ms >= e.open_until_ms {
             // Cooled: exactly one probe goes through, and a kill of the probe
             // reopens the breaker on that kill alone.
-            if e.probing {
+            if e.probing.as_ref().and_then(Weak::upgrade).is_some() {
                 return Err(e.open_until_ms);
             }
-            e.probing = true;
-            return Ok(());
+            let in_flight = Arc::new(());
+            e.probing = Some(Arc::downgrade(&in_flight));
+            return Ok(Some(BreakerProbe {
+                _in_flight: in_flight,
+            }));
         }
         Err(e.open_until_ms)
     }
@@ -97,8 +106,7 @@ impl HangBreaker {
     pub fn record_kill(&self, key: &BreakerKey, now_ms: u64) {
         let mut g = self.entries.lock();
         let e = g.entry(key.clone()).or_default();
-        if e.probing {
-            e.probing = false;
+        if e.probing.take().and_then(|probe| probe.upgrade()).is_some() {
             e.open_until_ms = now_ms + self.cfg.cooldown_ms;
             return;
         }
@@ -119,7 +127,7 @@ impl HangBreaker {
         if let Some(e) = g.get_mut(key) {
             e.kills = 0;
             e.open_until_ms = 0;
-            e.probing = false;
+            e.probing = None;
         }
     }
 
@@ -210,7 +218,7 @@ mod tests {
             b.record_kill(&k, t);
         }
         assert!(b.check(&k, 1_000).is_err(), "open during the cooldown");
-        assert!(b.check(&k, 6_000).is_ok(), "one probe after the cooldown");
+        let _probe = b.check(&k, 6_000).expect("one probe after the cooldown");
         assert!(b.check(&k, 6_001).is_err(), "only one probe may pass");
         b.record_success(&k);
         assert_eq!(
@@ -227,12 +235,26 @@ mod tests {
         for t in 0..3 {
             b.record_kill(&k, t);
         }
-        assert!(b.check(&k, 6_000).is_ok(), "the probe is admitted");
+        let _probe = b.check(&k, 6_000).expect("the probe is admitted");
         b.record_kill(&k, 6_050);
         assert!(
             b.check(&k, 6_100).is_err(),
             "a killed probe reopens the breaker on that kill alone"
         );
+    }
+
+    #[test]
+    fn releasing_an_unsuccessful_probe_allows_another_attempt() {
+        let breaker = HangBreaker::default();
+        let route = key("/spin");
+        for now in 0..3 {
+            breaker.record_kill(&route, now);
+        }
+        let probe = breaker.check(&route, 6_000).expect("probe admitted");
+        assert!(breaker.check(&route, 6_001).is_err());
+        drop(probe);
+        let _next = breaker.check(&route, 6_002).expect("next probe admitted");
+        assert!(breaker.check(&route, 6_003).is_err());
     }
 
     #[test]

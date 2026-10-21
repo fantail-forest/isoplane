@@ -222,13 +222,16 @@ impl Cell {
             route: route.clone(),
         };
         let dispatch_id = rec.dispatch_id;
-        if self.breaker.check(&key, now).is_err() {
-            completion.reject(super::completion::AdmissionRejection::BreakerOpen);
-            self.metrics
-                .breaker_rejections
-                .fetch_add(1, Ordering::Relaxed);
-            answer(&responder, DispatchResult::breaker_open(dispatch_id));
-            return Ok(());
+        match self.breaker.check(&key, now) {
+            Ok(probe) => completion.hold_breaker_probe(probe),
+            Err(_) => {
+                completion.reject(super::completion::AdmissionRejection::BreakerOpen);
+                self.metrics
+                    .breaker_rejections
+                    .fetch_add(1, Ordering::Relaxed);
+                answer(&responder, DispatchResult::breaker_open(dispatch_id));
+                return Ok(());
+            }
         }
         let job = Box::new(DispatchJob {
             module: module.clone(),
@@ -314,13 +317,16 @@ impl Cell {
             module: module.clone(),
             route: target.route(),
         };
-        if self.breaker.check(&key, now).is_err() {
-            completion.reject(super::completion::AdmissionRejection::BreakerOpen);
-            self.metrics
-                .breaker_rejections
-                .fetch_add(1, Ordering::Relaxed);
-            answer(&responder, DispatchResult::breaker_open(dispatch_id));
-            return true;
+        match self.breaker.check(&key, now) {
+            Ok(probe) => completion.hold_breaker_probe(probe),
+            Err(_) => {
+                completion.reject(super::completion::AdmissionRejection::BreakerOpen);
+                self.metrics
+                    .breaker_rejections
+                    .fetch_add(1, Ordering::Relaxed);
+                answer(&responder, DispatchResult::breaker_open(dispatch_id));
+                return true;
+            }
         }
         let job = Box::new(DispatchJob {
             module: module.clone(),

@@ -5,6 +5,39 @@ use super::*;
 use crate::cell::pool::cell_tests::{app, cell, http, manifest, wait_for};
 use crate::fakes::*;
 
+#[test]
+fn terminal_dispatches_release_the_breaker_probe_before_their_last_reference() {
+    let cell = cell(CellConfig::for_test("probe-completion"));
+    let module = app(&cell, "probe-completion", FakeBehaviour::done());
+    let key = crate::breaker::BreakerKey {
+        module: module.clone(),
+        route: "/".into(),
+    };
+    for now in 0..3 {
+        cell.breaker.record_kill(&key, now);
+    }
+    for reason in [
+        TerminalReason::RequestFailed,
+        TerminalReason::RequestCancelled,
+        TerminalReason::TransportFailure,
+        TerminalReason::OccupancyLimit,
+        TerminalReason::GuestTrap,
+        TerminalReason::AcquisitionFailed,
+    ] {
+        let owner = cell.completion_owner(&module, &http(1)).expect("owner");
+        owner.hold_breaker_probe(cell.breaker.check(&key, 6_000).expect("probe"));
+        assert!(cell.breaker.check(&key, 6_000).is_err());
+        owner.select(reason, 500);
+        owner.finish();
+        assert!(cell.breaker.check(&key, 6_000).is_ok());
+    }
+    let owner = cell.completion_owner(&module, &http(2)).expect("owner");
+    owner.hold_breaker_probe(cell.breaker.check(&key, 6_000).expect("probe"));
+    owner.reject(AdmissionRejection::QueueUnavailable);
+    assert!(cell.breaker.check(&key, 6_000).is_ok());
+    cell.shutdown();
+}
+
 /// Stands in for a host assertion firing during a slice.
 struct PanicsOnDispatch {
     first: Option<Box<dyn isoplane_engine::InstanceOps + Send>>,
