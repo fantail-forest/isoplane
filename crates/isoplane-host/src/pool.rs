@@ -101,6 +101,7 @@ pub(crate) struct IdleClaim<'a> {
 }
 
 impl IdleClaim<'_> {
+    #[cfg(test)]
     /// The entry reserved from acquisition until this claim is dropped.
     pub(crate) fn slot(&self) -> &Arc<Slot> {
         &self.slot

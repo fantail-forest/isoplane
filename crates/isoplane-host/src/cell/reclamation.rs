@@ -161,6 +161,9 @@ impl Cell {
         let Some(entry) = self.modules.read().get(&module).cloned() else {
             return Ok(false);
         };
+        let Some(_execution) = slot.try_lock_execution() else {
+            return Ok(false);
+        };
         let idle_claim = if kind == ReclaimKind::Active {
             None
         } else {
@@ -168,13 +171,6 @@ impl Cell {
                 return Ok(false);
             };
             Some(claim)
-        };
-        let slot = idle_claim
-            .as_ref()
-            .map(|claim| claim.slot().clone())
-            .unwrap_or(slot);
-        let Some(_execution) = slot.try_lock_execution() else {
-            return Ok(false);
         };
         if slot.parks() != parks {
             return Ok(false);

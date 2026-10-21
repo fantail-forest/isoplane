@@ -45,7 +45,11 @@ impl Cell {
         };
         slot.ctx.report_background();
         let generation = slot.ctx.dispatch_generation();
-        let step = IdleStep::after(timers, stop_at);
+        let step = if slot.state() == LifecycleTier::Hibernated {
+            IdleStep::Stop { at: stop_at }
+        } else {
+            IdleStep::after(timers, stop_at)
+        };
         let cell = Arc::downgrade(self);
         let watched = Arc::downgrade(slot);
         let entry = entry.clone();
@@ -60,10 +64,18 @@ impl Cell {
                 if slot.ctx.dispatch_generation() != generation {
                     return;
                 }
-                let Some(idle) = entry
-                    .pool
-                    .take_idle(slot.id, |slot| slot.state() == LifecycleTier::Parked)
-                else {
+                if matches!(step, IdleStep::Wake { .. })
+                    && slot.state() == LifecycleTier::Hibernated
+                {
+                    cell.watch_idle_timers(&slot, &entry);
+                    return;
+                }
+                let Some(idle) = entry.pool.take_idle(slot.id, |slot| {
+                    matches!(
+                        slot.state(),
+                        LifecycleTier::Parked | LifecycleTier::Hibernated
+                    )
+                }) else {
                     return;
                 };
                 match step {
@@ -84,7 +96,7 @@ impl Cell {
         tracing::info!(target: "isoplane_host::cell::transition",
             event = "instance_transition", tenant = %entry.tenant,
             app = %module.app, version = %module.version,
-            instance = slot.id.0, previous = "parked", current = "discarded",
+            instance = slot.id.0, previous = slot.state().as_str(), current = "discarded",
             cause = "no_request_for_background");
         self.rt.futures.release_instance(slot.id);
         self.forget(&slot);
@@ -100,34 +112,41 @@ mod tests {
     fn retained_non_timer_work_arms_the_idle_stop() {
         use crate::cell::pool::cell_tests::{app, cell, http, wait_for};
         use crate::fakes::FakeBehaviour;
-        let cell = cell(CellConfig::for_test("background-idle-stop"));
-        let module = app(&cell, "background-idle-stop", FakeBehaviour::done());
-        let result = cell
-            .dispatch_blocking(
-                &module,
-                Target::Handler { route: "/".into() },
-                http(1),
-                Duration::from_secs(10),
-            )
-            .expect("request completes");
-        assert!(wait_for(
-            || cell.idle_instances(&module) == Some(1),
-            Duration::from_secs(10)
-        ));
-        let slot = cell.slot(result.instance).expect("warm instance");
-        cell.rt
-            .futures
-            .alloc(slot.id, crate::futures::INSTANCE_WORK, "http_fetch", 8)
-            .expect("retained operation");
-        slot.ctx.background.request_arrived(Duration::ZERO);
-        let entry = cell.modules.read()[&module].clone();
-        cell.watch_idle_timers(&slot, &entry);
-        assert!(wait_for(
-            || cell.slot(slot.id).is_none(),
-            Duration::from_secs(10)
-        ));
-        assert_eq!(cell.futures().live_futures(), 0);
-        cell.shutdown();
+        for hibernate in [false, true] {
+            let cell = cell(CellConfig::for_test("background-idle-stop"));
+            let module = app(&cell, "background-idle-stop", FakeBehaviour::done());
+            let result = cell
+                .dispatch_blocking(
+                    &module,
+                    Target::Handler { route: "/".into() },
+                    http(1),
+                    Duration::from_secs(10),
+                )
+                .expect("request completes");
+            assert!(wait_for(
+                || cell.idle_instances(&module) == Some(1),
+                Duration::from_secs(10)
+            ));
+            let slot = cell.slot(result.instance).expect("warm instance");
+            cell.rt
+                .futures
+                .alloc(slot.id, crate::futures::INSTANCE_WORK, "http_fetch", 8)
+                .expect("retained operation");
+            if hibernate {
+                cell.force_hibernate(slot.id)
+                    .expect("hibernate retained work");
+                assert_eq!(slot.state(), LifecycleTier::Hibernated);
+            }
+            slot.ctx.background.request_arrived(Duration::ZERO);
+            let entry = cell.modules.read()[&module].clone();
+            cell.watch_idle_timers(&slot, &entry);
+            assert!(wait_for(
+                || cell.slot(slot.id).is_none(),
+                Duration::from_secs(10)
+            ));
+            assert_eq!(cell.futures().live_futures(), 0);
+            cell.shutdown();
+        }
     }
 
     #[test]
