@@ -20,6 +20,7 @@ struct Credit {
     updated: Instant,
     refill_remainder_ns: u64,
     consumed_ns: u64,
+    unmeasured_intervals: u64,
     refilled_ns: u64,
     donated_ns: u64,
     throttled_since: Option<Instant>,
@@ -36,6 +37,7 @@ impl Credit {
             updated: now,
             refill_remainder_ns: 0,
             consumed_ns: 0,
+            unmeasured_intervals: 0,
             refilled_ns: 0,
             donated_ns: 0,
             throttled_since: None,
@@ -200,6 +202,7 @@ impl Background {
         tracing::info!(event = "background_accounting", tenant, app = %module.app,
             version = %module.version, instance = self.instance.0, retained_connections,
             occupancy_ns = credit.consumed_ns, refilled_ns = credit.refilled_ns,
+            unmeasured_intervals = credit.unmeasured_intervals,
             donated_ns = credit.donated_ns, balance_ns = credit.balance_ns,
             capacity_ns = CAPACITY_NS, resume_balance_ns = INITIAL_NS, refill_occupancy_ns = 1_000_000_000u64,
             refill_interval_ns = 1_000_000_000 * REFILL_DIVISOR,
@@ -234,6 +237,9 @@ impl crate::reactor_accounting::Observer for Background {
     fn interval(&self, ns: Option<u64>) {
         if let Some(ns) = ns {
             self.charge(Duration::from_nanos(ns));
+        } else {
+            let mut credit = self.credit.lock();
+            credit.unmeasured_intervals = credit.unmeasured_intervals.saturating_add(1);
         }
     }
 
@@ -335,6 +341,9 @@ mod tests {
         });
         assert_eq!(polls.get(), 1);
         assert_eq!(meters.occupancy_ns(), 30);
+        assert_eq!(pool.credit.lock().balance_ns, 5_000_000_000 - 30);
+        pool.interval(None);
+        assert_eq!(pool.credit.lock().unmeasured_intervals, 1);
         assert_eq!(pool.credit.lock().balance_ns, 5_000_000_000 - 30);
     }
 }
