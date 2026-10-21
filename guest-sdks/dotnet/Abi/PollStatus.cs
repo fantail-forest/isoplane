@@ -29,16 +29,25 @@ internal static class PollStatus
     internal static long Done(uint responseHandle) => Pack(TagDone, responseHandle);
     internal static long Pending() => Pack(TagPending, 0);
     internal static long Cancelled() => Pack(TagCancelled, 0);
-    internal static long Failed() => Pack(TagFailed, 0);
+    internal static long Failed(Exception error)
+    {
+        NotifyUnhandled(error);
+        return Pack(TagFailed, 0);
+    }
     internal static long Trapped(TrapCode code) => Pack(TagTrapped, (uint)code);
 
-    [MethodImpl(MethodImplOptions.NoInlining)]
     internal static long Unhandled(Exception error)
     {
-        // The guest boundary catches failures to contain them; notify the editor before returning the trap.
+        NotifyUnhandled(error);
+        return Trapped(TrapCode.Panic);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void NotifyUnhandled(Exception error)
+    {
+        // The debugger adapter recognizes this frame and reads error after the handler has unwound.
         if (Debugger.IsAttached) Debugger.Break();
         GC.KeepAlive(error);
-        return Trapped(TrapCode.Panic);
     }
 
     private static long Pack(uint tag, uint payload) => (long)((ulong)tag | ((ulong)payload << 32));

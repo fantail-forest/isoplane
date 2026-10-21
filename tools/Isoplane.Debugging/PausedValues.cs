@@ -18,7 +18,7 @@ internal sealed class PausedValues(TargetEventArgs stopped, Func<int> allocate, 
     private bool IsGuestFailureBoundary()
     {
         var method = session.VirtualMachine.GetThreads().Single(thread => thread.Id == stopped.Thread.Id).GetFrames().FirstOrDefault()?.Method;
-        return method?.Name == "Unhandled" && method.DeclaringType.FullName == "Isoplane.Abi.PollStatus"
+        return method?.Name == "NotifyUnhandled" && method.DeclaringType.FullName == "Isoplane.Abi.PollStatus"
             && method.DeclaringType.Assembly.GetName().Name == "Isoplane.Sdk";
     }
 

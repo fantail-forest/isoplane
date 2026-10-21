@@ -263,12 +263,12 @@ public static unsafe class Exports<TRouter>
 
         if (root.IsFaulted)
         {
-            Exception? inner = root.Exception?.GetBaseException();
+            Exception inner = root.Exception!.GetBaseException();
             if (inner is OutOfMemoryException) return PollStatus.Trapped(TrapCode.OutOfMemory);
             if (inner is TooManyFuturesException) return PollStatus.Trapped(TrapCode.TooManyFutures);
             if (inner is PostcardException) return PollStatus.Trapped(TrapCode.Protocol);
-            if (inner is not null) Log(3, "request failed: " + inner.GetType().FullName + ": " + inner.Message);
-            return PollStatus.Failed();
+            Log(3, "request failed: " + inner.GetType().FullName + ": " + inner.Message);
+            return PollStatus.Failed(inner);
         }
 
         Response resp = root.Result;

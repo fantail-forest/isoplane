@@ -240,7 +240,10 @@ try:
         probe.shutdown(socket.SHUT_WR)
         assert probe.recv(1) == b"", "an empty connection must close without consuming the debug request"
     previous_frame = None
-    for attempt in range(2 if mode in ("requests", "launch", "reload", "uncaught", "detach-failure", "terminal-launch", "edit-and-continue-running") else 1):
+    request_urls = [url] * (2 if mode in ("requests", "launch", "reload", "detach-failure", "terminal-launch", "edit-and-continue-running") else 1)
+    if mode == "uncaught":
+        request_urls = [url, url, url + "?fatal=true", url + "?fatal=true"]
+    for attempt, url in enumerate(request_urls):
         http_result = concurrent.futures.Future()
         threading.Thread(target=request_http, args=(http_result,), daemon=True).start()
         if attempt == 0 and not launched:

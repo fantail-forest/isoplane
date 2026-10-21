@@ -136,10 +136,14 @@ custom awaiters, and `Task.WhenAll`/`Task.WhenAny` chains.
 Only values retained in the suspended state machine can be inspected; a local
 the compiler has optimized away or not saved across the await is unavailable.
 
-The **Uncaught exceptions** filter also stops on failures the SDK converts into
-guest traps. Exception details retain the original throw stack. At this boundary,
-methods may already have unwound; their original locals are no longer live.
-Disabling the filter lets the failed request finish without this stop.
+The **Uncaught exceptions** filter also stops when an exception escapes a request
+handler to the SDK, or the SDK converts a failure into a guest trap. Continuing
+after an ordinary handler failure returns HTTP 500 without discarding the instance;
+if the response has already started, it is aborted instead. Exceptions caught by
+the application and explicitly returned HTTP 500 responses do not trigger this stop.
+Exception details retain the original throw stack. At this boundary, methods may
+already have unwound; their original locals are no longer live. Disabling the filter
+lets the failure complete without this stop.
 
 ## Move execution
 
