@@ -482,6 +482,11 @@ async fn check_guest_timer_after_clock_advances(runtime: GuestRuntime) {
     );
     assert_eq!(result.body, b"2:0", "no other callback may run");
     wait_until_idle(&cell, &module).await;
+    assert_eq!(
+        cell.metrics().dispatches,
+        2,
+        "request timers and unsafe callbacks must complete without background dispatches"
+    );
     let observed = dispatch_at_idle(&cell, &module, "/observe").await;
     assert_eq!(
         observed.body, b"3:0",

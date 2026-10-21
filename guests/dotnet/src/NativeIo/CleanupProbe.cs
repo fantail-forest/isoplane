@@ -68,6 +68,9 @@ public static class CleanupProbe
             Task timer = Task.Delay(1);
             await Dns.GetHostAddressesAsync("clock-barrier.test").ConfigureAwait(false);
             await timer.ConfigureAwait(false);
+            var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            ThreadPool.UnsafeQueueUserWorkItem(_ => completed.SetResult(), null);
+            await completed.Task.ConfigureAwait(false);
             return Response.Text($"{_requests}:{_callbacks}");
         }
         if (path == "/observe") return Response.Text($"{_requests}:{_callbacks}");
