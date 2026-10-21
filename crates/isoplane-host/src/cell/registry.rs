@@ -465,9 +465,16 @@ impl Cell {
         let mut replacing_snapshot = false;
         let (slot, src) = entry.pool.acquire_reserved(
             |id| {
-                let admission = entry.instances.reserve(crate::admission::InstanceLimit(
+                let limit = crate::admission::InstanceLimit(
                     entry.manifest.effective_limits().instances_per_application,
-                ))?;
+                );
+                let admission = entry.instances.reserve(limit).or_else(|error| {
+                    if limit.0 > 0 && self.discard_idle_sibling(entry) {
+                        entry.instances.reserve(limit)
+                    } else {
+                        Err(error)
+                    }
+                })?;
                 let ctx = self.make_ctx(entry, id);
                 *ctx.admission.lock() = Some(admission);
                 let maximum = entry.activator.snapshot_size_bound(
@@ -503,6 +510,48 @@ impl Cell {
         });
         drop(residents);
         Ok((slot, src))
+    }
+
+    fn discard_idle_sibling(&self, entry: &Arc<ModuleEntry>) -> bool {
+        let siblings: Vec<_> = self
+            .modules
+            .read()
+            .values()
+            .filter(|other| {
+                !Arc::ptr_eq(other, entry) && Arc::ptr_eq(&other.instances, &entry.instances)
+            })
+            .cloned()
+            .collect();
+        for sibling in siblings {
+            let mut slots: Vec<_> = self
+                .residents
+                .lock()
+                .values()
+                .filter(|resident| &resident.module == sibling.activator.module())
+                .map(|resident| resident.slot.clone())
+                .collect();
+            slots.sort_by_key(|slot| slot.last_used_ms());
+            for slot in slots {
+                let Some(_execution) = slot.try_lock_execution() else {
+                    continue;
+                };
+                if self.active.contains_key(&slot.id) {
+                    continue;
+                }
+                if let Some(idle) = sibling.pool.take_idle(slot.id, |slot| {
+                    matches!(
+                        slot.state(),
+                        LifecycleTier::Parked | LifecycleTier::Hibernated
+                    )
+                }) {
+                    self.rt.futures.release_instance(slot.id);
+                    self.forget(&slot);
+                    sibling.pool.release(idle, evict());
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     pub fn slot(&self, id: InstanceId) -> Option<Arc<Slot>> {
@@ -578,6 +627,38 @@ mod tests {
         cell.forget(&second);
         old.pool.release(second, evict());
         assert!(cell.acquire_handler(&new).is_ok());
+        cell.shutdown();
+    }
+
+    #[test]
+    fn a_live_version_can_replace_an_idle_sibling_at_the_application_cap() {
+        let cell = cell(CellConfig::for_test("split-cap"));
+        let register = |version| {
+            let module = ModuleId::new("app", version);
+            let mut limits = manifest("app");
+            limits.resource_limits.instances_per_application = Some(1);
+            cell.register_module(
+                "tenant",
+                Arc::new(FakeActivator::named(module.clone(), FakeBehaviour::done())),
+                limits,
+            )
+            .expect("register live version");
+            cell.modules.read()[&module].clone()
+        };
+        let old = register("v1");
+        let new = register("v2");
+        let (first, _) = cell.acquire_handler(&old).expect("first activation");
+        assert!(
+            cell.acquire_handler(&new).is_err(),
+            "an acquired slot is not idle"
+        );
+        old.pool.release(first.clone(), warm());
+        let (second, _) = cell.acquire_handler(&new).expect("replace idle sibling");
+        assert_ne!(first.id, second.id);
+        assert_eq!(first.state(), LifecycleTier::Discarded);
+        assert_eq!(old.pool.live(), 0);
+        assert_eq!(new.pool.live(), 1);
+        assert!(cell.acquire_handler(&old).is_err(), "the cap still applies");
         cell.shutdown();
     }
 
