@@ -1,6 +1,6 @@
 using System;
 using System.Collections.Generic;
-using System.Threading;
+using System.IO;
 using System.Threading.Tasks;
 using Isoplane.Abi;
 
@@ -43,6 +43,7 @@ internal static class FutureTable
     /// </summary>
     internal static Task<ResultRecord> Register(long futureId)
     {
+        if (futureId == 0) throw new IOException("The instance has no capacity for another pending operation.");
         ulong id = (ulong)futureId;
         ulong dispatch = GuestDispatch.Current?.Id ?? 0;
         if (Owned(dispatch) >= MaxPending) throw new TooManyFuturesException();
@@ -52,20 +53,11 @@ internal static class FutureTable
         return tcs.Task;
     }
 
-    /// <summary>Cancels both the await and its host operation when the token is cancelled.</summary>
-    internal static async Task<ResultRecord> Register(long futureId, CancellationToken cancellationToken)
+    /// <summary>Releases an abandoned operation and settles its managed wait.</summary>
+    internal static void Cancel(long futureId)
     {
-        var pending = Register(futureId);
-        try
-        {
-            return await pending.WaitAsync(cancellationToken);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            Pending.Remove((ulong)futureId);
-            H.FutureCancel(futureId);
-            throw;
-        }
+        if (Pending.Remove((ulong)futureId, out var entry)) entry.Completion.TrySetResult(new ResultRecord { Error = FutureError.Cancelled });
+        H.FutureCancel(futureId);
     }
 
     /// <summary>

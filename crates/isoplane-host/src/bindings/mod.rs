@@ -82,8 +82,7 @@ impl CellBindings {
         self.ctx.rt.as_ref()
     }
 
-    /// A refusal latches [`TrapCode::TooManyFutures`], because `call_future`
-    /// returns a bare `u64` and cannot trap directly.
+    /// Per-dispatch exhaustion traps; shared instance exhaustion refuses allocation.
     pub(super) fn alloc(
         &self,
         import: &'static str,
@@ -126,9 +125,11 @@ impl CellBindings {
             Err(e) => {
                 tracing::warn!(
                     tenant = %self.ctx.tenant, instance = %self.ctx.instance,
-                    limit = e.limit, "pending-futures cap exceeded"
+                    limit = e.limit, scope = ?e.scope, "pending-futures cap exceeded"
                 );
-                self.ctx.latch_trap(TrapCode::TooManyFutures);
+                if e.scope == crate::futures::PendingCapScope::Dispatch {
+                    self.ctx.latch_trap(TrapCode::TooManyFutures);
+                }
                 None
             }
         }

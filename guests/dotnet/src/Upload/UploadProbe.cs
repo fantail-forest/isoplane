@@ -19,7 +19,7 @@ public static class UploadProbe
     [HttpHandler]
     public static async Task<Response> HandleAsync(StreamingRequest request)
     {
-        if (request.Path == "/cancel-read")
+        if (request.Path is "/cancel-read" or "/cancel-then-read")
         {
             using var cancellation = new CancellationTokenSource();
             var read = request.Body.ReadAsync(new byte[16], cancellation.Token);
@@ -31,7 +31,12 @@ public static class UploadProbe
             }
             catch (OperationCanceledException)
             {
-                return Response.Text("cancelled");
+                if (request.Path == "/cancel-read") return Response.Text("cancelled");
+                using var resumed = new MemoryStream();
+                byte[] buffer = new byte[3];
+                int count;
+                while ((count = await request.Body.ReadAsync(buffer)) != 0) resumed.Write(buffer, 0, count);
+                return Response.Text("resumed:" + Convert.ToBase64String(resumed.ToArray()));
             }
         }
         if (request.Path == "/leave-read")

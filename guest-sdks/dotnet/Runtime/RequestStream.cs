@@ -12,6 +12,8 @@ internal sealed class RequestStream(ReadOnlyMemory<byte> prefix, bool canHaveBod
     private bool eof = !canHaveBody;
     private bool reading;
     private bool disposed;
+    private Task<ResultRecord>? pending;
+    private long pendingId;
 
     public override bool CanRead => !disposed;
     public override bool CanSeek => false;
@@ -50,13 +52,23 @@ internal sealed class RequestStream(ReadOnlyMemory<byte> prefix, bool canHaveBod
         reading = true;
         try
         {
-            ResultRecord result = await FutureTable.Register(H.ReqBodyRead(buffer.Length), cancellationToken);
-            cancellationToken.ThrowIfCancellationRequested();
+            if (pending is null)
+            {
+                pendingId = H.ReqBodyRead(buffer.Length);
+                pending = FutureTable.Register(pendingId);
+            }
+            ResultRecord result = await pending.WaitAsync(cancellationToken);
+            pending = null;
+            pendingId = 0;
             if (!result.IsOk) throw new IOException($"The request body could not be read: the host reported {result.Error}.");
-            if (result.Payload.Length > buffer.Length) throw new IOException("The host returned more request bytes than requested.");
-            result.Payload.AsMemory().CopyTo(buffer);
-            eof = result.Payload.Length == 0;
-            return result.Payload.Length;
+            ObjectDisposedException.ThrowIf(disposed, this);
+            remaining = result.Payload;
+            eof = remaining.IsEmpty;
+            cancellationToken.ThrowIfCancellationRequested();
+            int count = Math.Min(buffer.Length, remaining.Length);
+            remaining[..count].CopyTo(buffer);
+            remaining = remaining[count..];
+            return count;
         }
         finally { reading = false; }
     }
@@ -65,6 +77,9 @@ internal sealed class RequestStream(ReadOnlyMemory<byte> prefix, bool canHaveBod
     {
         disposed = true;
         remaining = ReadOnlyMemory<byte>.Empty;
+        pending = null;
+        if (pendingId != 0) FutureTable.Cancel(pendingId);
+        pendingId = 0;
         base.Dispose(disposing);
     }
 }

@@ -432,6 +432,53 @@ async fn cancelling_a_future_through_the_import_cannot_affect_another_instance()
     assert_eq!(owner.ctx.take_trap(), None);
 }
 
+#[tokio::test]
+async fn aggregate_future_pressure_refuses_allocation_without_trapping_other_requests() {
+    let mut v = vtable(
+        Limits {
+            instances_per_application: 3,
+            module_bytes_compressed: 5242880,
+            package_bytes: 52428800,
+            instance_memory_max: 134217728,
+            occupancy_ms_per_dispatch: 100,
+            subrequests_per_dispatch: 20,
+            pending_futures_per_dispatch: 6,
+        },
+        "93.184.216.34:80",
+        None,
+    );
+    let allocate = |bindings: &mut CellBindings| {
+        bindings.call_future(ImportCall {
+            import: "clock_deadline_in",
+            payload: &[],
+            scalars: [600_000, 0, 0],
+        })
+    };
+    let first = allocate(&mut v.bindings);
+    assert_ne!(first, INVALID_FUTURE);
+    let mut retained = Vec::new();
+    while let Ok(id) = v
+        .futures
+        .alloc(v.ctx.instance, 2, "clock_deadline_in", u32::MAX)
+    {
+        retained.push(id);
+    }
+    assert!(!retained.is_empty());
+    assert_eq!(allocate(&mut v.bindings), INVALID_FUTURE);
+    assert_eq!(
+        v.ctx.take_trap(),
+        None,
+        "shared pressure must not kill the instance"
+    );
+    assert!(v.futures.cancel_owned(v.ctx.instance, retained[0].into()));
+    assert_ne!(
+        allocate(&mut v.bindings),
+        INVALID_FUTURE,
+        "released capacity allows progress"
+    );
+    v.futures.release_instance(v.ctx.instance);
+}
+
 #[derive(Clone, Default)]
 struct TestLogCapture(Arc<std::sync::Mutex<Vec<u8>>>);
 

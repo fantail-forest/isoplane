@@ -28,10 +28,6 @@ impl Reader {
         let length = (max_bytes.get() as usize).min(self.remaining.len() - self.offset);
         let bytes = self.remaining[self.offset..self.offset + length].to_vec();
         self.offset += length;
-        if self.offset == self.remaining.len() {
-            self.remaining = Vec::new();
-            self.offset = 0;
-        }
         Ok(Some(bytes))
     }
 }
@@ -98,7 +94,8 @@ impl RequestBodyScope {
         Ok(RequestRead {
             scope: self.clone(),
             reader: state.reader.take(),
-            complete: false,
+            delivered: false,
+            consumed: 0,
         })
     }
 
@@ -117,35 +114,62 @@ impl RequestBodyScope {
 pub(crate) struct RequestRead {
     scope: Arc<RequestBodyScope>,
     reader: Option<Reader>,
-    complete: bool,
+    delivered: bool,
+    consumed: usize,
 }
 impl RequestRead {
-    pub(crate) async fn read(mut self, max_bytes: NonZeroU32) -> Result<Vec<u8>, FutureError> {
-        let bytes = match &mut self.reader {
-            Some(reader) => match reader.read(max_bytes).await? {
-                Some(bytes) => bytes,
-                None => {
-                    self.reader = None;
-                    vec![]
-                }
-            },
-            None => vec![],
+    pub(crate) async fn read_pending(
+        &mut self,
+        max_bytes: NonZeroU32,
+    ) -> Result<Vec<u8>, FutureError> {
+        let result = match &mut self.reader {
+            Some(reader) => reader.read(max_bytes).await,
+            None => Ok(None),
         };
-        {
-            let mut state = self.scope.state.lock();
-            let state = state.as_mut().ok_or(FutureError::Cancelled)?;
-            state.reader = self.reader.take();
-            state.reading = false;
-            state.task = None;
+        let bytes = match result {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) => {
+                self.reader = None;
+                vec![]
+            }
+            Err(error) => {
+                self.scope.close();
+                self.reader = None;
+                return Err(error);
+            }
+        };
+        self.consumed = bytes.len();
+        if self.scope.state.lock().is_none() {
+            return Err(FutureError::Cancelled);
         }
-        self.complete = true;
+        Ok(bytes)
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn read(mut self, max_bytes: NonZeroU32) -> Result<Vec<u8>, FutureError> {
+        let bytes = self.read_pending(max_bytes).await?;
+        self.delivered = true;
         Ok(bytes)
     }
 }
+
+impl crate::futures::ResultDelivery for RequestRead {
+    fn delivered(&mut self) {
+        self.delivered = true;
+    }
+}
+
 impl Drop for RequestRead {
     fn drop(&mut self) {
-        if !self.complete {
-            self.scope.close();
+        if !self.delivered {
+            if let Some(reader) = &mut self.reader {
+                reader.offset -= self.consumed;
+            }
+        }
+        if let Some(state) = self.scope.state.lock().as_mut() {
+            state.reader = self.reader.take();
+            state.reading = false;
+            state.task = None;
         }
     }
 }
@@ -189,6 +213,42 @@ mod tests {
         assert!(
             scope.can_have_body().expect("live HTTP request"),
             "body-presence metadata must remain stable after consumption"
+        );
+    }
+
+    #[tokio::test]
+    async fn abandoned_reads_preserve_the_source_and_undelivered_bytes() {
+        use crate::futures::FutureTable;
+        use isoplane_abi::{result::ResultRecord};
+        let scope = RequestBodyScope::new(
+            Some(Box::new(Chunks(VecDeque::from([b"ABCD".to_vec()])))),
+            true,
+        );
+        drop(scope.begin_read().expect("first reader"));
+        assert!(scope.is_active(), "abandoning a read preserves its upload");
+        for byte_limit in [1, 8] {
+            let table = FutureTable::new(byte_limit);
+            let owner = crate::InstanceId(1);
+            let future = table
+                .alloc(owner, 1, "req_body_read", 1)
+                .expect("allocation");
+            let mut read = scope.begin_read().expect("retry reader");
+            let bytes = read
+                .read_pending(NonZeroU32::new(2).expect("positive"))
+                .await
+                .expect("read");
+            assert_eq!(bytes, b"AB");
+            table.complete_with_delivery(future, ResultRecord::Ok(bytes), Some(Box::new(read)));
+            assert!(table.cancel_owned(owner, future.into()));
+        }
+        assert_eq!(
+            scope
+                .begin_read()
+                .expect("retry")
+                .read(NonZeroU32::new(4).expect("positive"))
+                .await
+                .expect("read"),
+            b"ABCD"
         );
     }
 

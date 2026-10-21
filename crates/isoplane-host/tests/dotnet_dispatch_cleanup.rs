@@ -689,6 +689,15 @@ impl isoplane_abi::host::HttpBody for StalledUpload {
     }
 }
 
+struct UploadChunk(Option<Vec<u8>>);
+
+#[async_trait::async_trait]
+impl isoplane_abi::host::HttpBody for UploadChunk {
+    async fn read(&mut self) -> anyhow::Result<Option<Vec<u8>>> {
+        Ok(self.0.take())
+    }
+}
+
 /// An upload with no bytes.
 struct EmptyUpload;
 #[async_trait::async_trait]
@@ -799,5 +808,15 @@ async fn cancelling_a_pending_managed_upload_read_releases_the_operation_and_kee
     assert_eq!(upload(&cell, "/", Box::new(EmptyUpload)).await, "stream:");
     wait_until_idle(&cell, &module).await;
     assert_eq!(cell.resident_ids(), before);
+    assert_eq!(
+        upload(
+            &cell,
+            "/cancel-then-read",
+            Box::new(UploadChunk(Some(b"abcdefgh".to_vec())))
+        )
+        .await,
+        "resumed:YWJjZGVmZ2g=",
+        "a smaller subsequent read preserves cancelled completion bytes"
+    );
     cell.shutdown();
 }

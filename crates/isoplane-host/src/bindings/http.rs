@@ -32,17 +32,22 @@ impl CellBindings {
                 )),
             );
         };
-        let read = match scope.begin_read() {
+        let mut read = match scope.begin_read() {
             Ok(read) => read,
             Err(error) => return self.settle_now(id, ResultRecord::Err(error)),
         };
         let rt2 = rt.clone();
         let task = self.ctx.spawn(&rt.reactor, async move {
-            let result = match read.read(max_bytes).await {
+            let result = match read.read_pending(max_bytes).await {
                 Ok(bytes) => ResultRecord::Ok(bytes),
                 Err(error) => ResultRecord::Err(error),
             };
-            CellBindings::settle(&rt2, id, result);
+            let target = rt2
+                .futures
+                .complete_with_delivery(id, result, Some(Box::new(read)));
+            if let crate::futures::WakeTarget::Instance(owner) = target {
+                rt2.wake.signal(owner);
+            }
         });
         scope.attach_task(task.abort_handle());
         rt.futures.attach_task(id, task.abort_handle());

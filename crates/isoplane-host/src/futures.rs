@@ -27,8 +27,18 @@ impl From<u64> for FutureId {
     }
 }
 
+/// The owner whose retained or pending future limit refused allocation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PendingCapScope {
+    /// Outstanding work attributed to one dispatch.
+    Dispatch,
+    /// Retained entries shared by all work in an instance.
+    Instance,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PendingCapError {
+    pub scope: PendingCapScope,
     pub limit: u32,
     pub outstanding: u32,
 }
@@ -60,7 +70,12 @@ enum State {
 }
 
 
-#[derive(Debug)]
+/// Commits a consumed resource only when its result reaches the guest.
+/// Dropping before delivery restores the resource's readable state.
+pub(crate) trait ResultDelivery: Send {
+    fn delivered(&mut self);
+}
+
 struct Entry {
     /// Owner for completion routing.
     owner: Arc<OwnedFutures>,
@@ -71,6 +86,7 @@ struct Entry {
     rearmable: bool,
     state: State,
     result: Option<ResultRecord>,
+    delivery: Option<Mutex<Box<dyn ResultDelivery>>>,
     task: Option<tokio::task::AbortHandle>,
     waiting: Option<PendingWait>,
     /// When the result became deliverable, so its slice can say how long it
@@ -313,13 +329,18 @@ impl FutureTable {
         let mut o = arc.inner.lock();
         if o.retained_entries >= o.entry_limit {
             return Err(PendingCapError {
+                scope: PendingCapScope::Instance,
                 limit: o.entry_limit,
                 outstanding: o.retained_entries,
             });
         }
         let outstanding = *o.per_dispatch.get(&dispatch).unwrap_or(&0);
         if outstanding >= limit {
-            return Err(PendingCapError { limit, outstanding });
+            return Err(PendingCapError {
+                scope: PendingCapScope::Dispatch,
+                limit,
+                outstanding,
+            });
         }
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         o.pending.insert(id);
@@ -335,6 +356,7 @@ impl FutureTable {
                 rearmable,
                 state: State::Pending,
                 result: None,
+                delivery: None,
                 task: None,
                 waiting: Some(PendingWait {
                     span: tracing::info_span!(
@@ -397,6 +419,7 @@ impl FutureTable {
                 rearmable: false,
                 state: State::Pending,
                 result: None,
+                delivery: None,
                 task: None,
                 waiting: None,
                 ready_at: None,
@@ -407,6 +430,15 @@ impl FutureTable {
 
     /// Makes the result deliverable; the caller enqueues the wake.
     pub fn complete(&self, id: u64, result: ResultRecord) -> WakeTarget {
+        self.complete_with_delivery(id, result, None)
+    }
+
+    pub(crate) fn complete_with_delivery(
+        &self,
+        id: u64,
+        result: ResultRecord,
+        mut delivery: Option<Box<dyn ResultDelivery>>,
+    ) -> WakeTarget {
         let Some(arc) = self.entries.read_sync(&id, |_, entry| entry.owner.clone()) else {
             return WakeTarget::Orphan;
         };
@@ -422,6 +454,7 @@ impl FutureTable {
                 ResultRecord::Err(FutureError::BufferLimit)
             } else {
                 owned.buffered_bytes += bytes;
+                entry.delivery = delivery.take().map(Mutex::new);
                 result
             };
             entry.state = State::Ready;
@@ -490,6 +523,9 @@ impl FutureTable {
             let Some(result) = entry.result.take() else {
                 continue;
             };
+            if let Some(delivery) = &mut entry.delivery {
+                delivery.get_mut().delivered();
+            }
             let ready_at = entry.ready_at;
             return Some(Ready {
                 future: id,
@@ -992,6 +1028,7 @@ mod tests {
         assert_eq!(
             err,
             PendingCapError {
+                scope: PendingCapScope::Dispatch,
                 limit: 6,
                 outstanding: 6
             },
