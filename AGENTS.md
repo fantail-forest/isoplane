@@ -142,7 +142,7 @@ These rules are **non-negotiable**. If you can't satisfy a requirement without b
 | **No `unsafe`** except for operations that are unsafe by nature (FFI, memory mapping, deserialising native code)                                | Give every such block a `// SAFETY:` comment naming the invariant and where the caller enforces it. Put `#![forbid(unsafe_code)]` in every crate with no such operation. |
 | **No C# `DllImport` or `unsafe`** outside the SDK's one interop layer | None. |
 | **No test that cannot fail** (prints a figure and asserts nothing; asserts a constant against itself; downgrades a miss to a pass by default)   | None.                                                                                                                                                              |
-| **No test that fails in a normal run** | A test for an unfixed bug may be committed marked ignored, with the reason. Never assert the buggy behaviour. |
+| **No test that fails in a normal run** | A test for an unfixed bug may be committed marked ignored only when the owner has explicitly decided to defer it; record the reason. Never assert the buggy behaviour. |
 
 ### Types
 

@@ -30,7 +30,7 @@ Before relying on a regression test, see it fail against the bug, or with the gu
 
 ## Known failures are marked ignored
 
-A test for a bug that isn't fixed yet may be committed if it's marked ignored, with the reason. Don't commit a test that fails in a normal run, and don't write one that asserts the buggy behaviour.
+A test for a bug that isn't fixed yet may be committed marked ignored only when the owner has explicitly decided to defer the issue. Record that decision and the reason for ignoring it. The owner also decides whether a reported issue is a non-issue; an agent must not make either decision by suppressing a failure. Don't commit a test that fails in a normal run, and don't write one that asserts the buggy behaviour.
 
 ## Build static compiler outputs in advance
 
