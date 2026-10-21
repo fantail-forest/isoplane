@@ -5,6 +5,7 @@
 //! thing again.
 
 use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::sync::{Arc, Weak};
 
 use parking_lot::Mutex;
@@ -31,6 +32,8 @@ pub enum BreakerState {
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct BreakerConfig {
+    /// Maximum retained raw-path entries per cell; positive. Untracked paths are refused at capacity.
+    pub max_entries: NonZeroUsize,
     /// Consecutive budget or cancellation-grace kills before the breaker opens.
     pub kill_threshold: u32,
     /// Window over which kills count as consecutive.
@@ -42,6 +45,7 @@ pub struct BreakerConfig {
 impl Default for BreakerConfig {
     fn default() -> Self {
         Self {
+            max_entries: NonZeroUsize::new(1024).expect("1024 is positive"),
             kill_threshold: 3,
             window_ms: 10_000,
             cooldown_ms: 5_000,
@@ -64,6 +68,15 @@ pub struct BreakerProbe {
     _in_flight: Arc<()>,
 }
 
+/// Why a dispatch cannot pass the hang breaker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BreakerRejection {
+    /// The path is cooling down or has an outstanding probe.
+    Open,
+    /// Recent kills occupy all retained path entries.
+    Capacity,
+}
+
 pub struct HangBreaker {
     cfg: BreakerConfig,
     entries: Mutex<HashMap<BreakerKey, Entry>>,
@@ -77,13 +90,24 @@ impl HangBreaker {
         }
     }
 
-    /// `Err(until_ms)` means fail fast: the dispatch never reaches an
-    /// execution-pool thread.
-    pub fn check(&self, key: &BreakerKey, now_ms: u64) -> Result<Option<BreakerProbe>, u64> {
+    /// Refuses open paths and untracked paths when retained protection fills the cap.
+    pub fn check(
+        &self,
+        key: &BreakerKey,
+        now_ms: u64,
+    ) -> Result<Option<BreakerProbe>, BreakerRejection> {
         let mut g = self.entries.lock();
-        let Some(e) = g.get_mut(key) else {
-            return Ok(None);
-        };
+        if !g.contains_key(key) {
+            self.reclaim_expired(&mut g, now_ms);
+            return if g.len() < self.cfg.max_entries.get() {
+                Ok(None)
+            } else {
+                Err(BreakerRejection::Capacity)
+            };
+        }
+        let e = g
+            .get_mut(key)
+            .expect("the key was found while holding the same lock");
         if e.open_until_ms == 0 {
             return Ok(None);
         }
@@ -91,7 +115,7 @@ impl HangBreaker {
             // Cooled: exactly one probe goes through, and a kill of the probe
             // reopens the breaker on that kill alone.
             if e.probing.as_ref().and_then(Weak::upgrade).is_some() {
-                return Err(e.open_until_ms);
+                return Err(BreakerRejection::Open);
             }
             let in_flight = Arc::new(());
             e.probing = Some(Arc::downgrade(&in_flight));
@@ -99,12 +123,20 @@ impl HangBreaker {
                 _in_flight: in_flight,
             }));
         }
-        Err(e.open_until_ms)
+        Err(BreakerRejection::Open)
     }
 
     /// A dispatch exceeded its hard CPU budget or cancellation grace.
     pub fn record_kill(&self, key: &BreakerKey, now_ms: u64) {
         let mut g = self.entries.lock();
+        if !g.contains_key(key) {
+            self.reclaim_expired(&mut g, now_ms);
+            if g.len() >= self.cfg.max_entries.get() {
+                tracing::warn!(app = %key.module.app, version = %key.module.version,
+                    max_entries = self.cfg.max_entries.get(), "hang breaker storage full; untracked paths refused");
+                return;
+            }
+        }
         let e = g.entry(key.clone()).or_default();
         if e.probing.take().and_then(|probe| probe.upgrade()).is_some() {
             e.open_until_ms = now_ms + self.cfg.cooldown_ms;
@@ -114,11 +146,23 @@ impl HangBreaker {
             e.kills = 1;
             e.first_kill_ms = now_ms;
         } else {
-            e.kills += 1;
+            e.kills = e.kills.saturating_add(1);
         }
         if e.kills >= self.cfg.kill_threshold {
             e.open_until_ms = now_ms + self.cfg.cooldown_ms;
         }
+    }
+
+    fn reclaim_expired(&self, entries: &mut HashMap<BreakerKey, Entry>, now_ms: u64) {
+        if entries.len() < self.cfg.max_entries.get() {
+            return;
+        }
+        entries.retain(|_, entry| {
+            entry.probing.as_ref().and_then(Weak::upgrade).is_some()
+                || entry.open_until_ms > now_ms
+                || (entry.kills > 0
+                    && now_ms.saturating_sub(entry.first_kill_ms) <= self.cfg.window_ms)
+        });
     }
 
     /// A dispatch completed normally, which closes the breaker.
@@ -163,6 +207,39 @@ mod tests {
             module: ModuleId::new("app", "v1"),
             route: route.into(),
         }
+    }
+
+    #[test]
+    fn full_storage_preserves_live_protection_and_reclaims_expired_entries() {
+        let breaker = HangBreaker::new(BreakerConfig {
+            max_entries: NonZeroUsize::new(2).expect("positive"),
+            ..Default::default()
+        });
+        let spin = key("/spin");
+        let healthy = key("/healthy");
+        for now in 0..3 {
+            breaker.record_kill(&spin, now);
+        }
+        breaker.record_kill(&healthy, 3);
+        assert_eq!(
+            breaker.check(&key("/untracked"), 4).err(),
+            Some(BreakerRejection::Capacity)
+        );
+        assert!(breaker.check(&healthy, 4).is_ok());
+        breaker.record_kill(&key("/already-running"), 4);
+        assert_eq!(breaker.entries.lock().len(), 2);
+        assert_eq!(breaker.check(&spin, 4).err(), Some(BreakerRejection::Open));
+        let probe = breaker.check(&spin, 6_000).expect("probe");
+        breaker.record_kill(&healthy, 10_004);
+        assert_eq!(
+            breaker.check(&key("/untracked"), 10_004).err(),
+            Some(BreakerRejection::Capacity)
+        );
+        drop(probe);
+        assert!(breaker.check(&key("/untracked"), 10_004).is_ok());
+        assert_eq!(breaker.entries.lock().len(), 1);
+        breaker.record_success(&healthy);
+        assert!(breaker.check(&healthy, 10_005).is_ok());
     }
 
     #[test]

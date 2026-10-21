@@ -58,16 +58,20 @@ impl DispatchResult {
             slices: 0,
         }
     }
-    fn breaker_open(dispatch_id: u64) -> Self {
+    fn breaker_rejected(dispatch_id: u64, reason: crate::breaker::BreakerRejection) -> Self {
+        let reason = match reason {
+            crate::breaker::BreakerRejection::Open => "breaker_open",
+            crate::breaker::BreakerRejection::Capacity => "breaker_capacity",
+        };
         Self {
             dispatch_id,
             status: 503,
             headers: vec![],
-            body: b"hang breaker open".to_vec(),
+            body: reason.as_bytes().to_vec(),
             completion: Completion::Trapped,
             occupancy_ns: 0,
             wall_ns: 0,
-            trap: Some("breaker_open".into()),
+            trap: Some(reason.into()),
             instance: InstanceId(0),
             acquired: "none",
             slices: 0,
@@ -217,12 +221,15 @@ impl Cell {
         let dispatch_id = rec.dispatch_id;
         match self.breaker.check(&key, now) {
             Ok(probe) => completion.hold_breaker_probe(probe),
-            Err(_) => {
-                completion.reject(super::completion::AdmissionRejection::BreakerOpen);
+            Err(reason) => {
+                completion.reject(super::completion::AdmissionRejection::Breaker(reason));
                 self.metrics
                     .breaker_rejections
                     .fetch_add(1, Ordering::Relaxed);
-                answer(&responder, DispatchResult::breaker_open(dispatch_id));
+                answer(
+                    &responder,
+                    DispatchResult::breaker_rejected(dispatch_id, reason),
+                );
                 return Ok(());
             }
         }
@@ -315,12 +322,15 @@ impl Cell {
         };
         match self.breaker.check(&key, now) {
             Ok(probe) => completion.hold_breaker_probe(probe),
-            Err(_) => {
-                completion.reject(super::completion::AdmissionRejection::BreakerOpen);
+            Err(reason) => {
+                completion.reject(super::completion::AdmissionRejection::Breaker(reason));
                 self.metrics
                     .breaker_rejections
                     .fetch_add(1, Ordering::Relaxed);
-                answer(&responder, DispatchResult::breaker_open(dispatch_id));
+                answer(
+                    &responder,
+                    DispatchResult::breaker_rejected(dispatch_id, reason),
+                );
                 return true;
             }
         }

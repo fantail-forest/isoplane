@@ -19,7 +19,7 @@ impl DispatchToken {
 
 pub(super) enum AdmissionRejection {
     QueueUnavailable,
-    BreakerOpen,
+    Breaker(crate::breaker::BreakerRejection),
 }
 
 pub(super) type CompletionClock = Arc<dyn Fn() -> Option<u64> + Send + Sync>;
@@ -202,7 +202,10 @@ impl DispatchCompletion {
         }
         let reason = match reason {
             AdmissionRejection::QueueUnavailable => "queue_unavailable",
-            AdmissionRejection::BreakerOpen => "breaker_open",
+            AdmissionRejection::Breaker(crate::breaker::BreakerRejection::Open) => "breaker_open",
+            AdmissionRejection::Breaker(crate::breaker::BreakerRejection::Capacity) => {
+                "breaker_capacity"
+            }
         };
         self.in_scope(|| {
             tracing::warn!(event = "dispatch_rejected", tenant = %self.tenant,
