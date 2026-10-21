@@ -199,10 +199,17 @@ async fn an_early_response_releases_the_unread_upload_at_dispatch_settlement() {
         .await
         .expect("dispatch settlement must promptly release unread upload ownership")
         .expect("the actual upload body must be dropped before cell shutdown");
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while cell.metrics_raw().dispatch_us.count() == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("dispatch settlement must finish after disposing the upload");
     assert_eq!(
         cell.futures().live_futures(),
         0,
-        "early response leaves no upload read tasks behind"
+        "settling the early response leaves no request futures behind"
     );
     cell.shutdown();
 }
