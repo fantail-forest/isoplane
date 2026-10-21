@@ -37,6 +37,8 @@ pub enum Step {
     /// Enter cancellation grace and return to receive its wake.
     EnterGrace,
     Trap(TrapCode),
+    /// Return a non-trapping terminal status without producing a response.
+    Terminal(PollStatus),
     /// Hold the worker until the test drops the release sender.
     Hold {
         entered: std::sync::mpsc::Sender<()>,
@@ -208,6 +210,7 @@ impl FakeInstance {
                 PollStatus::Pending
             }
             Step::Trap(code) => PollStatus::Trapped { code },
+            Step::Terminal(status) => status,
             Step::Dirty { pages } => {
                 for p in 0..pages {
                     let off = p * PAGE_SIZE;

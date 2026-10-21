@@ -29,6 +29,8 @@ pub(super) enum TerminalReason {
     Success,
     GuestTrap,
     RequestFailed,
+    BackgroundFailed,
+    BackgroundCancelled,
     OccupancyLimit,
     WallLimit,
     RequestCancelled,
@@ -55,6 +57,8 @@ impl TerminalReason {
             Self::Success => "success",
             Self::GuestTrap => "guest_trap",
             Self::RequestFailed => "request_failed",
+            Self::BackgroundFailed => "background_failed",
+            Self::BackgroundCancelled => "background_cancelled",
             Self::OccupancyLimit => "occupancy_limit",
             Self::WallLimit => "execution_wall_limit",
             Self::RequestCancelled => "request_cancelled",
@@ -446,6 +450,8 @@ impl DispatchCompletion {
             | TerminalReason::WallLimit
             | TerminalReason::RequestCancelled
             | TerminalReason::RequestFailed
+            | TerminalReason::BackgroundFailed
+            | TerminalReason::BackgroundCancelled
             | TerminalReason::TransportFailure
             | TerminalReason::QueueUnavailable
             | TerminalReason::EntryRefused

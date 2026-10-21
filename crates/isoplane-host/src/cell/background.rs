@@ -170,7 +170,10 @@ impl Cell {
                 outcome.occupancy_ns,
                 matches!(
                     outcome.completion,
-                    Completion::Trapped | Completion::BudgetKill
+                    Completion::Trapped
+                        | Completion::BudgetKill
+                        | Completion::Failed
+                        | Completion::Cancelled
                 ),
             );
             if outcome.completion == Completion::BudgetExit {
@@ -214,11 +217,77 @@ impl Cell {
             } else {
                 self.retire_past_memory_limit(slot, &entry, guard.instance().memory_len());
                 drop(guard);
-                owner.select(TerminalReason::Success, 204);
+                let (reason, status) = match outcome.completion {
+                    Completion::Failed => (TerminalReason::BackgroundFailed, 500),
+                    Completion::Cancelled => (TerminalReason::BackgroundCancelled, 499),
+                    Completion::Done | Completion::Parked | Completion::BudgetExit => {
+                        (TerminalReason::Success, 204)
+                    }
+                    Completion::Trapped => (TerminalReason::GuestTrap, 500),
+                    Completion::BudgetKill => (TerminalReason::OccupancyLimit, 503),
+                };
+                owner.select(reason, status);
                 self.finish_and_release(slot, &entry, INSTANCE_WORK, warm());
             }
             slot.ctx.report_background();
         });
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cell::completion::test_events::Events;
+    use crate::cell::pool::cell_tests::{app, cell, http};
+    use crate::fakes::{FakeBehaviour, Step};
+    use isoplane_abi::status::PollStatus;
+
+    #[test]
+    fn background_failures_are_reported_without_discarding_the_instance() {
+        for (outcome, reason, status) in [
+            (PollStatus::Failed, "background_failed", 500),
+            (PollStatus::Cancelled, "background_cancelled", 499),
+        ] {
+            let events = Events::default();
+            let _trace = events.install();
+            let cell = cell(CellConfig {
+                exec_threads: 0,
+                ..CellConfig::for_test("background-outcome")
+            });
+            let module = app(
+                &cell,
+                "background-outcome",
+                FakeBehaviour::program([
+                    Step::Done {
+                        status: 200,
+                        body: vec![],
+                    },
+                    Step::Terminal(outcome),
+                ]),
+            );
+            let response = cell
+                .submit(&module, Target::Handler { route: "/".into() }, http(1))
+                .expect("admission");
+            let Job::Dispatch(job) = cell.queue.pop(0).expect("request") else {
+                panic!("request job");
+            };
+            cell.run_dispatch(*job);
+            cell.queue.job_done(0);
+            let slot = cell
+                .slot(response.recv().expect("response").instance)
+                .expect("warm instance");
+            slot.ctx.background.requested.store(true, Ordering::Release);
+            let _execution = slot.lock_execution();
+            assert!(cell.run_background(&slot));
+            let records = events.records();
+            assert_eq!(records.len(), 2);
+            assert_eq!(records[1]["dispatch_kind"], "background");
+            assert_eq!(records[1]["outcome"], reason);
+            assert_eq!(records[1]["status"], status);
+            assert_eq!(slot.state(), LifecycleTier::Parked);
+            drop(_execution);
+            cell.shutdown();
+        }
     }
 }
