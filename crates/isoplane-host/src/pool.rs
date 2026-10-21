@@ -98,6 +98,7 @@ pub(crate) struct IdleClaim<'a> {
     live: &'a AtomicU64,
     slot: Arc<Slot>,
     generation: Arc<()>,
+    retry_last: bool,
 }
 
 impl IdleClaim<'_> {
@@ -118,6 +119,8 @@ impl Drop for IdleClaim<'_> {
             drop(list);
             self.slot.discard();
             self.live.fetch_sub(1, Ordering::Relaxed);
+        } else if self.retry_last {
+            list.slots.insert(0, self.slot.clone());
         } else {
             list.slots.push(self.slot.clone());
         }
@@ -187,6 +190,7 @@ impl InstancePool {
             live: &self.live,
             slot,
             generation: entries.generation.clone(),
+            retry_last: false,
         })
     }
 
@@ -242,7 +246,10 @@ impl InstancePool {
         D: FnMut(&Arc<Slot>),
         R: FnMut(&Arc<Slot>) -> anyhow::Result<()>,
     {
-        loop {
+        let candidates = self.warm.lock().slots.len();
+        let mut restore_error = None;
+        let mut unavailable = Vec::new();
+        for _ in 0..candidates {
             let candidate = self.warm.lock().slots.pop();
             let Some(slot) = candidate else { break };
             let source = {
@@ -270,9 +277,19 @@ impl InstancePool {
                                 self.live.fetch_sub(1, Ordering::Relaxed);
                                 discard(&slot);
                             } else {
-                                warm.slots.push(slot.clone());
+                                warm.claimed += 1;
+                                unavailable.push(IdleClaim {
+                                    list: &self.warm,
+                                    live: &self.live,
+                                    slot: slot.clone(),
+                                    generation: warm.generation.clone(),
+                                    retry_last: true,
+                                });
                             }
-                            return Err(error);
+                            tracing::warn!(instance = %slot.id, tenant = %slot.ctx.tenant,
+                                %error, "snapshot temporarily unavailable; trying other capacity");
+                            restore_error = Some(error);
+                            continue;
                         }
                         AcquireSource::HibernationWake
                     }
@@ -283,7 +300,10 @@ impl InstancePool {
             return Ok((slot, source));
         }
         let id = InstanceId::alloc();
-        let ctx = make_ctx(id)?;
+        let ctx = match make_ctx(id) {
+            Ok(ctx) => ctx,
+            Err(error) => return Err(restore_error.unwrap_or(error)),
+        };
         let bindings = crate::bindings::CellBindings::boxed(ctx.clone());
         let inst = self.activate(bindings)?;
         self.live.fetch_add(1, Ordering::Relaxed);

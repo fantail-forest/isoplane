@@ -750,3 +750,37 @@ fn a_temporary_snapshot_read_failure_preserves_the_original_instance_for_retry()
     assert_eq!(restored.acquired, "hibernation_wake");
     assert_ne!(restored.body, first.body);
 }
+
+#[test]
+fn an_unreadable_snapshot_does_not_block_other_capacity() {
+    let storage = Storage::new(2);
+    let cell = test_cell(storage.clone(), 0);
+    let module = register(&cell, "read-error-capacity", FakeBehaviour::done());
+    let first = completed(&cell, &module, 1);
+    assert!(cell
+        .reclaim_candidate(candidate(&cell, first.instance))
+        .expect("capture"));
+    storage.state.fail_read.store(true, Ordering::Relaxed);
+    let replacement = completed(&cell, &module, 2);
+    assert_eq!(replacement.status, 200);
+    assert_ne!(replacement.instance, first.instance);
+    assert_eq!(
+        cell.instance_state(first.instance),
+        Some(LifecycleTier::Hibernated)
+    );
+    assert_eq!(storage.state.reservations.load(Ordering::Relaxed), 2);
+    let reused = completed(&cell, &module, 3);
+    assert_eq!(reused.instance, replacement.instance);
+    let entry = cell.modules.read()[&module].clone();
+    let slot = entry
+        .pool
+        .take_idle(replacement.instance, |_| true)
+        .expect("replacement idle");
+    cell.forget(&slot);
+    entry.pool.release(slot, evict());
+    storage.state.fail_read.store(false, Ordering::Relaxed);
+    let restored = completed(&cell, &module, 4);
+    assert_eq!(restored.status, 200);
+    assert_eq!(restored.instance, first.instance);
+    cell.shutdown();
+}
