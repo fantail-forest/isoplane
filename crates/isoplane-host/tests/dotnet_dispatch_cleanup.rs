@@ -382,6 +382,41 @@ async fn managed_request_failures_leave_other_requests_and_instance_state_intact
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_fatal_exception_inside_an_aggregate_discards_the_instance() {
+    let (cell, module) = cleanup_cell(
+        GuestRuntime::Mono,
+        Arc::new(PendingWork::default()),
+        "/timer",
+    );
+    let before = dispatch_at_idle(&cell, &module, "/observe").await;
+    wait_until_idle(&cell, &module).await;
+    let request = HttpRequest {
+        method: "GET".into(),
+        url: "https://cleanup.test/cleanup/fatal-aggregate".into(),
+        path: "/cleanup/fatal-aggregate".into(),
+        query: vec![],
+        headers: vec![],
+        body: vec![],
+    };
+    let failed = cell
+        .dispatch(
+            &module,
+            Target::Handler {
+                route: request.path.clone(),
+            },
+            cell.http_record(&module, request),
+            Duration::from_secs(60),
+        )
+        .await
+        .expect("fatal response");
+    assert_eq!(failed.completion, isoplane_engine::Completion::Trapped);
+    assert_eq!(failed.instance, before.instance);
+    let next = dispatch_at_idle(&cell, &module, "/observe").await;
+    assert_ne!(next.instance, before.instance);
+    cell.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_timer_left_pending_keeps_its_instance() {
     let (cell, module) = cleanup_cell(
         GuestRuntime::Mono,

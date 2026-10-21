@@ -19,6 +19,9 @@ public static class CleanupProbe
     public static async Task<Response> HandleAsync(string path)
     {
         _requests++;
+        if (path == "/fatal-aggregate") throw new AggregateException(
+            new InvalidOperationException("ordinary failure"),
+            new AggregateException(new OutOfMemoryException("fatal failure")));
         if (path == "/throw") throw new InvalidOperationException("handler failure probe");
         if (path == "/wait")
         {
