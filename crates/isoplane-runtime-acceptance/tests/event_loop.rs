@@ -214,15 +214,15 @@ in_mono_runtime! {
 
 in_mono_runtime! {
     #[tokio::test]
-    async fn a_yield_is_ready_work_and_never_parks(runtime: GuestRuntime) {
+    async fn a_yield_completes_through_ready_wakes_without_a_timer(runtime: GuestRuntime) {
         let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
         reactor.context.begin_slice(1, 1);
         let mut guest = guest(&reactor, runtime);
-        let outcome = guest.start("/loop/yield");
+        let outcome = guest.run(&reactor, "/loop/yield", 8).await;
         assert_eq!(
             outcome.completion,
             Completion::Done,
-            "Task.Yield needs no host wake source: {outcome:?}"
+            "Task.Yield must finish through ready-work wakes: {outcome:?}"
         );
         assert_eq!(reactor.response_text(1), "yielded");
         assert_eq!(
@@ -235,42 +235,52 @@ in_mono_runtime! {
 
 in_mono_runtime! {
     #[tokio::test(start_paused = true)]
-    async fn a_timer_left_pending_runs_before_a_later_dispatch(runtime: GuestRuntime) {
+    async fn request_timers_progress_while_retained_timer_work_is_withheld(runtime: GuestRuntime) {
+        use isoplane_host::futures::INSTANCE_WORK;
         let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
         reactor.context.begin_dispatch(1, 1);
         let mut guest = guest(&reactor, runtime);
         let outcome = guest.start("/loop/abandon");
         assert_eq!(outcome.completion, Completion::Done, "{outcome:?}");
-        assert_eq!(
-            reactor.futures.pending_total(reactor.context.instance),
-            1,
-            "the abandoned delay registers a real host timer"
-        );
-        assert!(
-            !reactor.futures.end_dispatch(reactor.context.instance, 1),
-            "a pending timer must not count as abandoned work"
-        );
-        assert_eq!(
-            reactor.futures.live_futures(),
-            0,
-            "dispatch completion must end the timer's wake"
-        );
+        assert!(!reactor.futures.end_dispatch(reactor.context.instance, 1));
         tokio::task::yield_now().await;
         tokio::time::advance(std::time::Duration::from_millis(200)).await;
-        tokio::task::yield_now().await;
-        for dispatch in 2u32..=3 {
-            reactor.context.begin_dispatch(201, u64::from(dispatch));
-            let outcome = guest.start("/loop/observe");
-            assert_eq!(outcome.completion, Completion::Done, "{outcome:?}");
+
+        // Withhold background slices as an exhausted pool does. Its timer is overdue.
+        for (dispatch, path) in [(2, "/loop/delay/50"), (3, "/loop/delay/100")] {
+            reactor.context.begin_dispatch(201, dispatch);
+            let outcome = guest.start(path);
+            assert_eq!(outcome.completion, Completion::Parked, "{outcome:?}");
             assert_eq!(
-                reactor.response_text(dispatch),
-                format!("{dispatch}:1"),
-                "the due callback must run once, before the request reads its count"
+                reactor.futures.pending_of_dispatch(reactor.context.instance, dispatch, "poll_call").len(),
+                1,
+                "each request must have a wake independent of the overdue background timer"
             );
-            reactor
-                .futures
-                .end_dispatch(reactor.context.instance, u64::from(dispatch));
         }
+        for (dispatch, now_ms, advance_ms) in [(2, 261, 60), (3, 311, 50)] {
+            tokio::task::yield_now().await;
+            tokio::time::advance(std::time::Duration::from_millis(advance_ms)).await;
+            reactor.context.begin_slice(now_ms, dispatch);
+            let outcome = guest.wake(&reactor).await;
+            assert_eq!(outcome.completion, Completion::Done, "request {dispatch}: {outcome:?}");
+            assert_eq!(reactor.response_text(dispatch as u32), "resumed");
+            reactor.futures.end_dispatch(reactor.context.instance, dispatch);
+        }
+        reactor.context.begin_dispatch(311, 4);
+        let outcome = guest.start("/loop/rearm");
+        assert_eq!(outcome.completion, Completion::Done, "{outcome:?}");
+        assert_eq!(reactor.response_text(4), "4:0", "requests must not run the retained callback");
+        reactor.futures.end_dispatch(reactor.context.instance, 4);
+
+        tokio::time::advance(std::time::Duration::from_millis(20)).await;
+        reactor.context.begin_dispatch(331, INSTANCE_WORK);
+        let outcome = guest.poll();
+        assert_eq!(outcome.completion, Completion::Done, "background work must resume: {outcome:?}");
+        reactor.context.begin_dispatch(331, 5);
+        let outcome = guest.start("/loop/observe");
+        assert_eq!(outcome.completion, Completion::Done, "{outcome:?}");
+        assert_eq!(reactor.response_text(5), "5:2", "handover must preserve both the pending and rearmed callbacks");
+        assert_eq!(reactor.futures.pending_total(reactor.context.instance), 0);
     }
 }
 
@@ -417,15 +427,9 @@ async fn scheduling_survives_store_restoration(runtime: GuestRuntime, scenario: 
     tokio::task::yield_now().await;
     tokio::time::advance(std::time::Duration::from_millis(60)).await;
     reactor.context.begin_slice(61, 1);
-    let outcome = guest.wake(&reactor).await;
+    let answer = guest.finish(&reactor, 8).await;
     assert_eq!(
-        outcome.completion,
-        Completion::Done,
-        "{scenario} must finish after restoring its continuation: {outcome:?}; logs: {:?}",
-        reactor.context.emitted_logs()
-    );
-    assert_eq!(
-        reactor.response_text(1),
+        answer,
         format!("{scenario} resumed"),
         "the customer scheduling mechanism must run its actual continuation"
     );

@@ -469,6 +469,11 @@ impl ReturnedGuest {
         self.restore_and_wake(future, &result)
     }
 
+    /// Polls the saved guest without delivering a host completion.
+    pub fn poll(&mut self) -> DispatchOutcome {
+        self.restore_and_wake(0, &ResultRecord::Ok(Vec::new()))
+    }
+
     /// Starts `path` and wakes the guest until it finishes, failing after
     /// `max_wakes` wakes so a guest that never finishes is a failed test
     /// rather than a hung one.

@@ -17,6 +17,7 @@ internal sealed class EventLoop
 {
     private int _abandonedCallbacks;
     private int _requests;
+    private Timer? _inactiveTimer;
 
     public async Task<string> RunAsync(string[] path)
     {
@@ -105,8 +106,12 @@ internal sealed class EventLoop
                 return "yielded";
             }
             case "abandon":
+                _inactiveTimer = new Timer(_ => _abandonedCallbacks++, null, Timeout.Infinite, Timeout.Infinite);
                 _ = AbandonedDelay();
                 return "armed";
+            case "rearm":
+                (_inactiveTimer ?? throw new InvalidOperationException("arm the retained timer first")).Change(10, Timeout.Infinite);
+                return _requests.ToString(CultureInfo.InvariantCulture) + ":" + _abandonedCallbacks.ToString(CultureInfo.InvariantCulture);
             case "observe":
                 return _requests.ToString(CultureInfo.InvariantCulture) + ":" + _abandonedCallbacks.ToString(CultureInfo.InvariantCulture);
             case "sync-wait":

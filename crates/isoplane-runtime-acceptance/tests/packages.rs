@@ -981,7 +981,15 @@ async fn timers_initialization_leaves_running_count_from_activation() {
         "step 1: a 30 s timer set during initialization must not be due on activation"
     );
 
+    reactor
+        .context
+        .begin_dispatch(activated_ms + 61, isoplane_host::futures::INSTANCE_WORK);
+    assert_eq!(guest.poll().completion, Completion::Done);
     tokio::time::advance(std::time::Duration::from_secs(30)).await;
+    reactor
+        .context
+        .begin_slice(activated_ms + 30_100, isoplane_host::futures::INSTANCE_WORK);
+    assert_eq!(guest.poll().completion, Completion::Done);
     assert_eq!(
         answer_at(&mut guest, &reactor, "/beats", activated_ms + 30_100, 2).await,
         "beats=1",

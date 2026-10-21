@@ -428,17 +428,22 @@ async fn a_timer_left_pending_keeps_its_instance() {
         long.body, b"armed",
         "step 1: the guest must leave a timer pending"
     );
-    assert_eq!(
-        cell.futures()
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while cell
+            .futures()
             .pending_of_dispatch(
                 long.instance,
                 isoplane_host::futures::INSTANCE_WORK,
-                "poll_call"
+                "poll_call",
             )
-            .len(),
-        1,
-        "step 1: the pending timer wake transfers to background ownership"
-    );
+            .len()
+            != 1
+        {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the background timer driver must arm its retained timer");
     let waiting = dispatch_at_idle(&cell, &module, "/observe").await;
     assert_eq!(
         (waiting.instance, waiting.body.as_slice()),
