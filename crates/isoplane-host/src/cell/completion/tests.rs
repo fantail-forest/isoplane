@@ -900,6 +900,33 @@ fn shutdown_completes_accepted_queued_work_without_inventing_an_instance() {
 }
 
 #[test]
+fn rejecting_a_requeued_dispatch_emits_one_completion() {
+    let cell = cell(CellConfig {
+        exec_threads: 0,
+        ..CellConfig::for_test("requeue-refused")
+    });
+    let module = app(&cell, "requeue-refused", FakeBehaviour::done());
+    let events = Events::default();
+    let _trace = events.install();
+    let response = cell
+        .submit(&module, Target::Handler { route: "/".into() }, http(301))
+        .expect("initial admission");
+    let Some(crate::cell::queue::Job::Dispatch(job)) = cell.queue.pop(0) else {
+        panic!("queued request");
+    };
+    cell.queue.job_done(0);
+    cell.queue.close();
+    cell.queue_dispatch(job);
+    assert_eq!(response.recv().expect("refusal").status, 503);
+    let records = events.records();
+    assert_eq!(records.len(), 1, "admitted work needs a final outcome");
+    assert_eq!(records[0]["outcome"], "queue_unavailable");
+    assert_eq!(records[0]["dispatch_id"], 301);
+    cell.shutdown();
+    assert_eq!(events.records().len(), 1);
+}
+
+#[test]
 fn shutdown_ends_parked_owners_and_late_futures_cannot_complete_them_again() {
     let events = Events::default();
     let _trace = events.install();

@@ -37,6 +37,7 @@ pub(super) enum TerminalReason {
     SnapshotCapacityUnavailable,
     InstanceCapacityUnavailable,
     EntryRefused,
+    QueueUnavailable,
     RestoreFailed,
     CaptureFailed,
     HostPanic,
@@ -62,6 +63,7 @@ impl TerminalReason {
             Self::SnapshotCapacityUnavailable => "snapshot_capacity_unavailable",
             Self::InstanceCapacityUnavailable => "instance_capacity_unavailable",
             Self::EntryRefused => "entry_refused",
+            Self::QueueUnavailable => "queue_unavailable",
             Self::RestoreFailed => "restore_failed",
             Self::CaptureFailed => "capture_failed",
             Self::HostPanic => "host_panic",
@@ -100,6 +102,7 @@ pub(super) struct Usage {
 struct State {
     instance: Option<InstanceId>,
     acquired: Option<&'static str>,
+    admitted: bool,
     /// The dispatch activated an instance because the ones with room were
     /// held by dispatches in their grace.
     activated_for_hold: bool,
@@ -159,6 +162,7 @@ impl DispatchCompletion {
             state: Mutex::new(State {
                 instance: None,
                 acquired: None,
+                admitted: false,
                 activated_for_hold: false,
                 usage: Usage::default(),
                 outcome: None,
@@ -179,8 +183,21 @@ impl DispatchCompletion {
         self.state.lock().breaker_probe = probe;
     }
 
+    pub(super) fn admitted(&self) {
+        self.state.lock().admitted = true;
+    }
+
     pub(super) fn reject(&self, reason: AdmissionRejection) {
-        self.state.lock().breaker_probe.take();
+        let admitted = {
+            let mut state = self.state.lock();
+            state.breaker_probe.take();
+            state.admitted
+        };
+        if admitted && matches!(reason, AdmissionRejection::QueueUnavailable) {
+            self.select(TerminalReason::QueueUnavailable, 503);
+            self.finish();
+            return;
+        }
         let reason = match reason {
             AdmissionRejection::QueueUnavailable => "queue_unavailable",
             AdmissionRejection::BreakerOpen => "breaker_open",
@@ -425,6 +442,7 @@ impl DispatchCompletion {
             | TerminalReason::RequestCancelled
             | TerminalReason::RequestFailed
             | TerminalReason::TransportFailure
+            | TerminalReason::QueueUnavailable
             | TerminalReason::EntryRefused
             | TerminalReason::HostPanic
             | TerminalReason::OccupancyClockUnavailable

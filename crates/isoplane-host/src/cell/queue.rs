@@ -178,6 +178,7 @@ impl WorkQueue {
         let waiting = j
             .completion
             .in_scope(|| tracing::info_span!("dispatch_queue"));
+        j.completion.admitted();
         g.dispatches.push_back(QueuedDispatch {
             job: j,
             _waiting: waiting,
