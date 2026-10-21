@@ -98,10 +98,14 @@ its concurrency slot; unused measured request running time is donated once to
 the allowance.
 
 Each instance starts with 5 seconds of background running time, replenishes 5
-seconds per 30 seconds of elapsed host time, and holds at most 30 seconds.
+seconds per 10 seconds of elapsed host time, and holds at most 30 seconds.
 Donations also replenish it. Actual execution is charged, including any overrun;
 each new background slice requires at least 5 seconds of credit. Below that
 threshold, background execution waits for time refill or request donations.
+Requests awaiting shared background work, such as a retained Redis connection,
+also wait while that work is throttled. Library timeouts may be reported only
+after background execution resumes.
+
 Background slices use the engine's existing grace margin and hard execution
 limit. A callback that fails to return can still cause the instance to be stopped.
 

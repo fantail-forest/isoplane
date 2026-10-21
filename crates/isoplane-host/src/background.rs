@@ -12,8 +12,8 @@ use crate::InstanceId;
 
 const INITIAL_NS: i64 = 5_000_000_000;
 const CAPACITY_NS: i64 = 30_000_000_000;
-// Five seconds of occupancy per thirty seconds of elapsed host time.
-const REFILL_DIVISOR: u64 = 6;
+// Five seconds of occupancy per ten seconds of elapsed host time.
+const REFILL_DIVISOR: u64 = 2;
 
 struct Credit {
     balance_ns: i64,
@@ -282,17 +282,17 @@ mod tests {
         assert_eq!(pool.allowance(), Ok(Duration::from_secs(5)));
         pool.queued();
         pool.charge(Duration::from_millis(10));
-        let eligible_at = Instant::now() + Duration::from_millis(60);
+        let eligible_at = Instant::now() + Duration::from_millis(20);
         assert_eq!(pool.allowance(), Err(eligible_at));
         pool.queued();
         assert_eq!(pool.take_thread_wait(), Duration::ZERO);
-        tokio::time::advance(Duration::from_millis(60)).await;
+        tokio::time::advance(Duration::from_millis(20)).await;
         assert_eq!(pool.allowance(), Ok(Duration::from_secs(5)));
         pool.queued();
         pool.charge(Duration::from_secs(6));
         assert_eq!(pool.credit.lock().balance_ns, -1_000_000_000);
         assert!(pool.allowance().is_err());
-        tokio::time::advance(Duration::from_secs(3)).await;
+        tokio::time::advance(Duration::from_secs(1)).await;
         assert!(pool.allowance().is_err());
         assert_eq!(pool.credit.lock().balance_ns, -500_000_000);
         pool.queued();
@@ -308,11 +308,11 @@ mod tests {
         );
         pool.donate(Duration::from_millis(4500));
         pool.queued();
-        tokio::time::advance(Duration::from_nanos(3)).await;
+        tokio::time::advance(Duration::from_nanos(1)).await;
         pool.queued();
         assert_eq!(
             pool.take_thread_wait(),
-            Duration::from_nanos(3),
+            Duration::from_nanos(1),
             "coalescing preserves eligibility time"
         );
         assert_eq!(pool.allowance(), Ok(Duration::from_secs(5)));
@@ -321,7 +321,7 @@ mod tests {
         tokio::time::advance(Duration::from_secs(300)).await;
         assert_eq!(pool.allowance(), Ok(Duration::from_secs(30)));
         pool.charge(Duration::from_secs(31));
-        tokio::time::advance(Duration::from_secs(35)).await;
+        tokio::time::advance(Duration::from_secs(11)).await;
         assert!(pool.allowance().is_err());
         tokio::time::advance(Duration::from_secs(1)).await;
         assert_eq!(pool.allowance(), Ok(Duration::from_secs(5)));
