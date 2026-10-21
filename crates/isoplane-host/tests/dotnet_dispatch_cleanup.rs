@@ -238,7 +238,7 @@ impl isoplane_host::egress::ConnectionFactory for PendingConnection {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_cancelled_managed_request_runs_cleanup_and_keeps_its_instance() {
+async fn a_guest_cancelled_request_fails_without_discarding_its_instance() {
     let (cell, module) = cleanup_cell(
         GuestRuntime::Mono,
         Arc::new(PendingWork::default()),
@@ -264,8 +264,8 @@ async fn a_cancelled_managed_request_runs_cleanup_and_keeps_its_instance() {
         )
         .await
         .expect("the cancelled request must settle");
-    assert_eq!(cancelled.status, 499);
-    assert_eq!(cancelled.completion, isoplane_engine::Completion::Cancelled);
+    assert_eq!(cancelled.status, 500);
+    assert_eq!(cancelled.completion, isoplane_engine::Completion::Failed);
     assert_eq!(cancelled.instance, before.instance);
     wait_until_idle(&cell, &module).await;
     let after = dispatch_at_idle(&cell, &module, "/observe").await;
@@ -283,11 +283,7 @@ async fn managed_request_failures_leave_other_requests_and_instance_state_intact
     tokio::time::timeout(Duration::from_secs(60), async {
         for (path, status, completion) in [
             ("/cleanup/throw", 500, isoplane_engine::Completion::Failed),
-            (
-                "/cleanup/cancel",
-                499,
-                isoplane_engine::Completion::Cancelled,
-            ),
+            ("/cleanup/cancel", 500, isoplane_engine::Completion::Failed),
         ] {
             let work = Arc::new(PendingWork::default());
             let (cell, module) = cleanup_cell(GuestRuntime::Mono, work.clone(), "/dns");
@@ -343,7 +339,14 @@ async fn managed_request_failures_leave_other_requests_and_instance_state_intact
             wait_until_idle(&cell, &module).await;
             let next = dispatch_at_idle(&cell, &module, "/observe").await;
             assert_eq!(next.instance, failure.instance);
-            assert_eq!(next.body, if status == 499 { b"3:1" } else { b"3:0" });
+            assert_eq!(
+                next.body,
+                if path == "/cleanup/cancel" {
+                    b"3:1"
+                } else {
+                    b"3:0"
+                }
+            );
             if status == 500 {
                 use isoplane_abi::host::{CodeTier, Dispatcher, RouteTarget};
                 let mut response = cell

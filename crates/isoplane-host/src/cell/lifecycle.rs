@@ -533,7 +533,14 @@ impl Cell {
             .dispatch(did)
             .filter(|dispatch| dispatch.transport.lock().is_some())
             .and_then(|_| slot.ctx.responses.lock().finished_stream(did));
-        let completion = if completion == Completion::Parked && closed_response.is_some() {
+        let completion = if completion == Completion::Cancelled
+            && !slot
+                .ctx
+                .dispatch(did)
+                .is_some_and(|dispatch| dispatch.cancellation_requested())
+        {
+            Completion::Failed
+        } else if completion == Completion::Parked && closed_response.is_some() {
             Completion::Done
         } else {
             completion
