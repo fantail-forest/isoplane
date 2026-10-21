@@ -766,13 +766,13 @@ async fn a_session_that_could_not_be_loaded_fails_the_request_naming_use_loaded_
     let logs = visitor.logs();
     assert_eq!(
         outcome.completion,
-        Completion::Trapped,
+        Completion::Failed,
         "using a session the asynchronous cache could not load synchronously must fail the request, \
          not carry on with an empty one: {outcome:?}; logs: {logs:?}"
     );
     assert!(
         logs.iter().any(|log| log.starts_with(
-            "unhandled System.InvalidOperationException: The session could not be loaded"
+            "request failed: System.InvalidOperationException: The session could not be loaded"
         ) && log.contains("Call app.UseLoadedSession()")),
         "the failure must say what to call; logs: {logs:?}"
     );

@@ -286,8 +286,15 @@ public static unsafe class Exports<TRouter>
 
     private static long SettleInitialization()
     {
-        ManagedWork.Drain();
         Task initialization = _initialization!;
+        // Preparation has no background scheduler. Drain ready startup work under
+        // the initialization budget before returning to wait for host I/O.
+        do
+        {
+            ManagedWork.Drain();
+        }
+        while (!initialization.IsCompleted &&
+            (IsoplaneSynchronizationContext.Instance.HasWork || DispatchPartition.HasWaiting(0)));
         if (!initialization.IsCompleted) return PollStatus.Pending();
         if (initialization.IsFaulted || initialization.IsCanceled)
             return initialization.Exception is { } error ? Panic("pre-initialization", error.GetBaseException()) : PollStatus.Trapped(TrapCode.Panic);

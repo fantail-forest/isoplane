@@ -161,7 +161,13 @@ in_mono_runtime! {
         tokio::task::yield_now().await;
         tokio::time::advance(std::time::Duration::from_millis(60)).await;
         reactor.context.begin_slice(61, 1);
-        let outcome = guest.wake(&reactor).await;
+        let mut outcome = guest.wake(&reactor).await;
+        for _ in 0..8 {
+            if outcome.completion != Completion::Parked {
+                break;
+            }
+            outcome = guest.wake(&reactor).await;
+        }
         assert_eq!(outcome.completion, Completion::Done, "ICU must remain usable after restoring the guest: {outcome:?}");
         assert_eq!(reactor.response_text(1), "tr-TR/İSTANBUL", "the current culture and its ICU-backed casing must survive Store restoration");
     }

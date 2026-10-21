@@ -206,6 +206,11 @@ fn aspnet_request_scopes_remain_isolated_after_restoring_guest_state() {
         slice_wall_ms_cap: 30_000,
         spent_ns: 0,
     };
+    assert_eq!(
+        instance.run_initialize(budget).completion,
+        Completion::Done,
+        "the ASP.NET application must initialize before serving requests"
+    );
     for _ in 0..2 {
         let result = instance.dispatch(&request, budget);
         let result = acknowledge_response_writes(
@@ -264,6 +269,11 @@ fn aspnet_cancellation_after_restore_disposes_the_request_scope() {
         slice_wall_ms_cap: 30_000,
         spent_ns: 0,
     };
+    assert_eq!(
+        instance.run_initialize(budget).completion,
+        Completion::Done,
+        "the ASP.NET application must initialize before serving requests"
+    );
     assert_eq!(
         instance.dispatch(&request, budget).completion,
         Completion::Parked,
@@ -351,13 +361,10 @@ fn acknowledge_response_writes(
         if outcome.completion != Completion::Parked {
             return outcome;
         }
-        let (future, bytes) = recorder.response_writes.lock().pop_front().expect("the parked ASP.NET fixture must be awaiting an explicit response write acknowledgement");
-        outcome = instance.wake(
-            dispatch,
-            future,
-            &ResultRecord::Ok(postcard::to_allocvec(&bytes).expect("write byte count")),
-            budget,
-        );
+        let (future, result) = recorder
+            .take_ready(dispatch)
+            .unwrap_or_else(|| panic!("the parked ASP.NET fixture must request a slice or await a response write; calls: {:?}", recorder.calls.lock()));
+        outcome = instance.wake(dispatch, future, &result, budget);
     }
     panic!("the small ASP.NET response failed to finish within its expected write count");
 }

@@ -1,4 +1,4 @@
-//! No-body framing sends the response at once; the guest is then told to stop.
+//! No-body framing suppresses payload bytes while preserving work left by the guest.
 
 use std::time::Duration;
 
@@ -50,7 +50,7 @@ async fn request(rig: &common::Rig, method: Method) -> common::Resp {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn no_body_framing_returns_the_wire_response_and_lets_the_guest_stop() {
+async fn no_body_framing_returns_the_wire_response_and_preserves_background_work() {
     for (method, status) in [
         (Method::GET, 204),
         (Method::GET, 205),
@@ -60,7 +60,7 @@ async fn no_body_framing_returns_the_wire_response_and_lets_the_guest_stop() {
         let rig = common::start_with_policy(
             guest(
                 status,
-                "(drop (call $timer (i64.const 600000))) (i64.const 1)",
+                "(drop (call $timer (i64.const 600000))) (i64.const 0)",
             ),
             InitSandbox::Sealed,
             None,
@@ -75,9 +75,9 @@ async fn no_body_framing_returns_the_wire_response_and_lets_the_guest_stop() {
             while cell.metrics_raw().dispatch_us.count() == 0 {
                 tokio::task::yield_now().await;
             }
-            assert_eq!(cell.futures().live_futures(), 0, "the guest's cancellation must end its unused timer wake");
-            assert_eq!(cell.metrics().traps, 0, "a guest that stops when told must not trap");
-        }).await.expect("the guest must stop once told, without awaiting its unused timer");
+            assert_eq!(cell.futures().live_futures(), 1, "response framing must preserve the handed-over timer");
+            assert_eq!(cell.metrics().traps, 0, "completing a bodyless response must not trap");
+        }).await.expect("a bodyless response must finish without awaiting its background timer");
         rig.shutdown().await;
     }
 }

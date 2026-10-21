@@ -12,6 +12,7 @@ pub struct Recorder {
     pub runtime_configuration: Arc<parking_lot::Mutex<Option<Vec<u8>>>>,
     pub responses: Arc<parking_lot::Mutex<Vec<isoplane_abi::dispatch::ResponseHead>>>,
     pub response_writes: Arc<parking_lot::Mutex<std::collections::VecDeque<(u64, u32)>>>,
+    pub ready_slices: Arc<parking_lot::Mutex<std::collections::VecDeque<(u64, u64)>>>,
     pub reject_next_response: Arc<AtomicBool>,
     pub deny_entropy: Arc<AtomicBool>,
     pub entropy_draws: Arc<parking_lot::Mutex<Vec<Vec<u8>>>>,
@@ -68,8 +69,17 @@ impl HostBindings for TestBindings {
 
     fn call_future(&mut self, call: ImportCall<'_>) -> u64 {
         self.note(&call);
+        if call.import == "dispatch_ready" && call.scalars[0] == u64::MAX {
+            return 0;
+        }
         let id = self.next_future;
         self.next_future += 1;
+        if call.import == "dispatch_ready" {
+            self.rec
+                .ready_slices
+                .lock()
+                .push_back((call.scalars[0], id));
+        }
         if call.import == "resp_write" {
             self.rec
                 .responses

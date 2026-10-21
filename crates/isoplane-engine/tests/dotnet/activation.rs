@@ -7,7 +7,6 @@
 
 use crate::bindings::Recorder;
 use crate::dotnet::{budget, fixture, Fixture, GuestRuntime, Request};
-use isoplane_abi::result::ResultRecord;
 use isoplane_engine::{Completion, Instance, InstanceOps};
 
 fn activation(runtime: GuestRuntime) -> &'static Fixture {
@@ -81,13 +80,10 @@ fn request_identifier(instance: &mut Instance, recorder: &Recorder) -> String {
         if outcome.completion != Completion::Parked {
             break;
         }
-        let (future, bytes) = recorder
-            .response_writes
-            .lock()
-            .pop_front()
-            .expect("a parked ASP.NET response must be awaiting a write");
-        let written = postcard::to_allocvec(&bytes).expect("encode the written byte count");
-        outcome = instance.wake(1, future, &ResultRecord::Ok(written), budget());
+        let (future, result) = recorder
+            .take_ready(1)
+            .expect("a parked ASP.NET response must request a slice or await a write");
+        outcome = instance.wake(1, future, &result, budget());
     }
     assert_eq!(
         outcome.completion,

@@ -59,7 +59,7 @@ in_mono_runtime! {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn a_managed_timer_left_pending_runs_before_a_later_dispatch(runtime: GuestRuntime) {
+    async fn a_managed_timer_left_pending_runs_in_a_background_slice(runtime: GuestRuntime) {
         let owner = InstanceId::alloc();
         let reactor = Reactor::with_network(owner, isoplane_harness::Network::with_resolver(Box::new(NoDns)));
         let context = &reactor.context;
@@ -74,8 +74,8 @@ in_mono_runtime! {
         );
         assert_eq!(
             futures.pending_total(owner),
-            1,
-            "the abandoned managed delay must register a real host timer"
+            0,
+            "closing the request must release its timer driver's host wake"
         );
         assert!(
             !futures.end_dispatch(owner, 1),
@@ -89,6 +89,10 @@ in_mono_runtime! {
         tokio::task::yield_now().await;
         tokio::time::advance(Duration::from_millis(100)).await;
         tokio::task::yield_now().await;
+
+        context.begin_dispatch(101, isoplane_host::futures::INSTANCE_WORK);
+        assert_eq!(guest.poll().completion, Completion::Done,
+            "the background slice must run the retained timer");
 
         // Observe twice: the callback runs once, before the first later dispatch reads its count.
         for dispatch in 2..=3 {
