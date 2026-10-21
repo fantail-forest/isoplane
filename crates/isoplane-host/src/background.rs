@@ -17,7 +17,6 @@ const REFILL_DIVISOR: u64 = 6;
 
 struct Credit {
     balance_ns: i64,
-    needs_refill: bool,
     updated: Instant,
     refill_remainder_ns: u64,
     consumed_ns: u64,
@@ -34,7 +33,6 @@ impl Credit {
     fn new(now: Instant) -> Self {
         Self {
             balance_ns: INITIAL_NS,
-            needs_refill: false,
             updated: now,
             refill_remainder_ns: 0,
             consumed_ns: 0,
@@ -62,9 +60,6 @@ impl Credit {
 
     fn resume_if_ready(&mut self, now: Instant) {
         if self.balance_ns >= INITIAL_NS {
-            self.needs_refill = false;
-        }
-        if !self.needs_refill && self.balance_ns > 0 {
             if let Some(since) = self.throttled_since.take() {
                 self.throttled += now.saturating_duration_since(since);
             }
@@ -138,12 +133,11 @@ impl Background {
         let now = self.now();
         let mut credit = self.credit.lock();
         credit.refill(now);
-        if !credit.needs_refill && credit.balance_ns > 0 {
+        if credit.balance_ns >= INITIAL_NS {
             Ok(Duration::from_nanos(credit.balance_ns as u64))
         } else {
             credit.throttled_since.get_or_insert(now);
-            let target_ns = if credit.needs_refill { INITIAL_NS } else { 1 };
-            let delay_ns = target_ns.saturating_sub(credit.balance_ns) as u64;
+            let delay_ns = INITIAL_NS.saturating_sub(credit.balance_ns) as u64;
             let delay_ns = delay_ns.saturating_mul(REFILL_DIVISOR);
             Err(now + Duration::from_nanos(delay_ns))
         }
@@ -153,7 +147,7 @@ impl Background {
         let now = self.now();
         let mut credit = self.credit.lock();
         credit.refill(now);
-        if !credit.needs_refill && credit.balance_ns > 0 {
+        if credit.balance_ns >= INITIAL_NS {
             credit.eligible_since.get_or_insert(now);
         }
     }
@@ -173,8 +167,7 @@ impl Background {
         credit.refill(self.now());
         let ns = occupied.as_nanos().min(i64::MAX as u128) as i64;
         credit.balance_ns = credit.balance_ns.saturating_sub(ns);
-        if credit.balance_ns <= 0 {
-            credit.needs_refill = true;
+        if credit.balance_ns < INITIAL_NS {
             credit.eligible_since = None;
         }
         credit.consumed_ns = credit.consumed_ns.saturating_add(ns as u64);
@@ -264,6 +257,14 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn refill_and_donations_repay_debt_without_exceeding_the_credit_cap() {
         let pool = Background::new(InstanceId(1), None);
+        assert_eq!(pool.allowance(), Ok(Duration::from_secs(5)));
+        pool.queued();
+        pool.charge(Duration::from_millis(10));
+        let eligible_at = Instant::now() + Duration::from_millis(60);
+        assert_eq!(pool.allowance(), Err(eligible_at));
+        pool.queued();
+        assert_eq!(pool.take_thread_wait(), Duration::ZERO);
+        tokio::time::advance(Duration::from_millis(60)).await;
         assert_eq!(pool.allowance(), Ok(Duration::from_secs(5)));
         pool.queued();
         pool.charge(Duration::from_secs(6));

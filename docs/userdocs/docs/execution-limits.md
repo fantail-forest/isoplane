@@ -100,8 +100,8 @@ the allowance.
 Each instance starts with 5 seconds of background running time, replenishes 5
 seconds per 30 seconds of elapsed host time, and holds at most 30 seconds.
 Donations also replenish it. Actual execution is charged, including any overrun;
-once exhausted, the pool must rebuild 5 seconds of credit before background
-execution resumes. Time refill and donations both count toward that threshold.
+each new background slice requires at least 5 seconds of credit. Below that
+threshold, background execution waits for time refill or request donations.
 Background slices use the engine's existing grace margin and hard execution
 limit. A callback that fails to return can still cause the instance to be stopped.
 
