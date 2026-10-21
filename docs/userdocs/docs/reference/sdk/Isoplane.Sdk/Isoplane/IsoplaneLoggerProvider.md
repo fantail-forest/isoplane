@@ -16,9 +16,9 @@ public sealed class IsoplaneLoggerProvider : ILoggerProvider, ISupportExternalSc
 | name | description |
 | --- | --- |
 | [IsoplaneLoggerProvider](IsoplaneLoggerProvider/-ctor.md)() | Creates a provider. Its loggers work only while the application runs under Isoplane. |
-| [CreateLogger](IsoplaneLoggerProvider/CreateLogger.md)(…) |  |
-| [Dispose](IsoplaneLoggerProvider/Dispose.md)() |  |
-| [SetScopeProvider](IsoplaneLoggerProvider/SetScopeProvider.md)(…) |  |
+| [CreateLogger](IsoplaneLoggerProvider/CreateLogger.md)(…) | Creates a logger whose records include the supplied category. |
+| [Dispose](IsoplaneLoggerProvider/Dispose.md)() | Releases the provider; no host resources are retained. |
+| [SetScopeProvider](IsoplaneLoggerProvider/SetScopeProvider.md)(…) | Uses the supplied scope provider for subsequently emitted records. |
 
 ## Remarks
 

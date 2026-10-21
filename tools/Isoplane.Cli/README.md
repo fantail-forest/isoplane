@@ -61,12 +61,12 @@ when its caller closes stdin; interactive sessions retain normal Ctrl+C behavior
 
 `isoplane bundle --project /path/to/app --configuration Release
 --output application.tar` compiles managed deployment input through the installed
-SDK. The project configuration selects execution mode. The archive contains
+SDK. Debug and Release select managed compilation settings. The archive contains
 application assemblies, their managed dependencies and available portable symbols;
 embedded resources and generated application code remain in those assemblies.
 Runtime exports and platform implementation assemblies are supplied by the server.
-This command needs no login and does not build WASM. External assets and satellite
-assemblies currently produce an explicit unsupported-input diagnostic.
+This command needs no login and does not build WASM. Copied content assets and
+satellite assemblies retain their output paths in the archive.
 
 For an HTTPS endpoint using a private CA, set `SSL_CERT_FILE` to a PEM certificate
 bundle. CLI downloads and telemetry use that bundle as their trust roots

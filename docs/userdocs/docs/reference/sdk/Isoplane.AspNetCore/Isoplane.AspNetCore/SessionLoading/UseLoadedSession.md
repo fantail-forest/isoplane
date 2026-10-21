@@ -21,7 +21,7 @@ public static IApplicationBuilder UseLoadedSession(this IApplicationBuilder app)
 
 ## Remarks
 
-Register the session and its cache as usual, with `AddSession` and an `IDistributedCache`; the options given to `AddSession` apply.
+Register the session and its cache as usual, with `AddSession` and an `IDistributedCache`; the options given to `AddSession` apply. For Redis, reference the stable StackExchange.Redis 3.x client directly; see [Redis compatibility](../../../../../library-compatibility.md#redis).
 
 Every request that passes through the middleware reads the cache once, whether or not it uses the session. Place it after middleware that answers requests without a session, such as `UseStaticFiles`, so those requests make no read. A failed read fails the request with the cache's exception.
 

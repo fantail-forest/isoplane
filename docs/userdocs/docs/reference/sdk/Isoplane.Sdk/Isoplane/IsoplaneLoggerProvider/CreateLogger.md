@@ -5,6 +5,8 @@ mdx:
 
 # IsoplaneLoggerProvider.CreateLogger method
 
+Creates a logger whose records include the supplied category.
+
 ```csharp
 public ILogger CreateLogger(string categoryName)
 ```

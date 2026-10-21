@@ -7,7 +7,7 @@ mdx:
 
 # SDK API reference
 
-The types and members of the Isoplane packages an application uses. Signatures and descriptions are generated from the compiled assemblies and their documentation comments, so they match the version you have installed.
+The types and members of the Isoplane packages an application uses. Signatures and descriptions are generated from the compiled assemblies and their documentation comments, for the source version used to build this documentation.
 
 ## Which package you need
 
@@ -24,7 +24,7 @@ Other packages each adapt one library an ASP.NET application may use. They are s
 
 ## Words these pages use
 
-- **Instance.** One running copy of your application. Isoplane runs as many as the traffic needs and may discard one between requests, so memory is not a place to keep anything that must last.
+- **Instance.** One running copy of your application. Isoplane scales instances with traffic up to the application’s instance limit and may discard one between requests, so memory is not a place to keep anything that must last.
 - **Template.** Isoplane starts your application once ahead of time and saves its memory. That saved memory is the template, and every instance starts as a copy of it. Work done before the template is saved is done once; state created then is identical in every instance.
 - **Initialization.** The start-up work that runs before the template is saved: [`Initialization.Initializing`](sdk/Isoplane.Sdk/Isoplane/Initialization/Initializing.md), or an [`[Initializer]`](sdk/Isoplane.Sdk/Isoplane/InitializerAttribute.md) method.
 - **Activation.** The moment an instance starts from the template, before its first request: [`Activation.Activated`](sdk/Isoplane.Sdk/Isoplane/Activation/Activated.md), or an [`[Activated]`](sdk/Isoplane.Sdk/Isoplane/ActivatedAttribute.md) method. State that must differ between instances is created here.

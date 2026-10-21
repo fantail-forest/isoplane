@@ -15,7 +15,8 @@ what is left to your application.
 | [A new build or changed settings](#a-new-build-or-changed-settings) | When you change the application or its settings | Prepares a new template when needed; matching captured state may be reused | Keeps what must outlive a build somewhere else |
 
 An *instance* is one running copy of the application. Isoplane runs as many as
-the traffic needs. The *template* is the memory every instance starts from.
+the traffic needs, up to the application’s instance limit. The *template* is the
+memory every instance starts from.
 
 ## Initialization
 
@@ -143,8 +144,9 @@ An application without ASP.NET marks one method `[Activated]` instead.
 ## Handling a request
 
 Isoplane hands a request to one instance. While the request waits on an
-asynchronous operation, Isoplane suspends the instance and resumes it when the
-operation completes.
+asynchronous operation, other requests and eligible background work can run on
+the same instance. When nothing is ready to run, the instance parks without
+occupying a worker thread.
 
 **Isoplane**
 
@@ -159,12 +161,10 @@ operation completes.
   whose dispatch keeps running after its running time is used up, or has not
   [finished 5 seconds after its token was cancelled](execution-limits.md#after-cancellation),
   and the other requests on that instance fail with it.
-- Keeps a request's dispatch open after its response while an outbound call or
-  name lookup it started is still pending, and ends it once that work completes;
-  see [What has to finish before the response?](dotnet-runtime-differences.md#before-the-response).
-  A timer still pending is kept with the instance and runs when it is due, in a
-  later slice; see
-  [What can run between requests?](dotnet-runtime-differences.md#between-requests).
+- Ends the request at the empty-stack boundary after response completion,
+  releasing its concurrency slot. Remaining operations, timers and their
+  accounting transfer to the instance's background allowance; see
+  [Work after the response](dotnet-runtime-differences.md#before-the-response).
 
 **Your application**
 
@@ -174,8 +174,8 @@ operation completes.
   [how .NET differs on Isoplane](dotnet-runtime-differences.md#waits).
 - Forwards the cancellation token to the asynchronous calls it makes.
 - Disposes what it opens. Do not leave cleanup to a finalizer.
-- Takes its `HttpClient` from `IHttpClientFactory`, whose clients keep no connection
-  open, rather than keeping one it constructed itself; see
+- Can use `IHttpClientFactory` with normal connection pooling and handler
+  lifetimes; see
   [HTTP clients and connection reuse](dotnet-runtime-differences.md#http-clients).
 - Saves anything that must last to a database or another external service
   before it responds.
@@ -218,9 +218,9 @@ instances.
   instance and vanish with it.
 - Expects a connection kept from an earlier request to be stale, and opens
   another when it is.
-- Pools database connections
-  [outside the application](dotnet-runtime-differences.md#pool-database-connections-outside-the-application),
-  because a pool inside it belongs to one instance.
+- Sizes any database pool for one instance. An
+  [external pooler](dotnet-runtime-differences.md#pool-database-connections-outside-the-application)
+  can cap database connections across the application.
 
 **What can go wrong**
 

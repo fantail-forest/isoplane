@@ -44,7 +44,8 @@ next, and the result is captured as the template every instance starts from.
 Keep request-specific state out of the top level of `Program.cs`. Request scopes
 are created and disposed by ASP.NET's normal request lifecycle. A
 `BackgroundService` still running once the host has started is refused by name:
-its work cannot continue beyond a completed dispatch. One that finishes during
+continuous execution is unavailable, even though bounded background work can
+continue after a response. One that finishes during
 startup is accepted, as is bounded asynchronous `IHostedService.StartAsync` work.
 
 To warm a read endpoint through middleware, binding and serialization before capture:

@@ -30,8 +30,8 @@ scripts/dev guests/build.sh
 # The SDK's own tests, including the assertion that its import names and order
 # have not drifted from `crates/isoplane-abi`. The `json` feature is required:
 # the preinit tests use `init::config_vars`, which is gated behind it.
-scripts/dev bash -lc 'cd /isoplane/guests && cargo test -p isoplane-guest --features json \
-    --target x86_64-unknown-linux-gnu'
+scripts/dev cargo test --manifest-path guests/Cargo.toml -p isoplane-guest --features json \
+    --target x86_64-unknown-linux-gnu
 ```
 
 ## Workspace

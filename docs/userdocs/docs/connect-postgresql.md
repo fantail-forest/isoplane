@@ -163,8 +163,9 @@ at the top of the switch in `HandleAsync`:
 Two choices in this code are particular to Isoplane:
 
 - **A connection for each request, with the driver's pooling off.** Isoplane
-  runs as many instances as the load needs, so a pool in each one does not cap
-  the connections the service opens.
+  scales instances within the application’s instance limit, so a pool in each one does not cap
+  the connections the service opens. This sample disables pooling; per-instance
+  pools are supported after initialization, subject to the connection limit.
   [Pool database connections outside the application](dotnet-runtime-differences.md#pool-database-connections-outside-the-application)
   explains what to use instead.
 - **The connection string is read during the request.** Settings are also

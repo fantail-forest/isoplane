@@ -24,8 +24,9 @@ namespace Isoplane;
 /// than copying it, so do not change it after the call.
 /// </para>
 /// <para>
-/// The client receives status 502 when the handler throws an exception instead of returning a
-/// response, and when it returns one whose status is below 200 or whose headers are not valid HTTP.
+/// An ordinary unhandled handler exception produces status 500 if the response has not started,
+/// or aborts it otherwise. Returning a response whose status is below 200 or whose headers are not
+/// valid HTTP produces status 502.
 /// </para>
 /// <para>
 /// An ASP.NET application does not use this type: it writes to <c>HttpContext.Response</c> as usual.

@@ -54,8 +54,10 @@ call as an error in your editor and offer the fix.
   `RunAsync`, then the `Isoplane.Initialization.Initializing` callbacks, and
   captures the result. `app.WarmupAsync("/path")` in such a callback serves a
   request before the capture, so no instance pays for that route's first use.
-- **A request owns its work.** Nothing runs in an instance after its response. A
-  `BackgroundService` still running once the host has started is refused by name.
+- **Await work the response depends on.** Remaining work uses a bounded instance
+  background allowance and may be lost if the instance is discarded. Continuous
+  execution is unavailable: a `BackgroundService` still running once the host
+  has started is refused by name.
 - **Configuration is layered as in ASP.NET Core:** `appsettings.json`, then
   `appsettings.{Environment}.json`, then the settings the platform supplies. In
   local development those are User Secrets and the launch profile's environment

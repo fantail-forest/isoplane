@@ -81,7 +81,8 @@ dotnet test
   already warm in every instance.
 - **`Activation.Activated` runs in each instance.** State that must differ between
   instances, such as `InstanceInfo.Id`, is set there and not during initialization.
-- **A request owns its work.** Nothing runs in an instance after its response, so
+- **Await work the response depends on.** Background work has a bounded allowance
+  and may be lost when the instance is discarded, so
 <!--#if (UseControllers) -->
   `TodosController.Update` awaits the webhook before returning.
 <!--#else -->
@@ -89,7 +90,7 @@ dotnet test
 <!--#endif --> An application
   with a `BackgroundService` that keeps running after startup refuses to start,
   and names the service.
-- **Connections are not pooled inside an instance.** `TodoServices` sets
+- **This sample disables database pooling.** `TodoServices` sets
   `Pooling=false`, because Isoplane decides how many instances run and may capture
   or discard any of them between requests. Use your database provider's pooler to
   share connections.

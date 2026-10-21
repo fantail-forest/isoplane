@@ -22,10 +22,10 @@ namespace Isoplane;
 /// has none.
 /// </para>
 /// <para>
-/// Isoplane runs as many copies of the application as its traffic needs. Each copy is an instance,
-/// and Isoplane may discard one between requests. Keep whatever must outlive a request in a database,
-/// and finish the request's work before returning the response: work still running afterwards is not
-/// given time to complete.
+/// Isoplane scales instances with traffic, up to the application’s plan limit, and may discard an
+/// instance between requests. Await work the response depends on before returning. Remaining work
+/// transfers to the instance’s bounded background allowance and may never finish. Keep durable state
+/// in a database or another external service.
 /// </para>
 /// </remarks>
 /// <example>
@@ -60,9 +60,9 @@ public sealed class HttpHandlerAttribute : Attribute;
 /// </para>
 /// <para>
 /// The method is static, returns <c>Task</c> and takes no parameters. It can have any name, and an
-/// application has at most one. Await all I/O, and dispose connections, streams and timers before
-/// returning: an open connection cannot be saved in the template. An exception stops the application
-/// from being prepared, so it does not start.
+/// application has at most one. Await all I/O, and dispose connections and streams before returning:
+/// an open connection cannot be saved in the template. Timers may remain; their remaining delay
+/// counts from activation. An exception stops the application from being prepared, so it does not start.
 /// </para>
 /// <para>
 /// Everything this method creates is identical in every instance. Create what must differ between

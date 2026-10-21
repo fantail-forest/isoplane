@@ -6,7 +6,7 @@ mdx:
 
 # launchSettings.json
 
-`Properties/launchSettings.json` is the ordinary .NET file of launch profiles. `dotnet run` and `isoplane dev` read one profile from it when they start a local session. This page lists the keys Isoplane reads. It ignores every other key, such as `launchBrowser`. The key tables are generated from the list the Isoplane CLI parses, so they match the version you have installed.
+`Properties/launchSettings.json` is the ordinary .NET file of launch profiles. `dotnet run` and `isoplane dev` read one profile from it when they start a local session. This page lists the keys Isoplane reads. It ignores every other key, such as `launchBrowser`. The key tables are generated from the list the Isoplane CLI parses, for the source version used to build this documentation.
 
 [Supply local development settings](../local-settings.md) shows the file in use.
 
@@ -29,8 +29,8 @@ Each key is optional, and each value is a positive whole number. A local session
 
 | Key | Description |
 | --- | --- |
-| `memoryBytes` | The most memory an instance may use, in bytes. Must be a multiple of 65536. |
-| `occupancyMsPerDispatch` | The running time one dispatch may use, in milliseconds. Time spent waiting for something the dispatch awaits does not count. |
+| `memoryBytes` | The instance soft memory limit, in bytes, with a 25% hard-limit margin for finishing work. Must be a multiple of 65536. |
+| `occupancyMsPerDispatch` | The running time one request may use, in milliseconds. Waiting does not count. Background work uses a separate instance allowance. |
 | `subrequestsPerDispatch` | The most outbound requests one dispatch may start. Not yet enforced for .NET applications. |
 | `pendingFuturesPerDispatch` | The most asynchronous operations one dispatch may have pending at once. |
 

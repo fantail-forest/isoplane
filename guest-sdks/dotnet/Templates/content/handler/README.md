@@ -61,9 +61,9 @@ dotnet test
 
 Both lifecycle methods are optional.
 
-A request owns its work: nothing runs in an instance after its response, and
-memory an instance keeps between requests may be discarded at any time. Keep
-state that must last in a database or another service.
+Await work the response depends on. Remaining work uses a bounded background
+allowance and may be lost when the instance is discarded. Memory between
+requests is a cache; keep durable state in a database or another service.
 
 ## Configuration
 

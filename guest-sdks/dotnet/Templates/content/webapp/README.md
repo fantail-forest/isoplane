@@ -85,15 +85,15 @@ dotnet test
   `Isoplane.AspNetCore.DataProtection.EntityFrameworkCore` package. Isoplane
   puts what it adds for one library in a package named after that library, so
   an application that does not use Entity Framework Core never restores it.
-- **A request owns its work.** Nothing runs in an instance after its response.
-  Page handlers await their database calls, and an application with a
-  `BackgroundService` that keeps running after startup refuses to start, and
-  names the service.
+- **Await work the response depends on.** Page handlers await their database calls.
+  Remaining work uses a bounded background allowance and may be lost when the
+  instance is discarded. Continuous execution is unavailable: a
+  `BackgroundService` still running after startup is refused by name.
 - **Memory is not storage.** Isoplane may discard an instance after any request,
   and successive requests can reach different instances. What must last is in
   the database, and what must follow a visitor is in a cookie: in-memory session
   state would not survive.
-- **Connections are not pooled inside an instance.** `Data/DataServices.cs` sets
+- **This sample disables database pooling.** `Data/DataServices.cs` sets
   `Pooling=false`, because Isoplane decides how many instances run and may capture
   or discard any of them between requests. Use your database provider's pooler to
   share connections.

@@ -10,9 +10,9 @@ namespace Isoplane;
 /// <remarks>
 /// <para>
 /// Isoplane initializes the application ahead of requests and saves its memory as a template. It then
-/// runs as many copies of the application as its traffic needs; each copy is an instance, and each
-/// starts from the template. Whatever existed when the template was saved is therefore identical in
-/// every instance, including a random value drawn at start-up. Subscribe to <see cref="Activated"/>
+/// scales copies of the application with traffic, up to the application’s instance limit. Each copy is
+/// an instance and starts from the template. Whatever existed when the template was saved is
+/// therefore identical in every instance, including a random value drawn at start-up. Subscribe to <see cref="Activated"/>
 /// to replace such state when an instance starts.
 /// </para>
 /// <para>

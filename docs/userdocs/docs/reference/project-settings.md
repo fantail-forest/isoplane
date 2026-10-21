@@ -6,7 +6,7 @@ mdx:
 
 # Project settings
 
-The MSBuild properties an application's project can set to change how the Isoplane SDK builds it. Names, defaults and descriptions are generated from the SDK's build files, so they match the version you have installed.
+The MSBuild properties an application's project can set to change how the Isoplane SDK builds it. Names, defaults and descriptions are generated from the SDK's build files, for the source version used to build this documentation.
 
 ## Setting a property
 

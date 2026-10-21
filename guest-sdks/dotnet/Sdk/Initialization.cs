@@ -9,9 +9,9 @@ namespace Isoplane;
 /// <remarks>
 /// <para>
 /// Isoplane initializes the application ahead of requests and saves its memory as a template. It then
-/// runs as many copies of the application as its traffic needs; each copy is an instance, and each
-/// starts from the template. Captured startup work is reused rather than repeated in every
-/// instance. Subscribe to <see cref="Initializing"/> to do that work: load reference data, build
+/// scales copies of the application with traffic, up to the application’s instance limit. Each copy is
+/// an instance and starts from the template. Captured startup work is reused rather than repeated
+/// in every instance. Subscribe to <see cref="Initializing"/> to do that work: load reference data, build
 /// lookup tables, and run the code a request will run so that no request pays for its first use.
 /// </para>
 /// <para>

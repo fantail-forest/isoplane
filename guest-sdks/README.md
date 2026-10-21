@@ -11,7 +11,8 @@ rather than copied into them.
 Read the asymmetry as the documentation does: .NET is the ecosystem Isoplane exists
 for, and the Rust SDK matters because it is what keeps the contract honest.
 
-Both build the *same* five exports against the *same* import module, and
+Both use the host contract defined by the same ABI crate. The platform runtime
+provides the managed exports; Rust fixtures build their own. In both cases,
 `crates/isoplane-abi` is compiled into the host and read by both — so the encoding
 on the two sides of the sandbox boundary is one implementation rather than
 several readings of a document.

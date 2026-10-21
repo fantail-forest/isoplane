@@ -8,7 +8,7 @@ mdx:
 
 The `isoplane` CLI records anonymous usage data and sends it to Isoplane. It shows which commands are used, where they fail and on which platforms. Only the CLI does this: the SDK packages an application references, the build and the local runtime send nothing.
 
-This page lists everything that is collected and how to turn it off. Its tables are generated from the definitions the CLI uses, so they match the version you have installed.
+This page lists everything that is collected and how to turn it off. Its tables are generated from the definitions the CLI uses, for the source version used to build this documentation.
 
 A CLI built from source collects nothing. `isoplane telemetry status` says whether yours does.
 

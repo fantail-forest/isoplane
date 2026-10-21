@@ -307,7 +307,7 @@ mdx:
 
 # SDK API reference
 
-The types and members of the Isoplane packages an application uses. Signatures and descriptions are generated from the compiled assemblies and their documentation comments, so they match the version you have installed.
+The types and members of the Isoplane packages an application uses. Signatures and descriptions are generated from the compiled assemblies and their documentation comments, for the source version used to build this documentation.
 
 ## Which package you need
 
@@ -324,7 +324,7 @@ Other packages each adapt one library an ASP.NET application may use. They are s
 
 ## Words these pages use
 
-- **Instance.** One running copy of your application. Isoplane runs as many as the traffic needs and may discard one between requests, so memory is not a place to keep anything that must last.
+- **Instance.** One running copy of your application. Isoplane scales instances with traffic up to the application’s plan limit and may discard one between requests, so memory is not a place to keep anything that must last.
 - **Template.** Isoplane starts your application once ahead of time and saves its memory. That saved memory is the template, and every instance starts as a copy of it. Work done before the template is saved is done once; state created then is identical in every instance.
 - **Initialization.** The start-up work that runs before the template is saved: [`Initialization.Initializing`](sdk/Isoplane.Sdk/Isoplane/Initialization/Initializing.md), or an [`[Initializer]`](sdk/Isoplane.Sdk/Isoplane/InitializerAttribute.md) method.
 - **Activation.** The moment an instance starts from the template, before its first request: [`Activation.Activated`](sdk/Isoplane.Sdk/Isoplane/Activation/Activated.md), or an [`[Activated]`](sdk/Isoplane.Sdk/Isoplane/ActivatedAttribute.md) method. State that must differ between instances is created here.
@@ -346,7 +346,7 @@ mdx:
 
 The `isoplane` CLI records anonymous usage data and sends it to Isoplane. It shows which commands are used, where they fail and on which platforms. Only the CLI does this: the SDK packages an application references, the build and the local runtime send nothing.
 
-This page lists everything that is collected and how to turn it off. Its tables are generated from the definitions the CLI uses, so they match the version you have installed.
+This page lists everything that is collected and how to turn it off. Its tables are generated from the definitions the CLI uses, for the source version used to build this documentation.
 
 A CLI built from source collects nothing. `isoplane telemetry status` says whether yours does.
 
@@ -411,7 +411,7 @@ mdx:
 
 # Project settings
 
-The MSBuild properties an application's project can set to change how the Isoplane SDK builds it. Names, defaults and descriptions are generated from the SDK's build files, so they match the version you have installed.
+The MSBuild properties an application's project can set to change how the Isoplane SDK builds it. Names, defaults and descriptions are generated from the SDK's build files, for the source version used to build this documentation.
 
 ## Setting a property
 
@@ -451,7 +451,7 @@ mdx:
 
 # launchSettings.json
 
-`Properties/launchSettings.json` is the ordinary .NET file of launch profiles. `dotnet run` and `isoplane dev` read one profile from it when they start a local session. This page lists the keys Isoplane reads. It ignores every other key, such as `launchBrowser`. The key tables are generated from the list the Isoplane CLI parses, so they match the version you have installed.
+`Properties/launchSettings.json` is the ordinary .NET file of launch profiles. `dotnet run` and `isoplane dev` read one profile from it when they start a local session. This page lists the keys Isoplane reads. It ignores every other key, such as `launchBrowser`. The key tables are generated from the list the Isoplane CLI parses, for the source version used to build this documentation.
 
 [Supply local development settings](../local-settings.md) shows the file in use.
 
@@ -549,7 +549,7 @@ mdx:
 
 # Project templates
 
-The `dotnet new` templates that create an Isoplane application or add tests to one. `isoplane setup` installs them. The names, descriptions and options on this page are generated from the templates themselves, so they match the version you have installed.
+The `dotnet new` templates that create an Isoplane application or add tests to one. `isoplane setup` installs them. The names, descriptions and options on this page are generated from the templates themselves, for the source version used to build this documentation.
 
 Every file in a generated project is commented, and an application's `README.md` says what each file is for and how to make common changes. That README is the guide to a template's contents. This page helps you choose a template and create a project from it.
 

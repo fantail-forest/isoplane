@@ -20,7 +20,7 @@ public static class Activation
 
 ## Remarks
 
-Isoplane initializes the application ahead of requests and saves its memory as a template. It then runs as many copies of the application as its traffic needs; each copy is an instance, and each starts from the template. Whatever existed when the template was saved is therefore identical in every instance, including a random value drawn at start-up. Subscribe to [`Activated`](./Activation/Activated.md) to replace such state when an instance starts.
+Isoplane initializes the application ahead of requests and saves its memory as a template. It then scales copies of the application with traffic, up to the application’s instance limit. Each copy is an instance and starts from the template. Whatever existed when the template was saved is therefore identical in every instance, including a random value drawn at start-up. Subscribe to [`Activated`](./Activation/Activated.md) to replace such state when an instance starts.
 
 Isoplane already reseeds, before the event is raised, every `Random` created without a seed, `Random.Shared`, the generator behind `Activity` trace and span identifiers, and the one behind SQLite's `random()` and `randomblob()`. Cryptographic randomness needs nothing: each call draws fresh bytes. Three things are left to you: a `Random` constructed with a seed, even when that seed was itself random; a generator that is not a `System.Random`, such as one a library implements; and a value already drawn, such as an identifier stored in a static field.
 

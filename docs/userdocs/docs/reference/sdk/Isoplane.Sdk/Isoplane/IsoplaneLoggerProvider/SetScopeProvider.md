@@ -5,6 +5,8 @@ mdx:
 
 # IsoplaneLoggerProvider.SetScopeProvider method
 
+Uses the supplied scope provider for subsequently emitted records.
+
 ```csharp
 public void SetScopeProvider(IExternalScopeProvider scopeProvider)
 ```

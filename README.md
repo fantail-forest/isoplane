@@ -14,35 +14,26 @@ derives from.
 
 ## Building and testing
 
-`scripts/dev` runs commands directly on the host, using your environment and
-adding `.isoplane-dev/tools/bin` to `PATH`. Install Rust, Python 3 and your
-platform's C compiler first. Node.js is needed for frontend and docs builds.
+Task prepares build dependencies and test fixtures; Cargo and MSBuild compile them.
+Install Rust, Python 3 and your platform's C compiler first, then run:
 
 ```sh
-scripts/setup                             # Rust guest tools
-scripts/dev cargo build --workspace --all-targets
-scripts/dev cargo test --workspace
-scripts/dev                               # interactive development shell
+scripts/setup
+task --list
+task build
+task test -- -- --skip a_prepared_release_installs_builds_applications_and_uninstalls
 ```
 
-C# builds require the .NET 10 SDK. On macOS, start Docker Desktop or a
-compatible local Docker runtime; the SDK's publish integration automatically
-provisions and uses a pinned Linux compiler image. The host and guest
-execution remain native:
-
-```sh
-scripts/dev guests/build-dotnet.sh --if-stale
-scripts/dev cargo test --workspace
-```
-
-The optional repository toolchain image remains available through
-`scripts/dev --container --build` for running Linux toolchain commands.
+Setup installs the pinned .NET SDK and guest tools. Platform runtime builds run
+on Linux; customer applications compile to IL packages for that shared runtime.
+The optional repository toolchain image is available through
+`scripts/dev --container --build`.
 
 See `scripts/dev` for native commands and the optional container workflow.
 
-Tests that need a guest module build it on demand through the `isoplane-fixtures`
-crate, which runs `guests/build.sh` and `guests/build-dotnet.sh` and fails
-naming the missing tool when the toolchain is absent.
+Task prepares guest modules before starting tests. Fixture helpers load those
+artifacts and fail with the preparation command if an input is missing. The
+installation journey additionally requires an explicitly prepared release.
 
 ## Layout
 

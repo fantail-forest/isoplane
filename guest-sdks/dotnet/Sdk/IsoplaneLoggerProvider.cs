@@ -58,13 +58,13 @@ public sealed class IsoplaneLoggerProvider : ILoggerProvider, ISupportExternalSc
 
     internal IsoplaneLoggerProvider(Action<int, string> emit) => this.emit = emit;
 
-    /// <inheritdoc />
+    /// <summary>Creates a logger whose records include the supplied category.</summary>
     public ILogger CreateLogger(string categoryName) => new Logger(this, categoryName);
 
-    /// <inheritdoc />
+    /// <summary>Uses the supplied scope provider for subsequently emitted records.</summary>
     public void SetScopeProvider(IExternalScopeProvider scopeProvider) => scopes = scopeProvider;
 
-    /// <inheritdoc />
+    /// <summary>Releases the provider; no host resources are retained.</summary>
     public void Dispose() { }
 
     private sealed class Logger(IsoplaneLoggerProvider provider, string category) : ILogger

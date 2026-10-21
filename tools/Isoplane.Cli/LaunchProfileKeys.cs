@@ -32,13 +32,13 @@ internal static class LaunchProfileKeys
     internal static readonly LaunchProfileKey[] Profile = [Command, Url, Environment, Limits];
 
     internal static readonly LimitOverrideKey Memory = new("memoryBytes", null,
-        "The most memory an instance may use, in bytes. Must be a multiple of 65536.");
+        "The instance soft memory limit, in bytes, with a 25% hard-limit margin for finishing work. Must be a multiple of 65536.");
 
     internal static readonly LimitOverrideKey[] LimitOverrides =
     [
         Memory,
         new("occupancyMsPerDispatch", "occupancy_ms_per_dispatch",
-            "The running time one dispatch may use, in milliseconds. Time spent waiting for something the dispatch awaits does not count."),
+            "The running time one request may use, in milliseconds. Waiting does not count. Background work uses a separate instance allowance."),
         new("subrequestsPerDispatch", "subrequests_per_dispatch",
             "The most outbound requests one dispatch may start. Not yet enforced for .NET applications."),
         new("pendingFuturesPerDispatch", "pending_futures_per_dispatch",

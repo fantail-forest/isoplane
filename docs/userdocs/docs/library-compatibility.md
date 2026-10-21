@@ -44,9 +44,9 @@ entry says otherwise.
 | ASP.NET Core | [Newtonsoft.Json formatters over 30 KB](#newtonsoft-json) | Moderate to large change: move to `System.Text.Json`. Or keep Newtonsoft.Json and raise two limits |
 | ASP.NET Core | [Rate limiting middleware](#rate-limiting) | Works, counting per instance. A sliding window refills late after an idle spell |
 | ASP.NET Core | [Validation attributes, localizers, token callbacks and service factories that do I/O](#synchronous-extension-points) | Moderate change: move the I/O elsewhere |
-| ASP.NET Core | [WebSockets, SignalR's WebSocket transport, Blazor Server](#connections-and-background-work) | Unsupported |
+| ASP.NET Core | [WebSockets, SignalR's WebSocket transport, Blazor Server](#connections-and-background-work) | Not available |
 | ASP.NET Core | [gRPC over HTTP/2](#connections-and-background-work) | Moderate change: use gRPC-Web |
-| ASP.NET Core | [`BackgroundService` and other work between requests](#connections-and-background-work) | Large change: do the work during a request |
+| ASP.NET Core | [Continuously running `BackgroundService`, jobs and queue consumers](#connections-and-background-work) | Large change: do the work during a request |
 | Microsoft.Extensions.Configuration | [`IConfigurationProvider` implementations that load from a remote service, such as Azure Key Vault](#remote-configuration) | Moderate change: fetch them before `builder.Build()` |
 | Microsoft.Extensions.Logging.Console | [The console logger in an application written without ASP.NET Core](#console-logging) | Small change: log through Isoplane's provider |
 | Entity Framework Core | [Lazy loading](#lazy-loading) | Moderate change: load with `Include` |
@@ -534,8 +534,8 @@ What to know before relying on it:
   [`TokenBucketRateLimiter`][TokenBucketRateLimiter] work out what to refill
   from the time that has passed, so their permits come back after an idle
   spell. A sliding-window limiter moves on by one segment for each tick, and
-  ticks only run during requests, so after an idle spell it can stay closed for
-  up to one window longer than configured.
+  background ticks can be delayed by throttling or hibernation. After such a
+  delay, permits can remain unavailable longer than configured.
 
 Typically used for limiting how often a client may call an endpoint.
 
@@ -839,7 +839,7 @@ Isoplane's runtime includes SQLite 3.54, so
 [`Microsoft.EntityFrameworkCore.Sqlite`][nuget-ef-sqlite] with its
 [`UseSqlite`][UseSqlite] work unchanged for databases held in memory. That
 covers the functions, aggregates and collations an application registers, and
-the ones Entity Framework Core registers for decimals. Two common uses do not
+the ones Entity Framework Core registers for decimals. File-backed databases do not
 work:
 
 - **A database kept in a file.** Opening one throws
@@ -1138,7 +1138,9 @@ server that depends on sampling or elicitation has no workaround.
 #### Looking ahead
 
 Session tracking keeps each session in memory between
-requests and tidies up from a background service. This session-tracking mode is not supported.
+requests and tidies up from a background service. The service requires continuous
+execution, which Isoplane does not provide, and successive requests need not
+reach the same instance.
 
 ## Packages that work {#works}
 
@@ -1198,7 +1200,8 @@ exercised, which is not everything the package does.
 - **[`Swashbuckle.AspNetCore`][swashbuckle] 10.3.0.** Generating the OpenAPI document. The
   Swagger UI was not exercised.
 
-With Npgsql, turn the driver's connection pooling off:
+The Npgsql examples disable driver pooling so initialization closes its
+connections. Pools may be retained after activation, subject to instance limits; see
 [Pool database connections outside the application](dotnet-runtime-differences.md#pool-database-connections-outside-the-application).
 
 ## Packages not checked yet {#not-checked}

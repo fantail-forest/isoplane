@@ -39,9 +39,9 @@ attach to.
 - `Initialization.Initializing` callbacks run during preparation, before Isoplane captures the
   template that every instance starts from. Whatever they leave in memory is
   already there when an instance serves its first request.
-- A request owns its work. Nothing runs in an instance after its response, and
-  an application with a `BackgroundService` that keeps running after startup
-  refuses to start.
+- Await work the response depends on. Remaining work uses a bounded background
+  allowance and may be lost when the instance is discarded. Continuous execution
+  is unavailable: a `BackgroundService` still running after startup is refused.
 
 ## Configuration
 

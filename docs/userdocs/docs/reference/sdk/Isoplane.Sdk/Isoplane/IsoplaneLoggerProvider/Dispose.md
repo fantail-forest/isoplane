@@ -5,6 +5,8 @@ mdx:
 
 # IsoplaneLoggerProvider.Dispose method
 
+Releases the provider; no host resources are retained.
+
 ```csharp
 public void Dispose()
 ```

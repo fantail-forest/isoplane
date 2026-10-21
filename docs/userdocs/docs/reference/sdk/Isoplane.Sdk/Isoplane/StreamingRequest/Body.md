@@ -15,7 +15,7 @@ public Stream Body { get; }
 
 Read it with `ReadAsync` or `CopyToAsync`; a read returns 0 at the end of the body. The synchronous `Read` throws `NotSupportedException`, and so do `Length`, `Position` and `Seek`. Await each read before starting the next.
 
-A cancellation token passed to a read is checked before the read begins; a read already in progress finishes first. A read throws `IOException` when the body cannot be delivered, for example because the request was cancelled.
+Cancelling the token passed to a pending read cancels its host operation and throws `OperationCanceledException`. A read throws `IOException` when the host cannot deliver the body, including a pending read left after response completion.
 
 The handler need not read the whole body. Content it has not read when it returns its response is not read at all, and a read still waiting then throws `IOException`.
 

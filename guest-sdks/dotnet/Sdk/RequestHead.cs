@@ -74,8 +74,8 @@ public class RequestHead
     /// Pass it to the asynchronous calls the handler makes, so that work nobody is waiting for stops.
     /// </para>
     /// <para>
-    /// Running time is the time a dispatch spends executing; a dispatch is the work Isoplane gives an
-    /// instance to handle one request, described in
+    /// Running time is the time a request dispatch spends executing. A request dispatch is the work
+    /// Isoplane gives an instance to handle one request, described in
     /// <see href="https://isoplane.dev/docs/dotnet-runtime-differences#units-of-work">Units of work</see>.
     /// Time spent waiting for something the handler awaits, such as a database or another service, does
     /// not count. Once a dispatch has used its allowance and the token is cancelled, it has a short
@@ -131,9 +131,9 @@ public sealed class StreamingRequest : RequestHead
     /// <c>Position</c> and <c>Seek</c>. Await each read before starting the next.
     /// </para>
     /// <para>
-    /// A cancellation token passed to a read is checked before the read begins; a read already in
-    /// progress finishes first. A read throws <c>IOException</c> when the body cannot be delivered,
-    /// for example because the request was cancelled.
+    /// Cancelling the token passed to a pending read cancels its host operation and throws
+    /// <c>OperationCanceledException</c>. A read throws <c>IOException</c> when the host cannot
+    /// deliver the body, including a pending read left after response completion.
     /// </para>
     /// <para>
     /// The handler need not read the whole body. Content it has not read when it returns its response

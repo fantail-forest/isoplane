@@ -22,7 +22,7 @@ public sealed class InitializerAttribute : Attribute
 
 Isoplane runs this method during template preparation, and saves the application's memory as a template. Every instance then starts as a copy of that template, so what the method left in static fields is already there when a request arrives. Use it for work each instance would otherwise repeat: reading settings, loading reference data, and running the code a request will run so that no request pays for its first use.
 
-The method is static, returns `Task` and takes no parameters. It can have any name, and an application has at most one. Await all I/O, and dispose connections, streams and timers before returning: an open connection cannot be saved in the template. An exception stops the application from being prepared, so it does not start.
+The method is static, returns `Task` and takes no parameters. It can have any name, and an application has at most one. Await all I/O, and dispose connections and streams before returning: an open connection cannot be saved in the template. Timers may remain; their remaining delay counts from activation. An exception stops the application from being prepared, so it does not start.
 
 Everything this method creates is identical in every instance. Create what must differ between instances, such as a random identifier, in an [`ActivatedAttribute`](./ActivatedAttribute.md) method.
 

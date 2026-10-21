@@ -24,7 +24,7 @@ Use it when one method is all the application needs. The project uses the `Isopl
 
 The method is static, returns `Task<Response>` and takes a [`Request`](./Request.md). It can have any name. It may take a [`StreamingRequest`](./StreamingRequest.md) in place of the [`Request`](./Request.md), to read a large body as it arrives. An application has exactly one such method. The build reports an error on a method that breaks these rules, on a second marked method, and on a project that has none.
 
-Isoplane runs as many copies of the application as its traffic needs. Each copy is an instance, and Isoplane may discard one between requests. Keep whatever must outlive a request in a database, and finish the request's work before returning the response: work still running afterwards is not given time to complete.
+Isoplane scales instances with traffic, up to the application’s instance limit, and may discard an instance between requests. Await work the response depends on before returning. Remaining work transfers to the instance’s bounded background allowance and may never finish. Keep durable state in a database or another external service.
 
 ## Examples
 

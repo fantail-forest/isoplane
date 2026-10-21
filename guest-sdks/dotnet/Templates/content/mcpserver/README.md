@@ -89,9 +89,9 @@ dotnet test
   template is captured, so the work of a first call is in the template too.
 - **A tool is a method.** `[McpServerTool]` marks it, `[Description]` tells the
   model when and how to call it, and its parameters are the tool's inputs.
-- **A request owns its work.** Nothing runs in an instance after its response,
-  and memory an instance keeps between requests may be discarded at any time.
-  Keep state that must last in a database or another service.
+- **Await work the response depends on.** Remaining work uses a bounded background
+  allowance and may be lost when the instance is discarded. Keep durable state
+  in a database or another service.
 
 `IsoplaneHosting.CreateBuilder(args)` replaces `WebApplication.CreateBuilder(args)`,
 and `Program.cs` ends with `await app.RunAsync()`: the synchronous `app.Run()`

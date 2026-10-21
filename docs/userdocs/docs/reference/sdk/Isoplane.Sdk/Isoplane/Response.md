@@ -35,7 +35,7 @@ Create one with the static method that fits what you are sending:
 
 [`Bytes`](./Response/Bytes.md), [`Raw`](./Response/Raw.md) and [`Http`](./Response/Http.md) keep the array they are given rather than copying it, so do not change it after the call.
 
-The client receives status 502 when the handler throws an exception instead of returning a response, and when it returns one whose status is below 200 or whose headers are not valid HTTP.
+An ordinary unhandled handler exception produces status 500 if the response has not started, or aborts it otherwise. Returning a response whose status is below 200 or whose headers are not valid HTTP produces status 502.
 
 An ASP.NET application does not use this type: it writes to `HttpContext.Response` as usual.
 

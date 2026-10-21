@@ -35,7 +35,7 @@ Isoplane.Activation.Activated += () =>
 
 ## Validation
 
-The fixture helper builds missing or stale guests from the configured runtime
-feed. SDK drift tests compare the managed ABI with the Rust contract. Runtime,
+Task prepares missing or stale guest fixtures from the configured runtime feed
+before running tests. Fixture helpers only resolve and load prepared artifacts. SDK drift tests compare the managed ABI with the Rust contract. Runtime,
 engine and node tests exercise real Mono guests and packages through their
 consuming interfaces.

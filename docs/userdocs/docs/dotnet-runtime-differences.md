@@ -13,8 +13,8 @@ you do. Most of the differences on this page come from two design decisions:
 The first is what keeps applications apart on shared hardware: using the
 network, reading files and reading the clock all go through Isoplane, so it
 decides what an application can reach. The second is what lets many
-applications share a few worker threads: an instance that is waiting, or has
-no request to handle, sits idle without occupying one.
+applications share a few worker threads: an instance with no ready, eligible
+request or background work sits idle without occupying one.
 
 Each section below explains why something differs, what that gives you, and
 what to change in your application, if anything. Where another page covers a
@@ -71,8 +71,8 @@ Apart from initialization, an application's code runs only during dispatches.
 Initialization is not a dispatch: it runs during template preparation, before any
 instance exists. `Activation.Activated` callbacks run as part of an instance's
 first dispatch. The rest of the time an instance sits idle, without occupying a
-worker thread or using any processor time, and Isoplane can set it aside or
-discard it whenever it needs the room.
+guest worker thread. Host I/O polls still consume accounted worker time, and
+Isoplane can set the instance aside or discard it whenever it needs the room.
 
 ### Running time {#resource-usage}
 
@@ -99,7 +99,8 @@ Each instance runs your application on exactly one thread;
 `Environment.ProcessorCount` is 1. An instance can have several dispatches in
 progress, which take turns on that thread one [slice](#units-of-work) at a
 time, and Isoplane runs more instances to serve more requests than one
-instance takes. Because an instance needs a thread only while its code is
+instance takes, up to the application’s instance limit. Because an instance needs a
+thread only while its code is
 running, one thread is enough, and a waiting instance does not occupy one at
 all. Code in an instance never runs on two threads at once.
 
@@ -358,7 +359,8 @@ or `DisposeAsync`.
 ## Instances come and go
 
 Isoplane decides how many instances of an application run, starting more as
-traffic grows and discarding them when they are idle or the memory is needed.
+traffic grows, within its instance limit, and discarding them when they are idle or
+the memory is needed.
 An instance whose memory grows past its
 [memory limit](execution-limits.md#memory) takes no more requests, and is
 replaced once it has finished the ones it has.
@@ -492,7 +494,9 @@ application as a whole opens: ten instances with a pool of twenty can hold two
 hundred. The pool is also lost whenever its instance is discarded, and a
 connection it kept open may be stale by the next request.
 
-Put the pool in front of the database instead. Use your database provider's
+Pooling inside an instance is supported after initialization, subject to its
+connection limit. Initialization must still close every connection before
+capture. To cap database connections across instances, use your database provider's
 pooler, such as PgBouncer or a provider's pooled connection endpoint, and point
 the application's connection string at it. The pooler caps the total and keeps
 connecting cheap, and the application can open a connection for each request
