@@ -123,7 +123,7 @@ impl Cell {
     /// An instance of `entry` that already has dispatches in progress and room
     /// for another, with a place reserved for it, so the instance is not
     /// released before the dispatch begins. Instances are tried oldest first.
-    pub(super) fn join_shared(&self, entry: &ModuleEntry) -> Join {
+    pub(super) fn join_shared(&self, entry: &ModuleEntry, allow_queued: bool) -> Join {
         let mut shared = entry.shared.lock();
         let mut joined = None;
         let mut held = false;
@@ -149,8 +149,10 @@ impl Cell {
                     + active.joining
                     < DISPATCHES_PER_INSTANCE;
                 held |= room && active.held_since.is_some();
-                let join =
-                    room && active.held_since.is_none() && !behind && slot.has_memory_for_join();
+                let join = room
+                    && active.held_since.is_none()
+                    && (!behind || allow_queued)
+                    && slot.has_memory_for_join();
                 if join {
                     active.joining += 1;
                 }

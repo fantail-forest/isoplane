@@ -16,22 +16,10 @@ impl Cell {
         let t0 = Instant::now();
         let mut held = false;
         if matches!(job.target, Delivery::Handler { .. }) {
-            match self.join_shared(&entry) {
+            match self.join_shared(&entry, false) {
                 registry::Join::Unavailable { held: h } => held = h,
                 registry::Join::Joined(slot) => {
-                    let execution = slot.try_lock_execution();
-                    match execution {
-                        Some(_execution) => {
-                            self.begin_dispatch(&slot, &entry, job, AcquireSource::Shared)
-                        }
-                        // Another dispatch's slice is running; this one begins
-                        // between slices, from the wake lane.
-                        None => {
-                            self.starts
-                                .upsert(slot.id, |starts| starts.push_back((Instant::now(), job)));
-                            self.queue_wake(slot.clone());
-                        }
-                    }
+                    self.start_shared(&slot, &entry, job);
                     return;
                 }
             }
@@ -42,6 +30,10 @@ impl Cell {
         let (slot, src) = match acquired {
             Ok(v) => v,
             Err(e) => {
+                if let registry::Join::Joined(slot) = self.join_shared(&entry, true) {
+                    self.start_shared(&slot, &entry, job);
+                    return;
+                }
                 let status = job.completion.acquisition_failed(&e);
                 job.completion.finish();
                 job.completion.answer(
@@ -71,6 +63,22 @@ impl Cell {
             job.completion.activated_for_hold();
         }
         self.begin_dispatch(&slot, &entry, job, src);
+    }
+
+    fn start_shared(
+        self: &Arc<Self>,
+        slot: &Arc<Slot>,
+        entry: &Arc<ModuleEntry>,
+        job: DispatchJob,
+    ) {
+        match slot.try_lock_execution() {
+            Some(_execution) => self.begin_dispatch(slot, entry, job, AcquireSource::Shared),
+            None => {
+                self.starts
+                    .upsert(slot.id, |starts| starts.push_back((Instant::now(), job)));
+                self.queue_wake(slot.clone());
+            }
+        }
     }
 
     /// Begins a dispatch on `slot` and runs its first slice; the caller holds
@@ -1160,6 +1168,83 @@ mod tests {
     use super::*;
     use crate::cell::pool::cell_tests::{app, cell, http, wait_for};
     use crate::fakes::{FakeBehaviour, Step};
+
+    #[test]
+    fn queued_instances_are_joined_only_when_activation_cannot_serve() {
+        use crate::cell::pool::cell_tests::manifest;
+        use crate::fakes::FakeActivator;
+        for limit in [1, 2] {
+            let cell = cell(
+                CellConfig {
+                    exec_threads: 0,
+                    ..CellConfig::for_test("join-fallback")
+                },
+                Arc::new(FakeHibernator),
+            );
+            let module = ModuleId::new("join-fallback", "v1");
+            let mut manifest = manifest("join-fallback");
+            manifest.resource_limits.instances_per_application = Some(limit);
+            cell.register_module(
+                "tenant",
+                Arc::new(FakeActivator::named(
+                    module.clone(),
+                    FakeBehaviour::program([
+                        Step::Park {
+                            imports: vec![("clock_deadline_in", 600_000)],
+                        },
+                        Step::Done {
+                            status: 200,
+                            body: vec![],
+                        },
+                    ]),
+                )),
+                manifest,
+            )
+            .expect("register");
+            let make_job = |did| {
+                let rec = http(did);
+                let completion = cell.completion_owner(&module, &rec).expect("owner");
+                let (sender, response) = std::sync::mpsc::sync_channel(1);
+                (
+                    DispatchJob {
+                        module: module.clone(),
+                        target: Target::Handler { route: "/".into() }.into(),
+                        rec,
+                        responder: sender.into(),
+                        stream: None,
+                        upload: None,
+                        completion: completion.clone(),
+                    },
+                    response,
+                    completion,
+                )
+            };
+            let (first, _first_response, first_owner) = make_job(1);
+            cell.run_dispatch(first);
+            let slot = cell
+                .slot(first_owner.instance().expect("first instance"))
+                .expect("resident");
+            let future = cell
+                .rt
+                .futures
+                .pending_of_dispatch(slot.id, 1, "clock_deadline_in")[0];
+            cell.complete_future(future, isoplane_abi::result::ResultRecord::Ok(vec![]));
+            assert!(cell.has_runnable(&slot));
+            let (second, second_response, second_owner) = make_job(2);
+            cell.run_dispatch(second);
+            if limit == 1 {
+                assert_eq!(
+                    second_response.try_recv().expect("joined response").status,
+                    200
+                );
+                assert_eq!(second_owner.instance(), Some(slot.id));
+            } else {
+                assert_ne!(second_owner.instance(), Some(slot.id));
+                assert!(second_response.try_recv().is_err(), "fresh instance parked");
+            }
+            cell.shutdown();
+        }
+    }
 
     #[test]
     fn a_queued_join_rechecks_memory_before_starting() {

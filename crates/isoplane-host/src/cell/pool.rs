@@ -1041,7 +1041,7 @@ pub(super) mod cell_tests {
         });
         assert!(
             matches!(
-                cell.join_shared(&entry),
+                cell.join_shared(&entry, false),
                 registry::Join::Unavailable { held: false }
             ),
             "a dispatch waiting to start means the instance is behind"
@@ -1053,7 +1053,7 @@ pub(super) mod cell_tests {
             .expect("the queued start");
         Cell::cancel_queued_dispatch(waiting_start);
 
-        let registry::Join::Joined(joined) = cell.join_shared(&entry) else {
+        let registry::Join::Joined(joined) = cell.join_shared(&entry, false) else {
             panic!("an instance with nothing waiting for its thread must take a dispatch")
         };
         assert_eq!(joined.id, slot.id, "the parked instance takes the dispatch");
