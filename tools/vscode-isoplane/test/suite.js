@@ -12,23 +12,29 @@ async function run() {
     await extension.activate();
     csharpLaunches();
     const sockets = new Set();
+    let connected;
+    const connecting = new Promise(resolve => { connected = resolve; });
     const listener = net.createServer(socket => {
         sockets.add(socket);
         socket.on('close', () => sockets.delete(socket));
+        connected();
     });
     await new Promise((resolve, reject) => { listener.once('error', reject); listener.listen(0, '127.0.0.1', resolve); });
     let timer;
     let tracker;
-    let cancelledAttachment;
+    let attached;
+    const attachment = new Promise(resolve => { attached = resolve; });
     try {
+        const deadline = new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error('The real CLI adapter did not complete the attachment cancellation scenario')), 30000);
+        });
         const initialized = new Promise((resolve, reject) => {
-            timer = setTimeout(() => reject(new Error('VS Code did not initialize the real CLI adapter')), 30000);
             tracker = vscode.debug.registerDebugAdapterTrackerFactory('isoplane', {
                 createDebugAdapterTracker() {
                     return {
                         onDidSendMessage(message) {
                             if (message.type === 'response' && message.command === 'initialize') resolve(message);
-                            if (message.type === 'response' && message.command === 'attach') cancelledAttachment = message;
+                            if (message.type === 'response' && message.command === 'attach') attached(message);
                         },
                         onError: reject
                     };
@@ -38,13 +44,16 @@ async function run() {
         const starting = vscode.debug.startDebugging(undefined, {
             type: 'isoplane', request: 'attach', name: 'Adapter registration test',
             port: String(listener.address().port), cliPath: process.env.ISOPLANE_TEST_CLI
-        });
-        const response = await initialized;
+        }).catch(error => assert.match(error.message, /The local debug session was stopped/));
+        const response = await Promise.race([initialized, deadline]);
         assert.equal(response.success, true, 'the registered executable must speak DAP to VS Code');
         assert.equal(response.body.supportsConditionalBreakpoints, true, 'VS Code must receive the real adapter capabilities');
+        await Promise.race([connecting, deadline]);
         await vscode.debug.stopDebugging();
-        await assert.rejects(starting, /The local debug session was stopped/, 'cancelling the pending guest handshake must reject attachment');
-        assert.equal(cancelledAttachment?.success, false, 'the adapter must complete the cancelled attach request');
+        const cancelledAttachment = await Promise.race([attachment, deadline]);
+        assert.equal(cancelledAttachment.success, false, 'the adapter must complete the cancelled attach request');
+        assert.match(cancelledAttachment.message, /The local debug session was stopped/);
+        await starting;
     } finally {
         clearTimeout(timer);
         tracker?.dispose();
