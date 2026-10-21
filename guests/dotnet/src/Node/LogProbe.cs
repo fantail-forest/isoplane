@@ -13,6 +13,7 @@ public static class LogProbe
     {
         if (path == "/after-response")
         {
+            Console.WriteLine("before-response");
             _ = LogAfterResponse();
             return Response.Text("returned");
         }

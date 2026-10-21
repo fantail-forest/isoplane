@@ -8,9 +8,11 @@ pub mod common;
 pub mod otlp;
 
 use isoplane_abi::config::InitSandbox;
+use isoplane_host::futures::INSTANCE_WORK;
+use std::time::Duration;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn managed_logs_keep_host_ownership_across_park_wake() {
+async fn managed_logs_keep_request_and_background_ownership_across_park_wake() {
     let output = otlp::output::LogOutput::default();
     let writer = output.clone();
     let logging = tokio::task::spawn_blocking(move || {
@@ -25,8 +27,28 @@ async fn managed_logs_keep_host_ownership_across_park_wake() {
             common::preparation::Guest::from("isoplane_guest_dotnet_node")
         })
         .await
-        .expect("the managed logging fixture must build");
+        .expect("the prepared managed logging fixture must load");
         let rig = common::start_with_policy(wasm, InitSandbox::RuntimeBringUp, None, |_| {}).await;
+        let left_over = common::get(rig.proxy, "quotes.isoplane.dev", "/logs/after-response").await;
+        assert_eq!(left_over.status, 200);
+        assert_eq!(left_over.body, "returned");
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let records: Vec<_> = otlp::output::guest_logs(&output)
+                    .into_iter()
+                    .skip(before)
+                    .collect();
+                if records
+                    .iter()
+                    .any(|record| record.fields.contains("left-over-work"))
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("background logging must progress without another request");
         let response = common::get(rig.proxy, "quotes.isoplane.dev", "/logs/logging").await;
         assert_eq!(
             response.status, 200,
@@ -46,9 +68,32 @@ async fn managed_logs_keep_host_ownership_across_park_wake() {
                 .find(|record| record.fields.contains(text))
                 .unwrap_or_else(|| panic!("the Mono host did not emit {text}: {records:?}"))
         };
+        let original = find("before-response");
+        let background = find("left-over-work");
         let first = find("console-before");
+        assert_eq!(background.dispatch, INSTANCE_WORK);
+        assert_ne!(original.dispatch, INSTANCE_WORK);
+        assert_ne!(first.dispatch, INSTANCE_WORK);
+        assert_ne!(original.dispatch, first.dispatch);
+        assert_eq!(background.instance, original.instance);
+        assert!(
+            original.emission_index < background.emission_index
+                && background.emission_index < first.emission_index
+        );
+        for record in [original, background] {
+            assert_eq!(
+                (&record.tenant, &record.module),
+                (&first.tenant, &first.module),
+                "handover must preserve the application's host-established ownership"
+            );
+        }
         let warning = find("sdk-before");
-        let wake = find("isoplane_wake enter");
+        let wake = records
+            .iter()
+            .find(|record| {
+                record.dispatch == first.dispatch && record.fields.contains("isoplane_wake enter")
+            })
+            .expect("the logging request must resume through its own wake");
         let last = find("console-after");
         let critical = find("sdk-after");
         assert_eq!(
