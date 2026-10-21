@@ -5,18 +5,15 @@ mod common;
 use isoplane_abi::config::Limits;
 use isoplane_abi::dispatch::HttpRequest;
 use isoplane_engine::{IsoplaneEngine, PlatformFile, PlatformFiles};
-use isoplane_fixtures::GuestRuntime;
 use isoplane_host::activator::EngineActivator;
 use isoplane_host::bindings::RuntimeConfiguration;
-use isoplane_host::cell::{CellConfig, Target};
+use isoplane_host::cell::{Cell, CellConfig, Target};
 use isoplane_host::ModuleId;
 use std::sync::Arc;
 use std::time::Duration;
 use isoplane_harness::EmittedGuestLogs as _;
 
-async fn activation_finishes_before_dispatch(runtime: GuestRuntime) {
-    isoplane_harness::LogCapture::global();
-    let GuestRuntime::Mono = runtime;
+fn activation_cell(settings: &[u8]) -> (Arc<Cell>, ModuleId) {
     let engine = Arc::new(
         IsoplaneEngine::new(isoplane_fixtures::engine_config(4))
             .expect("the managed activation engine must start"),
@@ -50,11 +47,18 @@ async fn activation_finishes_before_dispatch(runtime: GuestRuntime) {
         &module,
         // The guest is not pre-initialized here, so its initializer runs before
         // the first dispatch and reads `probe`.
-        RuntimeConfiguration::from_json(br#"{"activation-timer":"enabled","probe":"unprepared"}"#)
+        RuntimeConfiguration::from_json(settings)
             .expect("the activation fixture settings must be valid"),
     )
     .expect("the activation fixture must receive its settings");
 
+    (cell, module)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn interpreted_activation_awaits_its_timer_before_dispatch_and_does_not_repeat() {
+    isoplane_harness::LogCapture::global();
+    let (cell, module) = activation_cell(br#"{"activation-timer":"enabled","probe":"unprepared"}"#);
     let mut first_instance = None;
     for _ in 0..2 {
         let request = HttpRequest {
@@ -104,6 +108,50 @@ async fn activation_finishes_before_dispatch(runtime: GuestRuntime) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn interpreted_activation_awaits_its_timer_before_dispatch_and_does_not_repeat() {
-    activation_finishes_before_dispatch(GuestRuntime::Mono).await;
+async fn failed_activation_discards_the_instance_before_another_request() {
+    let (cell, module) = activation_cell(
+        br#"{"activation-timer":"enabled","activation-failure":"enabled","probe":"unprepared"}"#,
+    );
+    let mut previous = None;
+    for _ in 0..2 {
+        let request = HttpRequest {
+            method: "GET".into(),
+            url: "https://activation.test/activations".into(),
+            path: "/activations".into(),
+            query: vec![],
+            headers: vec![],
+            body: vec![],
+        };
+        let result = cell
+            .dispatch(
+                &module,
+                Target::Handler {
+                    route: "/activations".into(),
+                },
+                cell.http_record(&module, request),
+                Duration::from_secs(60),
+            )
+            .await
+            .expect("a failed activation must terminate its request");
+        assert_eq!(result.status, 500);
+        assert_eq!(result.completion, isoplane_engine::Completion::Trapped);
+        tokio::time::timeout(Duration::from_secs(60), async {
+            loop {
+                if cell.slot(result.instance).is_none() {
+                    break;
+                }
+                assert_ne!(
+                    cell.idle_instances(&module),
+                    Some(1),
+                    "a failed activation must not return to the reuse pool"
+                );
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("failed activation must release its instance");
+        assert_ne!(previous, Some(result.instance));
+        previous = Some(result.instance);
+    }
+    cell.shutdown();
 }

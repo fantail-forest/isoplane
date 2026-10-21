@@ -44,6 +44,8 @@ internal static class ActivationProbe
         await Task.Yield();
         if (RuntimeConfiguration.ReadValues().ContainsKey("activation-timer"))
             await Task.Delay(1);
+        if (RuntimeConfiguration.ReadValues().ContainsKey("activation-failure"))
+            throw new InvalidOperationException("activation probe failed");
         _activations++;
         _seeded = Fresh();
     }

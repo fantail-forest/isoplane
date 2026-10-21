@@ -11,7 +11,7 @@ namespace Isoplane.Abi;
 /// <summary>
 /// Managed bodies behind the native Mono entrypoints, parameterized by the
 /// application's router. Handler failures end their request; runtime and
-/// initialization failures trap the instance.
+/// startup failures trap the instance.
 /// </summary>
 public static unsafe class Exports<TRouter>
     where TRouter : IIsoplaneRouter, new()
@@ -231,9 +231,8 @@ public static unsafe class Exports<TRouter>
     /// Drains the dispatch's runnable continuations, then returns <c>pending</c>
     /// through the export if its root task is incomplete. Returning ends the
     /// slice with nothing of it left on the native stack; an incomplete root
-    /// does not prove that a host future exists to advance it. A timers
-    /// dispatch has no result of its own to wait for: it is done once it waits
-    /// on no future of its own, only on more timers.
+    /// does not prove that a host future exists to advance it. Background
+    /// dispatches have no root task and complete when no owned future remains.
     /// </summary>
     private static long Settle(GuestDispatch dispatch)
     {
@@ -256,6 +255,9 @@ public static unsafe class Exports<TRouter>
 
         dispatch.End();
         GuestDispatch.RequestSlices();
+
+        if (!Activation.IsActivated)
+            return Panic("instance startup", root.Exception?.GetBaseException() ?? new TaskCanceledException(root));
 
         if (root.IsCanceled) return PollStatus.Cancelled();
 
