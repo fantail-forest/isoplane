@@ -351,10 +351,8 @@ pub(crate) fn take_result(id: u64) -> Option<ResultRecord> {
 
 /// Called from `HostFuture::drop`. A future the guest stopped caring about is
 /// forgotten locally so a late `isoplane_wake` for it is a no-op.
-///
-/// CONTRACT GAP: there is no `future_cancel` import, so the host is not told,
-/// and the abandoned future keeps counting against the pending-futures cap
-/// until the dispatch ends. See guests/README.md.
+/// This only removes the local await; it does not call `future_cancel` to
+/// cancel the host operation.
 pub(crate) fn forget(id: u64) {
     with(|rt| {
         rt.futures.remove(&id);
