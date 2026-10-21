@@ -1,5 +1,6 @@
 //! Upload ownership for one HTTP dispatch, with no guest-selectable source handle.
 
+#[cfg(test)]
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
@@ -14,21 +15,27 @@ struct Reader {
 }
 
 impl Reader {
-    async fn read(&mut self, max_bytes: NonZeroU32) -> Result<Option<Vec<u8>>, FutureError> {
+    async fn fill(&mut self) -> Result<bool, FutureError> {
         while self.offset == self.remaining.len() {
+            self.remaining = Vec::new();
+            self.offset = 0;
             match self.body.read().await {
                 Ok(Some(bytes)) => {
                     self.remaining = bytes;
                     self.offset = 0;
                 }
-                Ok(None) => return Ok(None),
+                Ok(None) => return Ok(false),
                 Err(error) => return Err(FutureError::Io(format!("request upload: {error}"))),
             }
         }
-        let length = (max_bytes.get() as usize).min(self.remaining.len() - self.offset);
+        Ok(true)
+    }
+
+    fn read(&mut self, max_bytes: usize) -> Vec<u8> {
+        let length = max_bytes.min(self.remaining.len() - self.offset);
         let bytes = self.remaining[self.offset..self.offset + length].to_vec();
         self.offset += length;
-        Ok(Some(bytes))
+        bytes
     }
 }
 
@@ -118,26 +125,32 @@ pub(crate) struct RequestRead {
     consumed: usize,
 }
 impl RequestRead {
-    pub(crate) async fn read_pending(
-        &mut self,
-        max_bytes: NonZeroU32,
-    ) -> Result<Vec<u8>, FutureError> {
+    pub(crate) async fn prepare(&mut self, max_bytes: usize) -> Result<usize, FutureError> {
         let result = match &mut self.reader {
-            Some(reader) => reader.read(max_bytes).await,
-            None => Ok(None),
+            Some(reader) => reader.fill().await,
+            None => Ok(false),
         };
-        let bytes = match result {
-            Ok(Some(bytes)) => bytes,
-            Ok(None) => {
+        match result {
+            Ok(true) => {}
+            Ok(false) => {
                 self.reader = None;
-                vec![]
             }
             Err(error) => {
                 self.scope.close();
                 self.reader = None;
                 return Err(error);
             }
-        };
+        }
+        Ok(self.reader.as_ref().map_or(0, |reader| {
+            max_bytes.min(reader.remaining.len() - reader.offset)
+        }))
+    }
+
+    pub(crate) fn consume(&mut self, max_bytes: usize) -> Result<Vec<u8>, FutureError> {
+        let bytes = self
+            .reader
+            .as_mut()
+            .map_or_else(Vec::new, |reader| reader.read(max_bytes));
         self.consumed = bytes.len();
         if self.scope.state.lock().is_none() {
             return Err(FutureError::Cancelled);
@@ -146,8 +159,14 @@ impl RequestRead {
     }
 
     #[cfg(test)]
+    async fn read_pending(&mut self, max_bytes: usize) -> Result<Vec<u8>, FutureError> {
+        self.prepare(max_bytes).await?;
+        self.consume(max_bytes)
+    }
+
+    #[cfg(test)]
     pub(crate) async fn read(mut self, max_bytes: NonZeroU32) -> Result<Vec<u8>, FutureError> {
-        let bytes = self.read_pending(max_bytes).await?;
+        let bytes = self.read_pending(max_bytes.get() as usize).await?;
         self.delivered = true;
         Ok(bytes)
     }
@@ -233,10 +252,7 @@ mod tests {
                 .alloc(owner, 1, "req_body_read", 1)
                 .expect("allocation");
             let mut read = scope.begin_read().expect("retry reader");
-            let bytes = read
-                .read_pending(NonZeroU32::new(2).expect("positive"))
-                .await
-                .expect("read");
+            let bytes = read.read_pending(2).await.expect("read");
             assert_eq!(bytes, b"AB");
             table.complete_with_delivery(future, ResultRecord::Ok(bytes), Some(Box::new(read)));
             assert!(table.cancel_owned(owner, future.into()));

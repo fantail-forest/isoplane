@@ -707,6 +707,61 @@ impl isoplane_abi::host::HttpBody for EmptyUpload {
     }
 }
 
+struct AnnouncedStall(Option<tokio::sync::oneshot::Sender<()>>);
+
+#[async_trait::async_trait]
+impl isoplane_abi::host::HttpBody for AnnouncedStall {
+    async fn read(&mut self) -> anyhow::Result<Option<Vec<u8>>> {
+        if let Some(entered) = self.0.take() {
+            entered
+                .send(())
+                .expect("the test waits for the upload read");
+        }
+        std::future::pending().await
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn slow_uploads_leave_buffer_space_for_available_data_on_the_same_instance() {
+    let (cell, _) = upload_cell();
+    let mut stalled = Vec::new();
+    for _ in 0..2 {
+        let (entered, reading) = tokio::sync::oneshot::channel();
+        let request_cell = cell.clone();
+        stalled.push(tokio::spawn(async move {
+            upload(&request_cell, "/", Box::new(AnnouncedStall(Some(entered)))).await
+        }));
+        tokio::time::timeout(Duration::from_secs(10), reading)
+            .await
+            .expect("the upload starts reading")
+            .expect("read notification");
+    }
+    let result = tokio::time::timeout(
+        Duration::from_secs(10),
+        upload(
+            &cell,
+            "/",
+            Box::new(UploadChunk(Some(b"available".to_vec()))),
+        ),
+    )
+    .await
+    .expect("slow clients must not reserve the entire result buffer");
+    assert_eq!(result, "stream:YXZhaWxhYmxl");
+    assert_eq!(
+        cell.resident_ids().len(),
+        1,
+        "all three requests share the buffer"
+    );
+    for task in stalled {
+        task.abort();
+        assert!(task
+            .await
+            .expect_err("stalled caller cancelled")
+            .is_cancelled());
+    }
+    cell.shutdown();
+}
+
 async fn upload(
     cell: &Arc<Cell>,
     path: &str,

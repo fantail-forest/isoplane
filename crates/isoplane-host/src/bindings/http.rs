@@ -38,13 +38,33 @@ impl CellBindings {
         };
         let rt2 = rt.clone();
         let task = self.ctx.spawn(&rt.reactor, async move {
-            let result = match read.read_pending(max_bytes).await {
+            // A slow upload retains its transport frame, not a reservation
+            // that would prevent another request's available data progressing.
+            let available = match read.prepare(max_bytes.get() as usize).await {
+                Ok(0) => {
+                    CellBindings::settle(&rt2, id, ResultRecord::Ok(vec![]));
+                    return;
+                }
+                Ok(available) => available,
+                Err(error) => {
+                    CellBindings::settle(&rt2, id, ResultRecord::Err(error));
+                    return;
+                }
+            };
+            let space = match rt2.futures.reserve_read(id.into(), available).await {
+                Ok(space) => space,
+                Err(error) => {
+                    CellBindings::settle(&rt2, id, ResultRecord::Err(error));
+                    return;
+                }
+            };
+            let result = match read.consume(space.bytes()) {
                 Ok(bytes) => ResultRecord::Ok(bytes),
                 Err(error) => ResultRecord::Err(error),
             };
             let target = rt2
                 .futures
-                .complete_with_delivery(id, result, Some(Box::new(read)));
+                .complete_read(result, space, Some(Box::new(read)));
             if let crate::futures::WakeTarget::Instance(owner) = target {
                 rt2.wake.signal(owner);
             }
@@ -173,8 +193,36 @@ impl CellBindings {
         let resource = operation.handle();
         let rt2 = rt.clone();
         let task = self.ctx.spawn(&rt.reactor, async move {
-            let result = operation.read(body, max).await;
-            CellBindings::settle(&rt2, id, from_typed(result));
+            // Postcard encodes the byte length as a varint and EOF as one byte.
+            const OVERHEAD_BYTES: usize = (usize::BITS as usize).div_ceil(7) + 1;
+            let requested = if max == 0 {
+                usize::MAX
+            } else {
+                max.saturating_add(OVERHEAD_BYTES)
+            };
+            let space = match rt2.futures.reserve_read(id.into(), requested).await {
+                Ok(space) => space,
+                Err(error) => {
+                    CellBindings::settle(&rt2, id, ResultRecord::Err(error));
+                    return;
+                }
+            };
+            let max = space.bytes().saturating_sub(OVERHEAD_BYTES);
+            let result = if max == 0 {
+                ResultRecord::Err(FutureError::BufferLimit)
+            } else {
+                match from_typed(operation.read(body, max).await) {
+                    ResultRecord::Ok(bytes) => {
+                        ResultRecord::Ok(bytes.into_boxed_slice().into_vec())
+                    }
+                    error @ ResultRecord::Err(_) => error,
+                }
+            };
+            if let crate::futures::WakeTarget::Instance(owner) =
+                rt2.futures.complete_read(result, space, None)
+            {
+                rt2.wake.signal(owner);
+            }
         });
         scope.attach_task(resource, task.abort_handle());
         rt.futures.attach_task(id, task.abort_handle());

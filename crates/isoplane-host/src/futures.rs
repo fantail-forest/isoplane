@@ -37,9 +37,13 @@ pub enum PendingCapScope {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// An allocation refused by a dispatch or retained-instance entry limit.
 pub struct PendingCapError {
+    /// Which ownership limit refused the operation.
     pub scope: PendingCapScope,
+    /// Maximum entries allowed in that scope.
     pub limit: u32,
+    /// Entries already occupying that scope.
     pub outstanding: u32,
 }
 
@@ -143,6 +147,7 @@ impl Entry {
 
 #[derive(Debug)]
 struct Owned {
+    closed: bool,
     entry_limit: u32,
     retained_entries: u32,
     buffered_bytes: usize,
@@ -157,6 +162,7 @@ struct Owned {
 impl Default for Owned {
     fn default() -> Self {
         Self {
+            closed: false,
             entry_limit: retained_entry_limit(
                 crate::bindings::GuestResourceLimits::default().native_handles,
                 6,
@@ -199,14 +205,13 @@ impl Owned {
     }
 }
 
-/// One instance's future state, behind its own lock: the per-dispatch cap and
-/// the buffered-byte budget are check-then-act inside it, and one dispatch
-/// runs per instance at a time, so neither needs a reservation protocol.
+/// One instance's retained results and in-flight read reservations.
 #[derive(Debug)]
 pub struct OwnedFutures {
     /// Instance identifier returned by completion routing.
     instance: AtomicU64,
     inner: Mutex<Owned>,
+    space_available: tokio::sync::Notify,
 }
 
 impl OwnedFutures {
@@ -214,6 +219,7 @@ impl OwnedFutures {
         Arc::new(OwnedFutures {
             instance: AtomicU64::new(instance.0),
             inner: Mutex::new(Owned::default()),
+            space_available: tokio::sync::Notify::new(),
         })
     }
 
@@ -221,6 +227,28 @@ impl OwnedFutures {
         InstanceId(self.instance.load(Ordering::Acquire))
     }
 
+}
+
+/// Space held for a read's undelivered result.
+pub(crate) struct ReadSpace {
+    future: FutureId,
+    owner: Arc<OwnedFutures>,
+    bytes: usize,
+}
+
+impl ReadSpace {
+    pub(crate) fn bytes(&self) -> usize {
+        self.bytes
+    }
+}
+
+impl Drop for ReadSpace {
+    fn drop(&mut self) {
+        if self.bytes != 0 {
+            self.owner.inner.lock().buffered_bytes -= self.bytes;
+            self.owner.space_available.notify_waiters();
+        }
+    }
 }
 
 pub struct FutureTable {
@@ -232,7 +260,7 @@ pub struct FutureTable {
     /// Owner lookup for callers handed an `InstanceId` by the ABI. `complete`
     /// follows `Entry::owner` and never comes here.
     by_instance: scc::HashMap<InstanceId, Arc<OwnedFutures>>,
-    /// Byte budget for undelivered results and reserved read space.
+    /// Per-instance byte budget for undelivered results and reserved read space.
     buffered_budget_bytes: usize,
 }
 
@@ -258,6 +286,7 @@ impl FutureTable {
         owned.pending.remove(&id.0);
         owned.ready.retain(|candidate| *candidate != id.0);
         owned.removed(&entry);
+        arc.space_available.notify_waiters();
         entry.cancel_task();
         true
     }
@@ -292,8 +321,8 @@ impl FutureTable {
         self.owned_of(owner).inner.lock().entry_limit = limit;
     }
 
-    /// `limit` is the application's `pending_futures_per_dispatch`; a refusal is
-    /// observed by the guest as `TrapCode::TooManyFutures`.
+    /// Allocates within the dispatch's pending limit and the instance's retained
+    /// entry limit. The error identifies which scope refused the operation.
     pub fn alloc(
         &self,
         owner: InstanceId,
@@ -433,16 +462,79 @@ impl FutureTable {
         self.complete_with_delivery(id, result, None)
     }
 
+    pub(crate) async fn reserve_read(
+        &self,
+        id: FutureId,
+        max_bytes: usize,
+    ) -> Result<ReadSpace, FutureError> {
+        let id = id.0;
+        let arc = self
+            .entries
+            .read_sync(&id, |_, entry| entry.owner.clone())
+            .ok_or(FutureError::Cancelled)?;
+        let bytes = max_bytes.min(self.buffered_budget_bytes);
+        if bytes == 0 {
+            return Err(FutureError::BufferLimit);
+        }
+        loop {
+            let available = arc.space_available.notified();
+            tokio::pin!(available);
+            available.as_mut().enable();
+            {
+                let mut owned = arc.inner.lock();
+                if owned.closed || !owned.pending.contains(&id) {
+                    return Err(FutureError::Cancelled);
+                }
+                if bytes
+                    <= self
+                        .buffered_budget_bytes
+                        .saturating_sub(owned.buffered_bytes)
+                {
+                    owned.buffered_bytes += bytes;
+                    return Ok(ReadSpace {
+                        future: FutureId(id),
+                        owner: arc.clone(),
+                        bytes,
+                    });
+                }
+            }
+            available.await;
+        }
+    }
+
+    pub(crate) fn complete_read(
+        &self,
+        result: ResultRecord,
+        space: ReadSpace,
+        delivery: Option<Box<dyn ResultDelivery>>,
+    ) -> WakeTarget {
+        self.complete_reserved(space.future.0, result, Some(space), delivery)
+    }
+
     pub(crate) fn complete_with_delivery(
         &self,
         id: u64,
         result: ResultRecord,
+        delivery: Option<Box<dyn ResultDelivery>>,
+    ) -> WakeTarget {
+        self.complete_reserved(id, result, None, delivery)
+    }
+
+    fn complete_reserved(
+        &self,
+        id: u64,
+        result: ResultRecord,
+        mut space: Option<ReadSpace>,
         mut delivery: Option<Box<dyn ResultDelivery>>,
     ) -> WakeTarget {
         let Some(arc) = self.entries.read_sync(&id, |_, entry| entry.owner.clone()) else {
             return WakeTarget::Orphan;
         };
         let mut owned = arc.inner.lock();
+        if let Some(space) = space.as_mut() {
+            owned.buffered_bytes -= std::mem::take(&mut space.bytes);
+            arc.space_available.notify_waiters();
+        }
         let found = self.entries.update_sync(&id, |_, entry| {
             if entry.state != State::Pending {
                 return None;
@@ -520,6 +612,7 @@ impl FutureTable {
                 continue;
             };
             o.removed(&entry);
+            arc.space_available.notify_waiters();
             let Some(result) = entry.result.take() else {
                 continue;
             };
@@ -714,6 +807,7 @@ impl FutureTable {
             o.pending.remove(&id);
             o.ready.retain(|r| *r != id);
         }
+        arc.space_available.notify_waiters();
         abandoned_guest_work
     }
 
@@ -740,6 +834,8 @@ impl FutureTable {
         let Some(arc) = self.by_instance.remove_sync(&owner).map(|(_, a)| a) else {
             return;
         };
+        arc.inner.lock().closed = true;
+        arc.space_available.notify_waiters();
         // Aborting a task can drop what it holds on another thread at once, so
         // abort only after the entries are gone: whoever observes the drop
         // then sees the future released too.
@@ -813,6 +909,69 @@ impl Ready {
 mod tests {
     use super::*;
 
+
+    #[tokio::test]
+    async fn reads_wait_for_space_and_release_it_on_delivery_or_cancellation() {
+        let table = FutureTable::new(8);
+        let owner = InstanceId(1);
+        let first = table
+            .alloc(owner, 1, "req_body_read", 2)
+            .expect("first read");
+        let second = table
+            .alloc(owner, 2, "req_body_read", 2)
+            .expect("second read");
+        let space = table
+            .reserve_read(first.into(), 100)
+            .await
+            .expect("oversized read is shortened");
+        assert_eq!(space.bytes(), 8);
+        let waiting = table.reserve_read(second.into(), 8);
+        tokio::pin!(waiting);
+        assert!(futures::poll!(&mut waiting).is_pending());
+        table.complete_read(ResultRecord::Ok(vec![1; 8]), space, None);
+        assert!(
+            futures::poll!(&mut waiting).is_pending(),
+            "undelivered bytes still occupy space"
+        );
+        assert_eq!(
+            table.take_ready(owner).expect("first result").result,
+            ResultRecord::Ok(vec![1; 8])
+        );
+        let space = waiting.await.expect("delivery admits the next read");
+        drop(space);
+        let space = table
+            .reserve_read(second.into(), 8)
+            .await
+            .expect("abandoning a read releases its space");
+        table.complete_read(ResultRecord::Ok(vec![2; 8]), space, None);
+        let third = table
+            .alloc(owner, 3, "req_body_read", 2)
+            .expect("third read");
+        let waiting = table.reserve_read(third.into(), 8);
+        tokio::pin!(waiting);
+        assert!(futures::poll!(&mut waiting).is_pending());
+        assert!(table.cancel_owned(owner, second.into()));
+        let space = waiting
+            .await
+            .expect("cancelling a result releases its space");
+        let fourth = table
+            .alloc(owner, 4, "req_body_read", 2)
+            .expect("fourth read");
+        let waiting = table.reserve_read(fourth.into(), 8);
+        tokio::pin!(waiting);
+        assert!(futures::poll!(&mut waiting).is_pending());
+        table.release_instance(owner);
+        assert!(matches!(waiting.await, Err(FutureError::Cancelled)));
+        drop(space);
+        let denied = FutureTable::new(0);
+        let id = denied
+            .alloc(owner, 1, "req_body_read", 1)
+            .expect("read entry");
+        assert!(matches!(
+            denied.reserve_read(id.into(), 8).await,
+            Err(FutureError::BufferLimit)
+        ));
+    }
 
     fn table() -> FutureTable {
         FutureTable::new(64 * 1024)
