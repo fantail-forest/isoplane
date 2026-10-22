@@ -16,6 +16,7 @@ rustls-pki-types = { workspace = true }
 rustls = { workspace = true }
 hex = { workspace = true }
 httpdate = { workspace = true }
+time = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

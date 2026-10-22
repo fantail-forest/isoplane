@@ -525,37 +525,10 @@ fn parse_header_time(text: &str) -> Option<u64> {
 
 /// `YYYY-MM-DDTHH:MM:SSZ` to seconds since the Unix epoch.
 fn parse_utc(text: &str) -> Option<u64> {
-    let (date, time) = text.split_once('T')?;
-    let time = time.strip_suffix('Z')?;
-    let mut date = date.split('-');
-    let year: i64 = date.next()?.parse().ok()?;
-    let month: u32 = date.next()?.parse().ok()?;
-    let day: u32 = date.next()?.parse().ok()?;
-    if date.next().is_some() || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
-        return None;
-    }
-    let mut time = time.split(':');
-    let hour: u64 = time.next()?.parse().ok()?;
-    let minute: u64 = time.next()?.parse().ok()?;
-    let second: u64 = time.next()?.parse().ok()?;
-    if time.next().is_some() || hour > 23 || minute > 59 || second > 59 {
-        return None;
-    }
-    let days = days_from_civil(year, month, day);
-    let days = u64::try_from(days).ok()?;
-    Some(days * SECS_PER_DAY + hour * 3600 + minute * 60 + second)
-}
-
-/// Days since 1970-01-01 for a proleptic Gregorian date (Howard Hinnant's
-/// `days_from_civil`).
-fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
-    let year = if month <= 2 { year - 1 } else { year };
-    let era = if year >= 0 { year } else { year - 399 } / 400;
-    let year_of_era = year - era * 400;
-    let month_from_march = i64::from((month + 9) % 12);
-    let day_of_year = (153 * month_from_march + 2) / 5 + i64::from(day) - 1;
-    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
-    era * 146_097 + day_of_era - 719_468
+    let format =
+        time::macros::format_description!("[year]-[month]-[day]T[hour]:[minute]:[second]Z");
+    let timestamp = time::PrimitiveDateTime::parse(text, &format).ok()?;
+    u64::try_from(timestamp.assume_utc().unix_timestamp()).ok()
 }
 
 #[cfg(test)]
@@ -884,12 +857,12 @@ mod tests {
     #[test]
     fn a_manifest_with_an_unparseable_check_time_is_refused() {
         let mut manifest = shipped_manifest();
-        manifest.ingested_at = "yesterday".into();
+        manifest.ingested_at = "2026-11-31T00:00:00Z".into();
         let (_dir, path) = operator_dir(SHIPPED_PEM, Some(&manifest));
         let err = TrustBundle::load(&operator_config(&path, &manifest.bundle_sha256))
             .expect_err("an age that cannot be computed must not pass as fresh");
         assert!(
-            matches!(&err, TrustError::IngestedAtMalformed { value, .. } if value == "yesterday"),
+            matches!(&err, TrustError::IngestedAtMalformed { value, .. } if value == "2026-11-31T00:00:00Z"),
             "the refusal quotes the value: {err}"
         );
     }
@@ -1043,11 +1016,26 @@ mod tests {
             Some(MODIFIED_EPOCH_UNIX_SECS),
             "the guest timestamp epoch"
         );
+        assert_eq!(parse_utc("2000-02-29T00:00:00Z"), Some(951_782_400));
+        assert_eq!(parse_utc("2024-02-29T00:00:00Z"), Some(1_709_164_800));
         assert_eq!(parse_utc("1970-01-01T00:00:00Z"), Some(0), "the Unix epoch");
         for bad in [
             "2026-09-11T05:39:35",
             "2026-09-11 05:39:35Z",
             "2026-13-01T00:00:00Z",
+            "2026-11-34T00:00:00Z",
+            "2026-11-31T00:00:00Z",
+            "2026-02-30T00:00:00Z",
+            "2025-02-29T00:00:00Z",
+            "2100-02-29T00:00:00Z",
+            "2026-00-01T00:00:00Z",
+            "2026-01-00T00:00:00Z",
+            "2026-1-01T00:00:00Z",
+            "2026-09-11T05:60:00Z",
+            "2026-09-11T05:39:60Z",
+            "2026-09-11T05:39:35+00:00",
+            "2026-09-11T05:39:35.1Z",
+            "2026-09-11T05:39:35Zextra",
             "2026-09-11T24:00:00Z",
             "1969-12-31T23:59:59Z",
         ] {
