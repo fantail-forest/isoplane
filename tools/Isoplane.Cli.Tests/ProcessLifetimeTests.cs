@@ -136,8 +136,13 @@ public sealed class ProcessLifetimeTests
             var path = Path.Combine(Directory, "child.pid");
             while (true)
             {
-                if (File.Exists(path) && int.TryParse(await File.ReadAllTextAsync(path, Cancellation), out var pid))
-                    return pid;
+                if (File.Exists(path))
+                {
+                    // The atomic rename can still hold delete access when the new name becomes visible.
+                    using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
+                    using var reader = new StreamReader(stream);
+                    if (int.TryParse(await reader.ReadToEndAsync(Cancellation), out var pid)) return pid;
+                }
                 await Task.Delay(10, Cancellation);
             }
         }
