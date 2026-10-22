@@ -55,7 +55,23 @@ impl WorkerFailure {
         Self {
             stage,
             completion,
-            detail: error.to_string().chars().take(4096).collect(),
+            detail: format!("{error:#}").chars().take(4096).collect(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn worker_failure_preserves_the_cause_beneath_operation_context() {
+        let error = anyhow::anyhow!("allocation refused").context("constructing runtime engine");
+        let failure = WorkerFailure::new(BuildStage::Engine, error);
+        assert_eq!(
+            failure.detail,
+            "constructing runtime engine: allocation refused"
+        );
+        assert!(failure.completion.is_none());
     }
 }
