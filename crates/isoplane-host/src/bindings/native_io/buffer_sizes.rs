@@ -5,18 +5,16 @@ use isoplane_abi::native_io::{ByteCount, Error, SocketBuffer};
 use tokio::net::TcpStream;
 
 /// A smaller buffer moves a tenant's bytes in smaller segments, each costing
-/// the host a wake and the peer a segment. Every host OS takes this size as
-/// given (Linux raises smaller requests than about 2 KiB to its own minimum),
-/// so the size a guest reads back is the size its socket has.
+/// the host a wake and the peer a segment. This bounds the requested size;
+/// the kernel can resize its actual buffer as traffic flows.
 const MIN_BYTES: u32 = 4_096;
 
 /// Linux cuts a request to `net.core.rmem_max` or `wmem_max` without
 /// reporting it. Both were 212,992 on stock kernels until they were raised to
 /// 4 MiB, so a request up to this is one every stock host's socket really
 /// gets, and the host holds a guest to it where the sysctls are higher. A
-/// buffer the guest leaves unset is sized by the kernel itself, and on Linux
-/// autotuned beyond this, so a set never lets a guest hold more kernel memory
-/// than leaving it unset does.
+/// buffer the guest leaves unset is sized by the kernel itself. This ceiling
+/// bounds requests, not kernel memory: TCP autotuning can resize the buffer.
 const MAX_BYTES: u32 = 212_992;
 
 /// What a guest reads for a buffer it has not sized. The host leaves that
