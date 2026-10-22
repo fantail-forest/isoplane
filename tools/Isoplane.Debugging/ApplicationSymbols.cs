@@ -35,7 +35,7 @@ internal sealed class ApplicationSymbols
     internal static ApplicationSymbols Read(string package)
     {
         var documents = new List<Document>();
-        using var archive = File.OpenRead(package);
+        using var archive = new FileStream(package, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
         using var reader = new TarReader(archive);
         while (reader.GetNextEntry() is { } entry)
         {

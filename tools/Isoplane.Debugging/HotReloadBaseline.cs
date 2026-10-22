@@ -31,7 +31,7 @@ internal sealed class HotReloadBaseline : IDisposable
     private void Extract(string package)
     {
         var modules = new Dictionary<string, string>(StringComparer.Ordinal);
-        using var file = File.OpenRead(package);
+        using var file = new FileStream(package, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
         using var archive = new TarReader(file);
         while (archive.GetNextEntry() is { } entry)
         {
