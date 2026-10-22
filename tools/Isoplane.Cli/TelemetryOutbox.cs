@@ -30,11 +30,22 @@ internal sealed class TelemetryOutbox(string directory, TimeProvider time)
     /// Sends what is waiting and removes what the service took or will never take. Two commands sending
     /// the same event at once is harmless: the service stores an event identifier once.
     /// </summary>
-    internal async Task SendAsync(HttpClient client, Uri endpoint, CancellationToken cancellation)
+    internal Task SendAsync(Func<HttpClient> createClient, Uri endpoint, CancellationToken cancellation)
     {
-        if (!Directory.Exists(directory)) return;
+        // Select before scheduling so the current command's events wait for the next run.
+        var pending = Directory.Exists(directory) ? Pending().ToArray() : [];
+        if (pending.Length == 0) return Task.CompletedTask;
+        return Task.Run(async () =>
+        {
+            using var client = createClient();
+            await SendAsync(client, endpoint, pending, cancellation);
+        }, cancellation);
+    }
+
+    private async Task SendAsync(HttpClient client, Uri endpoint, string[] pending, CancellationToken cancellation)
+    {
         var oldest = time.GetUtcNow().UtcDateTime - LongestWait;
-        foreach (var batch in Pending().ToArray().Chunk(BatchSize))
+        foreach (var batch in pending.Chunk(BatchSize))
         {
             var waiting = batch.Where(path => !Expire(path, oldest)).Select(path => (Path: path, Event: Read(path)))
                 .Where(entry => entry.Event is not null).ToArray();

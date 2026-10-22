@@ -79,7 +79,7 @@ internal sealed class CommandTelemetry
         if (state.NoticeShown)
         {
             recording = true;
-            Upload = Task.Run(() => UploadAsync(host, endpoint, uploading.Token));
+            Upload = UploadAsync(host, endpoint, uploading.Token);
         }
         // Where nobody would read the notice, nothing is recorded until a run that can show it.
         else if (args is not ["telemetry", ..] && (!host.ErrorRedirected || context.Ci))
@@ -172,8 +172,7 @@ internal sealed class CommandTelemetry
     {
         try
         {
-            using var client = host.CreateClient();
-            await host.Outbox.SendAsync(client, endpoint, cancellation);
+            await host.Outbox.SendAsync(host.CreateClient, endpoint, cancellation);
         }
         // Sending is best effort and silent: what the service did not take stays queued for a later run.
         catch (Exception) { }

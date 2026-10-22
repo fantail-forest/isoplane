@@ -44,6 +44,29 @@ public sealed class TelemetryTests : IDisposable
         Assert.Equal("dev", Command(Assert.Single(Pending())));
     }
 
+    [Fact]
+    public async Task Events_recorded_while_an_upload_starts_wait_for_the_next_command()
+    {
+        Seen();
+        var earlier = Guid.NewGuid();
+        var current = Guid.NewGuid();
+        Queue(earlier);
+        service.Answer = HttpStatusCode.Accepted;
+        var run = CommandTelemetry.Begin(["--version"], Host() with
+        {
+            CreateClient = () =>
+            {
+                Queue(current);
+                return new HttpClient(service, disposeHandler: false);
+            }
+        });
+        await run.Upload;
+        run.Ended(0);
+        var sent = JsonDocument.Parse(Assert.Single(service.Requests)).RootElement.GetProperty("events").EnumerateArray().ToArray();
+        Assert.Equal(earlier, Assert.Single(sent).GetProperty("id").GetGuid());
+        Assert.Equal(current + ".json", Assert.Single(Pending()));
+    }
+
     [Theory]
     [InlineData("ISOPLANE_TELEMETRY_OPTOUT", "1")]
     [InlineData("ISOPLANE_TELEMETRY_OPTOUT", "true")]
