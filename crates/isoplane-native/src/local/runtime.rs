@@ -158,6 +158,8 @@ fn debug_engine(project: &Project) -> anyhow::Result<Arc<isoplane_engine::Isopla
 
 fn engine_configuration(project: &Project) -> isoplane_engine::EngineConfig {
     isoplane_engine::EngineConfig {
+        // Each local session owns its engine; a node-sized pool eagerly commits gigabytes on Windows.
+        pooling: false,
         max_memory_bytes: isoplane_abi::config::memory_ceiling_bytes(
             project.manifest.memory_max_bytes(),
         ),
