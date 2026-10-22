@@ -856,6 +856,58 @@ mod tests {
         assert_eq!(policy.pending.tracked(), 0, "and no queue");
     }
 
+    #[tokio::test]
+    async fn application_connection_caps_are_bounded_by_the_host_and_include_pending_attempts() {
+        for (application_limit, effective_limit) in [(1, 1), (3, 2)] {
+            let policy = limited(2, 2);
+            let mut limits = isoplane_abi::config::Limits {
+                instances_per_application: 16,
+                module_bytes_compressed: 52428800,
+                package_bytes: 52428800,
+                instance_memory_max: 536870912,
+                occupancy_ms_per_dispatch: 300000,
+                instance_open_connections: 32,
+                pending_futures_per_dispatch: 4096,
+            };
+            limits.instance_open_connections = application_limit;
+            let owner = owner("a", 1).with_application_limits(&limits);
+            let mut held = Vec::new();
+            for _ in 0..effective_limit {
+                held.push(
+                    policy
+                        .begin_connect(owner.clone())
+                        .await
+                        .expect("within cap"),
+                );
+            }
+            // Release the attempt queue slots while retaining open permits.
+            let established: Vec<_> = held
+                .into_iter()
+                .map(|permit| permit.established())
+                .collect();
+            assert_eq!(
+                denial(policy.begin_connect(owner.clone()).await),
+                Some(refused("a", 1, effective_limit))
+            );
+            drop(established);
+            let pending = policy
+                .begin_connect(owner.clone())
+                .await
+                .expect("released capacity");
+            assert_eq!(
+                policy.instance_connections(owner.instance()),
+                1,
+                "an unfinished attempt already counts"
+            );
+            drop(pending);
+            assert_eq!(
+                policy.instance_connections(owner.instance()),
+                0,
+                "cancellation frees capacity"
+            );
+        }
+    }
+
     #[test]
     fn refusals_name_the_instance_its_tenant_and_the_limit() {
         assert_eq!(

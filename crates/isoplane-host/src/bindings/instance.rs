@@ -329,10 +329,6 @@ impl InstanceCtx {
     pub fn dispatch_id(&self) -> u64 {
         self.current().id()
     }
-    /// Subrequests the current dispatch has started.
-    pub fn subrequests(&self) -> u32 {
-        self.current().subrequests()
-    }
     pub fn entropy_calls(&self) -> u64 {
         self.entropy_calls.load(Ordering::Relaxed)
     }

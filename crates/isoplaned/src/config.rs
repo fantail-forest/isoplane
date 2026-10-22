@@ -587,7 +587,7 @@ limits.module_bytes_compressed = 52428800
 limits.package_bytes = 52428800
 limits.instance_memory_max = 134217728
 limits.occupancy_ms_per_dispatch = 30000
-limits.subrequests_per_dispatch = 200
+limits.instance_open_connections = 32
 limits.pending_futures_per_dispatch = 64
 cell = "cell-1"
 versions = [{{ id = "v1" }}]
@@ -600,7 +600,7 @@ limits.module_bytes_compressed = 52428800
 limits.package_bytes = 52428800
 limits.instance_memory_max = 134217728
 limits.occupancy_ms_per_dispatch = 30000
-limits.subrequests_per_dispatch = 200
+limits.instance_open_connections = 32
 limits.pending_futures_per_dispatch = 64
 cell = "cell-1"
 versions = [{{ id = "v1" }}]
@@ -623,7 +623,7 @@ limits.module_bytes_compressed = 52428800
 limits.package_bytes = 52428800
 limits.instance_memory_max = 536870912
 limits.occupancy_ms_per_dispatch = 300000
-limits.subrequests_per_dispatch = 10000
+limits.instance_open_connections = 32
 limits.pending_futures_per_dispatch = 4096
 cell = "cell-2"
 versions = [{ id = "v1" }]
@@ -636,7 +636,7 @@ limits.module_bytes_compressed = 52428800
 limits.package_bytes = 52428800
 limits.instance_memory_max = 536870912
 limits.occupancy_ms_per_dispatch = 300000
-limits.subrequests_per_dispatch = 10000
+limits.instance_open_connections = 32
 limits.pending_futures_per_dispatch = 4096
 cell = "cell-2"
 versions = [{ id = "v1" }]
@@ -656,7 +656,7 @@ limits.module_bytes_compressed = 52428800
 limits.package_bytes = 52428800
 limits.instance_memory_max = 134217728
 limits.occupancy_ms_per_dispatch = 30000
-limits.subrequests_per_dispatch = 200
+limits.instance_open_connections = 32
 limits.pending_futures_per_dispatch = 64
 cell = "nope"
 versions = [{{ id = "v1" }}]
@@ -702,7 +702,7 @@ limits.module_bytes_compressed = 52428800
 limits.package_bytes = 52428800
 limits.instance_memory_max = 134217728
 limits.occupancy_ms_per_dispatch = 30000
-limits.subrequests_per_dispatch = 200
+limits.instance_open_connections = 32
 limits.pending_futures_per_dispatch = 64
 cell = "c"
 versions = [{ id = "v1", tier = "fast" }]

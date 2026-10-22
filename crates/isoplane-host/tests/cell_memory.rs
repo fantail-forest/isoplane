@@ -73,7 +73,7 @@ fn dispatch_growth(
                 package_bytes: 52428800,
                 instance_memory_max: 134217728,
                 occupancy_ms_per_dispatch: 100,
-                subrequests_per_dispatch: 20,
+                instance_open_connections: 32,
                 pending_futures_per_dispatch: 6,
             },
         );
@@ -133,7 +133,7 @@ fn a_guest_without_a_declared_maximum_cannot_grow_past_its_limits_ceiling() {
         package_bytes: 52428800,
         instance_memory_max: 134217728,
         occupancy_ms_per_dispatch: 100,
-        subrequests_per_dispatch: 20,
+        instance_open_connections: 32,
         pending_futures_per_dispatch: 6,
     }
     .instance_memory_max;
@@ -150,7 +150,7 @@ fn a_guest_may_grow_past_its_limit_up_to_its_ceiling_and_its_instance_is_retired
         package_bytes: 52428800,
         instance_memory_max: 134217728,
         occupancy_ms_per_dispatch: 100,
-        subrequests_per_dispatch: 20,
+        instance_open_connections: 32,
         pending_futures_per_dispatch: 6,
     }
     .instance_memory_max;
@@ -166,7 +166,7 @@ fn an_operator_memory_override_allows_growth_above_the_plan_default() {
         package_bytes: 52428800,
         instance_memory_max: 134217728,
         occupancy_ms_per_dispatch: 100,
-        subrequests_per_dispatch: 20,
+        instance_open_connections: 32,
         pending_futures_per_dispatch: 6,
     }
     .instance_memory_max;
@@ -181,7 +181,7 @@ fn the_engine_capacity_still_bounds_a_larger_application_override() {
         package_bytes: 52428800,
         instance_memory_max: 134217728,
         occupancy_ms_per_dispatch: 100,
-        subrequests_per_dispatch: 20,
+        instance_open_connections: 32,
         pending_futures_per_dispatch: 6,
     }
     .instance_memory_max;
@@ -197,7 +197,7 @@ fn a_template_larger_than_the_application_budget_is_refused_at_activation() {
         package_bytes: 52428800,
         instance_memory_max: 134217728,
         occupancy_ms_per_dispatch: 100,
-        subrequests_per_dispatch: 20,
+        instance_open_connections: 32,
         pending_futures_per_dispatch: 6,
     }
     .instance_memory_max;
@@ -230,7 +230,7 @@ fn a_template_larger_than_the_application_budget_is_refused_at_activation() {
                 package_bytes: 52428800,
                 instance_memory_max: 134217728,
                 occupancy_ms_per_dispatch: 100,
-                subrequests_per_dispatch: 20,
+                instance_open_connections: 32,
                 pending_futures_per_dispatch: 6,
             },
         ));

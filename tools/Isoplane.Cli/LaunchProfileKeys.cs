@@ -39,8 +39,8 @@ internal static class LaunchProfileKeys
         Memory,
         new("occupancyMsPerDispatch", "occupancy_ms_per_dispatch",
             "The running time one request may use, in milliseconds. Waiting does not count. Background work uses a separate instance allowance."),
-        new("subrequestsPerDispatch", "subrequests_per_dispatch",
-            "The most outbound requests one dispatch may start. Not yet enforced for .NET applications."),
+        new("concurrentConnectionsPerInstance", "instance_open_connections",
+            "The most outbound connections one instance may hold concurrently, including connections being opened and pooled connections. Closing a connection frees capacity. The host network ceiling still applies."),
         new("pendingFuturesPerDispatch", "pending_futures_per_dispatch",
             "The most asynchronous operations one dispatch may have pending at once."),
     ];

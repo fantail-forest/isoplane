@@ -73,6 +73,7 @@ impl Context for CellBindings {
     fn connection_owner(&self) -> std::io::Result<crate::egress::ConnectionOwner> {
         Ok(
             crate::egress::ConnectionOwner::new(self.ctx.tenant.clone(), self.ctx.instance)?
+                .with_application_limits(&self.ctx.limits)
                 .with_exceptions(self.ctx.endpoint_exceptions.clone()),
         )
     }

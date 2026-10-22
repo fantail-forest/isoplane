@@ -5,7 +5,7 @@
 pub const DEFAULT_INSTANCE_PENDING_CONNECTIONS: u64 = 6;
 
 /// Default for [`NetworkLimits::instance_open_connections`].
-pub const DEFAULT_INSTANCE_OPEN_CONNECTIONS: u64 = 32;
+pub use isoplane_abi::config::DEFAULT_INSTANCE_OPEN_CONNECTIONS;
 
 /// Limits used when constructing the host's egress policy and HTTP fetcher.
 ///

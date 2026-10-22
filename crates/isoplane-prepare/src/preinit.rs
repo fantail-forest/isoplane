@@ -209,7 +209,7 @@ impl PreInitializer {
                     package_bytes: 52428800,
                     instance_memory_max: 536870912,
                     occupancy_ms_per_dispatch: 300000,
-                    subrequests_per_dispatch: 10000,
+                    instance_open_connections: 32,
                     pending_futures_per_dispatch: 4096,
                 },
                 initialization: request,

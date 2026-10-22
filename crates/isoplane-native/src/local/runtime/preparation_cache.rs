@@ -397,7 +397,7 @@ mod tests {
             package_bytes: 52428800,
             instance_memory_max: 134217728,
             occupancy_ms_per_dispatch: 100,
-            subrequests_per_dispatch: 20,
+            instance_open_connections: 32,
             pending_futures_per_dispatch: 6,
         };
         assert_miss(

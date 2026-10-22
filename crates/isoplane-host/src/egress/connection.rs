@@ -8,6 +8,7 @@ use tokio::net::TcpStream;
 pub struct ConnectionOwner {
     tenant: String,
     instance: crate::InstanceId,
+    pub(super) open_limit: Option<u64>,
     exceptions: std::sync::Arc<[SocketAddr]>,
 }
 
@@ -23,8 +24,15 @@ impl ConnectionOwner {
         Ok(Self {
             tenant,
             instance,
+            open_limit: None,
             exceptions: std::sync::Arc::new([]),
         })
+    }
+
+    /// Applies the application's connection cap in addition to the host network ceiling.
+    pub fn with_application_limits(mut self, limits: &isoplane_abi::config::Limits) -> Self {
+        self.open_limit = Some(limits.instance_open_connections);
+        self
     }
 
     /// Lets this owner reach `exceptions` where the node's destination policy refuses them.

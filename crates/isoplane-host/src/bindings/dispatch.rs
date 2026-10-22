@@ -13,7 +13,6 @@ use crate::response_transport::ResponseTransport;
 
 pub(crate) struct DispatchState {
     id: u64,
-    pub(super) subrequests: AtomicU32,
     /// Bounds log volume independently of its occupied-worker cost.
     pub(super) log_bytes: AtomicU32,
     cancellation: Cancellation,
@@ -31,7 +30,6 @@ impl DispatchState {
     pub(super) fn new(id: u64) -> Arc<Self> {
         Arc::new(Self {
             id,
-            subrequests: AtomicU32::new(0),
             log_bytes: AtomicU32::new(0),
             cancellation: Cancellation::default(),
             cancel_future: AtomicU64::new(0),
@@ -72,10 +70,6 @@ impl DispatchState {
 
     pub(super) fn cancellation(&self) -> &Cancellation {
         &self.cancellation
-    }
-
-    pub(crate) fn subrequests(&self) -> u32 {
-        self.subrequests.load(Ordering::Relaxed)
     }
 
     /// Releases the incoming request body.

@@ -157,11 +157,14 @@ impl OpenConnections {
     pub(super) fn acquire(&self, owner: &ConnectionOwner) -> Result<Holding, DenyReason> {
         let mut instances = self.instances.lock();
         let open = instances.get(&owner.instance()).copied().unwrap_or(0);
-        if open >= self.limit {
+        let limit = owner
+            .open_limit
+            .map_or(self.limit, |limit| limit.min(self.limit));
+        if open >= limit {
             return Err(DenyReason::OpenConnectionLimit {
                 tenant: owner.tenant().to_owned(),
                 instance: owner.instance(),
-                limit: self.limit,
+                limit,
             });
         }
         instances.insert(owner.instance(), open + 1);

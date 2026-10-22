@@ -283,7 +283,7 @@ async fn socket_transfer(
             );
         }
     }
-    assert_eq!(*connections.calls.lock(), vec![(isoplane_host::egress::ConnectionOwner::new(context.tenant.clone(), owner).expect("the dispatch establishes the connection owner"), peer)],
+    assert_eq!(*connections.calls.lock(), vec![(isoplane_host::egress::ConnectionOwner::new(context.tenant.clone(), owner).expect("the dispatch establishes the connection owner").with_application_limits(&context.limits), peer)],
         "managed TCP must open exactly one connection through the injected provider with its tenant and instance");
     let mut byte = [0];
     let read = tokio::time::timeout(WAKE_DEADLINE, server.read(&mut byte))
@@ -1226,15 +1226,17 @@ async fn an_instance_at_its_open_connection_limit_is_refused_and_another_instanc
         .await
         .expect("the owned peer must bind");
     let peer = listener.local_addr().expect("the owned peer's endpoint");
-    let limit = isoplane_harness::production_connection_limits()
-        .ceilings()
-        .open;
+    let limit = 2;
     let owner = InstanceId::alloc();
-    let reactor = Reactor::with_network(
+    let mut reactor = Reactor::with_network(
         owner,
         isoplane_harness::Network::with_resolver(Box::new(NoDns))
             .with_destinations(Arc::new(ExactPeer(peer))),
     );
+    Arc::get_mut(&mut reactor.context)
+        .expect("unshared context")
+        .limits
+        .instance_open_connections = limit;
     let egress = reactor.runtime().services.egress.clone();
     let denials = || {
         reactor
@@ -1253,6 +1255,7 @@ async fn an_instance_at_its_open_connection_limit_is_refused_and_another_instanc
         open.push((socket, input, output));
     }
     assert_eq!(egress.instance_connections(owner), limit);
+    reactor.context.begin_dispatch(2, 2);
 
     let (refused, settled) = sockets.connect(peer).await;
     assert!(
@@ -1274,7 +1277,11 @@ async fn an_instance_at_its_open_connection_limit_is_refused_and_another_instanc
     sockets.drop_handle(refused, ResourceKind::Tcp);
 
     let sibling = InstanceId::alloc();
-    let sibling_reactor = reactor.sibling(sibling);
+    let mut sibling_reactor = reactor.sibling(sibling);
+    Arc::get_mut(&mut sibling_reactor.context)
+        .expect("unshared sibling")
+        .limits
+        .instance_open_connections = limit;
     let mut other = NativeSockets::new(&sibling_reactor);
     let (_, settled) = other.connect(peer).await;
     assert!(

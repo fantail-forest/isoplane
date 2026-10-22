@@ -24,7 +24,7 @@ public sealed class LaunchProfileTests : IDisposable
             },
             "tight": {
               "commandName": "Project",
-              "isoplaneLimitsOverride": { "memoryBytes": 67108864, "occupancyMsPerDispatch": 100, "subrequestsPerDispatch": 20, "pendingFuturesPerDispatch": 6 }
+              "isoplaneLimitsOverride": { "memoryBytes": 67108864, "occupancyMsPerDispatch": 100, "concurrentConnectionsPerInstance": 20, "pendingFuturesPerDispatch": 6 }
             }
           }
         }
@@ -58,7 +58,7 @@ public sealed class LaunchProfileTests : IDisposable
         Assert.Equal(67108864UL, profile.Limits.MemoryBytes);
         Assert.Equal(new Dictionary<string, ulong>
         {
-            ["occupancy_ms_per_dispatch"] = 100, ["subrequests_per_dispatch"] = 20, ["pending_futures_per_dispatch"] = 6
+            ["occupancy_ms_per_dispatch"] = 100, ["instance_open_connections"] = 20, ["pending_futures_per_dispatch"] = 6
         }, profile.Limits.ResourceLimits);
     }
 
@@ -74,6 +74,8 @@ public sealed class LaunchProfileTests : IDisposable
 
     [Theory]
     [InlineData("""{ "unsupported": 1 }""", "does not support 'unsupported'")]
+    [InlineData("""{ "subrequestsPerDispatch": 20 }""", "does not support 'subrequestsPerDispatch'")]
+    [InlineData("""{ "concurrentConnectionsPerInstance": 0 }""", "must be a positive whole number")]
     [InlineData("""{ "memoryBytes": "64MB" }""", "must be a positive whole number")]
     [InlineData("""{ "memoryBytes": 0 }""", "must be a positive whole number")]
     [InlineData("\"invalid\"", "must be an object")]

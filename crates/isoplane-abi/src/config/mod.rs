@@ -8,7 +8,7 @@ mod memory;
 mod node;
 
 pub use lifecycle::LifecycleTier;
-pub use limits::{Limits, ResourceLimitOverrides};
+pub use limits::{Limits, ResourceLimitOverrides, DEFAULT_INSTANCE_OPEN_CONNECTIONS};
 pub use manifest::{AppManifest, Bindings, InitSandbox};
 pub use memory::{
     memory_ceiling_bytes, GuestMemoryBytes, InvalidGuestMemory, WASM32_MEMORY_MAX_BYTES,

@@ -24,7 +24,7 @@ limits.module_bytes_compressed = 5242880
 limits.package_bytes = 52428800
 limits.instance_memory_max = 134217728
 limits.occupancy_ms_per_dispatch = 100
-limits.subrequests_per_dispatch = 20
+limits.instance_open_connections = 32
 limits.pending_futures_per_dispatch = 6
 cell = "cell-0"
 versions = [{ id = "v1" }]
@@ -37,7 +37,7 @@ limits.module_bytes_compressed = 52428800
 limits.package_bytes = 52428800
 limits.instance_memory_max = 134217728
 limits.occupancy_ms_per_dispatch = 30000
-limits.subrequests_per_dispatch = 200
+limits.instance_open_connections = 32
 limits.pending_futures_per_dispatch = 64
 cell = "cell-1"
 versions = [{ id = "v1" }]

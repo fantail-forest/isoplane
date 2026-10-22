@@ -263,6 +263,10 @@ fn initialization_network(project: &Project) -> isoplane_prepare::Initialization
         destinations: isoplane_prepare::InitializationDestinations::LocalDevelopment,
         limits: isoplane_runtime::network::NetworkLimits::default(),
         native_handles: host.guest_resources.native_handles,
+        open_connections: project
+            .manifest
+            .effective_limits()
+            .instance_open_connections,
         pending_futures: project
             .manifest
             .effective_limits()

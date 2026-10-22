@@ -2,6 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Default maximum outbound connections held by one instance.
+pub const DEFAULT_INSTANCE_OPEN_CONNECTIONS: u64 = 32;
+
 /// Effective per-application resource budgets.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -18,8 +21,8 @@ pub struct Limits {
     pub instance_memory_max: u64,
     /// Occupied-worker milliseconds across all slices of one dispatch.
     pub occupancy_ms_per_dispatch: u32,
-    /// Maximum subrequests started within one dispatch.
-    pub subrequests_per_dispatch: u32,
+    /// Maximum outbound connections one instance may hold, including attempts in progress.
+    pub instance_open_connections: u64,
     /// Maximum concurrently pending futures within one dispatch.
     pub pending_futures_per_dispatch: u32,
 }
@@ -32,7 +35,7 @@ impl Default for Limits {
             package_bytes: 52428800,
             instance_memory_max: 134217728,
             occupancy_ms_per_dispatch: 30000,
-            subrequests_per_dispatch: 200,
+            instance_open_connections: 32,
             pending_futures_per_dispatch: 64,
         }
     }
@@ -51,8 +54,8 @@ pub struct ResourceLimitOverrides {
     pub package_bytes: Option<u64>,
     /// Occupancy budget across all slices of one request dispatch.
     pub occupancy_ms_per_dispatch: Option<u32>,
-    /// Maximum subrequests started by one dispatch.
-    pub subrequests_per_dispatch: Option<u32>,
+    /// Maximum outbound connections one instance may hold concurrently.
+    pub instance_open_connections: Option<u64>,
     /// Maximum pending futures owned by one dispatch.
     pub pending_futures_per_dispatch: Option<u32>,
 }
@@ -71,9 +74,9 @@ impl ResourceLimitOverrides {
             occupancy_ms_per_dispatch: self
                 .occupancy_ms_per_dispatch
                 .unwrap_or(defaults.occupancy_ms_per_dispatch),
-            subrequests_per_dispatch: self
-                .subrequests_per_dispatch
-                .unwrap_or(defaults.subrequests_per_dispatch),
+            instance_open_connections: self
+                .instance_open_connections
+                .unwrap_or(defaults.instance_open_connections),
             pending_futures_per_dispatch: self
                 .pending_futures_per_dispatch
                 .unwrap_or(defaults.pending_futures_per_dispatch),

@@ -92,23 +92,6 @@ impl CellBindings {
         }
     }
 
-    /// Denies past the per-dispatch subrequest cap.
-    fn check_subrequest(&self) -> Result<(), FutureError> {
-        let n = self
-            .ctx
-            .current()
-            .subrequests
-            .fetch_add(1, Ordering::Relaxed)
-            + 1;
-        if n > self.ctx.limits.subrequests_per_dispatch {
-            return Err(FutureError::Denied(format!(
-                "subrequest cap of {} per dispatch exceeded",
-                self.ctx.limits.subrequests_per_dispatch
-            )));
-        }
-        Ok(())
-    }
-
     pub(super) fn http_fetch(&self, rt: Arc<CellRuntime>, id: u64, payload: &[u8]) -> u64 {
         let Some(req) = self.decode::<FetchRequest>(payload) else {
             return self.settle_now(
@@ -116,13 +99,11 @@ impl CellBindings {
                 ResultRecord::Err(FutureError::Denied("malformed fetch request".into())),
             );
         };
-        if let Err(e) = self.check_subrequest() {
-            rt.metrics.egress_denials.fetch_add(1, Ordering::Relaxed);
-            return self.settle_now(id, ResultRecord::Err(e));
-        }
         let owner =
             match crate::egress::ConnectionOwner::new(self.ctx.tenant.clone(), self.ctx.instance) {
-                Ok(owner) => owner.with_exceptions(self.ctx.endpoint_exceptions.clone()),
+                Ok(owner) => owner
+                    .with_application_limits(&self.ctx.limits)
+                    .with_exceptions(self.ctx.endpoint_exceptions.clone()),
                 Err(error) => {
                     return self
                         .settle_now(id, ResultRecord::Err(FutureError::Io(error.to_string())))

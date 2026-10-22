@@ -18,6 +18,7 @@ fn request() -> Initialization {
         },
         limits: Default::default(),
         native_handles: 16,
+        open_connections: isoplane_abi::config::DEFAULT_INSTANCE_OPEN_CONNECTIONS,
         pending_futures: 4,
         buffered_bytes: 1024,
     });

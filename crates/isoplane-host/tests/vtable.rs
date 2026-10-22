@@ -187,103 +187,6 @@ async fn a_host_off_the_allowlist_is_refused() {
 }
 
 #[tokio::test]
-async fn the_subrequest_cap_is_per_dispatch() {
-    let mut v = vtable(
-        Limits {
-            instances_per_application: 3,
-            module_bytes_compressed: 5242880,
-            package_bytes: 52428800,
-            instance_memory_max: 134217728,
-            occupancy_ms_per_dispatch: 100,
-            subrequests_per_dispatch: 20,
-            pending_futures_per_dispatch: 6,
-        },
-        "93.184.216.34:80",
-        None,
-    );
-    let cap = Limits {
-        instances_per_application: 3,
-        module_bytes_compressed: 5242880,
-        package_bytes: 52428800,
-        instance_memory_max: 134217728,
-        occupancy_ms_per_dispatch: 100,
-        subrequests_per_dispatch: 20,
-        pending_futures_per_dispatch: 6,
-    }
-    .subrequests_per_dispatch;
-    assert_eq!(cap, 20, "the free plan's subrequest cap");
-
-    assert_eq!(
-        Limits {
-            instances_per_application: 3,
-            module_bytes_compressed: 5242880,
-            package_bytes: 52428800,
-            instance_memory_max: 134217728,
-            occupancy_ms_per_dispatch: 100,
-            subrequests_per_dispatch: 20,
-            pending_futures_per_dispatch: 6
-        }
-        .pending_futures_per_dispatch,
-        6,
-        "the futures cap is lower than the subrequest cap, so subrequests are drained one at a \
-         time here"
-    );
-
-    let payload = fetch_payload("http://example.com/");
-    for i in 0..cap {
-        let id = v.bindings.call_future(ImportCall {
-            import: "http_fetch",
-            payload: &payload,
-            scalars: [0; 3],
-        });
-        assert_ne!(
-            id, INVALID_FUTURE,
-            "subrequest {i} was refused before the cap"
-        );
-        assert!(
-            matches!(settle(&v, id).await, ResultRecord::Ok(_)),
-            "subrequest {i} of {cap} was refused early"
-        );
-    }
-
-    let over = v.bindings.call_future(ImportCall {
-        import: "http_fetch",
-        payload: &payload,
-        scalars: [0; 3],
-    });
-    match settle(&v, over).await {
-        ResultRecord::Err(FutureError::Denied(m)) => assert!(m.contains("subrequest cap"), "{m}"),
-        other => panic!("the 21st subrequest was allowed: {other:?}"),
-    }
-    assert_eq!(
-        v.ctx.subrequests(),
-        cap + 1,
-        "the refused subrequest was counted"
-    );
-    assert_eq!(
-        v.ctx.take_trap(),
-        None,
-        "a policy denial is not a trap; the guest can catch it and carry on"
-    );
-
-    v.ctx.begin_dispatch(1_001, 2);
-    assert_eq!(
-        v.ctx.subrequests(),
-        0,
-        "a new dispatch starts with a full allowance"
-    );
-    let id = v.bindings.call_future(ImportCall {
-        import: "http_fetch",
-        payload: &payload,
-        scalars: [0; 3],
-    });
-    assert!(
-        matches!(settle(&v, id).await, ResultRecord::Ok(_)),
-        "the fetch succeeds"
-    );
-}
-
-#[tokio::test]
 async fn logging_enforces_the_dispatch_byte_limit() {
     let output = TestLogCapture::default();
     let subscriber = output.dispatch();
@@ -441,7 +344,7 @@ async fn aggregate_future_pressure_refuses_allocation_without_trapping_other_req
             package_bytes: 52428800,
             instance_memory_max: 134217728,
             occupancy_ms_per_dispatch: 100,
-            subrequests_per_dispatch: 20,
+            instance_open_connections: 32,
             pending_futures_per_dispatch: 6,
         },
         "93.184.216.34:80",

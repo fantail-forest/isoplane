@@ -267,7 +267,7 @@ fn initialization_without_a_memory_maximum_obeys_the_application_budget() {
         package_bytes: 52428800,
         instance_memory_max: 134217728,
         occupancy_ms_per_dispatch: 100,
-        subrequests_per_dispatch: 20,
+        instance_open_connections: 32,
         pending_futures_per_dispatch: 6,
     }
     .limits()
@@ -291,7 +291,7 @@ fn initialization_without_a_memory_maximum_obeys_the_application_budget() {
         package_bytes: 52428800,
         instance_memory_max: 134217728,
         occupancy_ms_per_dispatch: 100,
-        subrequests_per_dispatch: 20,
+        instance_open_connections: 32,
         pending_futures_per_dispatch: 6,
     };
     assert!(
@@ -311,7 +311,7 @@ fn preparation_identity_binds_the_plan_memory_default() {
         package_bytes: 52428800,
         instance_memory_max: 134217728,
         occupancy_ms_per_dispatch: 100,
-        subrequests_per_dispatch: 20,
+        instance_open_connections: 32,
         pending_futures_per_dispatch: 6,
     };
     assert_ne!(

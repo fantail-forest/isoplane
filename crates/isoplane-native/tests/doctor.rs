@@ -375,7 +375,7 @@ fn doctor_fails_a_module_the_manifest_alone_would_pass() {
             package_bytes: 52428800,
             instance_memory_max: 536870912,
             occupancy_ms_per_dispatch: 300000,
-            subrequests_per_dispatch: 10000,
+            instance_open_connections: 32,
             pending_futures_per_dispatch: 4096,
         })),
     );
@@ -445,7 +445,7 @@ fn doctor_takes_the_memory_ceiling_from_its_flag() {
                 package_bytes: 52428800,
                 instance_memory_max: 536870912,
                 occupancy_ms_per_dispatch: 300000,
-                subrequests_per_dispatch: 10000,
+                instance_open_connections: 32,
                 pending_futures_per_dispatch: 4096,
             })),
         ),

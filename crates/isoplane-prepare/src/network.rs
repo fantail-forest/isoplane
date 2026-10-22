@@ -24,6 +24,8 @@ pub struct InitializationNetwork {
     pub native_handles: usize,
     /// Maximum pending native futures.
     pub pending_futures: u32,
+    /// Application connection cap, also enforced during initialization.
+    pub open_connections: u64,
     /// Maximum buffered future-result bytes.
     pub buffered_bytes: usize,
 }
@@ -57,8 +59,14 @@ impl InitializationNetwork {
         let owner = ConnectionOwner::new(self.tenant.clone(), isoplane_host::InstanceId(1))
             .map_err(|error| crate::PrepareError::State(error.into()))?;
         let limits = ConnectionLimits::new(ConnectionCeilings {
-            in_progress: self.limits.instance_pending_connections,
-            open: self.limits.instance_open_connections,
+            in_progress: self
+                .limits
+                .instance_pending_connections
+                .min(self.open_connections),
+            open: self
+                .limits
+                .instance_open_connections
+                .min(self.open_connections),
         })
         .map_err(|error| crate::PrepareError::State(error.into()))?;
         let egress = HostEgressPolicy::system(limits)

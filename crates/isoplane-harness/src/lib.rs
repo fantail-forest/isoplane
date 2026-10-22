@@ -43,7 +43,7 @@ pub const GUEST_LIMITS: Limits = Limits {
     package_bytes: 52428800,
     instance_memory_max: 134217728,
     occupancy_ms_per_dispatch: 30000,
-    subrequests_per_dispatch: 200,
+    instance_open_connections: 32,
     pending_futures_per_dispatch: 64,
 };
 

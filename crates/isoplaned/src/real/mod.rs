@@ -204,6 +204,7 @@ fn initialization_network(
         },
         limits,
         native_handles: host.guest_resources.native_handles,
+        open_connections: manifest.effective_limits().instance_open_connections,
         pending_futures: manifest.effective_limits().pending_futures_per_dispatch,
         buffered_bytes: host.buffered_future_bytes,
     }

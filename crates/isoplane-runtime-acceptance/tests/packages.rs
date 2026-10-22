@@ -96,6 +96,9 @@ fn network() -> InitializationNetwork {
         },
         limits: Default::default(),
         native_handles: host.guest_resources.native_handles,
+        open_connections: isoplane_harness::GUEST_LIMITS
+            .limits()
+            .instance_open_connections,
         pending_futures: isoplane_harness::GUEST_LIMITS
             .limits()
             .pending_futures_per_dispatch,

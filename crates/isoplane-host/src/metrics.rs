@@ -125,7 +125,7 @@ pub struct Metrics {
     /// left the result queued for it to drain.
     pub reentrancy_refusals: AtomicU64,
     pub pending_cap_rejections: AtomicU64,
-    /// Egress-policy refusals plus subrequest-cap refusals.
+    /// Egress-policy refusals, including connection-limit refusals.
     pub egress_denials: AtomicU64,
 
     pub live: AtomicU64,
