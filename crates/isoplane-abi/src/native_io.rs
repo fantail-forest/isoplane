@@ -309,7 +309,10 @@ impl Error {
                     NetworkErrorCode::RemoteUnreachable
                 }
                 std::io::ErrorKind::ConnectionRefused => NetworkErrorCode::ConnectionRefused,
-                std::io::ErrorKind::ConnectionReset => NetworkErrorCode::ConnectionReset,
+                // A write after the peer's reset can report EPIPE rather than ECONNRESET.
+                std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::BrokenPipe => {
+                    NetworkErrorCode::ConnectionReset
+                }
                 std::io::ErrorKind::ConnectionAborted => NetworkErrorCode::ConnectionAborted,
                 // Other OS failures have no more specific WASI network equivalent.
                 _ => NetworkErrorCode::Unknown,

@@ -410,6 +410,10 @@ mod native_readiness {
                 NetworkErrorCode::ConnectionReset,
             ),
             (
+                std::io::ErrorKind::BrokenPipe,
+                NetworkErrorCode::ConnectionReset,
+            ),
+            (
                 std::io::ErrorKind::PermissionDenied,
                 NetworkErrorCode::AccessDenied,
             ),
