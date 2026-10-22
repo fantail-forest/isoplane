@@ -117,6 +117,7 @@ fn dispatch_growth(
                 std::thread::yield_now();
             }
         }
+        cell.shutdown();
         drop(cell);
         snapshots
             .close()
