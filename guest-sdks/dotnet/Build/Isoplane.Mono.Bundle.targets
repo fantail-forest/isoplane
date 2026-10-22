@@ -43,6 +43,9 @@
     </EmitBundleObjectFiles>
     <WriteLinesToFile File="$(_IsoplaneBundleManifest).tmp" Overwrite="true"
                       Lines="@(_IsoplaneBundleResources->'%(DestinationFile)');@(_IsoplaneBundleRegistrations);#isoplane-bundle-complete" />
+    <!-- NFS can report writable files as read-only. Delete the old manifest
+         explicitly so Move does not reject it based on that attribute. -->
+    <Delete Files="$(_IsoplaneBundleManifest)" />
     <Move SourceFiles="$(_IsoplaneBundleManifest).tmp" DestinationFiles="$(_IsoplaneBundleManifest)" />
   </Target>
 
