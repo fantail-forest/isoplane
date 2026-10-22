@@ -55,6 +55,26 @@ fn reactor(owner: u64, peers: Vec<std::net::SocketAddr>) -> Reactor {
     reactor
 }
 
+async fn reach_stalled_response(
+    guest: &mut isoplane_harness::ReturnedGuest,
+    reactor: &Reactor,
+    peer: &http_peers::HttpPeer,
+) {
+    tokio::time::timeout(WAKE_DEADLINE, async {
+        loop {
+            tokio::select! {
+                () = peer.stalled() => break,
+                outcome = guest.wake(reactor) => assert_eq!(
+                    outcome.completion, Completion::Parked,
+                    "the request must reach the peer before cancellation: {outcome:?}"
+                ),
+            }
+        }
+    })
+    .await
+    .expect("the peer must receive the request before advancing the cancellation clock");
+}
+
 in_mono_runtime! {
     #[tokio::test]
     async fn a_get_parks_on_the_socket_and_resumes_with_the_response(runtime: GuestRuntime) {
@@ -333,6 +353,7 @@ in_mono_runtime! {
         let mut guest = guest(&reactor, runtime);
         let outcome = guest.start(&format!("/http/timeout/127.0.0.1/{}/200", peer.address.port()));
         assert_eq!(outcome.completion, Completion::Parked, "the stalled request parks: {outcome:?}");
+        reach_stalled_response(&mut guest, &reactor, &peer).await;
         // The client's timeout is a host timer; the response never comes. The
         // guest's clock is the dispatch's, advanced past the deadline for the
         // wake that delivers the timer.
@@ -353,6 +374,7 @@ in_mono_runtime! {
         let mut guest = guest(&reactor, runtime);
         let outcome = guest.start(&format!("/http/cancel/127.0.0.1/{}/50", peer.address.port()));
         assert_eq!(outcome.completion, Completion::Parked, "the request parks: {outcome:?}");
+        reach_stalled_response(&mut guest, &reactor, &peer).await;
         reactor.context.begin_slice(CLOCK_2030_MS + 50 + 1, 1);
         let text = guest.finish(&reactor, 16).await;
         assert_eq!(

@@ -46,9 +46,15 @@ pub struct HttpPeer {
     pub address: SocketAddr,
     accepted: Arc<AtomicUsize>,
     alpn: Arc<Mutex<Vec<Option<String>>>>,
+    stalled: Arc<tokio::sync::Notify>,
 }
 
 impl HttpPeer {
+    /// Waits until the peer receives the request whose response it withholds.
+    pub async fn stalled(&self) {
+        self.stalled.notified().await;
+    }
+
     pub fn connections(&self) -> usize {
         self.accepted.load(Ordering::SeqCst)
     }
@@ -231,6 +237,7 @@ fn bound_peer(listener: TcpListener) -> (TcpListener, HttpPeer) {
         address,
         accepted: Arc::new(AtomicUsize::new(0)),
         alpn: Arc::new(Mutex::new(Vec::new())),
+        stalled: Arc::new(tokio::sync::Notify::new()),
     };
     (listener, peer)
 }
@@ -275,11 +282,18 @@ fn serve_bound(
     protocols: Protocols,
 ) -> HttpPeer {
     let alpn = peer.alpn.clone();
+    let stalled = peer.stalled.clone();
     accept_loop(listener, peer.accepted.clone(), move |stream| {
         let tls = tls.clone();
         let alpn = alpn.clone();
+        let stalled = stalled.clone();
         async move {
-            let service = service_fn(route);
+            let service = service_fn(move |request: Request<Incoming>| {
+                if request.uri().path() == "/stall" {
+                    stalled.notify_one();
+                }
+                route(request)
+            });
             let served = match tls {
                 Some(acceptor) => match acceptor.accept(stream).await {
                     Ok(stream) => {
