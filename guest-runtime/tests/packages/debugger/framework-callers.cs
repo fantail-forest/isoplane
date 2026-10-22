@@ -45,7 +45,7 @@ internal static class Application
 
     private sealed class DelayedStream : Stream
     {
-        public int Written;
+        public int Written { get; private set; }
 
         public override bool CanRead => false;
         public override bool CanSeek => false;

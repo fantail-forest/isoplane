@@ -1,0 +1,66 @@
+<Project>
+  <Target Name="IsoplaneModernizeDebuggerClient" BeforeTargets="CoreCompile" Condition="'$(MSBuildProjectName)' == 'Mono.Debugging'">
+    <IsoplanePrepareDebuggerSource Source="Mono.Debugging.Client/DebuggerException.cs" Destination="$(IntermediateOutputPath)Isoplane/DebuggerException.maintained.cs" Match="&#09;&#09;public DebuggerException (SerializationInfo info, StreamingContext ctx): base (info, ctx)&#10;&#09;&#09;{&#10;&#09;&#09;}&#10;" Replacement="" />
+    <ItemGroup>
+      <Compile Remove="Mono.Debugging.Client/DebuggerException.cs" />
+      <Compile Include="$(IntermediateOutputPath)Isoplane/DebuggerException.maintained.cs" />
+    </ItemGroup>
+    <IsoplanePrepareDebuggerSource Source="Mono.Debugging.Evaluation/ExpressionEvaluator.cs" Destination="$(IntermediateOutputPath)Isoplane/ExpressionEvaluator.maintenance-1.cs" Match="&#09;&#09;protected EvaluatorException (SerializationInfo info, StreamingContext context)&#10;&#09;&#09;&#09;: base (info, context)&#10;&#09;&#09;{&#10;&#09;&#09;}&#10;" Replacement="" />
+    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/ExpressionEvaluator.maintenance-1.cs" Destination="$(IntermediateOutputPath)Isoplane/ExpressionEvaluator.maintenance-2.cs" Match="&#09;&#09;protected EvaluatorAbortedException (SerializationInfo info, StreamingContext context)&#10;&#09;&#09;&#09;: base (info, context)&#10;&#09;&#09;{&#10;&#09;&#09;}&#10;" Replacement="" />
+    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/ExpressionEvaluator.maintenance-2.cs" Destination="$(IntermediateOutputPath)Isoplane/ExpressionEvaluator.maintenance-3.cs" Match="&#09;&#09;protected NotSupportedExpressionException (SerializationInfo info, StreamingContext context)&#10;&#09;&#09;&#09;: base (info, context)&#10;&#09;&#09;{&#10;&#09;&#09;}&#10;" Replacement="" />
+    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/ExpressionEvaluator.maintenance-3.cs" Destination="$(IntermediateOutputPath)Isoplane/ExpressionEvaluator.maintained.cs" Match="&#09;&#09;protected ImplicitEvaluationDisabledException (SerializationInfo info, StreamingContext context)&#10;&#09;&#09;&#09;: base (info, context)&#10;&#09;&#09;{&#10;&#09;&#09;}&#10;" Replacement="" />
+    <ItemGroup>
+      <Compile Remove="Mono.Debugging.Evaluation/ExpressionEvaluator.cs" />
+      <Compile Include="$(IntermediateOutputPath)Isoplane/ExpressionEvaluator.maintained.cs" />
+    </ItemGroup>
+    <IsoplanePrepareDebuggerSource Source="Mono.Debugging.Client/SourceLocation.cs" Destination="$(IntermediateOutputPath)Isoplane/SourceLocation.maintenance-1.cs" Match="&#09;&#09;&#09;&#09;using (var hash = HashAlgorithm.Create (algorithm)) {" Replacement="&#09;&#09;&#09;&#09;using (var hash = CreateChecksumAlgorithm (algorithm)) {" />
+    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/SourceLocation.maintenance-1.cs" Destination="$(IntermediateOutputPath)Isoplane/SourceLocation.maintenance-2.cs" Match="&#09;&#09;&#09;&#09;&#09;using (var dos = HashAlgorithm.Create (algorithm)) {" Replacement="&#09;&#09;&#09;&#09;&#09;using (var dos = CreateChecksumAlgorithm (algorithm)) {" />
+    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/SourceLocation.maintenance-2.cs" Destination="$(IntermediateOutputPath)Isoplane/SourceLocation.maintenance-3.cs" Match="&#09;&#09;&#09;&#09;&#09;&#09;using (var unix = HashAlgorithm.Create (algorithm)) {" Replacement="&#09;&#09;&#09;&#09;&#09;&#09;using (var unix = CreateChecksumAlgorithm (algorithm)) {" />
+    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/SourceLocation.maintenance-3.cs" Destination="$(IntermediateOutputPath)Isoplane/SourceLocation.maintenance-4.cs" Match="&#09;&#09;&#09;using (var hash = HashAlgorithm.Create (algorithm)) {" Replacement="&#09;&#09;&#09;using (var hash = CreateChecksumAlgorithm (algorithm)) {" />
+    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/SourceLocation.maintenance-4.cs" Destination="$(IntermediateOutputPath)Isoplane/SourceLocation.maintenance-5.cs" Match="&#09;&#09;&#09;&#09;using (var dos = HashAlgorithm.Create (algorithm)) {" Replacement="&#09;&#09;&#09;&#09;using (var dos = CreateChecksumAlgorithm (algorithm)) {" />
+    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/SourceLocation.maintenance-5.cs" Destination="$(IntermediateOutputPath)Isoplane/SourceLocation.maintenance-6.cs" Match="&#09;&#09;&#09;&#09;&#09;using (var unix = HashAlgorithm.Create (algorithm)) {" Replacement="&#09;&#09;&#09;&#09;&#09;using (var unix = CreateChecksumAlgorithm (algorithm)) {" />
+    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/SourceLocation.maintenance-6.cs" Destination="$(IntermediateOutputPath)Isoplane/SourceLocation.maintained.cs" Match="public static List&lt;byte[]&gt; ComputeChecksums (string path, string algorithm)" Replacement="private static HashAlgorithm CreateChecksumAlgorithm (string algorithm) =&gt; algorithm.ToUpperInvariant () switch {&#10;            &quot;MD5&quot; =&gt; MD5.Create (),&#10;            &quot;SHA1&quot; =&gt; SHA1.Create (),&#10;            &quot;SHA256&quot; =&gt; SHA256.Create (),&#10;            &quot;SHA384&quot; =&gt; SHA384.Create (),&#10;            &quot;SHA512&quot; =&gt; SHA512.Create (),&#10;            _ =&gt; throw new ArgumentException (&quot;Unsupported source checksum algorithm: &quot; + algorithm, nameof (algorithm))&#10;        };&#10;&#10;        public static List&lt;byte[]&gt; ComputeChecksums (string path, string algorithm)" />
+    <ItemGroup>
+      <Compile Remove="Mono.Debugging.Client/SourceLocation.cs" />
+      <Compile Include="$(IntermediateOutputPath)Isoplane/SourceLocation.maintained.cs" />
+    </ItemGroup>
+  </Target>
+  <Target Name="IsoplaneModernizeDebuggerMirrors" BeforeTargets="CoreCompile" AfterTargets="IsoplaneRefreshDebuggerAttributeSources" Condition="'$(MSBuildProjectName)' == 'Mono.Debugger.Soft'">
+    <IsoplanePrepareDebuggerSource Source="Mono.Debugger.Soft/AssemblyMirror.cs" Destination="$(IntermediateOutputPath)Isoplane/AssemblyMirror.maintained.cs" Match="&#09;&#09;&#09;TypeInfo typeInfo = null;&#10;&#09;&#09;&#09;int methodIdxAsm = 1;&#10;" Replacement="" />
+    <ItemGroup>
+      <Compile Remove="Mono.Debugger.Soft/AssemblyMirror.cs" />
+      <Compile Include="$(IntermediateOutputPath)Isoplane/AssemblyMirror.maintained.cs" />
+    </ItemGroup>
+    <IsoplanePrepareDebuggerSource Source="Mono.Debugger.Soft/DataConverter.cs" Destination="$(IntermediateOutputPath)Isoplane/DataConverter.maintenance-1.cs" Match="&#09;&#09;&#09;&#09;case '7':&#10;&#09;&#09;&#09;&#09;&#09;e = Encoding.UTF7;&#10;&#09;&#09;&#09;&#09;&#09;n = 1;&#10;&#09;&#09;&#09;&#09;&#09;break;" Replacement="&#09;&#09;&#09;&#09;case '7':&#10;&#09;&#09;&#09;&#09;&#09;throw new NotSupportedException (&quot;UTF-7 data conversion is not supported.&quot;);" />
+    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/DataConverter.maintenance-1.cs" Destination="$(IntermediateOutputPath)Isoplane/DataConverter.maintenance-2.cs" Match="&#09;&#09;&#09;&#09;&#09;case '7':&#10;&#09;&#09;&#09;&#09;&#09;&#09;e = Encoding.UTF7;&#10;&#09;&#09;&#09;&#09;&#09;&#09;n = 1;&#10;&#09;&#09;&#09;&#09;&#09;&#09;break;" Replacement="&#09;&#09;&#09;&#09;&#09;case '7':&#10;&#09;&#09;&#09;&#09;&#09;&#09;throw new NotSupportedException (&quot;UTF-7 data conversion is not supported.&quot;);" />
+    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/DataConverter.maintenance-2.cs" Destination="$(IntermediateOutputPath)Isoplane/DataConverter.maintenance-3.cs" Match="&#09;&#09;//   z7   string encoded as UTF7 with 1-byte null terminator" Replacement="" />
+    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/DataConverter.maintenance-3.cs" Destination="$(IntermediateOutputPath)Isoplane/DataConverter.maintained.cs" Match="&#09;&#09;//   $7   string encoded as UTF7" Replacement="" />
+    <ItemGroup>
+      <Compile Remove="Mono.Debugger.Soft/DataConverter.cs" />
+      <Compile Include="$(IntermediateOutputPath)Isoplane/DataConverter.maintained.cs" />
+    </ItemGroup>
+    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/FieldInfoMirror.cs" Destination="$(IntermediateOutputPath)Isoplane/FieldInfoMirror.maintained.cs" Match="return (Attributes &amp; FieldAttributes.NotSerialized) == FieldAttributes.NotSerialized;" Replacement="#pragma warning disable SYSLIB0050 // Inspect guest metadata flags; no formatter serialization is performed.&#10;                return (Attributes &amp; FieldAttributes.NotSerialized) == FieldAttributes.NotSerialized;&#10;#pragma warning restore SYSLIB0050" />
+    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/TypeMirror.partial.cs" Destination="$(IntermediateOutputPath)Isoplane/TypeMirror.partial.maintained.cs" Match="if ((Attributes &amp; TypeAttributes.Serializable) != 0)" Replacement="#pragma warning disable SYSLIB0050 // Inspect guest metadata flags; no formatter serialization is performed.&#10;                if ((Attributes &amp; TypeAttributes.Serializable) != 0)&#10;#pragma warning restore SYSLIB0050" />
+    <ItemGroup>
+      <Compile Remove="$(IntermediateOutputPath)Isoplane/FieldInfoMirror.cs" />
+      <Compile Include="$(IntermediateOutputPath)Isoplane/FieldInfoMirror.maintained.cs" />
+      <Compile Remove="$(IntermediateOutputPath)Isoplane/TypeMirror.partial.cs" />
+      <Compile Include="$(IntermediateOutputPath)Isoplane/TypeMirror.partial.maintained.cs" />
+    </ItemGroup>
+  </Target>
+  <Target Name="IsoplaneModernizeDebuggerSession" BeforeTargets="CoreCompile" AfterTargets="IsoplanePrepareDebuggerSessionSource" Condition="'$(MSBuildProjectName)' == 'Mono.Debugging.Soft'">
+    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/SoftDebuggerSession.cs" Destination="$(IntermediateOutputPath)Isoplane/SoftDebuggerSession.maintenance-1.cs" Match="private readonly ITracer _tracer;" Replacement="" />
+    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/SoftDebuggerSession.maintenance-1.cs" Destination="$(IntermediateOutputPath)Isoplane/SoftDebuggerSession.maintenance-2.cs" Match="catch (CommandException exc)" Replacement="catch (CommandException)" />
+    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/SoftDebuggerSession.maintenance-2.cs" Destination="$(IntermediateOutputPath)Isoplane/SoftDebuggerSession.maintenance-3.cs" Match="catch (NotSupportedException e)" Replacement="catch (NotSupportedException)" />
+    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/SoftDebuggerSession.maintenance-3.cs" Destination="$(IntermediateOutputPath)Isoplane/SoftDebuggerSession.maintenance-4.cs" Match="throw e;" Replacement="throw;" />
+    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/SoftDebuggerSession.maintenance-4.cs" Destination="$(IntermediateOutputPath)Isoplane/SoftDebuggerSession.maintenance-5.cs" Match="throw ex;" Replacement="throw;" />
+    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/SoftDebuggerSession.maintenance-5.cs" Destination="$(IntermediateOutputPath)Isoplane/SoftDebuggerSession.maintained.cs" Match="DebugSymbolsManager.TryLoadSymbolFromSymbolServerIfNeeded (asm);" Replacement="_ = LoadAssemblySymbolsAsync (asm);" />
+    <ItemGroup>
+      <Compile Include="$(MSBuildThisFileDirectory)AssemblySymbolLoading.cs" />
+    </ItemGroup>
+    <ItemGroup>
+      <Compile Remove="$(IntermediateOutputPath)Isoplane/SoftDebuggerSession.cs" />
+      <Compile Include="$(IntermediateOutputPath)Isoplane/SoftDebuggerSession.maintained.cs" />
+    </ItemGroup>
+  </Target>
+</Project>

@@ -8,7 +8,7 @@
       <Source ParameterType="System.String" Required="true" />
       <Destination ParameterType="System.String" Required="true" />
       <Match ParameterType="System.String" Required="true" />
-      <Replacement ParameterType="System.String" Required="true" />
+      <Replacement ParameterType="System.String" />
     </ParameterGroup>
     <Task>
       <Using Namespace="System.IO" />
@@ -22,7 +22,7 @@
             return false;
         }
         Directory.CreateDirectory(Path.GetDirectoryName(Destination));
-        var generated = source.Replace(declaration, Replacement);
+        var generated = source.Replace(declaration, Replacement ?? string.Empty);
         if (!File.Exists(Destination) || File.ReadAllText(Destination) != generated)
             File.WriteAllText(Destination, generated);
       ]]></Code>
@@ -104,4 +104,5 @@
       <Compile Include="$(IntermediateOutputPath)Isoplane/FieldValueReference.cs;$(IntermediateOutputPath)Isoplane/SoftDebuggerAdaptor.cs;$(MSBuildThisFileDirectory)ManagedFieldLocation.cs;$(MSBuildThisFileDirectory)ManagedLocalLocation.cs;$(IntermediateOutputPath)Isoplane/VariableValueReference.cs" />
     </ItemGroup>
   </Target>
+  <Import Project="BackendMaintenance.targets" />
 </Project>
