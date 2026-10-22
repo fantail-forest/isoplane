@@ -2,6 +2,8 @@
 title: Execution limits
 ---
 
+import LocalLimits from './_local-limits.mdx';
+
 Isoplane limits what one instance and one
 [dispatch](dotnet-runtime-differences.md#units-of-work) may use, so that no
 application can take resources from the others running beside it. A dispatch is
@@ -16,9 +18,8 @@ requests or draining an older application version still count, as do hibernated
 instances. Requests can share an existing eligible instance; when another
 instance is needed and usable capacity is exhausted, the request receives HTTP
 503 with `Retry-After: 1`; it is not placed in an application admission queue.
-The default per-application cap is eight live instances,
-with at most eight active requests per instance. An open streaming response
-continues to occupy a request slot.
+An instance accepts at most eight active requests. An open streaming response
+continues to occupy a request slot. The initial local limits are listed below.
 
 ## Memory
 
@@ -99,7 +100,7 @@ promptly protects them:
 At the empty-stack boundary after response completion, remaining operations and
 callbacks transfer to the instance's background allowance. The request releases
 its concurrency slot; unused measured request running time is donated once to
-the allowance.
+the allowance. Background dispatches do not receive a new request allowance.
 
 Each instance starts with 5 seconds of background running time, replenishes 5
 seconds per 10 seconds of elapsed host time, and holds at most 30 seconds.
@@ -152,9 +153,12 @@ Creating a seventeenth host timer stops the instance.
 
 ## Outbound connections
 
-An instance can hold 32 outbound connections open at once. A connection beyond
-that fails with a socket error. A connection counts from when it starts to open
-until the application closes or disposes of it, including while the instance is
+The [local defaults](#local-defaults) include a concurrent outbound-connection
+limit per instance.
+Set `concurrentConnectionsPerInstance` in [local settings](local-settings.md) to
+test a lower limit. The host network ceiling still applies. A connection beyond
+the effective limit fails with a socket error. A connection counts from when it
+starts to open until the application closes or disposes of it, including while the instance is
 idle between dispatches, so the connections a connection pool keeps open count
 too.
 
@@ -166,12 +170,18 @@ further connection does not fail: it waits, in order, until one of the six is
 established or fails, so it takes longer to open. Connections that are already
 open do not delay new ones.
 
-These are the only limits on outbound connections. Other instances, including
-other instances of the same application, do not use up an instance's
-connections.
+Other instances, including those of the same application, do not use up an
+instance's connection allowance.
+
+## Local defaults
+
+These are preliminary limits for the initial SDK release. They may increase or
+decrease in later releases.
+The table is generated from the implementation's default limits.
+
+<LocalLimits />
 
 ## Try smaller limits locally
 
-A local session runs with the largest limits the platform offers. To see how an
-application behaves under smaller ones, see
+To see how an application behaves under smaller limits, see
 [Try the application under tighter limits](local-settings.md#try-the-application-under-tighter-limits).

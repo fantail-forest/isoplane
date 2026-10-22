@@ -2,6 +2,10 @@
 title: Build a small API with ASP.NET Core and EF Core
 ---
 
+import {OnlyOn, PlatformToggle} from '@site/src/components/Platform';
+
+<PlatformToggle />
+
 In this tutorial you will create a todo API from an Isoplane template, run it in
 the sandbox against PostgreSQL, and see where its state lives. Then you will add
 a feature of your own, a due date, with a database migration, a new endpoint and
@@ -12,8 +16,8 @@ For a new project with a few simple tables, consider the lighter option first:
 that uses the Npgsql driver directly, so there is less code to load into every
 instance.
 
-Before starting, [install the tools](install.md). You also need Docker, which
-runs the database, and `curl`; the commands are written for bash or zsh. Allow
+Before starting, [install the tools](install.md). You also need Docker for the database. On macOS and Linux use `curl`;
+on Windows use PowerShell. Choose your operating system above for shell commands. Allow
 about twenty minutes.
 
 ## 1. Create the project
@@ -68,9 +72,21 @@ steps that follow.
 
 Create a todo:
 
+<OnlyOn platforms="mac linux">
+
 ```bash
 curl -X POST http://127.0.0.1:5019/todos -H 'Content-Type: application/json' -d '{"title":"Read the README"}'
 ```
+
+</OnlyOn>
+
+<OnlyOn platforms="win">
+
+```powershell
+(Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:5019/todos' -Method Post -ContentType 'application/json' -Body '{"title":"Read the README"}').Content
+```
+
+</OnlyOn>
 
 ```json
 {"id":1,"title":"Read the README","isComplete":false,"createdAt":"2026-10-13T03:56:24.901+00:00","completedAt":null}
@@ -78,9 +94,21 @@ curl -X POST http://127.0.0.1:5019/todos -H 'Content-Type: application/json' -d 
 
 List the todos:
 
+<OnlyOn platforms="mac linux">
+
 ```bash
 curl http://127.0.0.1:5019/todos
 ```
+
+</OnlyOn>
+
+<OnlyOn platforms="win">
+
+```powershell
+(Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:5019/todos').Content
+```
+
+</OnlyOn>
 
 ```json
 [{"id":1,"title":"Read the README","isComplete":false,"createdAt":"2026-10-13T03:56:24.901+00:00","completedAt":null}]
@@ -93,9 +121,21 @@ endpoint stored the todo in PostgreSQL through Entity Framework Core.
 
 The root endpoint reports which instance of the application answered:
 
+<OnlyOn platforms="mac linux">
+
 ```bash
 curl http://127.0.0.1:5019/
 ```
+
+</OnlyOn>
+
+<OnlyOn platforms="win">
+
+```powershell
+(Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:5019/').Content
+```
+
+</OnlyOn>
 
 ```json
 {"application":"TodoApi","environment":"Development","instance":"c442ce0e-99e8-43cd-96b5-7385074fc783"}
@@ -114,10 +154,23 @@ at the end, and save. The first terminal prints:
 
 Ask both questions again:
 
+<OnlyOn platforms="mac linux">
+
 ```bash
 curl http://127.0.0.1:5019/
 curl http://127.0.0.1:5019/todos
 ```
+
+</OnlyOn>
+
+<OnlyOn platforms="win">
+
+```powershell
+(Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:5019/').Content
+(Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:5019/todos').Content
+```
+
+</OnlyOn>
 
 ```json
 {"application":"TodoApi","environment":"Development","instance":"1534b7ee-f5da-44a0-998f-75ee1001b401"}
@@ -228,10 +281,23 @@ Initialization ran again, applied the migration, and the new version started.
 
 Create one todo that is overdue and one that is not:
 
+<OnlyOn platforms="mac linux">
+
 ```bash
 curl -X POST http://127.0.0.1:5019/todos -H 'Content-Type: application/json' -d '{"title":"Renew the passport","dueOn":"2020-01-01"}'
 curl -X POST http://127.0.0.1:5019/todos -H 'Content-Type: application/json' -d '{"title":"Plan the holiday","dueOn":"2099-01-01"}'
 ```
+
+</OnlyOn>
+
+<OnlyOn platforms="win">
+
+```powershell
+(Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:5019/todos' -Method Post -ContentType 'application/json' -Body '{"title":"Renew the passport","dueOn":"2020-01-01"}').Content
+(Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:5019/todos' -Method Post -ContentType 'application/json' -Body '{"title":"Plan the holiday","dueOn":"2099-01-01"}').Content
+```
+
+</OnlyOn>
 
 ```json
 {"id":2,"title":"Renew the passport","isComplete":false,"createdAt":"2026-10-13T04:00:55.814+00:00","completedAt":null,"dueOn":"2020-01-01"}
@@ -240,9 +306,21 @@ curl -X POST http://127.0.0.1:5019/todos -H 'Content-Type: application/json' -d 
 
 Then list the overdue ones:
 
+<OnlyOn platforms="mac linux">
+
 ```bash
 curl http://127.0.0.1:5019/todos/overdue
 ```
+
+</OnlyOn>
+
+<OnlyOn platforms="win">
+
+```powershell
+(Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:5019/todos/overdue').Content
+```
+
+</OnlyOn>
 
 ```json
 [{"id":2,"title":"Renew the passport","isComplete":false,"createdAt":"2026-10-13T04:00:55.814+00:00","completedAt":null,"dueOn":"2020-01-01"}]

@@ -61,9 +61,7 @@ export default {
   // Cloudflare serves `install.html` at `/docs/install` and redirects the
   // slashed form to it, so links and canonical URLs leave the slash off.
   trailingSlash: false,
-  // Unlisted until launch: every page asks crawlers not to index it and no
-  // sitemap is generated. Nothing on the marketing site links here either.
-  noIndex: true,
+  noIndex: false,
   onBrokenLinks: 'throw',
   onBrokenAnchors: 'throw',
   i18n: {defaultLocale: 'en', locales: ['en']},
@@ -86,6 +84,8 @@ export default {
     navbar: {items: [
       {type: 'doc', docId: 'index', label: 'Docs', position: 'left'},
       {type: 'custom-siteLink', href: '/blog', label: 'Blog', position: 'left'},
+      {type: 'doc', docId: 'quickstart', label: 'Get started', position: 'right',
+        className: 'navbar__cta'},
     ]},
     footer: {copyright: '© 2026 Fantail Forest, Ltd. · A New Zealand limited company.'},
     prism: {

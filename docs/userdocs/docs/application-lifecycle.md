@@ -203,8 +203,8 @@ instances.
 - Decides how many instances run and which one gets a request, within the
   application's instance limit, including instances finishing cancelled requests.
 - Discards instances without a shutdown callback or guest cleanup.
-- Runs ready background work under an instance allowance. Exhausted allowance
-  delays that work.
+- Runs ready background work under an instance allowance. A wake does not
+  create a new request allowance. Exhausted allowance delays that work.
 - Retains connections until the application, peer or instance cleanup closes
   them. Retained connections still count against instance limits.
 - Stops an idle instance with background work or open connections after five

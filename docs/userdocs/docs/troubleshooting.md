@@ -2,6 +2,10 @@
 title: Troubleshoot local development
 ---
 
+import {OnlyOn, PlatformToggle} from '@site/src/components/Platform';
+
+<PlatformToggle />
+
 Start with `isoplane doctor` from the application directory in the terminal where
 it fails. Doctor checks the selected .NET SDK, the native host library and its
 prerequisites, the template registration and saved-session permissions, naming
@@ -22,7 +26,8 @@ that root. `dotnet --info` shows which SDK and runtime identifier are active.
 
 ## Command or SDK not found
 
-Check that `~/.dotnet/tools` is on `PATH` so your shell can find `isoplane`.
+Check that the [.NET tools directory](install.md#install-the-cli) is on `PATH`
+so your shell can find `isoplane`.
 `dotnet --info` shows your selected SDK. Projects restore their Isoplane SDK
 from NuGet and do not need a machine-specific SDK path or custom workload.
 
@@ -131,11 +136,27 @@ Local development prints application messages in a compact level, message and
 category format. Runtime diagnostics stay out of that view. To capture the full
 structured runtime record for a bug report, run:
 
+<OnlyOn platforms="mac linux">
+
 ```bash
 RUST_LOG=debug isoplane dev --project . \
   --configuration Debug --json \
   >isoplane-session.jsonl 2>isoplane-debug.jsonl
 ```
+
+</OnlyOn>
+
+<OnlyOn platforms="win">
+
+```powershell
+$env:RUST_LOG = "debug"
+try {
+    isoplane dev --project . --configuration Debug --json >isoplane-session.jsonl 2>isoplane-debug.jsonl
+}
+finally { Remove-Item Env:RUST_LOG }
+```
+
+</OnlyOn>
 
 The session file contains machine-readable ready and reload events. The debug
 file contains the runtime diagnostics to attach to the report.

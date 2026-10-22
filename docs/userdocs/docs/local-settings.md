@@ -2,6 +2,10 @@
 title: Supply local development settings
 ---
 
+import {OnlyOn, PlatformToggle} from '@site/src/components/Platform';
+
+<PlatformToggle />
+
 A local session takes its settings from the places an ASP.NET developer already
 uses. Later sources override earlier ones:
 
@@ -80,16 +84,30 @@ or run without one with `--no-launch-profile`.
 
 Prefix a setting with `ISOPLANE_APP_`:
 
+<OnlyOn platforms="mac linux">
+
 ```bash
 ISOPLANE_APP_ConnectionStrings__Todo="Host=..." dotnet run
 ```
+
+</OnlyOn>
+
+<OnlyOn platforms="win">
+
+```powershell
+$env:ISOPLANE_APP_ConnectionStrings__Todo = "Host=..."
+try { dotnet run }
+finally { Remove-Item Env:ISOPLANE_APP_ConnectionStrings__Todo }
+```
+
+</OnlyOn>
 
 Integration tests supply settings the same way through
 [`ApplicationOptions.Settings`](test-an-application.md).
 
 ## Try the application under tighter limits
 
-A local session runs with the largest limits the platform offers.
+A local session uses the [local defaults](execution-limits.md#local-defaults).
 [Execution limits](execution-limits.md) explains what each one measures. To see
 how the application behaves under smaller ones, add `isoplaneLimitsOverride` to a
 launch profile:
@@ -98,7 +116,7 @@ launch profile:
 "isoplaneLimitsOverride": {
   "memoryBytes": 134217728,
   "occupancyMsPerDispatch": 1000,
-  "subrequestsPerDispatch": 20,
+  "concurrentConnectionsPerInstance": 20,
   "pendingFuturesPerDispatch": 6
 }
 ```
@@ -118,9 +136,23 @@ certificate directory on Linux. It also trusts the public authorities Isoplane
 trusts when deployed. To trust a private authority for one run without
 installing it, name its PEM file in `SSL_CERT_FILE`:
 
+<OnlyOn platforms="mac linux">
+
 ```bash
 SSL_CERT_FILE=/path/to/private-ca.pem dotnet run
 ```
+
+</OnlyOn>
+
+<OnlyOn platforms="win">
+
+```powershell
+$env:SSL_CERT_FILE = "C:\certificates\private-ca.pem"
+try { dotnet run }
+finally { Remove-Item Env:SSL_CERT_FILE }
+```
+
+</OnlyOn>
 
 ## Settings and the template
 

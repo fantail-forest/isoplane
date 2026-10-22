@@ -2,6 +2,10 @@
 title: Build and run
 ---
 
+import {OnlyOn, PlatformToggle} from '@site/src/components/Platform';
+
+<PlatformToggle />
+
 Build managed application code with the ordinary .NET configurations:
 
 ```bash
@@ -70,16 +74,23 @@ To make them identical, set
 to a number of seconds since 1970, by convention the time of the commit being
 built:
 
+<OnlyOn platforms="mac linux">
+
 ```bash
 SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) dotnet run
 ```
 
-In PowerShell:
+</OnlyOn>
+
+<OnlyOn platforms="win">
 
 ```powershell
 $env:SOURCE_DATE_EPOCH = git log -1 --format=%ct
-dotnet run
+try { dotnet run }
+finally { Remove-Item Env:SOURCE_DATE_EPOCH }
 ```
+
+</OnlyOn>
 
 Every file in the package then carries that time. The application sees it as
 each file's modification time, and ASP.NET Core sends it as the `Last-Modified`

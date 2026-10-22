@@ -11,7 +11,8 @@
     "clear": "docusaurus clear",
     "generate:reference": "dotnet run --project ../../tools/ApiReference -p:IsoplaneManagedOnly=true -- docs/reference",
     "check:reference": "dotnet run --project ../../tools/ApiReference -p:IsoplaneManagedOnly=true -- docs/reference --check",
-    "prebuild": "pnpm run check:reference"
+    "prestart": "task --dir ../.. docs:limits",
+    "prebuild": "task --dir ../.. docs:limits && pnpm run check:reference"
   },
   "dependencies": {
     "@docusaurus/core": "3.10.2",

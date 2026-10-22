@@ -2,13 +2,17 @@
 title: Build a small lightweight web service
 ---
 
+import {OnlyOn, PlatformToggle} from '@site/src/components/Platform';
+
+<PlatformToggle />
+
 An Isoplane application does not have to use ASP.NET. A service can be a single
 static method that receives every HTTP request. In this tutorial you will create
 one from a template, run it, read the three methods Isoplane calls, and then add
 a route and a test of your own.
 
-Before starting, [install the tools](install.md). You also need `curl`; the
-commands are written for bash or zsh. Allow about ten minutes.
+Before starting, [install the tools](install.md). On macOS and Linux you also need `curl`; on Windows use PowerShell.
+Choose your operating system above for shell commands. Allow about ten minutes.
 
 ## 1. Create the project
 
@@ -39,9 +43,21 @@ command running and open a second terminal in the `HelloService` directory.
 
 ## 3. Call it
 
+<OnlyOn platforms="mac linux">
+
 ```bash
 curl "http://127.0.0.1:5241/hello?name=Ada"
 ```
+
+</OnlyOn>
+
+<OnlyOn platforms="win">
+
+```powershell
+(Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:5241/hello?name=Ada').Content
+```
+
+</OnlyOn>
 
 ```json
 {"message":"Hello, Ada!","name":"Ada"}
@@ -55,9 +71,21 @@ The first terminal shows the line the service logged while handling the request:
 
 This route sends its response in pieces, as it produces them:
 
+<OnlyOn platforms="mac linux">
+
 ```bash
 curl http://127.0.0.1:5241/countdown
 ```
+
+</OnlyOn>
+
+<OnlyOn platforms="win">
+
+```powershell
+(Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:5241/countdown').Content
+```
+
+</OnlyOn>
 
 ```text
 3
@@ -83,9 +111,21 @@ attributes.
 
 Ask the service which instance answered:
 
+<OnlyOn platforms="mac linux">
+
 ```bash
 curl http://127.0.0.1:5241/
 ```
+
+</OnlyOn>
+
+<OnlyOn platforms="win">
+
+```powershell
+(Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:5241/').Content
+```
+
+</OnlyOn>
 
 ```json
 {"application":"HelloService","instance":"72cae793-01b3-4d57-81b9-e89c51abeb34"}
@@ -150,9 +190,21 @@ prints:
 
 Call the new route four times:
 
+<OnlyOn platforms="mac linux">
+
 ```bash
 curl http://127.0.0.1:5241/tip
 ```
+
+</OnlyOn>
+
+<OnlyOn platforms="win">
+
+```powershell
+(Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:5241/tip').Content
+```
+
+</OnlyOn>
 
 ```json
 {"text":"Keep what must last in a database, not in memory."}

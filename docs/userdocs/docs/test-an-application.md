@@ -51,9 +51,10 @@ public sealed class ApplicationTests(SandboxFixture sandbox)
 }
 ```
 
-Run the tests with:
+From the directory where you created the test project, enter it and run:
 
 ```bash
+cd MyApi.Tests
 dotnet test
 ```
 

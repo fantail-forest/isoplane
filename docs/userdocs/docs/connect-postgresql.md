@@ -2,6 +2,10 @@
 title: Connect to PostgreSQL
 ---
 
+import {OnlyOn, PlatformToggle} from '@site/src/components/Platform';
+
+<PlatformToggle />
+
 This guide connects a small service to PostgreSQL through the Npgsql driver. You
 will create a service from the `isoplane-handler` template, start a local
 database in Docker, keep the connection string in User Secrets, and add two
@@ -12,8 +16,8 @@ is less code to build and to load into every instance than ASP.NET Core and
 Entity Framework Core. When you want those, [Build a small API](build-an-api.md)
 uses them with PostgreSQL.
 
-Before starting, [install the tools](install.md). You also need Docker and
-`curl`; the commands are written for bash or zsh.
+Before starting, [install the tools](install.md). You also need Docker. On macOS and Linux use `curl`; on Windows use
+PowerShell. Choose your operating system above for shell commands.
 
 ## 1. Create the project
 
@@ -29,10 +33,22 @@ template creates a service without ASP.NET; its `README.md` describes each file.
 
 ## 2. Start a local database
 
+<OnlyOn platforms="mac linux">
+
 ```bash
 docker run --name notes-db --detach --publish 127.0.0.1:5432:5432 \
   --env POSTGRES_PASSWORD=development postgres:17
 ```
+
+</OnlyOn>
+
+<OnlyOn platforms="win">
+
+```powershell
+docker run --name notes-db --detach --publish 127.0.0.1:5432:5432 --env POSTGRES_PASSWORD=development postgres:17
+```
+
+</OnlyOn>
 
 This runs the official PostgreSQL image, reachable only from your machine. The
 password is for this disposable database alone. If something already listens on
@@ -41,22 +57,51 @@ port in the connection string below.
 
 Wait for the database to accept connections, then create the table:
 
+<OnlyOn platforms="mac linux">
+
 ```bash
 until docker exec notes-db pg_isready --host 127.0.0.1 --quiet; do sleep 1; done
 docker exec notes-db psql -U postgres \
   -c 'CREATE TABLE notes (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, text text NOT NULL)'
 ```
 
+</OnlyOn>
+
+<OnlyOn platforms="win">
+
+```powershell
+do {
+    docker exec notes-db pg_isready --host 127.0.0.1 --quiet
+    $ready = $LASTEXITCODE -eq 0
+    if (-not $ready) { Start-Sleep -Seconds 1 }
+} until ($ready)
+docker exec notes-db psql -U postgres -c 'CREATE TABLE notes (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, text text NOT NULL)'
+```
+
+</OnlyOn>
+
 The service only reads and writes rows. You create and change tables yourself,
 with `psql`, your provider's SQL console or a migration tool.
 
 ## 3. Set the connection string
+
+<OnlyOn platforms="mac linux">
 
 ```bash
 dotnet user-secrets set "ConnectionStrings:Notes" \
   "Host=127.0.0.1;Port=5432;Username=postgres;Password=development" \
   --project src/NotesService
 ```
+
+</OnlyOn>
+
+<OnlyOn platforms="win">
+
+```powershell
+dotnet user-secrets set "ConnectionStrings:Notes" "Host=127.0.0.1;Port=5432;Username=postgres;Password=development" --project src/NotesService
+```
+
+</OnlyOn>
 
 [User Secrets](local-settings.md#keep-credentials-in-user-secrets) keep the
 password outside the project, and a local session passes them to the
@@ -187,10 +232,23 @@ When the service is ready, the command prints its address:
 
 Your port will differ. In a second terminal, add a note and list the notes:
 
+<OnlyOn platforms="mac linux">
+
 ```bash
 curl --json '{"text":"Buy milk"}' http://127.0.0.1:5236/notes
 curl http://127.0.0.1:5236/notes
 ```
+
+</OnlyOn>
+
+<OnlyOn platforms="win">
+
+```powershell
+(Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:5236/notes' -Method Post -ContentType 'application/json' -Body '{"text":"Buy milk"}').Content
+(Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:5236/notes').Content
+```
+
+</OnlyOn>
 
 ```json
 {"id":1,"text":"Buy milk"}
@@ -208,21 +266,14 @@ command, and list the notes: the note is still there.
 
 ## Local private trust
 
-A local session trusts the certificate authorities your machine trusts, as any
-.NET program does. For a local database with a private CA, obtain the CA
-certificate from whoever created that database, then either install it in your
-operating system's trust store or name its PEM file in
-[`SSL_CERT_FILE`](local-settings.md#reach-local-services-and-private-certificate-authorities)
-for one run:
+Isoplane adds no PostgreSQL-specific TLS settings. Use [Npgsql's TLS
+configuration](https://www.npgsql.org/doc/security.html#encryption-ssltls) for
+your database, as in any .NET application. The disposable local database above
+needs none.
 
-```bash
-SSL_CERT_FILE=/path/to/local-ca.pem dotnet run
-```
-
-The database certificate still needs a matching hostname or IP address and a
-valid chain. Trusting its CA does not disable those checks. Keep its private key
-on the database server, not in the application. Restart the development session
-after changing which authorities are trusted.
+If your database uses a private certificate authority, see
+[local certificate trust](local-settings.md#reach-local-services-and-private-certificate-authorities)
+for how to make that authority available to the sandbox.
 
 ## Clean up
 

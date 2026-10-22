@@ -22,7 +22,7 @@ namespace Isoplane;
 /// has none.
 /// </para>
 /// <para>
-/// Isoplane scales instances with traffic, up to the application’s plan limit, and may discard an
+/// Isoplane scales instances with traffic, up to the application’s instance limit, and may discard an
 /// instance between requests. Await work the response depends on before returning. Remaining work
 /// transfers to the instance’s bounded background allowance and may never finish. Keep durable state
 /// in a database or another external service.

@@ -25,13 +25,13 @@ A local session uses the first profile whose `commandName` is `Project`. Select 
 
 ## Keys of `isoplaneLimitsOverride`
 
-Each key is optional, and each value is a positive whole number. A local session otherwise runs with the largest limits the platform offers. [Execution limits](../execution-limits.md) explains what each limit measures.
+Each key is optional, and each value is a positive whole number. A local session otherwise uses the [local defaults](../execution-limits.md#local-defaults). [Execution limits](../execution-limits.md) explains what each limit measures.
 
 | Key | Description |
 | --- | --- |
 | `memoryBytes` | The instance soft memory limit, in bytes, with a 25% hard-limit margin for finishing work. Must be a multiple of 65536. |
 | `occupancyMsPerDispatch` | The running time one request may use, in milliseconds. Waiting does not count. Background work uses a separate instance allowance. |
-| `subrequestsPerDispatch` | The most outbound requests one dispatch may start. Not yet enforced for .NET applications. |
+| `concurrentConnectionsPerInstance` | The most outbound connections one instance may hold concurrently, including connections being opened and pooled connections. Closing a connection frees capacity. The host network ceiling still applies. |
 | `pendingFuturesPerDispatch` | The most asynchronous operations one dispatch may have pending at once. |
 
 ## Example

@@ -23,13 +23,14 @@ some, and one rule covers them all:
 
 Each entry says what fails and how to work around it today, with the size of
 that change. Where there is more than one way through, the entry says which we
-recommend and gives the other as an alternative. This list is meant to shrink:
-where a later release is expected to remove a problem, or to make its
-workaround smaller, the entry says so under "Looking ahead". [Packages that work](#works) and
+recommend and gives the other as an alternative. [Packages that work](#works) and
 [packages not checked yet](#not-checked) are at the end.
 
-Everything here was run in the sandbox with SDK 0.1.0, unless its
-entry says otherwise.
+These observations come from the `0.1.0-preview.4` development line; the
+record on this page was last reviewed at source revision `b181ecea`. Each entry
+names the package version and paths exercised, or says when a conclusion is
+inferred rather than tested. Recheck the paths your application uses when
+upgrading the SDK or a package.
 
 ## At a glance {#summary}
 
@@ -517,10 +518,13 @@ builder.Services.AddRateLimiter(options =>
 
 var app = builder.Build();
 app.UseRateLimiter();
+app.MapGet("/orders", () => Results.Ok()).RequireRateLimiting("api");
 ```
 
 The policy above is registered with [`AddRateLimiter`][AddRateLimiter] and
-[`AddFixedWindowLimiter`][AddFixedWindowLimiter].
+[`AddFixedWindowLimiter`][AddFixedWindowLimiter], then applied to `/orders` with
+`RequireRateLimiting("api")`. Registering a named policy alone does not limit any
+endpoint; apply it to each endpoint or route group that should use it.
 
 What to know before relying on it:
 
@@ -593,14 +597,6 @@ Each of the four has its own way out:
 
 Size of the change: moderate. The I/O moves to a place that can await it.
 
-#### Looking ahead
-
-These interfaces can only do I/O by
-[blocking](dotnet-runtime-differences.md#waits), so the I/O has to
-move. Where one is common enough, Isoplane can provide a replacement that
-makes the change smaller, as it does for
-[Data Protection keys](#data-protection).
-
 ### Connections and background work {#connections-and-background-work}
 
 Retained Redis connections work across requests, including with
@@ -618,8 +614,7 @@ complete.
   Statically rendered Blazor pages work. See [Incoming requests](dotnet-runtime-differences.md#incoming-requests).
 - **gRPC over HTTP/2** is unavailable, because requests arrive as HTTP/1.1.
   gRPC-Web works, which is a moderate change: it has to be enabled in the
-  service and in its clients. Whether HTTP/2 can be supported is not known
-  yet.
+  service and in its clients.
 - **A [`BackgroundService`][BackgroundService] that keeps running**, a
   scheduled job or a queue consumer cannot rely on continuous execution.
   Background callbacks have a bounded allowance and stop five minutes after
@@ -674,14 +669,6 @@ local development, [User Secrets](local-settings.md#keep-credentials-in-user-sec
 need none of this.
 
 Size of the change: moderate.
-
-#### Looking ahead
-
-The workaround should get smaller. An adapter library
-from Isoplane can provide an asynchronous registration method for each
-provider, which would make it one line.
-
-{/* TODO: say how settings and secrets reach a deployed application once that exists; it is expected to make this entry unnecessary for most applications. */}
 
 ## `Microsoft.Extensions.Logging.Console`
 
@@ -820,25 +807,6 @@ PostgreSQL through Npgsql works today; see
 
 Size of the change: large: a different database.
 
-#### Looking ahead
-
-What stands in the way is being worked on in the driver itself, so we expect
-this to change.
-
-- The driver's maintainers track the blocking sign-in as a known problem
-  ([dotnet/SqlClient#979][sqlclient-979]), under their work to
-  [improve the asynchronous paths of its connection APIs][sqlclient-3459].
-- In October 2026 they wrote that `OpenAsync` "is not yet fully asynchronous
-  down to each individual network call" and that
-  [future work will correct it][sqlclient-pool-v2]. They gave no date.
-- The missing asynchronous commit and rollback are
-  [known to them as well][sqlclient-2215].
-
-Once those paths no longer block, the rest is ours to do: Isoplane has to
-select the driver's managed implementation for its platform, which needs no
-change to your code. We will recheck SQL Server as the driver's releases
-arrive.
-
 ### SQLite {#sqlite}
 
 Isoplane's runtime includes SQLite 3.54, so
@@ -957,13 +925,6 @@ clusters.
 Size of the change: small in code, but for most applications it also means a
 different deployment, one MongoDB does not support for production.
 
-#### Looking ahead
-
-Every other deployment waits on the driver's threads. Its maintainers moved
-monitoring onto dedicated threads [on purpose][csharp-3761], and in 2023
-[declined a request to use fewer][csharp-4661]. Nobody has yet asked them to
-support a runtime without threads, so there is no work under way to cite.
-
 ## Caching
 
 ### Redis {#redis}
@@ -1059,7 +1020,7 @@ sends each request's spans after its response. Add the package, and call
 `AddIsoplaneOtlpExporter` in place of `AddOtlpExporter`:
 
 ```bash
-dotnet add package Isoplane.OpenTelemetry
+dotnet add package Isoplane.OpenTelemetry --version 0.1.0-preview.5
 ```
 
 ```csharp
@@ -1141,13 +1102,6 @@ template is a server set up this way.
 
 Size of the change: small for a server that only answers tool calls. A
 server that depends on sampling or elicitation has no workaround.
-
-#### Looking ahead
-
-Session tracking keeps each session in memory between
-requests and tidies up from a background service. The service requires continuous
-execution, which Isoplane does not provide, and successive requests need not
-reach the same instance.
 
 ## Packages that work {#works}
 
@@ -1269,8 +1223,6 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [Controller.TempData]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.mvc.controller.tempdata
 [CryptographicException]: https://learn.microsoft.com/dotnet/api/system.security.cryptography.cryptographicexception
 [CryptoStream]: https://learn.microsoft.com/dotnet/api/system.security.cryptography.cryptostream
-[csharp-3761]: https://jira.mongodb.org/browse/CSHARP-3761
-[csharp-4661]: https://jira.mongodb.org/browse/CSHARP-4661
 [dapper]: https://www.learndapper.com/
 [DbConnection.OpenAsync]: https://learn.microsoft.com/dotnet/api/system.data.common.dbconnection.openasync
 [DbContext.SaveChanges]: https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontext.savechanges
@@ -1332,10 +1284,6 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [serilog-aspnetcore]: https://github.com/serilog/serilog-aspnetcore
 [serilog-console]: https://github.com/serilog/serilog-sinks-console
 [Socket]: https://learn.microsoft.com/dotnet/api/system.net.sockets.socket
-[sqlclient-2215]: https://github.com/dotnet/SqlClient/issues/2215
-[sqlclient-3459]: https://github.com/dotnet/SqlClient/issues/3459
-[sqlclient-979]: https://github.com/dotnet/SqlClient/issues/979
-[sqlclient-pool-v2]: https://devblogs.microsoft.com/azure-sql/try-sqlclients-new-connection-pool-for-faster-parallel-connections/
 [SqlConnection]: https://learn.microsoft.com/dotnet/api/microsoft.data.sqlclient.sqlconnection
 [SqliteException]: https://learn.microsoft.com/dotnet/api/microsoft.data.sqlite.sqliteexception
 [StackExchange.Redis]: https://stackexchange.github.io/StackExchange.Redis/

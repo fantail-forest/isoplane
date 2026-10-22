@@ -2,6 +2,10 @@
 title: How .NET differs on Isoplane
 ---
 
+import {OnlyOn, PlatformToggle} from '@site/src/components/Platform';
+
+<PlatformToggle />
+
 An Isoplane application is ordinary .NET code, but it runs inside a sandbox
 rather than as a process on a server, and that changes some of what .NET lets
 you do. Most of the differences on this page come from two design decisions:
@@ -74,13 +78,13 @@ first dispatch. The rest of the time an instance sits idle, without occupying a
 guest worker thread. Host I/O polls still consume accounted worker time, and
 Isoplane can set the instance aside or discard it whenever it needs the room.
 
-### Running time {#resource-usage}
+### How running time is counted {#resource-usage}
 
 Each HTTP request has a
 [running-time allowance](execution-limits.md#running-time). Instance background
 work uses a separate [allowance](execution-limits.md#after-the-response), which
 is replenished by elapsed host time and unused request time. A wake does not
-create a fresh background budget.
+create a new request allowance or a fresh background budget.
 
 Both allowances charge occupied execution and reactor workers. Time parked on
 I/O, waiting in a queue or waiting for background credit is excluded.
@@ -320,8 +324,8 @@ to its instance, including when no request is running.
 
 #### Running timers between requests {#run-timers-between-requests}
 
-Background dispatches use the instance's
-background allowance, including donated unused request time. This also applies
+Background dispatches use the instance's background allowance, including
+donated unused request time. This also applies
 to timers maintained by libraries such as connection pools.
 
 An idle instance with background work or open connections is stopped after five
@@ -424,9 +428,25 @@ builder.Services.AddDataProtection().UseConfiguredKeys();
 It reads `DataProtection:Keys:0`, which must be at least 32 random bytes in
 Base64. For local development, keep it in User Secrets:
 
+<OnlyOn platforms="mac linux">
+
 ```bash
 dotnet user-secrets set "DataProtection:Keys:0" "$(openssl rand -base64 48)"
 ```
+
+</OnlyOn>
+
+<OnlyOn platforms="win">
+
+```powershell
+$key = New-Object byte[] 48
+$random = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+try { $random.GetBytes($key) }
+finally { $random.Dispose() }
+dotnet user-secrets set "DataProtection:Keys:0" ([Convert]::ToBase64String($key))
+```
+
+</OnlyOn>
 
 The application refuses to start without a usable secret. To replace a key,
 put the new secret at `DataProtection:Keys:0` and move the old one to

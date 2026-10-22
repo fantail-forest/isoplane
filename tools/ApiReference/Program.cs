@@ -324,7 +324,7 @@ Other packages each adapt one library an ASP.NET application may use. They are s
 
 ## Words these pages use
 
-- **Instance.** One running copy of your application. Isoplane scales instances with traffic up to the application’s plan limit and may discard one between requests, so memory is not a place to keep anything that must last.
+- **Instance.** One running copy of your application. Isoplane scales instances with traffic up to the application’s instance limit and may discard one between requests, so memory is not a place to keep anything that must last.
 - **Template.** Isoplane starts your application once ahead of time and saves its memory. That saved memory is the template, and every instance starts as a copy of it. Work done before the template is saved is done once; state created then is identical in every instance.
 - **Initialization.** The start-up work that runs before the template is saved: [`Initialization.Initializing`](sdk/Isoplane.Sdk/Isoplane/Initialization/Initializing.md), or an [`[Initializer]`](sdk/Isoplane.Sdk/Isoplane/InitializerAttribute.md) method.
 - **Activation.** The moment an instance starts from the template, before its first request: [`Activation.Activated`](sdk/Isoplane.Sdk/Isoplane/Activation/Activated.md), or an [`[Activated]`](sdk/Isoplane.Sdk/Isoplane/ActivatedAttribute.md) method. State that must differ between instances is created here.
@@ -465,7 +465,7 @@ A local session uses the first profile whose `commandName` is `Project`. Select 
 
 ## Keys of `isoplaneLimitsOverride`
 
-Each key is optional, and each value is a positive whole number. A local session otherwise runs with the largest limits the platform offers. [Execution limits](../execution-limits.md) explains what each limit measures.
+Each key is optional, and each value is a positive whole number. A local session otherwise uses the [local defaults](../execution-limits.md#local-defaults). [Execution limits](../execution-limits.md) explains what each limit measures.
 
 {limits}
 

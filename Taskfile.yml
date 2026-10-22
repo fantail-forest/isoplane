@@ -67,6 +67,12 @@ includes:
   scenarios: taskfiles/scenarios.yml
 
 tasks:
+  docs:limits:
+    desc: Generate local execution limits for the customer docs
+    deps: [initialize]
+    cmds:
+      - '{{.DEVELOPMENT_COMMAND}}cargo run --quiet -p isoplane-abi --example local_limits > docs/userdocs/docs/_local-limits.mdx'
+
   initialize:
     internal: true
     run: once

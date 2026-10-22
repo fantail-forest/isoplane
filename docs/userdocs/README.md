@@ -23,8 +23,7 @@ preview accessible from another machine. Nothing is published by these commands.
 The site is served at `https://isoplane.dev/docs/` by its own Cloudflare Worker,
 `isoplane-docs`. `pnpm run deploy:prod` builds the site and uploads it.
 
-While `noIndex` is set in `docusaurus.config.js`, pages carry a `noindex`
-robots tag and no sitemap is generated.
+The site permits indexing and generates a sitemap at `/docs/sitemap.xml`.
 
 The site takes its palette from `docs/userdocs/src/css/tokens.css` and uses
 root-relative addresses for its wordmark and Blog links.
@@ -38,3 +37,6 @@ The sidebar groups pages by these needs; each page has one primary purpose. Run
 tutorial commands against installed packages from a fresh directory before claiming that the workflow works. Keep
 internal paths, repository build steps and unvalidated future commands out of
 the guide. Both links and anchors are checked by the static build.
+
+Starting or building the site generates the local limits table through Task and
+Cargo. Building also checks the retained SDK reference against the .NET assemblies.
