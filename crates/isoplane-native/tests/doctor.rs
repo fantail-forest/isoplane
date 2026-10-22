@@ -103,7 +103,7 @@ fn doctor_prints_the_capability_manifest_with_its_policy_bits() {
             ],
         ),
     );
-    let out = run(&["doctor", "--no-color", p.to_str().unwrap()]);
+    let out = run(&["doctor", p.to_str().unwrap()]);
     assert_eq!(out.code, Some(0), "stderr: {}", out.stderr);
 
     assert!(
@@ -158,7 +158,7 @@ fn doctor_rejects_a_module_that_reaches_for_an_undeclared_capability() {
             ],
         ),
     );
-    let out = run(&["doctor", "--no-color", p.to_str().unwrap()]);
+    let out = run(&["doctor", p.to_str().unwrap()]);
     assert_eq!(out.code, Some(2), "a rejected module must exit 2");
     assert!(
         out.stdout.contains("V1")
@@ -194,7 +194,7 @@ fn doctor_accepts_the_wasi_imports_the_pal_whitelist_covers() {
         ),
     );
 
-    let out = run(&["doctor", "--no-color", p.to_str().unwrap()]);
+    let out = run(&["doctor", p.to_str().unwrap()]);
     assert_eq!(
         out.code,
         Some(0),
@@ -263,7 +263,7 @@ fn a_wasi_import_outside_the_whitelist_is_still_refused() {
             ],
         ),
     );
-    let out = run(&["doctor", "--no-color", p.to_str().unwrap()]);
+    let out = run(&["doctor", p.to_str().unwrap()]);
     assert_eq!(
         out.code,
         Some(2),
@@ -283,7 +283,7 @@ fn doctor_notices_a_module_that_cannot_be_activated_at_all() {
         "noexports.wasm",
         &module(&[("isoplane", "http_fetch")], &["memory"]),
     );
-    let out = run(&["doctor", "--no-color", p.to_str().unwrap()]);
+    let out = run(&["doctor", p.to_str().unwrap()]);
     assert_eq!(
         out.code,
         Some(2),
@@ -349,7 +349,7 @@ fn doctor_says_so_when_a_module_holds_no_io_capability_at_all() {
             ],
         ),
     );
-    let out = run(&["doctor", "--no-color", p.to_str().unwrap()]);
+    let out = run(&["doctor", p.to_str().unwrap()]);
     assert_eq!(out.code, Some(0), "a pure module is accepted");
     assert!(
         out.stdout.contains("it holds no I/O capability at all"),
@@ -383,7 +383,6 @@ fn doctor_fails_a_module_the_manifest_alone_would_pass() {
 
     let ok = run(&[
         "doctor",
-        "--no-color",
         p.to_str().unwrap(),
         "--guest-memory-bytes",
         "536870912",
@@ -398,7 +397,6 @@ fn doctor_fails_a_module_the_manifest_alone_would_pass() {
 
     let bad = run(&[
         "doctor",
-        "--no-color",
         p.to_str().unwrap(),
         "--guest-memory-bytes",
         "134217728",
@@ -452,20 +450,14 @@ fn doctor_takes_the_memory_ceiling_from_its_flag() {
     );
     let path = path.to_str().unwrap();
 
-    let default = run(&["doctor", "--no-color", path]);
+    let default = run(&["doctor", path]);
     assert_eq!(
         default.code,
         Some(2),
         "the default limits refuses memory only the larger memory ceiling admits: {}",
         default.stdout
     );
-    let out = run(&[
-        "doctor",
-        "--no-color",
-        path,
-        "--guest-memory-bytes",
-        "536870912",
-    ]);
+    let out = run(&["doctor", path, "--guest-memory-bytes", "536870912"]);
     assert_eq!(
         out.code,
         Some(0),
@@ -539,21 +531,24 @@ fn doctor_admits_an_explicit_memory_override_without_changing_numeric_limits() {
             Some(8192),
         ),
     );
-    for format in ["--json", "--no-color"] {
-        let out = run(&[
+    for json in [true, false] {
+        let mut arguments = vec![
             "doctor",
-            format,
             path.to_str().unwrap(),
             "--guest-memory-bytes",
             "536870912",
-        ]);
+        ];
+        if json {
+            arguments.push("--json");
+        }
+        let out = run(&arguments);
         assert_eq!(
             out.code,
             Some(0),
             "the explicit ceiling must admit the bounded module: {}",
             out.stdout
         );
-        if format == "--json" {
+        if json {
             let verdict: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
 
             assert_eq!(

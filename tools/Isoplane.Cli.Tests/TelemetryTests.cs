@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -65,6 +64,24 @@ public sealed class TelemetryTests : IDisposable
         var sent = JsonDocument.Parse(Assert.Single(service.Requests)).RootElement.GetProperty("events").EnumerateArray().ToArray();
         Assert.Equal(earlier, Assert.Single(sent).GetProperty("id").GetGuid());
         Assert.Equal(current + ".json", Assert.Single(Pending()));
+    }
+
+    [Theory]
+    [InlineData("complete", "isoplane bundle --out")]
+    [InlineData("completions", "bash")]
+    public async Task Completion_neither_reads_telemetry_context_nor_sends_queued_events(string command, string argument)
+    {
+        Seen();
+        Queue(Guid.NewGuid());
+        var reads = 0;
+        var host = Host() with { Environment = _ => { reads++; return null; } };
+        var run = CommandTelemetry.Begin([command, argument], host);
+        run.Ended(0);
+        await run.Upload;
+        Assert.Equal(0, reads);
+        Assert.Empty(service.Requests);
+        Assert.Empty(error.ToString());
+        Assert.Single(Pending());
     }
 
     [Theory]
@@ -366,17 +383,9 @@ public sealed class TelemetryTests : IDisposable
     }
 
     [Fact]
-    public async Task Every_command_the_help_describes_has_a_telemetry_name()
+    public void Every_command_the_parser_accepts_has_a_telemetry_name_or_is_excluded()
     {
-        var start = new ProcessStartInfo("dotnet") { UseShellExecute = false, RedirectStandardOutput = true };
-        start.ArgumentList.Add(typeof(CliPaths).Assembly.Location);
-        start.ArgumentList.Add("--help");
-        using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start the CLI.");
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        var help = await process.StandardOutput.ReadToEndAsync(deadline.Token);
-        await process.WaitForExitAsync(deadline.Token);
-        var commands = Regex.Matches(help, @"^isoplane ([a-z|-]+)", RegexOptions.Multiline)
-            .SelectMany(match => match.Groups[1].Value.Split('|')).Distinct().Except(["telemetry"]).ToArray();
+        var commands = CliCommandLine.Create().Subcommands.Select(command => command.Name).ToArray();
         Assert.Contains("bundle", commands);
         Assert.All(commands, command => Assert.NotEqual(TelemetryCommand.Unknown, CommandNames.Classify([command])));
     }

@@ -6,63 +6,25 @@ internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool W
 {
     internal static DevelopmentOptions Parse(string[] arguments)
     {
-        IPEndPoint? debugLaunchEndpoint = null;
-        var configuration = "Debug";
-        var noBuild = false;
-        var directory = Environment.CurrentDirectory;
+        var parsed = CliCommandLine.Parse(["dev", .. arguments]);
+        var directory = Path.GetFullPath(parsed.GetValue<string>("--project") ?? Environment.CurrentDirectory);
+        var configuration = parsed.GetValue<string>("--configuration") ?? "Debug";
+        var noBuild = parsed.GetValue<bool>("--no-build");
+        var watch = !parsed.GetValue<bool>("--no-watch");
+        var json = parsed.GetValue<bool>("--json");
+        var debug = parsed.GetValue<bool>("--debug");
+        var shutdownOnInputClose = parsed.GetValue<bool>("--shutdown-on-stdin-close");
+        var launchProfile = parsed.GetValue<string>("--launch-profile");
+        var useLaunchProfile = !parsed.GetValue<bool>("--no-launch-profile");
         ushort? port = null;
-        var watch = true;
-        var json = false;
-        var debug = false;
-        var shutdownOnInputClose = false;
-        string? launchProfile = null;
-        var useLaunchProfile = true;
-        for (var index = 0; index < arguments.Length; index++)
-        {
-            switch (arguments[index])
-            {
-                case "--configuration" when index + 1 < arguments.Length:
-                case "-c" when index + 1 < arguments.Length:
-                    configuration = arguments[++index];
-                    break;
-                case "--project" when index + 1 < arguments.Length:
-                    directory = Path.GetFullPath(arguments[++index]);
-                    break;
-                case "--port" when index + 1 < arguments.Length:
-                    if (!ushort.TryParse(arguments[++index], out var parsedPort))
-                        throw new ArgumentException("--port must be between 0 and 65535.");
-                    port = parsedPort;
-                    break;
-                case "--debug-launch-endpoint" when index + 1 < arguments.Length:
-                    if (!IPEndPoint.TryParse(arguments[++index], out debugLaunchEndpoint)
-                        || !debugLaunchEndpoint.Address.Equals(IPAddress.Loopback) || debugLaunchEndpoint.Port == 0)
-                        throw new ArgumentException("--debug-launch-endpoint requires an IPv4 loopback endpoint with a nonzero port.");
-                    break;
-                case "--launch-profile" when index + 1 < arguments.Length:
-                    launchProfile = arguments[++index];
-                    break;
-                case "--no-launch-profile":
-                    useLaunchProfile = false;
-                    break;
-                case "--debug":
-                    debug = true;
-                    break;
-                case "--json":
-                    json = true;
-                    break;
-                case "--shutdown-on-stdin-close":
-                    shutdownOnInputClose = true;
-                    break;
-                case "--no-build":
-                    noBuild = true;
-                    break;
-                case "--no-watch":
-                    watch = false;
-                    break;
-                default:
-                    throw new ArgumentException($"Invalid or incomplete option '{arguments[index]}'. Run isoplane --help.");
-            }
-        }
+        if (parsed.GetValue<string>("--port") is { } portText)
+            port = ushort.TryParse(portText, out var parsedPort) ? parsedPort
+                : throw new ArgumentException("--port must be between 0 and 65535.");
+        IPEndPoint? debugLaunchEndpoint = null;
+        if (parsed.GetValue<string>("--debug-launch-endpoint") is { } endpoint
+            && (!IPEndPoint.TryParse(endpoint, out debugLaunchEndpoint)
+                || !debugLaunchEndpoint.Address.Equals(IPAddress.Loopback) || debugLaunchEndpoint.Port == 0))
+            throw new ArgumentException("--debug-launch-endpoint requires an IPv4 loopback endpoint with a nonzero port.");
         if (debugLaunchEndpoint is not null && !debug)
             throw new ArgumentException("--debug-launch-endpoint requires --debug.");
         if (noBuild && watch)

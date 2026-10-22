@@ -9,7 +9,8 @@ public sealed class HelpTests
     [Theory]
     [InlineData("bundle", "-h")]
     [InlineData("setup", "--help")]
-    public async Task Command_help_does_not_require_configuration_or_start_the_command(string command, string option)
+    [InlineData("completions", "--help")]
+    public async Task Command_help_does_not_require_configuration_or_start_the_command(params string[] arguments)
     {
         var start = new ProcessStartInfo("dotnet")
         {
@@ -18,8 +19,7 @@ public sealed class HelpTests
             RedirectStandardError = true,
         };
         start.ArgumentList.Add(typeof(CliPaths).Assembly.Location);
-        start.ArgumentList.Add(command);
-        start.ArgumentList.Add(option);
+        foreach (var argument in arguments) start.ArgumentList.Add(argument);
         using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start the CLI help command.");
         var output = process.StandardOutput.ReadToEndAsync();
         var errors = process.StandardError.ReadToEndAsync();
@@ -28,7 +28,7 @@ public sealed class HelpTests
         {
             await process.WaitForExitAsync(deadline.Token);
             Assert.True(process.ExitCode == 0, $"Command help must succeed without command arguments: {await errors}");
-            Assert.True((await output).Contains($"isoplane {command}", StringComparison.Ordinal),
+            Assert.True((await output).Contains($"isoplane {string.Join(' ', arguments[..^1])}", StringComparison.Ordinal),
                 "Help must describe the requested command.");
         }
         finally

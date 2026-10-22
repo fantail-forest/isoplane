@@ -11,9 +11,8 @@ internal static class RuntimePreparationCommand
 {
     internal static int Run(string[] arguments, string cacheDirectory, TextWriter output)
     {
-        var runtime = arguments is ["prepare-runtime", "--runtime", var directory]
-            ? new SharedRuntime(Path.GetFullPath(directory))
-            : throw new ArgumentException("Use isoplane prepare-runtime --runtime DIRECTORY, naming the directory that holds the shared runtime and its runtime.json.");
+        var parsed = CliCommandLine.Parse(arguments);
+        var runtime = new SharedRuntime(Path.GetFullPath(parsed.GetValue<string>("--runtime")!));
         // Sessions guest-read the machine's roots, and the compiled runtime depends on them.
         var trust = Directory.CreateTempSubdirectory("isoplane-prepare-runtime-");
         try

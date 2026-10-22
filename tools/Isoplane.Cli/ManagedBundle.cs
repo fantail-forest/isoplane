@@ -9,21 +9,10 @@ internal sealed record BundleOptions(string Directory, string Configuration, str
 {
     internal static BundleOptions Parse(string[] arguments)
     {
-        var directory = Environment.CurrentDirectory;
-        var configuration = "Release";
-        string? output = null;
-        for (var index = 0; index < arguments.Length; index++)
-        {
-            var option = arguments[index];
-            if (++index == arguments.Length) throw new ArgumentException($"{option} requires a value.");
-            switch (option)
-            {
-                case "--project": directory = Path.GetFullPath(arguments[index]); break;
-                case "--configuration": configuration = arguments[index]; break;
-                case "--output": output = Path.GetFullPath(arguments[index]); break;
-                default: throw new ArgumentException($"Unknown bundle option '{option}'.");
-            }
-        }
+        var parsed = CliCommandLine.Parse(["bundle", .. arguments]);
+        var directory = Path.GetFullPath(parsed.GetValue<string>("--project") ?? Environment.CurrentDirectory);
+        var configuration = parsed.GetValue<string>("--configuration") ?? "Release";
+        var output = parsed.GetValue<string>("--output") is { } path ? Path.GetFullPath(path) : null;
         if (string.IsNullOrWhiteSpace(configuration)) throw new ArgumentException("The build configuration must not be empty.");
         return new(directory, configuration, output ?? throw new ArgumentException("bundle requires --output FILE."));
     }

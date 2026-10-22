@@ -9,29 +9,15 @@ internal static class ModuleDoctor
 {
     internal static int Run(string[] arguments)
     {
-        string? module = null;
+        var parsed = CliCommandLine.Parse(arguments);
+        var module = Path.GetFullPath(parsed.GetValue<string>("module")
+            ?? throw new ArgumentException("Module validation requires a module path."));
+
+        var json = parsed.GetValue<bool>("--json");
         ulong? memoryBytes = null;
-        var json = false;
-        for (var index = 1; index < arguments.Length; index++)
-        {
-            var argument = arguments[index];
-            switch (argument)
-            {
-                case "--json": json = true; break;
-                case "--no-color": break;
-                case "--guest-memory-bytes":
-                    if (!ulong.TryParse(Value(arguments, ref index), NumberStyles.None, CultureInfo.InvariantCulture, out var bytes))
-                        throw new ArgumentException("--guest-memory-bytes requires a positive integer byte count.");
-                    memoryBytes = bytes;
-                    break;
-                default:
-                    if (argument.StartsWith('-') || module is not null)
-                        throw new ArgumentException($"Unexpected module doctor argument: {argument}");
-                    module = Path.GetFullPath(argument);
-                    break;
-            }
-        }
-        if (module is null) throw new ArgumentException("Usage: isoplane doctor MODULE [--guest-memory-bytes BYTES] [--json]");
+        if (parsed.GetValue<string>("--guest-memory-bytes") is { } memoryText)
+            memoryBytes = ulong.TryParse(memoryText, NumberStyles.None, CultureInfo.InvariantCulture, out var bytes)
+                ? bytes : throw new ArgumentException("--guest-memory-bytes requires a positive integer byte count.");
         var policy = ResolvePolicy(memoryBytes);
         var report = ModuleValidator.Validate(File.ReadAllBytes(module), JsonSerializer.SerializeToUtf8Bytes(policy.Settings));
         report["limits_from"] = policy.LimitsFrom;
@@ -39,12 +25,6 @@ internal static class ModuleDoctor
         if (json) Console.WriteLine(report.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
         else Render(module, report);
         return report["rejected"]!.GetValue<bool>() ? 2 : 0;
-    }
-
-    private static string Value(string[] arguments, ref int index)
-    {
-        if (++index == arguments.Length) throw new ArgumentException($"{arguments[index - 1]} requires a value.");
-        return arguments[index];
     }
 
     /// <summary>

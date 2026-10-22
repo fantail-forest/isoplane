@@ -96,6 +96,7 @@ internal sealed class CommandTelemetry
 
     private static CommandTelemetry Begin(string[] args, Func<TelemetryHost> host)
     {
+        if (args is ["complete" or "completions", ..]) return new();
         try { return new(args, host()); }
         // Telemetry never fails a command or speaks up about itself; a run whose recording cannot start goes unrecorded.
         catch (Exception) { return new(); }

@@ -29,11 +29,18 @@ async Task<int> RunAsync()
         Console.WriteLine($"isoplane {identity.Version}+{identity.SourceRevision}");
         return 0;
     }
-    if (CommandNames.AsksForHelp(args))
+    var parsed = CliCommandLine.Create().Parse(args.Length == 0 ? ["--help"] : args);
+    if (parsed.Action is System.CommandLine.Help.HelpAction) return await parsed.InvokeAsync();
+    if (parsed.Errors.Count > 0)
+        throw new ArgumentException(string.Join(Environment.NewLine, parsed.Errors.Select(error => error.Message)));
+    if (args[0] == "completions")
     {
-        Console.WriteLine("isoplane dev [--project DIRECTORY] [--configuration CONFIGURATION] [--port PORT] [--launch-profile NAME | --no-launch-profile] [--no-watch] [--no-build] [--debug] [--json] [--shutdown-on-stdin-close]\nThe port, environment variables and isoplaneLimitsOverride come from the selected profile of Properties/launchSettings.json; --port overrides its applicationUrl.\nEnvironment variables named ISOPLANE_APP_<Key> supply application settings, with __ for a colon; they override the profile and User Secrets.\n--debug preserves the debugger connection across requests and source rebuilds.\n--no-build requires --no-watch and uses existing compiled assemblies.\nisoplane debug-adapter\nServe the Debug Adapter Protocol on standard input/output.\nisoplane setup [--source RELEASE_DIRECTORY|URL] [--yes]\nCheck prerequisites and install matching project templates; --yes installs missing native prerequisites without prompting.\nisoplane uninstall-sdk\nRemove everything setup installed, keeping the CLI.\nisoplane cache info|clean\nShow or remove the compiled runtimes that sessions of every project share. They are kept in ISOPLANE_CACHE_DIR when it is set, else in your user cache directory.\nisoplane prepare-runtime --runtime DIRECTORY\nCompile the shared runtime in DIRECTORY, an SDK's tools/runtime folder, into that cache before the first session needs it.\nSet ISOPLANE_TARGET_DIR to keep each project's package and session files under that directory, outside the project.\nisoplane doctor\nCheck this machine: the .NET SDK, the native host library and the templates.\nisoplane doctor MODULE [--guest-memory-bytes BYTES] [--json]\nValidate a WebAssembly module against the platform's rules.\nisoplane --version");
-        Console.WriteLine("isoplane bundle --output FILE [--project DIRECTORY] [--configuration CONFIGURATION]\nCompile managed deployment input as a managed application archive.");
-        Console.WriteLine($"isoplane telemetry status|enable|disable\nShow or change whether anonymous usage data is collected. Setting {TelemetryVariables.OptOut.Name}=1 or {TelemetryVariables.DoNotTrack.Name}=1 also turns it off, and {TelemetryVariables.Debug.Name}=1 prints each event without recording or sending it.");
+        Console.WriteLine(ShellCompletions.Script(Enum.Parse<CompletionShell>(parsed.GetValue<string>("shell")!, ignoreCase: true)));
+        return 0;
+    }
+    if (args[0] == "complete")
+    {
+        foreach (var candidate in ShellCompletions.Candidates(parsed.GetValue<string>("line")!)) Console.WriteLine(candidate);
         return 0;
     }
     if (args[0] == "telemetry") return TelemetryCommands.Run(args, TelemetryHost.OfRunningCli(), Console.Out);

@@ -144,6 +144,46 @@ and open a new terminal.
 
 </OnlyOn>
 
+## Enable shell completions
+
+`isoplane completions` prints the setup script for your shell. The script asks
+the installed CLI for command names, options and supported shell names as you
+type, so suggestions stay current when you update the CLI. Completion does not
+require setup, sign-in or a configured server.
+
+**Bash:** add this line to `~/.bashrc`, then open a new terminal:
+
+```bash
+source <(isoplane completions bash)
+```
+
+**Zsh:** add these lines to `~/.zshrc`, then open a new terminal. If your shell
+configuration already runs `compinit`, keep only the last line after it:
+
+```zsh
+autoload -Uz compinit
+compinit
+source <(isoplane completions zsh)
+```
+
+**Fish:** save the script in fish's completion directory:
+
+```fish
+mkdir -p ~/.config/fish/completions
+isoplane completions fish > ~/.config/fish/completions/isoplane.fish
+```
+
+**PowerShell:** add this line to your profile (`$PROFILE`), then open a new
+terminal:
+
+```powershell
+isoplane completions powershell | Out-String | Invoke-Expression
+```
+
+For example, type `isoplane deploy --bu` and press Tab to complete `--bundle`.
+The script does not suggest remote application names or team names. Remove the
+line from your shell profile, or the fish completion file, to disable it.
+
 ## Run setup
 
 ```bash

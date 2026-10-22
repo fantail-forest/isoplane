@@ -7,18 +7,8 @@ internal sealed record SetupOptions(string? Source, bool AssumeYes)
 {
     internal static SetupOptions Parse(string[] args)
     {
-        string? source = null;
-        var yes = false;
-        for (var index = 1; index < args.Length; index++)
-        {
-            switch (args[index])
-            {
-                case "--source" when index + 1 < args.Length: source = args[++index]; break;
-                case "--yes" or "-y": yes = true; break;
-                default: throw new ArgumentException($"Unknown setup option '{args[index]}'. Usage: isoplane setup [--source DIRECTORY|URL] [--yes]");
-            }
-        }
-        return new(source, yes);
+        var parsed = CliCommandLine.Parse(args);
+        return new(parsed.GetValue<string>("--source"), parsed.GetValue<bool>("--yes"));
     }
 }
 

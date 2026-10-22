@@ -67,11 +67,11 @@ internal static class CommandNames
 
     /// <summary>
     /// The name a run is recorded under, or null for a run that is not recorded: help, the version and the
-    /// telemetry command itself. A first argument that names no command is <see cref="TelemetryCommand.Unknown"/>.
+    /// telemetry and completion commands themselves. A first argument that names no command is <see cref="TelemetryCommand.Unknown"/>.
     /// </summary>
     internal static TelemetryCommand? Classify(string[] args)
     {
-        if (AsksForHelp(args) || args is ["--version"] || args[0] == "telemetry") return null;
+        if (AsksForHelp(args) || args is ["--version"] || args[0] is "telemetry" or "complete" or "completions") return null;
         if (args[0] == "doctor") return args.Length == 1 ? TelemetryCommand.Doctor : TelemetryCommand.DoctorModule;
         return Named.GetValueOrDefault(args[0], TelemetryCommand.Unknown);
     }
