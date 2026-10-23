@@ -82,7 +82,7 @@ internal sealed class CommandTelemetry
             Upload = UploadAsync(host, endpoint, uploading.Token);
         }
         // Where nobody would read the notice, nothing is recorded until a run that can show it.
-        else if (args is not ["telemetry", ..] && (!host.ErrorRedirected || context.Ci))
+        else if (!host.ErrorRedirected || context.Ci)
         {
             host.State.Save(state with { NoticeShown = true });
             host.Error.WriteLine(Notice);
@@ -96,7 +96,7 @@ internal sealed class CommandTelemetry
 
     private static CommandTelemetry Begin(string[] args, Func<TelemetryHost> host)
     {
-        if (args is ["complete" or "completions", ..]) return new();
+        if (args is ["telemetry" or "complete" or "completions", ..]) return new();
         try { return new(args, host()); }
         // Telemetry never fails a command or speaks up about itself; a run whose recording cannot start goes unrecorded.
         catch (Exception) { return new(); }

@@ -111,8 +111,26 @@ public sealed class TelemetryTests : IDisposable
         Assert.NotNull(identifier);
         Assert.Equal($"Telemetry is enabled. Installation identifier: {identifier:D}", Status());
 
-        Assert.Equal(0, TelemetryCommands.Run(["telemetry", "disable"], Host(), TextWriter.Null));
+        service.Answer = HttpStatusCode.Accepted;
+        var clients = 0;
+        var contextReads = 0;
+        var host = Host() with
+        {
+            Environment = name => { contextReads++; return environment.GetValueOrDefault(name); },
+            CreateClient = () => { clients++; return new HttpClient(service, disposeHandler: false); }
+        };
+        string[] args = ["telemetry", "disable"];
+        Assert.Empty(CliCommandLine.Parse(args).Errors);
+        var disabling = CommandTelemetry.Begin(args, host);
+        await disabling.Upload.WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.Equal(0, clients);
+        Assert.Equal(0, contextReads);
+        Assert.Equal(0, disabling.Ended(TelemetryCommands.Run(args, host, TextWriter.Null)));
+        await disabling.Upload;
+        Assert.Equal(0, clients);
+        Assert.Empty(service.Requests);
         Assert.Empty(Pending());
+        Assert.False(Host().State.Load()!.Enabled);
         Assert.Null(Host().State.Load()!.InstallId);
         var disabled = CommandTelemetry.Begin(["dev"], Host());
         await disabled.Upload;
@@ -124,6 +142,39 @@ public sealed class TelemetryTests : IDisposable
         CommandTelemetry.Begin(["dev"], Host()).Ended(0);
         Assert.NotEqual(identifier, Host().State.Load()!.InstallId);
         Assert.Equal(["command", "installation"], Pending().Select(Kind).Order());
+    }
+
+    [Theory]
+    [InlineData("status")]
+    [InlineData("enable")]
+    public async Task Checking_or_enabling_telemetry_preserves_queued_events_without_starting_telemetry(string command)
+    {
+        Seen();
+        var state = Host().State.Load();
+        var queued = Path.GetFileName(Queue(Guid.NewGuid()));
+        service.Answer = HttpStatusCode.Accepted;
+        var clients = 0;
+        var contextReads = 0;
+        var host = Host() with
+        {
+            Environment = name => { contextReads++; return environment.GetValueOrDefault(name); },
+            CreateClient = () => { clients++; return new HttpClient(service, disposeHandler: false); }
+        };
+        string[] args = ["telemetry", command];
+        Assert.Empty(CliCommandLine.Parse(args).Errors);
+        var run = CommandTelemetry.Begin(args, host);
+        await run.Upload.WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.Equal(0, clients);
+        Assert.Equal(0, contextReads);
+        var output = new StringWriter();
+        Assert.Equal(0, run.Ended(TelemetryCommands.Run(args, host, output)));
+        await run.Upload;
+        Assert.Equal(0, clients);
+        Assert.Empty(service.Requests);
+        Assert.Equal(queued, Assert.Single(Pending()));
+        Assert.Equal(state, Host().State.Load());
+        Assert.Equal($"Telemetry is enabled. Installation identifier: {state!.InstallId:D}", output.ToString().TrimEnd());
+        Assert.Empty(error.ToString());
     }
 
     [Fact]
