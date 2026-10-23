@@ -142,13 +142,18 @@ tasks:
 
   editor:
     desc: Exercise launch and value editing inside VS Code
-    deps: [':fixtures:editor', ':cli', editor:environment]
+    deps: [':fixtures:editor', ':cli', editor:environment, editor:unit]
     env:
       ISOPLANE_TEST_PROJECT: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/editor-fixture/app'
       ISOPLANE_TEST_CLI: '{{env "ISOPLANE_TEST_CLI" | default .CLI}}'
       ISOPLANE_TEST_SKIP_PUBLICATION_FLUSH: '1'
     cmds:
       - '{{if eq OS "linux"}}xvfb-run -a {{end}}npm --prefix tools/vscode-isoplane test -- {{.CLI_ARGS | default "launch"}}'
+
+  editor:unit:
+    desc: Check editor Hot Reload scheduling without launching VS Code
+    cmds:
+      - node --test tools/vscode-isoplane/test/*.test.js
 
   editor:environment:
     sources:

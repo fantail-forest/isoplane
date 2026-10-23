@@ -17,10 +17,12 @@ function register(context) {
         let success;
         try { success = await state.applying; }
         finally { state.applying = undefined; }
-        if (state.generation !== generation) return;
-        if (!success) {
+        if (sessions.get(state.session.id) !== state) return;
+        const hasPendingEdits = state.pending.size !== 0;
+        if (state.generation === generation && !success) {
             for (const [file, edit] of edits) if (!state.pending.has(file)) state.pending.set(file, edit);
-        } else if (state.pending.size !== 0) {
+        }
+        if (hasPendingEdits) {
             await apply(state);
         }
     }
