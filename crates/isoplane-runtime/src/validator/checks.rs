@@ -303,6 +303,7 @@ pub(super) fn check_memory(
     v: &mut Vec<Violation>,
 ) {
     let ceiling_pages = ceiling_bytes / isoplane_abi::WASM_PAGE_SIZE as u64;
+    let pages_per_mib = (1 << 20) / isoplane_abi::WASM_PAGE_SIZE as u64;
 
     if s.memories.len() != 1 {
         v.push(Violation::new(
@@ -335,13 +336,13 @@ pub(super) fn check_memory(
                 ViolationCode::V3MemoryShape,
                 "an explicit guest memory budget requires a declared WebAssembly memory maximum",
             )),
-            Some(max) if max > ceiling_pages => v.push(Violation::new(
+            Some(max_pages) if max_pages > ceiling_pages => v.push(Violation::new(
                 ViolationCode::V3MemoryShape,
                 format!(
                     "declared memory maximum {} pages ({} MiB) exceeds the configured \
                      ceiling of {} pages ({} MiB)",
-                    max,
-                    (max * 65_536) >> 20,
+                    max_pages,
+                    max_pages / pages_per_mib,
                     ceiling_pages,
                     ceiling_bytes >> 20
                 ),
@@ -481,6 +482,32 @@ mod tests {
             .filter(|(_, subject, _)| subject.is_some_and(|s| s.starts_with("global ")))
             .map(|(code, subject, _)| (code, subject.map(str::to_string)))
             .collect()
+    }
+
+    #[test]
+    fn an_unvalidated_memory_maximum_is_rejected_with_accurate_units() {
+        let wasm = wat::parse_str("(module (memory i64 0 18446744073709551615))")
+            .expect("the oversized memory fixture must assemble");
+        let violations = validate(&wasm, Limits::default())
+            .expect_err("an oversized memory64 maximum must be rejected");
+        assert_eq!(
+            violations
+                .iter()
+                .filter(|v| v.code == ViolationCode::V3MemoryShape)
+                .map(|v| v.detail.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "64-bit linear memory is outside the engine profile",
+                "declared memory maximum 18446744073709551615 pages (1152921504606846975 MiB) \
+                 exceeds the configured ceiling of 2048 pages (128 MiB)",
+            ],
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.code == ViolationCode::V2ForbiddenFeature),
+            "the malformed memory must also fail bytecode validation: {violations:?}"
+        );
     }
 
     #[test]
