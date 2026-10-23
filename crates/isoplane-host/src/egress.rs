@@ -182,66 +182,28 @@ fn is_v6_link_local(v6: Ipv6Addr) -> bool {
     (v6.segments()[0] & 0xffc0) == 0xfe80
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParsedUrl {
-    pub scheme: String,
-    pub host: String,
-    pub port: u16,
-    pub path_and_query: String,
-}
-
-pub fn parse_url(url: &str) -> Result<ParsedUrl, DenyReason> {
-    let (scheme, rest) = url
-        .split_once("://")
-        .ok_or_else(|| DenyReason::Malformed("missing scheme".into()))?;
-    let scheme = scheme.to_ascii_lowercase();
-    if scheme != "http" && scheme != "https" {
-        return Err(DenyReason::Scheme(scheme));
-    }
-    let (authority, path) = match rest.find(['/', '?', '#']) {
-        Some(i) => (&rest[..i], &rest[i..]),
-        None => (rest, "/"),
+/// Parses an HTTP(S) fetch URL, refusing credentials in its authority.
+pub(crate) fn parse_url(url: &str) -> Result<url::Url, DenyReason> {
+    // Empty userinfo is normalized away, but fetch policy refuses it too.
+    let has_userinfo = std::cell::Cell::new(false);
+    let on_violation = |violation| {
+        if violation == url::SyntaxViolation::EmbeddedCredentials {
+            has_userinfo.set(true);
+        }
     };
-    if authority.is_empty() {
-        return Err(DenyReason::Malformed("empty authority".into()));
+    let parsed = url::Url::options()
+        .syntax_violation_callback(Some(&on_violation))
+        .parse(url)
+        .map_err(|error| DenyReason::Malformed(error.to_string()))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err(DenyReason::Scheme(parsed.scheme().to_owned()));
     }
-    // Credentials in the authority buy a tenant nothing a header cannot.
-    if authority.contains('@') {
+    if has_userinfo.get() {
         return Err(DenyReason::Malformed(
             "userinfo is not permitted in a fetch url".into(),
         ));
     }
-    let default_port = if scheme == "https" { 443 } else { 80 };
-    let (host, port) = if let Some(inner) = authority.strip_prefix('[') {
-        let (h, rest) = inner
-            .split_once(']')
-            .ok_or_else(|| DenyReason::Malformed("unterminated ipv6 literal".into()))?;
-        let port = match rest.strip_prefix(':') {
-            Some(p) => p
-                .parse()
-                .map_err(|_| DenyReason::Malformed("bad port".into()))?,
-            None => default_port,
-        };
-        (h.to_string(), port)
-    } else {
-        match authority.rsplit_once(':') {
-            Some((h, p)) => (
-                h.to_string(),
-                p.parse()
-                    .map_err(|_| DenyReason::Malformed("bad port".into()))?,
-            ),
-            None => (authority.to_string(), default_port),
-        }
-    };
-    if host.is_empty() {
-        return Err(DenyReason::Malformed("empty host".into()));
-    }
-    Ok(ParsedUrl {
-        scheme,
-        host: host.to_ascii_lowercase(),
-        port,
-        path_and_query: path.to_string(),
-    })
+    Ok(parsed)
 }
 
 pub struct HostEgressPolicy {
@@ -451,11 +413,20 @@ impl HostEgressPolicy {
         reach: Reach<'_>,
     ) -> Result<PinnedTarget, EgressError> {
         let parsed = parse_url(url)?;
-        if !Self::allowlisted(&parsed.host, reach.allowlist) {
-            return Err(DenyReason::NotAllowlisted(parsed.host).into());
+        let host = match parsed.host() {
+            Some(url::Host::Domain(domain)) => domain.to_owned(),
+            Some(url::Host::Ipv4(address)) => address.to_string(),
+            Some(url::Host::Ipv6(address)) => address.to_string(),
+            None => return Err(DenyReason::Malformed("empty host".into()).into()),
+        };
+        if !Self::allowlisted(&host, reach.allowlist) {
+            return Err(DenyReason::NotAllowlisted(host).into());
         }
+        let port = parsed
+            .port_or_known_default()
+            .ok_or_else(|| DenyReason::Malformed("missing port".into()))?;
         self.resolutions.fetch_add(1, Ordering::Relaxed);
-        let addrs = self.resolver.resolve(&parsed.host, parsed.port).await?;
+        let addrs = self.resolver.resolve(&host, port).await?;
         if addrs.is_empty() {
             return Err(DnsError::NoAddress.into());
         }
@@ -692,6 +663,76 @@ mod tests {
                 Err(EgressError::Denied(DenyReason::Malformed(_)))
             ),
             "userinfo in the authority is refused"
+        );
+    }
+
+    #[tokio::test]
+    async fn malformed_authorities_and_credentials_are_refused_before_dns() {
+        let calls = Arc::new(AtomicU64::new(0));
+        let policy = policy(CountingFailure(calls.clone()));
+        for url in [
+            "http://[::1]junk:1234/",
+            "http://[::1]junk/",
+            "http://[not-an-ip]:1234/",
+            "http://[::1/",
+            "http://example.com:65536/",
+            "http://user:password@example.com/",
+            "http://user@example.com/",
+            "http://@example.com/",
+            "http://:@example.com/",
+        ] {
+            let result = policy.check_url(url, Reach::default()).await;
+            assert!(
+                matches!(result, Err(EgressError::Denied(DenyReason::Malformed(_)))),
+                "{url} must be refused as malformed before DNS: {result:?}"
+            );
+        }
+        assert_eq!(
+            calls.load(Ordering::Relaxed),
+            0,
+            "invalid URLs must never reach DNS"
+        );
+    }
+
+    #[tokio::test]
+    async fn normalized_url_hosts_and_ports_reach_the_allowlist_and_resolver() {
+        struct RecordingResolver(Arc<Mutex<Vec<(String, u16)>>>);
+
+        #[async_trait::async_trait]
+        impl Resolver for RecordingResolver {
+            async fn resolve(&self, host: &str, port: u16) -> Result<Vec<SocketAddr>, DnsError> {
+                self.0.lock().push((host.to_owned(), port));
+                Ok(vec![sa([8, 8, 8, 8], port)])
+            }
+        }
+
+        let queries = Arc::new(Mutex::new(Vec::new()));
+        let policy = policy(RecordingResolver(queries.clone()));
+        let mut expected = Vec::new();
+        for (url, host, port) in [
+            ("https://EXAMPLE.com/", "example.com", 443),
+            (
+                "http://[2001:4860:4860::8888]:8080/",
+                "2001:4860:4860::8888",
+                8080,
+            ),
+            ("http://0x08080808/", "8.8.8.8", 80),
+        ] {
+            let target = policy
+                .check_url(url, only(&[host.to_owned()]))
+                .await
+                .expect("the normalized host is allowlisted");
+            assert_eq!(
+                target.addr,
+                sa([8, 8, 8, 8], port),
+                "the URL's port must be pinned"
+            );
+            expected.push((host.to_owned(), port));
+        }
+        assert_eq!(
+            *queries.lock(),
+            expected,
+            "policy and DNS must use the same normalized hosts, with IPv6 brackets removed"
         );
     }
 
@@ -1057,31 +1098,29 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn urls_parse_the_way_the_policy_assumes() {
+    #[test]
+    fn urls_parse_the_way_the_policy_assumes() {
+        let parsed = parse_url("https://example.com/a?b=c").expect("parses");
+        assert_eq!(parsed.scheme(), "https");
+        assert_eq!(parsed.host_str(), Some("example.com"));
+        assert_eq!(parsed.port_or_known_default(), Some(443));
         assert_eq!(
-            parse_url("https://example.com/a?b=c").expect("parses"),
-            ParsedUrl {
-                scheme: "https".into(),
-                host: "example.com".into(),
-                port: 443,
-                path_and_query: "/a?b=c".into()
-            },
-            "scheme, host, default port and path are split"
+            &parsed[url::Position::BeforePath..url::Position::AfterQuery],
+            "/a?b=c"
         );
         assert_eq!(
-            parse_url("http://example.com:8080").expect("parses").port,
-            8080,
+            parse_url("http://example.com:8080").expect("parses").port(),
+            Some(8080),
             "an explicit port is kept"
         );
         assert_eq!(
-            parse_url("http://[::1]:9/").expect("parses").host,
-            "::1",
-            "a v6 literal loses its brackets"
+            parse_url("http://[::1]:9/").expect("parses").host(),
+            Some(url::Host::Ipv6(Ipv6Addr::LOCALHOST)),
+            "an IPv6 host remains an address rather than its bracketed serialization"
         );
         assert_eq!(
-            parse_url("http://EXAMPLE.com/").expect("parses").host,
-            "example.com",
+            parse_url("http://EXAMPLE.com/").expect("parses").host_str(),
+            Some("example.com"),
             "hosts are lower-cased"
         );
     }

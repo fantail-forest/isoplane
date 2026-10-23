@@ -83,20 +83,17 @@ impl Fetcher for PinnedHttpFetcher {
     ) -> Result<OutboundResponse, FutureError> {
         let parsed = crate::egress::parse_url(&target.url)
             .map_err(|e| FutureError::Denied(e.to_string()))?;
-        if parsed.scheme == "https" {
+        if parsed.scheme() == "https" {
             return Err(FutureError::Io(
                 "legacy http_fetch does not support HTTPS; use guest TLS over sockets".into(),
             ));
         }
-        let authority = if parsed.port == 80 {
-            parsed.host.clone()
-        } else {
-            format!("{}:{}", parsed.host, parsed.port)
-        };
+        let authority = &parsed[url::Position::BeforeHost..url::Position::AfterPort];
+        let path_and_query = &parsed[url::Position::BeforePath..url::Position::AfterQuery];
         let mut builder = Request::builder()
             .method(req.method.as_str())
-            .uri(&parsed.path_and_query)
-            .header(hyper::header::HOST, &authority);
+            .uri(path_and_query)
+            .header(hyper::header::HOST, authority);
         for (k, v) in &req.headers {
             builder = builder.header(k.as_str(), v.as_str());
         }
@@ -273,6 +270,96 @@ mod tests {
                 Err(crate::egress::DenyReason::PrivateAddress(address.ip()))
             }
         }
+    }
+
+    async fn assert_request_components(url: &str, expected_path: &str, expected_host: &str) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("local pinned peer");
+        let address = listener.local_addr().expect("the peer endpoint");
+        let url = url.replace("{port}", &address.port().to_string());
+        let expected_host = expected_host.replace("{port}", &address.port().to_string());
+        let peer = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("the pinned connection");
+            let service = hyper::service::service_fn(|request: Request<Incoming>| async move {
+                let host = request.headers()[hyper::header::HOST]
+                    .to_str()
+                    .expect("an ASCII Host header");
+                let components = format!("{}\n{host}", request.uri());
+                Ok::<_, std::convert::Infallible>(Response::new(Full::new(Bytes::from(components))))
+            });
+            hyper::server::conn::http1::Builder::new()
+                .serve_connection(TokioIo::new(stream), service)
+                .await
+                .expect("the peer HTTP exchange");
+        });
+        let egress = Arc::new(
+            HostEgressPolicy::new(
+                Box::new(NoNetwork),
+                crate::egress::ConnectionLimits::uniform(8).expect("connection limits"),
+            )
+            .with_destinations(Arc::new(OnlyPeer(address))),
+        );
+        let response = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+            let response = PinnedHttpFetcher::new(INLINE_BODY_LIMIT)
+                .fetch(
+                    attempt(&egress).await,
+                    PinnedTarget {
+                        url: url.clone(),
+                        addr: address,
+                    },
+                    FetchRequest {
+                        method: "GET".into(),
+                        url,
+                        headers: vec![],
+                        body: vec![],
+                    },
+                )
+                .await?;
+            peer.await.expect("the peer task completes cleanly");
+            Ok::<_, FutureError>(response)
+        })
+        .await
+        .expect("the fetch completes before the test deadline")
+        .expect("the URL produces a valid HTTP request");
+        let OutboundBody::Inline(body) = response.body else {
+            panic!("the peer's small response must be inline");
+        };
+        assert_eq!(
+            String::from_utf8(body).expect("the peer echoes ASCII HTTP components"),
+            format!("{expected_path}\n{expected_host}"),
+            "the pinned peer must receive the URL's HTTP request target and authority"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_query_only_fetch_url_sends_a_root_path_before_its_query() {
+        assert_request_components(
+            "http://pinned.example:{port}?x=1",
+            "/?x=1",
+            "pinned.example:{port}",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn an_ipv6_fetch_url_sends_a_bracketed_host_header() {
+        assert_request_components(
+            "http://[2001:4860:4860::8888]:{port}/",
+            "/",
+            "[2001:4860:4860::8888]:{port}",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn a_fetch_url_fragment_is_excluded_from_the_request_target() {
+        assert_request_components(
+            "http://pinned.example:{port}/path?x=1#fragment",
+            "/path?x=1",
+            "pinned.example:{port}",
+        )
+        .await;
     }
 
     #[tokio::test]

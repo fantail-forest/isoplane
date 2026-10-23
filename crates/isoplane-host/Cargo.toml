@@ -30,6 +30,7 @@ bytes = { workspace = true }
 rand = { workspace = true }
 scc = { workspace = true }
 serde_json = { workspace = true }
+url = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
