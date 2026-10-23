@@ -1,266 +1,235 @@
 //! Renders node and proxy measurements as Prometheus text.
 
 use isoplane_proxy::ProxyMetrics;
+use prometheus::{proto, TextEncoder};
 
 use crate::admin::{Latency, NodeSnapshot};
 
-fn line(out: &mut String, args: std::fmt::Arguments<'_>) {
-    out.push_str(&args.to_string());
-    out.push('\n');
+fn metric(labels: &[(&str, &str)]) -> proto::Metric {
+    let mut metric = proto::Metric::default();
+    metric.set_label(
+        labels
+            .iter()
+            .map(|(name, value)| {
+                let mut label = proto::LabelPair::default();
+                label.set_name((*name).to_owned());
+                label.set_value((*value).to_owned());
+                label
+            })
+            .collect(),
+    );
+    metric
 }
 
-fn latency_lines(out: &mut String, node: &str, name: &str, help: &str, l: Latency) {
-    line(out, format_args!("# HELP {name} {help}"));
-    line(out, format_args!("# TYPE {name} summary"));
-    line(
-        out,
-        format_args!("{name}{{node=\"{node}\",quantile=\"0.5\"}} {}", l.p50_us),
-    );
-    line(
-        out,
-        format_args!("{name}{{node=\"{node}\",quantile=\"0.99\"}} {}", l.p99_us),
-    );
-    line(
-        out,
-        format_args!("{name}_count{{node=\"{node}\"}} {}", l.count),
-    );
+fn family(
+    name: &str,
+    help: &str,
+    kind: proto::MetricType,
+    metrics: Vec<proto::Metric>,
+) -> proto::MetricFamily {
+    let mut family = proto::MetricFamily::default();
+    family.set_name(name.to_owned());
+    family.set_help(help.to_owned());
+    family.set_field_type(kind);
+    family.set_metric(metrics);
+    family
 }
 
-fn histogram_lines(
-    out: &mut String,
+fn counter(labels: &[(&str, &str)], value: f64) -> proto::Metric {
+    let mut metric = metric(labels);
+    let mut counter = proto::Counter::default();
+    counter.set_value(value);
+    metric.set_counter(counter);
+    metric
+}
+
+fn gauge(labels: &[(&str, &str)], value: f64) -> proto::Metric {
+    let mut metric = metric(labels);
+    let mut gauge = proto::Gauge::default();
+    gauge.set_value(value);
+    metric.set_gauge(gauge);
+    metric
+}
+
+fn latency_family(node: &str, name: &str, help: &str, latency: Latency) -> proto::MetricFamily {
+    let mut summary = proto::Summary::default();
+    summary.set_sample_count(latency.count);
+    summary.set_sample_sum(latency.sum_us);
+    summary.set_quantile(
+        [(0.5, latency.p50_us as f64), (0.99, latency.p99_us as f64)]
+            .into_iter()
+            .map(|(quantile, value)| {
+                let mut sample = proto::Quantile::default();
+                sample.set_quantile(quantile);
+                sample.set_value(value);
+                sample
+            })
+            .collect(),
+    );
+    let mut metric = metric(&[("node", node)]);
+    metric.set_summary(summary);
+    family(name, help, proto::MetricType::SUMMARY, vec![metric])
+}
+
+fn histogram_family(
     node: &str,
     name: &str,
     help: &str,
     samples: &[u64],
     buckets: &[u64],
-) {
-    line(out, format_args!("# HELP {name} {help}"));
-    line(out, format_args!("# TYPE {name} histogram"));
-    for b in buckets {
-        let cum = samples.iter().filter(|s| **s <= *b).count();
-        line(
-            out,
-            format_args!("{name}_bucket{{node=\"{node}\",le=\"{b}\"}} {cum}"),
-        );
-    }
-    line(
-        out,
-        format_args!(
-            "{name}_bucket{{node=\"{node}\",le=\"+Inf\"}} {}",
-            samples.len()
-        ),
+) -> proto::MetricFamily {
+    let mut histogram = proto::Histogram::default();
+    histogram.set_sample_count(samples.len() as u64);
+    histogram.set_sample_sum(samples.iter().map(|value| u128::from(*value)).sum::<u128>() as f64);
+    histogram.set_bucket(
+        buckets
+            .iter()
+            .map(|bound| {
+                let mut bucket = proto::Bucket::default();
+                bucket.set_upper_bound(*bound as f64);
+                bucket.set_cumulative_count(
+                    samples.iter().filter(|sample| **sample <= *bound).count() as u64,
+                );
+                bucket
+            })
+            .collect(),
     );
-    line(
-        out,
-        format_args!(
-            "{name}_sum{{node=\"{node}\"}} {}",
-            samples.iter().sum::<u64>()
-        ),
-    );
-    line(
-        out,
-        format_args!("{name}_count{{node=\"{node}\"}} {}", samples.len()),
-    );
+    let mut metric = metric(&[("node", node)]);
+    metric.set_histogram(histogram);
+    family(name, help, proto::MetricType::HISTOGRAM, vec![metric])
 }
 
+/// Encodes one node snapshot using Prometheus text exposition version 0.0.4.
 pub fn render(node: &str, proxy: &ProxyMetrics, snap: NodeSnapshot) -> String {
     use std::sync::atomic::Ordering::Relaxed;
-    let mut o = String::with_capacity(8192);
-    let n = |name: &str| format!("{name}{{node=\"{node}\"}}");
-
-
-    line(
-        &mut o,
-        format_args!("# HELP isoplane_dispatches_total Dispatches handled, by code tier"),
-    );
-    line(
-        &mut o,
-        format_args!("# TYPE isoplane_dispatches_total counter"),
-    );
-    line(
-        &mut o,
-        format_args!(
-            "isoplane_dispatches_total{{node=\"{node}\",tier=\"fast\"}} {}",
-            proxy.dispatches_tier_fast.load(Relaxed)
+    let node_labels = [("node", node)];
+    let mut families = vec![
+        family(
+            "isoplane_dispatches_total",
+            "Dispatches handled, by code tier",
+            proto::MetricType::COUNTER,
+            vec![
+                counter(
+                    &[("node", node), ("tier", "fast")],
+                    proxy.dispatches_tier_fast.load(Relaxed) as f64,
+                ),
+                counter(
+                    &[("node", node), ("tier", "optimized")],
+                    proxy.dispatches_tier_optimized.load(Relaxed) as f64,
+                ),
+            ],
         ),
-    );
-    line(
-        &mut o,
-        format_args!(
-            "isoplane_dispatches_total{{node=\"{node}\",tier=\"optimized\"}} {}",
-            proxy.dispatches_tier_optimized.load(Relaxed)
+        family(
+            "isoplane_cell_dispatches_total",
+            "Dispatches observed inside the cell",
+            proto::MetricType::COUNTER,
+            vec![counter(&node_labels, snap.dispatches_total as f64)],
         ),
-    );
-    line(
-        &mut o,
-        format_args!("# HELP isoplane_cell_dispatches_total Dispatches observed inside the cell"),
-    );
-    line(
-        &mut o,
-        format_args!("# TYPE isoplane_cell_dispatches_total counter"),
-    );
-    line(
-        &mut o,
-        format_args!(
-            "{} {}",
-            n("isoplane_cell_dispatches_total"),
-            snap.dispatches_total
+        family(
+            "isoplane_occupancy_ms_total",
+            "Measured occupied-worker milliseconds over execution and reactor intervals",
+            proto::MetricType::COUNTER,
+            vec![counter(&node_labels, snap.occupancy_ms_total)],
         ),
-    );
-
-    line(&mut o, format_args!("# HELP isoplane_occupancy_ms_total Measured occupied-worker milliseconds over execution and reactor intervals"
-    ));
-    line(
-        &mut o,
-        format_args!("# TYPE isoplane_occupancy_ms_total counter"),
-    );
-    line(
-        &mut o,
-        format_args!(
-            "{} {:.3}",
-            n("isoplane_occupancy_ms_total"),
-            snap.occupancy_ms_total
+        latency_family(
+            node,
+            "isoplane_activation_us",
+            "Cold activation from a local template",
+            snap.activation,
         ),
-    );
-
-    latency_lines(
-        &mut o,
-        node,
-        "isoplane_activation_us",
-        "Cold activation from a local template",
-        snap.activation,
-    );
-    latency_lines(
-        &mut o,
-        node,
-        "isoplane_wake_us",
-        "Reported local wake latency",
-        snap.wake,
-    );
-
-    line(
-        &mut o,
-        format_args!(
-            "# HELP isoplane_instances Instances by lifecycle state"
+        latency_family(
+            node,
+            "isoplane_wake_us",
+            "Reported local wake latency",
+            snap.wake,
         ),
-    );
-    line(&mut o, format_args!("# TYPE isoplane_instances gauge"));
-    for (tier, v) in [
-        ("hot", snap.instances_hot),
-        ("parked", snap.instances_parked),
-        ("hibernated", snap.instances_hibernated),
-    ] {
-        line(
-            &mut o,
-            format_args!("isoplane_instances{{node=\"{node}\",tier=\"{tier}\"}} {v}"),
-        );
-    }
-
-    histogram_lines(
-        &mut o,
-        node,
-        "isoplane_dirty_set_bytes",
-        "Dirty bytes per instance at capture",
-        &snap.dirty_set_bytes,
-        &[64 * 1024, 256 * 1024, 1 << 20, 4 << 20, 16 << 20, 64 << 20],
-    );
-    line(
-        &mut o,
-        format_args!("# HELP isoplane_delta_storage_bytes Hibernation delta bytes held"),
-    );
-    line(
-        &mut o,
-        format_args!("# TYPE isoplane_delta_storage_bytes gauge"),
-    );
-    line(
-        &mut o,
-        format_args!(
-            "{} {}",
-            n("isoplane_delta_storage_bytes"),
-            snap.delta_storage_bytes
+        family(
+            "isoplane_instances",
+            "Instances by lifecycle state",
+            proto::MetricType::GAUGE,
+            [
+                ("hot", snap.instances_hot),
+                ("parked", snap.instances_parked),
+                ("hibernated", snap.instances_hibernated),
+            ]
+            .into_iter()
+            .map(|(tier, value)| gauge(&[("node", node), ("tier", tier)], value as f64))
+            .collect(),
         ),
-    );
-
-    line(
-        &mut o,
-        format_args!(
-            "# HELP isoplane_traps_total Guest faults. Traps are never retried on the same memory."
+        histogram_family(
+            node,
+            "isoplane_dirty_set_bytes",
+            "Dirty bytes per instance at capture",
+            &snap.dirty_set_bytes,
+            &[64 * 1024, 256 * 1024, 1 << 20, 4 << 20, 16 << 20, 64 << 20],
         ),
-    );
-    line(&mut o, format_args!("# TYPE isoplane_traps_total counter"));
-    line(
-        &mut o,
-        format_args!("{} {}", n("isoplane_traps_total"), snap.traps_total),
-    );
-    line(
-        &mut o,
-        format_args!("# HELP isoplane_trap_rate Traps per dispatch"),
-    );
-    line(&mut o, format_args!("# TYPE isoplane_trap_rate gauge"));
-    let denom = snap.dispatches_total.max(1) as f64;
-    line(
-        &mut o,
-        format_args!(
-            "{} {:.6}",
-            n("isoplane_trap_rate"),
-            snap.traps_total as f64 / denom
+        family(
+            "isoplane_delta_storage_bytes",
+            "Hibernation delta bytes held",
+            proto::MetricType::GAUGE,
+            vec![gauge(&node_labels, snap.delta_storage_bytes as f64)],
         ),
-    );
-    line(
-        &mut o,
-        format_args!("# HELP isoplane_hang_breakers_tripped Routes currently failing fast"),
-    );
-    line(
-        &mut o,
-        format_args!("# TYPE isoplane_hang_breakers_tripped gauge"),
-    );
-    line(
-        &mut o,
-        format_args!(
-            "{} {}",
-            n("isoplane_hang_breakers_tripped"),
-            snap.breaker_trips
+        family(
+            "isoplane_traps_total",
+            "Guest faults. Traps are never retried on the same memory.",
+            proto::MetricType::COUNTER,
+            vec![counter(&node_labels, snap.traps_total as f64)],
         ),
-    );
-
-    for (name, help, ty, v) in [
+        family(
+            "isoplane_trap_rate",
+            "Traps per dispatch",
+            proto::MetricType::GAUGE,
+            vec![gauge(
+                &node_labels,
+                snap.traps_total as f64 / snap.dispatches_total.max(1) as f64,
+            )],
+        ),
+        family(
+            "isoplane_hang_breakers_tripped",
+            "Routes currently failing fast",
+            proto::MetricType::GAUGE,
+            vec![gauge(&node_labels, snap.breaker_trips as f64)],
+        ),
+    ];
+    for (name, help, value) in [
         (
             "isoplane_proxy_requests_total",
             "Requests accepted by the front proxy",
-            "counter",
             proxy.requests_total.load(Relaxed),
         ),
         (
             "isoplane_proxy_requests_unrouted_total",
             "Requests with no matching route",
-            "counter",
             proxy.requests_404.load(Relaxed),
         ),
         (
             "isoplane_proxy_requests_shed_total",
             "Requests refused at the edge before cells saturated",
-            "counter",
             proxy.requests_shed.load(Relaxed),
         ),
         (
             "isoplane_proxy_requests_failed_total",
             "Dispatches that returned an error",
-            "counter",
             proxy.requests_failed.load(Relaxed),
         ),
-        (
-            "isoplane_proxy_route_generation",
-            "Route-table generation",
-            "gauge",
-            proxy.route_generation.load(Relaxed),
-        ),
     ] {
-        line(&mut o, format_args!("# HELP {name} {help}"));
-        line(&mut o, format_args!("# TYPE {name} {ty}"));
-        line(&mut o, format_args!("{} {}", n(name), v));
+        families.push(family(
+            name,
+            help,
+            proto::MetricType::COUNTER,
+            vec![counter(&node_labels, value as f64)],
+        ));
     }
-
-    for (name, help, h) in [
+    families.push(family(
+        "isoplane_proxy_route_generation",
+        "Route-table generation",
+        proto::MetricType::GAUGE,
+        vec![gauge(
+            &node_labels,
+            proxy.route_generation.load(Relaxed) as f64,
+        )],
+    ));
+    for (name, help, histogram) in [
         (
             "isoplane_proxy_request_latency_us",
             "End-to-end latency observed at the proxy",
@@ -272,29 +241,27 @@ pub fn render(node: &str, proxy: &ProxyMetrics, snap: NodeSnapshot) -> String {
             &proxy.admission_wait,
         ),
     ] {
-        line(&mut o, format_args!("# HELP {name} {help}"));
-        line(&mut o, format_args!("# TYPE {name} summary"));
-        line(
-            &mut o,
-            format_args!(
-                "{name}{{node=\"{node}\",quantile=\"0.5\"}} {:.0}",
-                h.p50_us()
-            ),
+        let mut summary = proto::Summary::default();
+        summary.set_sample_count(histogram.count());
+        summary.set_sample_sum(histogram.sum_us() as f64);
+        summary.set_quantile(
+            [(0.5, histogram.p50_us()), (0.99, histogram.p99_us())]
+                .into_iter()
+                .map(|(quantile, value)| {
+                    let mut sample = proto::Quantile::default();
+                    sample.set_quantile(quantile);
+                    sample.set_value(value);
+                    sample
+                })
+                .collect(),
         );
-        line(
-            &mut o,
-            format_args!(
-                "{name}{{node=\"{node}\",quantile=\"0.99\"}} {:.0}",
-                h.p99_us()
-            ),
-        );
-        line(
-            &mut o,
-            format_args!("{name}_count{{node=\"{node}\"}} {}", h.count()),
-        );
+        let mut metric = metric(&node_labels);
+        metric.set_summary(summary);
+        families.push(family(name, help, proto::MetricType::SUMMARY, vec![metric]));
     }
-
-    o
+    TextEncoder::new().encode_to_string(&families).expect(
+        "all families above have nonempty names and samples, and String writing cannot fail",
+    )
 }
 
 #[cfg(test)]
@@ -316,6 +283,39 @@ mod tests {
             traps_total: 1,
             breaker_trips: 0,
         }
+    }
+
+    #[test]
+    fn summary_and_histogram_totals_come_from_the_observations() {
+        let mut snapshot = snap();
+        snapshot.dirty_set_bytes = vec![u64::MAX, u64::MAX];
+        let proxy = ProxyMetrics::new();
+        proxy.request_latency.record_us(1);
+        proxy.request_latency.record_us(3);
+        let text = render("n1", &proxy, snapshot);
+        for sample in [
+            "isoplane_activation_us_sum{node=\"n1\"} 5900",
+            "isoplane_activation_us_count{node=\"n1\"} 4",
+            "isoplane_wake_us_sum{node=\"n1\"} 57000",
+            "isoplane_wake_us_count{node=\"n1\"} 3",
+            "isoplane_proxy_request_latency_us_sum{node=\"n1\"} 4",
+            "isoplane_proxy_request_latency_us_count{node=\"n1\"} 2",
+            "isoplane_dirty_set_bytes_count{node=\"n1\"} 2",
+            "isoplane_dirty_set_bytes_bucket{node=\"n1\",le=\"+Inf\"} 2",
+        ] {
+            assert!(
+                text.lines().any(|line| line == sample),
+                "missing {sample}: {text}"
+            );
+        }
+        assert!(
+            text.lines().any(|line| line
+                == format!(
+                    "isoplane_dirty_set_bytes_sum{{node=\"n1\"}} {}",
+                    u128::from(u64::MAX) as f64 * 2.0
+                )),
+            "dirty-set sums do not overflow: {text}"
+        );
     }
 
     #[test]
@@ -360,7 +360,7 @@ mod tests {
     fn an_empty_node_renders_without_dividing_by_zero() {
         let out = render("n1", &ProxyMetrics::new(), NodeSnapshot::default());
         assert!(
-            out.contains("isoplane_trap_rate{node=\"n1\"} 0.000000"),
+            out.contains("isoplane_trap_rate{node=\"n1\"} 0"),
             "no dispatches is a zero rate, not a NaN"
         );
         assert!(!out.contains("NaN"), "nothing renders as NaN");

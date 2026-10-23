@@ -67,6 +67,11 @@ impl Histogram {
         self.state.lock().count
     }
 
+    /// Returns the sum of accepted lifetime observations in microseconds.
+    pub fn sum_us(&self) -> u128 {
+        self.state.lock().sum_us
+    }
+
     /// Returns the lifetime arithmetic mean in microseconds, or zero if empty.
     pub fn mean_us(&self) -> f64 {
         let state = self.state.lock();

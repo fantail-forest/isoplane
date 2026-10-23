@@ -17,6 +17,7 @@ path = "src/main.rs"
 
 [dependencies]
 zstd.workspace = true
+prometheus = { workspace = true }
 fs4.workspace = true
 isoplane-trust = { workspace = true }
 anyhow = { workspace = true }

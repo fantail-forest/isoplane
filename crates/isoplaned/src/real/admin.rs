@@ -72,6 +72,23 @@ impl crate::admin::NodeAdmin for RealNodeAdmin {
                 ..Default::default()
             };
         };
+        let cells = self.cells.cells();
+        let activation_count = cells
+            .iter()
+            .map(|cell| cell.metrics_raw().activation_us.count())
+            .sum();
+        let activation_sum_us = cells
+            .iter()
+            .map(|cell| cell.metrics_raw().activation_us.sum())
+            .sum::<u128>();
+        let wake_count = cells
+            .iter()
+            .map(|cell| cell.metrics_raw().hibernation_wake_us.count())
+            .sum();
+        let wake_sum_us = cells
+            .iter()
+            .map(|cell| cell.metrics_raw().hibernation_wake_us.sum())
+            .sum::<u128>();
         crate::admin::NodeSnapshot {
             dispatches_total: m.dispatches,
             occupancy_ms_total: m.tenants.values().map(|t| t.occupancy_ns).sum::<u64>() as f64
@@ -79,12 +96,14 @@ impl crate::admin::NodeAdmin for RealNodeAdmin {
             activation: crate::admin::Latency {
                 p50_us: m.activation_p50_us,
                 p99_us: m.activation_p99_us,
-                count: m.dispatches,
+                count: activation_count,
+                sum_us: activation_sum_us as f64,
             },
             wake: crate::admin::Latency {
                 p50_us: m.hibernation_wake_p50_us,
                 p99_us: m.hibernation_wake_p99_us,
-                count: m.hibernation_wakes,
+                count: wake_count,
+                sum_us: wake_sum_us as f64,
             },
             instances_hot: m.hot,
             instances_parked: m.parked,

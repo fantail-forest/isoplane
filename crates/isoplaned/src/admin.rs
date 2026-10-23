@@ -13,12 +13,14 @@ pub trait NodeAdmin: Send + Sync + 'static {
 }
 
 
-/// A latency series reduced to the quantiles the exporter publishes.
+/// Quantiles and lifetime totals for a latency series.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct Latency {
     pub p50_us: u64,
     pub p99_us: u64,
     pub count: u64,
+    /// Sum of the observations in microseconds.
+    pub sum_us: f64,
 }
 
 impl Latency {
@@ -36,6 +38,7 @@ impl Latency {
             p50_us: at(0.50),
             p99_us: at(0.99),
             count: s.len() as u64,
+            sum_us: s.iter().map(|value| u128::from(*value)).sum::<u128>() as f64,
         }
     }
 }

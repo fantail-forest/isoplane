@@ -1643,6 +1643,7 @@ dependencies = [
  "libc",
  "parking_lot",
  "postcard",
+ "prometheus",
  "rand 0.9.5",
  "scc",
  "serde",
@@ -1871,6 +1872,7 @@ dependencies = [
  "opentelemetry-proto",
  "opentelemetry_sdk",
  "parking_lot",
+ "prometheus",
  "prost",
  "rand 0.9.5",
  "reqwest 0.12.28",
@@ -2516,6 +2518,20 @@ checksum = "e6401bf7b6af22f78b563665d15a22e9aef27775b79b149a66ca022468a4e405"
 dependencies = [
  "bitflags 2.13.1",
  "hex",
+]
+
+[[package]]
+name = "prometheus"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ca5326d8d0b950a9acd87e6a3f94745394f62e4dae1b1ee22b2bc0c394af43a"
+dependencies = [
+ "cfg-if",
+ "fnv",
+ "lazy_static",
+ "memchr",
+ "parking_lot",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

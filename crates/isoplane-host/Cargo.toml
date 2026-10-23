@@ -8,6 +8,7 @@ license-file.workspace = true
 description = "The cell: reactor threads, execution pool, future table, wake router, import vtable, meters, lifecycle tiers"
 
 [dependencies]
+prometheus = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }

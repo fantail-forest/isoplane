@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use parking_lot::Mutex;
+use prometheus::{proto, TextEncoder};
 
 /// Exact percentiles over the most recent 4096 observations, with lifetime
 /// count and mean. Recording stops if the lifetime count reaches `u64::MAX`.
@@ -53,6 +54,11 @@ impl Histogram {
     /// Returns the number of accepted lifetime observations.
     pub fn count(&self) -> u64 {
         self.state.lock().count
+    }
+
+    /// Returns the sum of accepted lifetime observations in this field's units.
+    pub fn sum(&self) -> u128 {
+        self.state.lock().sum
     }
 
     fn percentile(&self, percentile: f64) -> u64 {
@@ -312,27 +318,56 @@ impl Metrics {
         serde_json::to_string_pretty(&self.snapshot().as_json()).unwrap_or_else(|_| "{}".into())
     }
 
+    /// Encodes the current diagnostic snapshot as Prometheus gauges.
     pub fn to_text(&self) -> String {
-        let s = self.snapshot();
-        let mut out = String::new();
-        for (k, v) in s.as_pairs() {
-            out.push_str(&format!("isoplane_cell_{k} {v}\n"));
+        let snapshot = self.snapshot();
+        let mut families: Vec<_> = snapshot
+            .values()
+            .into_iter()
+            .map(|(name, value)| {
+                gauge_family(
+                    &format!("isoplane_cell_{name}"),
+                    vec![(None, value.as_f64())],
+                )
+            })
+            .collect();
+        if !snapshot.tenants.is_empty() {
+            for (name, values) in [
+                (
+                    "isoplane_tenant_dispatches",
+                    snapshot
+                        .tenants
+                        .iter()
+                        .map(|(tenant, counters)| {
+                            (Some(tenant.as_str()), counters.dispatches as f64)
+                        })
+                        .collect(),
+                ),
+                (
+                    "isoplane_tenant_occupancy_ms",
+                    snapshot
+                        .tenants
+                        .iter()
+                        .map(|(tenant, counters)| {
+                            (Some(tenant.as_str()), counters.occupancy_ns as f64 / 1e6)
+                        })
+                        .collect(),
+                ),
+                (
+                    "isoplane_tenant_traps",
+                    snapshot
+                        .tenants
+                        .iter()
+                        .map(|(tenant, counters)| (Some(tenant.as_str()), counters.traps as f64))
+                        .collect(),
+                ),
+            ] {
+                families.push(gauge_family(name, values));
+            }
         }
-        for (tenant, c) in &s.tenants {
-            out.push_str(&format!(
-                "isoplane_tenant_dispatches{{tenant=\"{tenant}\"}} {}\n",
-                c.dispatches
-            ));
-            out.push_str(&format!(
-                "isoplane_tenant_occupancy_ms{{tenant=\"{tenant}\"}} {:.3}\n",
-                c.occupancy_ns as f64 / 1e6
-            ));
-            out.push_str(&format!(
-                "isoplane_tenant_traps{{tenant=\"{tenant}\"}} {}\n",
-                c.traps
-            ));
-        }
-        out
+        TextEncoder::new().encode_to_string(&families).expect(
+            "all families above have nonempty names and samples, and String writing cannot fail",
+        )
     }
 }
 
@@ -399,115 +434,193 @@ pub struct MetricsSnapshot {
     pub tenants: BTreeMap<String, TenantCounters>,
 }
 
+#[derive(Clone, Copy)]
+enum MetricValue {
+    Count(u64),
+    Fraction(f64),
+}
+
+impl MetricValue {
+    fn as_f64(self) -> f64 {
+        match self {
+            Self::Count(value) => value as f64,
+            Self::Fraction(value) => value,
+        }
+    }
+
+    fn as_json(self) -> serde_json::Value {
+        match self {
+            Self::Count(value) => value.into(),
+            Self::Fraction(value) => value.into(),
+        }
+    }
+}
+
+fn gauge_family(name: &str, values: Vec<(Option<&str>, f64)>) -> proto::MetricFamily {
+    let mut family = proto::MetricFamily::default();
+    family.set_name(name.to_owned());
+    family.set_field_type(proto::MetricType::GAUGE);
+    family.set_metric(
+        values
+            .into_iter()
+            .map(|(tenant, value)| {
+                let mut metric = proto::Metric::default();
+                let mut gauge = proto::Gauge::default();
+                gauge.set_value(value);
+                metric.set_gauge(gauge);
+                if let Some(tenant) = tenant {
+                    let mut label = proto::LabelPair::default();
+                    label.set_name("tenant".to_owned());
+                    label.set_value(tenant.to_owned());
+                    metric.set_label(vec![label]);
+                }
+                metric
+            })
+            .collect(),
+    );
+    family
+}
+
 impl MetricsSnapshot {
-    pub fn as_pairs(&self) -> Vec<(&'static str, String)> {
+    fn values(&self) -> Vec<(&'static str, MetricValue)> {
         vec![
-            ("dispatches", self.dispatches.to_string()),
-            ("wakes", self.wakes.to_string()),
-            ("in_cell_wakes", self.in_cell_wakes.to_string()),
-            ("wakes_dropped", self.wakes_dropped.to_string()),
-            ("traps", self.traps.to_string()),
-            ("budget_exits", self.budget_exits.to_string()),
-            ("budget_kills", self.budget_kills.to_string()),
-            ("grace_entries", self.grace_entries.to_string()),
+            ("dispatches", MetricValue::Count(self.dispatches)),
+            ("wakes", MetricValue::Count(self.wakes)),
+            ("in_cell_wakes", MetricValue::Count(self.in_cell_wakes)),
+            ("wakes_dropped", MetricValue::Count(self.wakes_dropped)),
+            ("traps", MetricValue::Count(self.traps)),
+            ("budget_exits", MetricValue::Count(self.budget_exits)),
+            ("budget_kills", MetricValue::Count(self.budget_kills)),
+            ("grace_entries", MetricValue::Count(self.grace_entries)),
             (
                 "cancellation_grace_kills",
-                self.cancellation_grace_kills.to_string(),
+                MetricValue::Count(self.cancellation_grace_kills),
             ),
-            ("instance_holds", self.instance_holds.to_string()),
+            ("instance_holds", MetricValue::Count(self.instance_holds)),
             (
                 "instance_hold_p50_ms",
-                self.instance_hold_p50_ms.to_string(),
+                MetricValue::Count(self.instance_hold_p50_ms),
             ),
             (
                 "instance_hold_p99_ms",
-                self.instance_hold_p99_ms.to_string(),
+                MetricValue::Count(self.instance_hold_p99_ms),
             ),
             (
                 "activations_for_holds",
-                self.activations_for_holds.to_string(),
+                MetricValue::Count(self.activations_for_holds),
             ),
             (
                 "memory_limit_retirements",
-                self.memory_limit_retirements.to_string(),
+                MetricValue::Count(self.memory_limit_retirements),
             ),
             (
                 "work_handed_to_instance",
-                self.work_handed_to_instance.to_string(),
+                MetricValue::Count(self.work_handed_to_instance),
             ),
-            ("grace_deferrals", self.grace_deferrals.to_string()),
-            ("overage_ms", format!("{:.3}", self.overage_ns as f64 / 1e6)),
-            ("exit_kill_ratio", format!("{:.6}", self.exit_kill_ratio)),
-            ("shed", self.shed.to_string()),
-            ("breaker_rejections", self.breaker_rejections.to_string()),
-            ("reentrancy_refusals", self.reentrancy_refusals.to_string()),
+            ("grace_deferrals", MetricValue::Count(self.grace_deferrals)),
+            (
+                "overage_ms",
+                MetricValue::Fraction(self.overage_ns as f64 / 1e6),
+            ),
+            (
+                "exit_kill_ratio",
+                MetricValue::Fraction(self.exit_kill_ratio),
+            ),
+            ("shed", MetricValue::Count(self.shed)),
+            (
+                "breaker_rejections",
+                MetricValue::Count(self.breaker_rejections),
+            ),
+            (
+                "reentrancy_refusals",
+                MetricValue::Count(self.reentrancy_refusals),
+            ),
             (
                 "pending_cap_rejections",
-                self.pending_cap_rejections.to_string(),
+                MetricValue::Count(self.pending_cap_rejections),
             ),
-            ("egress_denials", self.egress_denials.to_string()),
-            ("instances_live", self.live.to_string()),
-            ("instances_parked", self.parked.to_string()),
-            ("instances_hibernated", self.hibernated.to_string()),
-            ("instances_hot", self.hot.to_string()),
-            ("captures", self.captures.to_string()),
-            ("delta_bytes", self.delta_bytes.to_string()),
+            ("egress_denials", MetricValue::Count(self.egress_denials)),
+            ("instances_live", MetricValue::Count(self.live)),
+            ("instances_parked", MetricValue::Count(self.parked)),
+            ("instances_hibernated", MetricValue::Count(self.hibernated)),
+            ("instances_hot", MetricValue::Count(self.hot)),
+            ("captures", MetricValue::Count(self.captures)),
+            ("delta_bytes", MetricValue::Count(self.delta_bytes)),
             (
                 "capture_write_failures",
-                self.capture_write_failures.to_string(),
+                MetricValue::Count(self.capture_write_failures),
             ),
-            ("hibernation_wakes", self.hibernation_wakes.to_string()),
-            ("delta_fallbacks", self.delta_fallbacks.to_string()),
-            ("futures_shed", self.futures_shed.to_string()),
+            (
+                "hibernation_wakes",
+                MetricValue::Count(self.hibernation_wakes),
+            ),
+            ("delta_fallbacks", MetricValue::Count(self.delta_fallbacks)),
+            ("futures_shed", MetricValue::Count(self.futures_shed)),
             (
                 "futures_shed_capture",
-                self.futures_shed_capture.to_string(),
+                MetricValue::Count(self.futures_shed_capture),
             ),
-            ("futures_buffered", self.futures_buffered.to_string()),
-            ("served_warm", self.served_warm.to_string()),
-            ("served_shared", self.served_shared.to_string()),
+            (
+                "futures_buffered",
+                MetricValue::Count(self.futures_buffered),
+            ),
+            ("served_warm", MetricValue::Count(self.served_warm)),
+            ("served_shared", MetricValue::Count(self.served_shared)),
             (
                 "served_hibernation_wake",
-                self.served_hibernation_wake.to_string(),
+                MetricValue::Count(self.served_hibernation_wake),
             ),
-            ("served_activated", self.served_activated.to_string()),
-            ("activation_p50_us", self.activation_p50_us.to_string()),
-            ("activation_p99_us", self.activation_p99_us.to_string()),
-            ("wake_p50_us", self.wake_p50_us.to_string()),
-            ("wake_p99_us", self.wake_p99_us.to_string()),
+            (
+                "served_activated",
+                MetricValue::Count(self.served_activated),
+            ),
+            (
+                "activation_p50_us",
+                MetricValue::Count(self.activation_p50_us),
+            ),
+            (
+                "activation_p99_us",
+                MetricValue::Count(self.activation_p99_us),
+            ),
+            ("wake_p50_us", MetricValue::Count(self.wake_p50_us)),
+            ("wake_p99_us", MetricValue::Count(self.wake_p99_us)),
             (
                 "hibernation_wake_p50_us",
-                self.hibernation_wake_p50_us.to_string(),
+                MetricValue::Count(self.hibernation_wake_p50_us),
             ),
             (
                 "hibernation_wake_p99_us",
-                self.hibernation_wake_p99_us.to_string(),
+                MetricValue::Count(self.hibernation_wake_p99_us),
             ),
-            ("capture_p50_us", self.capture_p50_us.to_string()),
-            ("dispatch_p50_us", self.dispatch_p50_us.to_string()),
-            ("dispatch_p99_us", self.dispatch_p99_us.to_string()),
-            ("gc_hint_p50_us", self.gc_hint_p50_us.to_string()),
-            ("dirty_pages_p50", self.dirty_pages_p50.to_string()),
-            ("dirty_pages_p99", self.dirty_pages_p99.to_string()),
-            ("park_p50_ms", self.park_p50_ms.to_string()),
-            ("slice_p50_us", self.slice_p50_us.to_string()),
-            ("slice_p99_us", self.slice_p99_us.to_string()),
-            ("thread_wait_p50_us", self.thread_wait_p50_us.to_string()),
-            ("thread_wait_p99_us", self.thread_wait_p99_us.to_string()),
-            ("clock_read_failures", self.clock_read_failures.to_string()),
-            ("trap_rate", format!("{:.6}", self.trap_rate)),
+            ("capture_p50_us", MetricValue::Count(self.capture_p50_us)),
+            ("dispatch_p50_us", MetricValue::Count(self.dispatch_p50_us)),
+            ("dispatch_p99_us", MetricValue::Count(self.dispatch_p99_us)),
+            ("gc_hint_p50_us", MetricValue::Count(self.gc_hint_p50_us)),
+            ("dirty_pages_p50", MetricValue::Count(self.dirty_pages_p50)),
+            ("dirty_pages_p99", MetricValue::Count(self.dirty_pages_p99)),
+            ("park_p50_ms", MetricValue::Count(self.park_p50_ms)),
+            ("slice_p50_us", MetricValue::Count(self.slice_p50_us)),
+            ("slice_p99_us", MetricValue::Count(self.slice_p99_us)),
+            (
+                "thread_wait_p50_us",
+                MetricValue::Count(self.thread_wait_p50_us),
+            ),
+            (
+                "thread_wait_p99_us",
+                MetricValue::Count(self.thread_wait_p99_us),
+            ),
+            (
+                "clock_read_failures",
+                MetricValue::Count(self.clock_read_failures),
+            ),
+            ("trap_rate", MetricValue::Fraction(self.trap_rate)),
         ]
     }
 
     pub fn as_json(&self) -> serde_json::Value {
         let mut m = serde_json::Map::new();
-        for (k, v) in self.as_pairs() {
-            let val: serde_json::Value = v
-                .parse::<u64>()
-                .map(Into::into)
-                .or_else(|_| v.parse::<f64>().map(Into::into))
-                .unwrap_or(serde_json::Value::String(v));
-            m.insert(k.to_string(), val);
+        for (name, value) in self.values() {
+            m.insert(name.to_owned(), value.as_json());
         }
         let tenants: serde_json::Map<String, serde_json::Value> = self
             .tenants
@@ -531,6 +644,49 @@ impl MetricsSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tenant_labels_cannot_inject_scrape_samples() {
+        for tenant in [
+            "acme",
+            "quote\"",
+            "back\\slash",
+            "literal\\n",
+            "line\nbreak",
+            "é\",tier=\"hot\\\"} 0\ninjected 1\n#",
+        ] {
+            let metrics = Metrics::new();
+            metrics.record_tenant(tenant, 1_250_000, true);
+            let text = metrics.to_text();
+            let samples: Vec<_> = text.lines().filter(|line| !line.starts_with('#')).collect();
+            let tenant_samples: Vec<_> = samples
+                .iter()
+                .filter(|line| line.starts_with("isoplane_tenant_"))
+                .map(|line| {
+                    let (series, value) = line.rsplit_once(' ').unwrap();
+                    (series.to_owned(), value.parse::<f64>().unwrap())
+                })
+                .collect();
+            let label = serde_json::to_string(tenant).unwrap();
+            assert_eq!(
+                tenant_samples,
+                [
+                    (format!("isoplane_tenant_dispatches{{tenant={label}}}"), 1.0),
+                    (
+                        format!("isoplane_tenant_occupancy_ms{{tenant={label}}}"),
+                        1.25
+                    ),
+                    (format!("isoplane_tenant_traps{{tenant={label}}}"), 1.0),
+                ],
+                "tenant {tenant:?} changed its samples"
+            );
+            assert!(
+                samples.iter().all(|line| line.starts_with("isoplane_cell_")
+                    || line.starts_with("isoplane_tenant_")),
+                "a label injected a sample: {text}"
+            );
+        }
+    }
 
     #[test]
     fn simultaneous_writers_replace_the_entire_retained_window() {
@@ -632,8 +788,7 @@ mod tests {
             "3,000 exits against 1 kill is 3,000"
         );
         assert!(
-            m.to_text()
-                .contains("isoplane_cell_exit_kill_ratio 3000.000000"),
+            m.to_text().contains("isoplane_cell_exit_kill_ratio 3000"),
             "the ratio is on the text scrape"
         );
         let json: serde_json::Value = serde_json::from_str(&m.to_json()).expect("json");
@@ -683,7 +838,7 @@ mod tests {
             "isoplane_cell_instances_parked",
             "isoplane_cell_instances_hibernated",
             "isoplane_cell_trap_rate",
-            "isoplane_tenant_occupancy_ms{tenant=\"acme\"} 2.000",
+            "isoplane_tenant_occupancy_ms{tenant=\"acme\"} 2",
         ] {
             assert!(
                 text.contains(needle),
@@ -691,7 +846,13 @@ mod tests {
             );
         }
 
+        m.wakes.store(u64::MAX, Ordering::Relaxed);
         let json: serde_json::Value = serde_json::from_str(&m.to_json()).expect("json");
+        assert_eq!(
+            json["wakes"].as_u64(),
+            Some(u64::MAX),
+            "JSON keeps integer precision"
+        );
         assert_eq!(
             json["dispatches"], 7,
             "the json scrape carries the counters"
