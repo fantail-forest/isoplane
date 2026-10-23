@@ -183,17 +183,20 @@ static int isoplane_sqlite_explain_refusal(int rc, sqlite3 *db)
 SQLITE_API int sqlite3_open(const char *filename, sqlite3 **db)
 {
     isoplane_sqlite_refused_file = 0;
-    return isoplane_sqlite_explain_refusal(isoplane_sqlite3_open_unchecked(filename, db), *db);
+    int rc = isoplane_sqlite3_open_unchecked(filename, db);
+    return isoplane_sqlite_explain_refusal(rc, *db);
 }
 
 SQLITE_API int sqlite3_open16(const void *filename, sqlite3 **db)
 {
     isoplane_sqlite_refused_file = 0;
-    return isoplane_sqlite_explain_refusal(isoplane_sqlite3_open16_unchecked(filename, db), *db);
+    int rc = isoplane_sqlite3_open16_unchecked(filename, db);
+    return isoplane_sqlite_explain_refusal(rc, *db);
 }
 
 SQLITE_API int sqlite3_open_v2(const char *filename, sqlite3 **db, int flags, const char *vfs)
 {
     isoplane_sqlite_refused_file = 0;
-    return isoplane_sqlite_explain_refusal(isoplane_sqlite3_open_v2_unchecked(filename, db, flags, vfs), *db);
+    int rc = isoplane_sqlite3_open_v2_unchecked(filename, db, flags, vfs);
+    return isoplane_sqlite_explain_refusal(rc, *db);
 }
