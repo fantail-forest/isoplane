@@ -420,6 +420,11 @@ fn free_host_buf(ptr: usize) {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn outstanding_handoff_buffers() -> usize {
+    with(|rt| rt.host_bufs.len())
+}
+
 /// `isoplane_handle(ptr, len) -> poll-status`.
 pub fn export_handle(ptr: usize, len: usize, make: fn(DispatchRecord) -> BoxTask) -> u64 {
     #[cfg(target_arch = "wasm32")]

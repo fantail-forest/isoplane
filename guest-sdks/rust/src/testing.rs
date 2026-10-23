@@ -31,6 +31,11 @@ pub struct StubHost {
 }
 
 impl StubHost {
+    /// Buffers allocated for the host and not yet consumed by `handle` or `wake`.
+    pub fn outstanding_handoff_buffers(&self) -> usize {
+        crate::rt::outstanding_handoff_buffers()
+    }
+
     /// A fresh host future id, as a real host would mint.
     pub fn next_future_id(&self) -> u64 {
         NEXT_ID.with(|c| {

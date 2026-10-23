@@ -61,7 +61,7 @@ fn record(path: &str) -> DispatchRecord {
 fn handoff(bytes: &[u8]) -> (usize, usize) {
     let p = isoplane_alloc(bytes.len(), 8);
     assert_ne!(p, 0, "isoplane_alloc refused");
-    // SAFETY: the non-null allocation above has room for all copied bytes.
+    // SAFETY: isoplane_alloc returned a distinct buffer with room for all bytes.
     unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), p as *mut u8, bytes.len()) };
     (p, bytes.len())
 }
@@ -105,6 +105,42 @@ fn a_dispatch_that_waits_parks_and_a_wake_completes_it() {
             isoplane_guest::rt::pending_futures(),
             0,
             "future table must not leak"
+        );
+    });
+}
+
+#[test]
+fn dispatch_and_wake_each_release_their_handoff_buffer() {
+    with_stub_host(|host| {
+        assert_eq!(host.outstanding_handoff_buffers(), 0);
+        let enc = postcard::to_allocvec(&record("/hello")).unwrap();
+        let (ptr, len) = handoff(&enc);
+        assert_eq!(host.outstanding_handoff_buffers(), 1);
+
+        let renc = postcard::to_allocvec(&wake(ResultRecord::Ok(Vec::new()))).unwrap();
+        let (rp, rl) = handoff(&renc);
+        assert_eq!(host.outstanding_handoff_buffers(), 2);
+
+        assert_eq!(
+            PollStatus::decode(isoplane_handle(ptr, len)),
+            PollStatus::Pending
+        );
+        assert_eq!(
+            host.outstanding_handoff_buffers(),
+            1,
+            "handle must release its buffer and retain the outstanding wake buffer"
+        );
+
+        assert_eq!(
+            PollStatus::decode(isoplane_wake(1, rp, rl)),
+            PollStatus::Done {
+                response: RESP_HANDLE as u32
+            }
+        );
+        assert_eq!(
+            host.outstanding_handoff_buffers(),
+            0,
+            "wake must release its buffer"
         );
     });
 }
