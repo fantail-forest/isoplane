@@ -22,6 +22,7 @@ pub(super) struct ModuleEntry {
     pub(super) pool: InstancePool,
     pub(super) meters: Arc<Meters>,
     pub(super) endpoint_exceptions: Arc<[std::net::SocketAddr]>,
+    // Fields drop in declaration order; retain admission through pool cleanup.
 }
 
 /// The cell's bookkeeping for one resident instance.
@@ -391,7 +392,7 @@ impl Cell {
             if let Some(instances) = applications.get(&key).and_then(Weak::upgrade) {
                 instances
             } else {
-                let instances = Arc::new(crate::admission::ApplicationInstances::default());
+                let instances = Arc::new(crate::admission::ApplicationInstances::new());
                 applications.insert(key, Arc::downgrade(&instances));
                 instances
             }
@@ -418,7 +419,10 @@ impl Cell {
         entry
             .pool
             .map_activation(entry.manifest.memory_max_bytes().try_into()?)?;
-        self.modules.write().insert(module, Arc::new(entry));
+        let replaced = self.modules.write().insert(module, Arc::new(entry));
+        if let Some(replaced) = replaced {
+            replaced.pool.retire();
+        }
         Ok(())
     }
 
@@ -585,6 +589,122 @@ mod tests {
     use super::*;
     use crate::cell::pool::cell_tests::{cell, http, manifest};
     use crate::fakes::{FakeActivator, FakeBehaviour};
+
+    struct MappingActivator {
+        inner: FakeActivator,
+        entered: std::sync::mpsc::Sender<()>,
+        release: Mutex<std::sync::mpsc::Receiver<()>>,
+        fail: bool,
+    }
+
+    impl Activator for MappingActivator {
+        fn map_activation(
+            &self,
+            _: isoplane_abi::config::GuestMemoryBytes,
+        ) -> anyhow::Result<Option<Box<dyn isoplane_engine::DormantInstance>>> {
+            self.entered.send(())?;
+            self.release.lock().recv_timeout(Duration::from_secs(10))?;
+            anyhow::ensure!(!self.fail, "preparation failed");
+            Ok(None)
+        }
+
+        fn module(&self) -> &ModuleId {
+            self.inner.module()
+        }
+
+        fn module_hash(&self) -> isoplane_engine::ModuleHash {
+            self.inner.module_hash()
+        }
+
+        fn abi_rev(&self) -> u32 {
+            self.inner.abi_rev()
+        }
+
+        fn snapshot_size_bound(&self, max_memory_bytes: u64) -> anyhow::Result<u64> {
+            self.inner.snapshot_size_bound(max_memory_bytes)
+        }
+
+        fn template_image(&self) -> Arc<isoplane_engine::MemoryImage> {
+            self.inner.template_image()
+        }
+
+        fn activate(
+            &self,
+            bindings: Box<dyn isoplane_engine::HostBindings>,
+        ) -> anyhow::Result<Box<dyn isoplane_engine::InstanceOps + Send>> {
+            self.inner.activate(bindings)
+        }
+    }
+
+    fn registration_cell() -> Arc<Cell> {
+        Cell::build(
+            CellConfig {
+                exec_threads: 1,
+                ..CellConfig::for_test("dedicated-admission")
+            },
+            crate::cell::pool::cell_tests::services(),
+            Arc::new(
+                isoplane_hibernate::snapshot::LocalSnapshotStorage::new(std::env::temp_dir())
+                    .expect("snapshot storage"),
+            ),
+        )
+        .expect("cell without workers")
+    }
+
+    fn large_budget_manifest(app: &str) -> AppManifest {
+        AppManifest {
+            limits: Limits {
+                instances_per_application: 16,
+                module_bytes_compressed: 52428800,
+                package_bytes: 52428800,
+                instance_memory_max: 536870912,
+                occupancy_ms_per_dispatch: 300000,
+                instance_open_connections: 32,
+                pending_futures_per_dispatch: 4096,
+            },
+            ..manifest(app)
+        }
+    }
+
+    fn register_test_module(cell: &Arc<Cell>, tenant: &str, app: &str) -> crate::Result<()> {
+        cell.register_module(
+            tenant,
+            Arc::new(FakeActivator::named(
+                ModuleId::new(app, "v1"),
+                FakeBehaviour::done(),
+            )),
+            large_budget_manifest(app),
+        )
+    }
+
+    #[test]
+    fn replacing_a_registered_module_discards_its_previous_idle_guests() {
+        let cell = registration_cell();
+        let module = ModuleId::new("replaced", "v1");
+        register_test_module(&cell, "first", "replaced").expect("first registration");
+        let response = cell
+            .submit(&module, Target::Handler { route: "/".into() }, http(1))
+            .expect("request");
+        assert_eq!(cell.queue.depth(), 1, "one request is queued");
+        let Job::Dispatch(job) = cell.queue.pop(0).expect("request job") else {
+            panic!("expected request");
+        };
+        cell.run_dispatch(*job);
+        cell.queue.job_done(0);
+        let slot = cell
+            .slot(response.try_recv().expect("response").instance)
+            .expect("idle guest");
+        assert_eq!(slot.state(), LifecycleTier::Parked);
+        register_test_module(&cell, "first", "replaced").expect("replacement registration");
+        assert_eq!(
+            slot.state(),
+            LifecycleTier::Discarded,
+            "replacement retires the old pool"
+        );
+        assert!(cell.retire_module(&module));
+        register_test_module(&cell, "second", "second").expect("discarded guests release capacity");
+        cell.shutdown();
+    }
 
     #[test]
     fn application_admission_counts_versions_and_releases_discarded_instances() {
