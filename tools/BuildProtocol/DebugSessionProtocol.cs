@@ -18,18 +18,6 @@ internal static class DebugSessionProtocol
     internal static Task WriteEndpointAsync(Stream stream, IPEndPoint endpoint, string package, DebugProject? project, CancellationToken cancellation) =>
         WriteAsync(stream, new Endpoint(Version, endpoint.Port, package, project), cancellation);
 
-    internal static async Task<SessionEndpoint> ReadEndpointAsync(Stream stream, CancellationToken cancellation)
-    {
-        var endpoint = await ReadAsync<Endpoint>(stream, cancellation)
-            ?? throw new IOException("The local session closed before providing a debugger endpoint.");
-        RequireVersion(endpoint.Version);
-        if (endpoint.Port is < 1 or > 65535) throw new IOException("The local session returned an invalid debugger port.");
-        if (!Path.IsPathFullyQualified(endpoint.Package ?? "")) throw new IOException("The local session did not name its application package.");
-        if (endpoint.Project is { } project && (!Path.IsPathFullyQualified(project.Path ?? "") || project.Properties is null))
-            throw new IOException("The local session returned an invalid Hot Reload project.");
-        return new(new IPEndPoint(IPAddress.Loopback, endpoint.Port), endpoint.Package!, endpoint.Project);
-    }
-
     internal static Task TerminateAsync(Stream stream) => WriteAsync(stream, new Command(Version, "terminate"), CancellationToken.None);
 
     internal static Task RequestDetachAsync(Stream stream, bool prepared, CancellationToken cancellation) =>
@@ -46,45 +34,6 @@ internal static class DebugSessionProtocol
         finally { writes.Release(); }
     }
 
-    internal static async Task<Reply?> ReadReplyAsync(Stream stream, CancellationToken cancellation)
-    {
-        var reply = await ReadAsync<Reply>(stream, cancellation);
-        if (reply is not null) RequireVersion(reply.Version);
-        return reply;
-    }
-
-    internal static async Task<bool> ReadTerminationAsync(Stream stream, SemaphoreSlim writes, Func<CancellationToken, Task>? prepareDetach, CancellationToken cancellation)
-    {
-        bool prepared = false;
-        while (true)
-        {
-            var command = await ReadAsync<Command>(stream, cancellation);
-            if (command is null) return false;
-            RequireVersion(command.Version);
-            switch (command.Action)
-            {
-                case "terminate": return false;
-                case "prepareDetach" when !prepared:
-                    try
-                    {
-                        if (prepareDetach is null) throw new InvalidOperationException("This local session cannot detach from its debugger.");
-                        await prepareDetach(cancellation);
-                        prepared = true;
-                        await ReplyAsync(stream, writes, "detachReady", null, cancellation);
-                    }
-                    catch (Exception error) when (error is InvalidOperationException or IOException or UnauthorizedAccessException)
-                    {
-                        await ReplyAsync(stream, writes, "detachReady", error.Message, cancellation);
-                    }
-                    break;
-                case "detach" when prepared:
-                    await ReplyAsync(stream, writes, "detached", null, cancellation);
-                    return true;
-                default: throw new IOException("The debugger sent an unsupported session command.");
-            }
-        }
-    }
-
     private static void RequireVersion(int version)
     {
         if (version != Version) throw new IOException("The debugger and local session use incompatible control protocols; install a matching CLI and adapter.");
@@ -96,11 +45,70 @@ internal static class DebugSessionProtocol
         await writer.WriteLineAsync(JsonSerializer.Serialize(message, Json).AsMemory(), cancellation);
     }
 
-    private static async Task<T?> ReadAsync<T>(Stream stream, CancellationToken cancellation) where T : class
+    /// <summary>Preserves buffered control messages for the lifetime of one connection.</summary>
+    internal sealed class Reader(Stream stream) : IDisposable
     {
-        using var reader = new StreamReader(stream, leaveOpen: true);
-        var line = await reader.ReadLineAsync(cancellation);
-        try { return line is null ? null : JsonSerializer.Deserialize<T>(line, Json) ?? throw new IOException("The local debugger control message was empty."); }
-        catch (JsonException error) { throw new IOException("The local debugger control message was invalid.", error); }
+        private readonly StreamReader reader = new(stream, leaveOpen: true);
+
+        internal async Task<SessionEndpoint> ReadEndpointAsync(CancellationToken cancellation)
+        {
+            var endpoint = await ReadAsync<Endpoint>(cancellation)
+                ?? throw new IOException("The local session closed before providing a debugger endpoint.");
+            RequireVersion(endpoint.Version);
+            if (endpoint.Port is < 1 or > 65535) throw new IOException("The local session returned an invalid debugger port.");
+            if (!Path.IsPathFullyQualified(endpoint.Package ?? "")) throw new IOException("The local session did not name its application package.");
+            if (endpoint.Project is { } project && (!Path.IsPathFullyQualified(project.Path ?? "") || project.Properties is null))
+                throw new IOException("The local session returned an invalid Hot Reload project.");
+            return new(new IPEndPoint(IPAddress.Loopback, endpoint.Port), endpoint.Package!, endpoint.Project);
+        }
+
+        internal async Task<Reply?> ReadReplyAsync(CancellationToken cancellation)
+        {
+            var reply = await ReadAsync<Reply>(cancellation);
+            if (reply is not null) RequireVersion(reply.Version);
+            return reply;
+        }
+
+        internal async Task<bool> ReadTerminationAsync(SemaphoreSlim writes, Func<CancellationToken, Task>? prepareDetach, CancellationToken cancellation)
+        {
+            bool prepared = false;
+            while (true)
+            {
+                var command = await ReadAsync<Command>(cancellation);
+                if (command is null) return false;
+                RequireVersion(command.Version);
+                switch (command.Action)
+                {
+                    case "terminate": return false;
+                    case "prepareDetach" when !prepared:
+                        try
+                        {
+                            if (prepareDetach is null) throw new InvalidOperationException("This local session cannot detach from its debugger.");
+                            await prepareDetach(cancellation);
+                            prepared = true;
+                            await ReplyAsync(reader.BaseStream, writes, "detachReady", null, cancellation);
+                        }
+                        catch (Exception error) when (error is InvalidOperationException or IOException or UnauthorizedAccessException)
+                        {
+                            await ReplyAsync(reader.BaseStream, writes, "detachReady", error.Message, cancellation);
+                        }
+                        break;
+                    case "detach" when prepared:
+                        await ReplyAsync(reader.BaseStream, writes, "detached", null, cancellation);
+                        return true;
+                    default: throw new IOException("The debugger sent an unsupported session command.");
+                }
+            }
+        }
+
+        /// <summary>Releases buffered input while leaving the connection stream open.</summary>
+        public void Dispose() => reader.Dispose();
+
+        private async Task<T?> ReadAsync<T>(CancellationToken cancellation) where T : class
+        {
+            var line = await reader.ReadLineAsync(cancellation);
+            try { return line is null ? null : JsonSerializer.Deserialize<T>(line, Json) ?? throw new IOException("The local debugger control message was empty."); }
+            catch (JsonException error) { throw new IOException("The local debugger control message was invalid.", error); }
+        }
     }
 }

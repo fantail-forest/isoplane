@@ -9,6 +9,7 @@ internal sealed class GuestSession(Action? ended = null, Action? packageChanged 
     internal DebugProject? Project { get; private set; }
     private readonly TcpClient client = new();
     private readonly CancellationTokenSource lifetime = new();
+    private DebugSessionProtocol.Reader? reader;
 
     private readonly SemaphoreSlim writes = new(1, 1);
     private TaskCompletionSource? prepared;
@@ -24,17 +25,18 @@ internal sealed class GuestSession(Action? ended = null, Action? packageChanged 
     internal async Task<(IPEndPoint Guests, string Package)> ConnectAsync(IPEndPoint endpoint)
     {
         await client.ConnectAsync(endpoint, lifetime.Token);
-        var target = await DebugSessionProtocol.ReadEndpointAsync(client.GetStream(), lifetime.Token);
+        reader = new DebugSessionProtocol.Reader(client.GetStream());
+        var target = await reader.ReadEndpointAsync(lifetime.Token);
         Project = target.Project;
-        monitoring = MonitorAsync();
+        monitoring = MonitorAsync(reader);
         return (target.Guests, target.Package);
     }
 
-    private async Task MonitorAsync()
+    private async Task MonitorAsync(DebugSessionProtocol.Reader control)
     {
         try
         {
-            while (await DebugSessionProtocol.ReadReplyAsync(client.GetStream(), lifetime.Token) is { } reply)
+            while (await control.ReadReplyAsync(lifetime.Token) is { } reply)
             {
                 if (reply.Action == DebugSessionProtocol.PackageChanged)
                 {
@@ -126,6 +128,7 @@ internal sealed class GuestSession(Action? ended = null, Action? packageChanged 
         Close();
         await closing;
         await monitoring;
+        reader?.Dispose();
         lifetime.Dispose();
         writes.Dispose();
     }

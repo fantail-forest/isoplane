@@ -52,9 +52,10 @@ internal sealed class DebugRelay : IAsyncDisposable
                 await DebugSessionProtocol.WriteEndpointAsync(editor.GetStream(), (IPEndPoint)adapterListener.LocalEndpoint, package, project, cancellation);
             }
             finally { writes.Release(); }
+            using var reader = new DebugSessionProtocol.Reader(editor.GetStream());
             using var connected = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
             var pairs = ForwardGuestsAsync(connected.Token);
-            var control = DebugSessionProtocol.ReadTerminationAsync(editor.GetStream(), writes, token => PrepareDetach is { } prepare ? prepare(token) : throw new InvalidOperationException("The local host is not ready to detach."), connected.Token);
+            var control = reader.ReadTerminationAsync(writes, token => PrepareDetach is { } prepare ? prepare(token) : throw new InvalidOperationException("The local host is not ready to detach."), connected.Token);
             if (await Task.WhenAny(pairs, control) == control) Detached = await control;
             connected.Cancel();
             try { await Task.WhenAll(pairs, control); }
