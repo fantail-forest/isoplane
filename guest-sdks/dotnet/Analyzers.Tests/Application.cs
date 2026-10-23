@@ -72,14 +72,20 @@ internal static class Application
     /// </summary>
     internal static async Task<string?> FixAsync(string source, string id, OutputKind kind = OutputKind.DynamicallyLinkedLibrary)
     {
-        var project = Project(source, kind);
-        var document = project.Documents.Single();
-        var diagnostic = (await DiagnosticsAsync(project)).First(candidate => candidate.Id == id);
+        var changed = await FixAsync(Project(source, kind).Documents.Single(), id);
+        return changed is null ? null : (await changed.GetTextAsync()).ToString();
+    }
+
+    /// <summary>Applies the offered fix in a document, retaining the project's other source files.</summary>
+    internal static async Task<Document?> FixAsync(Document document, string id)
+    {
+        var tree = await document.GetSyntaxTreeAsync();
+        var diagnostic = (await DiagnosticsAsync(document.Project)).First(candidate => candidate.Id == id && candidate.Location.SourceTree == tree);
         var actions = new List<CodeAction>();
         foreach (var provider in Fixes.Where(provider => provider.FixableDiagnosticIds.Contains(id)))
             await provider.RegisterCodeFixesAsync(new CodeFixContext(document, diagnostic, (action, _) => actions.Add(action), CancellationToken.None));
         if (actions.Count == 0) return null;
         var applied = Assert.Single((await Assert.Single(actions).GetOperationsAsync(CancellationToken.None)).OfType<ApplyChangesOperation>());
-        return (await applied.ChangedSolution.GetDocument(document.Id)!.GetTextAsync()).ToString();
+        return applied.ChangedSolution.GetDocument(document.Id);
     }
 }

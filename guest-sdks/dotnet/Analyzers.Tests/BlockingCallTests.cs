@@ -79,11 +79,13 @@ public sealed class BlockingCallTests
     }
 
     [Fact]
-    public async Task the_fix_makes_a_method_that_returns_nothing_asynchronous()
+    public async Task an_unreferenced_synchronous_entry_point_can_become_asynchronous()
     {
-        const string before = "using System.Threading;\n\npublic static class Worker\n{\n    public static void Pause()\n    {\n        Thread.Sleep(10);\n    }\n}\n";
-        var changed = await Application.FixAsync(before, "ISOPLANE1003");
-        Assert.Equal("using System.Threading;\nusing System.Threading.Tasks;\n\npublic static class Worker\n{\n    public static async Task Pause()\n    {\n        await Task.Delay(10);\n    }\n}\n", changed);
+        const string before = "using System.Threading;\n\npublic static class Worker\n{\n    public static void Main()\n    {\n        Thread.Sleep(10);\n    }\n}\n";
+        Assert.Equal(["ISOPLANE1003"], await Application.AnalyzeAsync(before, OutputKind.ConsoleApplication));
+        var changed = await Application.FixAsync(before, "ISOPLANE1003", OutputKind.ConsoleApplication);
+        Assert.Equal("using System.Threading;\nusing System.Threading.Tasks;\n\npublic static class Worker\n{\n    public static async Task Main()\n    {\n        await Task.Delay(10);\n    }\n}\n", changed);
+        Assert.Empty(await Application.AnalyzeAsync(changed!, OutputKind.ConsoleApplication));
     }
 
     /// <summary>Waits with no asynchronous counterpart of the same meaning, and code where an await cannot simply be written.</summary>
@@ -92,6 +94,7 @@ public sealed class BlockingCallTests
     [InlineData("Task.WaitAny(task, task);")]
     [InlineData("Thread.CurrentThread.Join();")]
     [InlineData("Action wait = () => task.Wait();\n        wait();")]
+    [InlineData("lock (gate) task.Wait();")]
     public async Task a_wait_without_one_clear_repair_offers_none(string statements)
     {
         Assert.Null(await Application.FixAsync(Method(statements), "ISOPLANE1003"));

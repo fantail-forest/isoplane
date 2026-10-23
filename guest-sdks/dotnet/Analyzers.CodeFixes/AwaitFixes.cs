@@ -9,6 +9,7 @@ using Microsoft.CodeAnalysis.CodeFixes;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Editing;
+using Microsoft.CodeAnalysis.FindSymbols;
 using Microsoft.CodeAnalysis.Formatting;
 
 namespace Isoplane.Analyzers;
@@ -16,8 +17,8 @@ namespace Isoplane.Analyzers;
 /// <summary>
 /// Replaces a call that blocks with the await that does the same work: <c>Run</c> and a blocked-on
 /// <c>RunAsync</c> with <c>await RunAsync</c>, and a synchronous wait with its asynchronous
-/// counterpart. Where the call is in a method that is not yet asynchronous, the fix makes it so
-/// when that changes nothing but the method's own declaration.
+/// counterpart. An unreferenced synchronous program entry point can become asynchronous;
+/// other synchronous methods keep their signatures and callers.
 /// </summary>
 [ExportCodeFixProvider(LanguageNames.CSharp, Name = nameof(AwaitFixes)), Shared]
 public sealed class AwaitFixes : CodeFixProvider
@@ -41,14 +42,17 @@ public sealed class AwaitFixes : CodeFixProvider
             if (root.FindNode(diagnostic.Location.SourceSpan, getInnermostNodeForTie: true) is not ExpressionSyntax blocking
                 || blocking.Parent is not ExpressionStatementSyntax
                 || Awaited(diagnostic.Id, blocking, model, SyntaxGenerator.GetGenerator(context.Document), context.CancellationToken) is not { } awaited
-                || AwaitSite.Find(blocking, model) is not { } site) continue;
+                || await AwaitSite.FindAsync(blocking, model, context.Document.Project.Solution, context.CancellationToken).ConfigureAwait(false) is not { } site) continue;
             string title = site.Method is null ? awaited.Title : $"{awaited.Title} and make '{site.Method.Identifier.Text}' asynchronous";
-            context.RegisterCodeFix(CodeAction.Create(title, cancellation => Edit.ApplyAsync(context.Document, editor =>
+            var changed = await Edit.ApplyAsync(context.Document, editor =>
             {
                 var awaiting = ((ExpressionSyntax)editor.Generator.AwaitExpression(awaited.Task.WithoutTrivia())).WithTriviaFrom(blocking);
                 if (site.Method is null) editor.ReplaceNode(blocking, awaiting);
                 else editor.ReplaceNode(site.Method, site.MakeAsynchronous(site.Method.ReplaceNode(blocking, awaiting), editor.Generator));
-            }, cancellation), equivalenceKey: diagnostic.Id), diagnostic);
+            }, context.CancellationToken).ConfigureAwait(false);
+            var compilation = await changed.Project.GetCompilationAsync(context.CancellationToken).ConfigureAwait(false);
+            if (compilation is null || compilation.GetDiagnostics(context.CancellationToken).Any(candidate => candidate.Severity == DiagnosticSeverity.Error)) continue;
+            context.RegisterCodeFix(CodeAction.Create(title, _ => Task.FromResult(changed), equivalenceKey: diagnostic.Id), diagnostic);
         }
     }
 
@@ -77,14 +81,20 @@ public sealed class AwaitFixes : CodeFixProvider
     private static ExpressionSyntax HostTask(ExpressionSyntax blocking) => blocking switch
     {
         InvocationExpressionSyntax { Expression: MemberAccessExpressionSyntax { Name.Identifier.Text: "Wait" } wait } => wait.Expression,
-        InvocationExpressionSyntax { Expression: MemberAccessExpressionSyntax { Name.Identifier.Text: "GetResult",
-            Expression: InvocationExpressionSyntax { Expression: MemberAccessExpressionSyntax { Name.Identifier.Text: "GetAwaiter" } awaiter } } } => awaiter.Expression,
+        InvocationExpressionSyntax
+        {
+            Expression: MemberAccessExpressionSyntax
+            {
+                Name.Identifier.Text: "GetResult",
+                Expression: InvocationExpressionSyntax { Expression: MemberAccessExpressionSyntax { Name.Identifier.Text: "GetAwaiter" } awaiter }
+            }
+        } => awaiter.Expression,
         _ => blocking
     };
 
     /// <summary>
-    /// Where an await can be written: in code that is already asynchronous, or in a method this fix can
-    /// make asynchronous by changing only its declaration.
+    /// Where an await can be written without changing callers: in asynchronous code or an
+    /// unreferenced program entry point whose task the runtime will await.
     /// </summary>
     private sealed class AwaitSite
     {
@@ -99,7 +109,7 @@ public sealed class AwaitFixes : CodeFixProvider
         /// <summary>The method to make asynchronous, or null when the code around the await already is.</summary>
         internal MethodDeclarationSyntax? Method { get; }
 
-        internal static AwaitSite? Find(SyntaxNode node, SemanticModel model)
+        internal static async Task<AwaitSite?> FindAsync(SyntaxNode node, SemanticModel model, Solution solution, CancellationToken cancellation)
         {
             foreach (var ancestor in node.Ancestors())
             {
@@ -114,10 +124,14 @@ public sealed class AwaitFixes : CodeFixProvider
                     case MethodDeclarationSyntax method when method.Modifiers.Any(SyntaxKind.AsyncKeyword):
                         return new(null, null);
                     case MethodDeclarationSyntax method:
-                        // A method that returns nothing can return a task instead without its body changing.
-                        // Any other return type would change every return statement and every caller.
-                        var task = model.Compilation.GetTypeByMetadataName("System.Threading.Tasks.Task");
-                        return task is not null && model.GetDeclaredSymbol(method) is { ReturnsVoid: true } ? new(method, task) : null;
+                        var symbol = model.GetDeclaredSymbol(method, cancellation);
+                        if (symbol is not { ReturnsVoid: true }
+                            || !SymbolEqualityComparer.Default.Equals(symbol, model.Compilation.GetEntryPoint(cancellation))
+                            || model.Compilation.GetTypeByMetadataName("System.Threading.Tasks.Task") is not { } task)
+                            return null;
+                        // The runtime awaits an async Main, but ordinary calls and delegates would still need migration.
+                        var references = await SymbolFinder.FindReferencesAsync(symbol, solution, cancellation).ConfigureAwait(false);
+                        return references.Any(reference => reference.Locations.Any()) ? null : new(method, task);
                     case MemberDeclarationSyntax:
                         return null;
                 }

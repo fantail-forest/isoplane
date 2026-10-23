@@ -15,8 +15,6 @@
   <ItemGroup>
     <!-- An analyzer runs on whichever compiler builds the application, so it is built against an older one. -->
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" PrivateAssets="all" />
-    <!-- The rules each release added, which the analyzer SDK checks against the descriptors in code. -->
-    <AdditionalFiles Include="AnalyzerReleases.Shipped.md;AnalyzerReleases.Unshipped.md" />
     <InternalsVisibleTo Include="Isoplane.Analyzers.CodeFixes" />
     <InternalsVisibleTo Include="Isoplane.Analyzers.Tests" />
   </ItemGroup>
