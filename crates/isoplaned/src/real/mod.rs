@@ -87,6 +87,14 @@ impl RealPaths {
 }
 
 impl RealCells {
+    /// Returns the owner of an exact version registered with its serving cell.
+    pub fn registered_owner(&self, app: &str, version: &str) -> Option<String> {
+        let module = ModuleId::new(app, version);
+        let modules = self.modules.read();
+        let index = *modules.get(&module)?;
+        self.cells[index].module_tenant(&module)
+    }
+
     pub fn cells(&self) -> &[Arc<Cell>] {
         &self.cells
     }
