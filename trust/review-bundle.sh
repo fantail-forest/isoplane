@@ -44,7 +44,14 @@ describe() {
     key="$(openssl x509 -in "$f" -noout -text \
         | sed -n -E 's/^ *Public Key Algorithm: (.*)$/\1/p; s/^ *(Public-Key|RSA Public-Key|EC Public-Key): \(([0-9]+) bit\)$/\2 bit/p; s/^ *ASN1 OID: (.*)$/\1/p' \
         | paste -sd ' ' -)"
-    if [[ "$subject" == "$issuer" ]]; then self_signed=yes; else self_signed=no; fi
+    self_signed=no
+    # Self-signature reporting is independent of expiry and TLS security policy.
+    # Verification failures mean "no"; the x509 calls above reject malformed input.
+    if [[ "$subject" == "$issuer" ]] && openssl verify \
+        -trusted "$f" -no-CAfile -no-CApath -no-CAstore \
+        -check_ss_sig -no_check_time -auth_level 0 "$f" >/dev/null 2>&1; then
+        self_signed=yes
+    fi
     printf '  fingerprint  %s\n  subject      %s\n  issuer       %s\n  not before   %s\n  not after    %s\n  key          %s\n  self-signed  %s\n\n' \
         "$(basename "$f" .pem)" "$subject" "$issuer" "$not_before" "$not_after" "$key" "$self_signed"
 }
