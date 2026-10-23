@@ -295,6 +295,7 @@ pub struct ReturnedGuest {
     platform_files: PlatformFiles,
     context: Arc<InstanceCtx>,
     snapshot: Option<(InstanceImage, Vec<u8>)>,
+    dispatch_budget: OccupancyBudget,
 }
 
 impl ReturnedGuest {
@@ -371,6 +372,7 @@ impl ReturnedGuest {
             platform_files: reactor.platform_files.clone(),
             context: reactor.context.clone(),
             snapshot: None,
+            dispatch_budget: budget(&reactor.context),
         }
     }
 
@@ -398,6 +400,7 @@ impl ReturnedGuest {
             platform_files: self.platform_files.clone(),
             context: reactor.context.clone(),
             snapshot: self.snapshot.clone(),
+            dispatch_budget: budget(&reactor.context),
         }
     }
 
@@ -408,6 +411,7 @@ impl ReturnedGuest {
 
     /// Dispatches `request` on a fresh Store restored from the last return.
     pub fn start_request(&mut self, request: HttpRequest) -> DispatchOutcome {
+        self.dispatch_budget = budget(&self.context);
         let mut instance = self.activate();
         let outcome = instance.dispatch(
             &DispatchRecord {
@@ -418,9 +422,10 @@ impl ReturnedGuest {
                 occupancy_budget_ms: self.context.limits.occupancy_ms_per_dispatch,
                 now_ms: self.context.slice_clock_ms(),
             },
-            budget(&self.context),
+            self.dispatch_budget,
         );
-        self.snapshot = capture(&mut instance, &outcome);
+        let snapshot = capture(&mut instance, &outcome);
+        self.record_return(&outcome, snapshot);
         outcome
     }
 
@@ -537,6 +542,19 @@ impl ReturnedGuest {
             .unwrap_or_else(|| panic!("{what} must produce a response"))
     }
 
+    fn record_return(
+        &mut self,
+        outcome: &DispatchOutcome,
+        snapshot: Option<(InstanceImage, Vec<u8>)>,
+    ) {
+        self.dispatch_budget = self.dispatch_budget.after(
+            self.dispatch_budget
+                .spent_ns
+                .saturating_add(outcome.occupancy_ns),
+        );
+        self.snapshot = snapshot;
+    }
+
     fn activate(&mut self) -> Instance {
         let mut instance = self
             .engine
@@ -571,7 +589,7 @@ impl ReturnedGuest {
                         self.context.dispatch_id(),
                         future,
                         result,
-                        budget(&self.context),
+                        self.dispatch_budget,
                     );
                     let snapshot = capture(&mut instance, &outcome);
                     (outcome, snapshot)
@@ -579,7 +597,7 @@ impl ReturnedGuest {
                 .join()
                 .expect("the worker must not panic")
         });
-        self.snapshot = snapshot;
+        self.record_return(&outcome, snapshot);
         outcome
     }
 }
@@ -632,6 +650,9 @@ async fn next_completion(
         wake.notified().await;
     }
 }
+
+#[cfg(test)]
+mod occupancy_tests;
 
 #[cfg(test)]
 mod completion_tests {
