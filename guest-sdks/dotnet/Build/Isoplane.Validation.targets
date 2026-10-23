@@ -23,8 +23,8 @@
     <PropertyGroup>
       <!-- Absolute, so the paths in the messages can be pasted back. -->
       <_IsoplaneModule>$([System.IO.Path]::GetFullPath($([System.IO.Path]::Combine('$(MSBuildProjectDirectory)', '$(NativeBinary)'))))</_IsoplaneModule>
-      <_IsoplaneDoctor>&quot;$(IsoplaneCli)&quot; doctor &quot;$(_IsoplaneModule)&quot; --no-color</_IsoplaneDoctor>
-      <_IsoplaneDoctor Condition="'$(IsoplaneCliAssembly)' != ''">dotnet &quot;$(IsoplaneCliAssembly)&quot; doctor &quot;$(_IsoplaneModule)&quot; --no-color</_IsoplaneDoctor>
+      <_IsoplaneDoctor>&quot;$(IsoplaneCli)&quot; doctor &quot;$(_IsoplaneModule)&quot;</_IsoplaneDoctor>
+      <_IsoplaneDoctor Condition="'$(IsoplaneCliAssembly)' != ''">dotnet &quot;$(IsoplaneCliAssembly)&quot; doctor &quot;$(_IsoplaneModule)&quot;</_IsoplaneDoctor>
       <_IsoplaneDoctor Condition="'$(IsoplaneGuestMemoryBytes)' != ''">$(_IsoplaneDoctor) --guest-memory-bytes $(IsoplaneGuestMemoryBytes)</_IsoplaneDoctor>
     </PropertyGroup>
 

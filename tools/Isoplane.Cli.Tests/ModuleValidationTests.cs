@@ -1,7 +1,9 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Xml.Linq;
 using Isoplane.Cli;
 using Isoplane.Native;
+using Isoplane.TestSupport;
 using Xunit;
 
 namespace Isoplane.Cli.Tests;
@@ -97,5 +99,56 @@ public sealed class ModuleValidationTests
             }
         }
         finally { directory.Delete(recursive: true); }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task sdk_publication_validation_obeys_the_real_module_doctor_verdict(bool accepted)
+    {
+        using var directory = new FileSystemTestDirectory("isoplane-sdk-validation-");
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        var root = Environment.GetEnvironmentVariable("ISOPLANE_BUILD_ROOT")
+            ?? throw new InvalidOperationException("Run this suite with task test:managed:standard.");
+        var module = Path.Combine(directory.Path, "module.wasm");
+        await File.WriteAllBytesAsync(module, accepted ? Module : Convert.FromBase64String("AGFzbQEAAAA="), deadline.Token);
+        var project = Path.Combine(directory.Path, "publication.proj");
+        new XDocument(new XElement("Project",
+            new XElement("PropertyGroup",
+                new XElement("NativeBinary", module),
+                new XElement("TargetName", "module"),
+                new XElement("IsoplaneCliAssembly", typeof(CliPaths).Assembly.Location),
+                new XElement("IsoplanePlan", "free")),
+            new XElement("Import", new XAttribute("Project", Path.Combine(root, "guest-sdks/dotnet/Build/Isoplane.Validation.targets")))))
+            .Save(project);
+        var start = new ProcessStartInfo("dotnet")
+        {
+            WorkingDirectory = directory.Path,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        foreach (var argument in new[] { "msbuild", project, "-nologo", "-nodeReuse:false", "-t:IsoplaneValidateModule" })
+            start.ArgumentList.Add(argument);
+        using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start SDK publication validation.");
+        var output = process.StandardOutput.ReadToEndAsync(deadline.Token);
+        var errors = process.StandardError.ReadToEndAsync(deadline.Token);
+        try
+        {
+            await process.WaitForExitAsync(deadline.Token);
+            var reported = await output + await errors;
+            Assert.True(accepted ? process.ExitCode == 0 : process.ExitCode != 0, reported);
+            Assert.Contains(accepted ? "passes validator rules V1-V4" : "ISOPLANE0001", reported);
+            Assert.Contains("judged against the free plan", reported);
+            if (!accepted) Assert.Contains("REJECTED", reported);
+        }
+        finally
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync();
+            }
+        }
     }
 }
