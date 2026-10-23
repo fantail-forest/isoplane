@@ -2,7 +2,7 @@
 //! the bindings moved into the engine at activation.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use isoplane_abi::config::Limits;
@@ -37,6 +37,12 @@ pub struct GuestResourceLimits {
     pub native_handles: usize,
     /// Maximum incoming guest log payload bytes accepted per dispatch.
     pub log_bytes_per_dispatch: u32,
+    /// Maximum guest trace spans retained in one instance.
+    pub trace_spans: usize,
+    /// Maximum UTF-8 name bytes retained by the instance's guest trace spans.
+    pub trace_name_bytes: usize,
+    /// Maximum responses retained in one instance.
+    pub response_handles: usize,
 }
 
 impl Default for GuestResourceLimits {
@@ -44,6 +50,9 @@ impl Default for GuestResourceLimits {
         Self {
             native_handles: 1024,
             log_bytes_per_dispatch: 256 * 1024,
+            trace_spans: 1024,
+            trace_name_bytes: 256 * 1024,
+            response_handles: 1024,
         }
     }
 }
@@ -88,8 +97,7 @@ pub struct InstanceCtx {
     pub(super) out_buffer: Mutex<Vec<u8>>,
     pub responses: Mutex<ResponseTable>,
     pub(super) http: Arc<super::http_scope::HttpScope>,
-    pub(super) spans: Mutex<HashMap<i32, (String, u64)>>,
-    pub(super) next_span: AtomicU32,
+    pub(super) spans: Mutex<super::observability::TraceSpans>,
     pub(super) native_io: Mutex<super::native_io::Resources>,
 }
 
@@ -104,6 +112,10 @@ impl InstanceCtx {
 
     pub(crate) fn configure_resources(&mut self, limits: GuestResourceLimits) {
         self.guest_resources = limits;
+        self.responses = Mutex::new(ResponseTable::new(
+            limits.response_handles,
+            self.limits.instance_memory_max,
+        ));
         self.native_io = Mutex::new(super::native_io::Resources::new(
             super::native_io::ResourceLimits {
                 handles: super::native_io::ResourceCount(limits.native_handles),
@@ -142,6 +154,8 @@ impl InstanceCtx {
     pub(crate) fn release_native_resources(&self) {
         self.http.close();
         self.native_io.lock().clear();
+        self.spans.lock().clear();
+        self.responses.lock().clear();
         for dispatch in self.dispatches.lock().values() {
             dispatch.close();
         }
@@ -210,10 +224,12 @@ impl InstanceCtx {
             trap_latch: Mutex::new(None),
             dispatch_generation: AtomicU64::new(0),
             out_buffer: Mutex::new(Vec::new()),
-            responses: Mutex::new(ResponseTable::default()),
+            responses: Mutex::new(ResponseTable::new(
+                GuestResourceLimits::default().response_handles,
+                tenancy.limits.instance_memory_max,
+            )),
             http: super::http_scope::HttpScope::new(),
-            spans: Mutex::new(HashMap::new()),
-            next_span: AtomicU32::new(1),
+            spans: Mutex::new(super::observability::TraceSpans::default()),
             native_io: Mutex::new(super::native_io::Resources::new(
                 super::native_io::ResourceLimits::default(),
             )),
@@ -276,11 +292,19 @@ impl InstanceCtx {
 
     /// Ends a dispatch's state, closing what it held open.
     pub(crate) fn end_dispatch(&self, dispatch: u64) {
+        let mut dropped_spans = 0;
         if let Some(state) = self.dispatches.lock().remove(&dispatch) {
+            dropped_spans = state.trace_dropped.load(Ordering::Relaxed);
             let background: Arc<dyn crate::reactor_accounting::Observer> = self.background.clone();
             state.reactor_attribution.set(Some(&background));
             state.close();
         }
+        let abandoned_spans = self.spans.lock().end_dispatch(dispatch);
+        if abandoned_spans != 0 || dropped_spans != 0 {
+            tracing::debug!(tenant = %self.tenant, instance = %self.instance, dispatch,
+                abandoned_spans, dropped_spans, "guest trace resources released");
+        }
+        self.responses.lock().end_dispatch(dispatch);
         let mut current = self.current.lock();
         if current.id() == dispatch {
             *current = self.no_dispatch.clone();

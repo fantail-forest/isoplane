@@ -1090,7 +1090,6 @@ impl Cell {
         let (req, remaining) = self.remove_active(slot.id, did);
         let _completion = req.as_ref().map(|owner| owner.completion.settlement());
         slot.ctx.end_dispatch(did);
-        slot.ctx.responses.lock().end_dispatch(did);
         let mut abandoned_guest_work = false;
         if let Some(r) = &req {
             if r.completion.is_http {

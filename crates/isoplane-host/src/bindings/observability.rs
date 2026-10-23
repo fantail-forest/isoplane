@@ -1,10 +1,85 @@
 //! The `log_emit` and `trace_span_*` import arms.
 
+use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 
 use crate::meters::OccupancyInterval;
 
 use super::CellBindings;
+
+#[derive(Default)]
+pub(super) struct TraceSpans {
+    next: i32,
+    names_bytes: usize,
+    open: HashMap<i32, GuestSpan>,
+}
+
+struct GuestSpan {
+    dispatch: u64,
+    name: Box<str>,
+    began_ms: u64,
+}
+
+impl TraceSpans {
+    fn begin(
+        &mut self,
+        dispatch: u64,
+        payload: &[u8],
+        began_ms: u64,
+        limits: super::GuestResourceLimits,
+    ) -> Option<i32> {
+        if self.open.len() >= limits.trace_spans {
+            return None;
+        }
+        let name_bytes = payload.utf8_chunks().try_fold(0usize, |bytes, chunk| {
+            bytes
+                .checked_add(chunk.valid().len())?
+                .checked_add(if chunk.invalid().is_empty() { 0 } else { 3 })
+        })?;
+        if name_bytes > limits.trace_name_bytes.saturating_sub(self.names_bytes) {
+            return None;
+        }
+        let id = self.next.checked_add(1)?;
+        let name = String::from_utf8_lossy(payload)
+            .into_owned()
+            .into_boxed_str();
+        self.next = id;
+        self.names_bytes += name.len();
+        self.open.insert(
+            id,
+            GuestSpan {
+                dispatch,
+                name,
+                began_ms,
+            },
+        );
+        Some(id)
+    }
+
+    fn end(&mut self, id: i32) -> Option<GuestSpan> {
+        let span = self.open.remove(&id)?;
+        self.names_bytes -= span.name.len();
+        Some(span)
+    }
+
+    pub(super) fn clear(&mut self) {
+        self.open.clear();
+        self.names_bytes = 0;
+    }
+
+    pub(super) fn end_dispatch(&mut self, dispatch: u64) -> usize {
+        let before = self.open.len();
+        self.open.retain(|_, span| {
+            if span.dispatch == dispatch {
+                self.names_bytes -= span.name.len();
+                false
+            } else {
+                true
+            }
+        });
+        before - self.open.len()
+    }
+}
 
 impl CellBindings {
     /// Log occupancy is already on the dispatch's meter; the interval makes the
@@ -49,19 +124,33 @@ impl CellBindings {
     }
 
     pub(super) fn trace_span_begin(&self, payload: &[u8]) -> i64 {
-        let name = String::from_utf8_lossy(payload).to_string();
-        let id = self.ctx.next_span.fetch_add(1, Ordering::Relaxed) as i32;
-        self.ctx
-            .spans
-            .lock()
-            .insert(id, (name, self.ctx.slice_clock_ms()));
-        id as i64
+        let dispatch = self.ctx.current();
+        if let Some(id) = self.ctx.spans.lock().begin(
+            dispatch.id(),
+            payload,
+            self.ctx.slice_clock_ms(),
+            self.ctx.guest_resources,
+        ) {
+            return i64::from(id);
+        }
+        let dropped = dispatch
+            .trace_dropped
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
+                Some(count.saturating_add(1))
+            })
+            .expect("the update closure always returns Some");
+        if dropped == 0 {
+            tracing::warn!(tenant = %self.ctx.tenant, instance = %self.ctx.instance,
+                dispatch = dispatch.id(), span_limit = self.ctx.guest_resources.trace_spans,
+                name_bytes_limit = self.ctx.guest_resources.trace_name_bytes, "guest trace spans truncated");
+        }
+        0
     }
 
     pub(super) fn trace_span_end(&self, scalars: [u64; 3]) -> i64 {
         let id = scalars[0] as i32;
-        if let Some((name, at)) = self.ctx.spans.lock().remove(&id) {
-            tracing::debug!(tenant = %self.ctx.tenant, span = %name, began_ms = at, "span end");
+        if let Some(span) = self.ctx.spans.lock().end(id) {
+            tracing::debug!(tenant = %self.ctx.tenant, dispatch = span.dispatch, span = %span.name, began_ms = span.began_ms, "span end");
         }
         0
     }
@@ -73,6 +162,130 @@ mod tests {
     use super::*;
     use isoplane_engine::HostBindings;
     use std::sync::Arc;
+
+    #[test]
+    fn discarding_an_instance_releases_trace_and_response_buffers_while_its_context_is_retained() {
+        let context = ctx();
+        context.begin_dispatch(1, 1);
+        let mut bindings = CellBindings::new(context.clone());
+        assert_ne!(
+            bindings.call_sync(call("trace_span_begin", b"retained", [0; 3])),
+            0
+        );
+        let response = context
+            .responses
+            .lock()
+            .create(
+                1,
+                isoplane_abi::dispatch::ResponseHead {
+                    status: 200,
+                    headers: vec![],
+                    body: b"retained".to_vec(),
+                    streaming: false,
+                },
+            )
+            .expect("retain response");
+        context.release_native_resources();
+        assert!(context.spans.lock().open.is_empty());
+        assert_eq!(context.spans.lock().names_bytes, 0);
+        assert!(context.responses.lock().get(response).is_none());
+    }
+
+    #[test]
+    fn trace_limits_count_lossy_utf8_bytes_and_release_capacity() {
+        let mut spans = TraceSpans::default();
+        let limits = super::super::GuestResourceLimits {
+            trace_spans: 2,
+            trace_name_bytes: 6,
+            ..Default::default()
+        };
+        let first = spans
+            .begin(1, &[0xff], 10, limits)
+            .expect("replacement character fits");
+        assert_eq!(spans.names_bytes, 3);
+        let second = spans
+            .begin(2, b"abc", 10, limits)
+            .expect("exact byte boundary fits");
+        assert!(
+            spans.begin(1, b"", 10, limits).is_none(),
+            "empty names still consume the count allowance"
+        );
+        assert!(spans.end(first).is_some());
+        assert!(
+            spans.begin(1, b"abcd", 10, limits).is_none(),
+            "aggregate byte allowance applies across dispatches"
+        );
+        let third = spans
+            .begin(1, b"abc", 10, limits)
+            .expect("ended span releases its bytes");
+        assert!(third > second, "stale handles cannot address a new span");
+        spans.end_dispatch(1);
+        assert_eq!(spans.names_bytes, 3);
+        assert!(
+            spans.open.contains_key(&second),
+            "another dispatch retains its span"
+        );
+        spans.end_dispatch(2);
+        assert_eq!(spans.names_bytes, 0);
+    }
+
+    #[test]
+    fn disabled_trace_limits_and_exhausted_ids_refuse_without_allocating() {
+        for limits in [
+            super::super::GuestResourceLimits {
+                trace_spans: 0,
+                ..Default::default()
+            },
+            super::super::GuestResourceLimits {
+                trace_name_bytes: 0,
+                ..Default::default()
+            },
+        ] {
+            let mut spans = TraceSpans::default();
+            assert!(spans.begin(1, b"a", 1, limits).is_none());
+            assert!(spans.open.is_empty());
+            assert_eq!(spans.names_bytes, 0);
+        }
+        let mut spans = TraceSpans {
+            next: i32::MAX,
+            ..Default::default()
+        };
+        assert!(spans.begin(1, b"a", 1, Default::default()).is_none());
+        assert!(spans.open.is_empty());
+    }
+
+    #[test]
+    fn ending_a_dispatch_releases_its_unfinished_spans_and_resets_drop_accounting() {
+        let mut context = ctx();
+        Arc::get_mut(&mut context)
+            .expect("new context")
+            .configure_resources(super::super::GuestResourceLimits {
+                trace_spans: 1,
+                trace_name_bytes: 4,
+                ..Default::default()
+            });
+        let mut bindings = CellBindings::new(context.clone());
+        for dispatch in 1..=8 {
+            context.begin_dispatch(dispatch, dispatch);
+            assert_ne!(
+                bindings.call_sync(call("trace_span_begin", b"name", [0; 3])),
+                0
+            );
+            assert_eq!(
+                bindings.call_sync(call("trace_span_begin", b"name", [0; 3])),
+                0
+            );
+            assert_eq!(context.current().trace_dropped.load(Ordering::Relaxed), 1);
+            assert_eq!(
+                context.take_trap(),
+                None,
+                "diagnostic truncation cannot kill the application"
+            );
+            context.end_dispatch(dispatch);
+            assert!(context.spans.lock().open.is_empty());
+            assert_eq!(context.spans.lock().names_bytes, 0);
+        }
+    }
 
     #[test]
     fn logging_records_its_occupancy_share_without_billing_it_twice() {

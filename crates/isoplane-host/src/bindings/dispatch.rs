@@ -15,6 +15,7 @@ pub(crate) struct DispatchState {
     id: u64,
     /// Bounds log volume independently of its occupied-worker cost.
     pub(super) log_bytes: AtomicU32,
+    pub(super) trace_dropped: AtomicU64,
     cancellation: Cancellation,
     /// The dispatch's implicit cancellation future; the host cancels by
     /// completing it, never by entering the instance.
@@ -31,6 +32,7 @@ impl DispatchState {
         Arc::new(Self {
             id,
             log_bytes: AtomicU32::new(0),
+            trace_dropped: AtomicU64::new(0),
             cancellation: Cancellation::default(),
             cancel_future: AtomicU64::new(0),
             request_body: Mutex::new(None),

@@ -175,9 +175,9 @@ pub const IMPORTS: &[ImportDef] = &[
         "structured log at `trace=0` .. `error=4`; worker occupancy counts against the dispatch budget, \
          which is what stops log-as-compute abuse") },
     imp!("trace_span_begin", Observe, BUF_TO_I32, SYNC,
-        "opens a trace span and returns its id, for correlating work inside one dispatch"),
+        "opens a trace span for work inside one dispatch; returns a positive id or 0 when the instance trace count or name-byte allowance is exhausted"),
     ImportDef { buf: BufSpec::None, ..imp!("trace_span_end", Observe, Sig { params: &[I32], results: &[] }, SYNC,
-        "closes the span with that id; unbalanced spans are the guest's problem, not the host's") },
+        "closes the span with that id; 0 and unknown ids have no effect; the host releases unfinished spans when their dispatch ends") },
 
     // ---- clock & entropy --------------------------------------------------
     // Not init-visible: a static initialiser that reads the clock is impure.

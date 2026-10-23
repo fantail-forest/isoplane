@@ -4,7 +4,6 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use isoplane_abi::calls::FetchRequest;
-use isoplane_abi::dispatch::ResponseHead;
 use isoplane_abi::result::{FutureError, ResultRecord};
 
 use super::runtime::CellRuntime;
@@ -236,29 +235,45 @@ impl CellBindings {
             rt.futures.attach_task(id, task.abort_handle());
             return id;
         }
-        let res = match self.ctx.responses.lock().write(handle, payload.to_vec()) {
-            Ok(n) => ResultRecord::Ok(postcard::to_allocvec(&(n as u32)).unwrap_or_default()),
-            Err(e) => ResultRecord::Err(FutureError::Io(format!("resp_write: {e:?}"))),
+        let res = match self.ctx.responses.lock().write(handle, payload) {
+            Ok(n) => super::ok_bytes(&(n as u32)),
+            Err(crate::response::ResponseError::BufferLimit) => {
+                ResultRecord::Err(FutureError::BufferLimit)
+            }
+            Err(error) => ResultRecord::Err(FutureError::Io(format!("resp_write: {error}"))),
         };
         self.settle_now(id, res)
     }
 
     pub(super) fn resp_new(&self, payload: &[u8]) -> i64 {
-        let Some(mut head) = self.decode::<ResponseHead>(payload) else {
-            return 0;
-        };
         let dispatch = self.ctx.current();
+        let mut responses = self.ctx.responses.lock();
+        let head = match responses.decode_head(payload) {
+            Ok(head) => head,
+            Err(error) => return self.response_refused(error),
+        };
+        let handle = match responses.create(dispatch.id(), head) {
+            Ok(handle) => handle,
+            Err(error) => return self.response_refused(error),
+        };
         let transport = dispatch.transport.lock().clone();
-        if head.streaming {
-            if let Some(stream) = transport {
-                if let Err(error) = stream.start(&head) {
+        if let Some(stream) = transport {
+            let response = responses
+                .get(handle)
+                .expect("the response was inserted above while holding the table lock");
+            if response.head.streaming {
+                if let Err(error) = stream.start(&response.head) {
+                    responses.take(handle);
                     tracing::warn!(instance = %self.ctx.instance, ?error, "response start refused");
                     self.ctx
                         .latch_trap(isoplane_abi::status::TrapCode::Protocol);
                     return 0;
                 }
-                if !head.body.is_empty() {
-                    let write = stream.prepare(std::mem::take(&mut head.body));
+                let body = responses
+                    .take_body(handle)
+                    .expect("the response remains inserted while holding the table lock");
+                if !body.is_empty() {
+                    let write = stream.prepare(body);
                     if let Some(rt) = self.rt() {
                         let owner = stream.clone();
                         let task = self.ctx.spawn(&rt.reactor, async move {
@@ -271,7 +286,23 @@ impl CellBindings {
                 }
             }
         }
-        self.ctx.responses.lock().create(dispatch.id(), head) as i64
+        i64::from(handle)
+    }
+
+    fn response_refused(&self, error: crate::response::ResponseError) -> i64 {
+        use crate::response::ResponseError;
+        let code = match error {
+            ResponseError::Malformed(_)
+            | ResponseError::NoSuchHandle
+            | ResponseError::AlreadyFinished => isoplane_abi::status::TrapCode::Protocol,
+            ResponseError::BufferLimit | ResponseError::HandleLimit => {
+                isoplane_abi::status::TrapCode::OutOfMemory
+            }
+        };
+        tracing::warn!(tenant = %self.ctx.tenant, instance = %self.ctx.instance,
+            dispatch = self.ctx.dispatch_id(), %error, "response creation refused");
+        self.ctx.latch_trap(code);
+        0
     }
 
     pub(super) fn resp_finish(&self, scalars: [u64; 3]) -> i64 {
@@ -287,7 +318,45 @@ impl CellBindings {
 mod tests {
     use super::super::tests::{call, ctx};
     use super::*;
+    use isoplane_abi::dispatch::ResponseHead;
     use isoplane_engine::HostBindings;
+
+    #[test]
+    fn a_response_budget_refusal_cannot_publish_streaming_headers() {
+        let mut context = ctx();
+        Arc::get_mut(&mut context)
+            .expect("new context")
+            .configure_resources(super::super::GuestResourceLimits {
+                response_handles: 0,
+                ..Default::default()
+            });
+        context.begin_dispatch(1, 1);
+        let transport = crate::response_transport::ResponseTransport::new(1024);
+        *context.current().transport.lock() = Some(transport.clone());
+        let mut bindings = CellBindings::new(context.clone());
+        let head = ResponseHead {
+            status: 200,
+            headers: vec![],
+            body: b"initial".to_vec(),
+            streaming: true,
+        };
+        assert_eq!(
+            bindings.call_sync(call(
+                "resp_new",
+                &postcard::to_allocvec(&head).expect("encode"),
+                [0; 3]
+            )),
+            0
+        );
+        assert!(
+            !transport.has_started(),
+            "table admission happens before transport side effects"
+        );
+        assert_eq!(
+            context.take_trap(),
+            Some(isoplane_abi::status::TrapCode::OutOfMemory)
+        );
+    }
 
     #[test]
     fn responses_are_built_through_the_vtable() {
