@@ -7,18 +7,22 @@ use std::sync::{Arc, Mutex};
 
 use crate::tls_material::{LEAF_CERTIFICATE, LEAF_KEY, ROOT_CERTIFICATE};
 use bytes::Bytes;
+use futures::{SinkExt, StreamExt};
 use http_body_util::Full;
 use hyper::body::Incoming;
 use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
-use isoplane_proxy::ws::{accept_key, WsReader, WsWriter};
-use isoplane_proxy::{WsError, WsFrame};
 use rustls_pki_types::pem::PemObject;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::TlsAcceptor;
+use tokio_tungstenite::tungstenite::error::ProtocolError;
+use tokio_tungstenite::tungstenite::handshake::server::create_response;
+use tokio_tungstenite::tungstenite::protocol::{Role, WebSocketConfig};
+use tokio_tungstenite::tungstenite::{Error as WebSocketError, Message};
+use tokio_tungstenite::WebSocketStream;
 
 /// An HTTP request target and the presence of credential headers.
 #[derive(Clone, Debug)]
@@ -206,65 +210,16 @@ async fn answer(
     }
     let path = request.uri().path();
     if path.starts_with("/ws-") && path != "/ws-bad" {
-        let key = request
-            .headers()
-            .get("sec-websocket-key")
-            .expect("ClientWebSocket must send its handshake key")
-            .to_str()
-            .expect("the handshake key must be ASCII");
-        let accept = accept_key(key);
         let upgrade = hyper::upgrade::on(&mut request);
+        let response = create_response(&request.map(|_| ()))
+            .expect("ClientWebSocket must send a valid upgrade request");
         tokio::spawn(async move {
             let upgraded = upgrade
                 .await
                 .expect("the protocol peer must complete the accepted upgrade");
-            let (read, write) = tokio::io::split(TokioIo::new(upgraded));
-            let mut reader = WsReader::new(read, 4096);
-            let mut writer = WsWriter::new(write);
-            loop {
-                let frame = match reader.next_message().await {
-                    Ok(frame) => frame,
-                    Err(WsError::Eof) => return,
-                    Err(WsError::Io(error))
-                        if matches!(
-                            error.kind(),
-                            std::io::ErrorKind::ConnectionReset
-                                | std::io::ErrorKind::UnexpectedEof
-                                | std::io::ErrorKind::BrokenPipe
-                        ) =>
-                    {
-                        return
-                    }
-                    Err(error) => panic!("the guest must send valid WebSocket frames: {error}"),
-                };
-                match frame {
-                    frame @ (WsFrame::Text(_) | WsFrame::Binary(_)) => writer
-                        .write(&frame)
-                        .await
-                        .expect("the peer must echo the guest's message"),
-                    WsFrame::Ping(bytes) => writer
-                        .write(&WsFrame::Pong(bytes))
-                        .await
-                        .expect("the peer must answer ping"),
-                    WsFrame::Pong(_) => {}
-                    frame @ WsFrame::Close { .. } => {
-                        peer.closed.store(true, Ordering::SeqCst);
-                        writer
-                            .write(&frame)
-                            .await
-                            .expect("the peer must answer the guest's close");
-                        return;
-                    }
-                }
-            }
+            echo_websocket(TokioIo::new(upgraded), peer).await;
         });
-        return Ok(Response::builder()
-            .status(StatusCode::SWITCHING_PROTOCOLS)
-            .header("connection", "upgrade")
-            .header("upgrade", "websocket")
-            .header("sec-websocket-accept", accept)
-            .body(Full::new(Bytes::new()))
-            .expect("the upgrade response must be valid"));
+        return Ok(response.map(|_| Full::new(Bytes::new())));
     }
     let (status, challenge) = match path {
         "/auth" if !authorization => (StatusCode::UNAUTHORIZED, Some("www-authenticate")),
@@ -286,4 +241,51 @@ async fn answer(
     Ok(response
         .body(Full::new(Bytes::from(body)))
         .expect("the protocol response must be valid"))
+}
+
+async fn echo_websocket<T>(stream: T, peer: ProtocolPeer)
+where
+    T: AsyncRead + AsyncWrite + Unpin,
+{
+    let config = WebSocketConfig::default()
+        .max_frame_size(Some(4096))
+        .max_message_size(Some(4096));
+    let mut websocket = WebSocketStream::from_raw_socket(stream, Role::Server, Some(config)).await;
+    while let Some(message) = websocket.next().await {
+        let message = match message {
+            Ok(message) => message,
+            Err(WebSocketError::Protocol(ProtocolError::ResetWithoutClosingHandshake)) => return,
+            Err(WebSocketError::Io(error))
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::ConnectionReset
+                        | std::io::ErrorKind::UnexpectedEof
+                        | std::io::ErrorKind::BrokenPipe
+                ) =>
+            {
+                return
+            }
+            Err(error) => panic!("the guest must send valid WebSocket frames: {error}"),
+        };
+        match message {
+            message @ (Message::Text(_) | Message::Binary(_)) => websocket
+                .send(message)
+                .await
+                .expect("the peer must echo the guest's message"),
+            Message::Ping(_) => websocket
+                .flush()
+                .await
+                .expect("the peer must flush its automatic pong reply"),
+            Message::Pong(_) => {}
+            Message::Close(_) => {
+                peer.closed.store(true, Ordering::SeqCst);
+                websocket
+                    .flush()
+                    .await
+                    .expect("the peer must flush its automatic close reply");
+                return;
+            }
+            Message::Frame(_) => panic!("the WebSocket stream must yield complete messages"),
+        }
+    }
 }

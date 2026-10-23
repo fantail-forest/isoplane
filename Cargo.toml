@@ -93,6 +93,7 @@ h2          = "0.4"    # the HTTP/2 framing hyper speaks, for test peers that dr
 # TLS for host-terminated https egress (already in the graph through reqwest).
 rustls      = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
 rustls-pki-types = { version = "1", features = ["std"] }
 hyper-util  = { version = "0.1", features = ["full"] }
 http-body-util = "0.1"

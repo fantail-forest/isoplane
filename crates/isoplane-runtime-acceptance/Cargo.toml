@@ -25,6 +25,7 @@ rustls-pki-types = { workspace = true }
 socket2 = { workspace = true }
 tokio = { workspace = true }
 tokio-rustls = { workspace = true }
+tokio-tungstenite = { workspace = true }
 isoplane-abi = { workspace = true, features = ["host"] }
 isoplane-engine = { workspace = true }
 isoplane-fixtures = { workspace = true }
@@ -35,4 +36,3 @@ serde_json = { workspace = true }
 tempfile = { workspace = true }
 tokio-util = { workspace = true }
 isoplane-host = { workspace = true }
-isoplane-proxy = { workspace = true }
