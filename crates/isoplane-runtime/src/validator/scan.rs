@@ -24,7 +24,8 @@ pub(super) struct Scan {
     pub(super) global_names: BTreeMap<u32, String>,
     pub(super) imported_funcs: u32,
     pub(super) defined_funcs: u32,
-    pub(super) table_elements: u64,
+    /// Unvalidated table64 sizes can sum beyond u64; their count is bounded by input bytes.
+    pub(super) table_elements: u128,
     pub(super) max_locals: u32,
     pub(super) max_locals_fn: u32,
     pub(super) code_entries: u32,
@@ -97,7 +98,7 @@ pub(super) fn scan(wasm: &[u8]) -> anyhow::Result<Scan> {
             Payload::TableSection(r) => {
                 for t in r {
                     let t = t?;
-                    s.table_elements += t.ty.maximum.unwrap_or(t.ty.initial);
+                    s.table_elements += u128::from(t.ty.maximum.unwrap_or(t.ty.initial));
                 }
             }
             Payload::ExportSection(r) => {

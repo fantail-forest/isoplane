@@ -397,7 +397,7 @@ pub(super) fn check_bombs(
         ),
     );
     bomb(
-        s.table_elements > policy.max_table_elements as u64,
+        s.table_elements > u128::from(policy.max_table_elements),
         format!(
             "table space of {} elements exceeds MAX_TABLE_ELEMENTS={}",
             s.table_elements, policy.max_table_elements
@@ -482,6 +482,38 @@ mod tests {
             .filter(|(_, subject, _)| subject.is_some_and(|s| s.starts_with("global ")))
             .map(|(code, subject, _)| (code, subject.map(str::to_string)))
             .collect()
+    }
+
+    #[test]
+    fn unvalidated_table_sizes_are_rejected_with_an_exact_aggregate() {
+        for tables in [
+            "(table i64 0 9223372036854775808 funcref) \
+             (table i64 0 9223372036854775808 funcref)",
+            "(table i64 9223372036854775808 funcref) \
+             (table i64 9223372036854775808 funcref)",
+        ] {
+            let wasm = wat::parse_str(format!("(module {tables})"))
+                .expect("the oversized table fixture must assemble");
+            let violations = validate(&wasm, Limits::default())
+                .expect_err("oversized table64 sizes must be rejected");
+            assert_eq!(
+                violations
+                    .iter()
+                    .filter(|v| v.code == ViolationCode::V4ResourceBomb)
+                    .map(|v| v.detail.as_str())
+                    .collect::<Vec<_>>(),
+                vec![
+                    "table space of 18446744073709551616 elements exceeds MAX_TABLE_ELEMENTS=1000000"
+                ],
+                "the aggregate must include every table's maximum or initial size: {tables}",
+            );
+            assert!(
+                violations
+                    .iter()
+                    .any(|v| v.code == ViolationCode::V2ForbiddenFeature),
+                "the table64 fixture must also fail bytecode validation: {violations:?}"
+            );
+        }
     }
 
     #[test]
