@@ -1,8 +1,7 @@
-//! Compression through the pack's native zlib: the stream codecs round-trip
+//! Compression through the runtime pack: the stream codecs round-trip
 //! and reject corrupt input, zip and tar archives build and read back in
 //! memory, a codec's native state survives a Store restoration between its
 //! writes, and the helpers that need a directory fail on the empty disk.
-//! Brotli ships without a native backend on wasi and says so.
 
 #[macro_use]
 mod common;
@@ -32,8 +31,6 @@ in_mono_runtime! {
 }
 
 in_mono_runtime! {
-    /// `System.IO.Compression.Brotli` has no wasi native backend in the pack,
-    /// so the codec declares itself unsupported rather than mis-encoding.
     #[tokio::test]
     async fn a_brotli_stream_round_trips_a_compressible_buffer(runtime: GuestRuntime) {
         let text = answer(runtime, "/compression/round-trip/brotli").await;
@@ -82,8 +79,6 @@ in_mono_runtime! {
 }
 
 in_mono_runtime! {
-    /// `System.Formats.Tar` ships as a throwing stub for wasi in the
-    /// framework: constructing a writer is `PlatformNotSupportedException`.
     #[tokio::test]
     async fn a_pax_tar_archive_round_trips_in_memory(runtime: GuestRuntime) {
         assert_eq!(
