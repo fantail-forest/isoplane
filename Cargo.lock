@@ -1727,7 +1727,6 @@ dependencies = [
  "isoplane-trust",
  "libc",
  "libproc",
- "nix 0.30.1",
  "parking_lot",
  "portable-pty",
  "procfs",

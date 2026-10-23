@@ -560,8 +560,3 @@ mod storage_tests {
         }
     }
 }
-
-#[cfg(feature = "diagnostic-benchmark")]
-mod concurrent_pairs;
-#[cfg(feature = "diagnostic-benchmark")]
-pub use concurrent_pairs::run_concurrent_pairs;

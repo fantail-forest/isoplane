@@ -406,10 +406,6 @@ pub unsafe extern "C" fn isoplane_runtime_prepare(
     })
 }
 
-/// Runs the isolated diagnostic response-pair experiment.
-#[cfg(feature = "diagnostic-benchmark")]
-pub use local::run_concurrent_pairs;
-
 #[cfg(test)]
 mod tests {
     use super::*;
