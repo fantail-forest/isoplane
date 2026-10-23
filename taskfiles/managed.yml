@@ -79,6 +79,7 @@ tasks:
     desc: Pack the prepared managed assemblies and shared runtime
     deps:
       - build
+      - template-package
       - ':runtime'
     sources:
       - '{{.MANAGED}}/bin/{Isoplane.Sdk,Isoplane.AspNetCore,Isoplane.AspNetCore.DataProtection.EntityFrameworkCore,Isoplane.OpenTelemetry,Isoplane.Templates,Isoplane.Testing,Conformance}/release/*'
@@ -115,11 +116,28 @@ tasks:
           - guest-sdks/dotnet/AspNetCore/Isoplane.AspNetCore.csproj
           - guest-sdks/dotnet/AspNetCore.DataProtection.EntityFrameworkCore/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.csproj
           - guest-sdks/dotnet/OpenTelemetry/Isoplane.OpenTelemetry.csproj
-          - guest-sdks/dotnet/Templates/Isoplane.Templates.csproj
           - tools/Isoplane.Testing/Isoplane.Testing.csproj
         task: pack
         vars:
           PROJECT: '{{.ITEM}}'
+
+  template-package:
+    run: once
+    desc: Pack the prepared application templates without building the guest runtime
+    deps: [build]
+    sources:
+      - '{{.MANAGED}}/bin/Isoplane.Templates/release/*'
+      - '{{.ROOT_DIR}}/guest-sdks/dotnet/Templates/**/*'
+      - '{{.ROOT_DIR}}/Directory.Build.props'
+      - '{{.ROOT_DIR}}/licenses/SdkPackage.props'
+      - '{{.ROOT_DIR}}/licenses/Isoplane-SDK-LICENSE.txt'
+      - '{{.ROOT_DIR}}/taskfiles/managed.yml'
+    generates:
+      - '{{.PACKAGES}}/Isoplane.Templates.*.nupkg'
+    cmds:
+      - task: pack
+        vars:
+          PROJECT: guest-sdks/dotnet/Templates/Isoplane.Templates.csproj
 
   pack:
     internal: true

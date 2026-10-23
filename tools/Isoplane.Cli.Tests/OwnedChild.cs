@@ -6,6 +6,11 @@ internal static class OwnedChild
 {
     internal static async Task<int> Main(string[] arguments)
     {
+        if (arguments is ["--verify-sdk-registrations", var registrationScenario, var registrationDirectory, var templatePackage, var templateVersion])
+        {
+            await SdkRegistrationsTests.VerifyRegistrationsAsync(registrationScenario, registrationDirectory, templatePackage, templateVersion);
+            return 0;
+        }
         if (arguments is ["--verify-ca-bundle", var certificateScenario])
         {
             await CertificateTrustTests.VerifyBundleAsync(certificateScenario);

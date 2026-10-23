@@ -1,6 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-using System.Text.RegularExpressions;
+using NuGet.Configuration;
 
 namespace Isoplane.Cli;
 
@@ -21,28 +21,21 @@ internal interface ISdkRegistrations
     Task UninstallTemplateAsync(string packageId, CancellationToken cancellation);
 }
 
-/// <summary>Registrations made through a <c>dotnet</c> executable, run from a directory with no project configuration.</summary>
-internal sealed partial class DotnetRegistrations(string dotnet, string workingDirectory) : ISdkRegistrations
+/// <summary>NuGet settings and template registrations for a <c>dotnet</c> executable, resolved from the same working directory.</summary>
+internal sealed class DotnetRegistrations(string dotnet, string workingDirectory) : ISdkRegistrations
 {
-    public async Task<string?> PackageSourceAsync(string name, CancellationToken cancellation) =>
-        SourcePath(await RunAsync(["nuget", "list", "source"], cancellation), name);
-
-    /// <summary>The path of the named source in <c>dotnet nuget list source</c> output: each entry is a numbered name line followed by its path.</summary>
-    internal static string? SourcePath(string listing, string name)
+    public Task<string?> PackageSourceAsync(string name, CancellationToken cancellation)
     {
-        string? current = null;
-        foreach (var line in listing.Split('\n').Select(line => line.Trim()))
+        cancellation.ThrowIfCancellationRequested();
+        try
         {
-            var entry = SourceEntry().Match(line);
-            if (entry.Success)
-            {
-                current = entry.Groups["name"].Value;
-                continue;
-            }
-            if (current == name && line.Length > 0)
-                return line;
+            var sources = PackageSourceProvider.LoadPackageSources(Settings.LoadDefaultSettings(workingDirectory));
+            return Task.FromResult(sources.FirstOrDefault(source => source.Name == name)?.Source);
         }
-        return null;
+        catch (NuGetConfigurationException error)
+        {
+            throw new InvalidOperationException($"Cannot read NuGet package source '{name}' from {workingDirectory}: {error.Message}", error);
+        }
     }
 
     public Task AddPackageSourceAsync(string name, string path, CancellationToken cancellation) =>
@@ -86,6 +79,8 @@ internal sealed partial class DotnetRegistrations(string dotnet, string workingD
         start.Environment["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1";
         start.Environment["DOTNET_NOLOGO"] = "1";
         start.Environment["DOTNET_SKIP_FIRST_TIME_EXPERIENCE"] = "1";
+        // The SDK exposes installed template versions as localized text, with no machine-readable listing.
+        start.Environment["DOTNET_CLI_UI_LANGUAGE"] = "en-US";
         using var process = Process.Start(start) ?? throw new InvalidOperationException($"Cannot start {dotnet}.");
         var output = process.StandardOutput.ReadToEndAsync(cancellation);
         var errors = process.StandardError.ReadToEndAsync(cancellation);
@@ -103,9 +98,6 @@ internal sealed partial class DotnetRegistrations(string dotnet, string workingD
             throw new InvalidOperationException($"dotnet {string.Join(' ', arguments)} failed (exit {process.ExitCode}):{Environment.NewLine}{(text + await errors).Trim()}");
         return text;
     }
-
-    [GeneratedRegex(@"^\d+\.\s+(?<name>.+?)\s+\[(Enabled|Disabled)\]$")]
-    private static partial Regex SourceEntry();
 
     /// <summary>
     /// Finds the <c>dotnet</c> hosting this CLI, falling back to the executable search path.

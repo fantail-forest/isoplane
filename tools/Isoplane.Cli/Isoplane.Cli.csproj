@@ -22,6 +22,7 @@
     <Compile Include="../BuildProtocol/AssetPaths.cs" Link="AssetPaths.cs" />
     <InternalsVisibleTo Include="Isoplane.Cli.Tests" />
     <PackageReference Include="System.CommandLine" Version="2.0.13" />
+    <PackageReference Include="NuGet.Configuration" Version="7.9.0" />
     <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" Version="10.0.11" />
     <EmbeddedResource Include="../TelemetryProtocol/command-event.schema.json" LogicalName="command-event.schema.json" />
     <None Include="PackageReadme.md" Pack="true" PackagePath="/" />

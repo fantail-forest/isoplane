@@ -51,7 +51,7 @@ tasks:
   managed:prepare:
     internal: true
     run: once
-    deps: [managed:host, ':runtime:toolchain', process-fixture, managed-bundle-fixture]
+    deps: [managed:host, ':managed:template-package', ':runtime:toolchain', process-fixture, managed-bundle-fixture]
 
   managed:standard:
     desc: Run managed tests; pass -- --filter <expression> to select tests
