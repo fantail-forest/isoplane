@@ -9,6 +9,8 @@ import urllib.request
 import xml.etree.ElementTree as ET
 import zipfile
 
+from release_version import validate_release_version
+
 ORIGIN = 'https://releases.isoplane.dev'
 NATIVE_LIBRARIES = {'linux-x64': 'libisoplane_native.so', 'win-x64': 'isoplane_native.dll', 'osx-arm64': 'libisoplane_native.dylib'}
 PLATFORMS = tuple(NATIVE_LIBRARIES)
@@ -81,8 +83,7 @@ def verify_nuspec(path, package_id, version, revision):
 
 def verify(version, manifest_sha256, directory, downloads):
     """Verify all inputs before producing the ordered package list for publication."""
-    require(re.fullmatch(r'(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*)?', version),
-            'invalid release version')
+    validate_release_version(version)
     directory.mkdir(parents=True, exist_ok=False)
     manifest = fetch_json(downloads, f'publication/{version}/manifest.json', manifest_sha256, directory)
     require(manifest['version'] == version, 'publication version mismatch')

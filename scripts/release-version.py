@@ -4,6 +4,7 @@
     scripts/release-version.py show          print the declared version
     scripts/release-version.py check         fail on any pin that differs from it
     scripts/release-version.py set VERSION   declare VERSION and rewrite every pin
+    scripts/release-version.py validate VERSION   check a supplied release identity
 """
 import argparse
 import os
@@ -12,20 +13,21 @@ import re
 import sys
 import xml.etree.ElementTree as ET
 
+from release_version import validate_release_version
+
 ROOT = Path(__file__).resolve().parents[1]
 DECLARATION = 'Directory.Build.props'
 SCANNED_SUFFIXES = ('.csproj', '.props', '.targets')
 EXCLUDED_PATHS = frozenset({'vendor', 'tools/debugger-libs', 'guest-runtime/work', 'handoffs', 'target'})
 EXCLUDED_DIRECTORIES = frozenset({'bin', 'obj', 'node_modules'})
-SEMVER = re.compile(r'^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z.-]+)?$')
 PIN = re.compile(r'(?P<prefix>\bSdk="(?:Isoplane\.Sdk|Isoplane\.AspNetCore)/|<PackageReference Include="(?:Isoplane\.Sdk|Isoplane\.AspNetCore|Isoplane\.AspNetCore\.DataProtection\.EntityFrameworkCore|Isoplane\.OpenTelemetry|Isoplane\.Testing)" Version=")(?P<version>[^"]+)"')
 
 
 def declared(root=ROOT):
     element = ET.parse(root / DECLARATION).getroot().find('./PropertyGroup/Version')
-    if element is None or not element.text or not SEMVER.match(element.text):
+    if element is None or not element.text:
         raise ValueError(f'{DECLARATION} must declare one semantic release version')
-    return element.text
+    return validate_release_version(element.text)
 
 
 def project_files(root=ROOT):
@@ -51,8 +53,7 @@ def check(root=ROOT):
 
 
 def set_version(version, root=ROOT):
-    if not SEMVER.match(version):
-        raise ValueError(f'not a semantic version: {version}')
+    validate_release_version(version)
     declaration = root / DECLARATION
     text = declaration.read_text()
     updated = re.sub(r'<Version>[^<]+</Version>', f'<Version>{version}</Version>', text, count=1)
@@ -72,6 +73,7 @@ def main():
     commands.add_parser('show')
     commands.add_parser('check')
     commands.add_parser('set').add_argument('version')
+    commands.add_parser('validate').add_argument('version')
     args = parser.parse_args()
     try:
         if args.command == 'show':
@@ -82,8 +84,10 @@ def main():
                 print(f'{path}: pins {pinned}, release version is {declared()}', file=sys.stderr)
             if drift:
                 raise SystemExit(f'{len(drift)} pin(s) differ from the declared release version; run scripts/release-version.py set')
-        else:
+        elif args.command == 'set':
             set_version(args.version)
+        else:
+            validate_release_version(args.version)
     except (OSError, ValueError, ET.ParseError) as error:
         raise SystemExit(f'release-version: {error}') from error
 

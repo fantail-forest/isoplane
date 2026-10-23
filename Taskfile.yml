@@ -10,6 +10,8 @@ vars:
   PATH_SEPARATOR: '{{if eq OS "windows"}};{{else}}:{{end}}'
   PYTHON: '{{.ISOPLANE_PYTHON | default (ternary "python" "python3" (eq OS "windows"))}}'
   PLATFORM: '{{if eq OS "darwin"}}osx{{else if eq OS "windows"}}win{{else}}{{OS}}{{end}}-{{if eq ARCH "amd64"}}x64{{else}}{{ARCH}}{{end}}'
+  RELEASE_PYTHON_DIRECTORY: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/release-python'
+  RELEASE_PYTHON: '{{.RELEASE_PYTHON_DIRECTORY}}/{{if eq OS "windows"}}Scripts/python.exe{{else}}bin/python{{end}}'
 
   DEVELOPMENT_COMMAND: '{{if eq OS "windows"}}powershell.exe -NoProfile -ExecutionPolicy Bypass -File taskfiles/windows-developer.ps1 {{end}}'
 

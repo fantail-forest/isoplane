@@ -26,6 +26,18 @@ tasks:
       - cmd: 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{{.SCRATCH}}/dotnet-install.ps1" -Version "{{.SDK_VERSION}}" -InstallDir "{{.USER_HOME}}/.dotnet" -NoPath'
         platforms: [windows]
 
+  release-python:
+    desc: Prepare the Python environment for release versioning and verification
+    deps: [':initialize']
+    sources:
+      - '{{.ROOT_DIR}}/scripts/requirements.txt'
+      - '{{.ROOT_DIR}}/taskfiles/setup.yml'
+    generates:
+      - '{{.RELEASE_PYTHON_DIRECTORY}}/pyvenv.cfg'
+    cmds:
+      - '"{{.PYTHON}}" -m venv --clear "{{.RELEASE_PYTHON_DIRECTORY}}"'
+      - '"{{.RELEASE_PYTHON}}" -m pip install --disable-pip-version-check -r scripts/requirements.txt'
+
   rust:
     cmds:
       - rustup component add rustfmt clippy
