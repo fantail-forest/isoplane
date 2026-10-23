@@ -265,33 +265,21 @@ impl Source {
             Source::Prepared(prepared) => {
                 let engine = IsoplaneEngine::new(engine_configuration(files))
                     .expect("the returned-guest engine must initialize");
-                let template = {
-                    // SAFETY: the private Source variants are constructed only by
-                    // ReturnedGuest's unsafe prepared/layered constructors, whose
-                    // callers establish controlled local compiler origin.
-                    unsafe { engine.load_prepared_product(prepared) }
-                }
-                .unwrap_or_else(|error| panic!("the prepared template must load: {error:#}"));
+                let template = engine
+                    .load_prepared_product(prepared)
+                    .unwrap_or_else(|error| panic!("the prepared template must load: {error:#}"));
                 (engine, template)
             }
             #[cfg(target_os = "linux")]
             Source::Layered { base, layer } => {
                 let engine = IsoplaneEngine::new(engine_configuration(files))
                     .expect("the returned-guest engine must initialize");
-                let base = {
-                    // SAFETY: the private Source variants are constructed only by
-                    // ReturnedGuest's unsafe prepared/layered constructors, whose
-                    // callers establish controlled local compiler origin.
-                    unsafe { engine.load_prepared_product(base) }
-                }
-                .unwrap_or_else(|error| panic!("the base template must load: {error:#}"));
-                let template = {
-                    // SAFETY: the private Source variants are constructed only by
-                    // ReturnedGuest's unsafe prepared/layered constructors, whose
-                    // callers establish controlled local compiler origin.
-                    unsafe { engine.load_prepared_product_over(&base, layer) }
-                }
-                .unwrap_or_else(|error| panic!("the layer must load over its base: {error:#}"));
+                let base = engine
+                    .load_prepared_product(base)
+                    .unwrap_or_else(|error| panic!("the base template must load: {error:#}"));
+                let template = engine
+                    .load_prepared_product_over(&base, layer)
+                    .unwrap_or_else(|error| panic!("the layer must load over its base: {error:#}"));
                 (engine, template)
             }
         }
@@ -357,26 +345,14 @@ impl ReturnedGuest {
     /// Serves trusted preparation output for `reactor`'s instance, as a cell
     /// loads what its builder produced. The preparation must have used
     /// [`engine_configuration`] with the reactor's platform files.
-    ///
-    /// # Safety
-    /// Every native payload must be unchanged output from controlled local preparation.
-    /// Customer-supplied or rewritten serialized native code is not admissible.
-    pub unsafe fn prepared(prepared: PreparedTemplate, reactor: &Reactor) -> Self {
+    pub fn prepared(prepared: PreparedTemplate, reactor: &Reactor) -> Self {
         Self::serving(Source::Prepared(Arc::new(prepared)), reactor)
     }
 
     /// Serves trusted preparation output captured as a layer over `base`, as
     /// [`ReturnedGuest::prepared`] serves a whole template.
     #[cfg(target_os = "linux")]
-    ///
-    /// # Safety
-    /// Every native payload must be unchanged output from controlled local preparation.
-    /// Customer-supplied or rewritten serialized native code is not admissible.
-    pub unsafe fn layered(
-        base: PreparedTemplate,
-        layer: PreparedTemplate,
-        reactor: &Reactor,
-    ) -> Self {
+    pub fn layered(base: PreparedTemplate, layer: PreparedTemplate, reactor: &Reactor) -> Self {
         Self::serving(
             Source::Layered {
                 base: Arc::new(base),

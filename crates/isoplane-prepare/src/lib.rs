@@ -1,5 +1,8 @@
 //! Restricted application initialization, separate from execution and deployment coordination.
 
+// On Linux, preparation loads a published runtime baseline's native code.
+#![cfg_attr(not(target_os = "linux"), forbid(unsafe_code))]
+
 mod bake;
 mod initialize;
 mod network;

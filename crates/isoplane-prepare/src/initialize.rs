@@ -506,14 +506,12 @@ pub(crate) fn initialize_with_cache(
                     }
                     (crate::PortableTemplate::Omitted, _) => None,
                 };
-                let template = unsafe {
-                    // SAFETY: this engine captured `prepared` above; its native bytes came from that compiler.
-                    engine.load_prepared_product_in(
+                let template = engine
+                    .load_prepared_product_in(
                         &prepared,
                         cache.map_or(std::env::temp_dir().as_path(), |cache| cache.directory()),
                     )
-                }
-                .map_err(|error| PrepareError::State(error.into()))?;
+                    .map_err(|error| PrepareError::State(error.into()))?;
                 (
                     template,
                     captured,
@@ -536,14 +534,12 @@ pub(crate) fn initialize_with_cache(
                 let captured = instance
                     .capture_mutable_state()
                     .map_err(PrepareError::State)?;
-                let template = unsafe {
-                    // SAFETY: this engine captured `prepared` above; its native bytes came from that compiler.
-                    engine.load_prepared_product_in(
+                let template = engine
+                    .load_prepared_product_in(
                         &prepared,
                         cache.map_or(std::env::temp_dir().as_path(), |cache| cache.directory()),
                     )
-                }
-                .map_err(|error| PrepareError::State(error.into()))?;
+                    .map_err(|error| PrepareError::State(error.into()))?;
                 (
                     template,
                     captured,
@@ -570,11 +566,9 @@ pub(crate) fn initialize_with_cache(
                 let captured = instance
                     .capture_mutable_state()
                     .map_err(PrepareError::State)?;
-                let template = unsafe {
-                    // SAFETY: this engine captured `prepared` above; its native bytes came from that compiler.
-                    engine.load_prepared_product_over_in(base, &prepared, storage)
-                }
-                .map_err(|error| PrepareError::State(error.into()))?;
+                let template = engine
+                    .load_prepared_product_over_in(base, &prepared, storage)
+                    .map_err(|error| PrepareError::State(error.into()))?;
                 (
                     template,
                     captured,

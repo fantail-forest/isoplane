@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use super::{
     files, state::State, Manifest, PreparedError, PreparedIdentity, PreparedPayload,
-    PreparedTemplate, ReadAhead, Result, FORMAT, MAGIC,
+    PreparedTemplate, PreparedTemplateData, ReadAhead, Result, FORMAT, MAGIC,
 };
 use crate::{Instance, InstanceOps, IsoplaneEngine, Template};
 
@@ -189,40 +189,33 @@ impl IsoplaneEngine {
             hash.update(blake3::hash(bytes).as_bytes());
         }
         Ok(PreparedTemplate {
-            manifest: Manifest {
-                magic: MAGIC,
-                format: FORMAT,
-                abi_rev: template.abi_rev,
-                engine: self.inner.fingerprint.clone(),
-                identity,
-                module_hash: *hash.finalize().as_bytes(),
-                files: std::array::from_fn(|index| files::FileRecord::new(&payloads[index])),
-                base,
+            data: PreparedTemplateData {
+                manifest: Manifest {
+                    magic: MAGIC,
+                    format: FORMAT,
+                    abi_rev: template.abi_rev,
+                    engine: self.inner.fingerprint.clone(),
+                    identity,
+                    module_hash: *hash.finalize().as_bytes(),
+                    files: std::array::from_fn(|index| files::FileRecord::new(&payloads[index])),
+                    base,
+                },
+                payloads,
             },
-            payloads,
         })
     }
 
     /// As [`IsoplaneEngine::load_prepared_product`], for a template captured as a layer over `base`.
-    /// # Safety
-    /// Native bytes must originate from controlled local compilation and trusted operator-owned storage.
-    /// Checksums do not establish compiler origin.
-    pub unsafe fn load_prepared_product_over(
+    pub fn load_prepared_product_over(
         &self,
         base: &Template,
         product: &PreparedTemplate,
     ) -> Result<Template> {
-        unsafe {
-            // SAFETY: the caller guarantees controlled local compiler origin for this product; its backing remains owned and unchanged.
-            self.load_prepared_product_over_in(base, product, &std::env::temp_dir())
-        }
+        self.load_prepared_product_over_in(base, product, &std::env::temp_dir())
     }
 
     /// As [`IsoplaneEngine::load_prepared_product_in`], for a template captured as a layer over `base`.
-    /// # Safety
-    /// Native bytes must originate from controlled local compilation and trusted operator-owned storage.
-    /// Checksums do not establish compiler origin.
-    pub unsafe fn load_prepared_product_over_in(
+    pub fn load_prepared_product_over_in(
         &self,
         base: &Template,
         product: &PreparedTemplate,

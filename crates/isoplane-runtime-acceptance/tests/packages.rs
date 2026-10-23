@@ -218,10 +218,7 @@ async fn answer_on_an_instance(
 ) -> String {
     let reactor = isoplane_harness::Reactor::new(instance);
     reactor.context.begin_slice(1, 1);
-    let guest = {
-        // SAFETY: The private decode helper receives only products from this test module's local preparation paths.
-        unsafe { ReturnedGuest::prepared(decode(product, request), &reactor) }
-    };
+    let guest = ReturnedGuest::prepared(decode(product, request), &reactor);
     finish_across_restored_stores(guest, &reactor, path).await
 }
 
@@ -365,10 +362,7 @@ async fn logged_with(calls: &str) -> Vec<(u8, String)> {
         .unwrap_or_else(|error| panic!("the web package calling {calls} must prepare: {error}"));
     let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
     reactor.context.begin_slice(1, 1);
-    let guest = {
-        // SAFETY: The private decode helper receives only products from this test module's local preparation paths.
-        unsafe { ReturnedGuest::prepared(decode(&product, &request), &reactor) }
-    };
+    let guest = ReturnedGuest::prepared(decode(&product, &request), &reactor);
     let body = finish_across_restored_stores(guest, &reactor, "/log").await;
     assert_eq!(
         body,
@@ -615,10 +609,7 @@ impl SessionVisitor {
             .await
             .unwrap_or_else(|error| panic!("the session package must prepare: {error}"));
         let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
-        let guest = {
-            // SAFETY: The private decode helper receives only products from this test module's local preparation paths.
-            unsafe { ReturnedGuest::prepared(decode(&product, &request), &reactor) }
-        };
+        let guest = ReturnedGuest::prepared(decode(&product, &request), &reactor);
         Self {
             guest,
             reactor,
@@ -933,10 +924,7 @@ async fn the_rate_limiter_middleware_starts_and_limits_an_instances_requests() {
     let prepared = prepared_package("web").await;
     let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
     reactor.context.begin_slice(1, 1);
-    let mut guest = {
-        // SAFETY: The private decode helper receives only products from this test module's local preparation paths.
-        unsafe { ReturnedGuest::prepared(decode(&prepared.0, &prepared.1), &reactor) }
-    };
+    let mut guest = ReturnedGuest::prepared(decode(&prepared.0, &prepared.1), &reactor);
     assert_eq!(
         answer_at(&mut guest, &reactor, "/limited", 1, 1).await,
         "allowed",
@@ -974,10 +962,7 @@ async fn timers_initialization_leaves_running_count_from_activation() {
         + 5 * 60 * 60 * 1000;
     let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
     reactor.context.begin_slice(activated_ms, 1);
-    let mut guest = {
-        // SAFETY: The private decode helper receives only products from this test module's local preparation paths.
-        unsafe { ReturnedGuest::prepared(decode(&product, &request), &reactor) }
-    };
+    let mut guest = ReturnedGuest::prepared(decode(&product, &request), &reactor);
     assert_eq!(
         answer_at(&mut guest, &reactor, "/beats", activated_ms, 1).await,
         "beats=0",
@@ -1058,11 +1043,9 @@ fn prepared_cell(
         IsoplaneEngine::new(engine_configuration(PlatformFiles::default()))
             .expect("the serving engine must initialize"),
     );
-    let template = {
-        // SAFETY: The private decode helper receives only products from this test module's local preparation paths.
-        unsafe { engine.load_prepared_product(&decode(product, request)) }
-    }
-    .expect("the prepared template must load");
+    let template = engine
+        .load_prepared_product(&decode(product, request))
+        .expect("the prepared template must load");
     let cell = isoplane_host::cell::Cell::new(
         config,
         services,
@@ -1428,10 +1411,7 @@ async fn diagnose(path: &str) -> (isoplane_engine::DispatchOutcome, Vec<String>)
     let prepared = prepared_package("diagnostics").await;
     let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
     reactor.context.begin_slice(1, 1);
-    let mut guest = {
-        // SAFETY: The private decode helper receives only products from this test module's local preparation paths.
-        unsafe { ReturnedGuest::prepared(decode(&prepared.0, &prepared.1), &reactor) }
-    };
+    let mut guest = ReturnedGuest::prepared(decode(&prepared.0, &prepared.1), &reactor);
     let outcome = guest.start(path);
     let logs = reactor
         .context
@@ -1606,11 +1586,9 @@ mod over_the_runtime_baseline {
             engine.decode_builder_output(baseline.product.prepared_bytes(), base_identity)
         }
         .expect("the baseline must decode");
-        let loaded = {
-            // SAFETY: This product was decoded from LocalPreparation output in this test module.
-            unsafe { engine.load_prepared_product(&base) }
-        }
-        .expect("the baseline must load");
+        let loaded = engine
+            .load_prepared_product(&base)
+            .expect("the baseline must load");
         let identity = request.identity().expect("the layer's identity");
         // SAFETY: LocalPreparation in this process produced these bytes.
         let layer =
@@ -1631,10 +1609,7 @@ mod over_the_runtime_baseline {
         let whole_reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
         whole_reactor.context.begin_slice(1, 1);
         let whole = finish_across_restored_stores(
-            {
-                // SAFETY: The private decode helper receives only products from this test module's local preparation paths.
-                unsafe { ReturnedGuest::prepared(decode(&whole, &request), &whole_reactor) }
-            },
+            ReturnedGuest::prepared(decode(&whole, &request), &whole_reactor),
             &whole_reactor,
             "/beta",
         )
@@ -1642,10 +1617,7 @@ mod over_the_runtime_baseline {
         let layered_reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
         layered_reactor.context.begin_slice(1, 1);
         let layered = finish_across_restored_stores(
-            {
-                // SAFETY: LocalPreparation/RuntimeBaseline produced both products through the local layer_over helper.
-                unsafe { ReturnedGuest::layered(base, layer, &layered_reactor) }
-            },
+            ReturnedGuest::layered(base, layer, &layered_reactor),
             &layered_reactor,
             "/beta",
         )
@@ -1671,10 +1643,7 @@ mod over_the_runtime_baseline {
         let alpha_reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
         alpha_reactor.context.begin_slice(1, 1);
         let alpha = finish_across_restored_stores(
-            {
-                // SAFETY: LocalPreparation/RuntimeBaseline produced both products through the local layer_over helper.
-                unsafe { ReturnedGuest::layered(alpha_base, alpha, &alpha_reactor) }
-            },
+            ReturnedGuest::layered(alpha_base, alpha, &alpha_reactor),
             &alpha_reactor,
             "/greeting",
         )
@@ -1682,10 +1651,7 @@ mod over_the_runtime_baseline {
         let beta_reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
         beta_reactor.context.begin_slice(1, 1);
         let beta = finish_across_restored_stores(
-            {
-                // SAFETY: LocalPreparation/RuntimeBaseline produced both products through the local layer_over helper.
-                unsafe { ReturnedGuest::layered(beta_base, beta, &beta_reactor) }
-            },
+            ReturnedGuest::layered(beta_base, beta, &beta_reactor),
             &beta_reactor,
             "/beta",
         )

@@ -76,8 +76,25 @@ struct Manifest {
 }
 
 /// Fully prepared native code and explicit initial state, awaiting atomic publication.
-#[derive(Serialize, Deserialize)]
+///
+/// Only engine capture or the unsafe trusted-builder decoder can establish native-code provenance.
+/// General deserialization cannot create a trusted product:
+///
+/// ```compile_fail,E0277
+/// use isoplane_engine::prepared::PreparedTemplate;
+///
+/// fn deserialize_untrusted(bytes: &[u8]) -> Result<PreparedTemplate, postcard::Error> {
+///     postcard::from_bytes(bytes)
+/// }
+/// ```
+#[derive(Serialize)]
+#[serde(transparent)]
 pub struct PreparedTemplate {
+    data: PreparedTemplateData,
+}
+
+#[derive(Serialize, Deserialize)]
+struct PreparedTemplateData {
     manifest: Manifest,
     #[serde(with = "byte_payloads")]
     payloads: [Vec<u8>; 3],
@@ -162,17 +179,19 @@ impl IsoplaneEngine {
             postcard::to_allocvec(&state)?,
         ];
         Ok(PreparedTemplate {
-            manifest: Manifest {
-                magic: MAGIC,
-                format: FORMAT,
-                abi_rev: isoplane_abi::ABI_REV,
-                engine: self.inner.fingerprint.clone(),
-                identity,
-                module_hash: template.hash.0,
-                files: std::array::from_fn(|index| files::FileRecord::new(&payloads[index])),
-                base: None,
+            data: PreparedTemplateData {
+                manifest: Manifest {
+                    magic: MAGIC,
+                    format: FORMAT,
+                    abi_rev: isoplane_abi::ABI_REV,
+                    engine: self.inner.fingerprint.clone(),
+                    identity,
+                    module_hash: template.hash.0,
+                    files: std::array::from_fn(|index| files::FileRecord::new(&payloads[index])),
+                    base: None,
+                },
+                payloads,
             },
-            payloads,
         })
     }
 
@@ -186,7 +205,8 @@ impl IsoplaneEngine {
         bytes: &[u8],
         expected: PreparedIdentity,
     ) -> Result<PreparedTemplate> {
-        self.decode_prepared(bytes, expected, None)
+        // SAFETY: the caller guarantees these bytes originate exclusively from the trusted builder.
+        unsafe { self.decode_prepared(bytes, expected, None) }
     }
 
     /// As [`IsoplaneEngine::decode_builder_output`], for output captured as a
@@ -200,16 +220,19 @@ impl IsoplaneEngine {
         bytes: &[u8],
         expected: PreparedIdentity,
     ) -> Result<PreparedTemplate> {
-        self.decode_prepared(bytes, expected, Some(base))
+        // SAFETY: the caller guarantees these bytes originate exclusively from the trusted builder.
+        unsafe { self.decode_prepared(bytes, expected, Some(base)) }
     }
 
-    fn decode_prepared(
+    /// # Safety
+    /// The bytes have the trusted-builder provenance required by `decode_builder_output`.
+    unsafe fn decode_prepared(
         &self,
         bytes: &[u8],
         expected: PreparedIdentity,
         base: Option<&Template>,
     ) -> Result<PreparedTemplate> {
-        let prepared: PreparedTemplate = postcard::from_bytes(bytes)?;
+        let prepared: PreparedTemplateData = postcard::from_bytes(bytes)?;
         self.check_prepared(&prepared.manifest, expected)?;
         let base = matching_base(&prepared.manifest, base)?;
         prepared.verify_payloads()?;
@@ -222,26 +245,17 @@ impl IsoplaneEngine {
         let state: state::State = postcard::from_bytes(&prepared.payloads[2])?;
         state.validate(&image, self.inner.cfg.max_memory_bytes)?;
         state.filesystem(&self.inner.cfg.platform_files)?;
-        Ok(prepared)
+        Ok(PreparedTemplate { data: prepared })
     }
 
     /// Loads captured preparation output without compilation.
-    /// # Safety
-    /// Native bytes must originate from controlled local compilation and trusted operator-owned storage.
-    /// Checksums do not establish compiler origin.
-    pub unsafe fn load_prepared_product(&self, product: &PreparedTemplate) -> Result<Template> {
-        unsafe {
-            // SAFETY: the caller guarantees controlled local compiler origin for this product; its backing remains owned and unchanged.
-            self.load_prepared_product_in(product, &std::env::temp_dir())
-        }
+    pub fn load_prepared_product(&self, product: &PreparedTemplate) -> Result<Template> {
+        self.load_prepared_product_in(product, &std::env::temp_dir())
     }
 
     /// Restore preparation output, using temporary backing files within
     /// `storage` where the platform maps templates from files.
-    /// # Safety
-    /// Native bytes must originate from controlled local compilation and trusted operator-owned storage.
-    /// Checksums do not establish compiler origin.
-    pub unsafe fn load_prepared_product_in(
+    pub fn load_prepared_product_in(
         &self,
         product: &PreparedTemplate,
         storage: &std::path::Path,
@@ -264,10 +278,11 @@ impl IsoplaneEngine {
         let path = directory.path().join("prepared");
         product.publish_discarded(&path)?;
         let manifest = files::read_manifest_receipt(&path)?.0;
-        self.check_prepared(&manifest, product.manifest.identity)?;
+        self.check_prepared(&manifest, product.data.manifest.identity)?;
         // SAFETY: the directory is private to this call and nothing writes its published files;
         // removing it with the call's end unlinks them, which leaves the mappings intact. `base`
-        // retains its own files.
+        // retains its own files. PreparedTemplate admits native code only from engine capture
+        // or the unsafe decoder of output from the controlled local compiler.
         unsafe { self.map_prepared(&path, manifest, &[], base) }
     }
 
@@ -284,11 +299,11 @@ impl IsoplaneEngine {
         _storage: &Path,
     ) -> Result<Template> {
         use std::io::Write;
-        let manifest = &product.manifest;
+        let manifest = &product.data.manifest;
         self.check_prepared(manifest, manifest.identity)?;
         let base = matching_base(manifest, base)?;
-        product.verify_payloads()?;
-        let [native, baseline, state] = &product.payloads;
+        product.data.verify_payloads()?;
+        let [native, baseline, state] = &product.data.payloads;
         let image = crate::MemoryImage::from_storage_over(
             crate::image::ImageStorage::Owned(baseline.clone()),
             base.map(|base| base.inner.image.clone()),
@@ -309,8 +324,8 @@ impl IsoplaneEngine {
                     .map_err(|error| PreparedError::Engine(error.into()))?;
                 copy.write_all(native)
                     .map_err(|error| PreparedError::Engine(error.into()))?;
-                // SAFETY: the public loader caller guarantees controlled local compiler origin;
-                // the verified native bytes are held in this private unchanged copy.
+                // SAFETY: the bytes hash to what the product's manifest records, and a
+                // product comes only from this engine's own capture or its trusted builder.
                 let module = unsafe { copy.deserialize(&self.inner.wasmtime) }
                     .map_err(|error| PreparedError::Engine(error.into()))?;
                 self.inner.natives.insert(native_hash, module)
@@ -594,7 +609,7 @@ impl IsoplaneEngine {
     }
 }
 
-impl PreparedTemplate {
+impl PreparedTemplateData {
     /// Fails unless every payload has the length and digest the manifest records.
     fn verify_payloads(&self) -> Result<()> {
         for (record, payload) in self.manifest.files.iter().zip(&self.payloads) {
@@ -606,15 +621,17 @@ impl PreparedTemplate {
         }
         Ok(())
     }
+}
 
+impl PreparedTemplate {
     /// Exact engine compatibility identity attached by the producer.
     pub fn engine_fingerprint(&self) -> &str {
-        &self.manifest.engine
+        &self.data.manifest.engine
     }
 
     /// Native compilation bytes for registration under this artifact's engine identity.
     pub fn native_bytes(&self) -> &[u8] {
-        &self.payloads[PreparedPayload::Native.index()]
+        &self.data.payloads[PreparedPayload::Native.index()]
     }
 
     /// Encodes complete preparation output for the host.
@@ -677,7 +694,7 @@ mod tests {
         // SAFETY: this function created the output with this engine's trusted producer.
         let decoded = unsafe { engine.decode_builder_output(&bytes, identity) }.expect("decode");
         assert_eq!(
-            decoded.payloads, prepared.payloads,
+            decoded.data.payloads, prepared.data.payloads,
             "builder transport must retain native code and complete explicit state"
         );
     }
@@ -685,8 +702,8 @@ mod tests {
     #[test]
     fn builder_output_with_inconsistent_state_is_rejected() {
         let (engine, mut prepared, identity) = prepared();
-        prepared.payloads[1][32..40].copy_from_slice(&u64::MAX.to_le_bytes());
-        prepared.manifest.files[1] = files::FileRecord::new(&prepared.payloads[1]);
+        prepared.data.payloads[1][32..40].copy_from_slice(&u64::MAX.to_le_bytes());
+        prepared.data.manifest.files[1] = files::FileRecord::new(&prepared.data.payloads[1]);
         let bytes = prepared.encode_builder_output().expect("encode");
         // SAFETY: this is a deliberately malformed output from the test-owned producer, not customer code.
         assert!(

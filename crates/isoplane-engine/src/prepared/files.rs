@@ -145,7 +145,7 @@ impl PreparedTemplate {
             tempfile::tempdir_in(parent).map_err(|e| io("create staging directory", parent, e))?;
         for (index, name) in PAYLOAD_NAMES.iter().enumerate() {
             let path = temporary.path().join(name);
-            write_new(&path, &self.payloads[index], persistence)?;
+            write_new(&path, &self.data.payloads[index], persistence)?;
             // Windows refuses to delete a file carrying its read-only attribute, which would
             // strand a published artifact in a cache or a scratch directory.
             #[cfg(unix)]
@@ -158,7 +158,7 @@ impl PreparedTemplate {
                     .map_err(|e| io("make published payload read-only", &path, e))?;
             }
         }
-        let metadata = postcard::to_allocvec(&self.manifest)?;
+        let metadata = postcard::to_allocvec(&self.data.manifest)?;
         write_new(&temporary.path().join(MANIFEST), &metadata, persistence)?;
         #[cfg(unix)]
         if persistence == Persistence::Durable {
