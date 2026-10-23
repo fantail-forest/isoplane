@@ -2,7 +2,7 @@
 
 mod admin;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -49,8 +49,7 @@ pub fn engine_config(
     })
 }
 
-/// The node's cells on one engine, and the placement that puts an app on
-/// one of them.
+/// The node's cells on one engine, and the cell hosting each registered version.
 pub struct RealCells {
     runtime_settings: Arc<dyn crate::development::RuntimeSettingsSource>,
     engine: Arc<isoplane_engine::IsoplaneEngine>,
@@ -58,10 +57,10 @@ pub struct RealCells {
     /// does not recompile.
     artifacts: std::path::PathBuf,
     cells: Vec<Arc<Cell>>,
-    /// Configured application-to-cell assignment.
-    placement: RwLock<HashMap<String, usize>>,
-    /// Exact app/version identities registered on this node.
-    modules: RwLock<HashSet<ModuleId>>,
+    /// Configured installation destinations for local applications.
+    configured_placement: HashMap<String, usize>,
+    /// Exact registered app/version identities and their index into `cells`.
+    modules: RwLock<HashMap<ModuleId, usize>>,
     /// app -> tenant.
     tenants: Arc<RwLock<HashMap<String, String>>>,
     /// The only way a module reaches a cell.
@@ -92,6 +91,14 @@ impl RealCells {
         &self.cells
     }
 
+    fn cell_for(&self, app: &str, version: &str) -> anyhow::Result<Arc<Cell>> {
+        let module = ModuleId::new(app, version);
+        let idx = *self.modules.read().get(&module).ok_or_else(|| {
+            anyhow::anyhow!("module `{module}` is not registered on any cell of this node")
+        })?;
+        Ok(self.cells[idx].clone())
+    }
+
     /// Local preparation using this node's existing compiler-owned artifact cache.
     pub fn local_preparation(&self) -> anyhow::Result<isoplane_prepare::LocalPreparation> {
         // SAFETY: the node owns this cache and uses only the atomic, content-addressed
@@ -104,20 +111,16 @@ impl RealCells {
         ))?)
     }
 
-    /// Registers a prepared template without acquiring artifacts or invoking preparation.
-    /// With the receipt of its published artifact, the template is restored from it again
-    /// once a read of its mapped storage fails.
-    pub async fn install_prepared(
+    async fn install_prepared_on_cell(
         &self,
-        app: &str,
-        version: &str,
+        index: usize,
+        module: ModuleId,
         tenant: &str,
         manifest: isoplane_abi::config::AppManifest,
         template: isoplane_engine::Template,
         receipt: Option<crate::deploy::PreparedReceipt>,
     ) -> anyhow::Result<ModuleId> {
-        let cell = self.cell_for(app)?;
-        let module = ModuleId::new(app, version);
+        let cell = &self.cells[index];
         let activator = match receipt {
             Some(receipt) => {
                 let deployer = self.deployer.clone();
@@ -135,7 +138,7 @@ impl RealCells {
             .runtime_settings
             .settings(crate::development::SettingsOwner {
                 tenant,
-                application: app,
+                application: &module.app,
             })?;
         cell.register_module_with_exceptions(
             tenant,
@@ -146,9 +149,9 @@ impl RealCells {
         cell.set_runtime_configuration(tenant, &module, settings.configuration)?;
         self.tenants
             .write()
-            .insert(app.to_owned(), tenant.to_owned());
-        self.modules.write().insert(module.clone());
-        tracing::info!(app, version, cell = %cell.cfg.name, "prepared module registered");
+            .insert(module.app.clone(), tenant.to_owned());
+        self.modules.write().insert(module.clone(), index);
+        tracing::info!(app = %module.app, version = %module.version, cell = %cell.cfg.name, "prepared module registered");
         Ok(module)
     }
 
@@ -166,7 +169,9 @@ impl Dispatcher for RealCells {
         target: &isoplane_abi::host::RouteTarget,
         req: HttpRequest,
     ) -> anyhow::Result<HttpReply> {
-        self.cell_for(&target.app)?.dispatch_http(target, req).await
+        self.cell_for(&target.app, &target.version)?
+            .dispatch_http(target, req)
+            .await
     }
 
     async fn dispatch_http_stream(
@@ -174,7 +179,7 @@ impl Dispatcher for RealCells {
         target: &isoplane_abi::host::RouteTarget,
         req: HttpRequest,
     ) -> anyhow::Result<isoplane_abi::host::HttpExchange> {
-        self.cell_for(&target.app)?
+        self.cell_for(&target.app, &target.version)?
             .dispatch_http_stream(target, req)
             .await
     }
@@ -183,7 +188,7 @@ impl Dispatcher for RealCells {
         target: &isoplane_abi::host::RouteTarget,
         upload: isoplane_abi::host::HttpUpload,
     ) -> anyhow::Result<isoplane_abi::host::HttpExchange> {
-        self.cell_for(&target.app)?
+        self.cell_for(&target.app, &target.version)?
             .dispatch_http_upload(target, upload)
             .await
     }
