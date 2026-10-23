@@ -1,6 +1,7 @@
 //! Process-safe retention for regenerable local artifacts.
 #![forbid(unsafe_code)]
 
+use file_id::FileId;
 use parking_lot::{Mutex, MutexGuard};
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
@@ -64,7 +65,7 @@ pub struct Cache {
     entries: Arc<LocalEntries>,
 }
 
-type LocalEntries = Mutex<HashMap<PathBuf, Weak<File>>>;
+type LocalEntries = Mutex<HashMap<FileId, Weak<File>>>;
 
 /// Where evicted entries wait until all their files can be deleted.
 const EVICTED: &str = ".evicted";
@@ -84,7 +85,7 @@ fn local_entries(root: &Path) -> Arc<LocalEntries> {
 struct Catalog<'a> {
     // Close the process lock before allowing another local owner to open it.
     _file: File,
-    entries: MutexGuard<'a, HashMap<PathBuf, Weak<File>>>,
+    entries: MutexGuard<'a, HashMap<FileId, Weak<File>>>,
 }
 
 /// Keeps an entry alive across processes until its last reader releases it.
@@ -132,13 +133,27 @@ impl Cache {
             return Err(Error::Unowned(path));
         }
         directory(&path)?;
+        if marker.is_symlink() {
+            return Err(Error::Unowned(marker));
+        }
+        let identity = match file_id::get_file_id(&marker) {
+            Ok(identity) => Some(identity),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(io(&marker, error)),
+        };
         // NFS locks can belong to a process rather than an individual open handle.
-        let file = match gate.entries.get(&path).and_then(Weak::upgrade) {
+        // Looking up identity through metadata avoids opening and closing a live marker,
+        // which could release those locks. A cleared entry's key can name a new file.
+        let file = match identity
+            .and_then(|identity| gate.entries.get(&identity))
+            .and_then(Weak::upgrade)
+        {
             Some(file) => file,
             None => {
                 let file = Arc::new(open_lock(&marker)?);
                 fs4::FileExt::lock_shared(file.as_ref()).map_err(|error| io(&marker, error))?;
-                gate.entries.insert(path.clone(), Arc::downgrade(&file));
+                let identity = file_id::get_file_id(&marker).map_err(|error| io(&marker, error))?;
+                gate.entries.insert(identity, Arc::downgrade(&file));
                 file
             }
         };
@@ -167,10 +182,11 @@ impl Cache {
             if total <= self.budget.0 {
                 break;
             }
-            if gate.entries.contains_key(&path) {
+            let marker = path.join(".lease");
+            let identity = file_id::get_file_id(&marker).map_err(|error| io(&marker, error))?;
+            if gate.entries.contains_key(&identity) {
                 continue;
             }
-            let marker = path.join(".lease");
             let file = open_lock(&marker)?;
             match fs4::FileExt::try_lock(&file) {
                 Ok(()) => {}
@@ -481,6 +497,89 @@ mod tests {
             !left.exists(),
             "retention must delete an evicted entry an earlier attempt left behind"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn clearing_a_live_entry_allows_repeated_leases_of_its_replacement() {
+        let root = tempfile::tempdir().unwrap();
+        let cache = Cache::new(root.path().into(), CacheBytes(0)).unwrap();
+        let original = cache.lease(CacheKey([1; 32])).unwrap();
+        fs::write(original.directory().join("module"), b"original").unwrap();
+        let mut original_file = File::open(original.directory().join("module")).unwrap();
+
+        assert!(cache.clear().unwrap().is_empty());
+        let replacement = cache.lease(CacheKey([1; 32])).unwrap();
+        fs::write(replacement.directory().join("module"), b"new").unwrap();
+        let third = cache
+            .lease(CacheKey([1; 32]))
+            .expect("another reader must be able to lease the recreated entry");
+        assert_eq!(cache.entries().unwrap().len(), 1);
+        assert_eq!(cache.entries().unwrap()[0].bytes, 3);
+        drop(replacement);
+        cache.prune().unwrap();
+        assert!(third.directory().join("module").is_file());
+        let path = third.directory().to_path_buf();
+        drop(third);
+        assert!(
+            !path.exists(),
+            "an old reader must not keep the replacement over budget"
+        );
+        assert_eq!(cache.entries().unwrap(), []);
+        let mut content = String::new();
+        std::io::Read::read_to_string(&mut original_file, &mut content).unwrap();
+        assert_eq!(content, "original");
+        drop(original);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pruning_reclaims_an_entry_another_process_recreated_beside_an_old_reader() {
+        const CHILD_ROOT: &str = "ISOPLANE_CACHE_TEST_RECREATED_ROOT";
+        if let Some(root) = std::env::var_os(CHILD_ROOT) {
+            let cache = Cache::new(root.into(), CacheBytes(u64::MAX)).unwrap();
+            assert!(cache.clear().unwrap().is_empty());
+            let replacement = cache.lease(CacheKey([1; 32])).unwrap();
+            fs::write(replacement.directory().join("module"), b"replacement").unwrap();
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        let cache = Cache::new(root.path().into(), CacheBytes(0)).unwrap();
+        let original = cache.lease(CacheKey([1; 32])).unwrap();
+        fs::write(original.directory().join("module"), b"original").unwrap();
+        let child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tests::pruning_reclaims_an_entry_another_process_recreated_beside_an_old_reader",
+                "--nocapture",
+            ])
+            .env(CHILD_ROOT, root.path())
+            .output()
+            .unwrap();
+        assert!(
+            child.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&child.stdout),
+            String::from_utf8_lossy(&child.stderr)
+        );
+        assert_eq!(cache.entries().unwrap()[0].bytes, 11);
+        cache.prune().unwrap();
+        assert!(
+            !original.directory().exists(),
+            "an old local reader must not prevent pruning another process's replacement"
+        );
+        let replacement = cache.lease(CacheKey([1; 32])).unwrap();
+        fs::write(replacement.directory().join("module"), b"new").unwrap();
+        let third = cache.lease(CacheKey([1; 32])).unwrap();
+        drop(replacement);
+        cache.prune().unwrap();
+        assert!(third.directory().join("module").is_file());
+        drop(third);
+        assert!(
+            !original.directory().exists(),
+            "an old local reader must not protect another process's released replacement"
+        );
+        assert_eq!(cache.entries().unwrap(), []);
     }
 
     #[test]
