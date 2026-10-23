@@ -102,6 +102,161 @@ pub async fn http_peer() -> HttpPeer {
     serve(None, Protocols::Http1And2).await
 }
 
+/// Evidence that the guest is holding a partially transferred body.
+#[derive(Debug)]
+pub enum BodyProgress {
+    /// The guest hashed the prefix before asking permission to read the rest.
+    Download { prefix_sha256: String },
+    /// The peer received the prefix before the guest asked to produce the rest.
+    Upload { prefix: Vec<u8> },
+}
+
+/// A peer whose body remainder and guest producer stay gated until released.
+pub struct MidstreamPeer {
+    /// The loopback destination admitted to the guest's reactor.
+    pub address: SocketAddr,
+    progress: tokio::sync::mpsc::UnboundedReceiver<BodyProgress>,
+    release: tokio::sync::watch::Sender<bool>,
+}
+
+impl MidstreamPeer {
+    /// Waits for body progress established by the guest's checkpoint request.
+    pub async fn progress(&mut self) -> BodyProgress {
+        self.progress
+            .recv()
+            .await
+            .expect("the peer must report body progress")
+    }
+
+    /// Allows the guest and peer to transfer the remaining body bytes.
+    pub fn release(&self) {
+        self.release.send_replace(true);
+    }
+}
+
+#[derive(Clone)]
+struct BodyGate {
+    progress: tokio::sync::mpsc::UnboundedSender<BodyProgress>,
+    release: tokio::sync::watch::Sender<bool>,
+    upload_prefix: tokio::sync::watch::Sender<Option<Vec<u8>>>,
+}
+
+impl BodyGate {
+    async fn released(&self) {
+        self.release
+            .subscribe()
+            .wait_for(|released| *released)
+            .await
+            .expect("the test owns the body release gate");
+    }
+
+    async fn route(
+        self,
+        request: Request<Incoming>,
+        prefix_bytes: usize,
+        total_bytes: usize,
+    ) -> Result<Response<PeerBody>, std::convert::Infallible> {
+        let path = request.uri().path().to_owned();
+        if path == "/stream" {
+            let mut body = pattern(total_bytes);
+            let remainder = body.split_off(prefix_bytes);
+            let chunks = futures::StreamExt::chain(
+                futures::stream::once(async { Ok(Frame::data(Bytes::from(body))) }),
+                futures::stream::once(async move {
+                    self.released().await;
+                    Ok(Frame::data(Bytes::from(remainder)))
+                }),
+            );
+            return Ok(Response::builder()
+                .header("content-type", "application/octet-stream")
+                .body(StreamBody::new(chunks).boxed())
+                .expect("a gated response builds"));
+        }
+        if path == "/echo" {
+            let mut incoming = request.into_body();
+            let mut body = Vec::new();
+            while let Some(frame) = incoming.frame().await {
+                let frame = frame.expect("the guest's request body must arrive");
+                if let Ok(bytes) = frame.into_data() {
+                    body.extend_from_slice(&bytes);
+                    if body.len() >= prefix_bytes && self.upload_prefix.borrow().is_none() {
+                        assert_eq!(
+                            body.len(),
+                            prefix_bytes,
+                            "the guest producer must withhold the remainder at its checkpoint"
+                        );
+                        self.upload_prefix.send_replace(Some(body.clone()));
+                    }
+                }
+            }
+            assert_eq!(
+                body.len(),
+                total_bytes,
+                "the complete upload must reach the peer"
+            );
+            return Ok(Response::builder()
+                .header("content-type", "application/octet-stream")
+                .body(Full::new(Bytes::from(body)).boxed())
+                .expect("an echo response builds"));
+        }
+        let progress = if let Some(prefix_sha256) = path.strip_prefix("/download-progress/") {
+            BodyProgress::Download {
+                prefix_sha256: prefix_sha256.to_owned(),
+            }
+        } else if path == "/upload-progress" {
+            let mut prefix = self.upload_prefix.subscribe();
+            let prefix = prefix
+                .wait_for(Option::is_some)
+                .await
+                .expect("the upload reader owns the prefix gate")
+                .as_ref()
+                .expect("the gate observed a prefix")
+                .clone();
+            BodyProgress::Upload { prefix }
+        } else {
+            return Ok(text(StatusCode::NOT_FOUND, "no such midstream route"));
+        };
+        self.progress
+            .send(progress)
+            .expect("the test waits for body progress");
+        self.released().await;
+        Ok(text(StatusCode::OK, "continue"))
+    }
+}
+
+/// Starts a Hyper peer that holds a body after `prefix_bytes` until the test
+/// has restored the guest's checkpoint. The guest reports download consumption
+/// and explicitly gates upload production through a second HTTP request.
+pub async fn midstream_peer(prefix_bytes: usize, total_bytes: usize) -> MidstreamPeer {
+    assert!(prefix_bytes > 0 && prefix_bytes < total_bytes);
+    let (listener, peer) = bind().await;
+    let (progress_tx, progress) = tokio::sync::mpsc::unbounded_channel();
+    let (release, _) = tokio::sync::watch::channel(false);
+    let (upload_prefix, _) = tokio::sync::watch::channel(None);
+    let gate = BodyGate {
+        progress: progress_tx,
+        release: release.clone(),
+        upload_prefix,
+    };
+    accept_loop(listener, peer.accepted, move |stream| {
+        let gate = gate.clone();
+        async move {
+            let service =
+                service_fn(move |request| gate.clone().route(request, prefix_bytes, total_bytes));
+            Protocols::Http1And2
+                .builder()
+                .serve_connection(TokioIo::new(stream), service)
+                .await
+                .expect("the gated HTTP connection must complete without a protocol error");
+        }
+    });
+    MidstreamPeer {
+        address: peer.address,
+        progress,
+        release,
+    }
+}
+
 /// Starts an HTTP/1.1-only peer behind TLS presenting `certificate`.
 pub async fn https_peer(certificate: Certificate) -> HttpPeer {
     serve(

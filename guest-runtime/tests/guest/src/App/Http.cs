@@ -110,9 +110,13 @@ internal sealed class Http
                 return Describe(response, selection) + " body=" + body + " x-answer=" + string.Join(",", response.Headers.GetValues("X-Answer"));
             }
             case "stream":
+            case "stream-gated":
             {
+                bool gated = path[0] == "stream-gated";
+                int prefixBytes = gated ? int.Parse(path[4], CultureInfo.InvariantCulture) : 0;
                 using var client = Client(selection);
-                using var response = await client.GetAsync(Url("http", path[1], path[2], "/stream/" + path[3]), HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
+                string route = gated ? "/stream" : "/stream/" + path[3];
+                using var response = await client.GetAsync(Url("http", path[1], path[2], route), HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
                 using var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
                 using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
                 byte[] buffer = new byte[8192];
@@ -120,21 +124,31 @@ internal sealed class Http
                 int reads = 0;
                 while (true)
                 {
-                    int count = await stream.ReadAsync(buffer).ConfigureAwait(false);
+                    int capacity = gated && length < prefixBytes ? (int)Math.Min(buffer.Length, prefixBytes - length) : buffer.Length;
+                    int count = await stream.ReadAsync(buffer.AsMemory(0, capacity)).ConfigureAwait(false);
                     if (count == 0) break;
                     digest.AppendData(buffer, 0, count);
                     length += count;
                     reads++;
+                    if (gated && length == prefixBytes)
+                    {
+                        // A separate client permits this checkpoint while HTTP/1's body is still open.
+                        using var progress = Client(selection);
+                        await progress.GetStringAsync(Url("http", path[1], path[2], "/download-progress/" + Convert.ToHexString(digest.GetCurrentHash()))).ConfigureAwait(false);
+                    }
                 }
                 return Describe(response, selection) + " length=" + length.ToString(CultureInfo.InvariantCulture)
                     + " reads=" + reads.ToString(CultureInfo.InvariantCulture)
                     + " sha256=" + Convert.ToHexString(digest.GetHashAndReset());
             }
             case "post":
+            case "post-gated":
             {
                 byte[] payload = Pattern(int.Parse(path[3], CultureInfo.InvariantCulture));
                 using var client = Client(selection);
-                using var content = new StreamContent(new MemoryStream(payload));
+                using HttpContent content = path[0] == "post-gated"
+                    ? new GatedUploadContent(payload, int.Parse(path[4], CultureInfo.InvariantCulture), selection, Url("http", path[1], path[2], "/upload-progress"))
+                    : new StreamContent(new MemoryStream(payload));
                 content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
                 using var response = await client.PostAsync(Url("http", path[1], path[2], "/echo"), content).ConfigureAwait(false);
                 byte[] echoed = await response.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
@@ -180,6 +194,25 @@ internal sealed class Http
             }
             default:
                 throw new ArgumentException("unknown http behaviour " + path[0]);
+        }
+    }
+
+    private sealed class GatedUploadContent(byte[] payload, int prefixBytes, Selection selection, string checkpoint) : HttpContent
+    {
+        protected override bool TryComputeLength(out long length)
+        {
+            length = payload.Length;
+            return true;
+        }
+
+        protected override async Task SerializeToStreamAsync(Stream stream, TransportContext? context)
+        {
+            await stream.WriteAsync(payload.AsMemory(0, prefixBytes)).ConfigureAwait(false);
+            await stream.FlushAsync().ConfigureAwait(false);
+            // Even a completely buffered transport cannot obtain the remainder before release.
+            using var progress = Client(selection);
+            await progress.GetStringAsync(checkpoint).ConfigureAwait(false);
+            await stream.WriteAsync(payload.AsMemory(prefixBytes)).ConfigureAwait(false);
         }
     }
 

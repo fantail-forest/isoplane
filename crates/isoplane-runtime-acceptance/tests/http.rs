@@ -31,13 +31,15 @@ use common::{guest, GuestRuntime};
 use fixed_dns::FixedDns;
 use http_peers::{
     goaway_peer, h2_https_peer, http_peer, http_peer_on, http_peer_on_listener, https_peer,
-    https_peer_on, reactor_for_http, stale_peer, Certificate,
+    https_peer_on, midstream_peer, pattern, reactor_for_http, stale_peer, BodyProgress,
+    Certificate, MidstreamPeer,
 };
 use isoplane_engine::Completion;
 use isoplane_harness::EmittedGuestLogs as _;
-use isoplane_harness::{Reactor, WAKE_DEADLINE};
+use isoplane_harness::{Reactor, ReturnedGuest, WAKE_DEADLINE};
 use refusing::refusing_endpoint;
 use resolvers::{reactor_for_dns, FailingDns, PendingDns};
+use sha2::{Digest as _, Sha256};
 
 const LOCALHOST: std::net::IpAddr = std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
 /// SHA-256 of the 300 000-byte pattern the stream route serves.
@@ -73,6 +75,102 @@ async fn reach_stalled_response(
     })
     .await
     .expect("the peer must receive the request before advancing the cancellation clock");
+}
+
+/// A prefix smaller than either body, used as an explicit guest/peer checkpoint.
+const BODY_PREFIX_BYTES: usize = 8192;
+
+async fn restore_at_body_checkpoint(
+    guest: &mut ReturnedGuest,
+    reactor: &Reactor,
+    peer: &mut MidstreamPeer,
+) -> BodyProgress {
+    let progress = tokio::time::timeout(WAKE_DEADLINE, async {
+        loop {
+            tokio::select! {
+                progress = peer.progress() => break progress,
+                outcome = guest.wake(reactor) => assert_eq!(
+                    outcome.completion, Completion::Parked,
+                    "the guest must remain partial until its body gate opens: {outcome:?}"
+                ),
+            }
+        }
+    })
+    .await
+    .expect("the guest and peer must establish body progress before the test deadline");
+    let outcome = guest.poll();
+    assert_eq!(outcome.completion, Completion::Parked,
+        "the partially transferred body must restore and park while its remainder is withheld: {outcome:?}");
+    progress
+}
+
+async fn response_body_survives_store_restoration(runtime: GuestRuntime, owner: u64, http2: bool) {
+    isoplane_harness::LogCapture::global();
+    let mut peer = midstream_peer(BODY_PREFIX_BYTES, 300_000).await;
+    let reactor = reactor(owner, vec![peer.address]);
+    let mut guest = guest(&reactor, runtime);
+    let selection = if http2 { "h2/" } else { "" };
+    let outcome = guest.start(&format!(
+        "/http/{selection}stream-gated/127.0.0.1/{}/300000/{BODY_PREFIX_BYTES}",
+        peer.address.port()
+    ));
+    assert_eq!(
+        outcome.completion,
+        Completion::Parked,
+        "the request parks: {outcome:?}"
+    );
+    let progress = restore_at_body_checkpoint(&mut guest, &reactor, &mut peer).await;
+    let BodyProgress::Download { prefix_sha256 } = progress else {
+        panic!("the guest must report download consumption: {progress:?}");
+    };
+    assert_eq!(
+        prefix_sha256,
+        format!("{:X}", Sha256::digest(pattern(BODY_PREFIX_BYTES))),
+        "the guest must hash the exact prefix before the selected park is captured"
+    );
+    peer.release();
+    let text = guest.finish(&reactor, 64).await;
+    let version = if http2 { " version=2.0" } else { "" };
+    assert!(
+        text.starts_with(&format!("status=200{version} content-type=application/octet-stream length=300000 "))
+            && text.ends_with(&format!(" sha256={STREAM_DIGEST}")),
+        "the partially consumed response and its digest must survive restoration before the remainder arrives: {text}; logs: {:?}",
+        reactor.context.emitted_logs()
+    );
+}
+
+async fn request_body_survives_store_restoration(runtime: GuestRuntime, owner: u64, http2: bool) {
+    isoplane_harness::LogCapture::global();
+    let mut peer = midstream_peer(BODY_PREFIX_BYTES, 200_000).await;
+    let reactor = reactor(owner, vec![peer.address]);
+    let mut guest = guest(&reactor, runtime);
+    let selection = if http2 { "h2/" } else { "" };
+    let outcome = guest.start(&format!(
+        "/http/{selection}post-gated/127.0.0.1/{}/200000/{BODY_PREFIX_BYTES}",
+        peer.address.port()
+    ));
+    assert_eq!(
+        outcome.completion,
+        Completion::Parked,
+        "the request parks: {outcome:?}"
+    );
+    let progress = restore_at_body_checkpoint(&mut guest, &reactor, &mut peer).await;
+    let BodyProgress::Upload { prefix } = progress else {
+        panic!("the peer must report the partially produced upload: {progress:?}");
+    };
+    assert_eq!(
+        prefix,
+        pattern(BODY_PREFIX_BYTES),
+        "the peer must receive the exact prefix while the guest producer withholds the remainder"
+    );
+    peer.release();
+    let text = guest.finish(&reactor, 64).await;
+    let version = if http2 { " version=2.0" } else { "" };
+    assert_eq!(text,
+        format!("status=200{version} content-type=application/octet-stream sent={POST_DIGEST} echoed={POST_DIGEST}"),
+        "the partly produced upload must survive restoration before the producer sends the remainder; logs: {:?}",
+        reactor.context.emitted_logs()
+    );
 }
 
 in_mono_runtime! {
@@ -115,19 +213,8 @@ in_mono_runtime! {
     }
 
     #[tokio::test]
-    async fn a_response_body_mid_stream_survives_a_store_restoration_delta_at_every_park(runtime: GuestRuntime) {
-        let peer = http_peer().await;
-        let reactor = reactor(3, vec![peer.address]);
-        let mut guest = guest(&reactor, runtime);
-        let outcome = guest.start(&format!("/http/stream/127.0.0.1/{}/300000", peer.address.port()));
-        assert_eq!(outcome.completion, Completion::Parked, "the request parks: {outcome:?}");
-        let text = guest.finish(&reactor, 64).await;
-        assert!(
-            text.starts_with("status=200 content-type=application/octet-stream length=300000 ")
-                && text.ends_with(&format!(" sha256={STREAM_DIGEST}")),
-            "the connection, the parsed head and the partly read body must survive every park being captured and restored: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
-        );
+    async fn a_response_body_mid_stream_survives_a_store_restoration_delta(runtime: GuestRuntime) {
+        response_body_survives_store_restoration(runtime, 3, false).await;
     }
 
     #[tokio::test]
@@ -145,19 +232,8 @@ in_mono_runtime! {
     }
 
     #[tokio::test]
-    async fn a_request_body_mid_stream_survives_a_store_restoration_delta_at_every_park(runtime: GuestRuntime) {
-        let peer = http_peer().await;
-        let reactor = reactor(5, vec![peer.address]);
-        let mut guest = guest(&reactor, runtime);
-        let outcome = guest.start(&format!("/http/post/127.0.0.1/{}/200000", peer.address.port()));
-        assert_eq!(outcome.completion, Completion::Parked, "the request parks: {outcome:?}");
-        let text = guest.finish(&reactor, 64).await;
-        assert_eq!(
-            text,
-            format!("status=200 content-type=application/octet-stream sent={POST_DIGEST} echoed={POST_DIGEST}"),
-            "the partly sent request body must survive every park being captured and restored; logs: {:?}",
-            reactor.context.emitted_logs()
-        );
+    async fn a_request_body_mid_stream_survives_a_store_restoration_delta(runtime: GuestRuntime) {
+        request_body_survives_store_restoration(runtime, 5, false).await;
     }
 
     #[tokio::test]
@@ -523,19 +599,8 @@ in_mono_runtime! {
     }
 
     #[tokio::test]
-    async fn an_http_2_response_body_mid_stream_survives_store_restoration_at_every_park(runtime: GuestRuntime) {
-        let peer = http_peer().await;
-        let reactor = reactor(29, vec![peer.address]);
-        let mut guest = guest(&reactor, runtime);
-        let outcome = guest.start(&format!("/http/h2/stream/127.0.0.1/{}/300000", peer.address.port()));
-        assert_eq!(outcome.completion, Completion::Parked, "the request parks: {outcome:?}");
-        let text = guest.finish(&reactor, 64).await;
-        assert!(
-            text.starts_with("status=200 version=2.0 content-type=application/octet-stream length=300000 ")
-                && text.ends_with(&format!(" sha256={STREAM_DIGEST}")),
-            "the HTTP/2 connection, its stream state and the partly read body must survive every park being captured and restored: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
-        );
+    async fn an_http_2_response_body_mid_stream_survives_a_store_restoration_delta(runtime: GuestRuntime) {
+        response_body_survives_store_restoration(runtime, 29, true).await;
     }
 
     #[tokio::test]
@@ -553,19 +618,8 @@ in_mono_runtime! {
     }
 
     #[tokio::test]
-    async fn an_http_2_request_body_mid_stream_survives_store_restoration_at_every_park(runtime: GuestRuntime) {
-        let peer = http_peer().await;
-        let reactor = reactor(31, vec![peer.address]);
-        let mut guest = guest(&reactor, runtime);
-        let outcome = guest.start(&format!("/http/h2/post/127.0.0.1/{}/200000", peer.address.port()));
-        assert_eq!(outcome.completion, Completion::Parked, "the request parks: {outcome:?}");
-        let text = guest.finish(&reactor, 64).await;
-        assert_eq!(
-            text,
-            format!("status=200 version=2.0 content-type=application/octet-stream sent={POST_DIGEST} echoed={POST_DIGEST}"),
-            "the partly sent request body and its flow-control window must survive every park being captured and restored; logs: {:?}",
-            reactor.context.emitted_logs()
-        );
+    async fn an_http_2_request_body_mid_stream_survives_a_store_restoration_delta(runtime: GuestRuntime) {
+        request_body_survives_store_restoration(runtime, 31, true).await;
     }
 
     #[tokio::test]
