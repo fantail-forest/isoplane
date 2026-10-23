@@ -2,68 +2,86 @@
 //! transition rather than one blended dispatch timer, so a slow dispatch
 //! decomposes into a named transition.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use parking_lot::Mutex;
 
-/// A bounded-sample latency distribution: exact percentiles over the retained
-/// window rather than approximations over all time.
+/// Exact percentiles over the most recent 4096 observations, with lifetime
+/// count and mean. Recording stops if the lifetime count reaches `u64::MAX`.
 #[derive(Debug)]
 pub struct Histogram {
-    samples: Mutex<Vec<u64>>,
+    state: Mutex<HistogramState>,
     cap: usize,
-    count: AtomicU64,
-    sum: AtomicU64,
+}
+
+#[derive(Debug, Default)]
+struct HistogramState {
+    samples: VecDeque<u64>,
+    count: u64,
+    sum: u128,
 }
 
 impl Histogram {
-    pub fn new(cap: usize) -> Self {
+    fn new(cap: usize) -> Self {
         Self {
-            samples: Mutex::new(Vec::with_capacity(cap)),
+            state: Mutex::new(HistogramState {
+                samples: VecDeque::with_capacity(cap),
+                ..HistogramState::default()
+            }),
             cap,
-            count: AtomicU64::new(0),
-            sum: AtomicU64::new(0),
         }
     }
-    pub fn record(&self, v: u64) {
-        self.count.fetch_add(1, Ordering::Relaxed);
-        self.sum.fetch_add(v, Ordering::Relaxed);
-        let mut s = self.samples.lock();
-        if s.len() < self.cap {
-            s.push(v);
-        } else {
-            // A rotating slot, so the window slides instead of freezing at
-            // startup.
-            let i = (self.count.load(Ordering::Relaxed) as usize) % self.cap;
-            s[i] = v;
+
+    /// Records one observation in this field's units.
+    pub fn record(&self, value: u64) {
+        let mut state = self.state.lock();
+        let Some(count) = state.count.checked_add(1) else {
+            tracing::warn!("host histogram lifetime count exhausted; observation dropped");
+            return;
+        };
+        if self.cap != 0 {
+            if state.samples.len() == self.cap {
+                state.samples.pop_front();
+            }
+            state.samples.push_back(value);
         }
+        state.count = count;
+        state.sum += u128::from(value);
     }
+
+    /// Returns the number of accepted lifetime observations.
     pub fn count(&self) -> u64 {
-        self.count.load(Ordering::Relaxed)
+        self.state.lock().count
     }
-    pub fn percentile(&self, p: f64) -> u64 {
-        let mut s = self.samples.lock().clone();
-        if s.is_empty() {
+
+    fn percentile(&self, percentile: f64) -> u64 {
+        let mut samples: Vec<_> = self.state.lock().samples.iter().copied().collect();
+        if samples.is_empty() {
             return 0;
         }
-        s.sort_unstable();
-        // Nearest rank, lower inclusive: p50 of 1..=100 is 50.
-        let idx = ((s.len() as f64 - 1.0) * p).floor() as usize;
-        s[idx.min(s.len() - 1)]
+        samples.sort_unstable();
+        let index = ((samples.len() as f64 - 1.0) * percentile).floor() as usize;
+        samples[index.min(samples.len() - 1)]
     }
+
+    /// Returns the lower-inclusive median of the retained window, or zero if empty.
     pub fn p50(&self) -> u64 {
         self.percentile(0.50)
     }
+
+    /// Returns the lower-inclusive 99th percentile of the window, or zero if empty.
     pub fn p99(&self) -> u64 {
         self.percentile(0.99)
     }
+
+    /// Returns the lifetime arithmetic mean, or zero if empty.
     pub fn mean(&self) -> f64 {
-        let c = self.count();
-        if c == 0 {
+        let state = self.state.lock();
+        if state.count == 0 {
             0.0
         } else {
-            self.sum.load(Ordering::Relaxed) as f64 / c as f64
+            state.sum as f64 / state.count as f64
         }
     }
 }
@@ -513,6 +531,73 @@ impl MetricsSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn simultaneous_writers_replace_the_entire_retained_window() {
+        let metrics = Metrics {
+            dispatch_us: Histogram::new(4),
+            ..Metrics::default()
+        };
+        for value in 0..4 {
+            metrics.dispatch_us.record(value);
+        }
+        let ready = std::sync::Barrier::new(5);
+        std::thread::scope(|scope| {
+            for value in 100..104 {
+                let histogram = &metrics.dispatch_us;
+                let ready = &ready;
+                scope.spawn(move || {
+                    ready.wait();
+                    histogram.record(value);
+                });
+            }
+            ready.wait();
+        });
+        let snapshot = metrics.snapshot();
+        assert_eq!(snapshot.dispatch_p50_us, 101);
+        assert_eq!(snapshot.dispatch_p99_us, 102);
+        assert_eq!(metrics.dispatch_us.count(), 8);
+        assert_eq!(metrics.dispatch_us.mean(), 51.5);
+    }
+
+    #[test]
+    fn the_window_evicts_the_oldest_sample_and_totals_remain_lifetime() {
+        let histogram = Histogram::new(2);
+        for value in [90, 10, 20] {
+            histogram.record(value);
+        }
+        assert_eq!(histogram.percentile(0.0), 10);
+        assert_eq!(histogram.percentile(1.0), 20);
+        assert_eq!(histogram.count(), 3);
+        assert_eq!(histogram.mean(), 40.0);
+        assert_eq!(histogram.state.lock().samples.len(), 2);
+    }
+
+    #[test]
+    fn zero_capacity_retains_only_lifetime_totals() {
+        let histogram = Histogram::new(0);
+        histogram.record(u64::MAX);
+        histogram.record(u64::MAX);
+        assert_eq!(histogram.p99(), 0);
+        assert_eq!(histogram.count(), 2);
+        assert_eq!(histogram.mean(), u64::MAX as f64);
+        assert!(histogram.state.lock().samples.is_empty());
+    }
+
+    #[test]
+    fn an_exhausted_count_keeps_the_last_valid_distribution() {
+        let histogram = Histogram::new(1);
+        {
+            let mut state = histogram.state.lock();
+            state.count = u64::MAX - 1;
+            state.sum = u128::from(u64::MAX - 1) * u128::from(u64::MAX);
+        }
+        histogram.record(u64::MAX);
+        histogram.record(0);
+        assert_eq!(histogram.count(), u64::MAX);
+        assert_eq!(histogram.mean(), u64::MAX as f64);
+        assert_eq!(histogram.p99(), u64::MAX);
+    }
 
     #[test]
     fn percentiles_are_exact_over_the_window() {

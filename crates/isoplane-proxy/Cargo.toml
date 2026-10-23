@@ -20,6 +20,7 @@ hyper-util = { workspace = true }
 http-body-util = { workspace = true }
 bytes = { workspace = true }
 parking_lot = { workspace = true }
+histogram = { workspace = true }
 serde_json = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
