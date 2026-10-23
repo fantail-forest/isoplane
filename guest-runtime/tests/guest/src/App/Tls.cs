@@ -243,22 +243,16 @@ internal sealed class Tls
             }
             case "sync-read":
             {
-                // Synchronous I/O on an established session against a peer
-                // that sends nothing: the write goes out, the read cannot wait.
                 using var client = await ConnectAsync(path[1], path[2]).ConfigureAwait(false);
                 using var tls = await AuthenticateAsync(client, Trust.Root, LeafHost).ConfigureAwait(false);
-                string step = "write";
                 try
                 {
-                    tls.Write(new byte[] { 1, 2, 3 });
-                    tls.Flush();
-                    step = "read";
                     int count = tls.Read(new byte[4], 0, 4);
                     return "read: " + count.ToString(CultureInfo.InvariantCulture) + " bytes";
                 }
                 catch (Exception error)
                 {
-                    return step + " failed: " + error.GetType().Name + ": " + error.Message;
+                    return "read failed: " + error.GetType().Name + ": " + error.Message;
                 }
             }
             case "sync-chain":

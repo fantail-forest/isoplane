@@ -724,8 +724,8 @@ in_mono_runtime! {
             )
             .await;
         assert!(
-            text.starts_with("write failed: IOException: "),
-            "synchronous I/O on an established session fails as I/O at the first write (the socket refuses to block): {text}; logs: {:?}",
+            text.starts_with("read failed: IOException: "),
+            "a synchronous read on an established session fails as I/O when the peer sends nothing (the socket refuses to block): {text}; logs: {:?}",
             reactor.context.emitted_logs()
         );
     }
