@@ -495,6 +495,21 @@ mod native_readiness {
     }
 
     #[test]
+    fn readiness_permission_cannot_invoke_clock_capabilities() {
+        for symbol in ["monotonic_clock_now", "monotonic_clock_resolution"] {
+            let operation = isoplane_abi::native_io::canonical::DEFINITIONS
+                .iter()
+                .find(|definition| definition.symbol == symbol)
+                .expect("the native contract must define the clock operation");
+            assert_eq!(
+                packet(operation.id.0, 1000, 0, ""),
+                Completion::Trapped,
+                "{symbol} must require the clock capability rather than readiness permission"
+            );
+        }
+    }
+
+    #[test]
     fn a_native_send_cannot_allocate_an_unbounded_pollable_list() {
         let count = isoplane_abi::imports::MAX_OUT_BUFFER_BYTES / 4 + 1;
         let setup = format!("(i64.store (i32.const 1008) (i64.const {count}))");

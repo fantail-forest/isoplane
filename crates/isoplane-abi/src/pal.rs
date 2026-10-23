@@ -101,7 +101,6 @@ pub const MONOTONIC_CLOCK: &str = MONOTONIC;
 pub const CLI_ENVIRONMENT: &str = CLI_ENV;
 pub const RANDOM_RANDOM: &str = RANDOM;
 
-const CLOCK: Delegation = Delegation::Cap("clock_now_coarse");
 const ENTROPY: Delegation = Delegation::Cap("entropy_fill");
 
 const fn trap(module: &'static str, func: &'static str, why: &'static str) -> PalDef {
@@ -154,33 +153,6 @@ const COMMON_PAL_IMPORTS: &[PalDef] = &[
             results: &[],
         },
         "the host invokes dispatch exports without process arguments, so the launch argument list is empty",
-    ),
-    // Inherits the coarse clock's millisecond quantum and intra-slice freeze:
-    // the value is the coarse clock multiplied into nanoseconds. A finer
-    // timer is the measurement primitive Spectre-class attacks need.
-    delegate(
-        MONOTONIC,
-        "now",
-        CLOCK,
-        Sig {
-            params: &[],
-            results: &[I64],
-        },
-        "quantized to the coarse clock's 1 ms resolution and frozen \
-         intra-slice — no finer timer than `clock_now_coarse` already is",
-    ),
-    // A guest told 1 ns and then shown 1 ms steps may spin until a tick that
-    // never comes inside its slice.
-    delegate(
-        MONOTONIC,
-        "resolution",
-        CLOCK,
-        Sig {
-            params: &[],
-            results: &[I64],
-        },
-        "the resolution query is quantized to match the delegated clock \
-         (1 ms), so the reported fidelity equals the delivered fidelity",
     ),
     // Not optional: a failed draw reaches `_Exit` through
     // `ObjectHeader.AssignHashCode`, so a guest with no entropy does not run.
@@ -265,23 +237,9 @@ const COMMON_PAL_IMPORTS: &[PalDef] = &[
     ),
 ];
 
-const NATIVE_PAL_COUNT: usize = {
-    let mut count = 0;
-    let mut index = 0;
-    while index < crate::native_io::canonical::DEFINITIONS.len() {
-        if !matches!(
-            crate::native_io::canonical::DEFINITIONS[index].action,
-            crate::native_io::canonical::Action::ClockNow
-                | crate::native_io::canonical::Action::ClockResolution
-        ) {
-            count += 1;
-        }
-        index += 1;
-    }
-    count
-};
-const PAL_COUNT: usize =
-    COMMON_PAL_IMPORTS.len() + crate::filesystem::IMPORTS.len() + NATIVE_PAL_COUNT;
+const PAL_COUNT: usize = COMMON_PAL_IMPORTS.len()
+    + crate::filesystem::IMPORTS.len()
+    + crate::native_io::canonical::DEFINITIONS.len();
 const fn all_imports() -> [PalDef; PAL_COUNT] {
     let mut out = [COMMON_PAL_IMPORTS[0]; PAL_COUNT];
     let mut i = 0;
@@ -297,15 +255,7 @@ const fn all_imports() -> [PalDef; PAL_COUNT] {
     i += j;
     j = 0;
     while j < crate::native_io::canonical::DEFINITIONS.len() {
-        let definition = &crate::native_io::canonical::DEFINITIONS[j];
-        if !matches!(
-            definition.action,
-            crate::native_io::canonical::Action::ClockNow
-                | crate::native_io::canonical::Action::ClockResolution
-        ) {
-            out[i] = definition.pal;
-            i += 1;
-        }
+        out[i + j] = crate::native_io::canonical::DEFINITIONS[j].pal;
         j += 1;
     }
     out

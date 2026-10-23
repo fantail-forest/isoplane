@@ -169,7 +169,13 @@ pub fn call<T: PalSource>(
             Request::Timer(DurationNanos(duration))
         }
         Action::ClockNow => {
-            return Ok(caller.data_mut().slice_clock_ms().saturating_mul(1_000_000))
+            caller
+                .data_mut()
+                .record_initialization_call(definition.pal.module);
+            return Ok(caller
+                .data_mut()
+                .slice_clock_ms()
+                .saturating_mul(isoplane_abi::pal::CLOCK_QUANTUM_NS as u64));
         }
         Action::ClockResolution => return Ok(isoplane_abi::pal::CLOCK_QUANTUM_NS as u64),
         Action::Ready => Request::Ready(handle(0)?),

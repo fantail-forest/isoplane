@@ -17,9 +17,7 @@ use platform_files::PlatformFiles;
 
 use anyhow::bail;
 use isoplane_abi::imports;
-use isoplane_abi::pal::{
-    lookup, Disposition, PalDef, CLI_ENV, CLOCK_QUANTUM_NS, MAX_ENTROPY_BYTES, MONOTONIC, RANDOM,
-};
+use isoplane_abi::pal::{lookup, Disposition, PalDef, CLI_ENV, MAX_ENTROPY_BYTES, RANDOM};
 use wasmtime::bail as wt_bail;
 
 use crate::bindings::ImportCall;
@@ -265,34 +263,6 @@ fn define_delegate<T: PalSource>(
         return Ok(());
     }
     match (def.module, def.func) {
-        // The coarse clock multiplied into nanoseconds: always a whole number
-        // of milliseconds, so no sub-millisecond bit exists to leak.
-        (MONOTONIC, "now") => {
-            linker.func_wrap(
-                def.module,
-                def.func,
-                |mut c: wasmtime::Caller<'_, T>| -> wasmtime::Result<i64> {
-                    c.data_mut().check_capability("clock_now_coarse")?;
-                    c.data_mut().record_initialization_call(MONOTONIC);
-                    let ms = c.data_mut().slice_clock_ms();
-                    // Saturating: a clock that stops is a better answer than
-                    // one that runs backwards.
-                    Ok(i64::try_from(ms)
-                        .unwrap_or(i64::MAX)
-                        .saturating_mul(CLOCK_QUANTUM_NS))
-                },
-            )?;
-        }
-        (MONOTONIC, "resolution") => {
-            linker.func_wrap(
-                def.module,
-                def.func,
-                |mut c: wasmtime::Caller<'_, T>| -> wasmtime::Result<i64> {
-                    c.data_mut().check_capability("clock_now_coarse")?;
-                    Ok(CLOCK_QUANTUM_NS)
-                },
-            )?;
-        }
         // Both canonical list results lower to a (ptr, len) pair in a
         // caller-supplied return area; (0, 0) is the empty list.
         (CLI_ENV, "get-environment" | "get-arguments") => {

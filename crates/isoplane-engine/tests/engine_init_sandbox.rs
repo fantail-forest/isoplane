@@ -225,6 +225,7 @@ fn runtime_configuration_reaches_the_preparation_binding() {
 
 struct NativeInitialization {
     bringup: bool,
+    permits_io: bool,
     in_unit: bool,
     calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
@@ -232,7 +233,10 @@ struct NativeInitialization {
 impl isoplane_engine::bindings::InitializationBindings for NativeInitialization {
     fn begin_slice(&mut self) {}
     fn permits_io(&self) -> bool {
-        true
+        self.permits_io
+    }
+    fn slice_clock_ms(&self) -> u64 {
+        1_234
     }
     fn runtime_bringup(&self) -> bool {
         self.bringup && !self.in_unit
@@ -270,7 +274,79 @@ impl isoplane_engine::bindings::InitializationBindings for NativeInitialization 
     }
 }
 
-fn check_raw_native_initialization(bringup: bool, unit: bool, permitted: bool) {
+#[test]
+fn offline_runtime_bringup_reads_the_frozen_coarse_clock_through_wasi() {
+    check_offline_clock(
+        "now",
+        r#"
+        (i64.store (i32.const 8) (call $clock_now_coarse))
+        (i64.store (i32.const 16) (call $wasi_clock))
+        (drop (call $burn (i32.const 200000)))
+        (i64.store (i32.const 24) (call $wasi_clock))
+        (i64.store (i32.const 32) (call $clock_now_coarse))"#,
+        &[1_234, 1_234_000_000, 1_234_000_000, 1_234],
+    );
+}
+
+#[test]
+fn offline_runtime_bringup_reports_the_coarse_clock_resolution() {
+    check_offline_clock(
+        "resolution",
+        "(i64.store (i32.const 8) (call $wasi_clock))",
+        &[isoplane_abi::pal::CLOCK_QUANTUM_NS],
+    );
+}
+
+fn check_offline_clock(function: &str, body: &str, expected: &[i64]) {
+    let engine = test_engine();
+    let imports = format!(
+        r#"(import "wasi:clocks/monotonic-clock@0.2.0" "{function}" (func $wasi_clock (result i64)))
+        (import "isoplane" "clock_now_coarse" (func $clock_now_coarse (result i64)))"#
+    );
+    let body = format!(
+        r#"(func (export "isoplane_initialize") (result i64)
+        {body} i64.const 0)"#
+    );
+    let wasm = guest(4, &imports, &body, DONE, DONE);
+    let template = engine.load_template(&wasm).expect("admitted clock import");
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut instance = engine
+        .activate_initialization(
+            &template,
+            Box::new(NativeInitialization {
+                bringup: true,
+                permits_io: false,
+                in_unit: false,
+                calls: calls.clone(),
+            }),
+        )
+        .expect("offline initialization context");
+    let outcome = instance.run_initialize(budget(10_000));
+    assert_eq!(
+        outcome.completion,
+        Completion::Done,
+        "offline runtime bring-up must admit WASI clock {function}: {:?}",
+        outcome.trap
+    );
+    let actual: Vec<_> = instance.memory()[8..8 + expected.len() * 8]
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|bytes| i64::from_le_bytes(*bytes))
+        .collect();
+    assert_eq!(
+        actual, expected,
+        "the WASI clock must retain coarse fidelity"
+    );
+    assert_eq!(instance.last_capability_violation(), None);
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "clock reads must not request native resources"
+    );
+}
+
+fn check_raw_native_initialization(bringup: bool, unit: bool, permits_io: bool, permitted: bool) {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     for (module, function, parameters, argument, capability) in [
@@ -284,6 +360,13 @@ fn check_raw_native_initialization(bringup: bool, unit: bool, permitted: bool) {
         (
             "wasi:clocks/monotonic-clock@0.2.0",
             "subscribe-duration",
+            "(param i64)",
+            "(i64.const 0)",
+            "poll_call",
+        ),
+        (
+            "wasi:clocks/monotonic-clock@0.2.0",
+            "subscribe-instant",
             "(param i64)",
             "(i64.const 0)",
             "poll_call",
@@ -313,6 +396,7 @@ fn check_raw_native_initialization(bringup: bool, unit: bool, permitted: bool) {
                 &template,
                 Box::new(NativeInitialization {
                     bringup,
+                    permits_io,
                     in_unit: false,
                     calls: calls.clone(),
                 }),
@@ -353,15 +437,20 @@ fn check_raw_native_initialization(bringup: bool, unit: bool, permitted: bool) {
 
 #[test]
 fn sealed_initialization_refuses_raw_native_capabilities_even_with_network_authority() {
-    check_raw_native_initialization(false, false, false);
+    check_raw_native_initialization(false, false, true, false);
 }
 
 #[test]
 fn initialization_units_refuse_raw_native_capabilities_even_with_network_authority() {
-    check_raw_native_initialization(true, true, false);
+    check_raw_native_initialization(true, true, true, false);
 }
 
 #[test]
 fn authorized_runtime_bringup_permits_raw_native_capabilities_outside_units() {
-    check_raw_native_initialization(true, false, true);
+    check_raw_native_initialization(true, false, true, true);
+}
+
+#[test]
+fn offline_runtime_bringup_refuses_network_and_timer_capabilities() {
+    check_raw_native_initialization(true, false, false, false);
 }

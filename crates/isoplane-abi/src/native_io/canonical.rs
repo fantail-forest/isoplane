@@ -11,6 +11,8 @@ pub const SOCKET_BRIDGE_MODULE: &str = "isoplane:native-sockets";
 /// Readiness and coarse deadline operations; cannot create connections.
 pub const POLL_IMPORT: &str = "poll_call";
 
+const CLOCK_IMPORT: &str = "clock_now_coarse";
+
 /// Canonical adapter operation identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OperationId(pub u32);
@@ -121,10 +123,23 @@ const fn definition(
     sig: Sig,
     action: Action,
 ) -> Definition {
-    Definition { id: OperationId(id), symbol, capability, action, pal: PalDef {
-        module, func: name, sig: Some(sig), disposition: Disposition::Delegate(Delegation::Cap(capability)),
-        why: "host-owned outbound TCP and coarse readiness; bind, listen, UDP and unsupported operations remain denied",
-    }}
+    Definition {
+        id: OperationId(id),
+        symbol,
+        capability,
+        action,
+        pal: PalDef {
+            module,
+            func: name,
+            sig: Some(sig),
+            disposition: Disposition::Delegate(Delegation::Cap(capability)),
+            why: if matches!(action, Action::ClockNow | Action::ClockResolution) {
+                "the coarse clock's 1 ms resolution and intra-slice freeze apply to both reads and the reported resolution"
+            } else {
+                "host-owned outbound TCP and coarse readiness; bind, listen, UDP and unsupported operations remain denied"
+            },
+        },
+    }
 }
 
 /// Every admitted canonical entry, with no ambient network fallback.
@@ -927,7 +942,7 @@ pub const DEFINITIONS: &[Definition] = &[
         "monotonic_clock_now",
         "wasi:clocks/monotonic-clock@0.2.0",
         "now",
-        POLL_IMPORT,
+        CLOCK_IMPORT,
         Sig {
             params: &[],
             results: &[Ty::I64],
@@ -939,7 +954,7 @@ pub const DEFINITIONS: &[Definition] = &[
         "monotonic_clock_resolution",
         "wasi:clocks/monotonic-clock@0.2.0",
         "resolution",
-        POLL_IMPORT,
+        CLOCK_IMPORT,
         Sig {
             params: &[],
             results: &[Ty::I64],
