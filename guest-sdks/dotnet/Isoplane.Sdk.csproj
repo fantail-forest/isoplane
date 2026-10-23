@@ -52,6 +52,9 @@
   <ItemGroup>
     <_IsoplaneRuntimeModuleName Include="Isoplane.MonoRuntime;Isoplane.MonoRuntime.Debug" />
   </ItemGroup>
+  <Import Project="Conformance/Build.props" />
+  <UsingTask TaskName="Isoplane.Conformance.ValidateRuntimeReceipt"
+             AssemblyFile="$(_IsoplaneConformanceArtifacts)bin/Conformance/$(Configuration.ToLowerInvariant())/Isoplane.Conformance.dll" />
   <Target Name="IsoplanePackSharedRuntime" BeforeTargets="_GetPackageFiles">
     <PropertyGroup>
       <IsoplaneRuntimeModuleDirectory Condition="'$(IsoplaneRuntimeModuleDirectory)' == ''">$(ISOPLANE_RUNTIME_MODULE_DIRECTORY)</IsoplaneRuntimeModuleDirectory>
@@ -65,25 +68,13 @@
     </ItemGroup>
     <Error Condition="'$(IsoplaneRuntimeModuleDirectory)' == '' OR '@(_IsoplaneMissingRuntime)' != '' OR !Exists('$(_IsoplaneRuntimeProvenance)') OR !Exists('$(_IsoplaneRuntimeNativeImports)')"
            Text="Pack the SDK with -p:IsoplaneRuntimeModuleDirectory naming the output of guest-sdks/dotnet/MonoRuntime/build.sh, which holds Isoplane.MonoRuntime.wasm, Isoplane.MonoRuntime.Debug.wasm, runtime.json, native-imports.txt; without its shared runtimes the SDK cannot run or debug interpreted applications." />
-    <ReadLinesFromFile File="$(_IsoplaneRuntimeProvenance)">
-      <Output TaskParameter="Lines" PropertyName="_IsoplaneReceipt" />
-    </ReadLinesFromFile>
-    <PropertyGroup>
-      <_IsoplaneReceiptVersion>$([System.Text.RegularExpressions.Regex]::Replace('$(_IsoplaneReceipt)', '^.*"sdkVersion":"([^"]*)".*$', '$1'))</_IsoplaneReceiptVersion>
-      <_IsoplaneReceiptRevision>$([System.Text.RegularExpressions.Regex]::Replace('$(_IsoplaneReceipt)', '^.*"sourceRevision":"([^"]*)".*$', '$1'))</_IsoplaneReceiptRevision>
-    </PropertyGroup>
-    <Error Condition="'$(_IsoplaneReceiptVersion)' != '$(PackageVersion)'"
-           Text="The shared runtimes in $(IsoplaneRuntimeModuleDirectory) were built for SDK $(_IsoplaneReceiptVersion), not $(PackageVersion); rebuild them from this source." />
-    <Error Condition="'$(ContinuousIntegrationBuild)' == 'true' AND '$(_IsoplaneReceiptRevision)' != '$(SourceRevisionId)'"
-           Text="The shared runtimes in $(IsoplaneRuntimeModuleDirectory) were built from $(_IsoplaneReceiptRevision), not $(SourceRevisionId); rebuild them from this source." />
     <GetFileHash Files="@(_IsoplaneRuntimeModule)" Algorithm="SHA256" HashEncoding="hex">
       <Output TaskParameter="Items" ItemName="_IsoplaneHashedRuntime" />
     </GetFileHash>
-    <ItemGroup>
-      <_IsoplaneHashedRuntime><Sha256>$([System.String]::Copy('%(FileHash)').ToLowerInvariant())</Sha256></_IsoplaneHashedRuntime>
-    </ItemGroup>
-    <Error Condition="!$(_IsoplaneReceipt.Contains('&quot;%(_IsoplaneHashedRuntime.Filename)%(_IsoplaneHashedRuntime.Extension)&quot;:{&quot;sha256&quot;:&quot;%(_IsoplaneHashedRuntime.Sha256)&quot;}'))"
-           Text="%(_IsoplaneHashedRuntime.Filename)%(_IsoplaneHashedRuntime.Extension) is not the module runtime.json records; rebuild the shared runtimes." />
+    <Isoplane.Conformance.ValidateRuntimeReceipt ReceiptFile="$(_IsoplaneRuntimeProvenance)"
+        SdkVersion="$(PackageVersion)" SourceRevision="$(SourceRevisionId)"
+        ContinuousIntegrationBuild="$([MSBuild]::ValueOrDefault('$(ContinuousIntegrationBuild)', 'false'))"
+        Modules="@(_IsoplaneHashedRuntime)" />
     <ItemGroup>
       <None Include="@(_IsoplaneRuntimeModule);$(_IsoplaneRuntimeProvenance);$(_IsoplaneRuntimeNativeImports)" Pack="true" PackagePath="tools/runtime/" />
     </ItemGroup>
