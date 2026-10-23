@@ -42,7 +42,7 @@ internal static class Development
         if (options.Debug)
             return await DebugDevelopment.RunAsync(options, cancellation);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
-        using var changes = new SourceChanges(options.Directory);
+        using var changes = options.Watch ? await SourceChanges.CreateAsync(options, lifetime.Token) : null;
         var build = new PackageBuild(options);
         var result = await build.BuildAsync(lifetime.Token);
         if (result != 0)
@@ -59,7 +59,7 @@ internal static class Development
                 await exited;
                 return 0;
             }
-            await SourceReload.RunAsync(changes, exited, async token =>
+            await SourceReload.RunAsync(changes!, exited, async token =>
             {
                 if (await build.BuildAsync(token) != 0)
                     Console.Error.WriteLine("isoplane: rebuild failed; keeping the last working application. Edit the source to retry.");

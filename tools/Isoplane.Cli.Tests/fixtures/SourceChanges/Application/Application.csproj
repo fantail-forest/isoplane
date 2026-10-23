@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../Dependency/Dependency.csproj" />
+    <Compile Include="../Shared/$(Configuration).cs" Link="Shared.cs" />
+  </ItemGroup>
+</Project>

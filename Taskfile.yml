@@ -51,6 +51,7 @@ env:
   ISOPLANE_TEST_DEBUGGER_PYTHON: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/dap-python/{{if eq OS "windows"}}Scripts/python.exe{{else}}bin/python{{end}}'
   ISOPLANE_TEST_HOT_RELOAD_ARTIFACTS: '{{.HOT_RELOAD_ARTIFACTS}}'
   ISOPLANE_TEST_MANAGED_BUNDLE: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/managed-bundle-fixture'
+  ISOPLANE_TEST_SOURCE_CHANGES: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/source-changes-fixture'
   ISOPLANE_TEST_PROCESS_FIXTURE: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/managed-fixtures/bin/ProcessFixture/release/ProcessFixture{{if eq OS "windows"}}.exe{{end}}'
 
 includes:

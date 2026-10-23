@@ -51,7 +51,7 @@ tasks:
   managed:prepare:
     internal: true
     run: once
-    deps: [managed:host, ':managed:template-package', ':runtime:toolchain', process-fixture, managed-bundle-fixture]
+    deps: [managed:host, ':managed:template-package', ':runtime:toolchain', process-fixture, managed-bundle-fixture, source-changes-fixture]
 
   managed:standard:
     desc: Run managed tests; pass -- --filter <expression> to select tests
@@ -87,6 +87,22 @@ tasks:
     cmds:
       - 'mkdir -p "{{.DIRECTORY}}"'
       - '"{{.DOTNET}}" msbuild tools/Isoplane.Cli.Tests/fixtures/ManagedBundle/Application/Application.csproj -restore -t:IsoplaneManagedBundle -p:UseArtifactsOutput=true -p:ArtifactsPath="{{.DIRECTORY}}" -getProperty:AssemblyName,IsoplaneRuntimeDirectory -getItem:ReferencePath,IsoplaneBundleAssembly,IsoplaneBundleSymbol,IsoplaneBundleAsset,IsoplaneBundlePlatformReference -getResultOutputFile:"{{.DIRECTORY}}/result.json" -nodeReuse:false'
+
+  source-changes-fixture:
+    desc: Prepare the project graph used by source-watching tests
+    deps: [':initialize']
+    vars:
+      DIRECTORY: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/source-changes-fixture'
+    sources:
+      - tools/Isoplane.Cli.Tests/fixtures/SourceChanges/**/*
+      - global.json
+      - taskfiles/test.yml
+    generates:
+      - '{{.DIRECTORY}}/artifacts/bin/Application/release/Application.dll'
+      - '{{.DIRECTORY}}/artifacts/bin/Dependency/release/Dependency.dll'
+    cmds:
+      - '"{{.PYTHON}}" -c "import shutil; shutil.copytree(''tools/Isoplane.Cli.Tests/fixtures/SourceChanges'', ''{{.DIRECTORY}}'', dirs_exist_ok=True); shutil.copyfile(''global.json'', ''{{.DIRECTORY}}/global.json'')"'
+      - '"{{.DOTNET}}" build "{{.DIRECTORY}}/Application/Application.csproj" -c Release'
 
   process-fixture:
     internal: true

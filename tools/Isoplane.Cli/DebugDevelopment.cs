@@ -50,7 +50,7 @@ internal static class DebugDevelopment
     private static async Task<int> RunPackageAsync(DevelopmentOptions options, string session, string package, string endpoint, DebugRelay relay, TerminalDebugLaunch? launch, CancellationToken cancellation)
     {
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
-        using var changes = new SourceChanges(options.Directory);
+        using var changes = options.Watch ? await SourceChanges.CreateAsync(options, lifetime.Token) : null;
         SharedRuntime runtime;
         try { runtime = await ManagedBundle.CreateAsync(new(options.Directory, options.Configuration, package, options.NoBuild), cancellation); }
         catch (InvalidOperationException error)
@@ -98,7 +98,7 @@ internal static class DebugDevelopment
                 await launch.AnnounceAsync(relay.AdapterEndpoint.ToString(), await ready.Task, lifetime.Token);
             }
             if (options.Watch)
-                await SourceReload.RunAsync(changes, running, async token =>
+                await SourceReload.RunAsync(changes!, running, async token =>
                 {
                     await publications.WaitAsync(token);
                     try

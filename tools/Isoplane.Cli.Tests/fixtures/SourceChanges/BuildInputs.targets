@@ -1,0 +1,5 @@
+<Project>
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)Shared/Hook.cs" Link="Hook.cs" />
+  </ItemGroup>
+</Project>

@@ -17,7 +17,8 @@ internal sealed class LocalProject(string directory, string? targetDirectory)
     /// <summary>The project at <paramref name="directory"/>, relocated when <c>ISOPLANE_TARGET_DIR</c> is set.</summary>
     internal LocalProject(string directory) : this(directory, CliPaths.TargetDirectory) { }
 
-    private string Root => targetDirectory is null ? Path.Combine(directory, ".isoplane") : Relocated(targetDirectory);
+    /// <summary>The directory containing this project's CLI-owned build and session outputs.</summary>
+    internal string Root => targetDirectory is null ? Path.Combine(directory, ".isoplane") : Relocated(targetDirectory);
 
     /// <summary>Where <c>isoplane dev</c> builds an interpreted project's package.</summary>
     internal string Package => Path.Combine(Root, "package", "application.tar");

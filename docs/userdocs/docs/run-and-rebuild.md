@@ -150,6 +150,12 @@ configuration with `--configuration`, which is Debug when omitted. `--port`,
 the [launch profile](local-settings.md#use-the-launch-profile), and `--no-watch`
 runs without watching.
 
+Source watching follows the .NET SDK's evaluated watch list, including referenced
+projects and linked source files, and each project's `Directory.Build.props` and
+`Directory.Build.targets`. Add other build inputs with MSBuild `Watch` items in
+the project. Restart the session after changing launch profiles, User Secrets or
+environment variables.
+
 The ordinary .NET watcher works too:
 
 ```bash
