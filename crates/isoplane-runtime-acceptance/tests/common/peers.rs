@@ -1,7 +1,7 @@
 //! Owned TCP peers that put a connection into each state the runtime must
 //! handle, and a reactor that admits exactly them.
 
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -140,17 +140,40 @@ pub async fn peer(peer: Peer) -> SocketAddr {
 
 /// An IPv6-only listener, so a dual-family client must actually use IPv6.
 pub async fn ipv6_peer(peer: Peer) -> SocketAddr {
-    let socket = TcpSocket::new_v6().expect("the IPv6 test peer must open a socket");
-    socket2::SockRef::from(&socket)
-        .set_only_v6(true)
-        .expect("the test peer must require IPv6");
-    socket
-        .bind((std::net::Ipv6Addr::LOCALHOST, 0).into())
-        .expect("the IPv6 test peer must bind");
+    let socket = bound_ipv6_socket(0).expect("the IPv6 test peer must bind");
     serve_peer(
         peer,
         socket.listen(8).expect("the IPv6 test peer must listen"),
     )
+}
+
+/// Starts an IPv6-only peer while reserving its IPv4 port without listening.
+/// Keep the returned socket alive to make IPv4 connections refuse reliably.
+pub fn ipv6_peer_with_refused_ipv4(peer: Peer) -> (SocketAddr, TcpSocket) {
+    let socket = bound_ipv6_socket(0).expect("the IPv6 test peer must bind");
+    let (listener, reservation) = reserve_ipv4_refusal(socket)
+        .expect("the IPv6 peer and refused IPv4 endpoint must reserve the same port");
+    (serve_peer(peer, listener), reservation)
+}
+
+fn bound_ipv6_socket(port: u16) -> std::io::Result<TcpSocket> {
+    let socket = TcpSocket::new_v6()?;
+    socket2::SockRef::from(&socket).set_only_v6(true)?;
+    socket.bind((Ipv6Addr::LOCALHOST, port).into())?;
+    Ok(socket)
+}
+
+fn reserve_ipv4_refusal(mut ipv6: TcpSocket) -> std::io::Result<(TcpListener, TcpSocket)> {
+    loop {
+        let ipv4 = TcpSocket::new_v4()?;
+        match ipv4.bind((Ipv4Addr::LOCALHOST, ipv6.local_addr()?.port()).into()) {
+            Ok(()) => return Ok((ipv6.listen(8)?, ipv4)),
+            Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => {
+                ipv6 = bound_ipv6_socket(0)?;
+            }
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 /// As [`peer`], with the accepted connections' kernel receive buffer capped
@@ -296,5 +319,58 @@ async fn serve(peer: Peer, mut stream: TcpStream) {
         Peer::Pattern(length) => {
             let _written = stream.write_all(&pattern(length)).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn an_ipv4_port_conflict_retries_before_starting_the_ipv6_peer() {
+        let (conflict, ipv6) = loop {
+            let conflict = TcpSocket::new_v4().expect("the conflicting IPv4 socket must open");
+            conflict
+                .bind((Ipv4Addr::LOCALHOST, 0).into())
+                .expect("the conflicting IPv4 socket must bind");
+            let port = conflict
+                .local_addr()
+                .expect("the conflict has a port")
+                .port();
+            match bound_ipv6_socket(port) {
+                Ok(ipv6) => break (conflict, ipv6),
+                Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => continue,
+                Err(error) => panic!("the IPv6 candidate must bind: {error}"),
+            }
+        };
+        let conflict_address = conflict.local_addr().expect("the conflict has an address");
+        let (listener, reservation) = reserve_ipv4_refusal(ipv6)
+            .expect("the peer must retry the conflicting port and reserve both endpoints");
+        let refused = reservation
+            .local_addr()
+            .expect("the reservation has an address");
+        let endpoint = serve_peer(Peer::Echo, listener);
+        assert_ne!(endpoint.port(), conflict_address.port());
+        assert_eq!(endpoint.port(), refused.port());
+        assert_eq!(
+            TcpStream::connect(refused)
+                .await
+                .expect_err("the reserved IPv4 endpoint must refuse connections")
+                .kind(),
+            std::io::ErrorKind::ConnectionRefused
+        );
+        let mut stream = TcpStream::connect(endpoint)
+            .await
+            .expect("the IPv6 peer must accept connections");
+        stream
+            .write_all(b"echo")
+            .await
+            .expect("the peer must receive bytes");
+        let mut echoed = [0; 4];
+        stream
+            .read_exact(&mut echoed)
+            .await
+            .expect("the peer must echo bytes");
+        assert_eq!(&echoed, b"echo");
     }
 }

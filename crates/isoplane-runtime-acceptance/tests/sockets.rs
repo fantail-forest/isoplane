@@ -969,20 +969,13 @@ in_mono_runtime! {
 
 async fn configured_tcp_client(runtime: GuestRuntime, mode: &str, ipv6: bool) {
     isoplane_harness::LogCapture::global();
-    let endpoint = if ipv6 {
-        peers::ipv6_peer(Peer::Echo).await
+    let (endpoint, guard) = if mode == "mixed" {
+        let (endpoint, reservation) = peers::ipv6_peer_with_refused_ipv4(Peer::Echo);
+        (endpoint, Some(reservation))
+    } else if ipv6 {
+        (peers::ipv6_peer(Peer::Echo).await, None)
     } else {
-        peer(Peer::Echo).await
-    };
-    let guard = if mode == "mixed" {
-        let socket =
-            tokio::net::TcpSocket::new_v4().expect("the refused IPv4 address must be reservable");
-        socket
-            .bind((std::net::Ipv4Addr::LOCALHOST, endpoint.port()).into())
-            .expect("the IPv4 control port must be reserved without listening");
-        Some(socket)
-    } else {
-        None
+        (peer(Peer::Echo).await, None)
     };
     let mut admitted = vec![endpoint];
     if !ipv6 {
