@@ -2,12 +2,12 @@
 title: Library compatibility
 ---
 
-Most NuGet packages run on Isoplane unchanged. The ones that do not fail for a
-handful of reasons, all of which follow from
+Most NuGet packages run on Isoplane unchanged. The ones that fail or require
+workarounds do so for a handful of reasons, all of which follow from
 [how .NET differs on Isoplane](dotnet-runtime-differences.md): something waits
 synchronously, starts a thread, requires continuous background execution,
-writes a file, or loads a native library. That page also explains what each
-of those limits gives you.
+writes a file, or loads a native library. Refer to that page to understand
+these limits deeply.
 
 This page lists the specific incompatibilities we know of, by package: APIs,
 packages and framework features that fail even though your own code is
@@ -34,30 +34,30 @@ upgrading the SDK or a package.
 
 ## At a glance {#summary}
 
-| Package | API or feature | What to do |
-| --- | --- | --- |
-| ASP.NET Core | [Session over a distributed cache, and TempData kept in it](#session) | Small change: call `UseLoadedSession` in place of `UseSession` |
-| ASP.NET Core | [File uploads over 64 KB](#uploads) | Moderate change: read the upload as a stream. Or hold small uploads in memory |
-| ASP.NET Core | [`Request.EnableBuffering()` over 30 KB](#enable-buffering) | Moderate change: read the body once, as a stream. Or buffer up to a limit |
-| ASP.NET Core | [Minimal API handlers that use source-generated code](#generated-code-in-handlers) | Small change: register the JSON context and return objects. Or switch one generator off |
-| ASP.NET Core | [Data Protection key stores](#data-protection) | Small change: use the replacement Isoplane provides |
-| ASP.NET Core | [XML formatters over 30 KB](#xml-formatters) | Moderate change: use the asynchronous XML APIs. Or buffer up to a limit |
-| ASP.NET Core | [Newtonsoft.Json formatters over 30 KB](#newtonsoft-json) | Moderate to large change: move to `System.Text.Json`. Or keep Newtonsoft.Json and raise two limits |
-| ASP.NET Core | [Rate limiting middleware](#rate-limiting) | Works, counting per instance. A sliding window refills late after an idle spell |
-| ASP.NET Core | [Validation attributes, localizers, token callbacks and service factories that do I/O](#synchronous-extension-points) | Moderate change: move the I/O elsewhere |
-| ASP.NET Core | [WebSockets, SignalR's WebSocket transport, Blazor Server](#connections-and-background-work) | Not available |
-| ASP.NET Core | [gRPC over HTTP/2](#connections-and-background-work) | Moderate change: use gRPC-Web |
-| ASP.NET Core | [Continuously running `BackgroundService`, jobs and queue consumers](#connections-and-background-work) | Large change: do the work during a request |
-| Microsoft.Extensions.Configuration | [`IConfigurationProvider` implementations that load from a remote service, such as Azure Key Vault](#remote-configuration) | Moderate change: fetch them before `builder.Build()` |
-| Microsoft.Extensions.Logging.Console | [The console logger in an application written without ASP.NET Core](#console-logging) | Small change: log through Isoplane's provider |
-| Entity Framework Core | [Lazy loading](#lazy-loading) | Moderate change: load with `Include` |
-| Entity Framework Core | [`TransactionScope`](#transaction-scope) | Small change: use a database transaction |
-| SqlClient | [SQL Server, including its Entity Framework Core provider](#sql-server) | Not supported yet: waits on work under way in the driver. PostgreSQL works today |
-| Sqlite | [SQLite, including its Entity Framework Core provider](#sqlite) | In-memory databases work, created once the application has started. A database file needs a different database, such as PostgreSQL |
-| MongoDB.Driver | [MongoDB](#mongodb) | Not supported yet for most deployments: waits on the driver. A load-balanced deployment works with two settings |
-| StackExchange.Redis | [Redis, including the Redis distributed cache](#redis) | Small change: reference the stable 3.x client and call it asynchronously |
-| OpenTelemetry | [OpenTelemetry SDK](#opentelemetry) | Small change, traces only: use the exporter Isoplane provides |
-| ModelContextProtocol | [An MCP server that tracks sessions](#mcp-sessions) | Small change: use stateless mode |
+| Package                              | API or feature                                                                                                             | What to do                                                                                                                         |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| ASP.NET Core                         | [Session over a distributed cache, and TempData kept in it](#session)                                                      | Small change: call `UseLoadedSession` in place of `UseSession`                                                                     |
+| ASP.NET Core                         | [File uploads over 64 KB](#uploads)                                                                                        | Moderate change: read the upload as a stream. Or hold small uploads in memory                                                      |
+| ASP.NET Core                         | [`Request.EnableBuffering()` over 30 KB](#enable-buffering)                                                                | Moderate change: read the body once, as a stream. Or buffer up to a limit                                                          |
+| ASP.NET Core                         | [Minimal API handlers that use source-generated code](#generated-code-in-handlers)                                         | Small change: register the JSON context and return objects. Or switch one generator off                                            |
+| ASP.NET Core                         | [Data Protection key stores](#data-protection)                                                                             | Small change: use the replacement Isoplane provides                                                                                |
+| ASP.NET Core                         | [XML formatters over 30 KB](#xml-formatters)                                                                               | Moderate change: use the asynchronous XML APIs. Or buffer up to a limit                                                            |
+| ASP.NET Core                         | [Newtonsoft.Json formatters over 30 KB](#newtonsoft-json)                                                                  | Moderate to large change: move to `System.Text.Json`. Or keep Newtonsoft.Json and raise two limits                                 |
+| ASP.NET Core                         | [Rate limiting middleware](#rate-limiting)                                                                                 | Works, counting per instance. A sliding window refills late after an idle spell                                                    |
+| ASP.NET Core                         | [Validation attributes, localizers, token callbacks and service factories that do I/O](#synchronous-extension-points)      | Moderate change: move the I/O elsewhere                                                                                            |
+| ASP.NET Core                         | [WebSockets, SignalR's WebSocket transport, Blazor Server](#connections-and-background-work)                               | Not available                                                                                                                      |
+| ASP.NET Core                         | [gRPC over HTTP/2](#connections-and-background-work)                                                                       | Moderate change: use gRPC-Web                                                                                                      |
+| ASP.NET Core                         | [Continuously running `BackgroundService`, jobs and queue consumers](#connections-and-background-work)                     | Large change: do the work during a request                                                                                         |
+| Microsoft.Extensions.Configuration   | [`IConfigurationProvider` implementations that load from a remote service, such as Azure Key Vault](#remote-configuration) | Moderate change: fetch them before `builder.Build()`                                                                               |
+| Microsoft.Extensions.Logging.Console | [The console logger in an application written without ASP.NET Core](#console-logging)                                      | Small change: log through Isoplane's provider                                                                                      |
+| Entity Framework Core                | [Lazy loading](#lazy-loading)                                                                                              | Moderate change: load with `Include`                                                                                               |
+| Entity Framework Core                | [`TransactionScope`](#transaction-scope)                                                                                   | Small change: use a database transaction                                                                                           |
+| SqlClient                            | [SQL Server, including its Entity Framework Core provider](#sql-server)                                                    | Not supported yet: waits on work under way in the driver. PostgreSQL works today                                                   |
+| Sqlite                               | [SQLite, including its Entity Framework Core provider](#sqlite)                                                            | In-memory databases work, created once the application has started. A database file needs a different database, such as PostgreSQL |
+| MongoDB.Driver                       | [MongoDB](#mongodb)                                                                                                        | Not supported yet for most deployments: waits on the driver. A load-balanced deployment works with two settings                    |
+| StackExchange.Redis                  | [Redis, including the Redis distributed cache](#redis)                                                                     | Small change: reference the stable 3.x client and call it asynchronously                                                           |
+| OpenTelemetry                        | [OpenTelemetry SDK](#opentelemetry)                                                                                        | Small change, traces only: use the exporter Isoplane provides                                                                      |
+| ModelContextProtocol                 | [An MCP server that tracks sessions](#mcp-sessions)                                                                        | Small change: use stateless mode                                                                                                   |
 
 The sections below give each package's full name.
 
@@ -76,18 +76,18 @@ The sections below give each package's full name.
 Exception messages from the runtime are short identifiers, not sentences, so
 read the stack trace to see which call failed.
 
-| What you see | What it means |
-| --- | --- |
-| `PlatformNotSupportedException: Arg_PlatformNotSupported`, with `Task.InternalWait` (internal to [`Task`][Task]), [`SemaphoreSlim.Wait`][SemaphoreSlim.Wait], [`Thread.Sleep`][Thread.Sleep], [`Socket`][Socket] or [`NetworkStream`][NetworkStream] near the top of the stack | Something waited synchronously. If the call is in your own code, see [Waits, delays and timers](dotnet-runtime-differences.md#waits). If it is inside a library, find the library in the table above. |
-| `PlatformNotSupportedException: net_wasi_sync_name_resolution` | The same, for a connection that was opened synchronously. |
-| `PlatformNotSupportedException: Arg_PlatformNotSupported`, with [`Thread.Start`][Thread.Start] near the top of the stack | A library started a thread. See [MongoDB](#mongodb), [Redis](#redis) and [the console logger](#console-logging). |
-| `DirectoryNotFoundException: /tmp/` | ASP.NET Core tried to move a large request or response to a temporary file. See [uploads](#uploads), [request buffering](#enable-buffering), [Newtonsoft.Json](#newtonsoft-json) and [XML formatters](#xml-formatters). |
-| `IOException: Read-only file system` | Something tried to write a file. The [file system is read-only](dotnet-runtime-differences.md#file-system). |
-| [`DllNotFoundException`][DllNotFoundException], sometimes inside a `TypeInitializationException` | A package called into a native library that the runtime does not include. An application cannot bring its own; see [native libraries](dotnet-runtime-differences.md#native-libraries). |
-| The application refuses to start with `unhandled System.PlatformNotSupportedException` and no stack trace | A call made while the application starts failed. The known ones are [remote configuration](#remote-configuration) and, in an application written without ASP.NET Core, [the console logger](#console-logging). |
-| The application refuses to start, naming a service that was `Still running once the application had started` | A package registered a background service. See [MCP sessions](#mcp-sessions) and [background work](#connections-and-background-work). |
-| A minimal API endpoint answers 200 with an empty body, or the build fails with `CS9144: Cannot intercept method` | A handler names code that another source generator produces. See [generated code in handlers](#generated-code-in-handlers). |
-| `InvalidOperationException: The session could not be loaded from its cache` | The session was used before it was loaded. See [session](#session). |
+| What you see                                                                                                                                                                                                                                                                   | What it means                                                                                                                                                                                                           |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PlatformNotSupportedException: Arg_PlatformNotSupported`, with `Task.InternalWait` (internal to [`Task`][Task]), [`SemaphoreSlim.Wait`][SemaphoreSlim.Wait], [`Thread.Sleep`][Thread.Sleep], [`Socket`][Socket] or [`NetworkStream`][NetworkStream] near the top of the stack | Something waited synchronously. If the call is in your own code, see [Waits, delays and timers](dotnet-runtime-differences.md#waits). If it is inside a library, find the library in the table above.                   |
+| `PlatformNotSupportedException: net_wasi_sync_name_resolution`                                                                                                                                                                                                                 | The same, for a connection that was opened synchronously.                                                                                                                                                               |
+| `PlatformNotSupportedException: Arg_PlatformNotSupported`, with [`Thread.Start`][Thread.Start] near the top of the stack                                                                                                                                                       | A library started a thread. See [MongoDB](#mongodb), [Redis](#redis) and [the console logger](#console-logging).                                                                                                        |
+| `DirectoryNotFoundException: /tmp/`                                                                                                                                                                                                                                            | ASP.NET Core tried to move a large request or response to a temporary file. See [uploads](#uploads), [request buffering](#enable-buffering), [Newtonsoft.Json](#newtonsoft-json) and [XML formatters](#xml-formatters). |
+| `IOException: Read-only file system`                                                                                                                                                                                                                                           | Something tried to write a file. The [file system is read-only](dotnet-runtime-differences.md#file-system).                                                                                                             |
+| [`DllNotFoundException`][DllNotFoundException], sometimes inside a `TypeInitializationException`                                                                                                                                                                               | A package called into a native library that the runtime does not include. An application cannot bring its own; see [native libraries](dotnet-runtime-differences.md#native-libraries).                                  |
+| The application refuses to start with `unhandled System.PlatformNotSupportedException` and no stack trace                                                                                                                                                                      | A call made while the application starts failed. The known ones are [remote configuration](#remote-configuration) and, in an application written without ASP.NET Core, [the console logger](#console-logging).          |
+| The application refuses to start, naming a service that was `Still running once the application had started`                                                                                                                                                                   | A package registered a background service. See [MCP sessions](#mcp-sessions) and [background work](#connections-and-background-work).                                                                                   |
+| A minimal API endpoint answers 200 with an empty body, or the build fails with `CS9144: Cannot intercept method`                                                                                                                                                               | A handler names code that another source generator produces. See [generated code in handlers](#generated-code-in-handlers).                                                                                             |
+| `InvalidOperationException: The session could not be loaded from its cache`                                                                                                                                                                                                    | The session was used before it was loaded. See [session](#session).                                                                                                                                                     |
 
 ## ASP.NET Core
 
