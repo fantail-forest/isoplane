@@ -58,7 +58,7 @@ export default {
   ],
   url: 'https://isoplane.dev',
   baseUrl,
-  // Cloudflare serves `install.html` at `/docs/install` and redirects the
+  // Cloudflare serves `how-to/install.html` at `/docs/how-to/install` and redirects the
   // slashed form to it, so links and canonical URLs leave the slash off.
   trailingSlash: false,
   noIndex: false,

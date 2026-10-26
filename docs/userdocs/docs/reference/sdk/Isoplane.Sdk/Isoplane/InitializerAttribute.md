@@ -26,7 +26,7 @@ The method is static, returns `Task` and takes no parameters. It can have any na
 
 Everything this method creates is identical in every instance. Create what must differ between instances, such as a random identifier, in an [`ActivatedAttribute`](./ActivatedAttribute.md) method.
 
-An application with a `Program.cs` subscribes to [`Initializing`](./Initialization/Initializing.md) instead; there the attribute is a build error. [The application lifecycle](../../../../application-lifecycle.md) explains templates and instances in full.
+An application with a `Program.cs` subscribes to [`Initializing`](./Initialization/Initializing.md) instead; there the attribute is a build error. [The application lifecycle](../../../../concepts/application-lifecycle.md) explains templates and instances in full.
 
 ## Examples
 

@@ -24,7 +24,7 @@ namespace Isoplane.Testing;
 /// Starting builds the project, so tests that can share one running application are faster when
 /// they do, through a fixture of the test framework. Two applications running at the same time need
 /// separate project directories.
-/// <see href="https://isoplane.dev/docs/test-an-application">Test an application</see> sets up a test
+/// <see href="https://isoplane.dev/docs/how-to/test-an-application">Test an application</see> sets up a test
 /// project from scratch.
 /// </para>
 /// </remarks>

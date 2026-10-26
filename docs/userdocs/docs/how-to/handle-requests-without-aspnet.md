@@ -3,7 +3,7 @@ title: Handle requests without ASP.NET
 ---
 
 An application that does not need ASP.NET can handle its requests in one static
-method. The [`isoplane-handler`](reference/project-templates.md#isoplane-handler) template creates a
+method. The [`isoplane-handler`](../reference/project-templates.md#isoplane-handler) template creates a
 complete example with tests; this page describes its parts.
 
 ## The project
@@ -71,7 +71,7 @@ The same checks and quick fixes apply to these methods.
 instance starts from. Use it to load data and to run the code a request will run,
 so no instance pays for its first use. `[Activated]` runs in each instance before
 its first request. Use it for state that must differ between instances. See
-[the application lifecycle](application-lifecycle.md).
+[the application lifecycle](../concepts/application-lifecycle.md).
 
 ## Settings
 

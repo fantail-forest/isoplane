@@ -116,7 +116,7 @@ declaration alone does not establish that an unsupported call will execute.
 
 To inspect dependencies or enable native-declaration warnings, set the desired
 properties in your project or `Directory.Build.props`.
-[Project settings](reference/project-settings.md) defines each one:
+[Project settings](../reference/project-settings.md) defines each one:
 
 ```xml
 <PropertyGroup>

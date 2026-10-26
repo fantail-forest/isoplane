@@ -24,7 +24,7 @@ Every instance starts as a copy of the same template, so anything created before
 
 The method is static, returns `Task` and takes no parameters. It can have any name, and an application has at most one. An exception fails the request the instance was started for.
 
-An application with a `Program.cs` subscribes to [`Activated`](./Activation/Activated.md) instead; there the attribute is a build error. [`Activation`](./Activation.md) lists what Isoplane already reseeds for you, and [The application lifecycle](../../../../application-lifecycle.md) explains templates and instances in full.
+An application with a `Program.cs` subscribes to [`Activated`](./Activation/Activated.md) instead; there the attribute is a build error. [`Activation`](./Activation.md) lists what Isoplane already reseeds for you, and [The application lifecycle](../../../../concepts/application-lifecycle.md) explains templates and instances in full.
 
 ## Examples
 

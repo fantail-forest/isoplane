@@ -8,7 +8,7 @@ mdx:
 
 `.vscode/launch.json` holds the debug configurations Visual Studio Code offers when you press F5. The Isoplane Debugger extension adds the `isoplane` configuration type. This page lists the attributes of that type. The tables are generated from the extension's manifest.
 
-[Debug an application](../debug-an-application.md) shows how to use these configurations.
+[Debug an application](../how-to/debug-an-application.md) shows how to use these configurations.
 
 ## Launch
 

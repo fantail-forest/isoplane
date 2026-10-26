@@ -17,7 +17,7 @@ namespace Isoplane;
 /// In local development the settings come from the project's User Secrets, the
 /// <c>environmentVariables</c> of its launch profile, and environment variables named
 /// <c>ISOPLANE_APP_&lt;Key&gt;</c>, each overriding the one before.
-/// <see href="https://isoplane.dev/docs/local-settings">Supply local development settings</see>
+/// <see href="https://isoplane.dev/docs/how-to/local-settings">Supply local development settings</see>
 /// describes each source. The application sees none of the machine's other environment variables.
 /// </para>
 /// </remarks>

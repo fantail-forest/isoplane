@@ -11,7 +11,7 @@ namespace Isoplane;
 /// project SDK and has no <c>Program.cs</c>; <c>dotnet new isoplane-handler</c> creates one, with
 /// tests. An application that wants routing, middleware or dependency injection is an ASP.NET
 /// application instead, and starts from <c>IsoplaneHosting.CreateBuilder</c>.
-/// <see href="https://isoplane.dev/docs/handle-requests-without-aspnet">Handle requests without ASP.NET</see>
+/// <see href="https://isoplane.dev/docs/how-to/handle-requests-without-aspnet">Handle requests without ASP.NET</see>
 /// walks through a complete project.
 /// </para>
 /// <para>
@@ -71,7 +71,7 @@ public sealed class HttpHandlerAttribute : Attribute;
 /// <para>
 /// An application with a <c>Program.cs</c> subscribes to <see cref="Initialization.Initializing"/>
 /// instead; there the attribute is a build error.
-/// <see href="https://isoplane.dev/docs/application-lifecycle">The application lifecycle</see>
+/// <see href="https://isoplane.dev/docs/concepts/application-lifecycle">The application lifecycle</see>
 /// explains templates and instances in full.
 /// </para>
 /// </remarks>
@@ -107,7 +107,7 @@ public sealed class InitializerAttribute : Attribute;
 /// <para>
 /// An application with a <c>Program.cs</c> subscribes to <see cref="Activation.Activated"/> instead;
 /// there the attribute is a build error. <see cref="Activation"/> lists what Isoplane already reseeds
-/// for you, and <see href="https://isoplane.dev/docs/application-lifecycle">The application lifecycle</see>
+/// for you, and <see href="https://isoplane.dev/docs/concepts/application-lifecycle">The application lifecycle</see>
 /// explains templates and instances in full.
 /// </para>
 /// </remarks>

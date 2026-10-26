@@ -46,4 +46,4 @@ It is a package of its own so that `Isoplane.AspNetCore` does not depend on
 Entity Framework Core, and an application that does not use it never restores
 it. Keep this package at the same version as `Isoplane.AspNetCore`.
 
-Learn more at [isoplane.dev](https://isoplane.dev/docs/dotnet-runtime-differences#keep-data-protection-keys-across-builds).
+Learn more at [isoplane.dev](https://isoplane.dev/docs/concepts/dotnet-runtime-differences#keep-data-protection-keys-across-builds).

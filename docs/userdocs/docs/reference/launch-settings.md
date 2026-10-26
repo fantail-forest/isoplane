@@ -8,7 +8,7 @@ mdx:
 
 `Properties/launchSettings.json` is the ordinary .NET file of launch profiles. `dotnet run` and `isoplane dev` read one profile from it when they start a local session. This page lists the keys Isoplane reads. It ignores every other key, such as `launchBrowser`. The key tables are generated from the list the Isoplane CLI parses, for the source version used to build this documentation.
 
-[Supply local development settings](../local-settings.md) shows the file in use.
+[Supply local development settings](../how-to/local-settings.md) shows the file in use.
 
 ## Which profile is used
 
@@ -25,7 +25,7 @@ A local session uses the first profile whose `commandName` is `Project`. Select 
 
 ## Keys of `isoplaneLimitsOverride`
 
-Each key is optional, and each value is a positive whole number. A local session otherwise uses the [local defaults](../execution-limits.md#local-defaults). [Execution limits](../execution-limits.md) explains what each limit measures.
+Each key is optional, and each value is a positive whole number. A local session otherwise uses the [local defaults](../concepts/execution-limits.md#local-defaults). [Execution limits](../concepts/execution-limits.md) explains what each limit measures.
 
 | Key | Description |
 | --- | --- |

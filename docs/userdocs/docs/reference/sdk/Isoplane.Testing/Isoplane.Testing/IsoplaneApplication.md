@@ -26,7 +26,7 @@ Use it to test the application as a client would, running as it runs under Isopl
 
 [`StartAsync`](./IsoplaneApplication/StartAsync.md) runs the `isoplane` command on the test machine to build the project and start it, so the command must be installed there, at the same version as this package. The test itself runs outside the sandbox, in any test framework. Dispose the application to stop it; `await using` does so.
 
-Starting builds the project, so tests that can share one running application are faster when they do, through a fixture of the test framework. Two applications running at the same time need separate project directories. [Test an application](../../../../test-an-application.md) sets up a test project from scratch.
+Starting builds the project, so tests that can share one running application are faster when they do, through a fixture of the test framework. Two applications running at the same time need separate project directories. [Test an application](../../../../how-to/test-an-application.md) sets up a test project from scratch.
 
 ## Examples
 

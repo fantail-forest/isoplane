@@ -18,7 +18,7 @@ namespace Isoplane;
 /// An application written without ASP.NET has no start-up code to subscribe from, and marks one
 /// method with <see cref="InitializerAttribute"/> instead. For state that must differ between
 /// instances, use <see cref="Activation"/>.
-/// <see href="https://isoplane.dev/docs/application-lifecycle">The application lifecycle</see>
+/// <see href="https://isoplane.dev/docs/concepts/application-lifecycle">The application lifecycle</see>
 /// explains templates and instances in full.
 /// </para>
 /// </remarks>

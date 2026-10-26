@@ -11,7 +11,7 @@ static method that receives every HTTP request. In this tutorial you will create
 one from a template, run it, read the three methods Isoplane calls, and then add
 a route and a test of your own.
 
-Before starting, [install the tools](install.md). On macOS and Linux you also need `curl`; on Windows use PowerShell.
+Before starting, [install the tools](../how-to/install.md). On macOS and Linux you also need `curl`; on Windows use PowerShell.
 Choose your operating system above for shell commands. Allow about ten minutes.
 
 ## 1. Create the project
@@ -21,7 +21,7 @@ dotnet new isoplane-handler --name HelloService
 cd HelloService
 ```
 
-This is the [`isoplane-handler`](reference/project-templates.md#isoplane-handler) template. The
+This is the [`isoplane-handler`](../reference/project-templates.md#isoplane-handler) template. The
 application is in `src/HelloService/`, and its tests are in
 `tests/HelloService.Tests/`. The project's `README.md` describes every file.
 
@@ -255,11 +255,11 @@ sandbox.
 
 Where to go next:
 
-- [Handle requests without ASP.NET](handle-requests-without-aspnet.md) covers
+- [Handle requests without ASP.NET](../how-to/handle-requests-without-aspnet.md) covers
   request bodies, streaming, settings and the rules for the three methods.
-- [The application lifecycle](application-lifecycle.md) explains initialization
+- [The application lifecycle](../concepts/application-lifecycle.md) explains initialization
   and activation, and who is responsible for what at each stage.
-- [How .NET differs on Isoplane](dotnet-runtime-differences.md) lists what to
+- [How .NET differs on Isoplane](../concepts/dotnet-runtime-differences.md) lists what to
   keep in mind as the service grows.
 - [Build a small API with ASP.NET Core and EF Core](build-an-api.md) builds an
   application with a database.

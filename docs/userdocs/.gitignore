@@ -3,7 +3,7 @@
 /.docusaurus
 /.cache-loader
 /.wrangler
-/docs/_local-limits.mdx
+/docs/concepts/_local-limits.mdx
 
 # Dependencies. `pnpm-lock.yaml` IS committed: it pins the exact toolchain
 # this site was built and verified against, and an unpinned float is a docs

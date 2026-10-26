@@ -6,10 +6,10 @@ Use ordinary .NET unit tests for application logic. `Isoplane.Testing` adds
 integration tests that start your application in the real sandbox and make HTTP
 requests to it. The tests themselves run outside the sandbox.
 
-The [`isoplane-webapi`](reference/project-templates.md#isoplane-webapi) and
-[`isoplane-handler`](reference/project-templates.md#isoplane-handler) templates
+The [`isoplane-webapi`](../reference/project-templates.md#isoplane-webapi) and
+[`isoplane-handler`](../reference/project-templates.md#isoplane-handler) templates
 include a test project. Add one to any other application with the
-[`isoplane-tests`](reference/project-templates.md#isoplane-tests) template. From
+[`isoplane-tests`](../reference/project-templates.md#isoplane-tests) template. From
 the directory containing `MyApi`:
 
 ```bash

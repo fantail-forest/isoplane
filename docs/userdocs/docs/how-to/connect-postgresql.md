@@ -13,7 +13,7 @@ routes that read and write a table.
 
 For a new project with a few simple tables, start here: SQL through the driver
 is less code to build and to load into every instance than ASP.NET Core and
-Entity Framework Core. When you want those, [Build a small API](build-an-api.md)
+Entity Framework Core. When you want those, [Build a small API](../tutorials/build-an-api.md)
 uses them with PostgreSQL.
 
 Before starting, [install the tools](install.md). You also need Docker. On macOS and Linux use `curl`; on Windows use
@@ -27,9 +27,9 @@ cd NotesService
 dotnet add src/NotesService package Npgsql
 ```
 
-The [`isoplane-handler`](reference/project-templates.md#isoplane-handler)
+The [`isoplane-handler`](../reference/project-templates.md#isoplane-handler)
 template creates a service without ASP.NET; its `README.md` describes each file.
-[Build a small lightweight web service](build-a-web-service.md) walks through it.
+[Build a small lightweight web service](../tutorials/build-a-web-service.md) walks through it.
 
 ## 2. Start a local database
 
@@ -211,12 +211,12 @@ Two choices in this code are particular to Isoplane:
   scales instances within the application’s instance limit, so a pool in each one does not cap
   the connections the service opens. This sample disables pooling; per-instance
   pools are supported after initialization, subject to the connection limit.
-  [Pool database connections outside the application](dotnet-runtime-differences.md#pool-database-connections-outside-the-application)
+  [Pool database connections outside the application](../concepts/dotnet-runtime-differences.md#pool-database-connections-outside-the-application)
   explains what to use instead.
 - **The connection string is read during the request.** Settings are also
   available in the `[Initializer]` method, but what it keeps in memory is saved
   in the template that every instance starts from.
-  [The application lifecycle](application-lifecycle.md) describes the template.
+  [The application lifecycle](../concepts/application-lifecycle.md) describes the template.
 
 ## 5. Run it and call it
 

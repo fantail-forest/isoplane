@@ -13,7 +13,7 @@ preview extension.
 With the extension installed, open your application
 folder, choose **Debug local Isoplane**, set a breakpoint, and press **F5**. A
 project created from a template has that configuration in `.vscode/launch.json`;
-[launch.json for VS Code](reference/vscode-launch.md) lists its attributes.
+[launch.json for VS Code](../reference/vscode-launch.md) lists its attributes.
 C# Dev Kit's **Debug project associated with this file** button starts the same
 session for an Isoplane project. The
 adapter builds and starts the application in an **Isoplane** terminal. Send an HTTP

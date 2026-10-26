@@ -91,7 +91,7 @@ I/O, waiting in a queue or waiting for background credit is excluded.
 
 Forward the request's cancellation token to the calls you await. That token is
 `HttpContext.RequestAborted`, or
-[`RequestHead.Aborted`](reference/sdk/Isoplane.Sdk/Isoplane/RequestHead/Aborted.md)
+[`RequestHead.Aborted`](../reference/sdk/Isoplane.Sdk/Isoplane/RequestHead/Aborted.md)
 without ASP.NET. It is cancelled when the client goes away before it has the
 whole response, or the dispatch uses up its running time, so passing it on
 stops work that nobody is waiting for, and saves the running time that work
@@ -116,7 +116,7 @@ requests needs no change.
 ### Starting a thread {#starting-a-thread}
 
 Starting a thread throws `PlatformNotSupportedException`, and the build warns
-about it as [`ISOPLANE1002`](reference/error-codes.md#isoplane1002). Rewrite
+about it as [`ISOPLANE1002`](../reference/error-codes.md#isoplane1002). Rewrite
 such work as asynchronous code that the request awaits.
 
 ### The thread pool, `Task.Run` and `Parallel` {#thread-pool}
@@ -243,12 +243,12 @@ interface with no asynchronous form:
 [Library compatibility](library-compatibility.md) lists the ones we know of.
 
 The build warns about several of these calls as
-[`ISOPLANE1003`](reference/error-codes.md#isoplane1003), and the editor offers a quick fix
+[`ISOPLANE1003`](../reference/error-codes.md#isoplane1003), and the editor offers a quick fix
 for most of them. It does not catch every case: `.Result` is not flagged, and
 NuGet packages are not inspected unless you set
-[`IsoplaneAnalyzeDependencies`](reference/project-settings.md#isoplaneanalyzedependencies).
+[`IsoplaneAnalyzeDependencies`](../reference/project-settings.md#isoplaneanalyzedependencies).
 The `app.Run()` error is described in
-[Adapt `Program.cs`](onboard-an-application.md#adapt-programcs).
+[Adapt `Program.cs`](../how-to/onboard-an-application.md#adapt-programcs).
 
 ## The clock {#time}
 
@@ -456,7 +456,7 @@ unprotects, so remove the old one once nothing it protected is in use.
 #### From the application's database
 
 If the application uses Entity Framework Core, add the
-[`Isoplane.AspNetCore.DataProtection.EntityFrameworkCore`](reference/sdk/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.md)
+[`Isoplane.AspNetCore.DataProtection.EntityFrameworkCore`](../reference/sdk/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.md)
 package at the version of your Isoplane SDK:
 
 ```bash
@@ -472,7 +472,7 @@ using Isoplane.AspNetCore.DataProtection.EntityFrameworkCore;
 builder.Services.AddDataProtection().UseKeysFromDbContext<AppDbContext>();
 ```
 
-[`UseKeysFromDbContext`](reference/sdk/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore/DataProtectionDbContextKeys/UseKeysFromDbContext.md)
+[`UseKeysFromDbContext`](../reference/sdk/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore/DataProtectionDbContextKeys/UseKeysFromDbContext.md)
 is in a package of its own so that an application that does not use Entity
 Framework Core never restores it.
 
@@ -492,7 +492,7 @@ Initialization.Initializing += async () =>
 };
 ```
 
-The [`isoplane-webapp`](reference/project-templates.md#isoplane-webapp)
+The [`isoplane-webapp`](../reference/project-templates.md#isoplane-webapp)
 template is set up this way.
 
 A prepared template retains the key ring loaded during initialization, even
@@ -522,7 +522,7 @@ pooler, such as PgBouncer or a provider's pooled connection endpoint, and point
 the application's connection string at it. The pooler caps the total and keeps
 connecting cheap, and the application can open a connection for each request
 and dispose it when the request is done.
-[Connect to PostgreSQL](connect-postgresql.md) shows a service that does this,
+[Connect to PostgreSQL](../how-to/connect-postgresql.md) shows a service that does this,
 with the driver's own pooling off.
 
 ## Network
@@ -539,7 +539,7 @@ Requests arrive as HTTP/1.1, without connection upgrades or response trailers.
 WebSockets are unavailable, and so are SignalR's WebSocket transport, Blazor
 Server interactivity and gRPC over HTTP/2. gRPC-Web and statically rendered
 Blazor pages work. See
-[Check application assumptions](onboard-an-application.md#check-application-assumptions).
+[Check application assumptions](../how-to/onboard-an-application.md#check-application-assumptions).
 
 ### Outgoing connections {#outgoing-connections}
 
@@ -611,7 +611,7 @@ has changed, here as on any host: `MapStaticAssets`, or a link with
 Environment variables are empty, because an instance has no process
 environment of its own. Settings reach the application through .NET
 configuration instead, so read them from `IConfiguration`; see
-[local development settings](local-settings.md).
+[local development settings](../how-to/local-settings.md).
 
 There are no other processes, and an application cannot start one: a process
 would run outside the sandbox. Use a managed
@@ -628,8 +628,8 @@ P/Invoke into a library the runtime does not include fails when it is called,
 not when the application builds or starts. A NuGet package that ships a native
 binary therefore still works as long as the code you use stays in managed code,
 and fails only on a path that reaches the native call. The build reports such
-declarations as [`ISOPLANE1001`](reference/error-codes.md#isoplane1001) when you
-set [`IsoplaneWarnOnNativeImports`](reference/project-settings.md#isoplanewarnonnativeimports).
+declarations as [`ISOPLANE1001`](../reference/error-codes.md#isoplane1001) when you
+set [`IsoplaneWarnOnNativeImports`](../reference/project-settings.md#isoplanewarnonnativeimports).
 
 ## Culture and time zone {#culture-and-time-zone}
 

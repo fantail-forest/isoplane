@@ -11,7 +11,7 @@ sandbox's capabilities.
 
 ## Create the application project
 
-Follow [the Quickstart's creation step](quickstart.md#3-create-an-application) to make a `MyApi`
+Follow [the Quickstart's creation step](../quickstart.md#3-create-an-application) to make a `MyApi`
 project next to your existing code. This supplies the matching SDK and launch
 settings. Move your startup code into its `Program.cs`. If your application logic
 is already in a separate library, add an ordinary project reference to that
@@ -53,7 +53,7 @@ Every instance starts from the captured result. Settings, including
 connection strings, are available while it runs. Two things do not carry over
 into an instance: an open connection, so close any that start-up opens, and
 uniqueness, so create a value that must differ between instances when an instance
-activates. See [the application lifecycle](application-lifecycle.md).
+activates. See [the application lifecycle](../concepts/application-lifecycle.md).
 
 ## Configuration
 
@@ -85,14 +85,14 @@ cookie are protected with ASP.NET Core Data Protection. A key created during
 initialization is captured in the template. Fresh initialization may create a
 different key; reusing a template retains its key. Keep earlier keys while
 protected data must remain readable. See how to
-[keep the keys across builds](dotnet-runtime-differences.md#keep-data-protection-keys-across-builds).
-The [`isoplane-webapp`](reference/project-templates.md#isoplane-webapp) template
+[keep the keys across builds](../concepts/dotnet-runtime-differences.md#keep-data-protection-keys-across-builds).
+The [`isoplane-webapp`](../reference/project-templates.md#isoplane-webapp) template
 is a Razor Pages application set up this way.
 
 A Model Context Protocol server built with `ModelContextProtocol.AspNetCore`
 works over Streamable HTTP in its stateless mode. With session tracking switched
 on, that package registers a background service and the application refuses to
-start. The [`isoplane-mcpserver`](reference/project-templates.md#isoplane-mcpserver)
+start. The [`isoplane-mcpserver`](../reference/project-templates.md#isoplane-mcpserver)
 template is such a server.
 
 Files in `wwwroot` are part of the application package. Serve them with
@@ -102,10 +102,10 @@ A package that depends on an older version of an assembly ASP.NET Core provides
 gets the framework's copy, as in an ordinary ASP.NET Core project.
 
 Keep durable state outside the instance. Review
-[the application lifecycle](application-lifecycle.md) for startup state,
+[the application lifecycle](../concepts/application-lifecycle.md) for startup state,
 connection pools, cancellation, and work after the response.
-[How .NET differs on Isoplane](dotnet-runtime-differences.md) lists everything
+[How .NET differs on Isoplane](../concepts/dotnet-runtime-differences.md) lists everything
 else that differs from a server process, including threads, the file system and
 native libraries.
-[Library compatibility](library-compatibility.md) lists the packages and
+[Library compatibility](../concepts/library-compatibility.md) lists the packages and
 framework features known not to work, with what to use in their place.

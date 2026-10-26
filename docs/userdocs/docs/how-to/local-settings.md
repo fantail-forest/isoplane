@@ -52,7 +52,7 @@ dotnet user-secrets remove "ConnectionStrings:Todo"
 
 `dotnet run` and `isoplane dev` read the first profile in
 `Properties/launchSettings.json` whose `commandName` is `Project`.
-[launchSettings.json](reference/launch-settings.md) lists every key Isoplane
+[launchSettings.json](../reference/launch-settings.md) lists every key Isoplane
 reads from it. Select another
 with `dotnet run --launch-profile NAME` or `isoplane dev --launch-profile NAME`,
 or run without one with `--no-launch-profile`.
@@ -107,8 +107,8 @@ Integration tests supply settings the same way through
 
 ## Try the application under tighter limits
 
-A local session uses the [local defaults](execution-limits.md#local-defaults).
-[Execution limits](execution-limits.md) explains what each one measures. To see
+A local session uses the [local defaults](../concepts/execution-limits.md#local-defaults).
+[Execution limits](../concepts/execution-limits.md) explains what each one measures. To see
 how the application behaves under smaller ones, add `isoplaneLimitsOverride` to a
 launch profile:
 
@@ -122,7 +122,7 @@ launch profile:
 ```
 
 Each key is optional. `memoryBytes` must be a multiple of 65536.
-[Keys of `isoplaneLimitsOverride`](reference/launch-settings.md#keys-of-isoplanelimitsoverride)
+[Keys of `isoplaneLimitsOverride`](../reference/launch-settings.md#keys-of-isoplanelimitsoverride)
 defines each one.
 
 ## Reach local services and private certificate authorities

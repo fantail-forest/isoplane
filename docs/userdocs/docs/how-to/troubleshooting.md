@@ -53,7 +53,7 @@ provide arbitrary operating-system capabilities. Changing a timeout or disabling
 certificate validation is not a fix for an unsupported API.
 
 An error whose code starts with `ISOPLANE` names an Isoplane requirement, at the
-line that breaks it where there is one. [Error codes](reference/error-codes.md) says what
+line that breaks it where there is one. [Error codes](../reference/error-codes.md) says what
 each one means and what to do about it. Your editor shows the same errors as you
 type and offers a quick fix for many of them; see
 [handling requests](handle-requests-without-aspnet.md) and
@@ -67,15 +67,15 @@ optimization, so a failure in one is rarely absent from the other.
 Keep the terminal open while running locally. Build and runtime diagnostics are
 written there. In a test, include `app.DiagnosticOutput` in failure diagnostics.
 Check that request work is awaited and that network calls use asynchronous APIs.
-See [the application lifecycle](application-lifecycle.md) before relying on
+See [the application lifecycle](../concepts/application-lifecycle.md) before relying on
 background work or retained state, and
-[how .NET differs on Isoplane](dotnet-runtime-differences.md) for the calls that
+[how .NET differs on Isoplane](../concepts/dotnet-runtime-differences.md) for the calls that
 fail in the sandbox.
 
 A `PlatformNotSupportedException` raised while ASP.NET Core Data Protection
 reads its keys comes from a key store that reads synchronously, such as
 `PersistKeysToDbContext`. Use one of the stores that
-[keep the keys across builds](dotnet-runtime-differences.md#keep-data-protection-keys-across-builds)
+[keep the keys across builds](../concepts/dotnet-runtime-differences.md#keep-data-protection-keys-across-builds)
 in the sandbox.
 
 ## The application refuses to start
@@ -89,7 +89,7 @@ a warm-up request to a database that is not running, fails preparation. So does
 initialization that leaves a connection or stream open: the message names the
 kind, for example `initialization retains a TCP socket`, and the fix is to
 dispose it before the callback returns. See
-[initialization](application-lifecycle.md#initialization).
+[initialization](../concepts/application-lifecycle.md#initialization).
 
 ## Breakpoints stay grey
 

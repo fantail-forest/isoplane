@@ -39,4 +39,4 @@ It is a package of its own so that an application that does not use
 OpenTelemetry never restores it. Keep this package at the same version as
 `Isoplane.AspNetCore`.
 
-Learn more at [isoplane.dev](https://isoplane.dev/docs/library-compatibility#opentelemetry).
+Learn more at [isoplane.dev](https://isoplane.dev/docs/concepts/library-compatibility#opentelemetry).

@@ -21,7 +21,7 @@ public static class Initialization
 
 Isoplane initializes the application ahead of requests and saves its memory as a template. It then scales copies of the application with traffic, up to the application’s instance limit. Each copy is an instance and starts from the template. Captured startup work is reused rather than repeated in every instance. Subscribe to [`Initializing`](./Initialization/Initializing.md) to do that work: load reference data, build lookup tables, and run the code a request will run so that no request pays for its first use.
 
-An application written without ASP.NET has no start-up code to subscribe from, and marks one method with [`InitializerAttribute`](./InitializerAttribute.md) instead. For state that must differ between instances, use [`Activation`](./Activation.md). [The application lifecycle](../../../../application-lifecycle.md) explains templates and instances in full.
+An application written without ASP.NET has no start-up code to subscribe from, and marks one method with [`InitializerAttribute`](./InitializerAttribute.md) instead. For state that must differ between instances, use [`Activation`](./Activation.md). [The application lifecycle](../../../../concepts/application-lifecycle.md) explains templates and instances in full.
 
 ## See Also
 

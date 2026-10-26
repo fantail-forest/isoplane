@@ -12,11 +12,11 @@ a feature of your own, a due date, with a database migration, a new endpoint and
 a test.
 
 For a new project with a few simple tables, consider the lighter option first:
-[Connect to PostgreSQL](connect-postgresql.md) builds a service without ASP.NET
+[Connect to PostgreSQL](../how-to/connect-postgresql.md) builds a service without ASP.NET
 that uses the Npgsql driver directly, so there is less code to load into every
 instance.
 
-Before starting, [install the tools](install.md). You also need Docker for the database. On macOS and Linux use `curl`;
+Before starting, [install the tools](../how-to/install.md). You also need Docker for the database. On macOS and Linux use `curl`;
 on Windows use PowerShell. Choose your operating system above for shell commands. Allow
 about twenty minutes.
 
@@ -27,7 +27,7 @@ dotnet new isoplane-webapi --name TodoApi
 cd TodoApi
 ```
 
-The [`isoplane-webapi`](reference/project-templates.md#isoplane-webapi) template is a complete
+The [`isoplane-webapi`](../reference/project-templates.md#isoplane-webapi) template is a complete
 application. These are the parts this tutorial
 touches; the project's `README.md` describes the rest.
 
@@ -184,7 +184,7 @@ in the instance: it is in the database.
 A rebuild is only one reason an instance is replaced. Isoplane may discard an
 instance after any request, so the rule holds everywhere: memory is a cache, and
 anything that must last goes in a database.
-[The application lifecycle](application-lifecycle.md) explains the stages you
+[The application lifecycle](../concepts/application-lifecycle.md) explains the stages you
 just saw.
 
 Remove the comment you added.
@@ -400,11 +400,11 @@ Isoplane:
 
 Where to go next:
 
-- [How .NET differs on Isoplane](dotnet-runtime-differences.md) lists what to
+- [How .NET differs on Isoplane](../concepts/dotnet-runtime-differences.md) lists what to
   keep in mind as the application grows.
-- [The application lifecycle](application-lifecycle.md) covers each stage and
+- [The application lifecycle](../concepts/application-lifecycle.md) covers each stage and
   who is responsible for what.
-- [Debug an application](debug-an-application.md) shows how to set a breakpoint
+- [Debug an application](../how-to/debug-an-application.md) shows how to set a breakpoint
   in the code you just wrote.
 - [Build a small lightweight web service](build-a-web-service.md) builds a
   service without ASP.NET.

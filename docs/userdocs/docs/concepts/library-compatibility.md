@@ -360,14 +360,14 @@ after a new build.
 Isoplane provides replacements, extension methods on
 [`IDataProtectionBuilder`][IDataProtectionBuilder] described in
 [Keep Data Protection keys across builds](dotnet-runtime-differences.md#keep-data-protection-keys-across-builds).
-- [`UseKeysFromDbContext`](reference/sdk/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore/DataProtectionDbContextKeys/UseKeysFromDbContext.md)
+- [`UseKeysFromDbContext`](../reference/sdk/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore/DataProtectionDbContextKeys/UseKeysFromDbContext.md)
   takes the place of `PersistKeysToDbContext` and uses the same table. It is in
-  the [`Isoplane.AspNetCore.DataProtection.EntityFrameworkCore`](reference/sdk/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.md)
+  the [`Isoplane.AspNetCore.DataProtection.EntityFrameworkCore`](../reference/sdk/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.md)
   package, which brings in
   [`Microsoft.AspNetCore.DataProtection.EntityFrameworkCore`][nuget-dp-ef].
-- [`UseConfiguredKeys`](reference/sdk/Isoplane.AspNetCore/Isoplane.AspNetCore/DataProtectionKeys/UseConfiguredKeys.md)
+- [`UseConfiguredKeys`](../reference/sdk/Isoplane.AspNetCore/Isoplane.AspNetCore/DataProtectionKeys/UseConfiguredKeys.md)
   derives the keys from a secret in the application's settings.
-- [`UseKeysFrom`](reference/sdk/Isoplane.AspNetCore/Isoplane.AspNetCore/DataProtectionKeys/UseKeysFrom.md)
+- [`UseKeysFrom`](../reference/sdk/Isoplane.AspNetCore/Isoplane.AspNetCore/DataProtectionKeys/UseKeysFrom.md)
   serves any other store.
 
 The last two are in Isoplane's ASP.NET Core adapter library,
@@ -585,7 +585,7 @@ Each of the four has its own way out:
   [`MustAsync`][fluentvalidation-async] rules run with
   [`ValidateAsync`][fluentvalidation-async].
 - **Localized strings and other lookup data.** Load them asynchronously in an
-  [`Initialization.Initializing`](reference/sdk/Isoplane.Sdk/Isoplane/Initialization/Initializing.md)
+  [`Initialization.Initializing`](../reference/sdk/Isoplane.Sdk/Isoplane/Initialization/Initializing.md)
   callback and serve them from memory. What initialization leaves in memory is
   copied into every instance.
 - **Signing keys.** Set
@@ -665,7 +665,7 @@ var app = builder.Build();
 
 This runs during [initialization](application-lifecycle.md#initialization),
 so the values are fetched once and every instance starts with them. For
-local development, [User Secrets](local-settings.md#keep-credentials-in-user-secrets)
+local development, [User Secrets](../how-to/local-settings.md#keep-credentials-in-user-secrets)
 need none of this.
 
 Size of the change: moderate.
@@ -803,7 +803,7 @@ Typically used for SQL Server and Azure SQL.
 #### Workaround: none for SQL Server itself, yet
 
 PostgreSQL through Npgsql works today; see
-[Connect PostgreSQL](connect-postgresql.md).
+[Connect PostgreSQL](../how-to/connect-postgresql.md).
 
 Size of the change: large: a different database.
 
@@ -875,7 +875,7 @@ serves the `SQLitePCLRaw` provider that `Microsoft.Data.Sqlite` uses by default,
 `e_sqlite3`, from `SQLitePCLRaw` 2.1 or 3.0.
 
 For data that must last, use PostgreSQL; see
-[Connect PostgreSQL](connect-postgresql.md).
+[Connect PostgreSQL](../how-to/connect-postgresql.md).
 
 Size of the change: small for in-memory data loaded as the instance starts.
 Large for a database file: a different database.
@@ -1097,7 +1097,7 @@ Leave [`Stateless`][mcp-http-options] set to `true` on the
 HTTP transport options, which is its default in version 2.2.0. Every request
 then stands alone: the server answers calls, and cannot start an exchange of
 its own. The
-[`isoplane-mcpserver`](reference/project-templates.md#isoplane-mcpserver)
+[`isoplane-mcpserver`](../reference/project-templates.md#isoplane-mcpserver)
 template is a server set up this way.
 
 Size of the change: small for a server that only answers tool calls. A
@@ -1187,7 +1187,7 @@ general rules suggest what to expect, the entry says so.
   [work that has nowhere to run](dotnet-runtime-differences.md#nowhere-to-run).
 
 To look into a package yourself, build with
-[`IsoplaneAnalyzeDependencies`](reference/project-settings.md#isoplaneanalyzedependencies)
+[`IsoplaneAnalyzeDependencies`](../reference/project-settings.md#isoplaneanalyzedependencies)
 set. The build then names every package assembly that contains a call that
 starts a thread or waits synchronously. Treat the result as a list of things
 to try, not a verdict: it flags an assembly for a call anywhere inside it, and

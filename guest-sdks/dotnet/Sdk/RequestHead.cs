@@ -76,12 +76,12 @@ public class RequestHead
     /// <para>
     /// Running time is the time a request dispatch spends executing. A request dispatch is the work
     /// Isoplane gives an instance to handle one request, described in
-    /// <see href="https://isoplane.dev/docs/dotnet-runtime-differences#units-of-work">Units of work</see>.
+    /// <see href="https://isoplane.dev/docs/concepts/dotnet-runtime-differences#units-of-work">Units of work</see>.
     /// Time spent waiting for something the handler awaits, such as a database or another service, does
     /// not count. Once a dispatch has used its allowance and the token is cancelled, it has a short
     /// further period in which to finish; after that Isoplane stops the instance. A local session allows the most the platform offers.
     /// To see how the application behaves with less, set <c>occupancyMsPerDispatch</c> as
-    /// <see href="https://isoplane.dev/docs/local-settings#try-the-application-under-tighter-limits">Try the application under tighter limits</see>
+    /// <see href="https://isoplane.dev/docs/how-to/local-settings#try-the-application-under-tighter-limits">Try the application under tighter limits</see>
     /// describes.
     /// </para>
     /// </remarks>

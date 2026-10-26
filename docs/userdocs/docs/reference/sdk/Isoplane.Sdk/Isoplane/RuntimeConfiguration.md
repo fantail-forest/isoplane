@@ -21,7 +21,7 @@ public static class RuntimeConfiguration
 
 An ASP.NET application does not need this type. `IsoplaneHosting.CreateBuilder` adds the same settings to `builder.Configuration`, so read them through `IConfiguration`.
 
-In local development the settings come from the project's User Secrets, the `environmentVariables` of its launch profile, and environment variables named `ISOPLANE_APP_<Key>`, each overriding the one before. [Supply local development settings](../../../../local-settings.md) describes each source. The application sees none of the machine's other environment variables.
+In local development the settings come from the project's User Secrets, the `environmentVariables` of its launch profile, and environment variables named `ISOPLANE_APP_<Key>`, each overriding the one before. [Supply local development settings](../../../../how-to/local-settings.md) describes each source. The application sees none of the machine's other environment variables.
 
 ## See Also
 

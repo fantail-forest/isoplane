@@ -24,7 +24,7 @@ Isoplane initializes the application ahead of requests and saves its memory as a
 
 Isoplane already reseeds, before the event is raised, every `Random` created without a seed, `Random.Shared`, the generator behind `Activity` trace and span identifiers, and the one behind SQLite's `random()` and `randomblob()`. Cryptographic randomness needs nothing: each call draws fresh bytes. Three things are left to you: a `Random` constructed with a seed, even when that seed was itself random; a generator that is not a `System.Random`, such as one a library implements; and a value already drawn, such as an identifier stored in a static field.
 
-An application written without ASP.NET has no start-up code to subscribe from, and marks one method with [`ActivatedAttribute`](./ActivatedAttribute.md) instead. For state that every instance can share, use [`Initialization`](./Initialization.md). [The application lifecycle](../../../../application-lifecycle.md) explains templates and instances in full.
+An application written without ASP.NET has no start-up code to subscribe from, and marks one method with [`ActivatedAttribute`](./ActivatedAttribute.md) instead. For state that every instance can share, use [`Initialization`](./Initialization.md). [The application lifecycle](../../../../concepts/application-lifecycle.md) explains templates and instances in full.
 
 ## Examples
 

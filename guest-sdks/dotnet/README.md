@@ -3,7 +3,7 @@
 Customer projects use the Isoplane SDK to compile application IL. `dotnet run`
 and `isoplane bundle` package assemblies, dependencies, assets and the SDK's
 runtime identity. The application runs on the shared Mono WASM runtime supplied
-with that SDK release. See the [application tutorial](../../docs/userdocs/docs/build-an-api.md).
+with that SDK release. See the [application tutorial](../../docs/userdocs/docs/tutorials/build-an-api.md).
 
 `MonoRuntime/` builds the platform runtime. `Isoplane.Guest.props`,
 `Isoplane.Guest.targets` and `build-guest.sh` serve platform builds and focused

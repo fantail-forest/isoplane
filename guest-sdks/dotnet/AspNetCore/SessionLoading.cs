@@ -40,7 +40,7 @@ public static class SessionLoading
     /// Register the session and its cache as usual, with <c>AddSession</c> and an
     /// <c>IDistributedCache</c>; the options given to <c>AddSession</c> apply. For Redis, reference
     /// the stable StackExchange.Redis 3.x client directly; see
-    /// <see href="https://isoplane.dev/docs/library-compatibility#redis">Redis compatibility</see>.
+    /// <see href="https://isoplane.dev/docs/concepts/library-compatibility#redis">Redis compatibility</see>.
     /// </para>
     /// <para>
     /// Every request that passes through the middleware reads the cache once, whether or not it

@@ -24,7 +24,7 @@ namespace Isoplane.AspNetCore;
 /// </para>
 /// <para>
 /// <c>dotnet new isoplane-webapi</c> creates a complete project, and
-/// <see href="https://isoplane.dev/docs/onboard-an-application">Bring an existing ASP.NET application</see>
+/// <see href="https://isoplane.dev/docs/how-to/onboard-an-application">Bring an existing ASP.NET application</see>
 /// covers moving one over.
 /// </para>
 /// </remarks>
@@ -64,7 +64,7 @@ public static class IsoplaneHosting
     /// <c>environmentVariables</c> of its launch profile, and environment variables named
     /// <c>ISOPLANE_APP_&lt;Key&gt;</c>; the application sees none of the machine's other environment
     /// variables.
-    /// <see href="https://isoplane.dev/docs/local-settings">Supply local development settings</see>
+    /// <see href="https://isoplane.dev/docs/how-to/local-settings">Supply local development settings</see>
     /// describes each source. The environment name comes from the supplied
     /// <c>ASPNETCORE_ENVIRONMENT</c> or <c>DOTNET_ENVIRONMENT</c> setting, and is <c>Production</c>
     /// without one. The <c>Logging</c> configuration section sets log levels.

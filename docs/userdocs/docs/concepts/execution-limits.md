@@ -40,8 +40,8 @@ instance stops and every request it was handling fails.
 that trim themselves as memory runs short see it.
 
 To keep a large request or response out of memory, read and write it as a
-stream: [`StreamingRequest`](reference/sdk/Isoplane.Sdk/Isoplane/StreamingRequest.md)
-and [`Response.Stream`](reference/sdk/Isoplane.Sdk/Isoplane/Response/Stream.md)
+stream: [`StreamingRequest`](../reference/sdk/Isoplane.Sdk/Isoplane/StreamingRequest.md)
+and [`Response.Stream`](../reference/sdk/Isoplane.Sdk/Isoplane/Response/Stream.md)
 without ASP.NET, or the request and response body streams in an ASP.NET
 application.
 
@@ -53,7 +53,7 @@ database or another service, does not count.
 
 When the allowance runs out, the request's cancellation token is cancelled:
 `HttpContext.RequestAborted`, or
-[`RequestHead.Aborted`](reference/sdk/Isoplane.Sdk/Isoplane/RequestHead/Aborted.md)
+[`RequestHead.Aborted`](../reference/sdk/Isoplane.Sdk/Isoplane/RequestHead/Aborted.md)
 without ASP.NET. The dispatch then has a short further period of running time in
 which to finish. If it is still running at the end of it, Isoplane stops the
 instance, `finally` blocks in the dispatch's code do not run, and every other
@@ -155,7 +155,7 @@ Creating a seventeenth host timer stops the instance.
 
 The [local defaults](#local-defaults) include a concurrent outbound-connection
 limit per instance.
-Set `concurrentConnectionsPerInstance` in [local settings](local-settings.md) to
+Set `concurrentConnectionsPerInstance` in [local settings](../how-to/local-settings.md) to
 test a lower limit. The host network ceiling still applies. A connection beyond
 the effective limit fails with a socket error. A connection counts from when it
 starts to open until the application closes or disposes of it, including while the instance is
@@ -184,4 +184,4 @@ The table is generated from the implementation's default limits.
 ## Try smaller limits locally
 
 To see how an application behaves under smaller limits, see
-[Try the application under tighter limits](local-settings.md#try-the-application-under-tighter-limits).
+[Try the application under tighter limits](../how-to/local-settings.md#try-the-application-under-tighter-limits).

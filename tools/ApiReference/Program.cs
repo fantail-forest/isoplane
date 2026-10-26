@@ -313,14 +313,14 @@ The types and members of the Isoplane packages an application uses. Signatures a
 
 An application is written in one of two ways, and tested with a third package.
 
-- **An ASP.NET application** has a `Program.cs`. It calls [`IsoplaneHosting.CreateBuilder`](sdk/Isoplane.AspNetCore/Isoplane.AspNetCore/IsoplaneHosting/CreateBuilder.md) from [Isoplane.AspNetCore](sdk/Isoplane.AspNetCore/Isoplane.AspNetCore.md) and is otherwise ordinary ASP.NET. From [Isoplane.Sdk](sdk/Isoplane.Sdk/Isoplane.Sdk.md) it needs only [`Initialization`](sdk/Isoplane.Sdk/Isoplane/Initialization.md) and [`Activation`](sdk/Isoplane.Sdk/Isoplane/Activation.md), and those only to prepare state ahead of time. Start with [Build a small API with ASP.NET Core and EF Core](../build-an-api.md) or [Bring an existing ASP.NET application](../onboard-an-application.md).
-- **An application without ASP.NET** is one static method marked [`[HttpHandler]`](sdk/Isoplane.Sdk/Isoplane/HttpHandlerAttribute.md) that takes a [`Request`](sdk/Isoplane.Sdk/Isoplane/Request.md) and returns a [`Response`](sdk/Isoplane.Sdk/Isoplane/Response.md). Everything it uses is in [Isoplane.Sdk](sdk/Isoplane.Sdk/Isoplane.Sdk.md). Start with [Build a small lightweight web service](../build-a-web-service.md) or [Handle requests without ASP.NET](../handle-requests-without-aspnet.md).
-- **A test project** uses [Isoplane.Testing](sdk/Isoplane.Testing/Isoplane.Testing.md) to start either kind of application in the sandbox and send it requests: [`IsoplaneApplication.StartAsync`](sdk/Isoplane.Testing/Isoplane.Testing/IsoplaneApplication/StartAsync.md). Start with [Test an application](../test-an-application.md).
+- **An ASP.NET application** has a `Program.cs`. It calls [`IsoplaneHosting.CreateBuilder`](sdk/Isoplane.AspNetCore/Isoplane.AspNetCore/IsoplaneHosting/CreateBuilder.md) from [Isoplane.AspNetCore](sdk/Isoplane.AspNetCore/Isoplane.AspNetCore.md) and is otherwise ordinary ASP.NET. From [Isoplane.Sdk](sdk/Isoplane.Sdk/Isoplane.Sdk.md) it needs only [`Initialization`](sdk/Isoplane.Sdk/Isoplane/Initialization.md) and [`Activation`](sdk/Isoplane.Sdk/Isoplane/Activation.md), and those only to prepare state ahead of time. Start with [Build a small API with ASP.NET Core and EF Core](../tutorials/build-an-api.md) or [Bring an existing ASP.NET application](../how-to/onboard-an-application.md).
+- **An application without ASP.NET** is one static method marked [`[HttpHandler]`](sdk/Isoplane.Sdk/Isoplane/HttpHandlerAttribute.md) that takes a [`Request`](sdk/Isoplane.Sdk/Isoplane/Request.md) and returns a [`Response`](sdk/Isoplane.Sdk/Isoplane/Response.md). Everything it uses is in [Isoplane.Sdk](sdk/Isoplane.Sdk/Isoplane.Sdk.md). Start with [Build a small lightweight web service](../tutorials/build-a-web-service.md) or [Handle requests without ASP.NET](../how-to/handle-requests-without-aspnet.md).
+- **A test project** uses [Isoplane.Testing](sdk/Isoplane.Testing/Isoplane.Testing.md) to start either kind of application in the sandbox and send it requests: [`IsoplaneApplication.StartAsync`](sdk/Isoplane.Testing/Isoplane.Testing/IsoplaneApplication/StartAsync.md). Start with [Test an application](../how-to/test-an-application.md).
 
 Other packages each adapt one library an ASP.NET application may use. They are separate so that an application without that library never restores it.
 
-- **[Isoplane.AspNetCore.DataProtection.EntityFrameworkCore](sdk/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.md)** keeps the Data Protection keys in the application's Entity Framework Core database: [`UseKeysFromDbContext`](sdk/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore/DataProtectionDbContextKeys/UseKeysFromDbContext.md). Start with [Keep Data Protection keys across builds](../dotnet-runtime-differences.md#keep-data-protection-keys-across-builds).
-- **[Isoplane.OpenTelemetry](sdk/Isoplane.OpenTelemetry/Isoplane.OpenTelemetry.md)** sends OpenTelemetry traces to an OTLP endpoint after each response: [`AddIsoplaneOtlpExporter`](sdk/Isoplane.OpenTelemetry/Isoplane.OpenTelemetry/IsoplaneOtlpExporterExtensions/AddIsoplaneOtlpExporter.md). Start with [OpenTelemetry](../library-compatibility.md#opentelemetry).
+- **[Isoplane.AspNetCore.DataProtection.EntityFrameworkCore](sdk/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.md)** keeps the Data Protection keys in the application's Entity Framework Core database: [`UseKeysFromDbContext`](sdk/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore/DataProtectionDbContextKeys/UseKeysFromDbContext.md). Start with [Keep Data Protection keys across builds](../concepts/dotnet-runtime-differences.md#keep-data-protection-keys-across-builds).
+- **[Isoplane.OpenTelemetry](sdk/Isoplane.OpenTelemetry/Isoplane.OpenTelemetry.md)** sends OpenTelemetry traces to an OTLP endpoint after each response: [`AddIsoplaneOtlpExporter`](sdk/Isoplane.OpenTelemetry/Isoplane.OpenTelemetry/IsoplaneOtlpExporterExtensions/AddIsoplaneOtlpExporter.md). Start with [OpenTelemetry](../concepts/library-compatibility.md#opentelemetry).
 
 ## Words these pages use
 
@@ -330,7 +330,7 @@ Other packages each adapt one library an ASP.NET application may use. They are s
 - **Activation.** The moment an instance starts from the template, before its first request: [`Activation.Activated`](sdk/Isoplane.Sdk/Isoplane/Activation/Activated.md), or an [`[Activated]`](sdk/Isoplane.Sdk/Isoplane/ActivatedAttribute.md) method. State that must differ between instances is created here.
 - **Sandbox.** The isolated environment your application runs in, on your machine and when deployed. It reaches the network and its settings only through Isoplane.
 
-[The application lifecycle](../application-lifecycle.md) explains these in full.
+[The application lifecycle](../concepts/application-lifecycle.md) explains these in full.
 
 <!-- Generated by tools/ApiReference. -->
 """ + "\n";
@@ -437,7 +437,7 @@ dotnet build -p:IsoplaneAnalyzeDependencies=true
 
 ## Standard .NET properties
 
-The warnings these properties produce also follow the ordinary .NET properties `NoWarn`, `WarningsAsErrors`, `TreatWarningsAsErrors` and `WarningsNotAsErrors`. [Control compatibility warnings](../run-and-rebuild.md#control-compatibility-warnings) shows how to use them, and [Error codes](error-codes.md) explains each warning.
+The warnings these properties produce also follow the ordinary .NET properties `NoWarn`, `WarningsAsErrors`, `TreatWarningsAsErrors` and `WarningsNotAsErrors`. [Control compatibility warnings](../how-to/run-and-rebuild.md#control-compatibility-warnings) shows how to use them, and [Error codes](error-codes.md) explains each warning.
 
 <!-- Generated by tools/ApiReference. -->
 """ + "\n";
@@ -453,7 +453,7 @@ mdx:
 
 `Properties/launchSettings.json` is the ordinary .NET file of launch profiles. `dotnet run` and `isoplane dev` read one profile from it when they start a local session. This page lists the keys Isoplane reads. It ignores every other key, such as `launchBrowser`. The key tables are generated from the list the Isoplane CLI parses, for the source version used to build this documentation.
 
-[Supply local development settings](../local-settings.md) shows the file in use.
+[Supply local development settings](../how-to/local-settings.md) shows the file in use.
 
 ## Which profile is used
 
@@ -465,7 +465,7 @@ A local session uses the first profile whose `commandName` is `Project`. Select 
 
 ## Keys of `isoplaneLimitsOverride`
 
-Each key is optional, and each value is a positive whole number. A local session otherwise uses the [local defaults](../execution-limits.md#local-defaults). [Execution limits](../execution-limits.md) explains what each limit measures.
+Each key is optional, and each value is a positive whole number. A local session otherwise uses the [local defaults](../concepts/execution-limits.md#local-defaults). [Execution limits](../concepts/execution-limits.md) explains what each limit measures.
 
 {limits}
 
@@ -508,7 +508,7 @@ mdx:
 
 `.vscode/launch.json` holds the debug configurations Visual Studio Code offers when you press F5. The Isoplane Debugger extension adds the `isoplane` configuration type. This page lists the attributes of that type. The tables are generated from the extension's manifest.
 
-[Debug an application](../debug-an-application.md) shows how to use these configurations.
+[Debug an application](../how-to/debug-an-application.md) shows how to use these configurations.
 
 ## Launch
 
@@ -555,12 +555,12 @@ Every file in a generated project is commented, and an application's `README.md`
 
 ## Choosing a template
 
-- **Starting something new?** Use [`isoplane-handler`](#isoplane-handler). It has no web framework: one static method receives every request. [Build a small lightweight web service](../build-a-web-service.md) walks through it.
-- **Want ASP.NET Core with a database?** Use [`isoplane-webapi`](#isoplane-webapi). [Build a small API with ASP.NET Core and EF Core](../build-an-api.md) walks through it.
-- **Bringing an existing ASP.NET application over, or want ASP.NET Core and nothing else?** Use [`isoplane-web`](#isoplane-web), as [Bring an existing ASP.NET application](../onboard-an-application.md) and the [Quickstart](../quickstart.md) do.
+- **Starting something new?** Use [`isoplane-handler`](#isoplane-handler). It has no web framework: one static method receives every request. [Build a small lightweight web service](../tutorials/build-a-web-service.md) walks through it.
+- **Want ASP.NET Core with a database?** Use [`isoplane-webapi`](#isoplane-webapi). [Build a small API with ASP.NET Core and EF Core](../tutorials/build-an-api.md) walks through it.
+- **Bringing an existing ASP.NET application over, or want ASP.NET Core and nothing else?** Use [`isoplane-web`](#isoplane-web), as [Bring an existing ASP.NET application](../how-to/onboard-an-application.md) and the [Quickstart](../quickstart.md) do.
 - **Want pages rendered on the server, with forms and a database?** Use [`isoplane-webapp`](#isoplane-webapp), a Razor Pages application.
 - **Giving an AI agent tools to call?** Use [`isoplane-mcpserver`](#isoplane-mcpserver), a Model Context Protocol server over HTTP.
-- **Have an application without sandbox tests?** Add them with [`isoplane-tests`](#isoplane-tests), created beside the application. [Test an application](../test-an-application.md) walks through it. `isoplane-handler` and `isoplane-webapi` already include a test project.
+- **Have an application without sandbox tests?** Add them with [`isoplane-tests`](#isoplane-tests), created beside the application. [Test an application](../how-to/test-an-application.md) walks through it. `isoplane-handler` and `isoplane-webapi` already include a test project.
 
 ## Creating a project
 

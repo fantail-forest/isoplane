@@ -20,7 +20,7 @@ public sealed class HttpHandlerAttribute : Attribute
 
 ## Remarks
 
-Use it when one method is all the application needs. The project uses the `Isoplane.Sdk` project SDK and has no `Program.cs`; `dotnet new isoplane-handler` creates one, with tests. An application that wants routing, middleware or dependency injection is an ASP.NET application instead, and starts from `IsoplaneHosting.CreateBuilder`. [Handle requests without ASP.NET](../../../../handle-requests-without-aspnet.md) walks through a complete project.
+Use it when one method is all the application needs. The project uses the `Isoplane.Sdk` project SDK and has no `Program.cs`; `dotnet new isoplane-handler` creates one, with tests. An application that wants routing, middleware or dependency injection is an ASP.NET application instead, and starts from `IsoplaneHosting.CreateBuilder`. [Handle requests without ASP.NET](../../../../how-to/handle-requests-without-aspnet.md) walks through a complete project.
 
 The method is static, returns `Task<Response>` and takes a [`Request`](./Request.md). It can have any name. It may take a [`StreamingRequest`](./StreamingRequest.md) in place of the [`Request`](./Request.md), to read a large body as it arrives. An application has exactly one such method. The build reports an error on a method that breaks these rules, on a second marked method, and on a project that has none.
 

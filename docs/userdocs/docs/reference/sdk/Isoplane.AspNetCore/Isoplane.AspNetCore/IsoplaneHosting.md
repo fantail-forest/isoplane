@@ -22,7 +22,7 @@ public static class IsoplaneHosting
 
 The builder it returns is an ordinary `WebApplicationBuilder`, so services, configuration, logging, middleware and endpoints are set up as usual. What differs is that Isoplane delivers requests to the application itself: the application opens no port and runs no web server of its own.
 
-`dotnet new isoplane-webapi` creates a complete project, and [Bring an existing ASP.NET application](../../../../onboard-an-application.md) covers moving one over.
+`dotnet new isoplane-webapi` creates a complete project, and [Bring an existing ASP.NET application](../../../../how-to/onboard-an-application.md) covers moving one over.
 
 ## Examples
 

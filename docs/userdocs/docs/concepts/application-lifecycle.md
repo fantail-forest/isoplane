@@ -22,7 +22,7 @@ memory every instance starts from.
 
 Isoplane runs initialization while creating a template, ahead of requests. In an ASP.NET
 application it runs `Program.cs` up to `RunAsync`, then raises
-[`Initialization.Initializing`](reference/sdk/Isoplane.Sdk/Isoplane/Initialization/Initializing.md).
+[`Initialization.Initializing`](../reference/sdk/Isoplane.Sdk/Isoplane/Initialization/Initializing.md).
 When the callbacks have finished it saves the application's memory as the
 template.
 
@@ -56,7 +56,7 @@ await app.RunAsync();
 
 - Does its expensive one-time work here, so that no request pays for it: load
   reference data, build lookup tables, and serve itself a request with
-  [`WarmupAsync`](reference/sdk/Isoplane.AspNetCore/Isoplane.AspNetCore/IsoplaneHosting/WarmupAsync.md)
+  [`WarmupAsync`](../reference/sdk/Isoplane.AspNetCore/Isoplane.AspNetCore/IsoplaneHosting/WarmupAsync.md)
   so that routes, serializers and database models are ready. Given a path it
   sends a `GET`; given an `HttpRequestMessage` it sends any method, with headers
   and a body, for a route such as a search that takes a `POST`. Preparation attempts
@@ -66,7 +66,7 @@ await app.RunAsync();
   return. An open connection cannot be saved in the template, so
   Isoplane refuses to start an application that leaves one. A database driver's
   connection pool keeps connections open after use, so turn pooling off, as
-  [Connect to PostgreSQL](connect-postgresql.md) does.
+  [Connect to PostgreSQL](../how-to/connect-postgresql.md) does.
 - Creates nothing that should be unique to an instance. Whatever initialization leaves
   in memory, including a random value or an identifier in a static field, is the
   same in every instance.
@@ -87,19 +87,19 @@ In each case the application does not start, and the terminal shows the reason.
 | A connection, stream or DNS result is still open when the callbacks finish | A message that names the kind, such as `initialization retains a TCP socket; dispose it before capture` |
 | Code waits synchronously or starts a thread | `PlatformNotSupportedException`, unless the code catches it |
 | Initialization runs longer than Isoplane allows | Initialization is stopped |
-| The entry point calls `Run`, or does not await `RunAsync` | A build error, [`ISOPLANE1020`](reference/error-codes.md#isoplane1020) or [`ISOPLANE1021`](reference/error-codes.md#isoplane1021), before anything runs |
+| The entry point calls `Run`, or does not await `RunAsync` | A build error, [`ISOPLANE1020`](../reference/error-codes.md#isoplane1020) or [`ISOPLANE1021`](../reference/error-codes.md#isoplane1021), before anything runs |
 
 A setting read during initialization is saved in the template with everything else, and
 every instance has the same settings.
 
-An application [without ASP.NET](handle-requests-without-aspnet.md#lifecycle-methods)
+An application [without ASP.NET](../how-to/handle-requests-without-aspnet.md#lifecycle-methods)
 has no `Program.cs`, and marks one method `[Initializer]` instead.
 
 ## Activation
 
 An instance starts as a copy of the template. Before it handles its first
 request, Isoplane raises
-[`Activation.Activated`](reference/sdk/Isoplane.Sdk/Isoplane/Activation/Activated.md).
+[`Activation.Activated`](../reference/sdk/Isoplane.Sdk/Isoplane/Activation/Activated.md).
 
 ```csharp
 var instance = Guid.Empty;
@@ -153,7 +153,7 @@ occupying a worker thread.
 - Delivers the request and returns the response.
 - Gives each ASP.NET request its own `HttpContext.TraceIdentifier`.
 - Cancels the request's token, `HttpContext.RequestAborted` or
-  [`RequestHead.Aborted`](reference/sdk/Isoplane.Sdk/Isoplane/RequestHead/Aborted.md),
+  [`RequestHead.Aborted`](../reference/sdk/Isoplane.Sdk/Isoplane/RequestHead/Aborted.md),
   when the client goes away before it has the whole response, or the request's
   [dispatch](dotnet-runtime-differences.md#units-of-work) has used its running
   time.
