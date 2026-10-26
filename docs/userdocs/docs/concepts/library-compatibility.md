@@ -23,14 +23,9 @@ some, and one rule covers them all:
 
 Each entry says what fails and how to work around it today, with the size of
 that change. Where there is more than one way through, the entry says which we
-recommend and gives the other as an alternative. [Packages that work](#works) and
-[packages not checked yet](#not-checked) are at the end.
-
-These observations come from the `0.1.0-preview.4` development line; the
-record on this page was last reviewed at source revision `b181ecea`. Each entry
-names the package version and paths exercised, or says when a conclusion is
-inferred rather than tested. Recheck the paths your application uses when
-upgrading the SDK or a package.
+recommend and gives the other as an alternative. A package that is not listed
+has no known incompatibility; to look for likely problems before relying on
+one, [check it yourself](#check-a-package).
 
 ## At a glance {#summary}
 
@@ -48,12 +43,12 @@ upgrading the SDK or a package.
 | ASP.NET Core                         | [WebSockets, SignalR's WebSocket transport, Blazor Server](#connections-and-background-work)                               | Not available                                                                                                                      |
 | ASP.NET Core                         | [gRPC over HTTP/2](#connections-and-background-work)                                                                       | Moderate change: use gRPC-Web                                                                                                      |
 | ASP.NET Core                         | [Continuously running `BackgroundService`, jobs and queue consumers](#connections-and-background-work)                     | Large change: do the work during a request                                                                                         |
-| Microsoft.Extensions.Configuration   | [`IConfigurationProvider` implementations that load from a remote service, such as Azure Key Vault](#remote-configuration) | Moderate change: fetch them before `builder.Build()`                                                                               |
-| Microsoft.Extensions.Logging.Console | [The console logger in an application written without ASP.NET Core](#console-logging)                                      | Small change: log through Isoplane's provider                                                                                      |
+| Microsoft.Extensions.Configuration   | [`IConfigurationProvider` implementations that load from a remote service, such as Azure Key Vault](#remote-configuration) | Moderate change: fetch fixed values before `builder.Build()`, and read changing ones where they are used                           |
+| Microsoft.Extensions.Logging.Console | [The console logger without ASP.NET Core, or with another dependency injection container](#console-logging)                | Small change: log through Isoplane's provider                                                                                      |
 | Entity Framework Core                | [Lazy loading](#lazy-loading)                                                                                              | Moderate change: load with `Include`                                                                                               |
 | Entity Framework Core                | [`TransactionScope`](#transaction-scope)                                                                                   | Small change: use a database transaction                                                                                           |
-| SqlClient                            | [SQL Server, including its Entity Framework Core provider](#sql-server)                                                    | Not supported yet: waits on work under way in the driver. PostgreSQL works today                                                   |
-| Sqlite                               | [SQLite, including its Entity Framework Core provider](#sqlite)                                                            | In-memory databases work, created once the application has started. A database file needs a different database, such as PostgreSQL |
+| SqlClient                            | [SQL Server, including its Entity Framework Core provider](#sql-server)                                                    | Not supported yet: the driver waits synchronously. No workaround                                                                   |
+| Sqlite                               | [SQLite, including its Entity Framework Core provider](#sqlite)                                                            | In-memory databases work, created once the application has started. Database files are not supported                              |
 | MongoDB.Driver                       | [MongoDB](#mongodb)                                                                                                        | Not supported yet for most deployments: waits on the driver. A load-balanced deployment works with two settings                    |
 | StackExchange.Redis                  | [Redis, including the Redis distributed cache](#redis)                                                                     | Small change: reference the stable 3.x client and call it asynchronously                                                           |
 | OpenTelemetry                        | [OpenTelemetry SDK](#opentelemetry)                                                                                        | Small change, traces only: use the exporter Isoplane provides                                                                      |
@@ -143,9 +138,7 @@ Every request that passes through it reads the cache once, whether or not it
 uses the session, so place it after middleware that answers requests without
 one, such as `UseStaticFiles`.
 
-We ran the failing load with a PostgreSQL-backed cache, and `UseLoadedSession`
-with a cache that answers asynchronously, as one backed by a database does. The
-Redis cache works too, with the client version given under [Redis](#redis).
+The Redis cache works too, with the client version given under [Redis](#redis).
 
 Size of the change: small. One call, replaced once.
 
@@ -360,6 +353,7 @@ after a new build.
 Isoplane provides replacements, extension methods on
 [`IDataProtectionBuilder`][IDataProtectionBuilder] described in
 [Keep Data Protection keys across builds](dotnet-runtime-differences.md#keep-data-protection-keys-across-builds).
+
 - [`UseKeysFromDbContext`](../reference/sdk/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore/DataProtectionDbContextKeys/UseKeysFromDbContext.md)
   takes the place of `PersistKeysToDbContext` and uses the same table. It is in
   the [`Isoplane.AspNetCore.DataProtection.EntityFrameworkCore`](../reference/sdk/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.md)
@@ -599,13 +593,6 @@ Size of the change: moderate. The I/O moves to a place that can await it.
 
 ### Connections and background work {#connections-and-background-work}
 
-Retained Redis connections work across requests, including with
-`Microsoft.Extensions.Caching.StackExchangeRedis`. A request awaiting a shared
-connection's background work can stall when the instance exhausts its background
-allowance and fail with a Redis timeout. The client's timeout detection may also
-be delayed until background execution resumes. See
-[background limits](execution-limits.md#after-the-response).
-
 These are described on other pages and listed here so that this page is
 complete.
 
@@ -616,7 +603,9 @@ complete.
   gRPC-Web works, which is a moderate change: it has to be enabled in the
   service and in its clients.
 - **A [`BackgroundService`][BackgroundService] that keeps running**, a
-  scheduled job or a queue consumer cannot rely on continuous execution.
+  scheduled job or a queue consumer cannot rely on continuous execution. Job
+  schedulers and message consumers such as Hangfire, Quartz.NET and
+  MassTransit rely on it.
   Background callbacks have a bounded allowance and stop five minutes after
   the last active request finishes, unless another request arrives. A hosted `BackgroundService` still running at startup is refused. Doing that work
   while a request is handled is a large change. See
@@ -637,26 +626,25 @@ builder.Configuration.AddAzureKeyVault(
     new Uri("https://contoso.vault.azure.net/"), new DefaultAzureCredential());
 ```
 
-We confirmed this with a provider written for the purpose. The Azure
-providers registered with [`AddAzureKeyVault`][AddAzureKeyVault] and
-[`AddAzureAppConfiguration`][AddAzureAppConfiguration], and the AWS provider
-registered with `AddSystemsManager` from the
+The Azure providers registered with [`AddAzureKeyVault`][AddAzureKeyVault]
+and [`AddAzureAppConfiguration`][AddAzureAppConfiguration], and the AWS
+provider registered with `AddSystemsManager` from the
 [`Amazon.Extensions.Configuration.SystemsManager`][nuget-aws-ssm] package,
-load the same way and are expected to fail likewise. They have not been run in
-the sandbox.
+all load this way.
 
 Typically used for taking secrets and settings from a vault.
 
-#### Workaround: fetch the settings before building the application
+#### Workaround: fetch fixed values before building the application, and read changing ones where they are used
 
-`Program.cs` may await before it builds the
-application, so fetch the values asynchronously there and add them to the configuration with
+`Program.cs` may await before it builds the application, so fetch the values
+asynchronously there and add them to the configuration with
 [`AddInMemoryCollection`][AddInMemoryCollection]:
 
 ```csharp
 var builder = IsoplaneHosting.CreateBuilder(args);
 
-// FetchSettingsAsync is yours: an asynchronous call that returns names and values.
+// FetchSettingsAsync is yours: an asynchronous call that returns names and
+// values, and disposes the client it used before it returns.
 Dictionary<string, string?> settings = await FetchSettingsAsync(builder.Configuration);
 builder.Configuration.AddInMemoryCollection(settings);
 
@@ -664,15 +652,29 @@ var app = builder.Build();
 ```
 
 This runs during [initialization](application-lifecycle.md#initialization),
-so the values are fetched once and every instance starts with them. For
-local development, [User Secrets](../how-to/local-settings.md#keep-credentials-in-user-secrets)
+once for each deployment, and every instance starts with the values it
+fetched. Two things follow:
+
+- **The values stay fixed until the application is deployed again.** A value
+  changed in the store afterwards does not reach the application, not even in
+  a new instance. Read a value that has to follow the store, such as a feature
+  flag or a rotated credential, from the service where it is used, with its
+  asynchronous client, and keep it in memory only for as long as it may be
+  stale.
+- **Close what the fetch opened.** Initialization refuses to finish while a
+  connection is still open, and an `HttpClient` or a service's SDK client keeps
+  its connections open for reuse. Dispose the client before
+  `FetchSettingsAsync` returns.
+
+For local development,
+[User Secrets](../how-to/local-settings.md#keep-credentials-in-user-secrets)
 need none of this.
 
 Size of the change: moderate.
 
 ## `Microsoft.Extensions.Logging.Console`
 
-### The console logger outside ASP.NET Core {#console-logging}
+### The console logger outside ASP.NET Core, or with another container {#console-logging}
 
 In an application written without ASP.NET Core, adding the console logger to a
 logger factory throws
@@ -684,11 +686,14 @@ starts a thread to write the entries it queues.
 using var loggers = LoggerFactory.Create(logging => logging.AddConsole());
 ```
 
-In an ASP.NET Core application the console logger works unchanged; see
-[Packages that work](#works). The failure above follows from how the console
-logger is built, and was confirmed in an ASP.NET Core application before
-Isoplane's ASP.NET Core adapter library, `Isoplane.AspNetCore`, replaced it
-there. It has not been run in an application without ASP.NET Core.
+In an ASP.NET Core application, Isoplane's ASP.NET Core adapter library,
+`Isoplane.AspNetCore`, replaces the console logger, so
+[`AddConsole`][AddConsole], [`AddJsonConsole`][AddJsonConsole],
+[`AddSimpleConsole`][AddSimpleConsole] and
+[`AddSystemdConsole`][AddSystemdConsole] work unchanged, with their formatter
+options. The exception is a dependency injection container set with
+`UseServiceProviderFactory`, such as Autofac's: it copies the registrations
+before Isoplane can replace the console logger, which then fails as above.
 
 #### Workaround: log through Isoplane's provider
 
@@ -705,8 +710,7 @@ Size of the change: small.
 
 ## Entity Framework Core
 
-Entity Framework Core works through its asynchronous methods. We ran it with
-the Npgsql provider; see [Packages that work](#works).
+Entity Framework Core works through its asynchronous methods.
 
 ### Lazy loading {#lazy-loading}
 
@@ -791,25 +795,19 @@ Everything built on the driver fails with it, including
 [`Microsoft.EntityFrameworkCore.SqlServer`][nuget-ef-sqlserver] and its
 [`UseSqlServer`][UseSqlServer].
 
-The driver is not short of anything native here: it has a fully managed
-implementation, which we ran in the sandbox. That implementation blocks. It
-signs in synchronously inside
-[`SqlConnection.OpenAsync`][DbConnection.OpenAsync], and it has no asynchronous
-commit, rollback or close of its own, so those fall back to their synchronous
-forms.
+The driver is not short of anything native here: its fully managed
+implementation loads in the sandbox, but blocks. It signs in synchronously
+inside [`SqlConnection.OpenAsync`][DbConnection.OpenAsync], and it has no
+asynchronous commit, rollback or close of its own, so those fall back to their
+synchronous forms.
 
 Typically used for SQL Server and Azure SQL.
 
-#### Workaround: none for SQL Server itself, yet
-
-PostgreSQL through Npgsql works today; see
-[Connect PostgreSQL](../how-to/connect-postgresql.md).
-
-Size of the change: large: a different database.
+There is no workaround yet.
 
 ### SQLite {#sqlite}
 
-Isoplane's runtime includes SQLite 3.54, so
+Isoplane's runtime includes SQLite, so
 [`Microsoft.Data.Sqlite`][Microsoft.Data.Sqlite] and
 [`Microsoft.EntityFrameworkCore.Sqlite`][nuget-ef-sqlite] with its
 [`UseSqlite`][UseSqlite] work unchanged for databases held in memory. That
@@ -874,11 +872,11 @@ Extension loading, including SpatiaLite, is not available. The runtime's SQLite
 serves the `SQLitePCLRaw` provider that `Microsoft.Data.Sqlite` uses by default,
 `e_sqlite3`, from `SQLitePCLRaw` 2.1 or 3.0.
 
-For data that must last, use PostgreSQL; see
+A database file has no workaround: data that must outlast an instance belongs
+in a database server, such as PostgreSQL; see
 [Connect PostgreSQL](../how-to/connect-postgresql.md).
 
 Size of the change: small for in-memory data loaded as the instance starts.
-Large for a database file: a different database.
 
 ### MongoDB {#mongodb}
 
@@ -911,9 +909,6 @@ settings.ClusterConfigurator = cluster =>
     cluster.ConfigureConnectionPool(pool => pool.With(maintenanceInterval: Timeout.InfiniteTimeSpan));
 var client = new MongoClient(settings);
 ```
-
-We ran this against a router behind HAProxy, creating the client within the
-request: inserts, queries and updates worked.
 
 Few deployments can offer this. The routers have to be started with a
 dedicated load-balancer port, behind a load balancer that sends the PROXY
@@ -952,12 +947,11 @@ Microsoft package would bring in, and leave the rest of the application as it
 is:
 
 ```xml
-<PackageReference Include="StackExchange.Redis" Version="3.4.5" />
-<PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="10.0.13" />
+<PackageReference Include="StackExchange.Redis" Version="3.4.20" />
 ```
 
-With 3.4.5 we ran [`IDistributedCache`][IDistributedCache] through
-`AddStackExchangeRedisCache`, and the client used directly:
+[`IDistributedCache`][IDistributedCache] through `AddStackExchangeRedisCache`
+then works, and so does the client used directly:
 
 ```csharp
 await using var redis = await ConnectionMultiplexer.ConnectAsync(connectionString);
@@ -967,8 +961,8 @@ var greeting = (string?)await db.StringGetAsync("greeting");
 ```
 
 [`HybridCache`][HybridCache] with Redis as its second level, and session state
-[loaded with `UseLoadedSession`](#session), use the same cache, and ran in
-an earlier check of this client.
+[loaded with `UseLoadedSession`](#session), use the same cache and work the
+same way.
 
 What to know before relying on it:
 
@@ -979,19 +973,16 @@ What to know before relying on it:
   to background accounting when the request completes, without keeping the
   request open. Later requests can reuse the client. The connection counts
   against the instance's connection limit until closed; reconnect if its peer,
-  network or instance lifecycle closes it. Background allowance exhaustion can
-  delay maintenance and completions.
+  network or instance lifecycle closes it.
+- **A shared client can time out after the instance's background allowance
+  runs out.** Its maintenance and completions wait until background execution
+  resumes, so a request awaiting it can fail with a Redis timeout. See
+  [background limits](execution-limits.md#after-the-response).
 - **Connect inside a request, not during initialization.** A connected client
   holds a socket, and initialization refuses an open socket.
-- **The Redis output cache works with the same client override.** We ran
-  `Microsoft.AspNetCore.OutputCaching.StackExchangeRedis` 10.0.13 with
-  [`AddStackExchangeRedisOutputCache`][AddStackExchangeRedisOutputCache],
-  asynchronous store operations and cache hits through the output-cache middleware.
-
-We ran these paths against Redis 7 without TLS or authentication, retaining the
-clients across completed responses and subsequent requests on the same instance. Clusters, sentinel
-and [`PersistKeysToStackExchangeRedis`][PersistKeysToStackExchangeRedis] were
-not run.
+- **The Redis output cache works with the same client override**, through
+  [`AddStackExchangeRedisOutputCache`][AddStackExchangeRedisOutputCache] from
+  `Microsoft.AspNetCore.OutputCaching.StackExchangeRedis`.
 
 Size of the change: small.
 
@@ -1010,8 +1001,7 @@ builder.Services.AddOpenTelemetry()
         .AddOtlpExporter());   // nothing arrives at the collector
 ```
 
-Typically used for sending traces, metrics and logs to a collector. We ran
-OpenTelemetry 1.20.0.
+Typically used for sending traces, metrics and logs to a collector.
 
 #### Workaround: send traces with Isoplane.OpenTelemetry
 
@@ -1064,11 +1054,6 @@ What it does not do:
 - **Metrics and logs.** It covers traces only; the SDK's metrics and logs
   exporters still deliver nothing.
 
-We ran it against the OpenTelemetry Collector over HTTP and over gRPC. The
-background-execution check also held an HTTP collector response open past the
-application response, then accepted further exports and Redis requests on the
-same instance.
-
 Size of the change: small.
 
 ## Model Context Protocol
@@ -1093,8 +1078,9 @@ sampling, elicitation and unsolicited notifications.
 
 #### Workaround: use stateless mode
 
-Leave [`Stateless`][mcp-http-options] set to `true` on the
-HTTP transport options, which is its default in version 2.2.0. Every request
+Set [`Stateless`][mcp-http-options] to `true` on the HTTP transport options.
+Recent versions default to it; setting it keeps it if the default moves. Every
+request
 then stands alone: the server answers calls, and cannot start an exchange of
 its own. The
 [`isoplane-mcpserver`](../reference/project-templates.md#isoplane-mcpserver)
@@ -1103,101 +1089,19 @@ template is a server set up this way.
 Size of the change: small for a server that only answers tool calls. A
 server that depends on sampling or elicitation has no workaround.
 
-## Packages that work {#works}
+## Check a package yourself {#check-a-package}
 
-These ran in the sandbox as they would anywhere else. Each entry says what we
-exercised, which is not everything the package does.
-
-- **ASP.NET Core 10.0.** Minimal APIs, MVC controllers and Razor views, Razor
-  Pages with tag helpers, model validation and TempData kept in a cookie, JSON
-  bodies of 100 KB in both directions, URL-encoded forms of several megabytes,
-  antiforgery tokens, output caching, response compression and health checks.
-- **ASP.NET Core Identity** with
-  `Microsoft.AspNetCore.Identity.EntityFrameworkCore` 10.0.12. Creating a
-  user, password sign-in, and an authorized request with the sign-in cookie.
-- **`Microsoft.AspNetCore.Authentication.JwtBearer` 10.0.12.** Validating a
-  token against signing keys fetched from
-  [`MetadataAddress`][JwtBearerOptions.MetadataAddress].
-- **`Microsoft.AspNetCore.Authentication.OpenIdConnect` 10.0.12.** The sign-in
-  redirect, which fetches the provider's metadata. The callback was not
-  exercised.
-- **`Microsoft.EntityFrameworkCore` 10.0.12 with
-  `Npgsql.EntityFrameworkCore.PostgreSQL` 10.0.3.** Asynchronous queries,
-  saves, transactions and migrations, the retrying execution strategy, and
-  context pooling.
-- **`Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore`
-  10.0.12.** [`AddDbContextCheck`][AddDbContextCheck].
-- **[`MySqlConnector`][MySqlConnector] 2.6.2.** Opening a connection to
-  MySQL and running a query. Transactions and the Entity Framework Core
-  providers built on this driver have not been run.
-- **[`Dapper`][dapper] 2.1.89** with Npgsql. `QueryAsync`, `QueryFirstAsync` over a
-  large result, and `ExecuteAsync`.
-- **`Microsoft.Extensions.Caching.Hybrid` 10.10.0.** [`HybridCache.GetOrCreateAsync`][HybridCache.GetOrCreateAsync],
-  with and without a distributed second level.
-- **`Microsoft.Extensions.Http.Resilience` 10.10.0.** A request through
-  [`AddStandardResilienceHandler`][AddStandardResilienceHandler].
-- **The console logger from `Microsoft.Extensions.Logging.Console`**, in an
-  ASP.NET Core application. [`AddConsole`][AddConsole],
-  [`AddJsonConsole`][AddJsonConsole], [`AddSimpleConsole`][AddSimpleConsole]
-  and [`AddSystemdConsole`][AddSystemdConsole], on their own or after
-  [`ClearProviders`][ClearProviders], with formatter options and
-  `LogToStandardErrorThreshold`. Each entry reaches the application's log once,
-  as the chosen formatter writes it, in place of the record Isoplane's own
-  provider writes, and an entry sent to standard error is recorded at the log's
-  error level. `ClearProviders` on its own leaves the application without
-  logging, as it does anywhere else. This was run with ASP.NET Core's own
-  service provider. A container set with `UseServiceProviderFactory`, such as
-  Autofac's, copies the registrations before Isoplane can replace the console
-  logger, which then fails as it does
-  [outside ASP.NET Core](#console-logging).
-- **[`Serilog.AspNetCore`][serilog-aspnetcore] 10.0.0.** `UseSerilog` with the
-  [console sink][serilog-console].
-- **[`FluentValidation`][fluentvalidation] 12.2.0.** Synchronous and
-  asynchronous rules through [`ValidateAsync`][fluentvalidation-async].
-- **[`MediatR`][mediatr] 12.5.0.** `IMediator.Send` to a handler that queries a database.
-- **[`AutoMapper`][automapper] 14.0.0.** Mapping an entity to a record.
-- **[`ModelContextProtocol.AspNetCore`][nuget-mcp] 2.2.0.** Tools called
-  through the MCP client, over stateless Streamable HTTP.
-- **[`Swashbuckle.AspNetCore`][swashbuckle] 10.3.0.** Generating the OpenAPI document. The
-  Swagger UI was not exercised.
-
-The Npgsql examples disable driver pooling so initialization closes its
-connections. Pools may be retained after activation, subject to instance limits; see
-[Pool database connections outside the application](dotnet-runtime-differences.md#pool-database-connections-outside-the-application).
-
-## Packages not checked yet {#not-checked}
-
-We have not run these, so this page makes no claim about them. Where the
-general rules suggest what to expect, the entry says so.
-
-- **Azure and AWS SDK clients**, such as `Azure.Storage.Blobs` and
-  `AWSSDK.S3`. Their asynchronous methods are built on [`HttpClient`][HttpClient], whose
-  asynchronous methods work, but the clients themselves have not been run.
-  Their synchronous methods block, as
-  [any synchronous I/O does](dotnet-runtime-differences.md#waits).
-- **[`Pomelo.EntityFrameworkCore.MySql`][Pomelo]** and other Entity Framework
-  Core providers for MySQL. The driver beneath them,
-  [`MySqlConnector`][MySqlConnector], [connects and queries](#works).
-- **`Microsoft.Identity.Web`.**
-- **`MailKit`.** It builds into an application package. Sending mail has not
-  been run.
-- **`Grpc.Net.Client`**, and Azure Cosmos DB.
-- **Job schedulers and message consumers**, such as Hangfire, Quartz.NET and
-  MassTransit. They rely on
-  [work that has nowhere to run](dotnet-runtime-differences.md#nowhere-to-run).
-
-To look into a package yourself, build with
+Build with
 [`IsoplaneAnalyzeDependencies`](../reference/project-settings.md#isoplaneanalyzedependencies)
 set. The build then names every package assembly that contains a call that
 starts a thread or waits synchronously. Treat the result as a list of things
 to try, not a verdict: it flags an assembly for a call anywhere inside it, and
 that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 
-[Activation.Activated]: reference/sdk/Isoplane.Sdk/Isoplane/Activation/Activated.md
+[Activation.Activated]: ../reference/sdk/Isoplane.Sdk/Isoplane/Activation/Activated.md
 [AddAzureAppConfiguration]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.configuration.azureappconfigurationextensions.addazureappconfiguration
 [AddAzureKeyVault]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.configuration.azurekeyvaultconfigurationextensions.addazurekeyvault
 [AddConsole]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.logging.consoleloggerextensions.addconsole
-[AddDbContextCheck]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.dependencyinjection.entityframeworkcorehealthchecksbuilderextensions.adddbcontextcheck
 [AddDistributedMemoryCache]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.dependencyinjection.memorycacheservicecollectionextensions.adddistributedmemorycache
 [AddFixedWindowLimiter]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.ratelimiting.ratelimiteroptionsextensions.addfixedwindowlimiter
 [AddInMemoryCollection]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.configuration.memoryconfigurationbuilderextensions.addinmemorycollection
@@ -1211,35 +1115,28 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [AddSessionStateTempDataProvider]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.dependencyinjection.mvcviewfeaturesmvcbuilderextensions.addsessionstatetempdataprovider
 [AddStackExchangeRedisCache]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.dependencyinjection.stackexchangerediscacheservicecollectionextensions.addstackexchangerediscache
 [AddStackExchangeRedisOutputCache]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.dependencyinjection.stackexchangeredisoutputcacheservicecollectionextensions.addstackexchangeredisoutputcache
-[AddStandardResilienceHandler]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.dependencyinjection.resiliencehttpclientbuilderextensions.addstandardresiliencehandler
 [AddXmlSerializerFormatters]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.dependencyinjection.mvcxmlmvcbuilderextensions.addxmlserializerformatters
 [AsFileSection]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.webutilities.multipartsectionconverterextensions.asfilesection
-[automapper]: https://docs.automapper.io/
 [BackgroundService]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.hosting.backgroundservice
 [BeginTransactionAsync]: https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.infrastructure.databasefacade.begintransactionasync
-[ClearProviders]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.logging.loggingbuilderextensions.clearproviders
 [CommitAsync]: https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.storage.idbcontexttransaction.commitasync
 [ConfigureHttpJsonOptions]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.dependencyinjection.httpjsonserviceextensions.configurehttpjsonoptions
 [Controller.TempData]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.mvc.controller.tempdata
 [CryptographicException]: https://learn.microsoft.com/dotnet/api/system.security.cryptography.cryptographicexception
 [CryptoStream]: https://learn.microsoft.com/dotnet/api/system.security.cryptography.cryptostream
-[dapper]: https://www.learndapper.com/
 [DbConnection.OpenAsync]: https://learn.microsoft.com/dotnet/api/system.data.common.dbconnection.openasync
 [DbContext.SaveChanges]: https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontext.savechanges
 [DbContext.SaveChangesAsync]: https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontext.savechangesasync
 [DllNotFoundException]: https://learn.microsoft.com/dotnet/api/system.dllnotfoundexception
 [EnableBuffering]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.http.httprequestrewindextensions.enablebuffering
 [FixedWindowRateLimiter]: https://learn.microsoft.com/dotnet/api/system.threading.ratelimiting.fixedwindowratelimiter
-[fluentvalidation]: https://docs.fluentvalidation.net/
 [fluentvalidation-async]: https://docs.fluentvalidation.net/en/latest/async.html
 [FormOptions]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.http.features.formoptions
 [FormOptions.MemoryBufferThreshold]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.http.features.formoptions.memorybufferthreshold
 [FormOptions.MultipartBodyLengthLimit]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.http.features.formoptions.multipartbodylengthlimit
-[HttpClient]: https://learn.microsoft.com/dotnet/api/system.net.http.httpclient
 [HttpContext.Session]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.http.httpcontext.session
 [HttpRequest.ReadFormAsync]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.http.httprequest.readformasync
 [HybridCache]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.caching.hybrid.hybridcache
-[HybridCache.GetOrCreateAsync]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.caching.hybrid.hybridcache.getorcreateasync
 [IConfigurationProvider.Load]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.configuration.iconfigurationprovider.load
 [IDataProtectionBuilder]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.dataprotection.idataprotectionbuilder
 [IDistributedCache]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.caching.distributed.idistributedcache
@@ -1247,7 +1144,7 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [ILazyLoader]: https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.infrastructure.ilazyloader
 [Include]: https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.entityframeworkqueryableextensions.include
 [InputFormatterMemoryBufferThreshold]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.mvc.mvcnewtonsoftjsonoptions.inputformattermemorybufferthreshold
-[IsoplaneLoggerProvider]: reference/sdk/Isoplane.Sdk/Isoplane/IsoplaneLoggerProvider.md
+[IsoplaneLoggerProvider]: ../reference/sdk/Isoplane.Sdk/Isoplane/IsoplaneLoggerProvider.md
 [IssuerSigningKeyResolver]: https://learn.microsoft.com/dotnet/api/microsoft.identitymodel.tokens.tokenvalidationparameters.issuersigningkeyresolver
 [IStringLocalizer]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.localization.istringlocalizer
 [IValidatableObject.Validate]: https://learn.microsoft.com/dotnet/api/system.componentmodel.dataannotations.ivalidatableobject.validate
@@ -1256,12 +1153,10 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [JwtBearerOptions.MetadataAddress]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.authentication.jwtbearer.jwtbeareroptions.metadataaddress
 [mcp-http-options]: https://csharp.sdk.modelcontextprotocol.io/v2/api/ModelContextProtocol.AspNetCore.HttpServerTransportOptions.html
 [mcp-stateless]: https://csharp.sdk.modelcontextprotocol.io/v2/concepts/stateless/stateless.html
-[mediatr]: https://github.com/jbogard/MediatR
 [Microsoft.Data.Sqlite]: https://learn.microsoft.com/dotnet/api/microsoft.data.sqlite
 [MongoDB.Driver]: https://www.mongodb.com/docs/drivers/csharp/current/
 [mongodb-load-balancer]: https://dev.to/alexbevi/mongodb-and-load-balancer-support-1p28
 [MultipartReader]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.webutilities.multipartreader
-[MySqlConnector]: https://mysqlconnector.net/
 [NetworkStream]: https://learn.microsoft.com/dotnet/api/system.net.sockets.networkstream
 [nuget-aws-ssm]: https://www.nuget.org/packages/Amazon.Extensions.Configuration.SystemsManager
 [nuget-dp-ef]: https://www.nuget.org/packages/Microsoft.AspNetCore.DataProtection.EntityFrameworkCore
@@ -1274,21 +1169,16 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [OutputFormatterMemoryBufferThreshold]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.mvc.mvcnewtonsoftjsonoptions.outputformattermemorybufferthreshold
 [PersistKeysToDbContext]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.dataprotection.entityframeworkcoredataprotectionextensions.persistkeystodbcontext
 [PersistKeysToFileSystem]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.dataprotection.dataprotectionbuilderextensions.persistkeystofilesystem
-[PersistKeysToStackExchangeRedis]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.dataprotection.stackexchangeredisdataprotectionbuilderextensions.persistkeystostackexchangeredis
 [PlatformNotSupportedException]: https://learn.microsoft.com/dotnet/api/system.platformnotsupportedexception
-[Pomelo]: https://github.com/PomeloFoundation/Pomelo.EntityFrameworkCore.MySql
 [rdg]: https://learn.microsoft.com/aspnet/core/fundamentals/aot/request-delegate-generator/rdg
 [ReferenceEntry.LoadAsync]: https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.changetracking.referenceentry.loadasync
 [se-redis-3]: https://github.com/StackExchange/StackExchange.Redis/releases/tag/3.0.0
 [SemaphoreSlim.Wait]: https://learn.microsoft.com/dotnet/api/system.threading.semaphoreslim.wait
-[serilog-aspnetcore]: https://github.com/serilog/serilog-aspnetcore
-[serilog-console]: https://github.com/serilog/serilog-sinks-console
 [Socket]: https://learn.microsoft.com/dotnet/api/system.net.sockets.socket
 [SqlConnection]: https://learn.microsoft.com/dotnet/api/microsoft.data.sqlclient.sqlconnection
 [SqliteException]: https://learn.microsoft.com/dotnet/api/microsoft.data.sqlite.sqliteexception
 [StackExchange.Redis]: https://stackexchange.github.io/StackExchange.Redis/
 [stj-source-generation]: https://learn.microsoft.com/dotnet/standard/serialization/system-text-json/source-generation
-[swashbuckle]: https://github.com/domaindrivendev/Swashbuckle.AspNetCore
 [System.Text.Json]: https://learn.microsoft.com/dotnet/api/system.text.json
 [Task]: https://learn.microsoft.com/dotnet/api/system.threading.tasks.task
 [Task.Result]: https://learn.microsoft.com/dotnet/api/system.threading.tasks.task-1.result
@@ -1299,7 +1189,7 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [TransactionInDoubtException]: https://learn.microsoft.com/dotnet/api/system.transactions.transactionindoubtexception
 [TransactionScope]: https://learn.microsoft.com/dotnet/api/system.transactions.transactionscope
 [UseLazyLoadingProxies]: https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.proxiesextensions.uselazyloadingproxies
-[UseLoadedSession]: reference/sdk/Isoplane.AspNetCore/Isoplane.AspNetCore/SessionLoading/UseLoadedSession.md
+[UseLoadedSession]: ../reference/sdk/Isoplane.AspNetCore/Isoplane.AspNetCore/SessionLoading/UseLoadedSession.md
 [UseRateLimiter]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.builder.ratelimiterapplicationbuilderextensions.useratelimiter
 [UseSession]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.builder.sessionmiddlewareextensions.usesession
 [UseSqlite]: https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.sqlitedbcontextoptionsbuilderextensions.usesqlite
