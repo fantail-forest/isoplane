@@ -81,9 +81,7 @@ in the sandbox.
 ## The application refuses to start
 
 Read the message printed with the failure; it names what stopped preparation.
-Four causes are particular to Isoplane. A `BackgroundService` that is still
-running once the host has started is refused by name; hosted background services
-that run continuously are unsupported. An entry point that returns without awaiting
+Three causes are particular to Isoplane. An entry point that returns without awaiting
 `RunAsync` cannot serve requests. An initialization callback that throws, such as
 a warm-up request to a database that is not running, fails preparation. So does
 initialization that leaves a connection or stream open: the message names the

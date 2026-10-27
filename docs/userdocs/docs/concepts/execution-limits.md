@@ -116,8 +116,8 @@ limit. A callback that fails to return can still cause the instance to be stoppe
 
 Timers and I/O completions do not create credit. Replacement instances start
 with the initial allowance. Background activity does not keep an instance alive:
-retained work and connections are stopped five minutes after the last active
-request finishes, unless another request arrives.
+an instance that holds retained work or connections is discarded five minutes
+after the last active request finishes, unless another request arrives.
 See [Work after the response](dotnet-runtime-differences.md#after-the-response).
 
 HTTP requests have no overall wall-time deadline while the client remains

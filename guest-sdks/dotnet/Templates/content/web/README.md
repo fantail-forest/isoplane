@@ -41,7 +41,8 @@ attach to.
   already there when an instance serves its first request.
 - Await work the response depends on. Remaining work uses a bounded background
   allowance and may be lost when the instance is discarded. Continuous execution
-  is unavailable: a `BackgroundService` still running after startup is refused.
+  is unavailable: a `BackgroundService` still running after startup runs only
+  while its instance is resident, and stops when the instance is discarded.
 
 ## Configuration
 

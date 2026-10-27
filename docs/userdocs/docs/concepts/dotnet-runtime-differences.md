@@ -328,7 +328,7 @@ Background dispatches use the instance's background allowance, including
 donated unused request time. This also applies
 to timers maintained by libraries such as connection pools.
 
-An idle instance with background work or open connections is stopped after five
+An idle instance that has background work or open connections is stopped five
 minutes after the last active request finishes, unless another request arrives.
 Background activity does not extend that deadline or
 make the instance appear recently requested. Hibernated instances are not woken
@@ -337,15 +337,20 @@ again; do not depend on a timer firing on schedule.
 
 ### What has nowhere to run? {#nowhere-to-run}
 
-Work that is meant to run continuously, or on a fixed schedule, such as
-a loop in a `BackgroundService`, a queue consumer, or a job scheduler. Timer
-wakes are best effort and stop five minutes after the last active request
-finishes, unless another request arrives, so they cannot provide continuous execution. An application whose
-`BackgroundService` is still running once the host has started is refused, with an error that names the service. Bounded
-asynchronous work in `IHostedService.StartAsync` is accepted.
+Work that is meant to run continuously, or on a fixed schedule, such as a loop
+in a `BackgroundService`, a queue consumer, or a job scheduler. Such work runs
+between requests as a timer does, but only while its instance is resident.
+Timer wakes are best effort, and an idle instance that holds background work is
+discarded five minutes after the last active request finishes, unless another
+request arrives. A `BackgroundService` in a discarded instance stops where it
+was, without its stopping token being cancelled, so work such as an outbox
+processor can stall until requests arrive again, and nothing reports it.
 
-Start such work from a request instead: for example, from an endpoint that a
-scheduler or a queue service calls.
+Isoplane accepts a `BackgroundService` still running once the host has
+started, as it accepts a timer, and the same rules apply to both.
+
+Start work that must run continuously or on a schedule from a request instead:
+for example, from an endpoint that a scheduler or a queue service calls.
 
 ### Cleanup
 

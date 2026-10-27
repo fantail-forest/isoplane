@@ -88,8 +88,9 @@ dotnet test
 <!--#else -->
   `TodoEndpoints.Update` awaits the webhook before returning.
 <!--#endif --> An application
-  with a `BackgroundService` that keeps running after startup refuses to start,
-  and names the service.
+  cannot rely on a `BackgroundService` that keeps running after startup: it
+  runs only while its instance is resident, and stops when the instance is
+  discarded.
 - **This sample disables database pooling.** `TodoServices` sets
   `Pooling=false`, because Isoplane decides how many instances run and may capture
   or discard any of them between requests. Use your database provider's pooler to

@@ -88,7 +88,8 @@ dotnet test
 - **Await work the response depends on.** Page handlers await their database calls.
   Remaining work uses a bounded background allowance and may be lost when the
   instance is discarded. Continuous execution is unavailable: a
-  `BackgroundService` still running after startup is refused by name.
+  `BackgroundService` still running after startup runs only while its instance
+  is resident, and stops when the instance is discarded.
 - **Memory is not storage.** Isoplane may discard an instance after any request,
   and successive requests can reach different instances. What must last is in
   the database, and what must follow a visitor is in a cookie: in-memory session

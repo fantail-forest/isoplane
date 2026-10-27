@@ -57,7 +57,7 @@ call as an error in your editor and offer the fix.
 - **Await work the response depends on.** Remaining work uses a bounded instance
   background allowance and may be lost if the instance is discarded. Continuous
   execution is unavailable: a `BackgroundService` still running once the host
-  has started is refused by name.
+  has started runs only while its instance is resident.
 - **Configuration is layered as in ASP.NET Core:** `appsettings.json`, then
   `appsettings.{Environment}.json`, then the settings the platform supplies. In
   local development those are User Secrets and the launch profile's environment

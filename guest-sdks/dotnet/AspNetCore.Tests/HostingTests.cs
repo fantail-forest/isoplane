@@ -314,50 +314,19 @@ public sealed class HostingTests
     }
 
     [Fact]
-    public async Task background_work_that_outlives_startup_is_refused_by_name()
+    public async Task a_background_service_still_running_after_startup_is_accepted()
     {
         var builder = Builder();
         builder.Services.AddSingleton<IHostedService>(new Background(stopping => Task.Delay(Timeout.Infinite, stopping)));
         await using var app = builder.Build();
         app.MapGet("/", () => "ready");
-        var error = await Record.ExceptionAsync(() => app.HandleAsync(Request()));
-        Assert.True(error is NotSupportedException && error.Message.Contains(typeof(Background).FullName!, StringComparison.Ordinal),
-            "work still running after startup must be refused, naming the service: " + error);
-    }
-
-    [Fact]
-    public async Task a_background_service_that_finishes_during_startup_is_startup_work()
-    {
-        var ran = false;
-        var builder = Builder();
-        builder.Services.AddSingleton<IHostedService>(new Background(_ => { ran = true; return Task.CompletedTask; }));
-        await using var app = builder.Build();
-        app.MapGet("/", () => "ready");
         var response = await app.HandleAsync(Request());
-        Assert.True(ran && response.Status == 200, "a background service with nothing left to do must not stop the application");
-    }
-
-    [Fact]
-    public async Task a_background_service_its_library_never_starts_is_accepted()
-    {
-        var builder = Builder();
-        builder.Services.AddSingleton<IHostedService>(new NeverStarted());
-        await using var app = builder.Build();
-        app.MapGet("/", () => "ready");
-        var response = await app.HandleAsync(Request());
-        Assert.Equal(200, response.Status);
+        Assert.True(response.Status == 200, "a background service still running after startup must not stop the application");
     }
 
     private sealed class Background(Func<CancellationToken, Task> work) : BackgroundService
     {
         protected override Task ExecuteAsync(CancellationToken stoppingToken) => work(stoppingToken);
-    }
-
-    /// <summary>What a library does with a service it registers unconditionally and needs only in some modes.</summary>
-    private sealed class NeverStarted : BackgroundService
-    {
-        public override Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
-        protected override Task ExecuteAsync(CancellationToken stoppingToken) => Task.Delay(Timeout.Infinite, stoppingToken);
     }
 
     [Fact]

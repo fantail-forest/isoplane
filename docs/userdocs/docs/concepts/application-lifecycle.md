@@ -46,11 +46,12 @@ await app.RunAsync();
 - Awaits the `Initializing` callbacks one at a time, in the order they
   subscribed.
 - Saves everything left in memory, and starts every instance from it.
-- Refuses to start the application if initialization throws, if a
-  `BackgroundService` is still running once the host has started, or if a
+- Refuses to start the application if initialization throws, or if a
   connection or stream is still open when the callbacks have finished.
-- Saves a timer still running when the callbacks have finished with the
-  template. In each instance it counts from when that instance starts.
+- Saves timers and `BackgroundService` loops still running when the callbacks
+  have finished with the template, and carries them on in each instance
+  [between requests](#between-requests). A timer counts from when that
+  instance starts.
 
 **Your application**
 
@@ -83,7 +84,6 @@ In each case the application does not start, and the terminal shows the reason.
 | Condition | What you see |
 | --- | --- |
 | `Program.cs` or an `Initializing` callback throws | The exception that was thrown |
-| A `BackgroundService` is still running once the host has started | An error that names the service |
 | A connection, stream or DNS result is still open when the callbacks finish | A message that names the kind, such as `initialization retains a TCP socket; dispose it before capture` |
 | Code waits synchronously or starts a thread | `PlatformNotSupportedException`, unless the code catches it |
 | Initialization runs longer than Isoplane allows | Initialization is stopped |
@@ -207,15 +207,17 @@ instances.
   create a new request allowance. Exhausted allowance delays that work.
 - Retains connections until the application, peer or instance cleanup closes
   them. Retained connections still count against instance limits.
-- Stops an idle instance with background work or open connections after five
-  minutes after the last active request finishes, unless another request arrives.
+- Stops an idle instance that has background work or open connections five
+  minutes after the last active request finishes, unless another request
+  arrives.
   Only request arrivals refresh demand recency. The idle stop also releases
   hibernated instances without waking them to run background work.
 
 **Your application**
 
 - Relies on no loop or queue consumer to run in the background, and on no
-  timer to run on time.
+  timer to run on time. A `BackgroundService` carries on between requests only
+  while its instance is resident.
 - Treats memory as a cache. Static fields and `IMemoryCache` belong to one
   instance and vanish with it.
 - Expects a connection kept from an earlier request to be stale, and opens
@@ -230,6 +232,7 @@ instances.
 | --- | --- |
 | Isoplane discards the instance | Nothing is reported. Its memory is gone, and the next request reaches an instance that starts from the template. |
 | A connection kept from an earlier request has gone stale | Its next use fails as a dropped connection does anywhere. Open a new one. |
+| Isoplane discards an instance whose `BackgroundService` is still running | The service stops where it was. Its stopping token is not cancelled and `StopAsync` does not run. |
 | A timer comes due while the instance is idle | It becomes eligible for a [background slice](dotnet-runtime-differences.md#run-timers-between-requests), subject to allowance and instance residency. It never runs if the instance is discarded first. |
 
 ## A new build or changed settings

@@ -49,10 +49,11 @@ builder.Services.AddTodos(builder.Configuration);
 builder.Services.AddCompletionNotifications(builder.Configuration);
 builder.Services.AddSingleton<InstanceInfo>();
 
-// Not here: a BackgroundService that keeps running. Background execution is
-// bounded; continuously running hosted services are refused at startup.
-// Do the work while handling a request, or in a hosted service whose
-// StartAsync completes it.
+// Not here: a BackgroundService for work that must run continuously or on a
+// schedule. Isoplane runs one between requests only while its instance is
+// resident, as it does a timer, and stops it without cancelling it when an idle
+// instance is discarded. Start such work from a request instead, for example
+// from an endpoint that a scheduler calls.
 
 var app = builder.Build();
 

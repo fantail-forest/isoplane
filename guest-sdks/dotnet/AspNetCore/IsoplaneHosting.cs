@@ -313,7 +313,6 @@ public static class IsoplaneHosting
             services.AddSingleton<IServer, IsoplaneServer>();
             services.RemoveAll<IHostLifetime>();
             services.AddSingleton<IHostLifetime, IsoplaneLifetime>();
-            services.AddHostedService<BackgroundWorkGuard>();
             services.ConfigureHttpClientDefaults(client => client
                 .AddHttpMessageHandler(() => new InitializationHttpHandler()));
         });

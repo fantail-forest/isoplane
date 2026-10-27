@@ -35,10 +35,11 @@ var builder = IsoplaneHosting.CreateBuilder(args);
 //   builder.Services.AddProblemDetails();
 //   builder.Services.AddHttpClient();
 //
-// One kind of service does not fit: a BackgroundService that keeps running.
-// Isoplane refuses continuously running hosted services at startup. Do the
-// work while handling a request, or in a hosted service whose StartAsync
-// completes it.
+// One kind of service does not fit: a BackgroundService for work that must run
+// continuously or on a schedule. Isoplane runs one between requests only while
+// its instance is resident, as it does a timer, and stops it without cancelling
+// it when an idle instance is discarded. Start such work from a request
+// instead, for example from an endpoint that a scheduler calls.
 
 var app = builder.Build();
 

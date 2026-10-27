@@ -67,12 +67,13 @@ choose the environment while developing.
 
 Use asynchronous I/O and await request work before returning the response.
 
-Background callbacks have a bounded allowance and an idle lifetime. Hosted
-services that run continuously are unsupported: a `BackgroundService` still running
-once the host has started fails to start, with an error that names the service;
-this includes services a library registers. An `IHostedService` may perform
-bounded asynchronous startup work in `StartAsync`, and a `BackgroundService` that
-finishes during startup is accepted.
+Background callbacks have a bounded allowance and an idle lifetime, so work that
+must run continuously or on a schedule needs a request to start it. A
+`BackgroundService` still running once the host has started, including one a
+library registers, carries on between requests as a timer does, but only while
+its instance is resident; it stops without being cancelled when the instance
+is discarded. See
+[What has nowhere to run?](../concepts/dotnet-runtime-differences.md#nowhere-to-run)
 
 Requests reach the application as HTTP/1.1, without connection upgrades or
 response trailers. WebSockets are therefore unavailable, and so is what depends on

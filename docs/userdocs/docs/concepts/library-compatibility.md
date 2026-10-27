@@ -80,7 +80,7 @@ read the stack trace to see which call failed.
 | `IOException: Read-only file system`                                                                                                                                                                                                                                           | Something tried to write a file. The [file system is read-only](dotnet-runtime-differences.md#file-system).                                                                                                             |
 | [`DllNotFoundException`][DllNotFoundException], sometimes inside a `TypeInitializationException`                                                                                                                                                                               | A package called into a native library that the runtime does not include. An application cannot bring its own; see [native libraries](dotnet-runtime-differences.md#native-libraries).                                  |
 | The application refuses to start with `unhandled System.PlatformNotSupportedException` and no stack trace                                                                                                                                                                      | A call made while the application starts failed. The known ones are [remote configuration](#remote-configuration) and, in an application written without ASP.NET Core, [the console logger](#console-logging).          |
-| The application refuses to start, naming a service that was `Still running once the application had started`                                                                                                                                                                   | A package registered a background service. See [MCP sessions](#mcp-sessions) and [background work](#connections-and-background-work).                                                                                   |
+| An MCP server answers some requests with 404 and `Session not found`                                                                                                                                                                                                           | The server tracks sessions, and the request reached an instance that does not hold its session. See [MCP sessions](#mcp-sessions).                                                                                      |
 | A minimal API endpoint answers 200 with an empty body, or the build fails with `CS9144: Cannot intercept method`                                                                                                                                                               | A handler names code that another source generator produces. See [generated code in handlers](#generated-code-in-handlers).                                                                                             |
 | `InvalidOperationException: The session could not be loaded from its cache`                                                                                                                                                                                                    | The session was used before it was loaded. See [session](#session).                                                                                                                                                     |
 
@@ -607,7 +607,10 @@ complete.
   schedulers and message consumers such as Hangfire, Quartz.NET and
   MassTransit rely on it.
   Background callbacks have a bounded allowance and stop five minutes after
-  the last active request finishes, unless another request arrives. A hosted `BackgroundService` still running at startup is refused. Doing that work
+  the last active request finishes, unless another request arrives. A
+  `BackgroundService` still running once the host has started is accepted, as
+  a timer is, and stops without being cancelled when its instance is
+  discarded. Doing that work
   while a request is handled is a large change. See
   [What has nowhere to run?](dotnet-runtime-differences.md#nowhere-to-run)
 
@@ -1062,14 +1065,18 @@ Size of the change: small.
 
 [`ModelContextProtocol.AspNetCore`][nuget-mcp] serves the Model Context
 Protocol over Streamable HTTP. In its [stateless mode][mcp-stateless] it works.
-With session tracking switched on, the package registers a background service,
-and the application refuses to start with an error that names
-`ModelContextProtocol.AspNetCore.IdleTrackingBackgroundService`.
+With session tracking switched on, by setting `Stateless` to `false` or
+`SessionMode` to anything but `Stateless`, the server keeps each session in the
+memory of the instance that began it. Nothing fails when the application
+starts, or for a client whose requests happen to reach that instance. A
+request that reaches another instance, or that arrives after the instance is
+discarded, is answered with 404 and the JSON-RPC error `Session not found`
+(`-32001`), so the failures are intermittent.
 
 ```csharp
 builder.Services
     .AddMcpServer()
-    .WithHttpTransport(options => options.Stateless = false)   // the application refuses to start
+    .WithHttpTransport(options => options.Stateless = false)   // starts, then fails intermittently
     .WithTools<HandbookTools>();
 ```
 
@@ -1080,9 +1087,8 @@ sampling, elicitation and unsolicited notifications.
 
 Set [`Stateless`][mcp-http-options] to `true` on the HTTP transport options.
 Recent versions default to it; setting it keeps it if the default moves. Every
-request
-then stands alone: the server answers calls, and cannot start an exchange of
-its own. The
+request then stands alone: the server answers calls, and cannot start an
+exchange of its own. The
 [`isoplane-mcpserver`](../reference/project-templates.md#isoplane-mcpserver)
 template is a server set up this way.
 

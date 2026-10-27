@@ -43,10 +43,11 @@ which starts the .NET host and its hosted services. Initialization hooks run
 next, and the result is captured as the template every instance starts from.
 Keep request-specific state out of the top level of `Program.cs`. Request scopes
 are created and disposed by ASP.NET's normal request lifecycle. A
-`BackgroundService` still running once the host has started is refused by name:
-continuous execution is unavailable, even though bounded background work can
-continue after a response. One that finishes during
-startup is accepted, as is bounded asynchronous `IHostedService.StartAsync` work.
+`BackgroundService` still running once the host has started is captured with
+the template and carries on in each instance between requests, as a timer does,
+under the instance's bounded background allowance. It runs only while its
+instance is resident and stops without being cancelled when the instance is
+discarded, so continuous execution is unavailable.
 
 To warm a read endpoint through middleware, binding and serialization before capture:
 

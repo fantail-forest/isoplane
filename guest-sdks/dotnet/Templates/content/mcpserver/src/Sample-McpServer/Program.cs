@@ -57,8 +57,9 @@ builder.Services
     //
     // A stateless server answers calls and cannot start an exchange of its own,
     // so sampling, elicitation and unsolicited notifications are unavailable.
-    // Setting Stateless to false is refused when the application starts: session
-    // tracking runs a background service, and Isoplane accepts none.
+    // Setting Stateless to false keeps each session in one instance's memory. The
+    // application starts, but a request that reaches another instance, or that
+    // arrives after the instance is discarded, fails with 404 Session not found.
     .WithHttpTransport(options => options.Stateless = true)
     // One line for each class of tools. Tools/HandbookTools.cs explains how a
     // tool is declared.
