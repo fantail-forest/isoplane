@@ -56,7 +56,7 @@ const T: Duration = Duration::from_secs(10);
 const PARK_MS: u64 = 600_000;
 
 #[test]
-fn the_pending_futures_cap_traps_the_guest() {
+fn the_pending_futures_cap_refuses_the_extra_operation_and_keeps_the_instance_serving() {
     let free = rig(CellConfig {
         ..CellConfig::for_test("cap-free")
     });
@@ -76,11 +76,17 @@ fn the_pending_futures_cap_traps_the_guest() {
 
     let act = Arc::new(FakeActivator::named(
         ModuleId::new("greedy", "v1"),
-        FakeBehaviour::program([Step::Park {
-            imports: (0..limit + 3)
-                .map(|_| ("clock_deadline_in", PARK_MS))
-                .collect(),
-        }]),
+        FakeBehaviour::program([
+            Step::Park {
+                imports: (0..limit + 3)
+                    .map(|_| ("clock_deadline_in", PARK_MS))
+                    .collect(),
+            },
+            Step::Done {
+                status: 200,
+                body: b"still serving".to_vec(),
+            },
+        ]),
     ));
     let module = act.module().clone();
     r.cell
@@ -104,29 +110,62 @@ fn the_pending_futures_cap_traps_the_guest() {
 
     let mut rec = http(&r.cell, &module, "/greedy");
     rec.dispatch_id = 1;
-    let out = r
+    assert_eq!(
+        rec.pending_futures_limit, limit,
+        "the record tells the guest the cap the host applies"
+    );
+    let greedy = r
         .cell
-        .dispatch_blocking(
+        .submit(
             &module,
             Target::Handler {
                 route: "/greedy".into(),
             },
             rec,
+        )
+        .unwrap();
+    assert!(
+        wait_for(|| r.cell.metrics().pending_cap_rejections == 1, T),
+        "the operation past the cap is refused: {:?}",
+        r.cell.metrics()
+    );
+    let instance = r.cell.resident_ids()[0];
+    assert_eq!(
+        r.cell
+            .futures()
+            .pending_for_import(instance, "clock_deadline_in"),
+        limit as usize,
+        "the operations within the cap stay pending"
+    );
+    assert!(
+        matches!(greedy.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty)),
+        "the capped dispatch keeps waiting on the operations it was allowed"
+    );
+
+    let mut rec = http(&r.cell, &module, "/again");
+    rec.dispatch_id = 2;
+    let again = r
+        .cell
+        .dispatch_blocking(
+            &module,
+            Target::Handler {
+                route: "/again".into(),
+            },
+            rec,
             T,
         )
         .unwrap();
-
     assert_eq!(
-        out.completion,
-        Completion::Trapped,
-        "the cap did not trap the guest"
+        (
+            again.instance,
+            again.completion,
+            again.status,
+            again.body.as_slice()
+        ),
+        (instance, Completion::Done, 200, b"still serving".as_slice()),
+        "the instance the cap refused on still serves its next dispatch"
     );
-    assert_eq!(out.status, 500, "a trap is a 500");
-    assert_eq!(
-        r.cell.metrics().pending_cap_rejections,
-        1,
-        "the cap refusal is counted"
-    );
+    assert_eq!(r.cell.metrics().traps, 0, "a cap refusal is not a trap");
 
     let ok = Arc::new(FakeActivator::named(
         ModuleId::new("higher-limit-app", "v1"),
@@ -165,6 +204,7 @@ fn the_pending_futures_cap_traps_the_guest() {
         "the standard plan was never capped"
     );
     drop(rx);
+    drop(greedy);
     free.cell.shutdown();
     paid.cell.shutdown();
 }
@@ -301,28 +341,37 @@ fn operator_budgets_reach_the_dispatch_and_pending_future_table() {
         .expect("configured module registers");
     let rec = http(&r.cell, &module, "/bounded");
     assert_eq!(
-        rec.occupancy_budget_ms, 1234,
-        "dispatch must carry the configured occupancy budget"
+        (rec.occupancy_budget_ms, rec.pending_futures_limit),
+        (1234, 2),
+        "the dispatch must carry the configured occupancy budget and pending cap"
     );
-    let out = r
+    let parked = r
         .cell
-        .dispatch_blocking(
+        .submit(
             &module,
             Target::Handler {
                 route: "/bounded".into(),
             },
             rec,
-            T,
         )
-        .expect("the cell contains the resource refusal");
-    assert_eq!(
-        out.completion,
-        Completion::Trapped,
-        "the third pending future must trip the operator cap"
+        .expect("the cell admits the dispatch");
+    assert!(
+        wait_for(|| r.cell.metrics().pending_cap_rejections == 1, T),
+        "the third pending future must trip the operator cap: {:?}",
+        r.cell.metrics()
     );
     assert_eq!(
-        r.cell.metrics().pending_cap_rejections,
-        1,
-        "the configured cap refusal must be observable"
+        r.cell
+            .futures()
+            .pending_for_import(r.cell.resident_ids()[0], "clock_deadline_in"),
+        2,
+        "the first two stay pending"
     );
+    assert_eq!(
+        r.cell.metrics().traps,
+        0,
+        "the configured cap refuses an operation without trapping"
+    );
+    drop(parked);
+    r.cell.shutdown();
 }

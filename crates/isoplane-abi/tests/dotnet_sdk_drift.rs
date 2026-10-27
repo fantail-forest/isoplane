@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use isoplane_abi::dispatch::{DispatchKind, HttpRequest};
+use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest, TraceContext};
 use isoplane_abi::imports::{self, Ty};
 use isoplane_abi::result::{FutureError, };
 use isoplane_abi::status::{PollStatus, TrapCode};
@@ -173,6 +173,122 @@ fn dispatch_kind_in_records_cs_mirrors_the_rust_enum() {
     );
 }
 
+/// A postcard reader with the operations `Records.cs` performs, replayed
+/// in the order that file performs them.
+struct Reader<'a> {
+    bytes: &'a [u8],
+}
+
+impl Reader<'_> {
+    fn varint(&mut self) -> u64 {
+        let mut value = 0u64;
+        let mut shift = 0;
+        loop {
+            let (byte, rest) = self.bytes.split_first().expect("an unterminated varint");
+            self.bytes = rest;
+            value |= u64::from(byte & 0x7f) << shift;
+            if byte & 0x80 == 0 {
+                return value;
+            }
+            shift += 7;
+        }
+    }
+
+    fn apply(&mut self, operation: &str) -> Option<u64> {
+        match operation {
+            "U64" | "U32" | "Varint" => Some(self.varint()),
+            "SkipBytes" => {
+                let length = self.varint() as usize;
+                self.bytes = &self.bytes[length..];
+                None
+            }
+            "Bool" => {
+                let (_, rest) = self.bytes.split_first().expect("a bool byte");
+                self.bytes = rest;
+                None
+            }
+            other => panic!("Records.cs reads a dispatch record with an operation this test does not replay: {other}"),
+        }
+    }
+}
+
+/// `(field, operation)` for every read `DispatchRecord.Decode` performs after
+/// the dispatch kind; a read into nothing has an empty field.
+fn csharp_dispatch_reads(src: &str) -> Vec<(String, String)> {
+    let body = &src[src
+        .find("static DispatchRecord Decode")
+        .expect("the decoder")..];
+    let body = &body[body
+        .find("// TraceContext")
+        .expect("the reads after the kind")..];
+    let body = &body[..body.find("return d;").expect("the end of the decoder")];
+    body.lines()
+        .map(str::trim)
+        .filter(|line| !line.starts_with("//") && line.contains("r."))
+        .map(|line| {
+            let (target, call) = line.split_once("r.").expect("a reader call");
+            let field = target
+                .trim_end_matches(" = ")
+                .trim_start_matches("d.")
+                .to_string();
+            let operation = call
+                .split("()")
+                .next()
+                .expect("a reader operation")
+                .to_string();
+            (field, operation)
+        })
+        .collect()
+}
+
+#[test]
+fn the_managed_dispatch_record_reads_the_rust_records_fields_in_order() {
+    let record = DispatchRecord {
+        dispatch_id: 9,
+        kind: DispatchKind::Background,
+        trace: TraceContext {
+            trace_id: "trace".into(),
+            span_id: "span".into(),
+            sampled: true,
+        },
+        cancel_future: 1_000_001,
+        occupancy_budget_ms: 30_000,
+        pending_futures_limit: 64,
+        now_ms: 1_700_000_000_000,
+    };
+    let bytes = isoplane_abi::encode(&record).expect("encodes");
+    let mut reader = Reader { bytes: &bytes };
+    assert_eq!(reader.varint(), record.dispatch_id);
+    assert_eq!(
+        reader.varint(),
+        discriminant(&DispatchKind::Background).into()
+    );
+    let mut read = BTreeMap::new();
+    for (field, operation) in csharp_dispatch_reads(&sdk_file("Records.cs")) {
+        if let Some(value) = reader.apply(&operation) {
+            read.insert(field, value);
+        }
+    }
+    assert!(
+        reader.bytes.is_empty(),
+        "Records.cs leaves {} bytes of the dispatch record unread",
+        reader.bytes.len()
+    );
+    let expected: BTreeMap<String, u64> = [
+        ("CancelFuture", record.cancel_future),
+        ("OccupancyBudgetMs", record.occupancy_budget_ms.into()),
+        ("PendingFuturesLimit", record.pending_futures_limit.into()),
+        ("NowMs", record.now_ms),
+    ]
+    .into_iter()
+    .map(|(field, value)| (field.to_string(), value))
+    .collect();
+    assert_eq!(
+        read, expected,
+        "Records.cs reads the dispatch record's fields in a different order or shape than the Rust struct encodes"
+    );
+}
+
 #[test]
 fn future_error_in_records_cs_mirrors_the_rust_enum() {
     assert_mirror(
@@ -232,7 +348,6 @@ fn trap_code_in_poll_status_cs_mirrors_the_rust_enum() {
         ("OutOfMemory", TrapCode::OutOfMemory),
         ("CapabilityViolation", TrapCode::CapabilityViolation),
         ("Protocol", TrapCode::Protocol),
-        ("TooManyFutures", TrapCode::TooManyFutures),
     ]
     .into_iter()
     .map(|(n, v)| (n.to_string(), v as u32))

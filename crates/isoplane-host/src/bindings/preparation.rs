@@ -449,13 +449,20 @@ mod tests {
             )
             .unwrap(),
         );
-        io.config.pending_futures = 0;
-        assert!(
-            matches!(
-                io.call(Request::Timer(DurationNanos(1))),
-                Err(Error::ResourceLimit)
-            ),
-            "a zero pending budget must refuse asynchronous preparation work"
+        io.config.pending_futures = 1;
+        for _ in 0..2 {
+            assert!(
+                matches!(
+                    io.call(Request::Timer(DurationNanos(1_000_000))),
+                    Ok(Response::Handle(_))
+                ),
+                "preparation accepts the timer and defers its wake past the budget"
+            );
+        }
+        assert_eq!(
+            io.runtime.futures.pending_total(io.instance()),
+            1,
+            "the budget bounds the futures preparation holds for the guest"
         );
     }
 

@@ -177,7 +177,7 @@ pub(crate) fn trap_kind_of_code(c: TrapCode) -> TrapKind {
         TrapCode::Panic => TrapKind::GuestPanic,
         TrapCode::OutOfMemory => TrapKind::OutOfMemory,
         TrapCode::CapabilityViolation => TrapKind::CapabilityViolation,
-        TrapCode::Protocol | TrapCode::TooManyFutures | TrapCode::Unknown => TrapKind::Other,
+        TrapCode::Protocol | TrapCode::Unknown => TrapKind::Other,
     }
 }
 

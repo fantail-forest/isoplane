@@ -34,13 +34,15 @@ internal sealed class ResponseHandle
     internal async Task WriteAsync(ReadOnlyMemory<byte> bytes)
     {
         if (finished) throw new InvalidOperationException("The host response is already finished.");
-        long future;
-        unsafe
+        int response = handle;
+        var result = await FutureTable.Start(() =>
         {
-            fixed (byte* pointer = bytes.Span)
-                future = H.RespWrite(handle, pointer, bytes.Length);
-        }
-        var result = await FutureTable.Register(future).ConfigureAwait(true);
+            unsafe
+            {
+                fixed (byte* pointer = bytes.Span)
+                    return H.RespWrite(response, pointer, bytes.Length);
+            }
+        }).Completion.ConfigureAwait(true);
         if (!result.IsOk) throw new IOException($"The response body could not be sent: the host reported {result.Error}.");
     }
 

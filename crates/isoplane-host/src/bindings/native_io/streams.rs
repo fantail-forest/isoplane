@@ -38,18 +38,19 @@ fn live_connection(state: &Mutex<SocketState>) -> Result<Option<Arc<Connection>>
 
 /// Runs `operation` on the reactor as a bounded socket future and settles
 /// it when the operation completes: the wake source for one stream's
-/// readiness.
+/// readiness. `None` while the dispatch has no future to spare; the stream
+/// stays unarmed and the guest's next poll asks again.
 fn watch(
     bindings: &dyn Context,
     operation: impl Future<Output = ()> + Send + 'static,
-) -> Result<ReactorWork, Error> {
+) -> Result<Option<ReactorWork>, Error> {
     let runtime = bindings
         .runtime()
         .ok_or(Error::Unsupported("stream operation without reactor"))?
         .clone();
-    let future = bindings
-        .alloc(isoplane_abi::native_io::canonical::SOCKET_IMPORT)
-        .ok_or(Error::ResourceLimit)?;
+    let Some(future) = bindings.alloc(isoplane_abi::native_io::canonical::SOCKET_IMPORT) else {
+        return Ok(None);
+    };
     let completion = runtime.clone();
     let span = tracing::info_span!("native_readiness", tenant = %bindings.tenant(), instance = %bindings.instance());
     let task = runtime.spawn(tracing::Instrument::instrument(
@@ -60,12 +61,12 @@ fn watch(
         span,
     ));
     runtime.futures.attach_task(future, task.abort_handle());
-    Ok(ReactorWork {
+    Ok(Some(ReactorWork {
         future: FutureId::from(future),
         owner: bindings.instance(),
         table: runtime.futures.clone(),
         task: task.abort_handle(),
-    })
+    }))
 }
 
 impl Input {
@@ -122,11 +123,11 @@ impl Input {
         let Some(stream) = live_connection(&self.state)? else {
             return Ok(());
         };
-        self.task = Some(watch(bindings, async move {
+        self.task = watch(bindings, async move {
             if let Err(error) = stream.stream.readable().await {
                 tracing::warn!(%error, "native input readiness failed");
             }
-        })?);
+        })?;
         Ok(())
     }
 }
@@ -170,11 +171,11 @@ impl Output {
         let Some(stream) = live_connection(&self.state)? else {
             return Ok(());
         };
-        self.task = Some(watch(bindings, async move {
+        self.task = watch(bindings, async move {
             if let Err(error) = stream.stream.writable().await {
                 tracing::warn!(%error, "native output readiness failed");
             }
-        })?);
+        })?;
         Ok(())
     }
 }

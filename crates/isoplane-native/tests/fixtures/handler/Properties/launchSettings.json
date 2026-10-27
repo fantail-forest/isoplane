@@ -1,0 +1,9 @@
+{
+  "//": "The fan-out route starts more host operations than this cap, so the test proves they wait their turn rather than fail.",
+  "profiles": {
+    "http": {
+      "commandName": "Project",
+      "isoplaneLimitsOverride": { "pendingFuturesPerDispatch": 4 }
+    }
+  }
+}

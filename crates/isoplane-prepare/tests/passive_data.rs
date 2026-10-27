@@ -27,6 +27,7 @@ fn dispatch(instance: &mut Instance) -> Completion {
         trace: Default::default(),
         cancel_future: 0,
         occupancy_budget_ms: 1000,
+        pending_futures_limit: 64,
         now_ms: 0,
     };
     instance

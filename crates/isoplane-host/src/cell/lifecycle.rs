@@ -521,11 +521,6 @@ impl Cell {
                         | Completion::Parked
                 ) =>
             {
-                if code == TrapCode::TooManyFutures {
-                    self.metrics
-                        .pending_cap_rejections
-                        .fetch_add(1, Ordering::Relaxed);
-                }
                 owner.host_trap(code);
                 latched_msg = Some(format!("{code:?}"));
                 Completion::Trapped

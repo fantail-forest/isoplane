@@ -81,12 +81,6 @@ struct FutureSlot {
     result: Option<ResultRecord>,
 }
 
-/// The host caps simultaneous pending futures per dispatch at the plan's
-/// `pending_futures_per_dispatch`. The guest keeps its own ceiling so a runaway
-/// fan-out surfaces as a clean `TooManyFutures` trap rather than as unbounded
-/// table growth.
-const MAX_PENDING_FUTURES: usize = 4096;
-
 pub(crate) struct Runtime {
     tasks: Vec<Option<Task>>,
     free_slots: Vec<u32>,
@@ -322,17 +316,11 @@ pub(crate) fn spawn_main(dispatch: u64, fut: BoxTask) {
 // The future table
 // ---------------------------------------------------------------------------
 
-pub(crate) enum Registered {
-    Ok,
-    TooMany,
-}
-
-pub(crate) fn register(id: u64) -> Registered {
+/// The host caps a dispatch's simultaneous pending futures at its record's
+/// `pending_futures_limit` and refuses the one past it; this SDK keeps no
+/// ceiling of its own.
+pub(crate) fn register(id: u64) {
     with(|rt| {
-        if rt.futures.len() >= MAX_PENDING_FUTURES {
-            rt.trap = Some(TrapCode::TooManyFutures);
-            return Registered::TooMany;
-        }
         let owner = rt.current;
         rt.futures
             .entry(id)
@@ -341,7 +329,6 @@ pub(crate) fn register(id: u64) -> Registered {
                 result: None,
             })
             .owner = owner;
-        Registered::Ok
     })
 }
 

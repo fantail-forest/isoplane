@@ -16,7 +16,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use crate::error::{IsoplaneError, Result};
-use crate::rt::{self, Registered};
+use crate::rt;
 
 /// A pending host operation, identified by the `future-id: u64` the import
 /// returned. Every potentially-slow import returns one immediately; no import
@@ -68,15 +68,17 @@ impl<T> Future for HostFuture<T> {
             }
             None => {
                 if !me.registered {
-                    match rt::register(me.id) {
-                        Registered::Ok => me.registered = true,
-                        Registered::TooMany => {
-                            me.finished = true;
-                            return Poll::Ready(Err(IsoplaneError::Protocol(
-                                "too many simultaneous pending futures".into(),
-                            )));
-                        }
+                    // The host answers a refused allocation with id 0 and
+                    // never wakes it; a dispatch past its pending cap sees
+                    // that one operation fail.
+                    if me.id == 0 {
+                        me.finished = true;
+                        return Poll::Ready(Err(IsoplaneError::Denied(
+                            "the dispatch has no capacity for another pending operation".into(),
+                        )));
                     }
+                    rt::register(me.id);
+                    me.registered = true;
                 }
                 // THE PARK. Nothing below this line waits; every caller's
                 // `.await` turns this into its own `return Poll::Pending`,

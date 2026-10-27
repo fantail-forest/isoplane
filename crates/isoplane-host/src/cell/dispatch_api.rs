@@ -381,6 +381,12 @@ impl Cell {
         })
     }
 
+    pub(crate) fn pending_futures_limit(&self, module: &ModuleId) -> u32 {
+        self.modules.read().get(module).map_or(64, |m| {
+            m.manifest.effective_limits().pending_futures_per_dispatch
+        })
+    }
+
     pub fn http_record(&self, module: &ModuleId, req: isoplane_abi::HttpRequest) -> DispatchRecord {
         let occupancy_budget_ms = self.occupancy_budget_ms(module);
         DispatchRecord {
@@ -389,6 +395,7 @@ impl Cell {
             trace: TraceContext::default(),
             cancel_future: 0,
             occupancy_budget_ms,
+            pending_futures_limit: self.pending_futures_limit(module),
             now_ms: crate::now_ms(),
         }
     }

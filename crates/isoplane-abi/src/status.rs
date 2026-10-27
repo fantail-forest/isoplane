@@ -33,8 +33,6 @@ pub enum TrapCode {
     CapabilityViolation = 3,
     /// Malformed dispatch or result encoding.
     Protocol = 4,
-    /// The pending-futures cap was exceeded.
-    TooManyFutures = 5,
 }
 
 impl TrapCode {
@@ -44,7 +42,6 @@ impl TrapCode {
             2 => Self::OutOfMemory,
             3 => Self::CapabilityViolation,
             4 => Self::Protocol,
-            5 => Self::TooManyFutures,
             _ => Self::Unknown,
         }
     }

@@ -189,6 +189,7 @@ impl Request {
             trace: TraceContext::default(),
             cancel_future: 0,
             occupancy_budget_ms: budget().occupancy_ms,
+            pending_futures_limit: 64,
             now_ms: self.now_ms,
         }
     }

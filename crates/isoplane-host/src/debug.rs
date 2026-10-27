@@ -363,6 +363,7 @@ mod tests {
             trace: TraceContext::default(),
             cancel_future: 0,
             occupancy_budget_ms: DEBUG_BUDGET_MS,
+            pending_futures_limit: 64,
             now_ms: 1,
         }
     }

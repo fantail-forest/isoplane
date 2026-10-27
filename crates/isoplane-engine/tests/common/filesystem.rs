@@ -102,6 +102,7 @@ pub fn dispatch() -> DispatchRecord {
         trace: TraceContext::default(),
         cancel_future: 0,
         occupancy_budget_ms: 30_000,
+        pending_futures_limit: 64,
         now_ms: 0,
     }
 }

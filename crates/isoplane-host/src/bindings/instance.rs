@@ -353,6 +353,17 @@ impl InstanceCtx {
     pub fn dispatch_id(&self) -> u64 {
         self.current().id()
     }
+    /// The most host operations `dispatch` may have pending at once: the
+    /// application's per-dispatch limit for a request, and for the instance's
+    /// own work the native handles it may retain, since that work waits on
+    /// those handles rather than fanning out on a request's behalf.
+    pub fn pending_futures_limit(&self, dispatch: u64) -> u32 {
+        if dispatch == crate::futures::INSTANCE_WORK {
+            self.guest_resources.native_handles.min(u32::MAX as usize) as u32
+        } else {
+            self.limits.pending_futures_per_dispatch
+        }
+    }
     pub fn entropy_calls(&self) -> u64 {
         self.entropy_calls.load(Ordering::Relaxed)
     }

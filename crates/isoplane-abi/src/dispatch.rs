@@ -13,6 +13,11 @@ pub struct DispatchRecord {
     /// it at its next await; one that never awaits is killed at its occupancy budget.
     pub cancel_future: u64,
     pub occupancy_budget_ms: u32,
+    /// The most host operations this dispatch may have pending at once. The
+    /// host refuses the operation that would exceed it, so a guest runtime
+    /// queues its own operations against this value and starts each as an
+    /// earlier one completes.
+    pub pending_futures_limit: u32,
     /// Wall clock at dispatch start, frozen for the slice.
     pub now_ms: u64,
 }

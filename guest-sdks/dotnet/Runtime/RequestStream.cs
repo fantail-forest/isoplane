@@ -12,8 +12,7 @@ internal sealed class RequestStream(ReadOnlyMemory<byte> prefix, bool canHaveBod
     private bool eof = !canHaveBody;
     private bool reading;
     private bool disposed;
-    private Task<ResultRecord>? pending;
-    private long pendingId;
+    private HostOperation? pending;
 
     public override bool CanRead => !disposed;
     public override bool CanSeek => false;
@@ -52,14 +51,10 @@ internal sealed class RequestStream(ReadOnlyMemory<byte> prefix, bool canHaveBod
         reading = true;
         try
         {
-            if (pending is null)
-            {
-                pendingId = H.ReqBodyRead(buffer.Length);
-                pending = FutureTable.Register(pendingId);
-            }
-            ResultRecord result = await pending.WaitAsync(cancellationToken);
+            int length = buffer.Length;
+            pending ??= FutureTable.Start(() => H.ReqBodyRead(length));
+            ResultRecord result = await pending.Completion.WaitAsync(cancellationToken);
             pending = null;
-            pendingId = 0;
             if (!result.IsOk) throw new IOException($"The request body could not be read: the host reported {result.Error}.");
             ObjectDisposedException.ThrowIf(disposed, this);
             remaining = result.Payload;
@@ -77,9 +72,8 @@ internal sealed class RequestStream(ReadOnlyMemory<byte> prefix, bool canHaveBod
     {
         disposed = true;
         remaining = ReadOnlyMemory<byte>.Empty;
+        pending?.Cancel();
         pending = null;
-        if (pendingId != 0) FutureTable.Cancel(pendingId);
-        pendingId = 0;
         base.Dispose(disposing);
     }
 }

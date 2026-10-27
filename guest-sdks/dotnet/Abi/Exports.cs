@@ -124,10 +124,6 @@ public static unsafe class Exports<TRouter>
 
             return Settle(dispatch);
         }
-        catch (TooManyFuturesException)
-        {
-            return PollStatus.Trapped(TrapCode.TooManyFutures);
-        }
         catch (PostcardException)
         {
             // From `Route`: a trigger this module has no handler for.
@@ -178,10 +174,6 @@ public static unsafe class Exports<TRouter>
             }
             FutureTable.Complete(future, wake.Result);
             return Settle(dispatch);
-        }
-        catch (TooManyFuturesException)
-        {
-            return PollStatus.Trapped(TrapCode.TooManyFutures);
         }
         catch (Exception error)
         {
@@ -268,7 +260,6 @@ public static unsafe class Exports<TRouter>
             {
                 Exception cause = failure.GetBaseException();
                 if (cause is OutOfMemoryException) return PollStatus.Trapped(TrapCode.OutOfMemory);
-                if (cause is TooManyFuturesException) return PollStatus.Trapped(TrapCode.TooManyFutures);
                 if (cause is PostcardException) return PollStatus.Trapped(TrapCode.Protocol);
             }
             Log(3, "request failed: " + inner.GetType().FullName + ": " + inner.Message);

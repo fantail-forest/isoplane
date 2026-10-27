@@ -18,6 +18,8 @@ internal sealed class GuestDispatch
     internal readonly ulong Id;
     internal readonly DispatchKind Kind;
     internal readonly ulong CancelFuture;
+    /// <summary>The most host operations this dispatch may have pending at once.</summary>
+    internal readonly uint PendingFuturesLimit;
     internal readonly IsoplaneSynchronizationContext Context;
     private readonly CancellationTokenSource? _cancellation;
     internal Task<Response>? Root;
@@ -30,6 +32,7 @@ internal sealed class GuestDispatch
         Id = record.DispatchId;
         Kind = record.Kind;
         CancelFuture = record.CancelFuture;
+        PendingFuturesLimit = record.PendingFuturesLimit;
         Context = new IsoplaneSynchronizationContext();
         _cancellation = record.CancelFuture == 0 ? null : new CancellationTokenSource();
     }
@@ -45,6 +48,7 @@ internal sealed class GuestDispatch
     {
         var dispatch = new GuestDispatch(record);
         InProgress[dispatch.Id] = dispatch;
+        FutureTable.Open(dispatch.Id, dispatch.PendingFuturesLimit);
         DispatchPartition.Open(dispatch.Id);
         dispatch.Enter();
         return dispatch;
@@ -121,6 +125,7 @@ internal sealed class GuestDispatch
     {
         InProgress.Remove(Id);
         DispatchPartition.Close(Id);
+        FutureTable.Close(Id);
         Context.HandOver(IsoplaneSynchronizationContext.Instance);
         _cancellation?.Dispose();
         if (Current == this)

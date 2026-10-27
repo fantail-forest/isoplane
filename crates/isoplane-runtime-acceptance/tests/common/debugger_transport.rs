@@ -203,6 +203,7 @@ async fn partial_debugger_headers_and_delayed_payloads_preserve_packet_boundarie
                     trace: TraceContext::default(),
                     cancel_future: 0,
                     occupancy_budget_ms: 180_000,
+                    pending_futures_limit: 64,
                     now_ms: 1,
                 },
                 OccupancyBudget {

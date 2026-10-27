@@ -320,6 +320,7 @@ mod queue_tests {
             trace: Default::default(),
             cancel_future: 0,
             occupancy_budget_ms: 30_000,
+            pending_futures_limit: 64,
             now_ms: 0,
         };
         let activator = Arc::new(crate::fakes::FakeActivator::new(

@@ -12,27 +12,45 @@ enum State {
 
 pub(super) struct Addresses {
     state: Arc<Mutex<State>>,
-    _task: ReactorWork,
+    /// The lookup not yet started: the dispatch had no future to spare when
+    /// the guest asked, so the poll that finds one starts it.
+    deferred: Option<Lookup>,
+    task: Option<ReactorWork>,
+}
+
+struct Lookup {
+    name: String,
+    maximum: ResourceCount,
 }
 
 impl Addresses {
-    pub(super) fn start(
-        bindings: &dyn Context,
-        name: String,
-        maximum: ResourceCount,
-    ) -> Result<Self, Error> {
+    pub(super) fn new(name: String, maximum: ResourceCount) -> Self {
+        Self {
+            state: Arc::new(Mutex::new(State::Pending)),
+            deferred: Some(Lookup { name, maximum }),
+            task: None,
+        }
+    }
+
+    /// Starts the lookup on the reactor if it has not started and the
+    /// dispatch has a future for it.
+    pub(super) fn arm(&mut self, bindings: &dyn Context) -> Result<(), Error> {
+        let Some(lookup) = self.deferred.take() else {
+            return Ok(());
+        };
         let runtime = bindings
             .runtime()
             .ok_or(Error::Unsupported("DNS without reactor"))?
             .clone();
-        let future = bindings
-            .alloc(
-                isoplane_abi::native_io::canonical::SOCKET_IMPORT,
-            )
-            .ok_or(Error::ResourceLimit)?;
-        let state = Arc::new(Mutex::new(State::Pending));
+        let Some(future) = bindings.alloc(
+            isoplane_abi::native_io::canonical::SOCKET_IMPORT,
+        ) else {
+            self.deferred = Some(lookup);
+            return Ok(());
+        };
+        let Lookup { name, maximum } = lookup;
         let completion = runtime.clone();
-        let answer = state.clone();
+        let answer = self.state.clone();
         let allowlist = bindings.reach().allowlist.map(<[String]>::to_vec);
         let exceptions = bindings.reach().exceptions.to_vec();
         let tenant = bindings.tenant().to_owned();
@@ -75,15 +93,13 @@ impl Addresses {
             completion.settle_future(future, ResultRecord::Ok(Vec::new()));
         });
         runtime.futures.attach_task(future, task.abort_handle());
-        Ok(Self {
-            state,
-            _task: ReactorWork {
-                future: FutureId::from(future),
-                owner: bindings.instance(),
-                table: runtime.futures.clone(),
-                task: task.abort_handle(),
-            },
-        })
+        self.task = Some(ReactorWork {
+            future: FutureId::from(future),
+            owner: bindings.instance(),
+            table: runtime.futures.clone(),
+            task: task.abort_handle(),
+        });
+        Ok(())
     }
 
     pub(super) fn ready(&self) -> bool {

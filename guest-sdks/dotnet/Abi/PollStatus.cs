@@ -62,5 +62,4 @@ internal enum TrapCode : uint
     CapabilityViolation = 3,
     /// <summary>Malformed dispatch/result encoding.</summary>
     Protocol = 4,
-    TooManyFutures = 5,
 }

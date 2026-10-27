@@ -420,6 +420,7 @@ impl ReturnedGuest {
                 trace: TraceContext::default(),
                 cancel_future: 0,
                 occupancy_budget_ms: self.context.limits.occupancy_ms_per_dispatch,
+                pending_futures_limit: self.context.limits.pending_futures_per_dispatch,
                 now_ms: self.context.slice_clock_ms(),
             },
             self.dispatch_budget,

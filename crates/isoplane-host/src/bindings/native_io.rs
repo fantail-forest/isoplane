@@ -105,7 +105,7 @@ mod tests {
         }
     }
 
-    struct EndpointPeer(std::net::SocketAddr);
+    pub(super) struct EndpointPeer(pub(super) std::net::SocketAddr);
 
     impl crate::egress::DestinationPolicy for EndpointPeer {
         fn authorize(
@@ -166,6 +166,7 @@ mod tests {
                 state: Arc::new(Mutex::new(SocketState::Connected(Arc::new(
                     Connection::new(stream.clone(), permit),
                 )))),
+                deferred: None,
                 task: None,
             }))
             .unwrap();
@@ -696,6 +697,9 @@ struct Socket {
     buffer_sizes: Arc<Mutex<buffer_sizes::Settings>>,
     streams_taken: bool,
     state: Arc<Mutex<SocketState>>,
+    /// An authorized connect the dispatch had no future for when it asked;
+    /// it starts when the guest polls the socket and a future is free.
+    deferred: Option<std::net::SocketAddr>,
     task: Option<ReactorWork>,
 }
 
@@ -736,7 +740,7 @@ impl Timer {
             let runtime = bindings
                 .runtime()
                 .ok_or(Error::Unsupported("native timer without reactor"))?;
-            self.wake = Some(arm_timer(deadline, &runtime, bindings)?);
+            self.wake = arm_timer(deadline, &runtime, bindings)?;
         }
         Ok(())
     }
@@ -765,26 +769,29 @@ pub(crate) fn reactor_now_on(reactor: &tokio::runtime::Handle) -> tokio::time::I
     tokio::time::Instant::now()
 }
 
+/// The wake for a timer's deadline, or `None` while the dispatch has no
+/// future to spare: the timer keeps its deadline and the next poll arms it.
 fn arm_timer(
     deadline: tokio::time::Instant,
     runtime: &Runtime,
     bindings: &dyn Context,
-) -> Result<ReactorWork, Error> {
-    let future = bindings
-        .alloc_rearmable(isoplane_abi::native_io::canonical::POLL_IMPORT)
-        .ok_or(Error::ResourceLimit)?;
+) -> Result<Option<ReactorWork>, Error> {
+    let Some(future) = bindings.alloc_rearmable(isoplane_abi::native_io::canonical::POLL_IMPORT)
+    else {
+        return Ok(None);
+    };
     let completion = runtime.clone();
     let task = runtime.spawn(async move {
         tokio::time::sleep_until(deadline).await;
         completion.settle_future(future, ResultRecord::Ok(Vec::new()));
     });
     runtime.futures.attach_task(future, task.abort_handle());
-    Ok(ReactorWork {
+    Ok(Some(ReactorWork {
         future: FutureId::from(future),
         owner: bindings.instance(),
         table: runtime.futures.clone(),
         task: task.abort_handle(),
-    })
+    }))
 }
 
 enum Resource {
@@ -1150,12 +1157,10 @@ impl Resources {
                     return Err(Error::InvalidHandle(network));
                 }
                 self.reserve(ResourceCount(1))?;
-                self.insert(Resource::Addresses(Addresses::start(
-                    bindings,
-                    name,
-                    self.limits.handles,
-                )?))
-                .map(Response::Handle)
+                let mut addresses = Addresses::new(name, self.limits.handles);
+                addresses.arm(bindings)?;
+                self.insert(Resource::Addresses(addresses))
+                    .map(Response::Handle)
             }
             Request::NextAddress(handle) => {
                 let address = match self.entries.get_mut(&handle) {
@@ -1179,6 +1184,7 @@ impl Resources {
                     buffer_sizes: Arc::default(),
                     streams_taken: false,
                     state: Arc::new(Mutex::new(SocketState::Created(family))),
+                    deferred: None,
                     task: None,
                 }))
                 .map(Response::Handle),
@@ -1321,7 +1327,7 @@ impl Resources {
                     let wake = arm_timer(deadline, &runtime, bindings)?;
                     Timer {
                         deadline: Some(deadline),
-                        wake: Some(wake),
+                        wake,
                     }
                 };
                 self.insert(Resource::Timer(timer)).map(Response::Handle)
@@ -1390,22 +1396,29 @@ impl Resources {
         }
     }
 
-    /// A stream the guest polled and found not ready is one it waits on:
+    /// A pollable the guest polled and found not ready is one it waits on:
     /// arms the readiness wake a blocked read or send would, so a guest that
     /// checks readiness instead of attempting the operation (a zero-byte
-    /// read, `Socket.Poll`) has a wake to park on. Every other pollable's
-    /// wake exists from the operation that created it.
+    /// read, `Socket.Poll`) has a wake to park on, and starts a connect or
+    /// lookup the dispatch had no future for when it asked. A pollable that
+    /// stays unarmed because the dispatch's cap is full is armed by a later
+    /// poll, after one of the dispatch's futures completes: the guest's poll
+    /// list is the queue, and the host holds no more than the cap.
     fn arm(&mut self, handle: ResourceHandle, bindings: &dyn Context) -> Result<(), Error> {
         let Some(Resource::Subscription(target)) = self.entries.get(&handle) else {
             return Ok(());
         };
-        match self.entries.get_mut(&target.clone()) {
+        let target = *target;
+        match self.entries.get_mut(&target) {
             Some(Resource::Input(input)) => input.arm(bindings),
             Some(Resource::Output(output)) => output.arm(bindings),
+            Some(Resource::Addresses(addresses)) => addresses.arm(bindings),
+            Some(Resource::Socket(socket)) => match socket.deferred.take() {
+                Some(destination) => self.start_connect(bindings, target, destination),
+                None => Ok(()),
+            },
             Some(
-                Resource::Socket(_)
-                | Resource::Addresses(_)
-                | Resource::Network
+                Resource::Network
                 | Resource::Error(_)
                 | Resource::Subscription(_)
                 | Resource::Timer(_),
@@ -1555,11 +1568,7 @@ impl Resources {
         if !matches!(self.entries.get(&network), Some(Resource::Network)) {
             return Err(Error::InvalidHandle(network));
         }
-        let socket = self.tcp(handle)?;
-        let state = socket.state.clone();
-        let no_delay = socket.no_delay.clone();
-        let keep_alive = socket.keep_alive.clone();
-        let buffer_sizes = socket.buffer_sizes.clone();
+        let state = self.tcp(handle)?.state.clone();
         {
             let current = state.lock();
             match &*current {
@@ -1579,12 +1588,11 @@ impl Resources {
                 }
             }
         }
-        let runtime = bindings
+        let policy = bindings
             .runtime()
             .ok_or(Error::Unsupported("outbound connect without reactor"))?
+            .egress
             .clone();
-        let policy = runtime.egress.clone();
-        let owner = bindings.connection_owner().map_err(Error::from)?;
         let reach = bindings.reach();
         policy
             .check_socket(
@@ -1599,8 +1607,36 @@ impl Resources {
                 },
             )
             .map_err(|reason| Error::Denied(reason.to_string()))?;
-        let future = bindings.alloc("socket_call").ok_or(Error::ResourceLimit)?;
         *state.lock() = SocketState::Connecting;
+        self.start_connect(bindings, handle, destination)?;
+        Ok(Response::Done)
+    }
+
+    /// Begins an authorized connect on the reactor, or defers it until the
+    /// guest polls the socket while the dispatch has a future to spare.
+    fn start_connect(
+        &mut self,
+        bindings: &dyn Context,
+        handle: ResourceHandle,
+        destination: std::net::SocketAddr,
+    ) -> Result<(), Error> {
+        let runtime = bindings
+            .runtime()
+            .ok_or(Error::Unsupported("outbound connect without reactor"))?
+            .clone();
+        let policy = runtime.egress.clone();
+        let owner = bindings.connection_owner().map_err(Error::from)?;
+        let socket = self.tcp(handle)?;
+        let state = socket.state.clone();
+        let no_delay = socket.no_delay.clone();
+        let keep_alive = socket.keep_alive.clone();
+        let buffer_sizes = socket.buffer_sizes.clone();
+        let Some(future) = bindings.alloc("socket_call") else {
+            if let Some(Resource::Socket(socket)) = self.entries.get_mut(&handle) {
+                socket.deferred = Some(destination);
+            }
+            return Ok(());
+        };
 
         let completion = runtime.clone();
         let tenant = bindings.tenant().to_owned();
@@ -1652,7 +1688,7 @@ impl Resources {
                 task: task.abort_handle(),
             });
         }
-        Ok(Response::Done)
+        Ok(())
     }
 }
 
@@ -1689,18 +1725,29 @@ mod timer_tests {
     }
 
     fn reactor_bindings() -> (Arc<crate::bindings::InstanceCtx>, Arc<Woken>) {
+        let egress = Arc::new(
+            crate::egress::HostEgressPolicy::system(
+                crate::egress::ConnectionLimits::uniform(1).expect("connection limits"),
+            )
+            .expect("egress policy"),
+        );
+        reactor_bindings_with(egress, isoplane_abi::config::Limits::default())
+    }
+
+    /// A reactor-backed context in dispatch 1, under `limits` and reaching
+    /// what `egress` allows.
+    fn reactor_bindings_with(
+        egress: Arc<crate::egress::HostEgressPolicy>,
+        limits: isoplane_abi::config::Limits,
+    ) -> (Arc<crate::bindings::InstanceCtx>, Arc<Woken>) {
         use isoplane_abi::config::Limits;
         let woken = Arc::new(Woken(Mutex::new(Vec::new())));
         let mut context = crate::bindings::InstanceCtx::for_test(InstanceId(7), Limits::default());
+        context.limits = limits;
         context.rt = Some(Arc::new(crate::bindings::CellRuntime {
             runtime_configuration: Default::default(),
             services: Arc::new(crate::cell::Services {
-                egress: Arc::new(
-                    crate::egress::HostEgressPolicy::system(
-                        crate::egress::ConnectionLimits::uniform(1).expect("connection limits"),
-                    )
-                    .expect("egress policy"),
-                ),
+                egress,
                 fetcher: Arc::new(crate::fakes::FakeFetcher::default()),
             }),
             futures: Arc::new(FutureTable::new(1 << 20)),
@@ -1710,6 +1757,218 @@ mod timer_tests {
         }));
         context.begin_dispatch(0, 1);
         (Arc::new(context), woken)
+    }
+
+    fn capped(pending_futures_per_dispatch: u32) -> isoplane_abi::config::Limits {
+        isoplane_abi::config::Limits {
+            pending_futures_per_dispatch,
+            ..isoplane_abi::config::Limits::default()
+        }
+    }
+
+    /// A poll as the guest's event loop issues one: every pollable it holds
+    /// plus one already ready, so the host never sees a poll that would block.
+    fn poll(
+        resources: &mut Resources,
+        handles: &[ResourceHandle],
+        bindings: &CellBindings,
+    ) -> Vec<u32> {
+        resources.begin_slice(tokio::time::Instant::now());
+        let ready = created(resources, bindings);
+        let mut list = handles.to_vec();
+        list.push(ready);
+        let indexes = match resources.call(Request::Poll(list), bindings) {
+            Ok(Response::ReadyIndexes(indexes)) => indexes,
+            other => panic!("a poll returned {other:?}"),
+        };
+        resources
+            .call(
+                Request::Drop {
+                    handle: ready,
+                    kind: ResourceKind::Pollable,
+                },
+                bindings,
+            )
+            .expect("the ready pollable drops");
+        indexes
+            .into_iter()
+            .filter(|index| (*index as usize) < handles.len())
+            .collect()
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn timers_past_the_dispatch_cap_arm_their_wakes_as_earlier_ones_complete() {
+        let (context, woken) = reactor_bindings_with(
+            Arc::new(
+                crate::egress::HostEgressPolicy::system(
+                    crate::egress::ConnectionLimits::uniform(1).expect("connection limits"),
+                )
+                .expect("egress policy"),
+            ),
+            capped(2),
+        );
+        let bindings = CellBindings::new(context.clone());
+        let futures = context.rt.as_ref().expect("reactor").futures.clone();
+        let mut resources = Resources::new(ResourceLimits {
+            handles: ResourceCount(4),
+        });
+        resources.begin_slice(tokio::time::Instant::now());
+        let mut timer = |milliseconds: u64| match resources.call(
+            Request::Timer(DurationNanos(milliseconds * 1_000_000)),
+            &bindings,
+        ) {
+            Ok(Response::Handle(handle)) => handle,
+            other => panic!("a {milliseconds} ms timer returned {other:?}"),
+        };
+        let timers = [timer(10), timer(20), timer(30)];
+        assert_eq!(
+            futures.pending_total(context.instance),
+            2,
+            "step 1: the third timer is created without a wake while the cap is full"
+        );
+        assert!(
+            poll(&mut resources, &timers, &bindings).is_empty(),
+            "step 1: no timer is due yet"
+        );
+        assert_eq!(
+            futures.pending_total(context.instance),
+            2,
+            "step 1: polling while the cap is full arms nothing more"
+        );
+
+        tokio::time::advance(std::time::Duration::from_millis(10)).await;
+        tokio::task::yield_now().await;
+        assert_eq!(
+            *woken.0.lock(),
+            vec![context.instance],
+            "step 2: the first timer wakes"
+        );
+        assert_eq!(
+            poll(&mut resources, &timers, &bindings),
+            vec![0],
+            "step 2: the first timer is due and the third is armed by the poll"
+        );
+        assert_eq!(
+            futures.pending_total(context.instance),
+            2,
+            "step 2: the completed wake's slot went to the third timer"
+        );
+
+        tokio::time::advance(std::time::Duration::from_millis(20)).await;
+        tokio::task::yield_now().await;
+        assert_eq!(
+            poll(&mut resources, &timers, &bindings),
+            vec![0, 1, 2],
+            "step 3: every timer is due at its own deadline"
+        );
+        assert_eq!(
+            futures.pending_total(context.instance),
+            0,
+            "step 3: nothing is left armed"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_connect_past_the_dispatch_cap_starts_when_a_poll_finds_a_free_future() {
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("a loopback listener");
+        let remote = listener.local_addr().expect("the listener's address");
+        let egress = Arc::new(
+            crate::egress::HostEgressPolicy::system(
+                crate::egress::ConnectionLimits::uniform(1).expect("connection limits"),
+            )
+            .expect("egress policy")
+            .with_destinations(Arc::new(super::tests::EndpointPeer(remote))),
+        );
+        let (context, _woken) = reactor_bindings_with(egress, capped(1));
+        let bindings = CellBindings::new(context.clone());
+        let futures = context.rt.as_ref().expect("reactor").futures.clone();
+        let mut resources = Resources::new(ResourceLimits {
+            handles: ResourceCount(6),
+        });
+        resources.begin_slice(tokio::time::Instant::now());
+        let Ok(Response::Handle(timer)) =
+            resources.call(Request::Timer(DurationNanos(10_000_000)), &bindings)
+        else {
+            panic!("a 10 ms timer must be created")
+        };
+        let Ok(Response::Handle(network)) = resources.call(Request::Network, &bindings) else {
+            panic!("the network handle must be created")
+        };
+        let Ok(Response::Handle(socket)) =
+            resources.call(Request::CreateTcp(AddressFamily::V4), &bindings)
+        else {
+            panic!("a socket must be created")
+        };
+        assert!(
+            matches!(
+                resources.call(
+                    Request::Connect {
+                        socket,
+                        network,
+                        destination: remote
+                    },
+                    &bindings
+                ),
+                Ok(Response::Done)
+            ),
+            "step 1: a connect past the cap is accepted"
+        );
+        assert_eq!(
+            futures.pending_total(context.instance),
+            1,
+            "step 1: the connect is deferred rather than given a future"
+        );
+        assert!(
+            matches!(
+                resources.call(Request::FinishConnect(socket), &bindings),
+                Err(Error::WouldBlock)
+            ),
+            "step 1: a deferred connect is in progress from the guest's side"
+        );
+        let Ok(Response::Handle(subscription)) =
+            resources.call(Request::Subscribe(socket), &bindings)
+        else {
+            panic!("the socket must be subscribable")
+        };
+        assert!(
+            poll(&mut resources, &[timer, subscription], &bindings).is_empty(),
+            "step 1: polling while the cap is full leaves the connect deferred"
+        );
+        assert_eq!(futures.pending_total(context.instance), 1);
+
+        tokio::time::advance(std::time::Duration::from_millis(10)).await;
+        tokio::task::yield_now().await;
+        assert_eq!(
+            poll(&mut resources, &[timer, subscription], &bindings),
+            vec![0],
+            "step 2: the timer is due and its freed slot starts the connect"
+        );
+        assert_eq!(
+            futures.pending_total(context.instance),
+            1,
+            "step 2: the connect now holds the dispatch's one future"
+        );
+        let (_accepted, _) = listener
+            .accept()
+            .await
+            .expect("the connect reaches the peer");
+        tokio::task::yield_now().await;
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            match resources.call(Request::FinishConnect(socket), &bindings) {
+                Ok(Response::Streams { .. }) => break,
+                Err(Error::WouldBlock) => {
+                    assert!(
+                        tokio::time::Instant::now() < deadline,
+                        "the connect never finished"
+                    );
+                    tokio::task::yield_now().await;
+                }
+                other => panic!("finishing the deferred connect returned {other:?}"),
+            }
+        }
     }
 
     /// Checks `handle` from a new slice, as a guest re-entered after time

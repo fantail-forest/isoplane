@@ -92,6 +92,7 @@ impl Cell {
             trace: TraceContext::default(),
             cancel_future: 0,
             occupancy_budget_ms: budget_ms,
+            pending_futures_limit: slot.ctx.pending_futures_limit(INSTANCE_WORK),
             now_ms: crate::now_ms(),
         };
         let owner = match DispatchCompletion::new(

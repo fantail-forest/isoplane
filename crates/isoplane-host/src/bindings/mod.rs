@@ -82,7 +82,10 @@ impl CellBindings {
         self.ctx.rt.as_ref()
     }
 
-    /// Per-dispatch exhaustion traps; shared instance exhaustion refuses allocation.
+    /// `None` when the dispatch's pending cap or the instance's retained-entry
+    /// limit is reached. Neither stops the instance: the caller defers or
+    /// refuses the one operation, and the guest is told its cap in its
+    /// dispatch record so it can queue before asking.
     pub(super) fn alloc(
         &self,
         import: &'static str,
@@ -98,14 +101,7 @@ impl CellBindings {
         rearmable: bool,
     ) -> Option<u64> {
         let rt = self.rt()?;
-        let limit = if dispatch == crate::futures::INSTANCE_WORK {
-            self.ctx
-                .guest_resources
-                .native_handles
-                .min(u32::MAX as usize) as u32
-        } else {
-            self.ctx.limits.pending_futures_per_dispatch
-        };
+        let limit = self.ctx.pending_futures_limit(dispatch);
         rt.futures.set_entry_limit(
             self.ctx.instance,
             crate::futures::retained_entry_limit(
@@ -123,16 +119,33 @@ impl CellBindings {
         match allocated {
             Ok(id) => Some(id),
             Err(e) => {
-                tracing::warn!(
-                    tenant = %self.ctx.tenant, instance = %self.ctx.instance,
-                    limit = e.limit, scope = ?e.scope, "pending-futures cap exceeded"
+                tracing::debug!(
+                    tenant = %self.ctx.tenant, instance = %self.ctx.instance, dispatch, import,
+                    limit = e.limit, outstanding = e.outstanding, scope = ?e.scope,
+                    "pending-futures cap reached"
                 );
-                if e.scope == crate::futures::PendingCapScope::Dispatch {
-                    self.ctx.latch_trap(TrapCode::TooManyFutures);
-                }
                 None
             }
         }
+    }
+
+    /// An import's future, or [`INVALID_FUTURE`] when the cap refuses it: the
+    /// guest sees that one operation fail and nothing else.
+    fn alloc_or_refuse(&self, import: &'static str) -> u64 {
+        if let Some(id) = self.alloc(import, false) {
+            return id;
+        }
+        if let Some(rt) = self.rt() {
+            rt.metrics
+                .pending_cap_rejections
+                .fetch_add(1, Ordering::Relaxed);
+        }
+        tracing::warn!(
+            tenant = %self.ctx.tenant, instance = %self.ctx.instance,
+            dispatch = self.ctx.dispatch_id(), import,
+            "pending-futures cap refused an operation"
+        );
+        INVALID_FUTURE
     }
 
     /// A future owned by `dispatch`, already complete, so its wake gives that
@@ -265,9 +278,10 @@ impl HostBindings for CellBindings {
         if def.name == "dispatch_ready" {
             return self.dispatch_ready(call.scalars[0]);
         }
-        let Some(id) = self.alloc(def.name, false) else {
+        let id = self.alloc_or_refuse(def.name);
+        if id == INVALID_FUTURE {
             return INVALID_FUTURE;
-        };
+        }
 
         // In the grace window every import answers `Cancelled` through its
         // future, so an over-budget dispatch cannot spend the window issuing
