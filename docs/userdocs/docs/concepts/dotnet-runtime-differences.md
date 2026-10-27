@@ -91,14 +91,14 @@ asynchronous waits do not count. Each request has a
 work has a [separate one](resource-limits.md#background-allowance), topped up
 over time and with whatever requests leave unused.
 
-Every dispatch gets a cancellation token: `HttpContext.RequestAborted`, or
+Every request gets a cancellation token: `HttpContext.RequestAborted`, or
 [`RequestHead.Aborted`](../reference/sdk/Isoplane.Sdk/Isoplane/RequestHead/Aborted.md)
 without ASP.NET. It is triggered when the allowance is exhausted, and when the
-client disconnects. A cancelled dispatch then has a 5-second grace period to
+client disconnects. A cancelled request then has a 5-second grace period to
 finish.
 
 :::important[Honour cancellation promptly]
-If a cancelled dispatch is still running when its grace period ends, its
+If a cancelled request is still running when its grace period ends, its
 instance is [evicted](#ephemeral-instances), and every other request on
 that instance fails with it.
 Pass the token to everything you await and let `OperationCanceledException`
@@ -251,9 +251,9 @@ instance's background work is limited by the instance's
 
 Timers, continuations and `BackgroundService` loops all run this way,
 including the timers a library runs for itself, such as a connection pool's.
-Nothing opts in. This is what lets a telemetry exporter or a Redis client
-finish what it started during a request. It runs only while its instance
-exists, and an idle instance is evicted five minutes after its last request,
+Nothing opts in. This is what lets the Isoplane OpenTelemetry exporter or a
+Redis client finish what it started during a request. It runs only while its
+instance exists, and an idle instance is evicted five minutes after its last request,
 so a `BackgroundService` stops where it was, without its stopping token being
 cancelled.
 
@@ -309,7 +309,7 @@ time. Keep anything that must last in a database or another external service.
 
 When a new template is needed, preparation runs startup code and captures
 its memory. Initialization may retry, and matching captured state may be reused. In an ASP.NET Core application that is `Program.cs` up to `RunAsync`.
-Every instance starts from that snapshot, so instances reuse captured startup work instead of each rerunning startup. That is what lets a new instance answer
+Every instance starts from that snapshot, the *template*, so instances reuse captured startup work instead of each rerunning startup. That is what lets a new instance answer
 its first request without a cold start, and why expensive startup work, such
 as building caches or warming routes, belongs in initialization rather than in
 the first request.
@@ -352,8 +352,8 @@ The host serves plaintext HTTP; configure a reverse proxy to terminate TLS.
 
 Requests arrive as HTTP/1.1, without upgrades or trailers. That rules out gRPC
 over HTTP/2, which needs both, although gRPC-Web works. WebSockets are
-currently unavailable, and with them SignalR's WebSocket transport and Blazor
-Server interactivity.
+currently unavailable, and with them Blazor Server interactivity. SignalR is
+[not supported](library-compatibility.md#signalr) on any of its transports.
 
 Streamed responses work, so server-sent events from your own endpoint do too,
 as do statically rendered Blazor pages. See
@@ -367,13 +367,13 @@ are subject to a per-instance
 [outbound connection limit](resource-limits.md#outbound-connections).
 
 In-process connection pools aren't shared across instances, so we recommend
-using an external connection pooler to stay within your database provider's
-connection limits, as [Connect to PostgreSQL](../how-to/connect-postgresql.md)
-shows.
+an external connection pooler to stay within your database provider's
+connection limits. [Connect to PostgreSQL](../how-to/connect-postgresql.md)
+turns the driver's own pool off for that reason.
 
 :::tip
-Where a library offers a choice of transport, such as a telemetry exporter,
-pick TCP or HTTP.
+Where a library offers a choice of transport, such as a metrics or logging
+client that can also send over UDP, pick TCP or HTTP.
 :::
 
 :::important
@@ -412,8 +412,11 @@ The file system is read-only, and holds only your application package:
 `appsettings.json`, `wwwroot` and so on. Writes fail, and there is currently
 nowhere to store temporary files.
 
-A file's modification time is the build time, which ASP.NET Core sends as
-`Last-Modified` when serving static files.
+A file's modification time is the time it was last written before the
+application was built, which ASP.NET Core sends as `Last-Modified` when
+serving static files.
+[Build the same package on any machine](../how-to/run-and-rebuild.md#build-the-same-package-on-any-machine)
+says how to make it the same on every build.
 
 :::tip
 [Handle uploads and generated files](../how-to/handle-uploads-and-generated-files.md)

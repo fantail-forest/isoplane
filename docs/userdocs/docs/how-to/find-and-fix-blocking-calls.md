@@ -28,8 +28,8 @@ dotnet build
 ```
 
 Each warning names the call and where it is. In the editor the warning sits on
-the call itself, and where the call has an async counterpart a quick fix
-replaces it.
+the call itself, and for `Thread.Sleep`, `task.Wait()`, `Task.WaitAll` and
+`SemaphoreSlim.Wait` a quick fix replaces it.
 
 ## Search for what the analyzer can't see
 

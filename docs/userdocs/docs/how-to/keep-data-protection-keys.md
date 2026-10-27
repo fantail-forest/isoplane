@@ -85,7 +85,7 @@ Initialization.Initializing += async () =>
 
 The [`isoplane-webapp`](../reference/project-templates.md#isoplane-webapp)
 template is set up this way. For another store,
-[`UseKeysFrom`](../reference/sdk/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore/DataProtectionDbContextKeys/UseKeysFromDbContext.md)
+[`UseKeysFrom`](../reference/sdk/Isoplane.AspNetCore/Isoplane.AspNetCore/DataProtectionKeys/UseKeysFrom.md)
 takes two async functions that read and add keys. A prepared template retains
 the key ring loaded during initialization, even after keys expire. When
 initialization loads the store, it creates and persists a new key if no
@@ -95,5 +95,6 @@ renews its key ring.
 
 :::note
 ASP.NET Core's own stores, such as `PersistKeysToDbContext`, read keys
-synchronously and so fail here with `PlatformNotSupportedException`.
+synchronously and so fail here. The log shows `An error occurred while reading
+the key ring`, and protecting data then throws `CryptographicException`.
 :::

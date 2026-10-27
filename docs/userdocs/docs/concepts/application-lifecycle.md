@@ -71,11 +71,10 @@ await app.RunAsync();
 - Creates nothing that should be unique to an instance. Whatever initialization leaves
   in memory, including a random value or an identifier in a static field, is the
   same in every instance.
-- May leave timers running. A timer with 30 s left when initialization ends
-  becomes eligible 30 s after an instance starts, as
+- May leave timers and `BackgroundService` loops running, on the terms
   [Background work](dotnet-runtime-differences.md#background-work)
-  describes.
-- Starts no background work.
+  describes. A timer with 30 s left when initialization ends becomes eligible
+  30 s after an instance starts.
 
 **What can go wrong**
 
@@ -85,7 +84,7 @@ In each case the application does not start, and the terminal shows the reason.
 | --- | --- |
 | `Program.cs` or an `Initializing` callback throws | The exception that was thrown |
 | A connection, stream or DNS result is still open when the callbacks finish | A message that names the kind, such as `initialization retains a TCP socket; dispose it before capture` |
-| Code waits synchronously or starts a thread | `PlatformNotSupportedException`, unless the code catches it |
+| Code waits synchronously or starts a thread | `PlatformNotSupportedException`, which fails initialization unless the code catches it |
 | Initialization runs longer than Isoplane allows | Initialization is stopped |
 | The entry point calls `Run`, or does not await `RunAsync` | A build error, [`ISOPLANE1020`](../reference/error-codes.md#isoplane1020) or [`ISOPLANE1021`](../reference/error-codes.md#isoplane1021), before anything runs |
 
@@ -154,17 +153,15 @@ occupying a worker thread.
 - Gives each ASP.NET request its own `HttpContext.TraceIdentifier`.
 - Cancels the request's token, `HttpContext.RequestAborted` or
   [`RequestHead.Aborted`](../reference/sdk/Isoplane.Sdk/Isoplane/RequestHead/Aborted.md),
-  when the client goes away before it has the whole response, or the request's
-  [dispatch](dotnet-runtime-differences.md#dispatches-and-slices) has used its running
-  time.
+  when the client goes away before it has the whole response, or the request
+  has used its [running time](dotnet-runtime-differences.md#running-time).
 - Enforces the [resource limits](resource-limits.md). It stops an instance
-  whose dispatch keeps running after its running time is used up, or has not
+  whose request has not
   [finished 5 seconds after its token was cancelled](resource-limits.md#running-time),
   and the other requests on that instance fail with it.
-- Ends the request at the empty-stack boundary after response completion,
-  releasing its concurrency slot. Remaining operations, timers and their
-  accounting transfer to the instance's background allowance; see
-  [Background work](dotnet-runtime-differences.md#background-work).
+- Ends the request once its response is complete, and hands any work the
+  request left pending to the instance's
+  [background work](dotnet-runtime-differences.md#background-work).
 
 **Your application**
 
@@ -187,14 +184,14 @@ occupying a worker thread.
 | An ordinary handler exception is not handled | That request receives status 500 if its response has not started; otherwise its response is aborted. The instance and other requests remain available. |
 | Code waits synchronously or starts a thread | The call throws `PlatformNotSupportedException` |
 | The client goes away before it has the whole response | The request's token is cancelled |
-| The dispatch uses up its running time | The token is cancelled. If the dispatch has not finished shortly afterwards, Isoplane stops the instance and the request fails. |
+| The request uses up its running time | The token is cancelled. If the request has not finished 5 seconds later, Isoplane stops the instance and the request fails. |
 | The request starts more operations than its [pending-operation cap](resource-limits.md#pending-operations) allows | The extra operations wait their turn and start as earlier ones complete. Nothing fails. |
-| The response is complete while work the request started is still pending | The request ends at the empty-stack boundary and the work transfers to the instance's background allowance. A pending request-body read fails. See [Background work](dotnet-runtime-differences.md#background-work). |
+| The response is complete while work the request started is still pending | The request ends and the work becomes the instance's [background work](dotnet-runtime-differences.md#background-work). A pending request-body read fails. |
 
 ## Between requests
 
 An instance may run background callbacks and retain connections between requests.
-Isoplane may hibernate or discard it. Successive requests can reach different
+Isoplane may discard it at any time. Successive requests can reach different
 instances.
 
 **Isoplane**
@@ -202,21 +199,21 @@ instances.
 - Decides how many instances run and which one gets a request, within the
   application's instance limit, including instances finishing cancelled requests.
 - Discards instances without a shutdown callback or guest cleanup.
-- Runs ready background work under an instance allowance. A wake does not
-  create a new request allowance. Exhausted allowance delays that work.
-- Retains connections until the application, peer or instance cleanup closes
-  them. Retained connections still count against instance limits.
-- Stops an idle instance that has background work or open connections five
-  minutes after the last active request finishes, unless another request
-  arrives.
-  Only request arrivals refresh demand recency. The idle stop also releases
-  hibernated instances without waking them to run background work.
+- Runs ready background work within the instance's
+  [background allowance](resource-limits.md#background-allowance), and delays
+  it while the allowance is exhausted.
+- Retains connections until the application or the peer closes them, or the
+  instance is discarded. Retained connections still count against the
+  [outbound connection limit](resource-limits.md#outbound-connections).
+- Evicts an idle instance five minutes after its last request finishes,
+  whatever it still holds, unless another request arrives. Background work
+  does not count as use.
 
 **Your application**
 
 - Relies on no loop or queue consumer to run in the background, and on no
   timer to run on time. A `BackgroundService` carries on between requests only
-  while its instance is resident.
+  while its instance exists.
 - Treats memory as a cache. Static fields and `IMemoryCache` belong to one
   instance and vanish with it.
 - Expects a connection kept from an earlier request to be stale, and opens
@@ -232,7 +229,7 @@ instances.
 | Isoplane discards the instance | Nothing is reported. Its memory is gone, and the next request reaches an instance that starts from the template. |
 | A connection kept from an earlier request has gone stale | Its next use fails as a dropped connection does anywhere. Open a new one. |
 | Isoplane discards an instance whose `BackgroundService` is still running | The service stops where it was. Its stopping token is not cancelled and `StopAsync` does not run. |
-| A timer comes due while the instance is idle | It becomes eligible for a [background slice](dotnet-runtime-differences.md#background-work), subject to allowance and instance residency. It never runs if the instance is discarded first. |
+| A timer comes due while the instance is idle | Its callback runs as [background work](dotnet-runtime-differences.md#background-work) when the allowance permits. It never runs if the instance is discarded first. |
 
 ## A new build or changed settings
 

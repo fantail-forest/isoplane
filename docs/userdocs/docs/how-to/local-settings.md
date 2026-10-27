@@ -76,9 +76,9 @@ or run without one with `--no-launch-profile`.
   loopback and ignores an `https` address. `isoplane dev --port` overrides it.
 - `environmentVariables` become settings. Two underscores in a name stand for a
   colon, so `Greeting__Default` is the setting `Greeting:Default`.
-- `ASPNETCORE_ENVIRONMENT` sets the environment name of an ASP.NET application,
-  and with it which `appsettings.{Environment}.json` is read. Without it the
-  environment is `Production`.
+- `ASPNETCORE_ENVIRONMENT`, or `DOTNET_ENVIRONMENT`, sets the environment name
+  of an ASP.NET application, and with it which `appsettings.{Environment}.json`
+  is read. Without either the environment is `Production`.
 
 ## Override a setting for one run
 

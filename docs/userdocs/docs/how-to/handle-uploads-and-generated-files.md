@@ -44,7 +44,8 @@ app.MapPut("/files/{name}", async (string name, HttpRequest request, IHttpClient
 Requiring `Content-Length` lets the endpoint refuse an oversized upload before
 reading any of it. For a multipart form, `MultipartReader` reads each section
 as a stream in the same way, where `Request.ReadFormAsync()` would buffer the
-whole form first.
+whole form first and
+[fails for a file over 64 KB](../concepts/library-compatibility.md#uploads).
 
 ## Buffer a small upload in memory
 

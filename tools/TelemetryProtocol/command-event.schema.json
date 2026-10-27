@@ -170,7 +170,7 @@
       "pattern": "^[0-9]{1,5}\\.[0-9]{1,5}\\.[0-9]{1,5}(-[0-9A-Za-z.-]{1,40})?$"
     },
     "platform": {
-      "description": "The operating system family and the processor architecture the CLI runs as, such as linux-x64 or win-arm64.",
+      "description": "The operating system family and the processor architecture the CLI runs as, such as linux-x64 or osx-arm64.",
       "type": "string",
       "pattern": "^(linux|linux-musl|osx|win|unsupported)-[a-z0-9]{1,16}$"
     },

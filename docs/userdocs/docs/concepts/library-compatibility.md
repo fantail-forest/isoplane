@@ -65,7 +65,7 @@ before relying on it, [check it yourself](#check-a-package).
 | Sqlite                                                            | [SQLite, including its Entity Framework Core provider](#sqlite)                                                                                                          | Needs a change | Small change for read-only data loaded into each instance. A database the application writes to is not supported |
 | MongoDB.Driver                                                    | [MongoDB](#mongodb)                                                                                                                                                      | Not supported  | Not for most deployments: waits on the driver. A load-balanced deployment works with two settings                |
 | StackExchange.Redis                                               | [StackExchange.Redis 2.x, and the Redis cache, output cache and other packages that bring it in](#redis)                                                                 | Needs a change | Small change: reference the stable 3.x client and call it asynchronously                                         |
-| Microsoft.Extensions.Caching.Hybrid                               | `HybridCache`, with or without a distributed second level                                                                                                                | Works          | Nothing                                                                                                          |
+| Microsoft.Extensions.Caching.Hybrid                               | `HybridCache`                                                                                                                                                            | Works          | Nothing for the in-memory level. A Redis second level needs the StackExchange.Redis change above                 |
 | Microsoft.Extensions.Http.Resilience                              | `AddStandardResilienceHandler`                                                                                                                                           | Works          | Nothing                                                                                                          |
 | OpenTelemetry                                                     | The SDK, and instrumentation such as ASP.NET Core's                                                                                                                      | Works          | Nothing                                                                                                          |
 | OpenTelemetry                                                     | [Exporters that send over the network, including OTLP](#opentelemetry)                                                                                                   | Needs a change | Small change, traces only: use the exporter Isoplane provides                                                    |
@@ -97,8 +97,11 @@ The changes are sized like this:
 
 ## Recognize a failure {#symptoms}
 
-Exception messages from the runtime are short identifiers, not sentences, so
-read the stack trace to see which call failed.
+Exception messages from the .NET runtime itself are short identifiers, not
+sentences. Where a stack trace is logged, it shows which call failed. A failure
+logged only as `request failed: ...` has none, and
+[Find and fix blocking calls](../how-to/find-and-fix-blocking-calls.md#run-the-application)
+says how to locate the call.
 
 | What you see                                                                                                                                                                                                                                                                   | What it means                                                                                                                                                                                                           |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -559,7 +562,7 @@ spell. [`FixedWindowRateLimiter`][FixedWindowRateLimiter] and
 the time that has passed. A sliding window instead moves on one segment for
 each tick of the middleware's 100 ms timer, which runs
 [between requests](dotnet-runtime-differences.md#background-work) and can be
-delayed by throttling or hibernation.
+delayed by throttling.
 
 Typically used for limiting how often a client may call an endpoint.
 
@@ -868,10 +871,10 @@ Everything built on the driver fails with it, including
 [`Microsoft.EntityFrameworkCore.SqlServer`][nuget-ef-sqlserver] and its
 [`UseSqlServer`][UseSqlServer].
 
-The driver is not short of anything native here: its fully managed
-implementation loads in the sandbox, but blocks. It signs in synchronously
-inside [`SqlConnection.OpenAsync`][DbConnection.OpenAsync], and it has no
-asynchronous commit, rollback or close of its own, so those fall back to their
+The driver is not short of anything native here. Its fully managed
+implementation would load in the sandbox, but it blocks. It signs in
+synchronously inside [`SqlConnection.OpenAsync`][DbConnection.OpenAsync], and
+it has no asynchronous commit, rollback or close of its own, so those fall back to their
 synchronous forms.
 
 Typically used for SQL Server and Azure SQL.

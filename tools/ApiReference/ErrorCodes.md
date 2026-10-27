@@ -138,7 +138,8 @@ Await it: `await app.RunAsync();`. The quick fix does this.
 
 ## Entry methods
 
-These apply to an application [without ASP.NET](../how-to/handle-requests-without-aspnet.md).
+These apply to the entry methods of an application [without ASP.NET](../how-to/handle-requests-without-aspnet.md),
+and `ISOPLANE1018` to an entry attribute in an application that has an entry point.
 Each error is reported on the method, and the message names it.
 
 ### ISOPLANE1010

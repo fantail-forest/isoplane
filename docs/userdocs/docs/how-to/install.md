@@ -221,8 +221,7 @@ dotnet new list isoplane
 
 Doctor checks the .NET SDK, Isoplane's native library and the templates. It
 reports problems and does not repair them. The template list shows the
-[project templates](../reference/project-templates.md), from
-[`isoplane-web`](../reference/project-templates.md#isoplane-web) on.
+[project templates](../reference/project-templates.md).
 
 Now [create your first application](../quickstart.md#3-create-an-application).
 

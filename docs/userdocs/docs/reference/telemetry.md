@@ -37,7 +37,7 @@ After that, each command writes one event to `telemetry/pending` in the Isoplane
 
 ## What is collected
 
-One event for each command. `--help`, `--version` and `isoplane telemetry` record nothing.
+One event for each command. `--help`, `--version`, `isoplane telemetry` and `isoplane completions` record nothing.
 
 | Field | What it records | Values |
 | --- | --- | --- |
@@ -54,7 +54,7 @@ One event for each command. `--help`, `--version` and `isoplane telemetry` recor
 | `failure` | The category of the error that ended the command, when one did. Error messages are never recorded. | `usage`, `invalid-data`, `invalid-operation`, `file-system`, `process`, `unexpected` |
 | `durationMs` | How long the command ran, in milliseconds. |  |
 | `cliVersion` | The version of the isoplane CLI. |  |
-| `platform` | The operating system family and the processor architecture the CLI runs as, such as linux-x64 or win-arm64. |  |
+| `platform` | The operating system family and the processor architecture the CLI runs as, such as linux-x64 or osx-arm64. |  |
 | `osArchitecture` | The machine's processor architecture, such as x64 or arm64. It differs from the platform's when the CLI runs under emulation: an x64 .NET under Rosetta 2 on an Apple silicon Mac, or on Windows on Arm. |  |
 | `osVersion` | The operating system's version number; on Linux, the kernel's. |  |
 | `distribution` | The Linux distribution's identifier from os-release, such as ubuntu. Absent on other systems and when the file is missing. |  |

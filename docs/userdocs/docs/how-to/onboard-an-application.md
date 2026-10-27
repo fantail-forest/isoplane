@@ -59,7 +59,8 @@ activates. See [the application lifecycle](../concepts/application-lifecycle.md)
 
 `IsoplaneHosting.CreateBuilder` reads `appsettings.json`, then
 `appsettings.{Environment}.json`, then the settings the platform supplies. It does
-not read your machine's environment variables. See
+not read your machine's environment variables, other than ones named
+`ISOPLANE_APP_<Key>` in local development. See
 [local development settings](local-settings.md) for how to supply settings and
 choose the environment while developing.
 
@@ -70,7 +71,9 @@ look for, how to find it, and what to do about it.
 
 - **Blocking calls.** A synchronous wait such as `.Result`, `.Wait()`,
   `Thread.Sleep` or a synchronous database call throws in the sandbox. Build
-  with the analyzer's dependency inspection on and fix each `ISOPLANE1003`.
+  with the analyzer's dependency inspection on and fix each `ISOPLANE1003`,
+  then search for `.Result` and `.GetAwaiter().GetResult()`, which the
+  analyzer does not flag.
   [Find and fix blocking calls](find-and-fix-blocking-calls.md) walks through
   it.
 - **Threads.** Starting a thread throws, and the analyzer reports it as
@@ -100,8 +103,8 @@ look for, how to find it, and what to do about it.
   template is set up this way.
 - **MCP servers.** A server built with `ModelContextProtocol.AspNetCore` works
   over Streamable HTTP in its stateless mode. With session tracking on, the
-  package registers a background service and the application refuses to
-  start. The
+  application starts, but a request that reaches an instance other than the
+  one holding its session fails with 404 `Session not found`. The
   [`isoplane-mcpserver`](../reference/project-templates.md#isoplane-mcpserver)
   template is such a server.
 - **Durable state.** Static fields, `IMemoryCache` and in-memory session
@@ -119,8 +122,9 @@ look for, how to find it, and what to do about it.
   `app.UseStaticFiles()`. For uploads and files the application generates, see
   [Handle uploads and generated files](handle-uploads-and-generated-files.md).
 - **Native libraries.** A NuGet package that ships a native binary fails on
-  the code path that calls it. Switch on `IsoplaneWarnOnNativeImports` to have
-  the analyzer list such declarations, as
+  the code path that calls it. Switch on `IsoplaneAnalyzeDependencies` and
+  `IsoplaneWarnOnNativeImports` to have the build list such declarations in
+  packages, as
   [Control compatibility warnings](run-and-rebuild.md#control-compatibility-warnings)
   shows. See
   [native libraries](../concepts/dotnet-runtime-differences.md#native-libraries).

@@ -17,7 +17,7 @@ Every file in a generated project is commented, and an application's `README.md`
 - **Bringing an existing ASP.NET application over, or want ASP.NET Core and nothing else?** Use [`isoplane-web`](#isoplane-web), as [Bring an existing ASP.NET application](../how-to/onboard-an-application.md) and the [Quickstart](../quickstart.md) do.
 - **Want pages rendered on the server, with forms and a database?** Use [`isoplane-webapp`](#isoplane-webapp), a Razor Pages application.
 - **Giving an AI agent tools to call?** Use [`isoplane-mcpserver`](#isoplane-mcpserver), a Model Context Protocol server over HTTP.
-- **Have an application without sandbox tests?** Add them with [`isoplane-tests`](#isoplane-tests), created beside the application. [Test an application](../how-to/test-an-application.md) walks through it. `isoplane-handler` and `isoplane-webapi` already include a test project.
+- **Have an application without sandbox tests?** Add them with [`isoplane-tests`](#isoplane-tests), created beside the application. [Test an application](../how-to/test-an-application.md) walks through it. `isoplane-handler`, `isoplane-webapi`, `isoplane-webapp` and `isoplane-mcpserver` already include one.
 
 ## Creating a project
 

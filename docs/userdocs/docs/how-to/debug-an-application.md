@@ -87,8 +87,8 @@ methods marked as generated or non-user code.
 ## Edit code during a session
 
 In VS Code, saving source automatically applies compiler-supported Hot Reload
-edits to the current guest, while running or paused. No separate command is
-required. **Isoplane: Apply Code Changes** is an optional save-all-and-apply action.
+edits to the current guest while a request is running or paused on a
+breakpoint. No separate command is required. **Isoplane: Apply Code Changes** is an optional save-all-and-apply action.
 Running updates briefly suspend execution without introducing an editor stop; new calls
 use the edited methods, and real breakpoint or exception stops remain in effect.
 Compilation errors preserve execution state and appear in the **Isoplane Hot

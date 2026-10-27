@@ -21,7 +21,9 @@ namespace Isoplane;
 /// log. Create a provider there only when you want what <c>ILogger</c> adds: levels, categories and
 /// named values. A logger from a provider you create writes every level except <c>None</c>.
 /// Use it there in place of the console logger from <c>Microsoft.Extensions.Logging.Console</c>,
-/// which starts a thread when it is created and so fails outside an ASP.NET application.
+/// which starts a thread when it is created and so fails wherever <c>Isoplane.AspNetCore</c> has not
+/// replaced it, which is outside an ASP.NET application and in one that sets another dependency
+/// injection container with <c>UseServiceProviderFactory</c>.
 /// </para>
 /// <para>
 /// While developing, the log appears in the terminal running the application. A message logged at
