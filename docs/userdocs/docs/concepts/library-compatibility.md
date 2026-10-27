@@ -48,7 +48,7 @@ one, [check it yourself](#check-a-package).
 | Entity Framework Core                | [Lazy loading](#lazy-loading)                                                                                              | Moderate change: load with `Include`                                                                                               |
 | Entity Framework Core                | [`TransactionScope`](#transaction-scope)                                                                                   | Small change: use a database transaction                                                                                           |
 | SqlClient                            | [SQL Server, including its Entity Framework Core provider](#sql-server)                                                    | Not supported yet: the driver waits synchronously. No workaround                                                                   |
-| Sqlite                               | [SQLite, including its Entity Framework Core provider](#sqlite)                                                            | In-memory databases work, created once the application has started. Database files are not supported                              |
+| Sqlite                               | [SQLite, including its Entity Framework Core provider](#sqlite)                                                            | Read-only data loaded into each instance works. A database the application writes to is not supported                              |
 | MongoDB.Driver                       | [MongoDB](#mongodb)                                                                                                        | Not supported yet for most deployments: waits on the driver. A load-balanced deployment works with two settings                    |
 | StackExchange.Redis                  | [Redis, including the Redis distributed cache](#redis)                                                                     | Small change: reference the stable 3.x client and call it asynchronously                                                           |
 | OpenTelemetry                        | [OpenTelemetry SDK](#opentelemetry)                                                                                        | Small change, traces only: use the exporter Isoplane provides                                                                      |
@@ -115,9 +115,11 @@ session with MVC's
 [`AddSessionStateTempDataProvider`][AddSessionStateTempDataProvider].
 
 The in-memory cache, [`AddDistributedMemoryCache`][AddDistributedMemoryCache],
-loads synchronously and works with `UseSession`, but it keeps each session in
-one instance's memory, which
-[can be discarded after any request](dotnet-runtime-differences.md#instances-come-and-go).
+does not fail this way, but it does not keep a session for the application
+either. Each session lives in the memory of the instance that wrote it.
+Successive requests can reach different instances, and an instance
+[can be discarded after any request](dotnet-runtime-differences.md#instances-come-and-go),
+so a visitor's session is missing whenever a request reaches another instance.
 
 Typically used for sign-in flows, shopping carts, multi-step forms, and messages
 shown after a redirect.
@@ -808,23 +810,27 @@ There is no workaround yet.
 
 ### SQLite {#sqlite}
 
-Isoplane's runtime includes SQLite, so
+Isoplane's runtime includes SQLite, but a database can only be held in memory,
+and that memory belongs to one instance. What a request writes is seen only by
+requests that reach the same instance, and it is gone when the instance is
+discarded. So SQLite suits read-only reference data loaded into each instance,
+and scratch data within a request, but not a database the application writes
+to and reads back.
+
+Against an in-memory database,
 [`Microsoft.Data.Sqlite`][Microsoft.Data.Sqlite] and
 [`Microsoft.EntityFrameworkCore.Sqlite`][nuget-ef-sqlite] with its
-[`UseSqlite`][UseSqlite] work unchanged for databases held in memory. That
-covers the functions, aggregates and collations an application registers, and
-the ones Entity Framework Core registers for decimals. File-backed databases do not
-work:
-
-- **A database kept in a file.** Opening one throws
-  [`SqliteException`][SqliteException] with
-  `SQLite Error 14: 'file-backed databases are not available, ...'`. No
-  storage outlasts an instance, so the file's data would vanish with it, and
-  Isoplane refuses the file rather than lose the data without telling you.
+[`UseSqlite`][UseSqlite] run unchanged, including the functions, aggregates and
+collations an application registers, and the ones Entity Framework Core
+registers for decimals. A database kept in a file is refused: opening one throws
+[`SqliteException`][SqliteException] with
+`SQLite Error 14: 'file-backed databases are not available, ...'`. No storage
+outlasts an instance, so the file's data would vanish with it, and Isoplane
+refuses the file rather than lose the data without telling you.
 
 Typically used for local development databases, tests and small applications.
 
-#### Workaround: keep the database in memory, and fill it as each instance starts
+#### Workaround for reference data: fill an in-memory database as each instance starts
 
 An in-memory database lasts while a connection to it is open, and belongs to
 one instance. Each instance has its own, which ends when Isoplane
@@ -873,11 +879,12 @@ Extension loading, including SpatiaLite, is not available. The runtime's SQLite
 serves the `SQLitePCLRaw` provider that `Microsoft.Data.Sqlite` uses by default,
 `e_sqlite3`, from `SQLitePCLRaw` 2.1 or 3.0.
 
-A database file has no workaround: data that must outlast an instance belongs
-in a database server, such as PostgreSQL; see
+A database the application writes to has no workaround on SQLite: data that
+must be shared between requests or outlast an instance belongs in a database
+server, such as PostgreSQL; see
 [Connect PostgreSQL](../how-to/connect-postgresql.md).
 
-Size of the change: small for in-memory data loaded as the instance starts.
+Size of the change: small for reference data loaded as each instance starts.
 
 ### MongoDB {#mongodb}
 

@@ -21,7 +21,7 @@ public static class SessionLoading
 
 ASP.NET Core's session loads itself synchronously the first time a request reads or writes it. A distributed cache that reaches a database or another service cannot be read synchronously on Isoplane, so that load fails. ASP.NET Core would then carry on with an empty session and drop what the request writes to it; on Isoplane, using a session that could not be loaded throws an InvalidOperationException that names [`UseLoadedSession`](./SessionLoading/UseLoadedSession.md).
 
-A session over the in-memory cache, `AddDistributedMemoryCache`, loads synchronously without trouble, and works with `UseSession` as well.
+The in-memory cache, `AddDistributedMemoryCache`, loads synchronously, so a session over it does not fail this way. It keeps each session in the memory of one instance, though, and successive requests can reach different instances, so the session is missing whenever a request reaches another one.
 
 ## See Also
 

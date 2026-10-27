@@ -21,8 +21,10 @@ namespace Isoplane.AspNetCore;
 /// <see cref="InvalidOperationException"/> that names <see cref="UseLoadedSession"/>.
 /// </para>
 /// <para>
-/// A session over the in-memory cache, <c>AddDistributedMemoryCache</c>, loads synchronously
-/// without trouble, and works with <c>UseSession</c> as well.
+/// The in-memory cache, <c>AddDistributedMemoryCache</c>, loads synchronously, so a session over
+/// it does not fail this way. It keeps each session in the memory of one instance, though, and
+/// successive requests can reach different instances, so the session is missing whenever a request
+/// reaches another one.
 /// </para>
 /// </remarks>
 public static class SessionLoading
