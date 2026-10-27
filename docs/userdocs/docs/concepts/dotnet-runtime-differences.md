@@ -541,9 +541,10 @@ grows. An application therefore cannot listen on a port or accept connections
 of its own.
 
 Requests arrive as HTTP/1.1, without connection upgrades or response trailers.
-WebSockets are unavailable, and so are SignalR's WebSocket transport, Blazor
-Server interactivity and gRPC over HTTP/2. gRPC-Web and statically rendered
-Blazor pages work. See
+WebSockets and gRPC over HTTP/2 are unavailable. gRPC-Web works.
+[SignalR and Blazor Server interactivity](library-compatibility.md#signalr) are
+not supported either, because a SignalR connection's requests can reach
+different instances; statically rendered Blazor pages work. See
 [Check application assumptions](../how-to/onboard-an-application.md#check-application-assumptions).
 
 ### Outgoing connections {#outgoing-connections}

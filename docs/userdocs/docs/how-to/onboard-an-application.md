@@ -76,9 +76,11 @@ is discarded. See
 [What has nowhere to run?](../concepts/dotnet-runtime-differences.md#nowhere-to-run)
 
 Requests reach the application as HTTP/1.1, without connection upgrades or
-response trailers. WebSockets are therefore unavailable, and so is what depends on
-them or on HTTP/2: SignalR's WebSocket transport, Blazor Server interactivity and
-gRPC over HTTP/2. gRPC-Web and statically rendered Blazor pages work.
+response trailers. WebSockets and gRPC over HTTP/2 are therefore unavailable;
+gRPC-Web works. SignalR and Blazor Server interactivity are not supported,
+because a SignalR connection's requests can reach different instances; see
+[SignalR and Blazor Server](../concepts/library-compatibility.md#signalr).
+Statically rendered Blazor pages work.
 
 Razor Pages work as they do elsewhere, with tag helpers, model validation,
 antiforgery tokens and TempData. A form's antiforgery token and the TempData

@@ -42,7 +42,8 @@ before relying on it, [check it yourself](#check-a-package).
 | ASP.NET Core                                                      | [Newtonsoft.Json formatters over 30 KB](#newtonsoft-json)                                                                                                                | Needs a change | Moderate to large change: move to `System.Text.Json`. Or keep Newtonsoft.Json and raise two limits               |
 | ASP.NET Core                                                      | [Rate limiters that count in memory, including the built-in ones](#rate-limiting)                                                                                        | Needs a change | Moderate change: use a limiter that counts in a shared store. Or limit requests in front of the application      |
 | ASP.NET Core                                                      | [Validation attributes, localizers, token callbacks and service factories that do I/O](#synchronous-extension-points)                                                    | Needs a change | Moderate change: move the I/O elsewhere                                                                          |
-| ASP.NET Core                                                      | [WebSockets, SignalR's WebSocket transport, Blazor Server](#connections-and-background-work)                                                                             | Not supported  | No workaround                                                                                                    |
+| ASP.NET Core                                                      | [WebSockets](#connections-and-background-work)                                                                                                                           | Not supported  | No workaround                                                                                                    |
+| ASP.NET Core                                                      | [SignalR and Blazor Server interactivity](#signalr)                                                                                                                      | Not supported  | No workaround yet: a connection's requests can reach different instances                                         |
 | ASP.NET Core                                                      | [gRPC over HTTP/2](#connections-and-background-work)                                                                                                                     | Needs a change | Moderate change: use gRPC-Web                                                                                    |
 | ASP.NET Core                                                      | [Continuously running `BackgroundService`, jobs and queue consumers](#connections-and-background-work)                                                                   | Needs a change | Large change: do the work during a request                                                                       |
 | Microsoft.AspNetCore.Identity.EntityFrameworkCore                 | Creating users, password sign-in and the sign-in cookie                                                                                                                  | Works          | Nothing                                                                                                          |
@@ -63,10 +64,11 @@ before relying on it, [check it yourself](#check-a-package).
 | SqlClient                                                         | [SQL Server, including its Entity Framework Core provider](#sql-server)                                                                                                  | Not supported  | No workaround yet: the driver waits synchronously                                                                |
 | Sqlite                                                            | [SQLite, including its Entity Framework Core provider](#sqlite)                                                                                                          | Needs a change | Small change for read-only data loaded into each instance. A database the application writes to is not supported |
 | MongoDB.Driver                                                    | [MongoDB](#mongodb)                                                                                                                                                      | Not supported  | Not for most deployments: waits on the driver. A load-balanced deployment works with two settings                |
-| StackExchange.Redis                                               | [Redis, including the Redis distributed cache and output cache](#redis)                                                                                                  | Needs a change | Small change: reference the stable 3.x client and call it asynchronously                                         |
+| StackExchange.Redis                                               | [StackExchange.Redis 2.x, and the Redis cache, output cache and other packages that bring it in](#redis)                                                                 | Needs a change | Small change: reference the stable 3.x client and call it asynchronously                                         |
 | Microsoft.Extensions.Caching.Hybrid                               | `HybridCache`, with or without a distributed second level                                                                                                                | Works          | Nothing                                                                                                          |
 | Microsoft.Extensions.Http.Resilience                              | `AddStandardResilienceHandler`                                                                                                                                           | Works          | Nothing                                                                                                          |
-| OpenTelemetry                                                     | [OpenTelemetry SDK](#opentelemetry)                                                                                                                                      | Needs a change | Small change, traces only: use the exporter Isoplane provides                                                    |
+| OpenTelemetry                                                     | The SDK, and instrumentation such as ASP.NET Core's                                                                                                                      | Works          | Nothing                                                                                                          |
+| OpenTelemetry                                                     | [Exporters that send over the network, including OTLP](#opentelemetry)                                                                                                   | Needs a change | Small change, traces only: use the exporter Isoplane provides                                                    |
 | ModelContextProtocol.AspNetCore                                   | [A stateless MCP server over Streamable HTTP](#mcp-sessions)                                                                                                             | Works          | Nothing                                                                                                          |
 | ModelContextProtocol.AspNetCore                                   | [An MCP server that tracks sessions](#mcp-sessions)                                                                                                                      | Needs a change | Small change: use stateless mode                                                                                 |
 | FluentValidation                                                  | Synchronous rules, and asynchronous ones through `ValidateAsync`                                                                                                         | Works          | Nothing                                                                                                          |
@@ -638,14 +640,34 @@ Each of the four has its own way out:
 
 Size of the change: moderate. The I/O moves to a place that can await it.
 
+### SignalR and Blazor Server {#signalr}
+
+SignalR, and Blazor Server interactivity, which is built on it, are not
+supported. SignalR
+[requires the same server to handle every request of a connection][signalr-sticky-sessions].
+Its preferred transport, WebSockets, is unavailable, and its other transports,
+Server-Sent Events and long polling, carry one connection over several
+requests. Isoplane sends each request to whichever instance is free, so those
+requests can reach different instances, and the connection fails when they do.
+A Redis backplane does not help: SignalR still needs the same server for a
+connection's requests, and the backplane is built on the
+[2.x Redis client](#redis).
+
+Statically rendered Blazor pages work.
+
+Typically used for live updates, chat, notifications and interactive Blazor
+components.
+
+There is no workaround yet.
+
 ### Connections and background work {#connections-and-background-work}
 
 These are described on other pages and listed here so that this page is
 complete.
 
-- **WebSockets, SignalR's WebSocket transport and Blazor Server
-  interactivity** are unavailable, and nothing takes their place today.
-  Statically rendered Blazor pages work. See [Incoming requests](dotnet-runtime-differences.md#incoming-requests).
+- **WebSockets** are unavailable, because requests arrive as HTTP/1.1 without
+  connection upgrades. See
+  [Incoming requests](dotnet-runtime-differences.md#incoming-requests).
 - **gRPC over HTTP/2** is unavailable, because requests arrive as HTTP/1.1.
   gRPC-Web works, which is a moderate change: it has to be enabled in the
   service and in its clients.
@@ -653,8 +675,9 @@ complete.
   scheduled job or a queue consumer cannot rely on continuous execution. Job
   schedulers and message consumers such as Hangfire, Quartz.NET and
   MassTransit rely on it.
-  Background callbacks have a bounded allowance and stop five minutes after
-  the last active request finishes, unless another request arrives. A
+  Background callbacks have a bounded allowance, and an idle instance that
+  holds background work is discarded five minutes after the last active
+  request finishes, unless another request arrives. A
   `BackgroundService` still running once the host has started is accepted, as
   a timer is, and stops without being cancelled when its instance is
   discarded. Doing that work
@@ -975,16 +998,29 @@ clusters.
 Size of the change: small in code, but for most applications it also means a
 different deployment, one MongoDB does not support for production.
 
-## Caching
+## Redis
 
-### Redis {#redis}
+### StackExchange.Redis 2.x, and the packages that bring it in {#redis}
 
-[`AddStackExchangeRedisCache`][AddStackExchangeRedisCache], from
-`Microsoft.Extensions.Caching.StackExchangeRedis`, brings in version 2.x of
-[`StackExchange.Redis`][StackExchange.Redis], which starts threads for its
-connections. Connecting throws
+Version 2.x of [`StackExchange.Redis`][StackExchange.Redis] starts threads for
+its connections, so connecting throws
 [`PlatformNotSupportedException`][PlatformNotSupportedException] from
-[`Thread.Start`][Thread.Start], so the cache fails when it is first used:
+[`Thread.Start`][Thread.Start]. Everything built on 2.x fails the same way,
+and Microsoft's Redis packages all bring it in:
+
+- `Microsoft.Extensions.Caching.StackExchangeRedis`, for the distributed cache
+  registered with [`AddStackExchangeRedisCache`][AddStackExchangeRedisCache],
+  which is also what [`HybridCache`][HybridCache] uses as a Redis second level.
+- `Microsoft.AspNetCore.OutputCaching.StackExchangeRedis`, for the output
+  cache registered with
+  [`AddStackExchangeRedisOutputCache`][AddStackExchangeRedisOutputCache].
+- `Microsoft.AspNetCore.DataProtection.StackExchangeRedis`, for
+  `PersistKeysToStackExchangeRedis`.
+- `Microsoft.AspNetCore.SignalR.StackExchangeRedis`, for SignalR's Redis
+  backplane.
+
+Other packages do too, such as [`RedisRateLimiting`][nuget-redis-rate-limiting].
+The distributed cache, for example, fails when it is first used:
 
 ```csharp
 builder.Services.AddStackExchangeRedisCache(options =>
@@ -998,7 +1034,7 @@ Protection keys.
 
 The current stable line, 3.x, [rewrote its I/O][se-redis-3] and starts no
 threads. Add a direct reference to it, which replaces the 2.x that the
-Microsoft package would bring in, and leave the rest of the application as it
+packages above would bring in, and leave the rest of the application as it
 is:
 
 ```xml
@@ -1035,19 +1071,25 @@ What to know before relying on it:
   [background limits](execution-limits.md#after-the-response).
 - **Connect inside a request, not during initialization.** A connected client
   holds a socket, and initialization refuses an open socket.
-- **The Redis output cache works with the same client override**, through
-  [`AddStackExchangeRedisOutputCache`][AddStackExchangeRedisOutputCache] from
-  `Microsoft.AspNetCore.OutputCaching.StackExchangeRedis`.
+- **The Redis output cache works with the same client override.**
+- **The override does not rescue every package above.** The Data Protection
+  store still fails, because Data Protection reads its keys synchronously; see
+  [Data Protection key stores](#data-protection). SignalR is not supported
+  with or without the backplane; see [SignalR](#signalr).
 
 Size of the change: small.
 
 ## Observability
 
-### OpenTelemetry SDK {#opentelemetry}
+### OpenTelemetry exporters that send over the network {#opentelemetry}
 
-An application that sends traces, metrics or logs with the OpenTelemetry SDK's
-OTLP exporter delivers nothing to its collector: the exporter sends
-synchronously, over HTTP and over gRPC alike.
+The OpenTelemetry SDK and its instrumentation, such as
+`AddAspNetCoreInstrumentation`, work: spans and measurements are recorded as
+they are anywhere else. Sending them is what fails. An exporter's `Export`
+method is synchronous by definition, so an exporter that sends over the network
+has to [wait synchronously](dotnet-runtime-differences.md#waits) for each send.
+The common one, the OTLP exporter, delivers nothing to its collector, for
+traces, metrics and logs, over HTTP and over gRPC alike.
 
 ```csharp
 builder.Services.AddOpenTelemetry()
@@ -1163,6 +1205,7 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [RateLimiter.AttemptAcquire]: https://learn.microsoft.com/dotnet/api/system.threading.ratelimiting.ratelimiter.attemptacquire
 [RateLimiter.AcquireAsync]: https://learn.microsoft.com/dotnet/api/system.threading.ratelimiting.ratelimiter.acquireasync
 [nuget-redis-rate-limiting]: https://www.nuget.org/packages/RedisRateLimiting
+[signalr-sticky-sessions]: https://learn.microsoft.com/aspnet/core/signalr/scale#sticky-sessions
 [Activation.Activated]: ../reference/sdk/Isoplane.Sdk/Isoplane/Activation/Activated.md
 [AddAzureAppConfiguration]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.configuration.azureappconfigurationextensions.addazureappconfiguration
 [AddAzureKeyVault]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.configuration.azurekeyvaultconfigurationextensions.addazurekeyvault
