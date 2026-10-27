@@ -25,7 +25,7 @@ A local session uses the first profile whose `commandName` is `Project`. Select 
 
 ## Keys of `isoplaneLimitsOverride`
 
-Each key is optional, and each value is a positive whole number. A local session otherwise uses the [local defaults](../concepts/execution-limits.md#local-defaults). [Execution limits](../concepts/execution-limits.md) explains what each limit measures.
+Each key is optional, and each value is a positive whole number. A local session otherwise uses the [local defaults](../concepts/resource-limits.md#local-defaults). [Resource limits](../concepts/resource-limits.md) explains what each limit measures.
 
 | Key | Description |
 | --- | --- |

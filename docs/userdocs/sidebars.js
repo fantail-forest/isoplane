@@ -13,7 +13,7 @@ export default {
       'how-to/troubleshooting',
     ]},
     {type: 'category', label: 'Concepts', items: [
-      'concepts/dotnet-runtime-differences', 'concepts/library-compatibility', 'concepts/execution-limits',
+      'concepts/dotnet-runtime-differences', 'concepts/library-compatibility', 'concepts/resource-limits',
       'concepts/application-lifecycle',
     ]},
     {type: 'category', label: 'Reference', items: [

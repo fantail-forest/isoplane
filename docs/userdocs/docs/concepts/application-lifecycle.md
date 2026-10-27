@@ -157,9 +157,9 @@ occupying a worker thread.
   when the client goes away before it has the whole response, or the request's
   [dispatch](dotnet-runtime-differences.md#dispatches-and-slices) has used its running
   time.
-- Enforces the [execution limits](execution-limits.md). It stops an instance
+- Enforces the [resource limits](resource-limits.md). It stops an instance
   whose dispatch keeps running after its running time is used up, or has not
-  [finished 5 seconds after its token was cancelled](execution-limits.md#after-cancellation),
+  [finished 5 seconds after its token was cancelled](resource-limits.md#running-time),
   and the other requests on that instance fail with it.
 - Ends the request at the empty-stack boundary after response completion,
   releasing its concurrency slot. Remaining operations, timers and their

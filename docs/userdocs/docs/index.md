@@ -50,6 +50,6 @@ The settings Isoplane reads are defined in [Project settings](reference/project-
 
 Read [how .NET differs on Isoplane](concepts/dotnet-runtime-differences.md) for everything
 that behaves differently from .NET in a server process, and
-[execution limits](concepts/execution-limits.md) for what the platform bounds. Understand
+[resource limits](concepts/resource-limits.md) for what the platform bounds. Understand
 [the application lifecycle](concepts/application-lifecycle.md) before choosing where to
 keep state or when to perform work.

@@ -73,7 +73,7 @@ dotnet user-secrets set "Jobs:Secret" ([Convert]::ToBase64String($secret))
 ## Keep each call inside the request's allowance
 
 Each request has a
-[running-time allowance](../concepts/execution-limits.md#running-time), and
+[running-time allowance](../concepts/resource-limits.md#running-time), and
 the endpoint is an ordinary request. Rather than doing all the work in one
 call, do a bounded batch per call and return how much is left, so the
 scheduler can call again until nothing remains. Pass the cancellation token

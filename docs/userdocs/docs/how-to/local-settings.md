@@ -107,8 +107,8 @@ Integration tests supply settings the same way through
 
 ## Try the application under tighter limits
 
-A local session uses the [local defaults](../concepts/execution-limits.md#local-defaults).
-[Execution limits](../concepts/execution-limits.md) explains what each one measures. To see
+A local session uses the [local defaults](../concepts/resource-limits.md#local-defaults).
+[Resource limits](../concepts/resource-limits.md) explains what each one measures. To see
 how the application behaves under smaller ones, add `isoplaneLimitsOverride` to a
 launch profile:
 

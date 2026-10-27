@@ -232,7 +232,7 @@ instead of taking an `IFormFile`.
 Raising [`MemoryBufferThreshold`][FormOptions.MemoryBufferThreshold] in
 [`FormOptions`][FormOptions] gets `IFormFile` working as written, by holding
 each upload in memory. We do not recommend it wherever the upload can be read
-as a stream: every upload then counts toward the instance's [memory limit](execution-limits.md#memory), and the
+as a stream: every upload then counts toward the instance's [memory limit](resource-limits.md#memory), and the
 largest file the application can accept is whatever memory it has left. If you
 do use it, set
 [`MultipartBodyLengthLimit`][FormOptions.MultipartBodyLengthLimit] to the same
@@ -307,7 +307,7 @@ context.Request.EnableBuffering(bufferThreshold: LargestBody, bufferLimit: Large
 ```
 
 This holds the whole body for the length of the request, counted toward the
-instance's [memory limit](execution-limits.md#memory), so prefer the single pass where it fits.
+instance's [memory limit](resource-limits.md#memory), so prefer the single pass where it fits.
 
 Size of the change: small.
 
@@ -453,7 +453,7 @@ buffer.Position = 0;
 var order = (Order)new XmlSerializer(typeof(Order)).Deserialize(buffer)!;
 ```
 
-The whole body is then held in memory, counted toward the instance's [memory limit](execution-limits.md#memory).
+The whole body is then held in memory, counted toward the instance's [memory limit](resource-limits.md#memory).
 
 Size of the change: small to moderate.
 
@@ -522,7 +522,7 @@ builder.Services.AddControllers().AddNewtonsoftJson(options =>
 ```
 
 A body up to that size is then held in memory in full, counted toward the
-instance's [memory limit](execution-limits.md#memory), and a larger one fails as before.
+instance's [memory limit](resource-limits.md#memory), and a larger one fails as before.
 
 Size of the change: small.
 
@@ -1068,7 +1068,7 @@ What to know before relying on it:
 - **A shared client can time out after the instance's background allowance
   runs out.** Its maintenance and completions wait until background execution
   resumes, so a request awaiting it can fail with a Redis timeout. See
-  [background limits](execution-limits.md#after-the-response).
+  [background limits](resource-limits.md#background-allowance).
 - **Connect inside a request, not during initialization.** A connected client
   holds a socket, and initialization refuses an open socket.
 - **The Redis output cache works with the same client override.**
@@ -1130,7 +1130,7 @@ for an endpoint that takes OTLP over HTTP.
 The spans of a request are held in the instance's memory until the request's
 own span ends, then encoded and sent while the client already has the response.
 Work retained after response completion uses the instance's
-[background allowance](execution-limits.md#after-the-response).
+[background allowance](resource-limits.md#background-allowance).
 A request that produces many spans can send the ones that have ended sooner,
 and learn whether the endpoint accepted them:
 

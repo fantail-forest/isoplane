@@ -5,7 +5,7 @@ title: Handle uploads and generated files
 The file system is read-only, so there is nowhere to put a temporary file,
 and an instance's memory is limited and shared by the requests it is handling.
 [File system](../concepts/dotnet-runtime-differences.md#file-system) explains
-the first and [execution limits](../concepts/execution-limits.md#memory) the
+the first and [resource limits](../concepts/resource-limits.md#memory) the
 second. This guide handles an upload and a generated file without either:
 streaming first, and buffering in memory, with a cap, where streaming won't
 do.
@@ -52,7 +52,7 @@ When the file has to be inspected or transformed before it goes anywhere,
 read it into memory, with a cap you choose. The whole file then sits in the
 instance's memory for the length of the request, once for each concurrent
 upload, so keep the cap well inside the
-[memory limit](../concepts/execution-limits.md#memory):
+[memory limit](../concepts/resource-limits.md#memory):
 
 ```csharp
 const long MaxBufferedBytes = 10 * 1024 * 1024;

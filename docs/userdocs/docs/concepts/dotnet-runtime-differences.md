@@ -16,7 +16,7 @@ Together they are how we scale your application out on demand and keep it
 cheap to run. For a typical async ASP.NET Core application the differences
 amount to a handful of changes, and where this page says nothing, .NET behaves
 as usual. Memory and CPU limits are covered in
-[execution limits](execution-limits.md).
+[resource limits](resource-limits.md).
 
 ## Single-threaded execution {#single-threaded}
 
@@ -87,8 +87,8 @@ no thread, and we can evict it at any time.
 *Running time* measures occupied worker intervals for an instance's slices and
 host operations on its behalf, including time a worker is descheduled. Parked
 asynchronous waits do not count. Each request has a
-[running-time allowance](execution-limits.md#running-time), and background
-work has a [separate one](execution-limits.md#after-the-response), topped up
+[running-time allowance](resource-limits.md#running-time), and background
+work has a [separate one](resource-limits.md#background-allowance), topped up
 over time and with whatever requests leave unused.
 
 Every dispatch gets a cancellation token: `HttpContext.RequestAborted`, or
@@ -103,7 +103,7 @@ instance is [evicted](#ephemeral-instances), and every other request on
 that instance fails with it.
 Pass the token to everything you await and let `OperationCanceledException`
 end the request.
-[Finishing after cancellation](execution-limits.md#after-cancellation) has the
+[Running time](resource-limits.md#running-time) has the
 details.
 :::
 
@@ -130,7 +130,7 @@ While a method computes without awaiting, nothing else on that instance runs,
 and cancellation can't reach it. I/O-bound requests, which is most of them,
 are unaffected, and we route new requests to another instance while one is
 busy. Break a long computation up as
-[running time](execution-limits.md#running-time) describes.
+[running time](resource-limits.md#running-time) describes.
 :::
 
 `Lazy<T>` and the `Concurrent*` collections work unchanged.
@@ -247,7 +247,7 @@ What this means in practice:
 Work still pending when a response is sent, such as an open connection, a timer
 or a task you didn't await, becomes the instance's background work. An
 instance's background work is limited by the instance's
-[background allowance](execution-limits.md#after-the-response).
+[background allowance](resource-limits.md#background-allowance).
 
 Timers, continuations and `BackgroundService` loops all run this way,
 including the timers a library runs for itself, such as a connection pool's.
@@ -278,7 +278,7 @@ collection, a finalizer may run much later, in some other request, or never
 if the instance is evicted first.
 
 When an instance is evicted, for example as a result of exceeding an
-application [limit](execution-limits.md), the instance is killed immediately,
+application [limit](resource-limits.md), the instance is killed immediately,
 so these automatic cleanup operations will not execute. If your application
 terminates requests promptly upon [cancellation](#running-time), evictions
 during request processing will be rare.
@@ -364,7 +364,7 @@ as do statically rendered Blazor pages. See
 An application can open TCP connections through the async APIs, which covers
 `HttpClient`, TLS and database drivers. There is no UDP. Outbound connections
 are subject to a per-instance
-[outbound connection limit](execution-limits.md#outbound-connections).
+[outbound connection limit](resource-limits.md#outbound-connections).
 
 In-process connection pools aren't shared across instances, so we recommend
 using an external connection pooler to stay within your database provider's
@@ -462,4 +462,4 @@ applies unchanged.
   [Onboard an application](../how-to/onboard-an-application.md).
 - Starting fresh? The [project templates](../reference/project-templates.md)
   already follow everything on this page.
-- Looking for the numbers? See [execution limits](execution-limits.md).
+- Looking for the numbers? See [resource limits](resource-limits.md).

@@ -78,7 +78,7 @@ look for, how to find it, and what to do about it.
   [threads and the thread pool](../concepts/dotnet-runtime-differences.md#thread-pool).
 - **Long computations.** A method that computes for a long time without
   awaiting stalls its instance and can't be cancelled. Split it up as
-  [running time](../concepts/execution-limits.md#running-time) describes.
+  [running time](../concepts/resource-limits.md#running-time) describes.
 - **Continuous and scheduled work.** A `BackgroundService` loop, a queue
   consumer or a job scheduler runs only while its instance exists and stops
   silently when the instance goes. Search for `BackgroundService`,
