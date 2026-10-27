@@ -6,11 +6,12 @@ Most NuGet packages run on Isoplane unchanged. The ones that fail or require
 workarounds do so for a handful of reasons, all of which follow from
 [how .NET differs on Isoplane](dotnet-runtime-differences.md): something waits
 synchronously, starts a thread, requires continuous background execution,
-writes a file, or loads a native library. Refer to that page to understand
-these limits deeply.
+writes a file, loads a native library, or keeps in one instance's memory what
+the whole application needs. Refer to that page to understand these limits
+deeply.
 
-This page lists the specific incompatibilities we know of, by package: APIs,
-packages and framework features that fail even though your own code is
+This page lists the packages and framework features we know about: the ones
+that work unchanged, and the ones that fail even though your own code is
 asynchronous.
 
 It does not list synchronous methods whose whole remedy is to call their
@@ -21,43 +22,69 @@ asynchronous counterpart, such as Entity Framework Core's
 some, and one rule covers them all:
 [Waits, delays and timers](dotnet-runtime-differences.md#waits).
 
-Each entry says what fails and how to work around it today, with the size of
-that change. Where there is more than one way through, the entry says which we
-recommend and gives the other as an alternative. A package that is not listed
-has no known incompatibility; to look for likely problems before relying on
-one, [check it yourself](#check-a-package).
+For each one that fails, the entry says what fails and how to work around it
+today, with the size of that change. Where there is more than one way through,
+the entry says which we recommend and gives the other as an alternative. A
+package that is not listed has not been checked; to look for likely problems
+before relying on it, [check it yourself](#check-a-package).
 
 ## At a glance {#summary}
 
-| Package                              | API or feature                                                                                                             | What to do                                                                                                                         |
-| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| ASP.NET Core                         | [Session over a distributed cache, and TempData kept in it](#session)                                                      | Small change: call `UseLoadedSession` in place of `UseSession`                                                                     |
-| ASP.NET Core                         | [File uploads over 64 KB](#uploads)                                                                                        | Moderate change: read the upload as a stream. Or hold small uploads in memory                                                      |
-| ASP.NET Core                         | [`Request.EnableBuffering()` over 30 KB](#enable-buffering)                                                                | Moderate change: read the body once, as a stream. Or buffer up to a limit                                                          |
-| ASP.NET Core                         | [Minimal API handlers that use source-generated code](#generated-code-in-handlers)                                         | Small change: register the JSON context and return objects. Or switch one generator off                                            |
-| ASP.NET Core                         | [Data Protection key stores](#data-protection)                                                                             | Small change: use the replacement Isoplane provides                                                                                |
-| ASP.NET Core                         | [XML formatters over 30 KB](#xml-formatters)                                                                               | Moderate change: use the asynchronous XML APIs. Or buffer up to a limit                                                            |
-| ASP.NET Core                         | [Newtonsoft.Json formatters over 30 KB](#newtonsoft-json)                                                                  | Moderate to large change: move to `System.Text.Json`. Or keep Newtonsoft.Json and raise two limits                                 |
-| ASP.NET Core                         | [Rate limiting middleware](#rate-limiting)                                                                                 | Limits count per instance, not for the application. Large change: limit requests in front of the application                       |
-| ASP.NET Core                         | [Validation attributes, localizers, token callbacks and service factories that do I/O](#synchronous-extension-points)      | Moderate change: move the I/O elsewhere                                                                                            |
-| ASP.NET Core                         | [WebSockets, SignalR's WebSocket transport, Blazor Server](#connections-and-background-work)                               | Not available                                                                                                                      |
-| ASP.NET Core                         | [gRPC over HTTP/2](#connections-and-background-work)                                                                       | Moderate change: use gRPC-Web                                                                                                      |
-| ASP.NET Core                         | [Continuously running `BackgroundService`, jobs and queue consumers](#connections-and-background-work)                     | Large change: do the work during a request                                                                                         |
-| Microsoft.Extensions.Configuration   | [`IConfigurationProvider` implementations that load from a remote service, such as Azure Key Vault](#remote-configuration) | Moderate change: fetch fixed values before `builder.Build()`, and read changing ones where they are used                           |
-| Microsoft.Extensions.Logging.Console | [The console logger without ASP.NET Core, or with another dependency injection container](#console-logging)                | Small change: log through Isoplane's provider                                                                                      |
-| Entity Framework Core                | [Lazy loading](#lazy-loading)                                                                                              | Moderate change: load with `Include`                                                                                               |
-| Entity Framework Core                | [`TransactionScope`](#transaction-scope)                                                                                   | Small change: use a database transaction                                                                                           |
-| SqlClient                            | [SQL Server, including its Entity Framework Core provider](#sql-server)                                                    | Not supported yet: the driver waits synchronously. No workaround                                                                   |
-| Sqlite                               | [SQLite, including its Entity Framework Core provider](#sqlite)                                                            | Read-only data loaded into each instance works. A database the application writes to is not supported                              |
-| MongoDB.Driver                       | [MongoDB](#mongodb)                                                                                                        | Not supported yet for most deployments: waits on the driver. A load-balanced deployment works with two settings                    |
-| StackExchange.Redis                  | [Redis, including the Redis distributed cache](#redis)                                                                     | Small change: reference the stable 3.x client and call it asynchronously                                                           |
-| OpenTelemetry                        | [OpenTelemetry SDK](#opentelemetry)                                                                                        | Small change, traces only: use the exporter Isoplane provides                                                                      |
-| ModelContextProtocol                 | [An MCP server that tracks sessions](#mcp-sessions)                                                                        | Small change: use stateless mode                                                                                                   |
+| Package                                                           | API or feature                                                                                                                                                           | Status         | What to do                                                                                                       |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------- | ---------------------------------------------------------------------------------------------------------------- |
+| ASP.NET Core                                                      | Minimal APIs, MVC controllers and views, Razor Pages, model validation, antiforgery tokens, TempData in a cookie, output caching, response compression and health checks | Works          | Nothing                                                                                                          |
+| ASP.NET Core                                                      | [Session over a distributed cache, and TempData kept in it](#session)                                                                                                    | Needs a change | Small change: call `UseLoadedSession` in place of `UseSession`                                                   |
+| ASP.NET Core                                                      | [File uploads over 64 KB](#uploads)                                                                                                                                      | Needs a change | Moderate change: read the upload as a stream. Or hold small uploads in memory                                    |
+| ASP.NET Core                                                      | [`Request.EnableBuffering()` over 30 KB](#enable-buffering)                                                                                                              | Needs a change | Moderate change: read the body once, as a stream. Or buffer up to a limit                                        |
+| ASP.NET Core                                                      | [Minimal API handlers that use source-generated code](#generated-code-in-handlers)                                                                                       | Needs a change | Small change: register the JSON context and return objects. Or switch one generator off                          |
+| ASP.NET Core                                                      | [Data Protection key stores](#data-protection)                                                                                                                           | Needs a change | Small change: use the replacement Isoplane provides                                                              |
+| ASP.NET Core                                                      | [XML formatters over 30 KB](#xml-formatters)                                                                                                                             | Needs a change | Moderate change: use the asynchronous XML APIs. Or buffer up to a limit                                          |
+| ASP.NET Core                                                      | [Newtonsoft.Json formatters over 30 KB](#newtonsoft-json)                                                                                                                | Needs a change | Moderate to large change: move to `System.Text.Json`. Or keep Newtonsoft.Json and raise two limits               |
+| ASP.NET Core                                                      | [Rate limiters that count in memory, including the built-in ones](#rate-limiting)                                                                                        | Needs a change | Moderate change: use a limiter that counts in a shared store. Or limit requests in front of the application      |
+| ASP.NET Core                                                      | [Validation attributes, localizers, token callbacks and service factories that do I/O](#synchronous-extension-points)                                                    | Needs a change | Moderate change: move the I/O elsewhere                                                                          |
+| ASP.NET Core                                                      | [WebSockets, SignalR's WebSocket transport, Blazor Server](#connections-and-background-work)                                                                             | Not supported  | No workaround                                                                                                    |
+| ASP.NET Core                                                      | [gRPC over HTTP/2](#connections-and-background-work)                                                                                                                     | Needs a change | Moderate change: use gRPC-Web                                                                                    |
+| ASP.NET Core                                                      | [Continuously running `BackgroundService`, jobs and queue consumers](#connections-and-background-work)                                                                   | Needs a change | Large change: do the work during a request                                                                       |
+| Microsoft.AspNetCore.Identity.EntityFrameworkCore                 | Creating users, password sign-in and the sign-in cookie                                                                                                                  | Works          | Nothing                                                                                                          |
+| Microsoft.AspNetCore.Authentication.JwtBearer                     | Validating tokens against signing keys fetched from `MetadataAddress`                                                                                                    | Works          | Nothing                                                                                                          |
+| Microsoft.AspNetCore.Authentication.OpenIdConnect                 | The sign-in redirect, which fetches the provider's metadata                                                                                                              | Works          | Nothing                                                                                                          |
+| Swashbuckle.AspNetCore                                            | Generating the OpenAPI document                                                                                                                                          | Works          | Nothing                                                                                                          |
+| Microsoft.Extensions.Configuration                                | [`IConfigurationProvider` implementations that load from a remote service, such as Azure Key Vault](#remote-configuration)                                               | Needs a change | Moderate change: fetch fixed values before `builder.Build()`, and read changing ones where they are used         |
+| Microsoft.Extensions.Logging.Console                              | [The console logger in an ASP.NET Core application](#console-logging)                                                                                                    | Works          | Nothing                                                                                                          |
+| Microsoft.Extensions.Logging.Console                              | [The console logger without ASP.NET Core, or with another dependency injection container](#console-logging)                                                              | Needs a change | Small change: log through Isoplane's provider                                                                    |
+| Serilog.AspNetCore                                                | `UseSerilog` with the console sink                                                                                                                                       | Works          | Nothing                                                                                                          |
+| Entity Framework Core                                             | Asynchronous queries, saves, transactions and migrations, the retrying execution strategy, and context pooling                                                           | Works          | Nothing                                                                                                          |
+| Entity Framework Core                                             | [Lazy loading](#lazy-loading)                                                                                                                                            | Needs a change | Moderate change: load with `Include`                                                                             |
+| Entity Framework Core                                             | [`TransactionScope`](#transaction-scope)                                                                                                                                 | Needs a change | Small change: use a database transaction                                                                         |
+| Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore | `AddDbContextCheck`                                                                                                                                                      | Works          | Nothing                                                                                                          |
+| Npgsql                                                            | PostgreSQL, directly or through Entity Framework Core or Dapper                                                                                                          | Works          | Nothing. See [Connect PostgreSQL](../how-to/connect-postgresql.md) for pooling                                   |
+| Dapper                                                            | Asynchronous queries and commands                                                                                                                                        | Works          | Nothing                                                                                                          |
+| MySqlConnector                                                    | Connecting to MySQL and running queries                                                                                                                                  | Works          | Nothing                                                                                                          |
+| SqlClient                                                         | [SQL Server, including its Entity Framework Core provider](#sql-server)                                                                                                  | Not supported  | No workaround yet: the driver waits synchronously                                                                |
+| Sqlite                                                            | [SQLite, including its Entity Framework Core provider](#sqlite)                                                                                                          | Needs a change | Small change for read-only data loaded into each instance. A database the application writes to is not supported |
+| MongoDB.Driver                                                    | [MongoDB](#mongodb)                                                                                                                                                      | Not supported  | Not for most deployments: waits on the driver. A load-balanced deployment works with two settings                |
+| StackExchange.Redis                                               | [Redis, including the Redis distributed cache and output cache](#redis)                                                                                                  | Needs a change | Small change: reference the stable 3.x client and call it asynchronously                                         |
+| Microsoft.Extensions.Caching.Hybrid                               | `HybridCache`, with or without a distributed second level                                                                                                                | Works          | Nothing                                                                                                          |
+| Microsoft.Extensions.Http.Resilience                              | `AddStandardResilienceHandler`                                                                                                                                           | Works          | Nothing                                                                                                          |
+| OpenTelemetry                                                     | [OpenTelemetry SDK](#opentelemetry)                                                                                                                                      | Needs a change | Small change, traces only: use the exporter Isoplane provides                                                    |
+| ModelContextProtocol.AspNetCore                                   | [A stateless MCP server over Streamable HTTP](#mcp-sessions)                                                                                                             | Works          | Nothing                                                                                                          |
+| ModelContextProtocol.AspNetCore                                   | [An MCP server that tracks sessions](#mcp-sessions)                                                                                                                      | Needs a change | Small change: use stateless mode                                                                                 |
+| FluentValidation                                                  | Synchronous rules, and asynchronous ones through `ValidateAsync`                                                                                                         | Works          | Nothing                                                                                                          |
+| MediatR                                                           | `IMediator.Send`                                                                                                                                                         | Works          | Nothing                                                                                                          |
+| AutoMapper                                                        | Mapping objects                                                                                                                                                          | Works          | Nothing                                                                                                          |
 
-The sections below give each package's full name.
+A linked row has a section below with the details.
 
 <details>
-<summary>How the changes are sized</summary>
+<summary>How the statuses and changes are described</summary>
+
+- **Works** means the package or feature runs as it does anywhere else, with no
+  change.
+- **Needs a change** means it fails as written, and the row says what to change.
+- **Not supported** means there is no way through, or none for most
+  applications.
+
+The changes are sized like this:
 
 - **Small** is a one-for-one replacement: the asynchronous form of the same
   call, a setting, or a method Isoplane provides.
@@ -497,14 +524,18 @@ instance's [memory limit](execution-limits.md#memory), and a larger one fails as
 
 Size of the change: small.
 
-### Rate limiting middleware {#rate-limiting}
+### Rate limiters that count in memory {#rate-limiting}
 
-[`UseRateLimiter`][UseRateLimiter] runs, but its limits do not hold for the
-application. Each instance counts requests in its own memory, and Isoplane runs
-as many instances as the traffic needs, so a client can make the full number of
-requests at every instance its requests reach. The more traffic the application
-has, the more instances share it, and the looser the limit gets. A new instance
-also starts its count from nothing, because
+The rate limiters ASP.NET Core provides, registered with
+[`AddFixedWindowLimiter`][AddFixedWindowLimiter],
+[`AddSlidingWindowLimiter`][AddSlidingWindowLimiter],
+[`AddTokenBucketLimiter`][AddTokenBucketLimiter] or
+[`AddConcurrencyLimiter`][AddConcurrencyLimiter], keep their counts in the
+memory of each instance, so their limits do not hold for the application.
+Isoplane runs as many instances as the traffic needs, so a client can make the
+full number of requests at every instance its requests reach. The more traffic
+the application has, the more instances share it, and the looser the limit
+gets. A new instance also starts its count from nothing, because
 [memory belongs to one instance](dotnet-runtime-differences.md#instances-come-and-go).
 
 ```csharp
@@ -530,15 +561,31 @@ delayed by throttling or hibernation.
 
 Typically used for limiting how often a client may call an endpoint.
 
-#### Workaround: limit requests in front of the application
+#### Recommended workaround: use a limiter that counts in a shared store
+
+[`UseRateLimiter`][UseRateLimiter] takes any limiter, and one that keeps its
+counts in a store every instance shares, such as Redis, holds for the
+application. Choose one that does no I/O when it is asked for a permit
+synchronously. The middleware first calls each limiter's
+[`AttemptAcquire`][RateLimiter.AttemptAcquire], and awaits
+[`AcquireAsync`][RateLimiter.AcquireAsync] only when that grants no permit, so
+a limiter that reaches its store from `AttemptAcquire`
+[waits synchronously](dotnet-runtime-differences.md#waits) and fails.
+
+The limiters in the [`RedisRateLimiting`][nuget-redis-rate-limiting] package
+are built this way: their `AttemptAcquire` grants nothing, and they count in
+`AcquireAsync`. The package brings in the 2.x Redis client, so reference the
+3.x client as described under [Redis](#redis).
+
+Size of the change: moderate. The limiter changes, and the application needs a
+store every instance can reach.
+
+#### Alternative workaround: limit requests in front of the application
 
 Enforce the limit where every request passes, such as the CDN, API gateway or
-reverse proxy in front of the application. Alternatively, count requests in a
-store that every instance shares, such as Redis, and check the count with its
-asynchronous API before handling each request.
+reverse proxy in front of the application.
 
-Size of the change: large. Limiting moves out of the application, or into a
-store that every instance shares.
+Size of the change: large. Limiting moves out of the application.
 
 ### Validation attributes, localizers, token callbacks and service factories that do I/O {#synchronous-extension-points}
 
@@ -1109,6 +1156,13 @@ starts a thread or waits synchronously. Treat the result as a list of things
 to try, not a verdict: it flags an assembly for a call anywhere inside it, and
 that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 
+[AddFixedWindowLimiter]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.ratelimiting.ratelimiteroptionsextensions.addfixedwindowlimiter
+[AddSlidingWindowLimiter]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.ratelimiting.ratelimiteroptionsextensions.addslidingwindowlimiter
+[AddTokenBucketLimiter]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.ratelimiting.ratelimiteroptionsextensions.addtokenbucketlimiter
+[AddConcurrencyLimiter]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.ratelimiting.ratelimiteroptionsextensions.addconcurrencylimiter
+[RateLimiter.AttemptAcquire]: https://learn.microsoft.com/dotnet/api/system.threading.ratelimiting.ratelimiter.attemptacquire
+[RateLimiter.AcquireAsync]: https://learn.microsoft.com/dotnet/api/system.threading.ratelimiting.ratelimiter.acquireasync
+[nuget-redis-rate-limiting]: https://www.nuget.org/packages/RedisRateLimiting
 [Activation.Activated]: ../reference/sdk/Isoplane.Sdk/Isoplane/Activation/Activated.md
 [AddAzureAppConfiguration]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.configuration.azureappconfigurationextensions.addazureappconfiguration
 [AddAzureKeyVault]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.configuration.azurekeyvaultconfigurationextensions.addazurekeyvault
