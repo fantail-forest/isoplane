@@ -22,7 +22,7 @@ The limits listed on this page are preliminary and may change in later releases.
 | Running time | Request | 300 s | The request's cancellation token fires, then the request has 5 s to finish |
 | Background running time | Instance | 5 s to start, refilling to 30 s | Background work waits until the allowance refills |
 | Outbound connections | Instance | 32 open, 6 opening at once | Opening another connection fails with a socket error |
-| Pending operations | Request | 4096 | The instance stops and every request on it fails |
+| Pending operations | Request | 4096 | Further operations wait their turn |
 | Application package | Application | 50 MiB uncompressed | Preparing the application fails |
 
 To see how your application behaves under smaller limits, see
@@ -143,14 +143,11 @@ lower limit.
 ## Pending operations
 
 Each request has a cap on the host operations it can have in flight at once,
-such as outbound calls it has started and not yet awaited. Going past it stops
-the instance, and every request on it fails. The instance as a whole has a
-larger cap shared by all its requests. Reaching that one refuses the new
-operation and leaves the instance running.
-
-:::tip
-Start a large batch of outbound calls in groups rather than all at once.
-:::
+such as outbound calls, DNS lookups, timers, and reads and writes of the
+request and response bodies. Past the cap, further operations wait their turn
+and start, in the order you started them, as earlier ones complete. A request
+that fans out thousands of calls takes longer, and nothing fails. Background
+work has a cap of its own.
 
 ## Where to go next
 
