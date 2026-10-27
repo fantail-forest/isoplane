@@ -7,7 +7,9 @@ export default {
     {type: 'category', label: 'Tutorials', items: ['tutorials/build-a-web-service', 'tutorials/build-an-api']},
     {type: 'category', label: 'How-to guides', items: [
       'how-to/install', 'how-to/onboard-an-application', 'how-to/handle-requests-without-aspnet', 'how-to/run-and-rebuild',
-      'how-to/debug-an-application', 'how-to/local-settings', 'how-to/connect-postgresql', 'how-to/test-an-application',
+      'how-to/debug-an-application', 'how-to/local-settings', 'how-to/connect-postgresql', 'how-to/keep-data-protection-keys',
+      'how-to/find-and-fix-blocking-calls', 'how-to/run-work-on-a-schedule', 'how-to/handle-uploads-and-generated-files',
+      'how-to/test-an-application',
       'how-to/troubleshooting',
     ]},
     {type: 'category', label: 'Concepts', items: [

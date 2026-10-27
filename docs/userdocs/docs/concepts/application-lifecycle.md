@@ -73,7 +73,7 @@ await app.RunAsync();
   same in every instance.
 - May leave timers running. A timer with 30 s left when initialization ends
   becomes eligible 30 s after an instance starts, as
-  [What can run between requests?](dotnet-runtime-differences.md#between-requests)
+  [Between requests](dotnet-runtime-differences.md#between-requests)
   describes.
 - Starts no background work.
 
@@ -164,7 +164,7 @@ occupying a worker thread.
 - Ends the request at the empty-stack boundary after response completion,
   releasing its concurrency slot. Remaining operations, timers and their
   accounting transfer to the instance's background allowance; see
-  [Work after the response](dotnet-runtime-differences.md#before-the-response).
+  [Work after the response](dotnet-runtime-differences.md#after-the-response).
 
 **Your application**
 
@@ -190,7 +190,7 @@ occupying a worker thread.
 | The dispatch uses up its running time | The token is cancelled. If the dispatch has not finished shortly afterwards, Isoplane stops the instance and the request fails. |
 | The dispatch exceeds its own pending-operation cap | The instance traps; all its requests fail |
 | Retained work fills the instance-wide future cap | Starting another operation fails; consuming or releasing existing work frees capacity |
-| The response is complete while work the request started is still pending | The request ends at the empty-stack boundary and the work transfers to the instance's background allowance. A pending request-body read fails. See [Work after the response](dotnet-runtime-differences.md#before-the-response). |
+| The response is complete while work the request started is still pending | The request ends at the empty-stack boundary and the work transfers to the instance's background allowance. A pending request-body read fails. See [Work after the response](dotnet-runtime-differences.md#after-the-response). |
 
 ## Between requests
 
@@ -233,7 +233,7 @@ instances.
 | Isoplane discards the instance | Nothing is reported. Its memory is gone, and the next request reaches an instance that starts from the template. |
 | A connection kept from an earlier request has gone stale | Its next use fails as a dropped connection does anywhere. Open a new one. |
 | Isoplane discards an instance whose `BackgroundService` is still running | The service stops where it was. Its stopping token is not cancelled and `StopAsync` does not run. |
-| A timer comes due while the instance is idle | It becomes eligible for a [background slice](dotnet-runtime-differences.md#run-timers-between-requests), subject to allowance and instance residency. It never runs if the instance is discarded first. |
+| A timer comes due while the instance is idle | It becomes eligible for a [background slice](dotnet-runtime-differences.md#between-requests), subject to allowance and instance residency. It never runs if the instance is discarded first. |
 
 ## A new build or changed settings
 

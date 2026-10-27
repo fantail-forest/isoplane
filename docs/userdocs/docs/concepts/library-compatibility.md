@@ -682,7 +682,7 @@ complete.
   a timer is, and stops without being cancelled when its instance is
   discarded. Doing that work
   while a request is handled is a large change. See
-  [What has nowhere to run?](dotnet-runtime-differences.md#nowhere-to-run)
+  [Continuous and scheduled work](dotnet-runtime-differences.md#continuous-work)
 
 ## `Microsoft.Extensions.Configuration`
 
