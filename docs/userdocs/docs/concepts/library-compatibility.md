@@ -38,7 +38,7 @@ one, [check it yourself](#check-a-package).
 | ASP.NET Core                         | [Data Protection key stores](#data-protection)                                                                             | Small change: use the replacement Isoplane provides                                                                                |
 | ASP.NET Core                         | [XML formatters over 30 KB](#xml-formatters)                                                                               | Moderate change: use the asynchronous XML APIs. Or buffer up to a limit                                                            |
 | ASP.NET Core                         | [Newtonsoft.Json formatters over 30 KB](#newtonsoft-json)                                                                  | Moderate to large change: move to `System.Text.Json`. Or keep Newtonsoft.Json and raise two limits                                 |
-| ASP.NET Core                         | [Rate limiting middleware](#rate-limiting)                                                                                 | Works, counting per instance. A sliding window refills late after an idle spell                                                    |
+| ASP.NET Core                         | [Rate limiting middleware](#rate-limiting)                                                                                 | Limits count per instance, not for the application. Large change: limit requests in front of the application                       |
 | ASP.NET Core                         | [Validation attributes, localizers, token callbacks and service factories that do I/O](#synchronous-extension-points)      | Moderate change: move the I/O elsewhere                                                                                            |
 | ASP.NET Core                         | [WebSockets, SignalR's WebSocket transport, Blazor Server](#connections-and-background-work)                               | Not available                                                                                                                      |
 | ASP.NET Core                         | [gRPC over HTTP/2](#connections-and-background-work)                                                                       | Moderate change: use gRPC-Web                                                                                                      |
@@ -497,16 +497,19 @@ Size of the change: small.
 
 ### Rate limiting middleware {#rate-limiting}
 
-[`UseRateLimiter`][UseRateLimiter] works, and its limits hold for one
-instance. The middleware's timer, which ticks every 100 ms to refill permits
-and tidy up, runs under the instance's background allowance; see
-[What can run between requests?](dotnet-runtime-differences.md#between-requests).
+[`UseRateLimiter`][UseRateLimiter] runs, but its limits do not hold for the
+application. Each instance counts requests in its own memory, and Isoplane runs
+as many instances as the traffic needs, so a client can make the full number of
+requests at every instance its requests reach. The more traffic the application
+has, the more instances share it, and the looser the limit gets. A new instance
+also starts its count from nothing, because
+[memory belongs to one instance](dotnet-runtime-differences.md#instances-come-and-go).
 
 ```csharp
 builder.Services.AddRateLimiter(options =>
     options.AddFixedWindowLimiter("api", limiter =>
     {
-        limiter.PermitLimit = 100;
+        limiter.PermitLimit = 100;   // 100 a minute for each instance, not for the application
         limiter.Window = TimeSpan.FromMinutes(1);
     }));
 
@@ -515,30 +518,25 @@ app.UseRateLimiter();
 app.MapGet("/orders", () => Results.Ok()).RequireRateLimiting("api");
 ```
 
-The policy above is registered with [`AddRateLimiter`][AddRateLimiter] and
-[`AddFixedWindowLimiter`][AddFixedWindowLimiter], then applied to `/orders` with
-`RequireRateLimiting("api")`. Registering a named policy alone does not limit any
-endpoint; apply it to each endpoint or route group that should use it.
-
-What to know before relying on it:
-
-- **Limits count per instance.** Isoplane runs as many instances as the
-  traffic needs, each with its own count, and
-  [memory belongs to one instance](dotnet-runtime-differences.md#instances-come-and-go).
-  For a limit across instances, count requests in a store that every instance
-  shares, or limit them in front of the application.
-- **A sliding window refills late after an idle spell.**
-  [`FixedWindowRateLimiter`][FixedWindowRateLimiter] and
-  [`TokenBucketRateLimiter`][TokenBucketRateLimiter] work out what to refill
-  from the time that has passed, so their permits come back after an idle
-  spell. A sliding-window limiter moves on by one segment for each tick, and
-  background ticks can be delayed by throttling or hibernation. After such a
-  delay, permits can remain unavailable longer than configured.
+A sliding-window limiter is also late to give permits back after an idle
+spell. [`FixedWindowRateLimiter`][FixedWindowRateLimiter] and
+[`TokenBucketRateLimiter`][TokenBucketRateLimiter] work out what to refill from
+the time that has passed. A sliding window instead moves on one segment for
+each tick of the middleware's 100 ms timer, which runs
+[between requests](dotnet-runtime-differences.md#between-requests) and can be
+delayed by throttling or hibernation.
 
 Typically used for limiting how often a client may call an endpoint.
 
-Size of the change: none for a limit per instance. Large for a limit across
-instances: limiting moves out of the application.
+#### Workaround: limit requests in front of the application
+
+Enforce the limit where every request passes, such as the CDN, API gateway or
+reverse proxy in front of the application. Alternatively, count requests in a
+store that every instance shares, such as Redis, and check the count with its
+asynchronous API before handling each request.
+
+Size of the change: large. Limiting moves out of the application, or into a
+store that every instance shares.
 
 ### Validation attributes, localizers, token callbacks and service factories that do I/O {#synchronous-extension-points}
 
@@ -1109,12 +1107,10 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [AddAzureKeyVault]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.configuration.azurekeyvaultconfigurationextensions.addazurekeyvault
 [AddConsole]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.logging.consoleloggerextensions.addconsole
 [AddDistributedMemoryCache]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.dependencyinjection.memorycacheservicecollectionextensions.adddistributedmemorycache
-[AddFixedWindowLimiter]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.ratelimiting.ratelimiteroptionsextensions.addfixedwindowlimiter
 [AddInMemoryCollection]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.configuration.memoryconfigurationbuilderextensions.addinmemorycollection
 [AddJsonConsole]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.logging.consoleloggerextensions.addjsonconsole
 [AddJsonOptions]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.dependencyinjection.mvccoremvcbuilderextensions.addjsonoptions
 [AddNewtonsoftJson]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.dependencyinjection.newtonsoftjsonmvcbuilderextensions.addnewtonsoftjson
-[AddRateLimiter]: https://learn.microsoft.com/dotnet/api/microsoft.aspnetcore.builder.ratelimiterservicecollectionextensions.addratelimiter
 [AddSession]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.dependencyinjection.sessionservicecollectionextensions.addsession
 [AddSimpleConsole]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.logging.consoleloggerextensions.addsimpleconsole
 [AddSystemdConsole]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.logging.consoleloggerextensions.addsystemdconsole
