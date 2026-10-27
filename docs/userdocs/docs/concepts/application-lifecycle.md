@@ -188,8 +188,7 @@ occupying a worker thread.
 | Code waits synchronously or starts a thread | The call throws `PlatformNotSupportedException` |
 | The client goes away before it has the whole response | The request's token is cancelled |
 | The dispatch uses up its running time | The token is cancelled. If the dispatch has not finished shortly afterwards, Isoplane stops the instance and the request fails. |
-| The dispatch exceeds its own pending-operation cap | The instance traps; all its requests fail |
-| Retained work fills the instance-wide future cap | Starting another operation fails; consuming or releasing existing work frees capacity |
+| The request starts more operations than its [pending-operation cap](resource-limits.md#pending-operations) allows | The extra operations wait their turn and start as earlier ones complete. Nothing fails. |
 | The response is complete while work the request started is still pending | The request ends at the empty-stack boundary and the work transfers to the instance's background allowance. A pending request-body read fails. See [Background work](dotnet-runtime-differences.md#background-work). |
 
 ## Between requests
