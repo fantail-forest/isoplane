@@ -24,7 +24,7 @@ public static IDataProtectionBuilder UseKeysFromDbContext<TContext>(
 
 ## Remarks
 
-This is `UseKeysFrom` from Isoplane.AspNetCore over the table, and behaves as it does. The keys load when initialization finishes, so the table must exist by then. An `Initialization.Initializing` callback that protects or unprotects data itself awaits `app.LoadDataProtectionKeysAsync()` first. A prepared template retains the key ring it loaded; reusing it reloads none. New initialization can load newer keys. [Keep Data Protection keys across builds](../../../../../concepts/dotnet-runtime-differences.md#keep-data-protection-keys-across-builds) describes this in full.
+This is `UseKeysFrom` from Isoplane.AspNetCore over the table, and behaves as it does. The keys load when initialization finishes, so the table must exist by then. An `Initialization.Initializing` callback that protects or unprotects data itself awaits `app.LoadDataProtectionKeysAsync()` first. A prepared template retains the key ring it loaded; reusing it reloads none. New initialization can load newer keys. [Keep ASP.NET Core Data Protection keys across builds](../../../../../how-to/keep-data-protection-keys.md) describes this in full.
 
 ## Examples
 

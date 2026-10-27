@@ -5,7 +5,7 @@ title: Execution limits
 import LocalLimits from './_local-limits.mdx';
 
 Isoplane limits what one instance and one
-[dispatch](dotnet-runtime-differences.md#units-of-work) may use, so that no
+[dispatch](dotnet-runtime-differences.md#dispatches-and-slices) may use, so that no
 application can take resources from the others running beside it. A dispatch is
 a piece of work Isoplane gives an instance, usually one HTTP request to handle.
 These limits are enforced by the platform. They are separate from the ways
@@ -60,7 +60,7 @@ instance, `finally` blocks in the dispatch's code do not run, and every other
 dispatch the instance was running fails too.
 
 Cancellation reaches the application only when it awaits. Like the
-[clock](dotnet-runtime-differences.md#time), the token stands still while code
+[clock](dotnet-runtime-differences.md#clock), the token stands still while code
 runs: `IsCancellationRequested` and `ThrowIfCancellationRequested` give the
 answer from when the application last resumed, so a loop that checks them
 without awaiting never sees the token cancel, and is stopped when the further
@@ -118,7 +118,7 @@ Timers and I/O completions do not create credit. Replacement instances start
 with the initial allowance. Background activity does not keep an instance alive:
 an instance that holds retained work or connections is discarded five minutes
 after the last active request finishes, unless another request arrives.
-See [Work after the response](dotnet-runtime-differences.md#after-the-response).
+See [Background work](dotnet-runtime-differences.md#background-work).
 
 HTTP requests have no overall wall-time deadline while the client remains
 connected. Streaming responses keep their request slot until the body completes.

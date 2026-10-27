@@ -27,7 +27,7 @@ public static class DataProtectionDbContextKeys
     /// <c>Initialization.Initializing</c> callback that protects or unprotects data itself awaits
     /// <c>app.LoadDataProtectionKeysAsync()</c> first. A prepared template retains the key ring it
     /// loaded; reusing it reloads none. New initialization can load newer keys.
-    /// <see href="https://isoplane.dev/docs/concepts/dotnet-runtime-differences#keep-data-protection-keys-across-builds">Keep Data Protection keys across builds</see>
+    /// <see href="https://isoplane.dev/docs/how-to/keep-data-protection-keys">Keep ASP.NET Core Data Protection keys across builds</see>
     /// describes this in full.
     /// </remarks>
     /// <example>

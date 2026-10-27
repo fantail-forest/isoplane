@@ -75,7 +75,7 @@ fail in the sandbox.
 A `PlatformNotSupportedException` raised while ASP.NET Core Data Protection
 reads its keys comes from a key store that reads synchronously, such as
 `PersistKeysToDbContext`. Use one of the stores that
-[keep the keys across builds](../concepts/dotnet-runtime-differences.md#keep-data-protection-keys-across-builds)
+[keep the keys across builds](keep-data-protection-keys.md)
 in the sandbox.
 
 ## The application refuses to start

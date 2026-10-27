@@ -115,7 +115,7 @@ A wait that can be satisfied at once behaves as it does anywhere else, such as
 `task.Wait()` on a task that has finished or `semaphore.Wait()` on a semaphore
 with a free slot. If you know that is the case at a particular call, suppress
 the warning there.
-[Waits, delays and timers](../concepts/dotnet-runtime-differences.md#waits)
+[Use async, not blocking waits](../concepts/dotnet-runtime-differences.md#blocking-waits)
 lists what each call does.
 
 ### Where these warnings are reported

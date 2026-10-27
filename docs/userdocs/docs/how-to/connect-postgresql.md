@@ -211,7 +211,7 @@ Two choices in this code are particular to Isoplane:
   scales instances within the application’s instance limit, so a pool in each one does not cap
   the connections the service opens. This sample disables pooling; per-instance
   pools are supported after initialization, subject to the connection limit.
-  [Pool database connections outside the application](../concepts/dotnet-runtime-differences.md#pool-database-connections-outside-the-application)
+  [Outgoing connections](../concepts/dotnet-runtime-differences.md#outgoing-connections)
   explains what to use instead.
 - **The connection string is read during the request.** Settings are also
   available in the `[Initializer]` method, but what it keeps in memory is saved

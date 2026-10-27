@@ -58,7 +58,7 @@ builder.Services.AddAppDatabase(builder.Configuration);
 //
 // Without a database, UseConfiguredKeys() from Isoplane.AspNetCore takes the
 // key from a secret setting instead:
-// https://isoplane.dev/docs/concepts/dotnet-runtime-differences#keep-data-protection-keys-across-builds
+// https://isoplane.dev/docs/how-to/keep-data-protection-keys
 builder.Services.AddDataProtection().UseKeysFromDbContext<AppDbContext>();
 
 // Not here: a BackgroundService for work that must run continuously or on a

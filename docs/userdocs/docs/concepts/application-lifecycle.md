@@ -73,7 +73,7 @@ await app.RunAsync();
   same in every instance.
 - May leave timers running. A timer with 30 s left when initialization ends
   becomes eligible 30 s after an instance starts, as
-  [Between requests](dotnet-runtime-differences.md#between-requests)
+  [Background work](dotnet-runtime-differences.md#background-work)
   describes.
 - Starts no background work.
 
@@ -155,7 +155,7 @@ occupying a worker thread.
 - Cancels the request's token, `HttpContext.RequestAborted` or
   [`RequestHead.Aborted`](../reference/sdk/Isoplane.Sdk/Isoplane/RequestHead/Aborted.md),
   when the client goes away before it has the whole response, or the request's
-  [dispatch](dotnet-runtime-differences.md#units-of-work) has used its running
+  [dispatch](dotnet-runtime-differences.md#dispatches-and-slices) has used its running
   time.
 - Enforces the [execution limits](execution-limits.md). It stops an instance
   whose dispatch keeps running after its running time is used up, or has not
@@ -164,14 +164,14 @@ occupying a worker thread.
 - Ends the request at the empty-stack boundary after response completion,
   releasing its concurrency slot. Remaining operations, timers and their
   accounting transfer to the instance's background allowance; see
-  [Work after the response](dotnet-runtime-differences.md#after-the-response).
+  [Background work](dotnet-runtime-differences.md#background-work).
 
 **Your application**
 
 - Awaits everything the request needs before it responds. Work started and not
   awaited may never finish.
 - Uses asynchronous APIs throughout; see
-  [how .NET differs on Isoplane](dotnet-runtime-differences.md#waits).
+  [how .NET differs on Isoplane](dotnet-runtime-differences.md#blocking-waits).
 - Forwards the cancellation token to the asynchronous calls it makes.
 - Disposes what it opens. Do not leave cleanup to a finalizer.
 - Can use `IHttpClientFactory` with normal connection pooling and handler
@@ -190,7 +190,7 @@ occupying a worker thread.
 | The dispatch uses up its running time | The token is cancelled. If the dispatch has not finished shortly afterwards, Isoplane stops the instance and the request fails. |
 | The dispatch exceeds its own pending-operation cap | The instance traps; all its requests fail |
 | Retained work fills the instance-wide future cap | Starting another operation fails; consuming or releasing existing work frees capacity |
-| The response is complete while work the request started is still pending | The request ends at the empty-stack boundary and the work transfers to the instance's background allowance. A pending request-body read fails. See [Work after the response](dotnet-runtime-differences.md#after-the-response). |
+| The response is complete while work the request started is still pending | The request ends at the empty-stack boundary and the work transfers to the instance's background allowance. A pending request-body read fails. See [Background work](dotnet-runtime-differences.md#background-work). |
 
 ## Between requests
 
@@ -223,7 +223,7 @@ instances.
 - Expects a connection kept from an earlier request to be stale, and opens
   another when it is.
 - Sizes any database pool for one instance. An
-  [external pooler](dotnet-runtime-differences.md#pool-database-connections-outside-the-application)
+  [external pooler](dotnet-runtime-differences.md#outgoing-connections)
   can cap database connections across the application.
 
 **What can go wrong**
@@ -233,7 +233,7 @@ instances.
 | Isoplane discards the instance | Nothing is reported. Its memory is gone, and the next request reaches an instance that starts from the template. |
 | A connection kept from an earlier request has gone stale | Its next use fails as a dropped connection does anywhere. Open a new one. |
 | Isoplane discards an instance whose `BackgroundService` is still running | The service stops where it was. Its stopping token is not cancelled and `StopAsync` does not run. |
-| A timer comes due while the instance is idle | It becomes eligible for a [background slice](dotnet-runtime-differences.md#between-requests), subject to allowance and instance residency. It never runs if the instance is discarded first. |
+| A timer comes due while the instance is idle | It becomes eligible for a [background slice](dotnet-runtime-differences.md#background-work), subject to allowance and instance residency. It never runs if the instance is discarded first. |
 
 ## A new build or changed settings
 
@@ -251,7 +251,7 @@ without rerunning initialization callbacks.
 
 - Keeps what must outlive a build outside the instance.
 - Does not depend on data protected by ASP.NET Core Data Protection outliving a
-  build, unless it [keeps its keys across builds](dotnet-runtime-differences.md#keep-data-protection-keys-across-builds).
+  build, unless it [keeps its keys across builds](../how-to/keep-data-protection-keys.md).
   By default the key is created during initialization, so it is part of the
   template: every instance of the same template shares it, which keeps antiforgery
   tokens and authentication cookies working across instances. Fresh initialization
