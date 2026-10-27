@@ -252,15 +252,15 @@ instance's background work is limited by the instance's
 Timers, continuations and `BackgroundService` loops all run this way,
 including the timers a library runs for itself, such as a connection pool's.
 Nothing opts in. This is what lets a telemetry exporter or a Redis client
-finish what it started during a request.
+finish what it started during a request. It runs only while its instance
+exists, and an idle instance is evicted five minutes after its last request,
+so a `BackgroundService` stops where it was, without its stopping token being
+cancelled.
 
 :::important[Background work is not guaranteed to run]
-As on any autoscaled platform, it runs only while its instance exists, and
-nothing runs on time. An idle instance is evicted five minutes after its last
-request, and an evicted instance's work stops where it was, with no notice. A
-`BackgroundService`'s stopping token is never cancelled. Finish and save
-everything the response depends on before you send it, and put work that must
-happen on a durable queue outside the instance.
+Background work is not guaranteed to run on time, or at all. Finish anything
+the response depends on before you send it, and put work that must happen on
+a durable queue outside the instance.
 :::
 
 :::tip
