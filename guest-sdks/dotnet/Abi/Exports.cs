@@ -262,7 +262,7 @@ public static unsafe class Exports<TRouter>
                 if (cause is OutOfMemoryException) return PollStatus.Trapped(TrapCode.OutOfMemory);
                 if (cause is PostcardException) return PollStatus.Trapped(TrapCode.Protocol);
             }
-            Log(3, "request failed: " + inner.GetType().FullName + ": " + inner.Message);
+            Log(3, "request failed: " + inner);
             return PollStatus.Failed(inner);
         }
 

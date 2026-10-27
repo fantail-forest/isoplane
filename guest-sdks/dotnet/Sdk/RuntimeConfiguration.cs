@@ -14,11 +14,11 @@ namespace Isoplane;
 /// same settings to <c>builder.Configuration</c>, so read them through <c>IConfiguration</c>.
 /// </para>
 /// <para>
-/// In local development the settings come from the project's User Secrets, the
-/// <c>environmentVariables</c> of its launch profile, and environment variables named
-/// <c>ISOPLANE_APP_&lt;Key&gt;</c>, each overriding the one before.
+/// In local development the settings come from the project's User Secrets and the
+/// <c>environmentVariables</c> of its launch profile, the second overriding the first, and a
+/// sandbox test can add its own.
 /// <see href="https://isoplane.dev/docs/how-to/local-settings">Supply local development settings</see>
-/// describes each source. The application sees none of the machine's other environment variables.
+/// describes each source. The application sees none of the machine's environment variables.
 /// </para>
 /// </remarks>
 public static class RuntimeConfiguration

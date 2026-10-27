@@ -122,12 +122,6 @@ overrides an earlier one.
    `src/Sample-WebApp/Properties/launchSettings.json`, where `__` in a name stands
    for `:`.
 
-4. **The shell**, for one run. Prefix the setting with `ISOPLANE_APP_`:
-
-   ```bash
-   ISOPLANE_APP_Logging__LogLevel__Default=Debug dotnet run --project src/Sample-WebApp
-   ```
-
 Restart the session after changing a setting. Sandbox tests supply their own
 settings in `tests/Sample-WebApp.Tests/SandboxFixture.cs`.
 

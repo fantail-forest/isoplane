@@ -142,8 +142,13 @@ internal static class Reference
             var name = source.EndsWith(".Tests", StringComparison.Ordinal) ? "MyApp.Tests" : "MyApp";
             var section = new StringBuilder($"### `{shortName}`\n\n**{template.GetProperty("name").GetString()}.** {template.GetProperty("description").GetString()}\n\n");
             section.Append($"```bash\ndotnet new {shortName} --name {name}\n```\n\nIn a new `{name}` directory, it creates:\n\n");
-            section.AppendJoin('\n', template.GetProperty("primaryOutputs").EnumerateArray()
-                .Select(output => $"- `{output.GetProperty("path").GetString()!.Replace(source, name)}`")).Append('\n');
+            var outputs = template.GetProperty("primaryOutputs").EnumerateArray()
+                .Select(output => output.GetProperty("path").GetString()!.Replace(source, name)).ToArray();
+            section.AppendJoin('\n', outputs.Select(output => $"- `{output}`")).Append('\n');
+            if (name != "MyApp.Tests")
+                section.Append(outputs.Any(output => output.StartsWith("tests/", StringComparison.Ordinal))
+                    ? "\nThe `tests` project runs the application in the sandbox, as [Test an application](../how-to/test-an-application.md) describes.\n"
+                    : "\nIt has no test project. Add one with [`isoplane-tests`](#isoplane-tests).\n");
             var options = template.GetProperty("symbols").EnumerateObject()
                 .Where(symbol => symbol.Value.GetProperty("type").GetString() == "parameter").ToArray();
             var names = OptionNames(resources, "TemplateOptions/" + resource["Templates/".Length..]);
@@ -560,7 +565,7 @@ Every file in a generated project is commented, and an application's `README.md`
 - **Bringing an existing ASP.NET application over, or want ASP.NET Core and nothing else?** Use [`isoplane-web`](#isoplane-web), as [Bring an existing ASP.NET application](../how-to/onboard-an-application.md) and the [Quickstart](../quickstart.md) do.
 - **Want pages rendered on the server, with forms and a database?** Use [`isoplane-webapp`](#isoplane-webapp), a Razor Pages application.
 - **Giving an AI agent tools to call?** Use [`isoplane-mcpserver`](#isoplane-mcpserver), a Model Context Protocol server over HTTP.
-- **Have an application without sandbox tests?** Add them with [`isoplane-tests`](#isoplane-tests), created beside the application. [Test an application](../how-to/test-an-application.md) walks through it. `isoplane-handler`, `isoplane-webapi`, `isoplane-webapp` and `isoplane-mcpserver` already include one.
+- **Have an application without sandbox tests?** Add them with [`isoplane-tests`](#isoplane-tests), created beside the application. [Test an application](../how-to/test-an-application.md) walks through it. A template that already includes a test project says so below.
 
 ## Creating a project
 

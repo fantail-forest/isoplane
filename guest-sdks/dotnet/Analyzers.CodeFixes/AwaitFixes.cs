@@ -16,9 +16,10 @@ namespace Isoplane.Analyzers;
 
 /// <summary>
 /// Replaces a call that blocks with the await that does the same work: <c>Run</c> and a blocked-on
-/// <c>RunAsync</c> with <c>await RunAsync</c>, and a synchronous wait with its asynchronous
-/// counterpart. An unreferenced synchronous program entry point can become asynchronous;
-/// other synchronous methods keep their signatures and callers.
+/// <c>RunAsync</c> with <c>await RunAsync</c>, a synchronous wait with its asynchronous
+/// counterpart, and a task's <c>Result</c> or its awaiter's <c>GetResult()</c> with awaiting the task.
+/// An unreferenced synchronous program entry point can become asynchronous; other synchronous
+/// methods keep their signatures and callers.
 /// </summary>
 [ExportCodeFixProvider(LanguageNames.CSharp, Name = nameof(AwaitFixes)), Shared]
 public sealed class AwaitFixes : CodeFixProvider
@@ -38,15 +39,13 @@ public sealed class AwaitFixes : CodeFixProvider
         if (root is null || model is null) return;
         foreach (var diagnostic in context.Diagnostics)
         {
-            // Each of these calls returns nothing, so the await takes the place of a whole statement.
             if (root.FindNode(diagnostic.Location.SourceSpan, getInnermostNodeForTie: true) is not ExpressionSyntax blocking
-                || blocking.Parent is not ExpressionStatementSyntax
                 || Awaited(diagnostic.Id, blocking, model, SyntaxGenerator.GetGenerator(context.Document), context.CancellationToken) is not { } awaited
                 || await AwaitSite.FindAsync(blocking, model, context.Document.Project.Solution, context.CancellationToken).ConfigureAwait(false) is not { } site) continue;
             string title = site.Method is null ? awaited.Title : $"{awaited.Title} and make '{site.Method.Identifier.Text}' asynchronous";
             var changed = await Edit.ApplyAsync(context.Document, editor =>
             {
-                var awaiting = ((ExpressionSyntax)editor.Generator.AwaitExpression(awaited.Task.WithoutTrivia())).WithTriviaFrom(blocking);
+                var awaiting = Awaiting(awaited.Task, blocking, editor.Generator);
                 if (site.Method is null) editor.ReplaceNode(blocking, awaiting);
                 else editor.ReplaceNode(site.Method, site.MakeAsynchronous(site.Method.ReplaceNode(blocking, awaiting), editor.Generator));
             }, context.CancellationToken).ConfigureAwait(false);
@@ -56,10 +55,26 @@ public sealed class AwaitFixes : CodeFixProvider
         }
     }
 
+    /// <summary>
+    /// An await of <paramref name="task"/> in the place of <paramref name="blocking"/>, in parentheses
+    /// where a member access, call, index or postfix operator on the result would otherwise bind to the task.
+    /// </summary>
+    private static ExpressionSyntax Awaiting(ExpressionSyntax task, ExpressionSyntax blocking, SyntaxGenerator generator)
+    {
+        var awaiting = (ExpressionSyntax)generator.AwaitExpression(task.WithoutTrivia());
+        if (blocking.Parent is MemberAccessExpressionSyntax or ConditionalAccessExpressionSyntax or InvocationExpressionSyntax
+            or ElementAccessExpressionSyntax or PostfixUnaryExpressionSyntax)
+            awaiting = SyntaxFactory.ParenthesizedExpression(awaiting);
+        return awaiting.WithTriviaFrom(blocking);
+    }
+
     /// <summary>The task to await in place of <paramref name="blocking"/>, or null when the call has no asynchronous counterpart to offer.</summary>
     private static (ExpressionSyntax Task, string Title)? Awaited(string id, ExpressionSyntax blocking, SemanticModel model, SyntaxGenerator generator, CancellationToken cancellation)
     {
         if (id == HostRunAnalyzer.NotAwaited.Id) return (HostTask(blocking), "Await RunAsync");
+        // ISOPLANE1003 reports Result only on a task, and GetResult only on the awaiter of one.
+        if (blocking is MemberAccessExpressionSyntax read && model.GetSymbolInfo(read, cancellation).Symbol is IPropertySymbol { Name: "Result" })
+            return (read.Expression, "Await the task");
         if (blocking is not InvocationExpressionSyntax { Expression: MemberAccessExpressionSyntax member } call
             || model.GetSymbolInfo(call, cancellation).Symbol is not IMethodSymbol method) return null;
         ExpressionSyntax Renamed(string name) => call.WithExpression(member.WithName(SyntaxFactory.IdentifierName(name)));
@@ -71,8 +86,10 @@ public sealed class AwaitFixes : CodeFixProvider
                 (call.WithExpression((ExpressionSyntax)generator.MemberAccessExpression(generator.TypeExpression(task), "Delay")), "Await Task.Delay"),
             ("System.Threading.Tasks.Task", "Wait") when method.Parameters.Length == 0 => (member.Expression, "Await the task"),
             ("System.Threading.Tasks.Task", "WaitAll") when method.Parameters.Length == 1 && method.Parameters[0].IsParams => (Renamed("WhenAll"), "Await Task.WhenAll"),
+            ("System.Threading.Tasks.Task", "WaitAny") when method.Parameters.Length == 1 && method.Parameters[0].IsParams => (Renamed("WhenAny"), "Await Task.WhenAny"),
             ("System.Threading.SemaphoreSlim", "Wait") when method.Parameters.Length == 0
                 || method.Parameters.Length == 1 && method.Parameters[0].Type.Name == "CancellationToken" => (Renamed("WaitAsync"), "Await WaitAsync"),
+            (_, "GetResult") when Awaitable(call) is { } awaitable => (awaitable, "Await the task"),
             _ => null
         };
     }
@@ -81,16 +98,16 @@ public sealed class AwaitFixes : CodeFixProvider
     private static ExpressionSyntax HostTask(ExpressionSyntax blocking) => blocking switch
     {
         InvocationExpressionSyntax { Expression: MemberAccessExpressionSyntax { Name.Identifier.Text: "Wait" } wait } => wait.Expression,
-        InvocationExpressionSyntax
-        {
-            Expression: MemberAccessExpressionSyntax
-            {
-                Name.Identifier.Text: "GetResult",
-                Expression: InvocationExpressionSyntax { Expression: MemberAccessExpressionSyntax { Name.Identifier.Text: "GetAwaiter" } awaiter }
-            }
-        } => awaiter.Expression,
+        InvocationExpressionSyntax call when Awaitable(call) is { } awaitable => awaitable,
         _ => blocking
     };
+
+    /// <summary>The expression <paramref name="call"/> blocks on as <c>.GetAwaiter().GetResult()</c>, or null when it is not that call.</summary>
+    private static ExpressionSyntax? Awaitable(InvocationExpressionSyntax call) => call.Expression is MemberAccessExpressionSyntax
+    {
+        Name.Identifier.Text: "GetResult",
+        Expression: InvocationExpressionSyntax { Expression: MemberAccessExpressionSyntax { Name.Identifier.Text: "GetAwaiter" } awaiter }
+    } ? awaiter.Expression : null;
 
     /// <summary>
     /// Where an await can be written without changing callers: in asynchronous code or an

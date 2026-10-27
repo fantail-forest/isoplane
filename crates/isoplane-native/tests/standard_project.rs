@@ -254,8 +254,15 @@ fn start_dotnet(
             "PATH",
             std::env::join_paths(paths).expect("tool paths contain no path separators"),
         );
-    for (name, value) in settings {
-        command.env(format!("ISOPLANE_APP_{name}"), value);
+    if !settings.is_empty() {
+        let settings: serde_json::Map<String, serde_json::Value> = settings
+            .iter()
+            .map(|(name, value)| (name.to_string(), serde_json::Value::from(*value)))
+            .collect();
+        command.args([
+            "--settings",
+            &serde_json::Value::Object(settings).to_string(),
+        ]);
     }
     common::Dev::spawn(&mut command, std::time::Duration::from_secs(900), false)
 }

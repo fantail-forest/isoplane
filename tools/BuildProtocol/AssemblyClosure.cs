@@ -84,12 +84,9 @@ internal static class AssemblyClosure
                         metadata.GetString(metadata.GetModuleReference(import.Module).Name), metadata.GetString(import.Name));
                 }).ToArray();
             var methods = metadata.MemberReferences.Select(metadata.GetMemberReference)
-                .Where(member => member.GetKind() == MemberReferenceKind.Method && member.Parent.Kind == HandleKind.TypeReference)
-                .Select(member =>
-                {
-                    var type = metadata.GetTypeReference((TypeReferenceHandle)member.Parent);
-                    return new ReferencedMethod(metadata.GetString(type.Namespace) + "." + metadata.GetString(type.Name), metadata.GetString(member.Name));
-                }).Distinct().ToArray();
+                .Where(member => member.GetKind() == MemberReferenceKind.Method)
+                .Select(member => ReferencedType(metadata, member.Parent) is { } type ? new ReferencedMethod(type, metadata.GetString(member.Name)) : null)
+                .OfType<ReferencedMethod>().Distinct().ToArray();
             return new(origin, identity, references, HasManagedIl(pe, metadata, header), imports, methods);
         }
         catch (BadImageFormatException) { throw Invalid(origin, "is not a valid managed assembly"); }
@@ -134,6 +131,38 @@ internal static class AssemblyClosure
     }
 
     /// <summary>
+    /// The metadata name of the type another assembly declares that a member reference's parent names,
+    /// as the analyzer spells it: namespace, enclosing types and the type, with a generic type's arity
+    /// suffix and none of its arguments. Null for a parent that is not such a type, including the
+    /// assembly's own types, which the table of platform members cannot name.
+    /// </summary>
+    private static string? ReferencedType(MetadataReader metadata, EntityHandle parent)
+    {
+        if (parent.Kind == HandleKind.TypeSpecification)
+        {
+            var signature = metadata.GetBlobReader(metadata.GetTypeSpecification((TypeSpecificationHandle)parent).Signature);
+            if (signature.ReadSignatureTypeCode() != SignatureTypeCode.GenericTypeInstance
+                || signature.ReadSignatureTypeCode() != SignatureTypeCode.TypeHandle) return null;
+            parent = signature.ReadTypeHandle();
+        }
+        if (parent.Kind != HandleKind.TypeReference) return null;
+        var names = new Stack<string>();
+        var visited = new HashSet<EntityHandle>();
+        while (true)
+        {
+            if (!visited.Add(parent)) throw new BadImageFormatException("Cyclic nested type metadata.");
+            var type = metadata.GetTypeReference((TypeReferenceHandle)parent);
+            names.Push(metadata.GetString(type.Name));
+            if (type.ResolutionScope.Kind != HandleKind.TypeReference)
+            {
+                if (!type.Namespace.IsNil) names.Push(metadata.GetString(type.Namespace));
+                return string.Join(".", names.Where(name => name.Length != 0));
+            }
+            parent = type.ResolutionScope;
+        }
+    }
+
+    /// <summary>
     /// Advisory diagnostics for <paramref name="assemblies"/>. Native imports are reported when
     /// <paramref name="warnOnNativeImports"/> is set, except those <paramref name="providedNativeImports"/>
     /// lists as <c>library!entry</c>, which the runtime provides.
@@ -156,6 +185,7 @@ internal static class AssemblyClosure
                 else if (method is { Type: "System.Threading.Thread", Name: "Sleep" or "Join" }
                     or { Type: "System.Threading.Monitor", Name: "Wait" }
                     or { Type: "System.Threading.Tasks.Task", Name: "Wait" or "WaitAll" or "WaitAny" }
+                    or { Type: "System.Threading.Tasks.Task`1" or "System.Threading.Tasks.ValueTask`1", Name: "get_Result" }
                     or { Type: "System.Threading.SemaphoreSlim", Name: "Wait" })
                     yield return new("ISOPLANE1003", $"Assembly '{assembly.Identity.Name}' references '{method.Type}.{method.Name}', which can wait synchronously. " +
                         "A guest cannot block waiting for unfinished work; use await and asynchronous wait APIs. Already-completed operations are not rejected by this diagnostic. Conformance rules: 1.");

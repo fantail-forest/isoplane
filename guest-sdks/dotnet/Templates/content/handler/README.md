@@ -85,12 +85,6 @@ development they come from three places, and a later one overrides an earlier on
    `src/Sample-Handler/Properties/launchSettings.json`, where `__` in a name
    stands for `:`. This is the place for settings that are safe to commit.
 
-3. **The shell**, for one run. Prefix the setting with `ISOPLANE_APP_`:
-
-   ```bash
-   ISOPLANE_APP_Greeting__Default=Grace dotnet run --project src/Sample-Handler
-   ```
-
 Restart the session after changing a setting. Sandbox tests supply their own
 settings in `tests/Sample-Handler.Tests/SandboxFixture.cs`.
 

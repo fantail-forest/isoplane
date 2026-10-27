@@ -66,12 +66,6 @@ overrides an earlier one.
 3. **The launch profile**: the `environmentVariables` in
    `Properties/launchSettings.json`, where `__` in a name stands for `:`.
 
-4. **The shell**, for one run. Prefix the setting with `ISOPLANE_APP_`:
-
-   ```bash
-   ISOPLANE_APP_Greeting__Message="Hello from the shell!" dotnet run
-   ```
-
 Restart the session after changing a setting. `Greeting:Message` is the setting
 read by the `/greeting` route that `Program.cs` shows commented out.
 

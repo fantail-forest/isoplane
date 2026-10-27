@@ -276,9 +276,11 @@ public sealed class IsoplaneApplication : IAsyncDisposable
         };
         foreach (var argument in new[] { "dev", "--project", directory, "--configuration", options.Configuration, "--port", "0", "--no-watch", "--json", "--shutdown-on-stdin-close" })
             start.ArgumentList.Add(argument);
-        // The CLI reads application settings from its environment, which keeps secrets off its command line.
-        foreach (var setting in options.Settings)
-            start.Environment["ISOPLANE_APP_" + setting.Key.Replace(":", "__", StringComparison.Ordinal)] = setting.Value;
+        if (options.Settings.Count > 0)
+        {
+            start.ArgumentList.Add("--settings");
+            start.ArgumentList.Add(System.Text.Json.JsonSerializer.Serialize(options.Settings));
+        }
         start.Environment[TelemetryVariables.TestRun.Name] = "1";
         return start;
     }

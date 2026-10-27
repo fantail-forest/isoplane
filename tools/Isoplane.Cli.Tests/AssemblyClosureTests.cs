@@ -137,14 +137,16 @@ public sealed class AssemblyClosureTests : IDisposable
             {
                 public static void Start(System.Threading.Thread thread) => thread.Start();
                 public static void Wait(System.Threading.Tasks.Task task) => task.Wait();
+                public static int Read(System.Threading.Tasks.Task<int> task) => task.Result;
             }
             """);
         var assembly = AssemblyClosure.InspectFile(dependency);
         AssemblyClosure.Validate(AssemblyClosure.Application([assembly]), Platform);
         var diagnostics = AssemblyClosure.Diagnostics([assembly]).ToArray();
         Assert.True(diagnostics.Any(item => item.Code == "ISOPLANE1002" && item.Message.Contains("System.Threading.Thread.Start", StringComparison.Ordinal))
-            && diagnostics.Any(item => item.Code == "ISOPLANE1003" && item.Message.Contains("System.Threading.Tasks.Task.Wait", StringComparison.Ordinal)),
-            "Dependency metadata must identify thread creation and potentially blocking calls without blacklisting the containing assembly.");
+            && diagnostics.Any(item => item.Code == "ISOPLANE1003" && item.Message.Contains("System.Threading.Tasks.Task.Wait", StringComparison.Ordinal))
+            && diagnostics.Any(item => item.Code == "ISOPLANE1003" && item.Message.Contains("System.Threading.Tasks.Task`1.get_Result", StringComparison.Ordinal)),
+            "Dependency metadata must identify thread creation and potentially blocking calls, including through a generic instantiation, without blacklisting the containing assembly.");
     }
 
     [Fact]

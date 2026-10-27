@@ -282,8 +282,11 @@ fn start_debug_session(app: &std::path::Path, cli: &std::path::Path, mode: &str)
     } else if mode == "detach-failure" {
         // The fixture's initializer then refuses to prepare the ordinary runtime, so detaching fails.
         Dev::spawn(
-            common::managed_command(app, cli, &["--debug"])
-                .env("ISOPLANE_APP_RequireDebugger", "true"),
+            &mut common::managed_command(
+                app,
+                cli,
+                &["--debug", "--settings", r#"{"RequireDebugger":"true"}"#],
+            ),
             std::time::Duration::from_secs(600),
             true,
         )

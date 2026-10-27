@@ -17,6 +17,17 @@ public sealed class ProcessLifetimeTests
     }
 
     [Fact]
+    public void a_tests_settings_reach_the_cli_as_one_settings_argument()
+    {
+        var options = new ApplicationOptions { Settings = new Dictionary<string, string> { ["ConnectionStrings:Todos"] = "Host=test" } };
+        var start = IsoplaneApplication.StartInfo(Path.GetTempPath(), options);
+        var index = start.ArgumentList.IndexOf("--settings");
+        Assert.True(index >= 0, "The settings must travel as the --settings argument.");
+        Assert.Equal("""{"ConnectionStrings:Todos":"Host=test"}""", start.ArgumentList[index + 1]);
+        Assert.DoesNotContain("--settings", IsoplaneApplication.StartInfo(Path.GetTempPath(), new ApplicationOptions()).ArgumentList);
+    }
+
+    [Fact]
     public async Task open_stdin_allows_readiness_and_eof_releases_the_owned_session()
     {
         using var fixture = new SessionFixture();

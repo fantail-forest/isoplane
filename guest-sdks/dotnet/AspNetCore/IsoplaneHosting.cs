@@ -60,10 +60,9 @@ public static class IsoplaneHosting
     /// <c>builder.Configuration</c> is layered as in any ASP.NET application, a later source
     /// overriding an earlier one: <c>appsettings.json</c>, then
     /// <c>appsettings.{Environment}.json</c>, then the settings Isoplane supplies. In local
-    /// development the supplied settings are the project's User Secrets, the
-    /// <c>environmentVariables</c> of its launch profile, and environment variables named
-    /// <c>ISOPLANE_APP_&lt;Key&gt;</c>; the application sees none of the machine's other environment
-    /// variables.
+    /// development the supplied settings are the project's User Secrets and the
+    /// <c>environmentVariables</c> of its launch profile, and a sandbox test can add its own; the
+    /// application sees none of the machine's environment variables.
     /// <see href="https://isoplane.dev/docs/how-to/local-settings">Supply local development settings</see>
     /// describes each source. The environment name comes from the supplied
     /// <c>ASPNETCORE_ENVIRONMENT</c> or <c>DOTNET_ENVIRONMENT</c> setting, and is <c>Production</c>

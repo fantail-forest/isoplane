@@ -17,7 +17,7 @@ Every file in a generated project is commented, and an application's `README.md`
 - **Bringing an existing ASP.NET application over, or want ASP.NET Core and nothing else?** Use [`isoplane-web`](#isoplane-web), as [Bring an existing ASP.NET application](../how-to/onboard-an-application.md) and the [Quickstart](../quickstart.md) do.
 - **Want pages rendered on the server, with forms and a database?** Use [`isoplane-webapp`](#isoplane-webapp), a Razor Pages application.
 - **Giving an AI agent tools to call?** Use [`isoplane-mcpserver`](#isoplane-mcpserver), a Model Context Protocol server over HTTP.
-- **Have an application without sandbox tests?** Add them with [`isoplane-tests`](#isoplane-tests), created beside the application. [Test an application](../how-to/test-an-application.md) walks through it. `isoplane-handler`, `isoplane-webapi`, `isoplane-webapp` and `isoplane-mcpserver` already include one.
+- **Have an application without sandbox tests?** Add them with [`isoplane-tests`](#isoplane-tests), created beside the application. [Test an application](../how-to/test-an-application.md) walks through it. A template that already includes a test project says so below.
 
 ## Creating a project
 
@@ -38,6 +38,8 @@ In a new `MyApp` directory, it creates:
 - `src/MyApp/MyApp.csproj`
 - `tests/MyApp.Tests/MyApp.Tests.csproj`
 
+The `tests` project runs the application in the sandbox, as [Test an application](../how-to/test-an-application.md) describes.
+
 | Option | Value | Description |
 | --- | --- | --- |
 | `--HttpPort` | integer | Port number to use for the HTTP endpoint in launchSettings.json. |
@@ -54,6 +56,8 @@ In a new `MyApp` directory, it creates:
 
 - `src/MyApp/MyApp.csproj`
 - `tests/MyApp.Tests/MyApp.Tests.csproj`
+
+The `tests` project runs the application in the sandbox, as [Test an application](../how-to/test-an-application.md) describes.
 
 | Option | Value | Description |
 | --- | --- | --- |
@@ -87,6 +91,8 @@ In a new `MyApp` directory, it creates:
 
 - `MyApp.csproj`
 
+It has no test project. Add one with [`isoplane-tests`](#isoplane-tests).
+
 | Option | Value | Description |
 | --- | --- | --- |
 | `--HttpPort` | integer | Port number to use for the HTTP endpoint in launchSettings.json. |
@@ -103,6 +109,8 @@ In a new `MyApp` directory, it creates:
 
 - `src/MyApp/MyApp.csproj`
 - `tests/MyApp.Tests/MyApp.Tests.csproj`
+
+The `tests` project runs the application in the sandbox, as [Test an application](../how-to/test-an-application.md) describes.
 
 | Option | Value | Description |
 | --- | --- | --- |
@@ -121,6 +129,8 @@ In a new `MyApp` directory, it creates:
 
 - `src/MyApp/MyApp.csproj`
 - `tests/MyApp.Tests/MyApp.Tests.csproj`
+
+The `tests` project runs the application in the sandbox, as [Test an application](../how-to/test-an-application.md) describes.
 
 | Option | Value | Description |
 | --- | --- | --- |

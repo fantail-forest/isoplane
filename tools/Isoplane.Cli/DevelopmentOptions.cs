@@ -16,6 +16,7 @@ internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool W
         var shutdownOnInputClose = parsed.GetValue<bool>("--shutdown-on-stdin-close");
         var launchProfile = parsed.GetValue<string>("--launch-profile");
         var useLaunchProfile = !parsed.GetValue<bool>("--no-launch-profile");
+        var settings = ParseSettings(parsed.GetValue<string>("--settings"));
         ushort? port = null;
         if (parsed.GetValue<string>("--port") is { } portText)
             port = ushort.TryParse(portText, out var parsedPort) ? parsedPort
@@ -35,6 +36,36 @@ internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool W
             throw new ArgumentException("Use either --launch-profile NAME or --no-launch-profile, not both.");
         if (System.IO.Directory.GetFiles(directory, "*.csproj").Length != 1)
             throw new ArgumentException($"Expected exactly one .NET project in {directory}; create one with dotnet new, or select its directory with --project.");
-        return new(directory, port, watch, json, shutdownOnInputClose, debug, configuration, noBuild, debugLaunchEndpoint, launchProfile, useLaunchProfile);
+        return new(directory, port, watch, json, shutdownOnInputClose, debug, configuration, noBuild, debugLaunchEndpoint, launchProfile, useLaunchProfile)
+        {
+            Settings = settings
+        };
+    }
+
+    /// <summary>
+    /// Application settings for this session, keyed in ASP.NET's <c>Section:Key</c> form. They override
+    /// the project's User Secrets and launch profile. Isoplane.Testing passes a test's settings here.
+    /// </summary>
+    internal Dictionary<string, string> Settings { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+
+    private static Dictionary<string, string> ParseSettings(string? json)
+    {
+        var settings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (json is null) return settings;
+        const string expected = "--settings must be a JSON object of string values, such as {\"ConnectionStrings:Todos\":\"Host=localhost\"}";
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(json);
+            if (document.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object)
+                throw new ArgumentException($"{expected}; got {document.RootElement.ValueKind.ToString().ToLowerInvariant()}.");
+            foreach (var property in document.RootElement.EnumerateObject())
+                settings[property.Name] = property.Value.ValueKind == System.Text.Json.JsonValueKind.String ? property.Value.GetString()!
+                    : throw new ArgumentException($"{expected}; '{property.Name}' is {property.Value.ValueKind.ToString().ToLowerInvariant()}.");
+        }
+        catch (System.Text.Json.JsonException error)
+        {
+            throw new ArgumentException($"{expected}; {error.Message}", error);
+        }
+        return settings;
     }
 }

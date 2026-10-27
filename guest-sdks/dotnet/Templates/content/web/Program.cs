@@ -21,12 +21,8 @@ using Isoplane.AspNetCore;
 //   3. The "environmentVariables" of the launch profile in
 //      Properties/launchSettings.json, where two underscores stand for the
 //      colon: "Greeting__Message": "Hello from the launch profile!".
-//   4. Variables named ISOPLANE_APP_<setting> in the shell that starts the
-//      session, to override a setting for one run:
 //
-//          ISOPLANE_APP_Greeting__Message="Hello from the shell!" dotnet run
-//
-// The application sees none of your machine's other environment variables.
+// The application sees none of your machine's environment variables.
 // Restart the session after changing a setting.
 var builder = IsoplaneHosting.CreateBuilder(args);
 

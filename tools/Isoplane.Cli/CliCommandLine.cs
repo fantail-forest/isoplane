@@ -12,11 +12,12 @@ internal static class CliCommandLine
             new System.CommandLine.Help.HelpOption(),
             new VersionOption()
         };
-        var dev = new Command("dev", "Run a local application. Launch settings supply the port and environment; --port and ISOPLANE_APP_<Key> override them.");
+        var dev = new Command("dev", "Run a local application. Launch settings supply the port and environment; --port overrides the port.");
         Project(dev);
         Value(dev, "--configuration", "Build configuration (default: Debug).", "-c");
         Value(dev, "--port", "Local HTTP port (0–65535).");
         Value(dev, "--launch-profile", "Profile from Properties/launchSettings.json.");
+        Value(dev, "--settings", "JSON object of application settings for the session, such as {\"Section:Key\":\"value\"}; overrides User Secrets and the launch profile. Isoplane.Testing uses it.");
         Value(dev, "--debug-launch-endpoint", "Debugger's IPv4 loopback endpoint.").Hidden = true;
         Flag(dev, "--no-launch-profile", "Do not load a launch profile.");
         Flag(dev, "--no-watch", "Do not watch for source changes.");

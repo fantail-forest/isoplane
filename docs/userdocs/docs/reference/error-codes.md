@@ -95,21 +95,24 @@ behaviour off, or an asynchronous alternative in the same package.
 
 **Warning.** A guest application cannot wait synchronously.
 
-The code calls one of `Thread.Sleep`,
-`Thread.Join`, `Monitor.Wait`, `Task.Wait`, `Task.WaitAll`, `Task.WaitAny` or
-`SemaphoreSlim.Wait`. When it runs, the call throws
-`PlatformNotSupportedException` if it would have to wait. `Thread.Sleep`,
-`Thread.Join` and `Monitor.Wait` always would, unless their timeout is zero.
+The code calls one of `Thread.Sleep`, `Thread.Join`, `Monitor.Wait`,
+`Task.Wait`, `Task.WaitAll`, `Task.WaitAny` or `SemaphoreSlim.Wait`, reads
+`Result` on a `Task<T>` or `ValueTask<T>`, or calls `GetAwaiter().GetResult()`.
+When it runs, the call throws `PlatformNotSupportedException` if it would have
+to wait. `Thread.Sleep`, `Thread.Join` and `Monitor.Wait` always would, unless
+their timeout is zero.
 
-Await instead. The editor offers a quick fix for the first four rows:
+Await instead. The editor offers a quick fix for each row where one edit is
+enough:
 
 | Instead of | Use |
 | --- | --- |
 | `Thread.Sleep(...)` | `await Task.Delay(...)` |
-| `task.Wait()` | `await task` |
+| `task.Wait()`, `task.Result` | `await task` |
+| `task.GetAwaiter().GetResult()` | `await task` |
 | `Task.WaitAll(...)` | `await Task.WhenAll(...)` |
-| `semaphore.Wait()` | `await semaphore.WaitAsync()` |
 | `Task.WaitAny(...)` | `await Task.WhenAny(...)` |
+| `semaphore.Wait()` | `await semaphore.WaitAsync()` |
 
 A wait that can be satisfied at once behaves as it does anywhere else, such as
 `task.Wait()` on a task that has finished or `semaphore.Wait()` on a semaphore
@@ -124,7 +127,9 @@ lists what each call does.
 code, and from the compiled assembly for projects you reference. NuGet packages
 are not inspected unless you set
 [`IsoplaneAnalyzeDependencies`](project-settings.md#isoplaneanalyzedependencies)
-to `true` in the application's project file.
+to `true` in the application's project file. `GetAwaiter().GetResult()` is
+reported only in source, because in a compiled assembly every `await` looks the
+same.
 
 ## The entry point
 

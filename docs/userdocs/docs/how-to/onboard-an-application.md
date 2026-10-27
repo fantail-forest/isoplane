@@ -59,8 +59,7 @@ activates. See [the application lifecycle](../concepts/application-lifecycle.md)
 
 `IsoplaneHosting.CreateBuilder` reads `appsettings.json`, then
 `appsettings.{Environment}.json`, then the settings the platform supplies. It does
-not read your machine's environment variables, other than ones named
-`ISOPLANE_APP_<Key>` in local development. See
+not read your machine's environment variables. See
 [local development settings](local-settings.md) for how to supply settings and
 choose the environment while developing.
 
@@ -71,9 +70,7 @@ look for, how to find it, and what to do about it.
 
 - **Blocking calls.** A synchronous wait such as `.Result`, `.Wait()`,
   `Thread.Sleep` or a synchronous database call throws in the sandbox. Build
-  with the analyzer's dependency inspection on and fix each `ISOPLANE1003`,
-  then search for `.Result` and `.GetAwaiter().GetResult()`, which the
-  analyzer does not flag.
+  with the analyzer's dependency inspection on and fix each `ISOPLANE1003`.
   [Find and fix blocking calls](find-and-fix-blocking-calls.md) walks through
   it.
 - **Threads.** Starting a thread throws, and the analyzer reports it as
@@ -89,8 +86,11 @@ look for, how to find it, and what to do about it.
   instead, as [Run work on a schedule](run-work-on-a-schedule.md) shows. See
   [background work](../concepts/dotnet-runtime-differences.md#background-work).
 - **WebSockets and HTTP/2.** Requests arrive as HTTP/1.1 without trailers,
-  which rules out gRPC over HTTP/2. WebSockets are currently unavailable, and
-  with them SignalR and Blazor Server interactivity. gRPC-Web, server-sent
+  which rules out gRPC over HTTP/2. WebSockets are currently unavailable.
+  SignalR and Blazor Server interactivity need sticky sessions, which Isoplane
+  does not keep, so they are
+  [currently unsupported](../concepts/library-compatibility.md#signalr).
+  gRPC-Web, server-sent
   events and statically rendered Blazor pages work. See
   [incoming requests](../concepts/dotnet-runtime-differences.md#incoming-requests)
   and [SignalR and Blazor Server](../concepts/library-compatibility.md#signalr).

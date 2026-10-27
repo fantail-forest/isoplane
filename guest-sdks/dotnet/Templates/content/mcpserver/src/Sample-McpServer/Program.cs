@@ -24,12 +24,8 @@ using Sample_McpServer.Tools;
 //   3. The "environmentVariables" of the launch profile in
 //      Properties/launchSettings.json, where two underscores stand for the
 //      colon: "Handbook__MaxResults": "10".
-//   4. Variables named ISOPLANE_APP_<setting> in the shell that starts the
-//      session, to override a setting for one run:
 //
-//          ISOPLANE_APP_Handbook__MaxResults=10 dotnet run --project src/Sample-McpServer
-//
-// The application sees none of your machine's other environment variables.
+// The application sees none of your machine's environment variables.
 // Restart the session after changing a setting.
 var builder = IsoplaneHosting.CreateBuilder(args);
 

@@ -28,17 +28,7 @@ dotnet build
 ```
 
 Each warning names the call and where it is. In the editor the warning sits on
-the call itself, and for `Thread.Sleep`, `task.Wait()`, `Task.WaitAll` and
-`SemaphoreSlim.Wait` a quick fix replaces it.
-
-## Search for what the analyzer can't see
-
-The analyzer doesn't flag `.Result` or `.GetAwaiter().GetResult()`, which
-block in the same way. Search your code for them:
-
-```bash
-grep -rn --include=*.cs "\.Result\b\|GetAwaiter()\.GetResult()" .
-```
+the call itself, with a quick fix that awaits instead.
 
 Some blocking calls don't look like waits at all, such as reading
 `Request.Form` before the form has been read, or disposing a data reader that
@@ -73,8 +63,6 @@ lists the libraries known to do so, with what to use in their place.
 Anything left throws when it is reached, not before. Run the application and
 its tests as [Run and rebuild](run-and-rebuild.md) and
 [Test an application](test-an-application.md) describe. A remaining blocking
-wait fails its request, and the session log shows
-`request failed: System.PlatformNotSupportedException` without a stack trace.
-To find the call, run under the debugger and break on the exception, as
-[Debug an application](debug-an-application.md) describes, or wrap the
-suspect code in a `try` block that logs the exception's `StackTrace`.
+wait fails its request with status 500, and the session log shows
+`request failed: System.PlatformNotSupportedException` with a stack trace that
+names the call.

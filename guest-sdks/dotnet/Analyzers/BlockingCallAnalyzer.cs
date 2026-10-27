@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Collections.Immutable;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
@@ -6,8 +7,9 @@ using Microsoft.CodeAnalysis.Operations;
 namespace Isoplane.Analyzers;
 
 /// <summary>
-/// Reports, where they are written, the calls the build reports from the compiled assembly as
-/// <c>ISOPLANE1002</c> and <c>ISOPLANE1003</c>: starting a thread, and waiting synchronously.
+/// Reports, where they are written, starting a thread (<c>ISOPLANE1002</c>) and waiting synchronously
+/// (<c>ISOPLANE1003</c>). The build reports the same members from the compiled assembly, except an
+/// awaiter's <c>GetResult</c>, which every <c>await</c> compiles to and only source tells apart.
 /// </summary>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public sealed class BlockingCallAnalyzer : DiagnosticAnalyzer
@@ -34,36 +36,62 @@ public sealed class BlockingCallAnalyzer : DiagnosticAnalyzer
             var hosts = HostTypes.Find(start.Compilation);
             start.RegisterOperationAction(operation =>
             {
-                var method = operation.Operation switch
+                ISymbol? member = operation.Operation switch
                 {
                     IInvocationOperation invocation => invocation.TargetMethod,
                     IMethodReferenceOperation reference => reference.Method,
+                    IPropertyReferenceOperation property => property.Property,
                     _ => null
                 };
-                if (method is null || Rule(method) is not { } rule) return;
+                if (member is null || Rule(member) is not { } rule) return;
                 // Blocking on the host's RunAsync has its own diagnostic, which says what to do about it.
                 if (operation.Operation is IInvocationOperation { Instance: { } awaited } && hosts is not null && IsHostRun(awaited, hosts)) return;
                 operation.ReportDiagnostic(Diagnostic.Create(rule, operation.Operation.Syntax.GetLocation(),
-                    method.ContainingType.Name + "." + method.Name));
-            }, OperationKind.Invocation, OperationKind.MethodReference);
+                    member.ContainingType.Name + "." + member.Name));
+            }, OperationKind.Invocation, OperationKind.MethodReference, OperationKind.PropertyReference);
         });
     }
 
     private static bool IsHostRun(IOperation task, HostTypes hosts)
     {
-        while (task is IInvocationOperation { TargetMethod.Name: "ConfigureAwait", Instance: { } inner }) task = inner;
+        while (task is IInvocationOperation { TargetMethod.Name: "ConfigureAwait" or "GetAwaiter", Instance: { } inner }) task = inner;
         return task is IInvocationOperation run && hosts.IsRunAsync(run.TargetMethod);
     }
 
-    /// <summary>The rule a call to <paramref name="method"/> breaks, by the method's declaring type and name.</summary>
-    internal static DiagnosticDescriptor? Rule(IMethodSymbol method) =>
-        ((method.ReducedFrom ?? method).ContainingType?.ToDisplayString(), method.Name) switch
+    /// <summary>
+    /// The rule a use of <paramref name="member"/>, a method or property, breaks, by the declaring type's
+    /// metadata name and the member's name.
+    /// </summary>
+    internal static DiagnosticDescriptor? Rule(ISymbol member) =>
+        (MetadataName(((member as IMethodSymbol)?.ReducedFrom ?? member).ContainingType), member.Name) switch
         {
             ("System.Threading.Thread", "Start") => StartsThread,
             ("System.Threading.Thread", "Sleep" or "Join") => Waits,
             ("System.Threading.Monitor", "Wait") => Waits,
             ("System.Threading.Tasks.Task", "Wait" or "WaitAll" or "WaitAny") => Waits,
+            ("System.Threading.Tasks.Task`1" or "System.Threading.Tasks.ValueTask`1", "Result") => Waits,
             ("System.Threading.SemaphoreSlim", "Wait") => Waits,
+            ("System.Runtime.CompilerServices.TaskAwaiter" or "System.Runtime.CompilerServices.TaskAwaiter`1"
+                or "System.Runtime.CompilerServices.ValueTaskAwaiter" or "System.Runtime.CompilerServices.ValueTaskAwaiter`1"
+                or "System.Runtime.CompilerServices.ConfiguredTaskAwaitable.ConfiguredTaskAwaiter"
+                or "System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1.ConfiguredTaskAwaiter"
+                or "System.Runtime.CompilerServices.ConfiguredValueTaskAwaitable.ConfiguredValueTaskAwaiter"
+                or "System.Runtime.CompilerServices.ConfiguredValueTaskAwaitable`1.ConfiguredValueTaskAwaiter", "GetResult") => Waits,
             _ => null
         };
+
+    /// <summary>
+    /// The name of <paramref name="type"/> as assembly metadata spells it, which the build's inspection of
+    /// the compiled assembly matches on: namespace, then each enclosing type and the type, with the arity
+    /// suffix of a generic type and none of its arguments.
+    /// </summary>
+    private static string? MetadataName(INamedTypeSymbol? type)
+    {
+        if (type is null) return null;
+        var names = new List<string>();
+        for (var current = type.OriginalDefinition; current is not null; current = current.ContainingType)
+            names.Insert(0, current.MetadataName);
+        if (type.ContainingNamespace is { IsGlobalNamespace: false } ns) names.Insert(0, ns.ToDisplayString());
+        return string.Join(".", names);
+    }
 }

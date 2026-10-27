@@ -110,25 +110,58 @@ public sealed class LaunchProfileTests : IDisposable
     }
 
     [Fact]
-    public void settings_layer_user_secrets_then_the_profile_then_prefixed_process_variables()
+    public void settings_layer_user_secrets_then_the_profile_then_the_sessions_settings()
     {
         Settings(TwoProfiles);
-        var secrets = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["ConnectionStrings:Todos"] = "Host=secret", ["Only:Secret"] = "kept"
-        };
-        var process = new System.Collections.Hashtable
-        {
-            ["ISOPLANE_APP_ASPNETCORE_ENVIRONMENT"] = "Staging", ["ISOPLANE_APP_Feature__Enabled"] = "true",
-            ["ConnectionStrings__Todos"] = "Host=unprefixed", ["ISOPLANE_APP_"] = "ignored"
-        };
-        var settings = DevelopmentSettings.Layer(secrets, LaunchProfile.Read(directory.FullName, null), process);
+        var session = new Dictionary<string, string> { ["ASPNETCORE_ENVIRONMENT"] = "Staging", ["Feature:Enabled"] = "true" };
+        var settings = DevelopmentSettings.Layer(Secrets(), LaunchProfile.Read(directory.FullName, null), session);
         Assert.Equal("Host=db", settings["ConnectionStrings:Todos"]);
         Assert.Equal("kept", settings["Only:Secret"]);
         Assert.Equal("Staging", settings["ASPNETCORE_ENVIRONMENT"]);
         Assert.Equal("true", settings["Feature:Enabled"]);
         Assert.Equal(4, settings.Count);
     }
+
+    [Fact]
+    public void a_session_without_settings_keeps_user_secrets_and_the_profile()
+    {
+        Settings(TwoProfiles);
+        var settings = DevelopmentSettings.Layer(Secrets(), LaunchProfile.Read(directory.FullName, null), new Dictionary<string, string>());
+        Assert.Equal("Host=db", settings["ConnectionStrings:Todos"]);
+        Assert.Equal("kept", settings["Only:Secret"]);
+        Assert.Equal("Development", settings["ASPNETCORE_ENVIRONMENT"]);
+        Assert.Equal(3, settings.Count);
+    }
+
+    [Fact]
+    public void the_settings_option_is_parsed_as_an_object_of_strings()
+    {
+        Project();
+        var options = DevelopmentOptions.Parse(["--project", directory.FullName, "--settings", """{"ConnectionStrings:Todos":"Host=test","Feature:Enabled":"true"}"""]);
+        Assert.Equal("Host=test", options.Settings["connectionstrings:todos"]);
+        Assert.Equal("true", options.Settings["Feature:Enabled"]);
+        Assert.Equal(2, options.Settings.Count);
+        Assert.Empty(DevelopmentOptions.Parse(["--project", directory.FullName]).Settings);
+    }
+
+    [Theory]
+    [InlineData("not json")]
+    [InlineData("""["ConnectionStrings:Todos"]""")]
+    [InlineData("""{"Feature:Enabled":true}""")]
+    [InlineData("""{"Feature:Enabled":null}""")]
+    public void malformed_settings_are_a_usage_error(string json)
+    {
+        Project();
+        var failure = Assert.Throws<ArgumentException>(() => DevelopmentOptions.Parse(["--project", directory.FullName, "--settings", json]));
+        Assert.StartsWith("--settings must be a JSON object of string values", failure.Message, StringComparison.Ordinal);
+    }
+
+    private void Project() => File.WriteAllText(Path.Combine(directory.FullName, "App.csproj"), "<Project />");
+
+    private static Dictionary<string, string> Secrets() => new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["ConnectionStrings:Todos"] = "Host=secret", ["Only:Secret"] = "kept"
+    };
 
     public void Dispose() => directory.Delete(recursive: true);
 }

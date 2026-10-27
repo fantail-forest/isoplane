@@ -12,17 +12,19 @@ uses. Later sources override earlier ones:
 1. `appsettings.json`, then `appsettings.{Environment}.json`, in the project.
 2. The project's [.NET User Secrets](https://learn.microsoft.com/aspnet/core/security/app-secrets).
 3. The `environmentVariables` of the launch profile in `Properties/launchSettings.json`.
-4. Environment variables named `ISOPLANE_APP_<Key>` in the shell that starts the session.
 
 ASP.NET applications read all of them through `IConfiguration`. Other
-applications read the last three with `RuntimeConfiguration.ReadValues()`.
+applications read the last two with `RuntimeConfiguration.ReadValues()`.
 
 These sources apply to local sessions and sandbox tests. Only the `appsettings`
 files travel with the application.
 
-The application does not see your machine's other environment variables.
-Restart the development session after changing a setting; the tools prepare the
-application again for the changed settings.
+The application does not see your machine's environment variables. A sandbox
+test can add settings of its own, as [Test an application](test-an-application.md)
+describes.
+
+Restart the development session after changing a setting. The tools prepare
+the application again for the changed settings.
 
 ## Keep credentials in User Secrets
 
@@ -79,31 +81,6 @@ or run without one with `--no-launch-profile`.
 - `ASPNETCORE_ENVIRONMENT`, or `DOTNET_ENVIRONMENT`, sets the environment name
   of an ASP.NET application, and with it which `appsettings.{Environment}.json`
   is read. Without either the environment is `Production`.
-
-## Override a setting for one run
-
-Prefix a setting with `ISOPLANE_APP_`:
-
-<OnlyOn platforms="mac linux">
-
-```bash
-ISOPLANE_APP_ConnectionStrings__Todo="Host=..." dotnet run
-```
-
-</OnlyOn>
-
-<OnlyOn platforms="win">
-
-```powershell
-$env:ISOPLANE_APP_ConnectionStrings__Todo = "Host=..."
-try { dotnet run }
-finally { Remove-Item Env:ISOPLANE_APP_ConnectionStrings__Todo }
-```
-
-</OnlyOn>
-
-Integration tests supply settings the same way through
-[`ApplicationOptions.Settings`](test-an-application.md).
 
 ## Try the application under tighter limits
 

@@ -104,10 +104,11 @@ built it.
 
 Thread-start (`ISOPLANE1002`) and synchronous-wait (`ISOPLANE1003`) warnings
 cover your application and project references by default. In your application's
-own C# code they appear in the editor on the call itself. For four of them a
-quick fix makes the change: `Thread.Sleep` to `await Task.Delay`,
-`task.Wait()` to `await task`, `Task.WaitAll` to `await Task.WhenAll`, and
-`SemaphoreSlim.Wait` to `await WaitAsync`. Project
+own C# code they appear in the editor on the call itself, with a quick fix
+that awaits instead: `Thread.Sleep` becomes `await Task.Delay`, `task.Wait()`
+or `task.Result` becomes `await task`, `Task.WaitAll` becomes
+`await Task.WhenAll`, `Task.WaitAny` becomes `await Task.WhenAny`, and
+`SemaphoreSlim.Wait` becomes `await WaitAsync`. Project
 references are reported from their compiled assemblies when the application
 builds. Packaged dependencies
 are inspected for valid metadata but do not produce these advisory warnings.
@@ -148,13 +149,14 @@ working application stays available. Press Ctrl+C to end the session.
 configuration with `--configuration`, which is Debug when omitted. `--port`,
 `--launch-profile` and `--no-launch-profile` choose what `dotnet run` takes from
 the [launch profile](local-settings.md#use-the-launch-profile), and `--no-watch`
-runs without watching.
+runs without watching. `--settings` takes a JSON object of settings that
+override User Secrets and the launch profile for that session, which is how a
+sandbox test passes its own.
 
 Source watching follows the .NET SDK's evaluated watch list, including referenced
 projects and linked source files, and each project's `Directory.Build.props` and
 `Directory.Build.targets`. Add other build inputs with MSBuild `Watch` items in
-the project. Restart the session after changing launch profiles, User Secrets or
-environment variables.
+the project. Restart the session after changing launch profiles or User Secrets.
 
 The ordinary .NET watcher works too:
 

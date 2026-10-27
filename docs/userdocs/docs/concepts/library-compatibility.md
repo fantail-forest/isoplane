@@ -43,7 +43,7 @@ before relying on it, [check it yourself](#check-a-package).
 | ASP.NET Core                                                      | [Rate limiters that count in memory, including the built-in ones](#rate-limiting)                                                                                        | Needs a change | Moderate change: use a limiter that counts in a shared store. Or limit requests in front of the application      |
 | ASP.NET Core                                                      | [Validation attributes, localizers, token callbacks and service factories that do I/O](#synchronous-extension-points)                                                    | Needs a change | Moderate change: move the I/O elsewhere                                                                          |
 | ASP.NET Core                                                      | [WebSockets](#connections-and-background-work)                                                                                                                           | Not supported  | No workaround                                                                                                    |
-| ASP.NET Core                                                      | [SignalR and Blazor Server interactivity](#signalr)                                                                                                                      | Not supported  | No workaround yet: a connection's requests can reach different instances                                         |
+| ASP.NET Core                                                      | [SignalR and Blazor Server interactivity](#signalr)                                                                                                                      | Not supported  | No workaround: SignalR needs sticky sessions, which Isoplane does not keep |
 | ASP.NET Core                                                      | [gRPC over HTTP/2](#connections-and-background-work)                                                                                                                     | Needs a change | Moderate change: use gRPC-Web                                                                                    |
 | ASP.NET Core                                                      | [Continuously running `BackgroundService`, jobs and queue consumers](#connections-and-background-work)                                                                   | Needs a change | Large change: do the work during a request                                                                       |
 | Microsoft.AspNetCore.Identity.EntityFrameworkCore                 | Creating users, password sign-in and the sign-in cookie                                                                                                                  | Works          | Nothing                                                                                                          |
@@ -98,10 +98,8 @@ The changes are sized like this:
 ## Recognize a failure {#symptoms}
 
 Exception messages from the .NET runtime itself are short identifiers, not
-sentences. Where a stack trace is logged, it shows which call failed. A failure
-logged only as `request failed: ...` has none, and
-[Find and fix blocking calls](../how-to/find-and-fix-blocking-calls.md#run-the-application)
-says how to locate the call.
+sentences, so read the stack trace the log prints with the failure to see which
+call failed.
 
 | What you see                                                                                                                                                                                                                                                                   | What it means                                                                                                                                                                                                           |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -645,16 +643,14 @@ Size of the change: moderate. The I/O moves to a place that can await it.
 
 ### SignalR and Blazor Server {#signalr}
 
-SignalR, and Blazor Server interactivity, which is built on it, are not
-supported. SignalR
-[requires the same server to handle every request of a connection][signalr-sticky-sessions].
-Its preferred transport, WebSockets, is unavailable, and its other transports,
-Server-Sent Events and long polling, carry one connection over several
-requests. Isoplane sends each request to whichever instance is free, so those
-requests can reach different instances, and the connection fails when they do.
-A Redis backplane does not help: SignalR still needs the same server for a
-connection's requests, and the backplane is built on the
-[2.x Redis client](#redis).
+SignalR, and Blazor Server interactivity, which is built on it, are currently
+unsupported. SignalR keeps each connection's state in the memory of the server
+that accepted it, and
+[requires that server to handle every request of the connection][signalr-sticky-sessions],
+which is a sticky session. Isoplane sends each request to whichever instance is
+free and keeps no sticky sessions, so a connection's requests can reach
+different instances. A Redis backplane does not change that. It forwards
+messages between servers, and each connection still lives on one.
 
 Statically rendered Blazor pages work.
 

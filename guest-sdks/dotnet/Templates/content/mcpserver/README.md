@@ -120,12 +120,6 @@ overrides an earlier one.
    `src/Sample-McpServer/Properties/launchSettings.json`, where `__` in a name
    stands for `:`.
 
-4. **The shell**, for one run. Prefix the setting with `ISOPLANE_APP_`:
-
-   ```bash
-   ISOPLANE_APP_Handbook__MaxResults=10 dotnet run --project src/Sample-McpServer
-   ```
-
 Restart the session after changing a setting. Sandbox tests supply their own
 settings in `tests/Sample-McpServer.Tests/SandboxFixture.cs`.
 

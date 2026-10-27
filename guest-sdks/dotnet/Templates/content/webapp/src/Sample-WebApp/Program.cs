@@ -25,12 +25,8 @@ using Sample_WebApp.Data;
 //   3. The "environmentVariables" of the launch profile in
 //      Properties/launchSettings.json, where two underscores stand for the
 //      colon: "Logging__LogLevel__Default": "Debug".
-//   4. Variables named ISOPLANE_APP_<setting> in the shell that starts the
-//      session, to override a setting for one run:
 //
-//          ISOPLANE_APP_Logging__LogLevel__Default=Debug dotnet run --project src/Sample-WebApp
-//
-// The application sees none of your machine's other environment variables.
+// The application sees none of your machine's environment variables.
 // Restart the session after changing a setting.
 var builder = IsoplaneHosting.CreateBuilder(args);
 

@@ -119,12 +119,6 @@ overrides an earlier one.
    `src/Sample-Api/Properties/launchSettings.json`, where `__` in a name stands
    for `:`.
 
-4. **The shell**, for one run. Prefix the setting with `ISOPLANE_APP_`:
-
-   ```bash
-   ISOPLANE_APP_Notifications__WebhookUrl=https://example.com/hook dotnet run --project src/Sample-Api
-   ```
-
 Restart the session after changing a setting. Sandbox tests supply their own
 settings in `tests/Sample-Api.Tests/SandboxFixture.cs`.
 

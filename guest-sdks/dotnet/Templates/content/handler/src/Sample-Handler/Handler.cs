@@ -42,12 +42,7 @@ public static class Handler
         //      Properties/launchSettings.json, where two underscores stand for the
         //      colon: "Greeting__Default": "world".
         //
-        //   3. Variables named ISOPLANE_APP_<setting> in the shell that starts the
-        //      session, to override a setting for one run:
-        //
-        //          ISOPLANE_APP_Greeting__Default=Grace dotnet run --project src/Sample-Handler
-        //
-        // The application sees none of your machine's other environment variables.
+        // The application sees none of your machine's environment variables.
         // Restart the session after changing a setting.
         var settings = RuntimeConfiguration.ReadValues();
         greeter = new Greeter(settings.GetValueOrDefault("Greeting:Default") ?? "world");
