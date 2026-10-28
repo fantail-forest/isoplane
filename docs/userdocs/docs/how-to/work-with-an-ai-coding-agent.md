@@ -31,6 +31,24 @@ where it comes from, and how to change it.
 An existing application gets the skill on its first build after it references
 an Isoplane SDK package.
 
+## Give the agent tools
+
+The CLI is also a [Model Context Protocol](https://modelcontextprotocol.io)
+server, so an agent can run the application and read what it reports through
+tools instead of a terminal it has to watch. Register it with the agent you
+use, from the repository root:
+
+```bash
+isoplane agent init --harness claude-code
+```
+
+[`isoplane agent init`](../reference/cli/agent.md#isoplane-agent-init) lists
+the agents it knows and the file it writes for each; the agent then starts
+`isoplane agent mcp` itself. The tools start, watch and stop an application
+and read its events and logs, and check that the machine is set up;
+[`isoplane agent mcp`](../reference/cli/agent.md#isoplane-agent-mcp) lists
+them.
+
 ## Keep guidance of your own
 
 The build overwrites the `isoplane` skill, so put instructions for your own

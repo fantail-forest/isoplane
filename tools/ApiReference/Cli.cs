@@ -50,6 +50,12 @@ internal static class Cli
         if (subcommands.Length > 0)
             page.Append("| Command | Description |\n| --- | --- |\n").AppendJoin('\n', subcommands.Select(subcommand =>
                 $"| [`isoplane {path} {subcommand.Name}`](#{Anchor($"isoplane {path} {subcommand.Name}")}) | {Described(subcommand)} |")).Append("\n\n");
+        if (path == "agent mcp")
+            page.Append("The tools it offers:\n\n| Tool | Description |\n| --- | --- |\n").AppendJoin('\n', AgentToolCatalogue.All.Select(tool =>
+                $"| `{tool.Name}`{Since.Mark(Item($"{path}#{tool.Name}"))} | {tool.Description.Replace("<", "&lt;")} |")).Append("\n\n");
+        if (path == "agent init")
+            page.Append("The file each harness's configuration is written to, relative to the directory:\n\n| Harness | File |\n| --- | --- |\n").AppendJoin('\n', AgentHarness.All.Select(harness =>
+                $"| `{harness.Name}`{Since.Mark(Item($"{path}#{harness.Name}"))} | `{harness.File}` |")).Append("\n\n");
         foreach (var subcommand in subcommands) Section(page, subcommand, $"{path} {subcommand.Name}", level + 1);
     }
 

@@ -9,9 +9,13 @@ public sealed class CompletionTests
 {
     [Theory]
     [InlineData("isoplane de", "dev")]
+    [InlineData("isoplane bu", "bundle")]
+    [InlineData("isoplane bundle --out", "--output")]
     [InlineData("isoplane dev --no-w", "--no-watch")]
     [InlineData("isoplane dev --launch-", "--launch-profile")]
     [InlineData("isoplane cache ", "clean")]
+    [InlineData("isoplane agent ", "init")]
+    [InlineData("isoplane agent init --harness c", "claude-code")]
     [InlineData("isoplane telemetry ", "status")]
     [InlineData("isoplane setup --so", "--source")]
     [InlineData("isoplane completions p", "powershell")]

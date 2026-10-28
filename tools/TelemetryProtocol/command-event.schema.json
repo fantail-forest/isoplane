@@ -116,6 +116,7 @@
         "cache",
         "bundle",
         "prepare-runtime",
+        "agent",
         "unknown"
       ]
     },

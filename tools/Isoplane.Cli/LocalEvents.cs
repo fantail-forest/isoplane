@@ -23,6 +23,7 @@ internal static class LocalEvents
         else if (kind == "debugger_detached") output($"  debugger detached; {message["app"]} continues at {message["url"]}. Press Ctrl+C to stop.");
         else if (kind == "reload_pending") output("  rebuilt application; changes apply after the current request completes.");
         else if (kind == "reload_failed") errors($"isoplane: reload failed; keeping the last working app: {message["detail"]}");
+        else if (kind == "build_failed") errors($"isoplane: rebuild failed; keeping the last working application. Edit the source to retry.\n{message["detail"]}");
         else output($"  {kind} {message["app"]} at {message["url"]} (local guest execution)");
     }
 

@@ -50,5 +50,8 @@ it before changing the project.
 - The Isoplane SDK writes skills for the SDK version in use into
   `.agents/skills/` when the project builds. They hold the detailed rules and
   the reference pages. Commit them.
+- `isoplane agent init --harness <name>` registers Isoplane's MCP server with
+  a coding agent, so that it can run the application and read its logs through
+  tools; `isoplane agent init --help` names the agents it knows.
 - Documentation: https://isoplane.dev/docs/. Append `.md` to a page's URL to
   read it as markdown.

@@ -1,5 +1,3 @@
-using Isoplane.Native;
-
 namespace Isoplane.Cli;
 
 internal static class Development
@@ -41,65 +39,8 @@ internal static class Development
             Console.Error.WriteLine("isoplane: isoplane.toml is no longer read; delete it. Development settings come from Properties/launchSettings.json and .NET User Secrets.");
         if (options.Debug)
             return await DebugDevelopment.RunAsync(options, cancellation);
-        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
-        using var changes = options.Watch ? await SourceChanges.CreateAsync(options, lifetime.Token) : null;
-        var build = new PackageBuild(options);
-        var result = await build.BuildAsync(lifetime.Token);
-        if (result != 0)
-            return result;
-        var settings = await DevelopmentSettings.ResolveAsync(options, cancellation);
-        await using var host = new LocalSession(await build.ModuleAsync(lifetime.Token),
-            build.SessionOptions(settings), message => LocalEvents.Write(message, options.Json));
-        using var stopping = lifetime.Token.Register(host.Stop);
-        var exited = host.Completion;
-        try
-        {
-            if (!options.Watch)
-            {
-                await exited;
-                return 0;
-            }
-            await SourceReload.RunAsync(changes!, exited, async token =>
-            {
-                if (await build.BuildAsync(token) != 0)
-                    Console.Error.WriteLine("isoplane: rebuild failed; keeping the last working application. Edit the source to retry.");
-                else
-                    host.Reload(await build.ModuleAsync(token), build.SessionOptions(settings));
-            }, lifetime.Token);
-            return 0;
-        }
-        finally
-        {
-            lifetime.Cancel();
-            host.Stop();
-        }
+        await using var session = await DevelopmentSession.StartAsync(options, message => LocalEvents.Write(message, options.Json), cancellation);
+        await session.Completion;
+        return 0;
     }
-
-    /// <summary>An interpreted project, built as a package for the shared runtime its SDK carries.</summary>
-    private sealed class PackageBuild(DevelopmentOptions options)
-    {
-        private string? runtime;
-
-        internal async Task<int> BuildAsync(CancellationToken cancellation)
-        {
-            var package = new LocalProject(options.Directory).Package;
-            try
-            {
-                Directory.CreateDirectory(Path.GetDirectoryName(package)!);
-                runtime = (await ManagedBundle.CreateAsync(new(options.Directory, options.Configuration, package, options.NoBuild), cancellation)).Module;
-                return 0;
-            }
-            catch (Exception error) when (error is InvalidOperationException or IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
-            {
-                Console.Error.WriteLine($"isoplane: package build failed: {error.Message}");
-                return 1;
-            }
-        }
-
-        internal Task<byte[]> ModuleAsync(CancellationToken cancellation) =>
-            File.ReadAllBytesAsync(runtime ?? throw new InvalidOperationException("The package has not been built."), cancellation);
-
-        internal byte[] SessionOptions(DevelopmentSettings settings) => new LocalProject(options.Directory).SessionOptions(settings);
-    }
-
 }

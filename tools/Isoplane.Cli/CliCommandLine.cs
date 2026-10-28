@@ -41,6 +41,16 @@ internal static class CliCommandLine
         Value(prepare, "--runtime", "SDK tools/runtime directory.").Required = true;
         root.Add(prepare);
         root.Add(new Command("doctor", "Check this machine's .NET SDK, native library and templates."));
+        var init = new Command("init", "Register the Isoplane MCP server in a coding agent's project configuration.");
+        var harness = new Option<string[]>("--harness") { Description = $"The coding agent to configure; repeat for several: {string.Join(", ", AgentHarness.Names)}.", Required = true, AllowMultipleArgumentsPerToken = true };
+        harness.AcceptOnlyFromAmong(AgentHarness.Names);
+        init.Add(harness);
+        Value(init, "--directory", "Directory whose configuration is written (default: current directory), usually the repository root.");
+        root.Add(new Command("agent", "Connect a coding agent to this machine's Isoplane tools.")
+        {
+            init,
+            new Command("mcp", "Serve the Isoplane MCP server on standard input and output, for a coding agent to start.")
+        });
         var bundle = new Command("bundle", "Build a managed application archive.");
         Project(bundle);
         Value(bundle, "--configuration", "Build configuration (default: Release).");

@@ -62,6 +62,9 @@ for the packages this project uses, as of the SDK version that wrote them.
   `dotnet test --filter "Category!=Sandbox"` runs only the unit tests.
 - `isoplane doctor --json` checks the machine's prerequisites when a build or
   run fails for an unclear reason.
+- `isoplane agent init --harness <name>` registers Isoplane's MCP server with
+  a coding agent, which then runs, watches and stops the application and reads
+  its events through tools instead of a terminal.
 - `references/sdk/reference/cli.md` lists every command and option.
 
 ## Documentation

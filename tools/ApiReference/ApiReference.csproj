@@ -25,6 +25,8 @@
     <Compile Include="../BuildProtocol/BuildDiagnostics.cs" Link="BuildDiagnostics.cs" />
     <Compile Include="../Isoplane.Cli/TelemetryVariables.cs" Link="TelemetryVariables.cs" />
     <Compile Include="../Isoplane.Cli/CliCommandLine.cs" Link="CliCommandLine.cs" />
+    <Compile Include="../Isoplane.Cli/AgentHarness.cs" Link="AgentHarness.cs" />
+    <Compile Include="../Isoplane.Cli/AgentToolCatalogue.cs" Link="AgentToolCatalogue.cs" />
     <Compile Include="../Isoplane.Cli/ShellCompletions.cs" Link="ShellCompletions.cs" />
     <EmbeddedResource Include="../TelemetryProtocol/command-event.schema.json" LogicalName="command-event.schema.json" />
     <EmbeddedResource Include="../TelemetryProtocol/installation-event.schema.json" LogicalName="installation-event.schema.json" />
