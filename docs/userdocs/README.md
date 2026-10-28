@@ -132,14 +132,10 @@ sight and multiply load on the server. The embedding provider is the least
 dependable link, so a query it fails to embed within three seconds is asked
 again by keyword alone, answered uncached and logged with `mode: keyword`.
 
-Configuration lives in `search/.env`, which Git ignores:
-
-```sh
-DOCS_SEARCH_KEY=                 # the search-only key value; also the Worker's
-                                 # DOCS_SEARCH_KEY secret (wrangler secret put)
-DOCS_SEARCH_EMBEDDING_API_KEY=   # Fireworks key, for the model in search/scraper.config.json
-# DOCS_SEARCH_EMBEDDINGS=off     # keyword-only, for a build without a provider
-```
+Configuration lives in `search/.env`, which Git ignores; copy
+`search/.env.example` and fill it in. The Worker's own settings are in
+`wrangler.jsonc`, and its one secret is set with `wrangler secret put`; it
+needs no `.dev.vars`.
 
 The server's own admin key is a Fly secret, `TYPESENSE_API_KEY`, set once and
 never used by the site; `DOCS_SEARCH_KEY` is a Fly secret as well, for nginx to
