@@ -70,14 +70,14 @@ public sealed class InspectManagedAssemblies : Microsoft.Build.Utilities.Task
                     if (diagnostic.Code is "ISOPLANE1002" or "ISOPLANE1003" && sourceAnalyzed.Contains(path)) continue;
                     if (ContainsCode(WarningsAsErrors, diagnostic.Code)
                         || (TreatWarningsAsErrors && !ContainsCode(WarningsNotAsErrors, diagnostic.Code)))
-                        Log.LogError(null, diagnostic.Code, null, path, 0, 0, 0, 0, "{0}", diagnostic.Message);
+                        Log.LogError(null, diagnostic.Code, null, ErrorCodeReference.Link(diagnostic.Code), path, 0, 0, 0, 0, "{0}", diagnostic.Message);
                     else
-                        Log.LogWarning(null, diagnostic.Code, null, path, 0, 0, 0, 0, "{0}", diagnostic.Message);
+                        Log.LogWarning(null, diagnostic.Code, null, ErrorCodeReference.Link(diagnostic.Code), path, 0, 0, 0, 0, "{0}", diagnostic.Message);
                 }
             }
             catch (Exception error) when (error is AssemblyInputException or IOException or UnauthorizedAccessException)
             {
-                Log.LogError(null, BuildDiagnostics.UnreadableAssembly.Code, null, path, 0, 0, 0, 0, "{0}", error.Message);
+                Log.LogError(null, BuildDiagnostics.UnreadableAssembly.Code, null, ErrorCodeReference.Link(BuildDiagnostics.UnreadableAssembly.Code), path, 0, 0, 0, 0, "{0}", error.Message);
             }
         }
         foreach (var path in EntryAssembly.Select(item => item.GetMetadata("FullPath")))
@@ -85,7 +85,7 @@ public sealed class InspectManagedAssemblies : Microsoft.Build.Utilities.Task
             try { ApplicationEntryDiscovery.Discover(path); }
             catch (ApplicationEntryException error)
             {
-                Log.LogError(null, ApplicationEntryException.Code, null, path, 0, 0, 0, 0, "{0}", error.Message);
+                Log.LogError(null, ApplicationEntryException.Code, null, ErrorCodeReference.Link(ApplicationEntryException.Code), path, 0, 0, 0, 0, "{0}", error.Message);
             }
         }
         return !Log.HasLoggedErrors;

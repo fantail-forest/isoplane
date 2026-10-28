@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Collections.Immutable;
+using Isoplane.Build;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
 using Microsoft.CodeAnalysis.Operations;
@@ -16,11 +17,11 @@ public sealed class BlockingCallAnalyzer : DiagnosticAnalyzer
 {
     internal static readonly DiagnosticDescriptor StartsThread = new("ISOPLANE1002", "A guest application cannot start a thread",
         "'{0}' starts an operating-system thread, which a guest application cannot do. Use asynchronous .NET APIs for concurrent I/O.",
-        "Isoplane", DiagnosticSeverity.Warning, isEnabledByDefault: true);
+        "Isoplane", DiagnosticSeverity.Warning, isEnabledByDefault: true, helpLinkUri: ErrorCodeReference.Link("ISOPLANE1002"));
 
     internal static readonly DiagnosticDescriptor Waits = new("ISOPLANE1003", "A guest application cannot wait synchronously",
         "'{0}' can wait synchronously, and a guest cannot block waiting for unfinished work. Use await and asynchronous wait APIs.",
-        "Isoplane", DiagnosticSeverity.Warning, isEnabledByDefault: true);
+        "Isoplane", DiagnosticSeverity.Warning, isEnabledByDefault: true, helpLinkUri: ErrorCodeReference.Link("ISOPLANE1003"));
 
     /// <inheritdoc />
     public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics => ImmutableArray.Create(StartsThread, Waits);

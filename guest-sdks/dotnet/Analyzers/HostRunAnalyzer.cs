@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using Isoplane.Build;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
 using Microsoft.CodeAnalysis.Operations;
@@ -15,11 +16,11 @@ public sealed class HostRunAnalyzer : DiagnosticAnalyzer
 {
     internal static readonly DiagnosticDescriptor Blocks = new("ISOPLANE1020", "Run blocks until the application stops",
         "'{0}' blocks until the application stops, which an Isoplane application cannot do: it returns to the platform while it waits for requests. Await RunAsync instead.",
-        "Isoplane", DiagnosticSeverity.Error, isEnabledByDefault: true);
+        "Isoplane", DiagnosticSeverity.Error, isEnabledByDefault: true, helpLinkUri: ErrorCodeReference.Link("ISOPLANE1020"));
 
     internal static readonly DiagnosticDescriptor NotAwaited = new("ISOPLANE1021", "RunAsync must be awaited",
         "The task RunAsync returns must be awaited: an entry point that returns or blocks while the application runs stops it from serving requests",
-        "Isoplane", DiagnosticSeverity.Error, isEnabledByDefault: true);
+        "Isoplane", DiagnosticSeverity.Error, isEnabledByDefault: true, helpLinkUri: ErrorCodeReference.Link("ISOPLANE1021"));
 
     /// <inheritdoc />
     public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics => ImmutableArray.Create(Blocks, NotAwaited);

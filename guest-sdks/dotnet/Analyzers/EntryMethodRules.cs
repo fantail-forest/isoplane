@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using Isoplane.Build;
 using Microsoft.CodeAnalysis;
 
 namespace Isoplane.Analyzers;
@@ -44,5 +45,5 @@ internal static class EntryMethodRules
         MustBeStatic, HandlerReturn, HandlerParameters, LifecycleReturn, LifecycleParameters, Generic, Overloaded, Duplicate, NeverCalled);
 
     private static DiagnosticDescriptor Rule(string id, string title, string message) =>
-        new(id, title, message, Category, DiagnosticSeverity.Error, isEnabledByDefault: true);
+        new(id, title, message, Category, DiagnosticSeverity.Error, isEnabledByDefault: true, helpLinkUri: ErrorCodeReference.Link(id));
 }
