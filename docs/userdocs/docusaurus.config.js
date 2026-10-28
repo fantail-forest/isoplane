@@ -100,6 +100,7 @@ export default {
       {type: 'doc', docId: 'index', label: 'Docs', position: 'left'},
       {type: 'custom-siteLink', href: '/blog', label: 'Blog', position: 'left'},
       {type: 'docsVersionDropdown', position: 'right'},
+      {href: 'https://github.com/fantail-forest/isoplane', label: 'GitHub', position: 'right'},
       {type: 'doc', docId: 'quickstart', label: 'Get started', position: 'right',
         className: 'navbar__cta'},
     ]},
