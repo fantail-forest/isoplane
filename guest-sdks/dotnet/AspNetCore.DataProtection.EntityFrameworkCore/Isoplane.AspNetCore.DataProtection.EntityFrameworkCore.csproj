@@ -14,6 +14,9 @@
     <PackageReference Include="Microsoft.AspNetCore.DataProtection.EntityFrameworkCore" Version="10.0.13" />
     <ProjectReference Include="../AspNetCore/Isoplane.AspNetCore.csproj" />
     <None Update="PackageReadme.md" Pack="true" PackagePath="/" />
+    <None Include="buildTransitive/**" Pack="true" PackagePath="buildTransitive/" />
   </ItemGroup>
   <Import Project="../../../licenses/SdkPackage.props" />
+  <PropertyGroup><IsoplaneSkillPart>dataprotection-efcore</IsoplaneSkillPart></PropertyGroup>
+  <Import Project="../Skill/Pack.targets" />
 </Project>

@@ -8,7 +8,8 @@ mdx:
 
 The Isoplane SDK reports problems it finds in an application under codes that
 start with `ISOPLANE`. Most appear in the editor as you type, on the line that
-causes them, and all of them appear when the application builds. The codes,
+causes them, and all of them appear when the application builds. In an editor, the
+code links to its section on this page. The codes,
 severities and titles on this page are generated from the SDK, for the source version used to build this documentation.
 
 Codes marked **error** are requirements: the application cannot run until they

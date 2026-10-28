@@ -32,6 +32,7 @@ Use these when you have a particular task to complete:
 - [Supply local development settings](how-to/local-settings.md).
 - [Connect to PostgreSQL](how-to/connect-postgresql.md).
 - [Add a sandbox integration test](how-to/test-an-application.md).
+- [Work with an AI coding agent](how-to/work-with-an-ai-coding-agent.md).
 - [Troubleshoot local development](how-to/troubleshooting.md).
 
 ## Reference

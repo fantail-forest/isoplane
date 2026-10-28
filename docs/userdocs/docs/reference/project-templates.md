@@ -8,7 +8,7 @@ mdx:
 
 The `dotnet new` templates that create an Isoplane application or add tests to one. `isoplane setup` installs them. The names, descriptions and options on this page are generated from the templates themselves, for the source version used to build this documentation.
 
-Every file in a generated project is commented, and an application's `README.md` says what each file is for and how to make common changes. That README is the guide to a template's contents. This page helps you choose a template and create a project from it.
+Every file in a generated project is commented, and an application's `README.md` says what each file is for and how to make common changes. That README is the guide to a template's contents. An application's `AGENTS.md` gives an AI coding agent the commands and the rules of the sandbox; [Work with an AI coding agent](../how-to/work-with-an-ai-coding-agent.md) describes what else a project gives one. This page helps you choose a template and create a project from it.
 
 ## Choosing a template
 

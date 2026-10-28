@@ -28,6 +28,19 @@
     <!-- <IsoplaneWarnOnNativeImports>true</IsoplaneWarnOnNativeImports> -->
     <!-- Fail the build on these warnings: -->
     <!-- <WarningsAsErrors>$(WarningsAsErrors);ISOPLANE1002;ISOPLANE1003</WarningsAsErrors> -->
+
+    <!--
+      The build writes the `isoplane` skill for AI coding agents, with the rules and reference
+      pages for the Isoplane packages this project uses, into `.agents/skills/` and `.claude/skills/`
+      at the repository root; `.agents/skills/isoplane/SKILL.md` explains it. Remove the comment
+      markers from a line below to change that.
+    -->
+    <!-- Do not write the skill: -->
+    <!-- <IsoplaneWriteAgentSkill>false</IsoplaneWriteAgentSkill> -->
+    <!-- Write it to other skills directories; the first holds the files, the others link to it: -->
+    <!-- <IsoplaneAgentSkillDirectories>.agents/skills;.claude/skills</IsoplaneAgentSkillDirectories> -->
+    <!-- Write it under a directory other than the nearest one with a .git entry or a solution file: -->
+    <!-- <IsoplaneAgentSkillRoot>$(MSBuildProjectDirectory)/..</IsoplaneAgentSkillRoot> -->
   </PropertyGroup>
 
   <!--

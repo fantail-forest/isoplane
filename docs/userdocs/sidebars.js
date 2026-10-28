@@ -10,6 +10,7 @@ export default {
       'how-to/debug-an-application', 'how-to/local-settings', 'how-to/connect-postgresql', 'how-to/keep-data-protection-keys',
       'how-to/find-and-fix-blocking-calls', 'how-to/run-work-on-a-schedule', 'how-to/handle-uploads-and-generated-files',
       'how-to/test-an-application',
+      'how-to/work-with-an-ai-coding-agent',
       'how-to/troubleshooting',
     ]},
     {type: 'category', label: 'Concepts', items: [

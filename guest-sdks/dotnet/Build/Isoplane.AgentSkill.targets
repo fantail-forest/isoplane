@@ -1,0 +1,33 @@
+<Project>
+  <!-- The comment above each property is its description in the generated project settings reference. -->
+  <PropertyGroup>
+    <!--
+      Set to `false` to stop the build writing the `isoplane` agent skill, the rules and reference
+      pages a coding agent needs for the SDK packages the project uses, into the repository.
+    -->
+    <IsoplaneWriteAgentSkill Condition="'$(IsoplaneWriteAgentSkill)' == ''">true</IsoplaneWriteAgentSkill>
+    <!--
+      The skills directories the agent skill is written to, relative to `IsoplaneAgentSkillRoot`
+      and separated by semicolons. The first holds the files; each other one links to it, or holds
+      a copy where the platform cannot make the link. A directory that is already a link is left as
+      it is.
+    -->
+    <IsoplaneAgentSkillDirectories Condition="'$(IsoplaneAgentSkillDirectories)' == ''">.agents/skills;.claude/skills</IsoplaneAgentSkillDirectories>
+    <!--
+      The directory the skills directories are created under, where a coding agent opens the
+      repository. Empty selects the nearest directory above the project holding a `.git` entry or
+      a solution file, else the project directory.
+    -->
+    <IsoplaneAgentSkillRoot Condition="'$(IsoplaneAgentSkillRoot)' == ''"></IsoplaneAgentSkillRoot>
+  </PropertyGroup>
+  <UsingTask TaskName="Isoplane.Conformance.WriteAgentSkill"
+             AssemblyFile="$(MSBuildThisFileDirectory)../Conformance/Isoplane.Conformance.dll" />
+  <!-- After the build, not before it: the skill describes the SDK the project just built with,
+       and a failing build has more pressing output. -->
+  <Target Name="IsoplaneWriteAgentSkill" AfterTargets="Build"
+          Condition="'$(IsoplaneWriteAgentSkill)' == 'true' AND '$(DesignTimeBuild)' != 'true' AND '$(WasmBuildingForNestedPublish)' != 'true' AND '@(IsoplaneAgentSkillBase)' != ''">
+    <Isoplane.Conformance.WriteAgentSkill ProjectDirectory="$(MSBuildProjectDirectory)" Root="$(IsoplaneAgentSkillRoot)"
+        Directories="$(IsoplaneAgentSkillDirectories)" Base="@(IsoplaneAgentSkillBase)" Parts="@(IsoplaneAgentSkillPart)"
+        SdkVersion="$(IsoplaneSdkVersion)" ManifestFile="$(IntermediateOutputPath)isoplane-agent-skill.txt" />
+  </Target>
+</Project>

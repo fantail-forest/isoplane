@@ -19,7 +19,7 @@
                       GlobalPropertiesToRemove="RuntimeIdentifier;RuntimeIdentifiers;PublishAot;SelfContained" />
     <None Update="PackageReadme.md" Pack="true" PackagePath="/" />
     <None Include="Sdk/**" Exclude="Sdk/Sdk.props" Pack="true" PackagePath="Sdk/" />
-    <None Include="../Build/Isoplane.ManagedBundle.*;../Build/Isoplane.Conformance.targets;../Build/Isoplane.Run.targets" Pack="true" PackagePath="tools/Build/" />
+    <None Include="../Build/Isoplane.ManagedBundle.*;../Build/Isoplane.Conformance.targets;../Build/Isoplane.Run.targets;../Build/Isoplane.AgentSkill.targets" Pack="true" PackagePath="tools/Build/" />
     <None Include="buildTransitive/**" Pack="true" PackagePath="buildTransitive/" />
   </ItemGroup>
   <Target Name="StampPackagedSdkVersion" BeforeTargets="_GetPackageFiles">
@@ -36,4 +36,6 @@
   </Target>
   <Import Project="../../../licenses/SdkPackage.props" />
   <Import Project="../Conformance/Pack.targets" />
+  <PropertyGroup><IsoplaneSkillPart>aspnetcore</IsoplaneSkillPart></PropertyGroup>
+  <Import Project="../Skill/Pack.targets" />
 </Project>

@@ -40,6 +40,24 @@ Default: `false`.
 
 Set to `true` to report each native import an inspected assembly declares, as [`ISOPLANE1001`](error-codes.md#isoplane1001), except imports of functions the runtime provides, such as SQLite's. It is off by default because a declaration alone does not show that the native call will be reached.
 
+### `IsoplaneWriteAgentSkill` :since[next]
+
+Default: `true`.
+
+Set to `false` to stop the build writing the `isoplane` agent skill, the rules and reference pages a coding agent needs for the SDK packages the project uses, into the repository.
+
+### `IsoplaneAgentSkillDirectories` :since[next]
+
+Default: `.agents/skills;.claude/skills`.
+
+The skills directories the agent skill is written to, relative to `IsoplaneAgentSkillRoot` and separated by semicolons. The first holds the files; each other one links to it, or holds a copy where the platform cannot make the link. A directory that is already a link is left as it is.
+
+### `IsoplaneAgentSkillRoot` :since[next]
+
+Default: empty.
+
+The directory the skills directories are created under, where a coding agent opens the repository. Empty selects the nearest directory above the project holding a `.git` entry or a solution file, else the project directory.
+
 ## Standard .NET properties
 
 The warnings these properties produce also follow the ordinary .NET properties `NoWarn`, `WarningsAsErrors`, `TreatWarningsAsErrors` and `WarningsNotAsErrors`. [Control compatibility warnings](../how-to/run-and-rebuild.md#control-compatibility-warnings) shows how to use them, and [Error codes](error-codes.md) explains each warning.

@@ -11,5 +11,7 @@
     <Version>0.1.0-preview.4</Version>
     <RepositoryUrl>https://github.com/fantail-forest/isoplane</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
+    <!-- Probes and fixtures built with the checkout's own SDK would otherwise write the agent skill into this repository. -->
+    <IsoplaneWriteAgentSkill>false</IsoplaneWriteAgentSkill>
   </PropertyGroup>
 </Project>

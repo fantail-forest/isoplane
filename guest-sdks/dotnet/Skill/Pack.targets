@@ -1,0 +1,19 @@
+<Project>
+  <!-- Packs a package's part of the isoplane agent skill, named by IsoplaneSkillPart, from the
+       directory tools/ApiReference laid out; task managed:skill writes it and passes the directory
+       to pack. The Isoplane.Sdk package also packs the skill's base. -->
+  <Target Name="IsoplanePackSkill" BeforeTargets="_GetPackageFiles">
+    <PropertyGroup>
+      <_IsoplaneSkillDirectory>$([MSBuild]::EnsureTrailingSlash('$(IsoplaneSkillDirectory)'))</_IsoplaneSkillDirectory>
+      <_IsoplaneSkillPartDirectory>$(_IsoplaneSkillDirectory)references/$(IsoplaneSkillPart)/</_IsoplaneSkillPartDirectory>
+    </PropertyGroup>
+    <Error Condition="'$(IsoplaneSkillPart)' == ''" Text="Set IsoplaneSkillPart to the name of this package's part of the agent skill." />
+    <Error Condition="'$(IsoplaneSkillDirectory)' == '' OR !Exists('$(_IsoplaneSkillPartDirectory)README.md')"
+           Text="Pack with -p:IsoplaneSkillDirectory naming the output of tools/ApiReference skill-references (task managed:skill), which holds references/$(IsoplaneSkillPart)/; without it the package cannot write its part of the agent skill." />
+    <ItemGroup>
+      <_IsoplaneSkillFile Include="$(_IsoplaneSkillPartDirectory)**" />
+      <None Include="@(_IsoplaneSkillFile)" Pack="true" PackagePath="tools/skill/references/$(IsoplaneSkillPart)/%(RecursiveDir)" />
+      <None Include="$(_IsoplaneSkillDirectory)SKILL.md" Pack="true" PackagePath="tools/skill/" Condition="'$(IsoplaneSkillPart)' == 'sdk'" />
+    </ItemGroup>
+  </Target>
+</Project>

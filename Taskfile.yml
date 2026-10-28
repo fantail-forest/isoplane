@@ -19,6 +19,7 @@ vars:
   MANAGED: '{{.ROOT_DIR}}/.build/clr-anycpu/managed'
   HOT_RELOAD_ARTIFACTS: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/hotreload-fixture'
   PACKAGES: '{{.ROOT_DIR}}/.build/clr-anycpu/packages'
+  SKILL: '{{.ROOT_DIR}}/.build/clr-anycpu/skill'
   CLI: '{{.MANAGED}}/bin/Isoplane.Cli/release/Isoplane.Cli.dll'
   NATIVE_TARGET: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/native'
   RELEASE_NATIVE_ROOT: '{{.ISOPLANE_RELEASE_NATIVE_ROOT | default (printf "%s/.build" .ROOT_DIR)}}'

@@ -74,18 +74,36 @@ tasks:
       # Windows loads PE images with execute access, including over SMB.
       - 'find "{{.MANAGED}}/bin" "{{.MANAGED}}/publish" -type f -name "*.dll" ! -perm -a=x -exec chmod a+x {} +'
 
+  skill:
+    run: once
+    desc: Lay out the isoplane agent skill the SDK packages carry, from the customer docs
+    deps: [build]
+    sources:
+      - '{{.ROOT_DIR}}/docs/userdocs/docs/**/*'
+      - '{{.ROOT_DIR}}/guest-sdks/dotnet/Skill/**/*'
+      - '{{.ROOT_DIR}}/tools/ApiReference/**/*.cs'
+      - exclude: 'docs/userdocs/docs/**/{obj,bin}/**/*'
+    generates:
+      - '{{.SKILL}}/SKILL.md'
+    cmds:
+      - '"{{.DOTNET}}" run --project tools/ApiReference -c Release -p:IsoplaneManagedOnly=true --artifacts-path "{{.MANAGED}}" -- skill-references --docs docs/userdocs/docs --skill guest-sdks/dotnet/Skill --out "{{.SKILL}}"'
+
   packages:
     run: once
     desc: Pack the prepared managed assemblies and shared runtime
     deps:
       - build
+      - skill
       - template-package
       - ':runtime'
     sources:
+      - '{{.SKILL}}/**/*'
       - '{{.MANAGED}}/bin/{Isoplane.Sdk,Isoplane.AspNetCore,Isoplane.AspNetCore.DataProtection.EntityFrameworkCore,Isoplane.OpenTelemetry,Isoplane.Templates,Isoplane.Testing,Conformance}/release/*'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/Build/**/*'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/MSBuild/**/*'
-      - '{{.ROOT_DIR}}/guest-sdks/dotnet/AspNetCore/{Sdk,buildTransitive}/**/*'
+      - '{{.ROOT_DIR}}/guest-sdks/dotnet/{AspNetCore,OpenTelemetry,AspNetCore.DataProtection.EntityFrameworkCore}/buildTransitive/**/*'
+      - '{{.ROOT_DIR}}/guest-sdks/dotnet/{buildTransitive,Skill}/**/*'
+      - '{{.ROOT_DIR}}/guest-sdks/dotnet/AspNetCore/Sdk/**/*'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/{Isoplane.Sdk,AspNetCore/Isoplane.AspNetCore,AspNetCore.DataProtection.EntityFrameworkCore/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore,OpenTelemetry/Isoplane.OpenTelemetry,Templates/Isoplane.Templates}.csproj'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/{PackageReadme.md,AspNetCore/README.md,AspNetCore.DataProtection.EntityFrameworkCore/PackageReadme.md,OpenTelemetry/PackageReadme.md}'
       - '{{.ROOT_DIR}}/tools/Isoplane.Testing/{Isoplane.Testing.csproj,README.md}'
@@ -143,7 +161,7 @@ tasks:
     internal: true
     label: 'pack:{{.PROJECT}}'
     cmds:
-      - '"{{.DOTNET}}" pack "{{.PROJECT}}" -c Release --no-build --artifacts-path "{{.MANAGED}}" -o "{{.PACKAGES}}" -p:IsoplaneManagedOnly=true -p:UseAppHost=false -p:IsoplaneRuntimeModuleDirectory="{{.MODULES}}"'
+      - '"{{.DOTNET}}" pack "{{.PROJECT}}" -c Release --no-build --artifacts-path "{{.MANAGED}}" -o "{{.PACKAGES}}" -p:IsoplaneManagedOnly=true -p:UseAppHost=false -p:IsoplaneRuntimeModuleDirectory="{{.MODULES}}" -p:IsoplaneSkillDirectory="{{.SKILL}}"'
 
 
   native-packages:

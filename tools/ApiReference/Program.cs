@@ -17,6 +17,12 @@ var stamp = new Option<string?>("--stamp") { Description = "The release being sn
 var line = new Option<string?>("--line") { Description = "The release line of --stamp, such as 0.1. A release on a new line becomes its first." };
 var root = new RootCommand("Generates and checks the customer reference pages.") { directory, record, check, stamp, line };
 root.SetAction(parsed => Run(parsed.GetValue(directory)!, parsed.GetValue(record)!, parsed.GetValue(check), parsed.GetValue(stamp), parsed.GetValue(line)));
+var docs = new Option<DirectoryInfo>("--docs") { Description = "The docs directory of the customer site, holding the current reference pages.", Required = true };
+var skill = new Option<DirectoryInfo>("--skill") { Description = "The directory holding the skill's SKILL.md and the sections/ of its parts.", Required = true };
+var output = new Option<DirectoryInfo>("--out") { Description = "The directory to lay the skill out in, as the SDK packages carry it. Replaced.", Required = true };
+var references = new Command("skill-references", "Writes the isoplane agent skill's reference files from the customer docs, one part per SDK package.") { docs, skill, output };
+references.SetAction(parsed => SkillReferences.Export(parsed.GetValue(docs)!, parsed.GetValue(skill)!, parsed.GetValue(output)!));
+root.Add(references);
 return root.Parse(args).Invoke();
 
 static int Run(DirectoryInfo destination, FileInfo recordFile, bool check, string? stamp, string? line)
@@ -236,20 +242,24 @@ internal static class Reference
     }
 
     /// <summary>
-    /// One section for each property the SDK's build file gives a default, described by the comment above it there.
+    /// One section for each property the SDK's build files give a default, described by the comment above it there.
     /// </summary>
     private static string Settings()
     {
-        using var targets = Resource("Isoplane.Conformance.targets");
         var settings = new StringBuilder();
-        foreach (var property in XDocument.Load(targets).Root!.Elements("PropertyGroup").First().Elements())
+        foreach (var file in new[] { "Isoplane.Conformance.targets", "Isoplane.AgentSkill.targets" })
         {
-            var name = property.Name.LocalName;
-            if (property.PreviousNode is not XComment comment)
-                throw new InvalidOperationException($"{name} has no comment describing it in Isoplane.Conformance.targets.");
-            var description = string.Join(' ', comment.Value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
-            description = ErrorCode.Replace(description, code => $"[`{code.Value}`](error-codes.md#{code.Value.ToLowerInvariant()})");
-            settings.Append($"### `{name}`{Since.Mark("project-settings#" + name)}\n\nDefault: `{property.Value}`.\n\n{description}\n\n");
+            using var targets = Resource(file);
+            foreach (var property in XDocument.Load(targets).Root!.Elements("PropertyGroup").First().Elements())
+            {
+                var name = property.Name.LocalName;
+                if (property.PreviousNode is not XComment comment)
+                    throw new InvalidOperationException($"{name} has no comment describing it in {file}.");
+                var description = string.Join(' ', comment.Value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+                description = ErrorCode.Replace(description, code => $"[`{code.Value}`](error-codes.md#{code.Value.ToLowerInvariant()})");
+                var initial = property.Value.Length == 0 ? "empty" : $"`{property.Value}`";
+                settings.Append($"### `{name}`{Since.Mark("project-settings#" + name)}\n\nDefault: {initial}.\n\n{description}\n\n");
+            }
         }
         return settings.ToString().TrimEnd();
     }
@@ -628,7 +638,7 @@ mdx:
 
 The `dotnet new` templates that create an Isoplane application or add tests to one. `isoplane setup` installs them. The names, descriptions and options on this page are generated from the templates themselves, for the source version used to build this documentation.
 
-Every file in a generated project is commented, and an application's `README.md` says what each file is for and how to make common changes. That README is the guide to a template's contents. This page helps you choose a template and create a project from it.
+Every file in a generated project is commented, and an application's `README.md` says what each file is for and how to make common changes. That README is the guide to a template's contents. An application's `AGENTS.md` gives an AI coding agent the commands and the rules of the sandbox; [Work with an AI coding agent](../how-to/work-with-an-ai-coding-agent.md) describes what else a project gives one. This page helps you choose a template and create a project from it.
 
 ## Choosing a template
 

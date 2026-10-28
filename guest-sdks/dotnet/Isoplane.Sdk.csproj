@@ -42,7 +42,8 @@
                       GlobalPropertiesToRemove="RuntimeIdentifier;RuntimeIdentifiers;PublishAot;SelfContained" />
     <None Update="PackageReadme.md" Pack="true" PackagePath="/" />
     <None Include="MSBuild/Sdk.targets" Pack="true" PackagePath="Sdk/" />
-    <None Include="Build/Isoplane.ManagedBundle.*;Build/Isoplane.Conformance.targets;Build/Isoplane.Run.targets" Pack="true" PackagePath="tools/Build/" />
+    <None Include="Build/Isoplane.ManagedBundle.*;Build/Isoplane.Conformance.targets;Build/Isoplane.Run.targets;Build/Isoplane.AgentSkill.targets" Pack="true" PackagePath="tools/Build/" />
+    <None Include="buildTransitive/**" Pack="true" PackagePath="buildTransitive/" />
   </ItemGroup>
   <!-- The shared runtimes interpreted applications run on, production and
        local-debug. Their directory comes from guest-sdks/dotnet/MonoRuntime/build.sh,
@@ -90,4 +91,6 @@
   <Import Project="../../licenses/SdkPackage.props" />
   <Import Project="Conformance/Pack.targets" />
   <Import Project="Analyzers/Pack.targets" />
+  <PropertyGroup><IsoplaneSkillPart>sdk</IsoplaneSkillPart></PropertyGroup>
+  <Import Project="Skill/Pack.targets" />
 </Project>

@@ -66,7 +66,9 @@ choose the environment while developing.
 ## Check application assumptions
 
 Go through this list once for an existing application. Each item says what to
-look for, how to find it, and what to do about it.
+look for, how to find it, and what to do about it. An AI coding agent can work
+through it too: the first build writes the agent a skill with these pages, as
+[Work with an AI coding agent](work-with-an-ai-coding-agent.md) describes.
 
 - **Blocking calls.** A synchronous wait such as `.Result`, `.Wait()`,
   `Thread.Sleep` or a synchronous database call throws in the sandbox. Build
