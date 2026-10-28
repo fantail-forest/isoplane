@@ -12,6 +12,7 @@ public sealed class HelpTests
     [InlineData("setup", "--help")]
     [InlineData("completions", "--help")]
     [InlineData("cache", "clean", "--help")]
+    [InlineData("bundle", "-h")]
     public async Task Command_help_does_not_require_configuration_or_start_the_command(params string[] arguments)
     {
         var start = new ProcessStartInfo("dotnet")

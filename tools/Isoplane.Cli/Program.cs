@@ -30,7 +30,10 @@ async Task<int> RunAsync()
         return 0;
     }
     var parsed = CliCommandLine.Create().Parse(args.Length == 0 ? ["--help"] : args);
-    if (parsed.Action is System.CommandLine.Help.HelpAction) return await parsed.InvokeAsync();
+    if (parsed.Action is System.CommandLine.Help.HelpAction)
+    {
+        return await parsed.InvokeAsync();
+    }
     if (parsed.Errors.Count > 0)
         throw new ArgumentException(string.Join(Environment.NewLine, parsed.Errors.Select(error => error.Message)));
     if (args[0] == "completions")
