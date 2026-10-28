@@ -12,7 +12,8 @@
            Text="Pack with -p:IsoplaneSkillDirectory naming the output of tools/ApiReference skill-references (task managed:skill), which holds references/$(IsoplaneSkillPart)/; without it the package cannot write its part of the agent skill." />
     <ItemGroup>
       <_IsoplaneSkillFile Include="$(_IsoplaneSkillPartDirectory)**" />
-      <None Include="@(_IsoplaneSkillFile)" Pack="true" PackagePath="tools/skill/references/$(IsoplaneSkillPart)/%(RecursiveDir)" />
+      <!-- A directory package path keeps the files' own subdirectories. -->
+      <None Include="@(_IsoplaneSkillFile)" Pack="true" PackagePath="tools/skill/references/$(IsoplaneSkillPart)/" />
       <None Include="$(_IsoplaneSkillDirectory)SKILL.md" Pack="true" PackagePath="tools/skill/" Condition="'$(IsoplaneSkillPart)' == 'sdk'" />
     </ItemGroup>
   </Target>

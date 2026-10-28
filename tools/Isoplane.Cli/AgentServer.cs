@@ -16,7 +16,9 @@ internal static class AgentServer
         var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings { DisableDefaults = true });
         builder.Logging.AddConsole(console => console.LogToStandardErrorThreshold = LogLevel.Trace);
         builder.Logging.SetMinimumLevel(LogLevel.Warning);
+        // The registry stops every application still running when the host shuts down.
         builder.Services.AddSingleton<AgentSessions>();
+        builder.Services.AddHostedService(services => services.GetRequiredService<AgentSessions>());
         builder.Services
             .AddMcpServer(options =>
             {

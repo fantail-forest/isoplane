@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text.Json.Nodes;
+using Microsoft.Extensions.Hosting;
 
 namespace Isoplane.Cli;
 
@@ -49,7 +50,7 @@ internal sealed record AgentSession(string Id, string ProjectDirectory, string A
 }
 
 /// <summary>The sessions the agent server has started and not yet stopped; all stop when the server does.</summary>
-internal sealed class AgentSessions : IAsyncDisposable
+internal sealed class AgentSessions : IHostedService
 {
     private readonly ConcurrentDictionary<string, AgentSession> sessions = new(StringComparer.Ordinal);
 
@@ -94,7 +95,11 @@ internal sealed class AgentSessions : IAsyncDisposable
         return true;
     }
 
-    public async ValueTask DisposeAsync()
+    /// <inheritdoc />
+    public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    /// <inheritdoc />
+    public async Task StopAsync(CancellationToken cancellationToken)
     {
         foreach (var id in sessions.Keys) await StopAsync(id);
     }
