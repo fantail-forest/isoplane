@@ -8,7 +8,12 @@ namespace Isoplane.Cli.Tests;
 public sealed class CompletionTests
 {
     [Theory]
+    [InlineData("isoplane de", "dev")]
+    [InlineData("isoplane dev --no-w", "--no-watch")]
     [InlineData("isoplane dev --launch-", "--launch-profile")]
+    [InlineData("isoplane cache ", "clean")]
+    [InlineData("isoplane telemetry ", "status")]
+    [InlineData("isoplane doctor module.wasm --guest-", "--guest-memory-bytes")]
     [InlineData("isoplane completions p", "powershell")]
     public void suggestions_come_from_the_command_parser(string line, string expected)
     {
@@ -18,6 +23,7 @@ public sealed class CompletionTests
     [Fact]
     public void suggestions_respect_command_scope_and_hide_internal_commands_and_options()
     {
+        Assert.DoesNotContain("--no-watch", ShellCompletions.Candidates("isoplane setup --"));
         Assert.DoesNotContain("--debug-launch-endpoint", ShellCompletions.Candidates("isoplane dev --"));
         Assert.DoesNotContain("complete", ShellCompletions.Candidates("isoplane "));
     }
@@ -38,9 +44,9 @@ public sealed class CompletionTests
     [Fact]
     public async Task the_cli_returns_only_candidates_without_initializing_telemetry_or_configuration()
     {
-        var result = await RunAsync("complete", "isoplane bundle --out");
+        var result = await RunAsync("complete", "isoplane dev --no-w");
         Assert.Equal(0, result.ExitCode);
-        Assert.Equal("--output", result.Output.Trim());
+        Assert.Equal("--no-watch", result.Output.Trim());
         Assert.Equal("", result.Error);
     }
 

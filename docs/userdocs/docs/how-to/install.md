@@ -180,7 +180,7 @@ terminal:
 isoplane completions powershell | Out-String | Invoke-Expression
 ```
 
-For example, type `isoplane deploy --bu` and press Tab to complete `--bundle`.
+For example, type `isoplane dev --no-w` and press Tab to complete `--no-watch`.
 The script does not suggest remote application names or team names. Remove the
 line from your shell profile, or the fish completion file, to disable it.
 
