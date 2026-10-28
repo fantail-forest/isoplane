@@ -25,6 +25,20 @@ The site is served at `https://isoplane.dev/docs/` by its own Cloudflare Worker,
 
 The site permits indexing and generates a sitemap at `/docs/sitemap.xml`.
 
+Every page is also built as Markdown beside its HTML, at the page's route plus
+`.md` (`index.md` for the docs root and a version root), by the plugin in
+`src/plugins/markdown-pages`. It renders the page's source after the build:
+imports, platform blocks, partials, admonitions and release markers become
+plain text, and links become absolute. The Worker script, `worker/index.mjs`,
+serves that file to a request whose `Accept` header ranks `text/markdown`
+above `text/html`, with `Vary: Accept` and `X-Robots-Tag: noindex`; other
+requests get the asset as built, HTML with `Vary: Accept`. Each page links its
+Markdown form from its head and from a row of actions above its title.
+`static/llms.txt`, served at `/docs/llms.txt`, states these conventions for an
+agent and points at the sitemap. `pnpm test` runs the unit tests of the
+negotiation and the conversion; a local server has no Markdown pages, since the
+plugin only runs in a build.
+
 The site takes its palette from `docs/userdocs/src/css/tokens.css` and uses
 root-relative addresses for its wordmark and Blog links.
 The site honors the visitor’s light or dark and operating-system preferences.

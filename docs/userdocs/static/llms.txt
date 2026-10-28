@@ -1,0 +1,11 @@
+# Isoplane documentation
+
+> Customer documentation for building and running .NET applications in Isoplane's WebAssembly sandbox, published at https://isoplane.dev/docs/.
+
+Every page is available as Markdown. Append `.md` to a page's address (https://isoplane.dev/docs/quickstart is https://isoplane.dev/docs/quickstart.md; a directory address such as https://isoplane.dev/docs/ is https://isoplane.dev/docs/index.md), or request the page with an `Accept: text/markdown` header. Each Markdown page begins with YAML front matter giving its title, its description when it has one, and its canonical address.
+
+The documentation is published once per release line. The newest line is at https://isoplane.dev/docs/ and each older line at https://isoplane.dev/docs/<line>/, where the line is named for the release that began it, such as 0.1. Documentation for unreleased changes is not published.
+
+## Pages
+
+- [Sitemap](https://isoplane.dev/docs/sitemap.xml): every published page, in every release line

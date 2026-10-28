@@ -10,8 +10,17 @@
     { "pattern": "isoplane.dev/docs", "zone_name": "isoplane.dev" },
     { "pattern": "isoplane.dev/docs/*", "zone_name": "isoplane.dev" },
   ],
+  // Serves a page as Markdown to a client whose Accept header asks for it;
+  // see worker/index.mjs. Page routes go through it, the site's static files
+  // do not.
+  "main": "worker/index.mjs",
   // Requests arrive with their /docs prefix intact, so the site is built into
   // build/docs and this directory is its parent.
-  "assets": { "directory": "build", "not_found_handling": "404-page" },
+  "assets": {
+    "directory": "build",
+    "binding": "ASSETS",
+    "not_found_handling": "404-page",
+    "run_worker_first": ["/docs", "/docs/*", "!/docs/assets/*", "!/docs/img/*"],
+  },
   "observability": { "enabled": true },
 }

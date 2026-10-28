@@ -4,6 +4,7 @@ import {parseEnv} from 'node:util';
 import {themes as prismThemes} from 'prism-react-renderer';
 import {visitorPlatformExpression} from './src/platform/preference.ts';
 import since from './src/remark/since.js';
+import markdownPages from './src/plugins/markdown-pages/index.mjs';
 
 // Set DOCS_GTM_CONTAINER_ID in .env beside this config to enable the tag;
 // an absent file or blank value leaves it out.
@@ -75,6 +76,9 @@ export default {
   i18n: {defaultLocale: 'en', locales: ['en']},
   markdown: {mermaid: true, hooks: {onBrokenMarkdownLinks: 'throw'}},
   themes: ['@docusaurus/theme-mermaid'],
+  // Every page is also built as Markdown beside its HTML; the Worker in
+  // wrangler.jsonc serves that form to a client that asks for it.
+  plugins: [markdownPages],
   presets: [['classic', {
     docs: {
       path: 'docs', routeBasePath: '/', sidebarPath: './sidebars.js',

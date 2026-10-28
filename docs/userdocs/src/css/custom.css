@@ -274,6 +274,33 @@ html[data-os='linux'] .platform-toggle button[data-platform='linux'] {
   }
 }
 
+/* The row that hands a page to an assistant as Markdown, above the title and
+   out of the text's way. */
+.markdown-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.25rem 1rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.8125rem;
+  color: var(--muted-foreground);
+}
+.markdown-actions a,
+.markdown-actions button {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+.markdown-actions a:hover,
+.markdown-actions button:hover {
+  color: var(--foreground);
+}
+
 /* A release marker, sized to sit in a table cell or a heading without widening it. */
 .since {
   display: inline-block;
