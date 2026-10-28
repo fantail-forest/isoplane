@@ -54,7 +54,11 @@
             "hierarchy.lvl5",
             "hierarchy.lvl6"
           ],
-          "model_config": {"model_name": "openai/text-embedding-3-large"}
+          "model_config": {
+            "model_name": "openai/accounts/fireworks/models/qwen3-embedding-8b",
+            "url": "https://api.fireworks.ai/inference",
+            "query_prefix": "Instruct: Given a question about Isoplane, retrieve the documentation sections that answer it\nQuery:"
+          }
         }
       }
     ]

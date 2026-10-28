@@ -94,8 +94,9 @@ The search box is [Typesense DocSearch](https://typesense.org/docs/guide/docsear
 `docusaurus-theme-search-typesense` in the site, a Typesense server on Fly.io,
 and the DocSearch scraper to index one into the other. Searches are hybrid:
 keyword matching plus an embedding of each section, computed by the model named
-in `search/scraper.config.json` through its provider's API. Nothing under
-`search/` is reachable from the site except through the Worker.
+in `search/scraper.config.json` through its provider's API: Qwen3-Embedding-8B
+served by Fireworks, with the model's instruction template as the query prefix.
+Nothing under `search/` is reachable from the site except through the Worker.
 
 The search bar itself is ejected into `src/theme/SearchBar` so that typing is
 debounced, a refused or failed search is retried after the pause its
@@ -127,14 +128,16 @@ limited per client address, cached at the edge per distinct query, and logged
 as `docs_search` events (query, hit count, status, cache, session) in Workers Logs.
 A refusal or outage is passed back to the search box with its `Retry-After`
 rather than retried in the Worker, which would queue requests out of the box's
-sight and multiply load on the server.
+sight and multiply load on the server. The embedding provider is the least
+dependable link, so a query it fails to embed within three seconds is asked
+again by keyword alone, answered uncached and logged with `mode: keyword`.
 
 Configuration lives in `search/.env`, which Git ignores:
 
 ```sh
 DOCS_SEARCH_KEY=                 # the search-only key value; also the Worker's
                                  # DOCS_SEARCH_KEY secret (wrangler secret put)
-DOCS_SEARCH_EMBEDDING_API_KEY=   # for the model in search/scraper.config.json
+DOCS_SEARCH_EMBEDDING_API_KEY=   # Fireworks key, for the model in search/scraper.config.json
 # DOCS_SEARCH_EMBEDDINGS=off     # keyword-only, for a build without a provider
 ```
 
@@ -142,9 +145,12 @@ The server's own admin key is a Fly secret, `TYPESENSE_API_KEY`, set once and
 never used by the site; `DOCS_SEARCH_KEY` is a Fly secret as well, for nginx to
 admit. Searches at query time embed the query with the same provider, so the
 server holds the provider key too, inside the baked snapshot. To change model
-or provider, edit `model_config` in `search/scraper.config.json` (an
-OpenAI-compatible provider other than OpenAI also takes
-`DOCS_SEARCH_EMBEDDING_URL`), then index and deploy.
+or provider, edit `model_config` in `search/scraper.config.json`: any
+OpenAI-compatible provider works as `openai/<model id>` with its base `url`,
+and `query_prefix` carries whatever instruction the model wants in front of a
+query. Then index and deploy. Documents and queries must be embedded by the same
+provider at the same precision, so a provider change is a reindex, not a
+redeploy.
 
 The first deploy creates the Fly app and sets the two secrets; later deploys
 need none of this:

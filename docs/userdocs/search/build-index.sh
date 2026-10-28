@@ -9,8 +9,10 @@
 #   DOCS_SEARCH_EMBEDDING_API_KEY   key for the embedding provider named in
 #                                   scraper.config.json (required unless off)
 #   DOCS_SEARCH_EMBEDDINGS=off      keyword-only index, no provider needed
-#   DOCS_SEARCH_EMBEDDING_MODEL     override the model, e.g. ts/all-MiniLM-L12-v2
-#   DOCS_SEARCH_EMBEDDING_URL       base URL of an OpenAI-compatible provider
+#   DOCS_SEARCH_EMBEDDING_MODEL     replace the model, e.g. ts/all-MiniLM-L12-v2;
+#                                   the committed url and prefixes do not carry over
+#   DOCS_SEARCH_EMBEDDING_URL       base URL of an OpenAI-compatible provider,
+#                                   replacing the committed one
 #   DOCS_SEARCH_PORT                loopback port for the build's Typesense (8118)
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
@@ -33,24 +35,29 @@ api="http://127.0.0.1:${DOCS_SEARCH_PORT}"
 [ -f ../build/docs/sitemap.xml ] || { echo "build/docs is missing; run pnpm run build first" >&2; exit 1; }
 
 # The scraper reads its whole config from one environment variable. The
-# committed config names the production embedding model; the environment adds
-# the provider key, or swaps the model, or drops embeddings altogether.
+# committed config names the production embedding model, its provider URL and
+# query prefix; the environment adds the provider key, or swaps the model for
+# another (which starts its model_config afresh), or drops embeddings.
 embeddings_filter='.'
 if [ "${DOCS_SEARCH_EMBEDDINGS:-on}" = off ]; then
   embeddings_filter='.custom_settings.field_definitions |= map(select(.name != "embedding"))'
 else
   model="${DOCS_SEARCH_EMBEDDING_MODEL:-}"
+  base='.'
   if [ -z "$model" ]; then
     model="$(jq -r '.custom_settings.field_definitions[] | select(.name == "embedding") | .embed.model_config.model_name' scraper.config.json)"
+  else
+    base='{}'
   fi
   case "$model" in
     ts/*) ;;
     *) : "${DOCS_SEARCH_EMBEDDING_API_KEY:?set DOCS_SEARCH_EMBEDDING_API_KEY for $model, or DOCS_SEARCH_EMBEDDINGS=off}" ;;
   esac
-  embeddings_filter='(.custom_settings.field_definitions[] | select(.name == "embedding") | .embed.model_config) |=
-    ({model_name: $model}
-     + (if $key == "" then {} else {api_key: $key} end)
-     + (if $url == "" then {} else {url: $url} end))'
+  embeddings_filter="(.custom_settings.field_definitions[] | select(.name == \"embedding\") | .embed.model_config) |=
+    ($base
+     + {model_name: \$model}
+     + (if \$key == \"\" then {} else {api_key: \$key} end)
+     + (if \$url == \"\" then {} else {url: \$url} end))"
 fi
 DOCS_SEARCH_SCRAPER_CONFIG="$(jq -c \
   --arg model "${model:-}" --arg key "${DOCS_SEARCH_EMBEDDING_API_KEY:-}" --arg url "${DOCS_SEARCH_EMBEDDING_URL:-}" \
