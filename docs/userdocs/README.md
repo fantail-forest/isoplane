@@ -98,7 +98,8 @@ in `search/scraper.config.json` through its provider's API. Nothing under
 `search/` is reachable from the site except through the Worker.
 
 The search bar itself is ejected into `src/theme/SearchBar` so that typing is
-debounced, a refused or failed search is retried after a pause, prefixes under
+debounced, a refused or failed search is retried after the pause its
+`Retry-After` names, prefixes under
 four characters are keyword-only, and each page load can tag its searches with
 a random in-memory id that the search log records as `session`. That tag is
 disabled (`SEARCH_SESSION_ENABLED`) pending a consent implementation.

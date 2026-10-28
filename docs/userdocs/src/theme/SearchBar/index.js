@@ -11,6 +11,7 @@ import Link from '@docusaurus/Link';
 // @ts-ignore
 import { isRegexpStringMatch } from '@docusaurus/theme-common';
 import { DocSearchButton, useDocSearchKeyboardEvents, } from 'typesense-docsearch-react';
+import { SearchResponseAdapter } from 'typesense-instantsearch-adapter/lib/SearchResponseAdapter';
 import { useTypesenseContextualFilters } from 'docusaurus-theme-search-typesense/client';
 // @ts-ignore
 import Translate from '@docusaurus/Translate';
@@ -21,12 +22,15 @@ let DocSearchModal = null;
 
 // Ejected from docusaurus-theme-search-typesense to shape the traffic the
 // search box sends through /docs/search (see ../../../search/worker.js):
-// typing is debounced, refusals and outages are retried after a pause, and
-// each page load can tag its searches with a random id so refinements line up
-// in the search log. The id lives in memory only; nothing is stored on the
-// device. It is disabled pending a consent implementation.
+// typing is debounced, a refusal or outage is retried after the pause its
+// Retry-After names, and each page load can tag its searches with a random id
+// so refinements line up in the search log. The id lives in memory only;
+// nothing is stored on the device. It is disabled pending a consent
+// implementation.
 const DEBOUNCE_MS = 250;
-const RETRY_DELAYS_MS = {429: [5000], 503: [2000, 4000], 502: [2000, 4000]};
+// Pauses when a refusal or outage names none, per attempt.
+const RETRY_FALLBACK_MS = {429: [5000], 502: [2000, 4000], 503: [2000, 4000]};
+const MAX_RETRY_AFTER_MS = 10000;
 const SEARCH_SESSION_ENABLED = false;
 const pageSessionId = SEARCH_SESSION_ENABLED && typeof crypto !== 'undefined' && crypto.randomUUID
     ? crypto.randomUUID()
@@ -50,25 +54,43 @@ function debounceSearch(search) {
     });
 }
 
-// The Typesense client surfaces a refused or failed search as an error with
-// its HTTP status and nothing else, so the pauses cannot be read from the
-// Retry-After header and instead match what the Worker and the search server
-// send: 5 s on a refusal, 2 s on an outage.
-async function searchWithRetry(search, requests) {
+// The modal's one search, sent directly rather than through the Typesense
+// client, which drops every response header, so that a refusal's Retry-After
+// sets the pause. The adapter restores the response shape the modal expects.
+function searchTransport({nodes: [node], apiKey, additionalHeaders}) {
+    const endpoint = `${node.protocol}://${node.host}:${node.port}${node.path ?? ''}/multi_search`;
+    const headers = {'content-type': 'application/json', 'x-typesense-api-key': apiKey, ...additionalHeaders};
+    return async ([request]) => {
+        const response = await fetchWithRetry(endpoint, {method: 'POST', headers, body: JSON.stringify({searches: [request]})});
+        const {results: [result]} = await response.json();
+        const adapter = new SearchResponseAdapter(result, {
+            params: {...request.params, highlightPreTag: '<mark>', highlightPostTag: '</mark>'},
+        }, {geoLocationField: ''});
+        return {results: [adapter.adapt()]};
+    };
+}
+
+async function fetchWithRetry(url, init) {
     for (let attempt = 0; ; attempt++) {
+        let response;
         try {
-            return await search(requests);
-        } catch (error) {
-            const delays = RETRY_DELAYS_MS[error?.httpStatus] ?? [];
-            if (attempt >= delays.length) throw error;
-            await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
+            response = await fetch(url, init);
+        } catch {
+            response = undefined;
         }
+        if (response?.ok) return response;
+        const status = response?.status ?? 503;
+        const fallback = RETRY_FALLBACK_MS[status] ?? [];
+        if (attempt >= fallback.length) {
+            throw Object.assign(new Error(`Search failed with status ${status}`), {httpStatus: status});
+        }
+        await new Promise((resolve) => setTimeout(resolve, retryAfterMs(response) ?? fallback[attempt]));
     }
 }
 
-function shapeSearchClient(searchClient) {
-    const search = debounceSearch((requests) => searchWithRetry((r) => searchClient.search(r), requests));
-    return {...searchClient, search};
+function retryAfterMs(response) {
+    const seconds = Number(response?.headers.get('retry-after'));
+    return Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds * 1000, MAX_RETRY_AFTER_MS) : undefined;
 }
 function Hit({ hit, children, }) {
     return <Link to={hit.url}>{children}</Link>;
@@ -97,10 +119,13 @@ function DocSearch({ contextualSearch, externalUrlRegex, ...props }) {
         filter_by: facetFilters,
         ...props.typesenseSearchParameters,
     };
-    const typesenseServerConfig = {
+    const typesenseServerConfig = useMemo(() => ({
         ...props.typesenseServerConfig,
         ...(pageSessionId && {additionalHeaders: {'x-search-session': pageSessionId}}),
-    };
+    }), [props.typesenseServerConfig]);
+    const transformSearchClient = useCallback(
+        (client) => ({...client, search: debounceSearch(searchTransport(typesenseServerConfig))}),
+        [typesenseServerConfig]);
     const typesenseCollectionName = props.typesenseCollectionName;
     const { withBaseUrl } = useBaseUrlUtils();
     const history = useHistory();
@@ -183,7 +208,7 @@ function DocSearch({ contextualSearch, externalUrlRegex, ...props }) {
             searchContainer.current &&
             createPortal(<DocSearchModal onClose={onClose} initialScrollY={window.scrollY} initialQuery={initialQuery} navigator={navigator} transformItems={transformItems} hitComponent={Hit} {...(props.searchPagePath && {
                 resultsFooterComponent,
-            })} {...props} transformSearchClient={shapeSearchClient} typesenseSearchParameters={typesenseSearchParameters} typesenseServerConfig={typesenseServerConfig} typesenseCollectionName={typesenseCollectionName} placeholder={translations.placeholder} translations={translations.modal}/>, searchContainer.current)}
+            })} {...props} transformSearchClient={transformSearchClient} typesenseSearchParameters={typesenseSearchParameters} typesenseServerConfig={typesenseServerConfig} typesenseCollectionName={typesenseCollectionName} placeholder={translations.placeholder} translations={translations.modal}/>, searchContainer.current)}
     </>);
 }
 export default function SearchBar() {
