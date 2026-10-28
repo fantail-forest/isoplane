@@ -134,30 +134,24 @@ again by keyword alone, answered uncached and logged with `mode: keyword`.
 
 Configuration lives in `search/.env`, which Git ignores; copy
 `search/.env.example` and fill it in. The Worker's own settings are in
-`wrangler.jsonc`, and its one secret is set with `wrangler secret put`; it
-needs no `.dev.vars`.
+`wrangler.jsonc`; it needs no `.dev.vars`.
 
-The server's own admin key is a Fly secret, `TYPESENSE_API_KEY`, set once and
-never used by the site; `DOCS_SEARCH_KEY` is a Fly secret as well, for nginx to
-admit. Searches at query time embed the query with the same provider, so the
-server holds the provider key too, inside the baked snapshot. To change model
-or provider, edit `model_config` in `search/scraper.config.json`: any
-OpenAI-compatible provider works as `openai/<model id>` with its base `url`,
-and `query_prefix` carries whatever instruction the model wants in front of a
-query. Then index and deploy. Documents and queries must be embedded by the same
-provider at the same precision, so a provider change is a reindex, not a
-redeploy.
+`search/deploy.sh` sets the secrets from `search/.env` over stdin, so no secret
+is typed into a shell: `DOCS_SEARCH_KEY` on Fly, for nginx to admit, and on the
+Worker; and the server's own admin key, `TYPESENSE_API_KEY`, generated on the
+first deploy and never used by the site. Searches at query time embed the
+query with the same provider, so the server holds the provider key too, inside
+the baked snapshot. To change model or provider, edit `model_config` in
+`search/scraper.config.json`: any OpenAI-compatible provider works as
+`openai/<model id>` with its base `url`, and `query_prefix` carries whatever
+instruction the model wants in front of a query. Then index and deploy.
+Documents and queries must be embedded by the same provider at the same
+precision, so a provider change is a reindex, not a redeploy.
 
-The first deploy creates the Fly app and sets the two secrets; later deploys
-need none of this:
-
-```sh
-fly apps create isoplane-docs-search
-fly secrets set --app isoplane-docs-search TYPESENSE_API_KEY=$(openssl rand -hex 24) DOCS_SEARCH_KEY=...
-wrangler secret put DOCS_SEARCH_KEY     # the DOCS_SEARCH_KEY value from search/.env
-```
+The first deploy needs only `fly auth login` and `wrangler login`; it creates
+the Fly app itself. Changing `DOCS_SEARCH_KEY` in `search/.env` is a reindex
+and a deploy, nothing more.
 
 To run the search box against a local server: `pnpm run search:serve` runs the
-production image from `search/snapshot/`, and
-`DOCS_SEARCH_URL=http://127.0.0.1:8118 DOCS_SEARCH_KEY=<key> pnpm start` points
-a local site at it with the key `build-index.sh` was given.
+production image from `search/snapshot/`, and `pnpm run search:start` points a
+local site at it with the key from `search/.env`.

@@ -11,6 +11,7 @@
     "deploy:prod": "pnpm run build && pnpm run search:index && search/deploy.sh",
     "search:index": "search/build-index.sh",
     "search:serve": "search/serve.sh",
+    "search:start": "search/start-site.sh",
     "search:deploy": "search/deploy.sh",
     "clear": "docusaurus clear",
     "generate:reference": "dotnet run --project ../../tools/ApiReference -p:IsoplaneManagedOnly=true -- docs/reference --since since.json",

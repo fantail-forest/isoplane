@@ -18,7 +18,7 @@ const gtmContainerId = siteEnvironment.DOCS_GTM_CONTAINER_ID?.trim();
 
 // The search box queries Typesense through the docs Worker at /docs/search,
 // which holds the real key; the site sends a placeholder. A local site can
-// point at a local server instead: see search/serve.sh.
+// point at a local server instead: see search/serve.sh and search/start-site.sh.
 const searchUrl = new URL(process.env.DOCS_SEARCH_URL ?? 'https://isoplane.dev/docs/search');
 const searchKey = process.env.DOCS_SEARCH_KEY ?? 'proxied';
 // Hybrid search needs the embedding field that search/build-index.sh indexes

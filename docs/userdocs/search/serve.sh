@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Run the production search image locally from search/snapshot, on the port
-# build-index.sh uses, for a local site started with
-#   DOCS_SEARCH_URL=http://127.0.0.1:8118 DOCS_SEARCH_KEY=<key> pnpm start
+# build-index.sh uses, for a local site started with `pnpm run search:start`.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 if [ -f .env ]; then
