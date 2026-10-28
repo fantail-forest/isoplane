@@ -8,7 +8,7 @@ namespace Isoplane.Cli;
 
 internal enum TelemetryCommand
 {
-    Dev, DebugAdapter, Setup, UninstallSdk, Doctor, DoctorModule, Cache, Bundle, PrepareRuntime, Unknown
+    Dev, DebugAdapter, Setup, UninstallSdk, Doctor, Cache, Bundle, PrepareRuntime, Unknown
 }
 
 internal enum CommandMode { Run, Debug, Test }
@@ -56,7 +56,7 @@ internal sealed record InstallationEvent(Guid Id, string OccurredAt, Guid Instal
 internal static class CommandNames
 {
     private static readonly Dictionary<string, TelemetryCommand> Named = Enum.GetValues<TelemetryCommand>()
-        .Where(command => command is not (TelemetryCommand.DoctorModule or TelemetryCommand.Unknown))
+        .Where(command => command is not TelemetryCommand.Unknown)
         .ToDictionary(Name, StringComparer.Ordinal);
 
     internal static string Name<T>(T value) where T : struct, Enum =>
@@ -72,7 +72,6 @@ internal static class CommandNames
     internal static TelemetryCommand? Classify(string[] args)
     {
         if (AsksForHelp(args) || args is ["--version"] || args[0] is "telemetry" or "complete" or "completions") return null;
-        if (args[0] == "doctor") return args.Length == 1 ? TelemetryCommand.Doctor : TelemetryCommand.DoctorModule;
         return Named.GetValueOrDefault(args[0], TelemetryCommand.Unknown);
     }
 

@@ -1,7 +1,6 @@
 # Isoplane native support
 
-Shared platform validation, local guest execution, and build-process ownership
-for Isoplane tooling. The managed CLI owns project discovery, publication,
+Local guest execution and build-process ownership for Isoplane tooling. The managed CLI owns project discovery, publication,
 watching, and rendering.
 
 The native ABI is defined in `crates/isoplane-native/src/lib.rs`. Regenerate its

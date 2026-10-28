@@ -17,7 +17,7 @@ namespace Isoplane.Native.Interop
         /// <summary>
         ///  Version of the native entry points and their report schema.
         /// </summary>
-        internal const uint ABI_VERSION = 4;
+        internal const uint ABI_VERSION = 5;
 
 
 
@@ -27,18 +27,6 @@ namespace Isoplane.Native.Interop
         /// </summary>
         [DllImport(__DllName, EntryPoint = "isoplane_abi_version", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern uint isoplane_abi_version();
-
-        /// <summary>
-        ///  Inspects supplied WASM with the platform validator and supplied JSON policy.
-        ///  Buffers are borrowed only for this synchronous call. Rejection is a successful
-        ///  report whose `rejected` field is true; invalid policy or bytes is an error.
-        ///
-        ///  # Safety
-        ///  Each nonempty buffer points to readable memory for its length, remains alive
-        ///  and is not mutated for the call. The managed wrapper pins both buffers.
-        /// </summary>
-        [DllImport(__DllName, EntryPoint = "isoplane_validate", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        internal static extern NativeResult isoplane_validate(byte* wasm, nuint wasm_length, byte* policy, nuint policy_length);
 
         /// <summary>
         ///  Releases the payload of a result returned by this library.
@@ -194,7 +182,7 @@ namespace Isoplane.Native.Interop
 
 
     /// <summary>
-    ///  Outcome of a native operation, separate from a module's validation verdict.
+    ///  Outcome of a native operation.
     /// </summary>
     internal enum NativeStatus : uint
     {
@@ -203,7 +191,7 @@ namespace Isoplane.Native.Interop
         /// </summary>
         Success,
         /// <summary>
-        ///  The supplied input could not be inspected.
+        ///  The supplied input could not be read or parsed.
         /// </summary>
         InvalidInput,
         /// <summary>

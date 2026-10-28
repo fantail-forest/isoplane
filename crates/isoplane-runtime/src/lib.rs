@@ -2,7 +2,6 @@
 
 #![forbid(unsafe_code)]
 
-pub mod inspection;
 pub mod validator;
 
 pub use validator::{

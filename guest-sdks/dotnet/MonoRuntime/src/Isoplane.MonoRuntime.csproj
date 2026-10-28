@@ -1,4 +1,4 @@
-<Project TreatAsLocalProperty="IsoplaneMemoryMaxBytes;IsoplaneGuestMemoryBytes">
+<Project TreatAsLocalProperty="IsoplaneMemoryMaxBytes">
   <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
 
   <!--
@@ -17,7 +17,6 @@
     <EventSourceSupport>true</EventSourceSupport>
     <!-- The shared module serves every application limit; the host bounds each instance. -->
     <IsoplaneMemoryMaxBytes>$(Wasm32MemoryMaxBytes)</IsoplaneMemoryMaxBytes>
-    <IsoplaneGuestMemoryBytes>$(IsoplaneMemoryMaxBytes)</IsoplaneGuestMemoryBytes>
     <IsoplaneRouter>Isoplane.MonoRuntime.PackageRouter</IsoplaneRouter>
   </PropertyGroup>
 

@@ -18,7 +18,7 @@ The commands of the `isoplane` CLI, with the arguments and options of each. They
 | [`isoplane uninstall-sdk`](cli/uninstall-sdk.md) | Remove everything setup installed, keeping the CLI. |
 | [`isoplane cache`](cli/cache.md) | Manage compiled runtimes shared by local sessions. |
 | [`isoplane prepare-runtime`](cli/prepare-runtime.md) | Compile a shared runtime into the local cache. |
-| [`isoplane doctor`](cli/doctor.md) | Check this machine, or validate a WebAssembly module. |
+| [`isoplane doctor`](cli/doctor.md) | Check this machine's .NET SDK, native library and templates. |
 | [`isoplane telemetry`](cli/telemetry.md) | Manage anonymous usage data. ISOPLANE_TELEMETRY_OPTOUT=1 or DO_NOT_TRACK=1 also disables it; ISOPLANE_TELEMETRY_DEBUG=1 prints events without sending them. |
 | [`isoplane completions`](cli/completions.md) | Print a shell completion script. See the installation guide for shell setup. |
 

@@ -85,7 +85,6 @@ scripts/dev guests/build-dotnet.sh --if-stale      # managed probes -> .build/cl
 task daemon -- --config isoplaned.toml            # Run a node
 task daemon -- --config isoplaned.toml --check    # Validate a config without running
 isoplane deploy --app <name> --project <directory> --team <name>
-isoplane doctor <wasm>             # Validate a module locally
 
 cd docs/userdocs && pnpm run start                 # Serve customer docs
 

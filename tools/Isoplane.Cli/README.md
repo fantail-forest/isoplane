@@ -49,8 +49,7 @@ and SourceLink caches remain shared.
 The session's port, settings and limit overrides come from the project's launch
 profile and User Secrets. Source edits rebuild the application package and replace
 it after a successful build; failed builds leave the last working app serving. Ctrl+C stops the session and its
-active child processes. `isoplane doctor path/to/module.wasm` runs the native
-validator.
+active child processes.
 
 Normal development output shows compact application logs and keeps runtime
 internals hidden. For process-owning test tools, `dev --json` writes JSON
@@ -65,7 +64,7 @@ SDK. Debug and Release select managed compilation settings. The archive contains
 application assemblies, their managed dependencies and available portable symbols;
 embedded resources and generated application code remain in those assemblies.
 Runtime exports and platform implementation assemblies are supplied by the server.
-This command needs no login and does not build WASM. Copied content assets and
+Copied content assets and
 satellite assemblies retain their output paths in the archive.
 
 For an HTTPS endpoint using a private CA, set `SSL_CERT_FILE` to a PEM certificate
@@ -75,11 +74,11 @@ Without it, the operating system trust configuration applies.
 
 ## Telemetry
 
-A CLI built with `-p:IsoplaneTelemetryEndpoint=URL` records one event per command
-under `ISOPLANE_HOME/telemetry` and sends earlier runs' events to that URL while a
-later command works. A build without the property records and sends nothing, which
-is every build from source. `tools/TelemetryProtocol/command-event.schema.json`
-defines the event. The customer
+Release builds send anonymous command usage to `https://telemetry.isoplane.dev/v1/events`.
+`-p:IsoplaneTelemetryEndpoint=URL` selects another endpoint. Other builds record and
+send nothing unless that property is set. Pending events live under
+`ISOPLANE_HOME/telemetry`; a later command sends earlier runs' events while it works.
+`tools/TelemetryProtocol/command-event.schema.json` defines the event. The customer
 reference page, generated from the same definitions, covers opting out and what
 is collected.
 

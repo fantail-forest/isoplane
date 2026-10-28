@@ -344,10 +344,8 @@ public sealed class TelemetryTests : IDisposable
     [InlineData(null, "--version")]
     [InlineData(null, "telemetry", "status")]
     [InlineData("doctor", "doctor")]
-    [InlineData("doctor-module", "doctor", "/home/someone/app.wasm")]
     [InlineData("bundle", "bundle", "--output", "x")]
     [InlineData("unknown", "depoly")]
-    [InlineData("unknown", "doctor-module")]
     public void A_run_is_named_by_its_command_alone(string? expected, params string[] args) =>
         Assert.Equal(expected, CommandNames.Classify(args) is { } command ? CommandNames.Name(command) : null);
 

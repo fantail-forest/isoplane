@@ -35,7 +35,7 @@ pub(crate) struct OwnedChild {
     cleanup_grace: Duration,
 }
 
-pub(crate) fn start(settings: &[u8]) -> Result<Vec<u8>, crate::validation::Error> {
+pub(crate) fn start(settings: &[u8]) -> Result<Vec<u8>, crate::error::Error> {
     let settings: Start = serde_json::from_slice(settings)?;
     let mut child = Command::new(settings.executable)
         .args(settings.arguments)

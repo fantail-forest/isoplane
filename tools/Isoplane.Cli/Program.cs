@@ -60,7 +60,6 @@ async Task<int> RunAsync()
     if (args is ["uninstall-sdk"])
         return await SdkRemoval.RunAsync(CliPaths.Home, dotnet => new DotnetRegistrations(dotnet, CliPaths.Home), cancellation.Token);
     if (args is ["doctor"]) return await EnvironmentDoctor.RunAsync(cancellation.Token);
-    if (args[0] == "doctor") return ModuleDoctor.Run(args);
     if (args[0] == "bundle")
     {
         var options = BundleOptions.Parse(args[1..]);

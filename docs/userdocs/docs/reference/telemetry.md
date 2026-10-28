@@ -47,7 +47,7 @@ One event for each command. `--help`, `--version`, `isoplane telemetry` and `iso
 | `ci` | Whether the command ran on a continuous integration machine. |  |
 | `ciProvider` | The continuous integration service the command ran on, or other for one the CLI does not recognise. Absent when it did not run on one. | `github-actions`, `azure-pipelines`, `gitlab`, `bitbucket`, `buildkite`, `circleci`, `travis`, `appveyor`, `drone`, `teamcity`, `jenkins`, `aws-codebuild`, `other` |
 | `agent` | The coding agent that ran the command, when its environment identifies one. | `none`, `cowork`, `claude`, `cursor`, `gemini`, `copilot-cli`, `copilot-app`, `copilot-vscode`, `codex`, `aider`, `plandex`, `amp`, `qwen`, `droid`, `opencode`, `zed`, `kimi`, `openhands`, `goose`, `cline`, `roo`, `windsurf`, `replit`, `augment`, `antigravity`, `pi`, `other` |
-| `command` | The command that ran. A name the CLI does not recognise is recorded as unknown, never as typed. | `dev`, `debug-adapter`, `setup`, `uninstall-sdk`, `doctor`, `doctor-module`, `cache`, `bundle`, `prepare-runtime`, `unknown` |
+| `command` | The command that ran. A name the CLI does not recognise is recorded as unknown, never as typed. | `dev`, `debug-adapter`, `setup`, `uninstall-sdk`, `doctor`, `cache`, `bundle`, `prepare-runtime`, `unknown` |
 | `mode` | Why the command ran: test when Isoplane.Testing started it, debug for a debugging session, and run otherwise. | `run`, `debug`, `test` |
 | `outcome` | How the command ended. | `succeeded`, `failed`, `cancelled`, `crashed` |
 | `exitCode` | The exit code the command returned. Absent when the command crashed. |  |

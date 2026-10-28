@@ -1754,7 +1754,6 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
- "wasmparser 0.244.0",
  "wat",
  "win32job",
  "windows-sys 0.61.2",
@@ -1823,7 +1822,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "blake3",
  "hex",
  "isoplane-abi",
  "isoplane-fixtures",

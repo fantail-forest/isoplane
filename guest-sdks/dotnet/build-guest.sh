@@ -22,16 +22,12 @@ fi
 OUT="${ISOPLANE_OUT_DIR:-$HERE/out}"
 NAME="${ISOPLANE_OUT:-}"
 
-# Task prepares the validator before runtime compilation.
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-ISOPLANE_CLI_ASSEMBLY="${ISOPLANE_CLI_ASSEMBLY:?Run task runtime:modules to prepare the runtime build}"
-
 echo "==> dotnet publish (C# -> wasm32 core module)"
 mkdir -p "$HERE/obj"
 PUBLISH=$(mktemp -d "$HERE/obj/publish.XXXXXX")
 PENDING=""
 trap 'rm -rf "$PUBLISH"; if [ -n "$PENDING" ]; then rm -f "$PENDING"; fi' EXIT
-dotnet publish "$CSPROJ" -c Release --disable-build-servers -o "$PUBLISH" "-p:IsoplaneCliAssembly=$ISOPLANE_CLI_ASSEMBLY" "$@"
+dotnet publish "$CSPROJ" -c Release --disable-build-servers -o "$PUBLISH" "$@"
 
 mkdir -p "$OUT"
 shopt -s nullglob

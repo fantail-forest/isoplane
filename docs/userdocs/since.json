@@ -21,10 +21,6 @@
     "cli#dev#--settings": "0.1.0-preview.4",
     "cli#dev#--shutdown-on-stdin-close": "0.1.0-preview.4",
     "cli#doctor": "0.1.0-preview.4",
-    "cli#doctor#--guest-memory-bytes": "0.1.0-preview.4",
-    "cli#doctor#--json": "0.1.0-preview.4",
-
-    "cli#doctor#module": "0.1.0-preview.4",
     "cli#prepare-runtime": "0.1.0-preview.4",
     "cli#prepare-runtime#--runtime": "0.1.0-preview.4",
     "cli#setup": "0.1.0-preview.4",

@@ -1,5 +1,6 @@
 //! Native platform operations consumed by managed local development tooling.
 
+mod error;
 mod local;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod process;
@@ -9,19 +10,18 @@ mod process;
 mod runtime_cache;
 mod session;
 mod session_events;
-mod validation;
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 /// Version of the native entry points and their report schema.
-pub const ABI_VERSION: u32 = 4;
+pub const ABI_VERSION: u32 = 5;
 
-/// Outcome of a native operation, separate from a module's validation verdict.
+/// Outcome of a native operation.
 #[repr(C)]
 pub enum NativeStatus {
     /// The operation returned its report.
     Success,
-    /// The supplied input could not be inspected.
+    /// The supplied input could not be read or parsed.
     InvalidInput,
     /// An owned build-tool process could not be started, waited for or stopped.
     ProcessError,
@@ -59,42 +59,18 @@ pub extern "C" fn isoplane_abi_version() -> u32 {
     ABI_VERSION
 }
 
-/// Inspects supplied WASM with the platform validator and supplied JSON policy.
-/// Buffers are borrowed only for this synchronous call. Rejection is a successful
-/// report whose `rejected` field is true; invalid policy or bytes is an error.
-///
-/// # Safety
-/// Each nonempty buffer points to readable memory for its length, remains alive
-/// and is not mutated for the call. The managed wrapper pins both buffers.
-#[no_mangle]
-pub unsafe extern "C" fn isoplane_validate(
-    wasm: *const u8,
-    wasm_length: usize,
-    policy: *const u8,
-    policy_length: usize,
-) -> NativeResult {
-    boundary(|| {
-        // SAFETY: the managed wrapper pins the supplied slices throughout this call.
-        let wasm = unsafe { input(wasm, wasm_length)? };
-        // SAFETY: the same pinning contract applies to the UTF-8 policy buffer.
-        let policy = unsafe { input(policy, policy_length)? };
-        validation::inspect(wasm, policy)
-    })
-}
-
-fn boundary(operation: impl FnOnce() -> Result<Vec<u8>, validation::Error>) -> NativeResult {
+fn boundary(operation: impl FnOnce() -> Result<Vec<u8>, error::Error>) -> NativeResult {
     match catch_unwind(AssertUnwindSafe(operation)) {
         Ok(Ok(report)) => NativeResult::new(NativeStatus::Success, report),
         Ok(Err(error)) => {
             let status = match &error {
-                validation::Error::Process(_) => NativeStatus::ProcessError,
-                validation::Error::Buffer
-                | validation::Error::Policy(_)
-                | validation::Error::Module(_)
-                | validation::Error::CacheDirectory => NativeStatus::InvalidInput,
-                validation::Error::Session(_)
-                | validation::Error::Cache(_)
-                | validation::Error::RuntimePreparation(_) => NativeStatus::InternalError,
+                error::Error::Process(_) => NativeStatus::ProcessError,
+                error::Error::Buffer | error::Error::Settings(_) | error::Error::CacheDirectory => {
+                    NativeStatus::InvalidInput
+                }
+                error::Error::Session(_)
+                | error::Error::Cache(_)
+                | error::Error::RuntimePreparation(_) => NativeStatus::InternalError,
             };
             NativeResult::new(status, error.to_string().into_bytes())
         }
@@ -110,12 +86,12 @@ fn boundary(operation: impl FnOnce() -> Result<Vec<u8>, validation::Error>) -> N
     }
 }
 
-unsafe fn input<'a>(data: *const u8, length: usize) -> Result<&'a [u8], validation::Error> {
+unsafe fn input<'a>(data: *const u8, length: usize) -> Result<&'a [u8], error::Error> {
     if length == 0 {
         return Ok(&[]);
     }
     if data.is_null() || length > isize::MAX as usize {
-        return Err(validation::Error::Buffer);
+        return Err(error::Error::Buffer);
     }
     // SAFETY: the export's caller guarantees readable, pinned memory; the null
     // and addressable-length cases are checked above.
@@ -168,7 +144,7 @@ pub unsafe extern "C" fn isoplane_session_run(
                 session
                     .cast::<session::Session>()
                     .as_ref()
-                    .ok_or(validation::Error::Buffer)?,
+                    .ok_or(error::Error::Buffer)?,
                 input(wasm, wasm_length)?,
                 input(options, options_length)?,
             )
@@ -179,7 +155,7 @@ pub unsafe extern "C" fn isoplane_session_run(
                 options,
                 session_events::Events::new(callback, context),
             )
-            .map_err(validation::Error::Session)?;
+            .map_err(error::Error::Session)?;
         Ok(b"{}".to_vec())
     })
 }
@@ -203,14 +179,14 @@ pub unsafe extern "C" fn isoplane_session_reload(
                 session
                     .cast::<session::Session>()
                     .as_ref()
-                    .ok_or(validation::Error::Buffer)?,
+                    .ok_or(error::Error::Buffer)?,
                 input(wasm, wasm_length)?,
                 input(options, options_length)?,
             )
         };
         session
             .reload(wasm, options)
-            .map_err(validation::Error::Session)?;
+            .map_err(error::Error::Session)?;
         Ok(b"{}".to_vec())
     })
 }
@@ -223,8 +199,8 @@ pub unsafe extern "C" fn isoplane_session_reload(
 pub unsafe extern "C" fn isoplane_session_stop(session: *mut std::ffi::c_void) -> NativeResult {
     boundary(|| {
         // SAFETY: the managed owner retains the session for this call.
-        let session = unsafe { session.cast::<session::Session>().as_ref() }
-            .ok_or(validation::Error::Buffer)?;
+        let session =
+            unsafe { session.cast::<session::Session>().as_ref() }.ok_or(error::Error::Buffer)?;
         session.cancellation.cancel();
         Ok(b"{}".to_vec())
     })
@@ -280,7 +256,7 @@ pub unsafe extern "C" fn isoplane_process_wait(handle: *mut std::ffi::c_void) ->
         {
             // SAFETY: the managed owner retains the process until this call finishes.
             let process = unsafe { handle.cast::<process::OwnedChild>().as_ref() }
-                .ok_or(validation::Error::Buffer)?;
+                .ok_or(error::Error::Buffer)?;
             Ok(serde_json::json!({"exit_code":process.wait()?})
                 .to_string()
                 .into_bytes())
@@ -308,7 +284,7 @@ pub unsafe extern "C" fn isoplane_process_stop(handle: *mut std::ffi::c_void) ->
         {
             // SAFETY: the managed owner retains the process during cancellation.
             let process = unsafe { handle.cast::<process::OwnedChild>().as_ref() }
-                .ok_or(validation::Error::Buffer)?;
+                .ok_or(error::Error::Buffer)?;
             process.terminate()?;
             Ok(b"{}".to_vec())
         }
@@ -429,13 +405,11 @@ mod tests {
             ),
         ] {
             // SAFETY: both descriptors fail the boundary checks before dereferencing.
-            let result = unsafe { isoplane_validate(pointer, length, std::ptr::null(), 0) };
+            let result = unsafe { input(pointer, length) };
             assert!(
-                matches!(result.status, NativeStatus::InvalidInput),
+                matches!(result, Err(error::Error::Buffer)),
                 "unreadable descriptors must return a managed input error"
             );
-            // SAFETY: the test owns the unchanged result.
-            unsafe { isoplane_result_free(result) };
         }
     }
 

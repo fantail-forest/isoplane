@@ -40,12 +40,7 @@ internal static class CliCommandLine
         var prepare = new Command("prepare-runtime", "Compile a shared runtime into the local cache.");
         Value(prepare, "--runtime", "SDK tools/runtime directory.").Required = true;
         root.Add(prepare);
-        var doctor = new Command("doctor", "Check this machine, or validate a WebAssembly module.");
-        doctor.Add(new Argument<string?>("module") { Arity = ArgumentArity.ZeroOrOne, Description = "WebAssembly module to validate; without one, checks this machine." });
-
-        Value(doctor, "--guest-memory-bytes", "Guest memory ceiling in bytes.");
-        Json(doctor);
-        root.Add(doctor);
+        root.Add(new Command("doctor", "Check this machine's .NET SDK, native library and templates."));
         var bundle = new Command("bundle", "Build a managed application archive.");
         Project(bundle);
         Value(bundle, "--configuration", "Build configuration (default: Release).");

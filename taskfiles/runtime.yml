@@ -19,7 +19,6 @@ tasks:
     deps: [compiler:selected, sqlite, ':setup:workload']
     env:
       ISOPLANE_GUEST_RUNTIME_FEED: '{{.FEED}}'
-      ISOPLANE_CLI_ASSEMBLY: '{{.CLI}}'
       ISOPLANE_SQLITE_DIRECTORY: '{{.SQLITE}}'
       # The feed's runtime pack keeps its version when rebuilt from the same
       # inputs, but not its bytes, so in the user's NuGet cache one
@@ -33,7 +32,7 @@ tasks:
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/AspNetCore/**/*.cs'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/{Isoplane.Sdk.csproj,Isoplane.Guest.props,Isoplane.Guest.targets}'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/AspNetCore/{Isoplane.AspNetCore.csproj,buildTransitive/Isoplane.AspNetCore.Framework.targets}'
-      - '{{.ROOT_DIR}}/guest-sdks/dotnet/Build/Isoplane.{Mono*,NativeExports,Validation,Exports}.targets'
+      - '{{.ROOT_DIR}}/guest-sdks/dotnet/Build/Isoplane.{Mono*,NativeExports,Exports}.targets'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/Build/Isoplane.Mono.props'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/native/*'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/Conformance/**/*'

@@ -113,7 +113,6 @@
         "setup",
         "uninstall-sdk",
         "doctor",
-        "doctor-module",
         "cache",
         "bundle",
         "prepare-runtime",

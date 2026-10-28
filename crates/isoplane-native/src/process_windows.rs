@@ -112,7 +112,7 @@ fn resume(pid: u32) -> io::Result<()> {
     }
 }
 
-pub(crate) fn start(settings: &[u8]) -> Result<Vec<u8>, crate::validation::Error> {
+pub(crate) fn start(settings: &[u8]) -> Result<Vec<u8>, crate::error::Error> {
     let settings: Start = serde_json::from_slice(settings)?;
     let (job, port) = create_job()?;
     let mut child = Command::new(settings.executable)

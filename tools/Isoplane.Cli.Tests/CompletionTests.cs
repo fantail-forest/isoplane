@@ -13,7 +13,7 @@ public sealed class CompletionTests
     [InlineData("isoplane dev --launch-", "--launch-profile")]
     [InlineData("isoplane cache ", "clean")]
     [InlineData("isoplane telemetry ", "status")]
-    [InlineData("isoplane doctor module.wasm --guest-", "--guest-memory-bytes")]
+    [InlineData("isoplane setup --so", "--source")]
     [InlineData("isoplane completions p", "powershell")]
     public void suggestions_come_from_the_command_parser(string line, string expected)
     {

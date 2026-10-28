@@ -6,7 +6,7 @@ use std::time::UNIX_EPOCH;
 
 use sha2::Digest;
 
-use crate::validation::Error;
+use crate::error::Error;
 
 /// Reports the compiled runtimes kept at `directory`, without creating it.
 pub(crate) fn inventory(directory: &[u8]) -> Result<Vec<u8>, Error> {
