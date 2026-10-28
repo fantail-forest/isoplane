@@ -1,9 +1,15 @@
 // Serves the built site, giving a page's Markdown form to a client whose
-// Accept header asks for it. Everything else is the static asset as built.
+// Accept header asks for it, and proxies the search box's requests. Everything
+// else is the static asset as built.
+import {SEARCH_PATH, search} from '../search/worker.js';
 import {markdownSibling, prefersMarkdown} from './negotiate.mjs';
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
+    const {pathname} = new URL(request.url);
+    if (pathname === SEARCH_PATH || pathname.startsWith(`${SEARCH_PATH}/`)) {
+      return search(request, env, ctx);
+    }
     if (isPageRequest(request) && prefersMarkdown(request.headers.get('Accept'))) {
       const sibling = new URL(request.url);
       sibling.pathname = markdownSibling(sibling.pathname);

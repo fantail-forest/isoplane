@@ -16,6 +16,17 @@ try {
 }
 const gtmContainerId = siteEnvironment.DOCS_GTM_CONTAINER_ID?.trim();
 
+// The search box queries Typesense through the docs Worker at /docs/search,
+// which holds the real key; the site sends a placeholder. A local site can
+// point at a local server instead: see search/serve.sh.
+const searchUrl = new URL(process.env.DOCS_SEARCH_URL ?? 'https://isoplane.dev/docs/search');
+const searchKey = process.env.DOCS_SEARCH_KEY ?? 'proxied';
+// Hybrid search needs the embedding field that search/build-index.sh indexes
+// unless DOCS_SEARCH_EMBEDDINGS=off there; this keeps the two in step.
+const searchEmbeddings = process.env.DOCS_SEARCH_EMBEDDINGS !== 'off';
+const searchFields = ['hierarchy.lvl0', 'hierarchy.lvl1', 'hierarchy.lvl2', 'hierarchy.lvl3',
+  'hierarchy.lvl4', 'hierarchy.lvl5', 'hierarchy.lvl6', 'content'];
+
 // The release lines with a snapshot under versioned_docs, newest first, as
 // scripts/snapshot.mjs maintains them. The newest is the site's default.
 const releaseLines = JSON.parse(readFileSync(new URL('versions.json', import.meta.url), 'utf8'));
@@ -75,7 +86,7 @@ export default {
   onBrokenAnchors: 'throw',
   i18n: {defaultLocale: 'en', locales: ['en']},
   markdown: {mermaid: true, hooks: {onBrokenMarkdownLinks: 'throw'}},
-  themes: ['@docusaurus/theme-mermaid'],
+  themes: ['@docusaurus/theme-mermaid', 'docusaurus-theme-search-typesense'],
   // Every page is also built as Markdown beside its HTML; the Worker in
   // wrangler.jsonc serves that form to a client that asks for it.
   plugins: [markdownPages],
@@ -109,6 +120,24 @@ export default {
         className: 'navbar__cta'},
     ]},
     footer: {copyright: '© 2026 Fantail Forest, Ltd. · A New Zealand limited company.'},
+    typesense: {
+      typesenseCollectionName: 'isoplane-docs',
+      typesenseServerConfig: {
+        nodes: [{
+          host: searchUrl.hostname,
+          port: Number(searchUrl.port || (searchUrl.protocol === 'https:' ? 443 : 80)),
+          protocol: searchUrl.protocol.replace(':', ''),
+          path: searchUrl.pathname.replace(/\/$/, ''),
+        }],
+        apiKey: searchKey,
+      },
+      typesenseSearchParameters: searchEmbeddings ? {
+        query_by: [...searchFields, 'embedding'].join(','),
+        vector_query: 'embedding:([], k: 10, distance_threshold: 1.0, alpha: 0.3)',
+      } : {query_by: searchFields.join(',')},
+      // Results come from the release line being read.
+      contextualSearch: true,
+    },
     prism: {
       theme: onBrandSurface(prismThemes.gruvboxMaterialLight),
       darkTheme: onBrandSurface(prismThemes.gruvboxMaterialDark),

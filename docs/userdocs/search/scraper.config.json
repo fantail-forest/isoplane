@@ -1,0 +1,62 @@
+{
+  "index_name": "isoplane-docs",
+  "start_urls": [{"url": "http://site/docs/"}],
+  "sitemap_urls": ["http://site/docs/sitemap.xml"],
+  "stop_urls": ["http://site/docs/search"],
+  "selectors": {
+    "lvl0": {
+      "selector": "(//ul[contains(@class,'menu__list')]//a[contains(@class,'menu__link--sublist') and contains(@class,'menu__link--active')]//text())[last()]",
+      "type": "xpath",
+      "global": true,
+      "default_value": "Documentation"
+    },
+    "lvl1": "article h1, header h1",
+    "lvl2": "article h2",
+    "lvl3": "article h3",
+    "lvl4": "article h4",
+    "lvl5": "article h5, article td:first-child",
+    "lvl6": "article h6",
+    "text": "article p, article li, article td:last-child"
+  },
+  "selectors_exclude": [".hash-link", ".theme-doc-version-badge", ".theme-doc-breadcrumbs", ".pagination-nav"],
+  "strip_chars": " .,;:#",
+  "js_render": false,
+  "custom_settings": {
+    "field_definitions": [
+      {"name": "anchor", "type": "string", "optional": true},
+      {"name": "content", "type": "string", "optional": true},
+      {"name": "url", "type": "string", "facet": true},
+      {"name": "url_without_anchor", "type": "string", "facet": true, "optional": true},
+      {"name": "version", "type": "string[]", "facet": true, "optional": true},
+      {"name": "hierarchy.lvl0", "type": "string", "facet": true, "optional": true},
+      {"name": "hierarchy.lvl1", "type": "string", "facet": true, "optional": true},
+      {"name": "hierarchy.lvl2", "type": "string", "facet": true, "optional": true},
+      {"name": "hierarchy.lvl3", "type": "string", "facet": true, "optional": true},
+      {"name": "hierarchy.lvl4", "type": "string", "facet": true, "optional": true},
+      {"name": "hierarchy.lvl5", "type": "string", "facet": true, "optional": true},
+      {"name": "hierarchy.lvl6", "type": "string", "facet": true, "optional": true},
+      {"name": "type", "type": "string", "facet": true, "optional": true},
+      {"name": ".*_tag", "type": "string", "facet": true, "optional": true},
+      {"name": "language", "type": "string", "facet": true, "optional": true},
+      {"name": "tags", "type": "string[]", "facet": true, "optional": true},
+      {"name": "item_priority", "type": "int64"},
+      {
+        "name": "embedding",
+        "type": "float[]",
+        "embed": {
+          "from": [
+            "content",
+            "hierarchy.lvl0",
+            "hierarchy.lvl1",
+            "hierarchy.lvl2",
+            "hierarchy.lvl3",
+            "hierarchy.lvl4",
+            "hierarchy.lvl5",
+            "hierarchy.lvl6"
+          ],
+          "model_config": {"model_name": "openai/text-embedding-3-small"}
+        }
+      }
+    ]
+  }
+}

@@ -67,3 +67,9 @@ handoffs/
 
 # Task source fingerprints.
 /.task/
+
+# Docs search index builds; see docs/userdocs/search/build-index.sh.
+docs/userdocs/search/.work/
+docs/userdocs/search/snapshot/
+docs/userdocs/search/.env
+docs/userdocs/.dev.vars

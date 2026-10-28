@@ -1,0 +1,32 @@
+# The docs search server. Reached only through the isoplane-docs Worker at
+# isoplane.dev/docs/search, which holds the search-only key and rate limits.
+app = "isoplane-docs-search"
+primary_region = "syd"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[http_service]
+  internal_port = 8108
+  force_https = true
+  # The machine suspends a few minutes after the last search and resumes, index
+  # still in memory, on the next one.
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 200
+    hard_limit = 250
+
+  [[http_service.checks]]
+    grace_period = "15s"
+    interval = "30s"
+    timeout = "5s"
+    method = "GET"
+    path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

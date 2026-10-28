@@ -1,0 +1,35 @@
+# The index build: a throwaway Typesense, the built site served the way
+# Cloudflare serves it, and the scraper that crawls one into the other.
+# build-index.sh drives it; nothing here is reachable from outside this host.
+services:
+  typesense:
+    image: typesense/typesense:30.2
+    user: "${DOCS_SEARCH_UID:?set by build-index.sh}:${DOCS_SEARCH_GID:?set by build-index.sh}"
+    command:
+      - --data-dir=/data
+      - --api-key=${DOCS_SEARCH_ADMIN_KEY:?set by build-index.sh}
+      - --enable-cors=false
+    volumes:
+      - ./.work/data:/data
+      - ./.work/snapshot:/snapshot
+    ports:
+      - "127.0.0.1:${DOCS_SEARCH_PORT:-8118}:8108"
+
+  site:
+    image: nginx:1.28-alpine
+    volumes:
+      - ../build:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      # The built sitemap names the public origin; the crawl needs this one.
+      - ./.work/sitemap.xml:/usr/share/nginx/html/docs/sitemap.xml:ro
+
+  scraper:
+    image: typesense/docsearch-scraper:0.12.2
+    profiles: [scrape]
+    depends_on: [typesense, site]
+    environment:
+      TYPESENSE_HOST: typesense
+      TYPESENSE_PORT: "8108"
+      TYPESENSE_PROTOCOL: http
+      TYPESENSE_API_KEY: ${DOCS_SEARCH_ADMIN_KEY:?set by build-index.sh}
+      CONFIG: ${DOCS_SEARCH_SCRAPER_CONFIG:?set by build-index.sh}
