@@ -1,6 +1,5 @@
 ---
 title: SDK API reference
-sidebar_position: 6
 mdx:
   format: md
 ---

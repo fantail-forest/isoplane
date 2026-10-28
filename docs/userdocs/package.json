@@ -5,7 +5,7 @@
   "description": "Isoplane customer development guides",
   "scripts": {
     "start": "docusaurus start --host 127.0.0.1 --port 3123 --no-open",
-    "build": "docusaurus build --out-dir build/docs",
+    "build": "docusaurus clear && docusaurus build --out-dir build/docs",
     "serve": "docusaurus serve --dir build/docs --host 127.0.0.1 --port 3123",
     "deploy:prod": "pnpm run build && wrangler deploy",
     "clear": "docusaurus clear",

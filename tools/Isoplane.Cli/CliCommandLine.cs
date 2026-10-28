@@ -41,7 +41,7 @@ internal static class CliCommandLine
         Value(prepare, "--runtime", "SDK tools/runtime directory.").Required = true;
         root.Add(prepare);
         var doctor = new Command("doctor", "Check this machine, or validate a WebAssembly module.");
-        doctor.Add(new Argument<string?>("module") { Arity = ArgumentArity.ZeroOrOne });
+        doctor.Add(new Argument<string?>("module") { Arity = ArgumentArity.ZeroOrOne, Description = "WebAssembly module to validate; without one, checks this machine." });
 
         Value(doctor, "--guest-memory-bytes", "Guest memory ceiling in bytes.");
         Json(doctor);
@@ -58,8 +58,9 @@ internal static class CliCommandLine
             new Command("disable", "Disable anonymous usage data.")
         });
         var completions = new Command("completions", "Print a shell completion script. See the installation guide for shell setup.");
-        var shell = new Argument<string>("shell");
-        shell.AcceptOnlyFromAmong(Enum.GetNames<CompletionShell>().Select(name => name.ToLowerInvariant()).ToArray());
+        var shells = Enum.GetNames<CompletionShell>().Select(name => name.ToLowerInvariant()).ToArray();
+        var shell = new Argument<string>("shell") { Description = $"The shell: {string.Join(", ", shells)}." };
+        shell.AcceptOnlyFromAmong(shells);
         completions.Add(shell);
         root.Add(completions);
         var complete = new Command("complete", "Return completion candidates for a command line.") { Hidden = true };

@@ -48,6 +48,8 @@ it as "Next", and the built site leaves it out. What is published are the
 snapshots under `versioned_docs/`, one per release line. A line begins with a
 breaking release (`0.1`, `0.2`, then `1`, `2`); the newest line is served at
 `/docs/` and the others at `/docs/<line>/`, with a version menu in the navbar.
+`pnpm run build` clears the Docusaurus cache first: a build made after a local
+server or a dev-mode build would otherwise keep the "Next" menu entry.
 
 Every release, breaking or not, re-snapshots its line from `docs/`:
 

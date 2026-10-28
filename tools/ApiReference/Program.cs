@@ -37,11 +37,10 @@ static int Run(DirectoryInfo destination, FileInfo recordFile, bool check, strin
             since.Save(recordFile);
         }
         var generated = drafted.ToDictionary(page => page.Key, page => since.Resolve(page.Value), StringComparer.Ordinal);
-        var existing = Directory.Exists(Path.Combine(destination.FullName, "sdk"))
-            ? Directory.EnumerateFiles(Path.Combine(destination.FullName, "sdk"), "*.md", SearchOption.AllDirectories)
+        var existing = destination.Exists
+            ? Directory.EnumerateFiles(destination.FullName, "*.md", SearchOption.AllDirectories)
                 .Select(path => Path.GetRelativePath(destination.FullName, path)).ToHashSet(StringComparer.Ordinal)
             : [];
-        if (File.Exists(Path.Combine(destination.FullName, "sdk.md"))) existing.Add("sdk.md");
         var differences = generated.Keys.Union(existing).Where(path =>
             !generated.TryGetValue(path, out var content) || !File.Exists(Path.Combine(destination.FullName, path)) ||
             File.ReadAllText(Path.Combine(destination.FullName, path)) != content).Order(StringComparer.Ordinal).ToArray();
@@ -59,7 +58,7 @@ static int Run(DirectoryInfo destination, FileInfo recordFile, bool check, strin
             Directory.CreateDirectory(Path.GetDirectoryName(file)!);
             File.WriteAllText(file, content, new UTF8Encoding(false));
         }
-        Console.WriteLine($"Generated {generated.Count} SDK reference pages.");
+        Console.WriteLine($"Generated {generated.Count} reference pages.");
         return 0;
     }
     finally
@@ -103,7 +102,9 @@ internal static class Reference
                 output.Add(id + ".md", $"---\ntitle: {title}\nmdx:\n  format: md\n---\n\n" + text.TrimEnd() + "\n");
             }
         }
+        output.Add("sdk/_category_.json", "{\"position\": 7}\n");
         output.Add("sdk.md", Overview);
+        Cli.Generate(output);
         output.Add("project-settings.md", ProjectSettings.Replace("{settings}", Settings()));
         output.Add("error-codes.md", ErrorCodes());
         output.Add("project-templates.md", ProjectTemplates.Replace("{templates}", Templates()));
@@ -377,7 +378,6 @@ internal static class Reference
     private const string Overview = """
 ---
 title: SDK API reference
-sidebar_position: 6
 mdx:
   format: md
 ---
@@ -414,7 +414,7 @@ Other packages each adapt one library an ASP.NET application may use. They are s
 
     private const string Telemetry = """
 ---
-sidebar_position: 7
+sidebar_position: 8
 mdx:
   format: md
 ---

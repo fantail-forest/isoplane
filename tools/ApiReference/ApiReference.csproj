@@ -23,6 +23,8 @@
     <Compile Include="../Isoplane.Cli/LaunchProfileKeys.cs" Link="LaunchProfileKeys.cs" />
     <Compile Include="../BuildProtocol/BuildDiagnostics.cs" Link="BuildDiagnostics.cs" />
     <Compile Include="../Isoplane.Cli/TelemetryVariables.cs" Link="TelemetryVariables.cs" />
+    <Compile Include="../Isoplane.Cli/CliCommandLine.cs" Link="CliCommandLine.cs" />
+    <Compile Include="../Isoplane.Cli/ShellCompletions.cs" Link="ShellCompletions.cs" />
     <EmbeddedResource Include="../TelemetryProtocol/command-event.schema.json" LogicalName="command-event.schema.json" />
     <EmbeddedResource Include="../TelemetryProtocol/installation-event.schema.json" LogicalName="installation-event.schema.json" />
     <EmbeddedResource Include="ErrorCodes.md" LogicalName="ErrorCodes.md" />
