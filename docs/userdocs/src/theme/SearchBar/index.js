@@ -22,11 +22,15 @@ let DocSearchModal = null;
 // Ejected from docusaurus-theme-search-typesense to shape the traffic the
 // search box sends through /docs/search (see ../../../search/worker.js):
 // typing is debounced, refusals and outages are retried after a pause, and
-// each page load tags its searches with a random id so refinements line up in
-// the search log. The id lives in memory only; nothing is stored on the device.
+// each page load can tag its searches with a random id so refinements line up
+// in the search log. The id lives in memory only; nothing is stored on the
+// device. It is disabled pending a consent implementation.
 const DEBOUNCE_MS = 250;
 const RETRY_DELAYS_MS = {429: [2000], 503: [1000, 3000], 502: [1000, 3000]};
-const pageSessionId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : undefined;
+const SEARCH_SESSION_ENABLED = false;
+const pageSessionId = SEARCH_SESSION_ENABLED && typeof crypto !== 'undefined' && crypto.randomUUID
+    ? crypto.randomUUID()
+    : undefined;
 
 // Resolves every call made during a pause with the result of the last one, so
 // a burst of keystrokes is one search and no caller is left waiting.

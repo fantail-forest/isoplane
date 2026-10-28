@@ -99,8 +99,9 @@ in `search/scraper.config.json` through its provider's API. Nothing under
 
 The search bar itself is ejected into `src/theme/SearchBar` so that typing is
 debounced, a refused or failed search is retried after a pause, prefixes under
-four characters are keyword-only, and each page load tags its searches with a
-random in-memory id that the search log records as `session`.
+four characters are keyword-only, and each page load can tag its searches with
+a random in-memory id that the search log records as `session`. That tag is
+disabled (`SEARCH_SESSION_ENABLED`) pending a consent implementation.
 
 `pnpm run search:index` (`search/build-index.sh`) runs after `pnpm run build`.
 It starts a throwaway Typesense and an nginx serving `build/` in Docker, crawls
@@ -112,16 +113,20 @@ machine's port admits only `POST /multi_search`, with the search-only key and
 one query per call, and `GET /health`; every other route is 404 before it
 reaches Typesense. nginx also limits each client address, so the machine is
 protected even from traffic that bypasses Cloudflare. Production therefore has
-no write path, no volume and no admin key in use. `pnpm run search:deploy` (`search/deploy.sh`)
+no write path, no volume and no admin key in use. The two share a machine
+because the index is small; should search ever need more than one machine,
+nginx moves to its own, in front of Typesense machines on Fly's private network. `pnpm run search:deploy` (`search/deploy.sh`)
 deploys the image to Fly and then the site to Cloudflare, with the snapshot's
 version as the edge cache key. The Fly machine suspends when idle and resumes
 on the next search.
 
 `search/worker.js` is the site's Worker. Pages are static assets; requests under
 `/docs/search` are proxied to the Fly server with the search-only key, rate
-limited per client address, cached at the edge per distinct query, retried
-with backoff when the server is resuming or refusing, and logged as
-`docs_search` events (query, hit count, status, cache, session) in Workers Logs.
+limited per client address, cached at the edge per distinct query, and logged
+as `docs_search` events (query, hit count, status, cache, session) in Workers Logs.
+A refusal or outage is passed back to the search box with its `Retry-After`
+rather than retried in the Worker, which would queue requests out of the box's
+sight and multiply load on the server.
 
 Configuration lives in `search/.env`, which Git ignores:
 

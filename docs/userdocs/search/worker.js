@@ -8,8 +8,6 @@ const CACHE_SECONDS = 3600;
 // Prefixes shorter than this get keyword matching only: semantic ranking adds
 // nothing to "ap", and skipping it saves an embedding call per keystroke.
 const MIN_SEMANTIC_QUERY_LENGTH = 4;
-const UPSTREAM_ATTEMPTS = 3;
-const MAX_RETRY_AFTER_MS = 5000;
 const SESSION_ID = /^[A-Za-z0-9-]{1,40}$/;
 
 export async function search(request, env, ctx) {
@@ -43,8 +41,11 @@ export async function search(request, env, ctx) {
   const started = Date.now();
   let response = cached;
   if (!response) {
+    // A refusal or outage goes back to the search box as it came, Retry-After
+    // included. The box decides whether the query is still worth retrying;
+    // queueing here would hide load from it and pile retries onto the server.
     try {
-      response = await fetchUpstream(origin, {
+      response = await fetch(origin, {
         method: request.method,
         headers: {
           'content-type': 'application/json',
@@ -96,32 +97,6 @@ function parseSearch(text) {
   keywordOnly.query_by = query.query_by.split(',').filter((field) => field !== 'embedding').join(',');
   return {searches: [keywordOnly]};
 }
-
-// The server answers 429 while a client is over its own limit and 502/503
-// while the machine resumes from suspension; both say when to come back.
-async function fetchUpstream(origin, init) {
-  let response;
-  for (let attempt = 1; attempt <= UPSTREAM_ATTEMPTS; attempt++) {
-    try {
-      response = await fetch(origin, init);
-    } catch (error) {
-      if (attempt === UPSTREAM_ATTEMPTS) throw error;
-      await delay(backoffMs(attempt));
-      continue;
-    }
-    if (![429, 502, 503, 504].includes(response.status) || attempt === UPSTREAM_ATTEMPTS) return response;
-    await delay(retryAfterMs(response) ?? backoffMs(attempt));
-  }
-  return response;
-}
-
-function retryAfterMs(response) {
-  const seconds = Number(response.headers.get('retry-after'));
-  return Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds * 1000, MAX_RETRY_AFTER_MS) : undefined;
-}
-
-const backoffMs = (attempt) => 300 * 2 ** (attempt - 1);
-const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // One edge cache entry per distinct query against one index build. Keys are
 // hashed because the query is a request body, which the cache cannot key on.
