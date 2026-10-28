@@ -1,4 +1,5 @@
 ---
+title: "IsoplaneLoggerProvider.Dispose method"
 mdx:
   format: md
 ---

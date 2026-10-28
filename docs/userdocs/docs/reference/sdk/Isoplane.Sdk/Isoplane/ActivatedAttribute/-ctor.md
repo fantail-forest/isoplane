@@ -1,4 +1,5 @@
 ---
+title: "ActivatedAttribute constructor"
 mdx:
   format: md
 ---

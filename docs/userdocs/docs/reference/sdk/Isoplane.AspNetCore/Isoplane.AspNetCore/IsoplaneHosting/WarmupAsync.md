@@ -1,4 +1,5 @@
 ---
+title: "IsoplaneHosting.WarmupAsync method (1 of 2)"
 mdx:
   format: md
 ---

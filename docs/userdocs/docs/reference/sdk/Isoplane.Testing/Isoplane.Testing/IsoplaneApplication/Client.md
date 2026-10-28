@@ -1,4 +1,5 @@
 ---
+title: "IsoplaneApplication.Client property"
 mdx:
   format: md
 ---

@@ -1,4 +1,5 @@
 ---
+title: "IsoplaneApplication class"
 mdx:
   format: md
 ---

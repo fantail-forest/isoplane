@@ -273,3 +273,19 @@ html[data-os='linux'] .platform-toggle button[data-platform='linux'] {
     --ifm-navbar-height: 64px;
   }
 }
+
+/* A release marker, sized to sit in a table cell or a heading without widening it. */
+.since {
+  display: inline-block;
+  margin-left: 0.4em;
+  padding: 0 0.45em;
+  border: 1px solid var(--border);
+  border-radius: 1em;
+  font-family: var(--ifm-font-family-base);
+  font-size: 0.7em;
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+  vertical-align: 0.25em;
+  white-space: nowrap;
+}

@@ -3,6 +3,7 @@ import {readFileSync} from 'node:fs';
 import {parseEnv} from 'node:util';
 import {themes as prismThemes} from 'prism-react-renderer';
 import {visitorPlatformExpression} from './src/platform/preference.ts';
+import since from './src/remark/since.js';
 
 // Set DOCS_GTM_CONTAINER_ID in .env beside this config to enable the tag;
 // an absent file or blank value leaves it out.
@@ -13,6 +14,13 @@ try {
   if (error.code !== 'ENOENT') throw error;
 }
 const gtmContainerId = siteEnvironment.DOCS_GTM_CONTAINER_ID?.trim();
+
+// The release lines with a snapshot under versioned_docs, newest first, as
+// scripts/snapshot.mjs maintains them. The newest is the site's default.
+const releaseLines = JSON.parse(readFileSync(new URL('versions.json', import.meta.url), 'utf8'));
+// `docs/` describes the next release. A local server shows it as "Next"; the
+// published site shows only the snapshots.
+const includeNext = process.env.NODE_ENV !== 'production';
 
 // A page beside a directory of the same name is that directory's landing page.
 // Docusaurus lists the two as siblings, so link the directory's category to the
@@ -70,6 +78,13 @@ export default {
   presets: [['classic', {
     docs: {
       path: 'docs', routeBasePath: '/', sidebarPath: './sidebars.js',
+      includeCurrentVersion: includeNext,
+      lastVersion: releaseLines[0],
+      versions: {
+        ...(includeNext && {current: {label: 'Next', path: 'next', banner: 'unreleased'}}),
+        ...Object.fromEntries(releaseLines.map((line) => [line, {label: `${line}.x`}])),
+      },
+      beforeDefaultRemarkPlugins: [since],
       async sidebarItemsGenerator({defaultSidebarItemsGenerator, ...args}) {
         const titles = new Map(args.docs.map((doc) => [doc.id, doc.title]));
         return linkCategoriesToTheirPages(await defaultSidebarItemsGenerator(args), titles);
@@ -84,6 +99,7 @@ export default {
     navbar: {items: [
       {type: 'doc', docId: 'index', label: 'Docs', position: 'left'},
       {type: 'custom-siteLink', href: '/blog', label: 'Blog', position: 'left'},
+      {type: 'docsVersionDropdown', position: 'right'},
       {type: 'doc', docId: 'quickstart', label: 'Get started', position: 'right',
         className: 'navbar__cta'},
     ]},

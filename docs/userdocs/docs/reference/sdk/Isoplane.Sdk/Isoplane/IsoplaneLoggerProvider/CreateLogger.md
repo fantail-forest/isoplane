@@ -1,4 +1,5 @@
 ---
+title: "IsoplaneLoggerProvider.CreateLogger method"
 mdx:
   format: md
 ---

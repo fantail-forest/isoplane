@@ -1,4 +1,5 @@
 ---
+title: "Response.Bytes method"
 mdx:
   format: md
 ---

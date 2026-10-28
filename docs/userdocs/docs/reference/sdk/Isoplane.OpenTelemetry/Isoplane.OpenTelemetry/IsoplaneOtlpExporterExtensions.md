@@ -1,4 +1,5 @@
 ---
+title: "IsoplaneOtlpExporterExtensions class"
 mdx:
   format: md
 ---

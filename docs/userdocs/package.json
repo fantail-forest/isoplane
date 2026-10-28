@@ -4,15 +4,16 @@
   "private": true,
   "description": "Isoplane customer development guides",
   "scripts": {
-    "start": "docusaurus start --host 127.0.0.1 --port 3123",
+    "start": "docusaurus start --host 127.0.0.1 --port 3123 --no-open",
     "build": "docusaurus build --out-dir build/docs",
     "serve": "docusaurus serve --dir build/docs --host 127.0.0.1 --port 3123",
     "deploy:prod": "pnpm run build && wrangler deploy",
     "clear": "docusaurus clear",
-    "generate:reference": "dotnet run --project ../../tools/ApiReference -p:IsoplaneManagedOnly=true -- docs/reference",
-    "check:reference": "dotnet run --project ../../tools/ApiReference -p:IsoplaneManagedOnly=true -- docs/reference --check",
+    "generate:reference": "dotnet run --project ../../tools/ApiReference -p:IsoplaneManagedOnly=true -- docs/reference --since since.json",
+    "check:reference": "dotnet run --project ../../tools/ApiReference -p:IsoplaneManagedOnly=true -- docs/reference --since since.json --check",
     "prestart": "task --dir ../.. docs:limits",
-    "prebuild": "task --dir ../.. docs:limits && pnpm run check:reference"
+    "prebuild": "task --dir ../.. docs:limits && pnpm run check:reference",
+    "snapshot": "node scripts/snapshot.mjs"
   },
   "dependencies": {
     "@docusaurus/core": "3.10.2",
@@ -24,9 +25,11 @@
     "clsx": "^2.0.0",
     "prism-react-renderer": "^2.3.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "unist-util-visit": "5.1.0"
   },
   "devDependencies": {
+    "semver": "7.8.5",
     "wrangler": "4.149.0"
   },
   "browserslist": {

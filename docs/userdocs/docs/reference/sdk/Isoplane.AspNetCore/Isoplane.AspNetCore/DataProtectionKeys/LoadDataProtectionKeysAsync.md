@@ -1,4 +1,5 @@
 ---
+title: "DataProtectionKeys.LoadDataProtectionKeysAsync method"
 mdx:
   format: md
 ---

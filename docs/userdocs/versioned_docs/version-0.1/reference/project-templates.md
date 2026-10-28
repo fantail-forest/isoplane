@@ -1,0 +1,139 @@
+---
+sidebar_position: 1
+mdx:
+  format: md
+---
+
+# Project templates
+
+The `dotnet new` templates that create an Isoplane application or add tests to one. `isoplane setup` installs them. The names, descriptions and options on this page are generated from the templates themselves, for the source version used to build this documentation.
+
+Every file in a generated project is commented, and an application's `README.md` says what each file is for and how to make common changes. That README is the guide to a template's contents. This page helps you choose a template and create a project from it.
+
+## Choosing a template
+
+- **Starting something new?** Use [`isoplane-handler`](#isoplane-handler). It has no web framework: one static method receives every request. [Build a small lightweight web service](../tutorials/build-a-web-service.md) walks through it.
+- **Want ASP.NET Core with a database?** Use [`isoplane-webapi`](#isoplane-webapi). [Build a small API with ASP.NET Core and EF Core](../tutorials/build-an-api.md) walks through it.
+- **Bringing an existing ASP.NET application over, or want ASP.NET Core and nothing else?** Use [`isoplane-web`](#isoplane-web), as [Bring an existing ASP.NET application](../how-to/onboard-an-application.md) and the [Quickstart](../quickstart.md) do.
+- **Want pages rendered on the server, with forms and a database?** Use [`isoplane-webapp`](#isoplane-webapp), a Razor Pages application.
+- **Giving an AI agent tools to call?** Use [`isoplane-mcpserver`](#isoplane-mcpserver), a Model Context Protocol server over HTTP.
+- **Have an application without sandbox tests?** Add them with [`isoplane-tests`](#isoplane-tests), created beside the application. [Test an application](../how-to/test-an-application.md) walks through it. A template that already includes a test project says so below.
+
+## Creating a project
+
+`--name` names the project and the directory it is created in. Without it, the project takes the name of the current directory and is created there.
+
+## Templates
+
+### `isoplane-handler`
+
+**Isoplane Handler.** A service for the Isoplane sandbox that handles HTTP requests in one static method, without ASP.NET, with tests.
+
+```bash
+dotnet new isoplane-handler --name MyApp
+```
+
+In a new `MyApp` directory, it creates:
+
+- `src/MyApp/MyApp.csproj`
+- `tests/MyApp.Tests/MyApp.Tests.csproj`
+
+The `tests` project runs the application in the sandbox, as [Test an application](../how-to/test-an-application.md) describes.
+
+| Option | Value | Description |
+| --- | --- | --- |
+| `--HttpPort` | integer | Port number to use for the HTTP endpoint in launchSettings.json. |
+
+### `isoplane-mcpserver`
+
+**Isoplane MCP Server.** A Model Context Protocol server over HTTP for the Isoplane sandbox, with example tools and tests.
+
+```bash
+dotnet new isoplane-mcpserver --name MyApp
+```
+
+In a new `MyApp` directory, it creates:
+
+- `src/MyApp/MyApp.csproj`
+- `tests/MyApp.Tests/MyApp.Tests.csproj`
+
+The `tests` project runs the application in the sandbox, as [Test an application](../how-to/test-an-application.md) describes.
+
+| Option | Value | Description |
+| --- | --- | --- |
+| `--HttpPort` | integer | Port number to use for the HTTP endpoint in launchSettings.json. |
+
+### `isoplane-tests`
+
+**Isoplane Sandbox Tests.** An xUnit project that starts an existing Isoplane application in the sandbox and sends it requests.
+
+```bash
+dotnet new isoplane-tests --name MyApp.Tests
+```
+
+In a new `MyApp.Tests` directory, it creates:
+
+- `MyApp.Tests.csproj`
+
+| Option | Value | Description |
+| --- | --- | --- |
+| `--application` | string | Path from the test project to the application's project file. Without it, the application is the sibling project named like the test project less its '.Tests' suffix: ../MyApi/MyApi.csproj for MyApi.Tests. |
+
+### `isoplane-web`
+
+**Isoplane ASP.NET Core Empty.** An empty ASP.NET Core application that runs in the Isoplane sandbox.
+
+```bash
+dotnet new isoplane-web --name MyApp
+```
+
+In a new `MyApp` directory, it creates:
+
+- `MyApp.csproj`
+
+It has no test project. Add one with [`isoplane-tests`](#isoplane-tests).
+
+| Option | Value | Description |
+| --- | --- | --- |
+| `--HttpPort` | integer | Port number to use for the HTTP endpoint in launchSettings.json. |
+
+### `isoplane-webapi`
+
+**Isoplane ASP.NET Core Web API.** A Web API for the Isoplane sandbox with Entity Framework Core, PostgreSQL, OpenAPI and tests.
+
+```bash
+dotnet new isoplane-webapi --name MyApp
+```
+
+In a new `MyApp` directory, it creates:
+
+- `src/MyApp/MyApp.csproj`
+- `tests/MyApp.Tests/MyApp.Tests.csproj`
+
+The `tests` project runs the application in the sandbox, as [Test an application](../how-to/test-an-application.md) describes.
+
+| Option | Value | Description |
+| --- | --- | --- |
+| `--use-controllers` | bool | Whether to use controllers instead of minimal APIs. |
+| `--HttpPort` | integer | Port number to use for the HTTP endpoint in launchSettings.json. |
+
+### `isoplane-webapp`
+
+**Isoplane ASP.NET Core Web App (Razor Pages).** A server-rendered web application for the Isoplane sandbox with Razor Pages, Entity Framework Core, PostgreSQL and tests.
+
+```bash
+dotnet new isoplane-webapp --name MyApp
+```
+
+In a new `MyApp` directory, it creates:
+
+- `src/MyApp/MyApp.csproj`
+- `tests/MyApp.Tests/MyApp.Tests.csproj`
+
+The `tests` project runs the application in the sandbox, as [Test an application](../how-to/test-an-application.md) describes.
+
+| Option | Value | Description |
+| --- | --- | --- |
+| `--HttpPort` | integer | Port number to use for the HTTP endpoint in launchSettings.json. |
+
+<!-- Generated by tools/ApiReference. -->

@@ -1,4 +1,5 @@
 ---
+title: "Isoplane.AspNetCore.DataProtection.EntityFrameworkCore assembly"
 mdx:
   format: md
 ---

@@ -1,4 +1,5 @@
 ---
+title: "IsoplaneLoggerProvider class"
 mdx:
   format: md
 ---

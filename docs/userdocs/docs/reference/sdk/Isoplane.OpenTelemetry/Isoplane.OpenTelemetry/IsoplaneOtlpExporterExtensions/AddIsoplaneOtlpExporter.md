@@ -1,4 +1,5 @@
 ---
+title: "IsoplaneOtlpExporterExtensions.AddIsoplaneOtlpExporter method"
 mdx:
   format: md
 ---

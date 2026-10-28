@@ -1,4 +1,5 @@
 ---
+title: "RequestHead.Path property"
 mdx:
   format: md
 ---

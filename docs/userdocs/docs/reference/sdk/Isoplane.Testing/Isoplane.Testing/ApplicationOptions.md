@@ -1,4 +1,5 @@
 ---
+title: "ApplicationOptions record"
 mdx:
   format: md
 ---

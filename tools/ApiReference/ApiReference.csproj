@@ -2,7 +2,7 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <IsPackable>false</IsPackable>
-    <Description>Generates and checks the customer SDK reference: the API from assemblies and XML documentation, and the settings, template, error code and telemetry pages from the build files, launch profile keys, debugger manifest, template definitions, diagnostics and event schema that define them.</Description>
+    <Description>Generates and checks the customer SDK reference: the API from assemblies and XML documentation, and the settings, template, error code and telemetry pages from the build files, launch profile keys, debugger manifest, template definitions, diagnostics and event schema that define them; and the release that added each documented item, recorded when the docs are snapshotted for a release.</Description>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
@@ -10,6 +10,8 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="XmlDocMarkdown.Core" Version="2.9.0" />
+    <PackageReference Include="NuGet.Versioning" Version="7.9.0" />
+    <PackageReference Include="System.CommandLine" Version="2.0.13" />
     <ProjectReference Include="../../guest-sdks/dotnet/Isoplane.Sdk.csproj" />
     <ProjectReference Include="../../guest-sdks/dotnet/AspNetCore/Isoplane.AspNetCore.csproj" />
     <ProjectReference Include="../../guest-sdks/dotnet/AspNetCore.DataProtection.EntityFrameworkCore/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.csproj" />

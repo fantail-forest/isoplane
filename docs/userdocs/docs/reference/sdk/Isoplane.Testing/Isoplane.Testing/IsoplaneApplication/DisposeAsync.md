@@ -1,4 +1,5 @@
 ---
+title: "IsoplaneApplication.DisposeAsync method"
 mdx:
   format: md
 ---

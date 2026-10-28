@@ -1,4 +1,5 @@
 ---
+title: "IsoplaneLoggerProvider constructor"
 mdx:
   format: md
 ---

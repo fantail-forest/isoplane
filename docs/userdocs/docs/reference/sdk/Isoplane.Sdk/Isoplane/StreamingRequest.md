@@ -1,4 +1,5 @@
 ---
+title: "StreamingRequest class"
 mdx:
   format: md
 ---

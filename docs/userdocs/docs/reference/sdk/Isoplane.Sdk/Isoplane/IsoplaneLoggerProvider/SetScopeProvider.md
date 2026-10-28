@@ -1,4 +1,5 @@
 ---
+title: "IsoplaneLoggerProvider.SetScopeProvider method"
 mdx:
   format: md
 ---

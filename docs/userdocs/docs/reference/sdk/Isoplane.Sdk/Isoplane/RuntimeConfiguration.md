@@ -1,4 +1,5 @@
 ---
+title: "RuntimeConfiguration class"
 mdx:
   format: md
 ---

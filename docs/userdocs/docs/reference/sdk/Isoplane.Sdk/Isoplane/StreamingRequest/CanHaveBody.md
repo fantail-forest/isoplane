@@ -1,4 +1,5 @@
 ---
+title: "StreamingRequest.CanHaveBody property"
 mdx:
   format: md
 ---

@@ -1,4 +1,5 @@
 ---
+title: "Initialization class"
 mdx:
   format: md
 ---

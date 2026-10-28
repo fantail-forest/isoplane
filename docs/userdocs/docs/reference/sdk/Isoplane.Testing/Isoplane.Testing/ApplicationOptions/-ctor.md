@@ -1,4 +1,5 @@
 ---
+title: "ApplicationOptions constructor"
 mdx:
   format: md
 ---

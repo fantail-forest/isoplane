@@ -26,6 +26,14 @@ Follow the [reference-documentation guidance](../../../AGENTS.md#comments--docum
 
 **Exception:** Repository readers or consumers that cannot run the generator may benefit from retained generated pages. Check those copies for drift rather than requiring every consumer to generate them.
 
+## Snapshot customer docs per release line
+
+Publish one snapshot of the customer docs per release line, where a line begins with a breaking release, and re-snapshot the line from the working docs at every release on it. Keep the working docs unpublished, as the docs of the next release. Mark an item added after a line's first release with a release marker that is resolved and pruned at snapshot time, and derive the reference pages' markers from a record the snapshot keeps, not from prose. `docs/userdocs/README.md` has the mechanics.
+
+**Not this:** A snapshot per patch release; editing a published snapshot by hand; a "since" note written into every list and table as prose.
+
+**Exception:** None.
+
 ## Describe supported behavior and its limits
 
 Describe behavior the implementation provides, using evidence appropriate to the claim. Customer-visible guarantees need validation through the relevant interface; structural explanations and limitations can be established from the implementation. Reuse existing evidence and coverage rather than adding a test for each page or sentence. A declared configuration field or SDK method alone does not establish a working feature.

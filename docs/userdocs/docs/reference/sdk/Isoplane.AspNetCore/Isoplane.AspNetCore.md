@@ -1,4 +1,5 @@
 ---
+title: "Isoplane.AspNetCore assembly"
 mdx:
   format: md
 ---

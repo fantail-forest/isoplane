@@ -1,4 +1,5 @@
 ---
+title: "Activation.IsActivated property"
 mdx:
   format: md
 ---

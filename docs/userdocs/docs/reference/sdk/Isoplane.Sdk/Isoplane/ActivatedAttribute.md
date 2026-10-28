@@ -1,4 +1,5 @@
 ---
+title: "ActivatedAttribute class"
 mdx:
   format: md
 ---

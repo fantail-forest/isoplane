@@ -1,4 +1,5 @@
 ---
+title: "Activation.Activated event"
 mdx:
   format: md
 ---

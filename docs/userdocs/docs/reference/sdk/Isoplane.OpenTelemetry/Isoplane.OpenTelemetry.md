@@ -1,4 +1,5 @@
 ---
+title: "Isoplane.OpenTelemetry assembly"
 mdx:
   format: md
 ---

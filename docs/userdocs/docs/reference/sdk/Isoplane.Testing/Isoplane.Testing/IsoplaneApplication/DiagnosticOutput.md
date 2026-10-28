@@ -1,4 +1,5 @@
 ---
+title: "IsoplaneApplication.DiagnosticOutput property"
 mdx:
   format: md
 ---

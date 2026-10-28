@@ -1,4 +1,5 @@
 ---
+title: "DataProtectionKeys class"
 mdx:
   format: md
 ---

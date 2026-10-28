@@ -1,4 +1,5 @@
 ---
+title: "Activation class"
 mdx:
   format: md
 ---

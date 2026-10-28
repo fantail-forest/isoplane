@@ -1,4 +1,5 @@
 ---
+title: "Response.Stream method"
 mdx:
   format: md
 ---

@@ -1,4 +1,5 @@
 ---
+title: "RequestHead.Aborted property"
 mdx:
   format: md
 ---

@@ -1,4 +1,5 @@
 ---
+title: "Response class"
 mdx:
   format: md
 ---

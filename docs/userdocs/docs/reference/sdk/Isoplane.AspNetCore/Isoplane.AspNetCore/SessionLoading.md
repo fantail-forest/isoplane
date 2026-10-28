@@ -1,4 +1,5 @@
 ---
+title: "SessionLoading class"
 mdx:
   format: md
 ---

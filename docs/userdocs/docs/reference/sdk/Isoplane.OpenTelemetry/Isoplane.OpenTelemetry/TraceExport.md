@@ -1,4 +1,5 @@
 ---
+title: "TraceExport class"
 mdx:
   format: md
 ---

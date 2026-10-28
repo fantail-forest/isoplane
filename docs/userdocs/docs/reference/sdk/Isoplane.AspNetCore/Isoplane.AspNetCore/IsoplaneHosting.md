@@ -1,4 +1,5 @@
 ---
+title: "IsoplaneHosting class"
 mdx:
   format: md
 ---

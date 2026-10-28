@@ -1,4 +1,5 @@
 ---
+title: "Isoplane.Sdk assembly"
 mdx:
   format: md
 ---

@@ -1,3 +1,4 @@
+using System.CommandLine;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
@@ -9,44 +10,62 @@ using Isoplane.Cli;
 using Microsoft.CodeAnalysis.Diagnostics;
 using XmlDocMarkdown.Core;
 
-if (args.Length is < 1 or > 2 || (args.Length == 2 && args[1] != "--check"))
+var directory = new Argument<DirectoryInfo>("reference-directory") { Description = "The docs/reference directory the pages are written to, or compared against." };
+var record = new Option<FileInfo>("--since") { Description = "The JSON record of the release that added each documented item.", Required = true };
+var check = new Option<bool>("--check") { Description = "Compare the generated pages with the directory instead of writing them." };
+var stamp = new Option<string?>("--stamp") { Description = "The release being snapshotted. Items the record does not list are recorded as added in it." };
+var line = new Option<string?>("--line") { Description = "The release line of --stamp, such as 0.1. A release on a new line becomes its first." };
+var root = new RootCommand("Generates and checks the customer reference pages.") { directory, record, check, stamp, line };
+root.SetAction(parsed => Run(parsed.GetValue(directory)!, parsed.GetValue(record)!, parsed.GetValue(check), parsed.GetValue(stamp), parsed.GetValue(line)));
+return root.Parse(args).Invoke();
+
+static int Run(DirectoryInfo destination, FileInfo recordFile, bool check, string? stamp, string? line)
 {
-    Console.Error.WriteLine("Usage: ApiReference <reference-directory> [--check]");
-    return 2;
-}
-var temporary = Directory.CreateTempSubdirectory("isoplane-api-reference-");
-try
-{
-    var generated = Reference.Generate(temporary.FullName);
-    var destination = Path.GetFullPath(args[0]);
-    var existing = Directory.Exists(Path.Combine(destination, "sdk"))
-        ? Directory.EnumerateFiles(Path.Combine(destination, "sdk"), "*.md", SearchOption.AllDirectories)
-            .Select(path => Path.GetRelativePath(destination, path)).ToHashSet(StringComparer.Ordinal)
-        : [];
-    if (File.Exists(Path.Combine(destination, "sdk.md"))) existing.Add("sdk.md");
-    var differences = generated.Keys.Union(existing).Where(path =>
-        !generated.TryGetValue(path, out var content) || !File.Exists(Path.Combine(destination, path)) ||
-        File.ReadAllText(Path.Combine(destination, path)) != content).Order(StringComparer.Ordinal).ToArray();
-    if (args.Length == 2)
+    if (stamp is null != line is null || (check && stamp is not null))
     {
-        if (differences.Length == 0) return 0;
-        Console.Error.WriteLine("SDK reference is stale. Run pnpm run generate:reference in docs/userdocs.");
-        foreach (var path in differences) Console.Error.WriteLine(path);
-        return 1;
+        Console.Error.WriteLine("--stamp and --line go together, and not with --check.");
+        return 2;
     }
-    foreach (var path in existing.Except(generated.Keys)) File.Delete(Path.Combine(destination, path));
-    foreach (var (path, content) in generated)
+    var since = Since.Load(recordFile);
+    var temporary = Directory.CreateTempSubdirectory("isoplane-api-reference-");
+    try
     {
-        var file = Path.Combine(destination, path);
-        Directory.CreateDirectory(Path.GetDirectoryName(file)!);
-        File.WriteAllText(file, content, new UTF8Encoding(false));
+        var drafted = Reference.Generate(temporary.FullName);
+        if (stamp is not null)
+        {
+            since.Stamp(stamp, line!, Since.Items(drafted.Values));
+            since.Save(recordFile);
+        }
+        var generated = drafted.ToDictionary(page => page.Key, page => since.Resolve(page.Value), StringComparer.Ordinal);
+        var existing = Directory.Exists(Path.Combine(destination.FullName, "sdk"))
+            ? Directory.EnumerateFiles(Path.Combine(destination.FullName, "sdk"), "*.md", SearchOption.AllDirectories)
+                .Select(path => Path.GetRelativePath(destination.FullName, path)).ToHashSet(StringComparer.Ordinal)
+            : [];
+        if (File.Exists(Path.Combine(destination.FullName, "sdk.md"))) existing.Add("sdk.md");
+        var differences = generated.Keys.Union(existing).Where(path =>
+            !generated.TryGetValue(path, out var content) || !File.Exists(Path.Combine(destination.FullName, path)) ||
+            File.ReadAllText(Path.Combine(destination.FullName, path)) != content).Order(StringComparer.Ordinal).ToArray();
+        if (check)
+        {
+            if (differences.Length == 0) return 0;
+            Console.Error.WriteLine("SDK reference is stale. Run pnpm run generate:reference in docs/userdocs.");
+            foreach (var path in differences) Console.Error.WriteLine(path);
+            return 1;
+        }
+        foreach (var path in existing.Except(generated.Keys)) File.Delete(Path.Combine(destination.FullName, path));
+        foreach (var (path, content) in generated)
+        {
+            var file = Path.Combine(destination.FullName, path);
+            Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+            File.WriteAllText(file, content, new UTF8Encoding(false));
+        }
+        Console.WriteLine($"Generated {generated.Count} SDK reference pages.");
+        return 0;
     }
-    Console.WriteLine($"Generated {generated.Count} SDK reference pages.");
-    return 0;
-}
-finally
-{
-    temporary.Delete(recursive: true);
+    finally
+    {
+        temporary.Delete(recursive: true);
+    }
 }
 
 internal static class Reference
@@ -57,6 +76,7 @@ internal static class Reference
     private static readonly Regex GuideLink = new(@"\]\(https://isoplane\.dev/docs/([^)#]+)(#[^)]*)?\)", RegexOptions.CultureInvariant);
     private static readonly Regex ErrorCode = new(@"ISOPLANE\d{4}", RegexOptions.CultureInvariant);
     private static readonly Regex ErrorCodeSection = new(@"^### (ISOPLANE\d{4})$", RegexOptions.CultureInvariant | RegexOptions.Multiline);
+    private static readonly Regex Heading = new(@"^# (.+?)(?:\u0001|$)", RegexOptions.CultureInvariant | RegexOptions.Multiline);
     private static readonly Assembly[] Assemblies = [typeof(Isoplane.Request).Assembly, typeof(Isoplane.AspNetCore.IsoplaneHosting).Assembly, typeof(Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.DataProtectionDbContextKeys).Assembly, typeof(Isoplane.OpenTelemetry.TraceExport).Assembly, typeof(Isoplane.Testing.IsoplaneApplication).Assembly];
     private static readonly HashSet<string> Namespaces = ["Isoplane", "Isoplane.AspNetCore", "Isoplane.AspNetCore.DataProtection.EntityFrameworkCore", "Isoplane.OpenTelemetry", "Isoplane.Testing"];
 
@@ -72,13 +92,15 @@ internal static class Reference
             var types = assembly.GetExportedTypes().Where(type => Namespaces.Contains(type.Namespace ?? "")).ToArray();
             var pages = Directory.EnumerateFiles(directory, "*.md", SearchOption.AllDirectories)
                 .Where(path => Included(Path.GetRelativePath(directory, path), name, types)).ToHashSet(StringComparer.Ordinal);
-            foreach (var page in pages)
+            var ids = pages.ToDictionary(page => page, page => Id("sdk", name, Path.GetRelativePath(directory, Published(page, pages))), StringComparer.Ordinal);
+            foreach (var (page, id) in ids)
             {
                 var text = Filter(File.ReadAllText(page), page, pages, types);
-                var relative = Path.Combine("sdk", name, Path.GetRelativePath(directory, Published(page, pages)));
-                var guides = string.Concat(Enumerable.Repeat("../", relative.Split(Path.DirectorySeparatorChar).Length));
+                var guides = string.Concat(Enumerable.Repeat("../", id.Count(c => c == '/') + 1));
                 text = GuideLink.Replace(text, match => $"]({guides}{match.Groups[1].Value}.md{match.Groups[2].Value})");
-                output.Add(relative, "---\nmdx:\n  format: md\n---\n\n" + text.TrimEnd() + "\n");
+                text = Mark(text, id, ids.Values.ToHashSet(StringComparer.Ordinal));
+                var title = JsonSerializer.Serialize(Heading.Match(text).Groups[1].Value);
+                output.Add(id + ".md", $"---\ntitle: {title}\nmdx:\n  format: md\n---\n\n" + text.TrimEnd() + "\n");
             }
         }
         output.Add("sdk.md", Overview);
@@ -86,17 +108,17 @@ internal static class Reference
         output.Add("error-codes.md", ErrorCodes());
         output.Add("project-templates.md", ProjectTemplates.Replace("{templates}", Templates()));
         output.Add("launch-settings.md", LaunchSettings
-            .Replace("{profile}", Keys(LaunchProfileKeys.Profile.Select(key => (key.Name, key.Description))))
-            .Replace("{limits}", Keys(LaunchProfileKeys.LimitOverrides.Select(key => (key.Name, key.Description)))));
+            .Replace("{profile}", Keys("launch-settings#profile", LaunchProfileKeys.Profile.Select(key => (key.Name, key.Description))))
+            .Replace("{limits}", Keys("launch-settings#limits", LaunchProfileKeys.LimitOverrides.Select(key => (key.Name, key.Description)))));
         output.Add("telemetry.md", Telemetry
-            .Replace("{variables}", "| Variable | Description |\n| --- | --- |\n" + string.Join("\n", TelemetryVariables.All.Select(variable => $"| `{variable.Name}` | {variable.Description} |")))
+            .Replace("{variables}", "| Variable | Description |\n| --- | --- |\n" + string.Join("\n", TelemetryVariables.All.Select(variable => $"| `{variable.Name}`{Since.Mark("telemetry#variable#" + variable.Name)} | {variable.Description} |")))
             .Replace("{fields}", EventFields("command-event.schema.json"))
             .Replace("{installation}", EventFields("installation-event.schema.json"))
             .Replace("{ci}", "| Variable | Recorded as |\n| --- | --- |\n" + string.Join("\n", TelemetryVariables.CiServices.Select(service =>
-                $"| `{service.Variable}`{(service.AnyValue ? "" : ", when `true` or `1`")} | `{service.Name}` |"))
-                + $"\n| `CI`, unless empty, `false` or `0` | `{TelemetryVariables.OtherCiService}` |")
+                $"| `{service.Variable}`{(service.AnyValue ? "" : ", when `true` or `1`")}{Since.Mark("telemetry#ci#" + service.Variable)} | `{service.Name}` |"))
+                + $"\n| `CI`, unless empty, `false` or `0`{Since.Mark("telemetry#ci#CI")} | `{TelemetryVariables.OtherCiService}` |")
             .Replace("{agents}", "| Variables | Recorded as |\n| --- | --- |\n" + string.Join("\n", TelemetryVariables.Agents.Select(rule =>
-                $"| {Names(rule.Variables)}{(rule.Value is null ? "" : $", set to `{rule.Value}`")} | `{rule.Name}` |"))));
+                $"| {Names(rule.Variables)}{(rule.Value is null ? "" : $", set to `{rule.Value}`")}{Since.Mark("telemetry#agent#" + rule.Name)} | `{rule.Name}` |"))));
         output.Add("vscode-launch.md", DebugConfiguration.Replace("{launch}", DebugAttributes("launch")).Replace("{attach}", DebugAttributes("attach")));
         return output;
     }
@@ -122,9 +144,9 @@ internal static class Reference
         if (codes.Except(explained).Concat(explained.Except(codes)).Order(StringComparer.Ordinal).ToArray() is { Length: > 0 } unmatched)
             throw new InvalidOperationException("ErrorCodes.md and the declared diagnostics differ on: " + string.Join(", ", unmatched));
         foreach (var rule in declared)
-            page = page.Replace($"### {rule.Code}\n", $"### {rule.Code}\n\n**{rule.Severity}.** {rule.Title}.\n");
+            page = page.Replace($"### {rule.Code}\n", $"### {rule.Code}{Since.Mark("error-codes#" + rule.Code)}\n\n**{rule.Severity}.** {rule.Title}.\n");
         return page.Replace("{codes}", "| Code | Severity | Meaning |\n| --- | --- | --- |\n" + string.Join("\n",
-            declared.Select(rule => $"| [`{rule.Code}`](#{rule.Code.ToLowerInvariant()}) | {rule.Severity} | {rule.Title} |")));
+            declared.Select(rule => $"| [`{rule.Code}`](#{rule.Code.ToLowerInvariant()}){Since.Mark("error-codes#" + rule.Code)} | {rule.Severity} | {rule.Title} |")));
     }
 
     /// <summary>One section for each template the SDK ships, from the definition file inside the template.</summary>
@@ -140,7 +162,7 @@ internal static class Reference
             var source = template.GetProperty("sourceName").GetString()!;
             // A template added beside an application is named after it, as its source name is.
             var name = source.EndsWith(".Tests", StringComparison.Ordinal) ? "MyApp.Tests" : "MyApp";
-            var section = new StringBuilder($"### `{shortName}`\n\n**{template.GetProperty("name").GetString()}.** {template.GetProperty("description").GetString()}\n\n");
+            var section = new StringBuilder($"### `{shortName}`{Since.Mark("project-templates#" + shortName)}\n\n**{template.GetProperty("name").GetString()}.** {template.GetProperty("description").GetString()}\n\n");
             section.Append($"```bash\ndotnet new {shortName} --name {name}\n```\n\nIn a new `{name}` directory, it creates:\n\n");
             var outputs = template.GetProperty("primaryOutputs").EnumerateArray()
                 .Select(output => output.GetProperty("path").GetString()!.Replace(source, name)).ToArray();
@@ -154,7 +176,10 @@ internal static class Reference
             var names = OptionNames(resources, "TemplateOptions/" + resource["Templates/".Length..]);
             if (options.Length != 0)
                 section.Append("\n| Option | Value | Description |\n| --- | --- | --- |\n").AppendJoin('\n', options.Select(option =>
-                    $"| `--{names.GetValueOrDefault(option.Name, option.Name)}` | {option.Value.GetProperty("datatype").GetString()} | {option.Value.GetProperty("description").GetString()} |")).Append('\n');
+                {
+                    var name = names.GetValueOrDefault(option.Name, option.Name);
+                    return $"| `--{name}`{Since.Mark($"project-templates#{shortName}#--{name}")} | {option.Value.GetProperty("datatype").GetString()} | {option.Value.GetProperty("description").GetString()} |";
+                })).Append('\n');
             sections.Add(shortName, section.ToString());
         }
         return string.Join("\n", sections.Values).TrimEnd();
@@ -177,16 +202,17 @@ internal static class Reference
     private static string EventFields(string resource)
     {
         using var schema = JsonDocument.Parse(Resource(resource));
+        var item = "telemetry#" + resource.Replace(".schema.json", "") + "#";
         return "| Field | What it records | Values |\n| --- | --- | --- |\n" + string.Join("\n", schema.RootElement.GetProperty("properties").EnumerateObject()
             .Where(field => !field.Value.TryGetProperty("const", out _)).Select(field =>
-                $"| `{field.Name}` | {field.Value.GetProperty("description").GetString()} | " + (field.Value.TryGetProperty("enum", out var values)
+                $"| `{field.Name}`{Since.Mark(item + field.Name)} | {field.Value.GetProperty("description").GetString()} | " + (field.Value.TryGetProperty("enum", out var values)
                     ? Names(values.EnumerateArray().Where(value => value.ValueKind == JsonValueKind.String).Select(value => value.GetString()!)) : "") + " |"));
     }
 
     private static string Names(IEnumerable<string> names) => string.Join(", ", names.Select(name => $"`{name}`"));
 
-    private static string Keys(IEnumerable<(string Name, string Description)> keys) =>
-        "| Key | Description |\n| --- | --- |\n" + string.Join("\n", keys.Select(key => $"| `{key.Name}` | {key.Description} |"));
+    private static string Keys(string item, IEnumerable<(string Name, string Description)> keys) =>
+        "| Key | Description |\n| --- | --- |\n" + string.Join("\n", keys.Select(key => $"| `{key.Name}`{Since.Mark($"{item}#{key.Name}")} | {key.Description} |"));
 
     /// <summary>The attributes the debugger extension's manifest declares for one kind of debug configuration.</summary>
     private static string DebugAttributes(string request)
@@ -204,7 +230,7 @@ internal static class Reference
                     : attribute.Value.GetProperty("type").GetString();
                 var initial = required.Contains(attribute.Name) ? "required"
                     : attribute.Value.TryGetProperty("default", out var preset) ? $"`{preset.GetRawText().Trim('"')}`" : "";
-                return $"| `{attribute.Name}` | {value} | {initial} | {attribute.Value.GetProperty("description").GetString()} |";
+                return $"| `{attribute.Name}`{Since.Mark($"vscode-launch#{request}#{attribute.Name}")} | {value} | {initial} | {attribute.Value.GetProperty("description").GetString()} |";
             }));
     }
 
@@ -222,9 +248,55 @@ internal static class Reference
                 throw new InvalidOperationException($"{name} has no comment describing it in Isoplane.Conformance.targets.");
             var description = string.Join(' ', comment.Value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
             description = ErrorCode.Replace(description, code => $"[`{code.Value}`](error-codes.md#{code.Value.ToLowerInvariant()})");
-            settings.Append($"### `{name}`\n\nDefault: `{property.Value}`.\n\n{description}\n\n");
+            settings.Append($"### `{name}`{Since.Mark("project-settings#" + name)}\n\nDefault: `{property.Value}`.\n\n{description}\n\n");
         }
         return settings.ToString().TrimEnd();
+    }
+
+    private static string Id(params string[] segments)
+    {
+        var path = string.Join('/', segments.Select(segment => segment.Replace(Path.DirectorySeparatorChar, '/')));
+        return path.EndsWith(".md", StringComparison.Ordinal) ? path[..^3] : path;
+    }
+
+    private static int Depth(string id) => id.Count(c => c == '/');
+
+    /// <summary>
+    /// Marks each item a page documents with its release placeholder: the page's own title, and each
+    /// table row whose first cell links to a type or member page. A member page documents one item per
+    /// heading, told apart by the signature under it, so that each overload is an item of its own; a row
+    /// that links to a member page covers every overload and takes the earliest. The assembly page itself
+    /// is as old as the package and is left unmarked.
+    /// </summary>
+    private static string Mark(string text, string id, HashSet<string> ids)
+    {
+        var lines = text.Split('\n');
+        var directory = id[..id.LastIndexOf('/')];
+        for (var index = 0; index < lines.Length; index++)
+        {
+            var line = lines[index];
+            if (line.StartsWith("# ", StringComparison.Ordinal) && Depth(id) == TypeDepth)
+                lines[index] = line + Since.Mark(id);
+            else if (line.StartsWith("# ", StringComparison.Ordinal) && Depth(id) > TypeDepth)
+                lines[index] = line + Since.Mark($"{id}#{Signature(lines, index)}");
+            else if (line.StartsWith("| ", StringComparison.Ordinal) && line.IndexOf(" | ", 2, StringComparison.Ordinal) is var cell and > 0
+                && Link.Match(line[..cell]) is { Success: true } link && Target(link.Groups[2].Value, "/" + directory + "/x.md") is { } target
+                && Id(target.TrimStart('/')) is var linked && ids.Contains(linked) && Depth(linked) >= TypeDepth)
+                lines[index] = line[..cell] + (Depth(linked) == TypeDepth ? Since.Mark(linked) : Since.MarkEarliest(linked)) + line[cell..];
+        }
+        return string.Join('\n', lines);
+    }
+
+    // sdk/<package>/<namespace>/<Type>: a member page is one level deeper.
+    private const int TypeDepth = 3;
+
+    /// <summary>The signature xmldocmd prints under a member heading, on one line.</summary>
+    private static string Signature(string[] lines, int heading)
+    {
+        var start = Array.FindIndex(lines, heading, line => line == "```csharp");
+        if (start < 0) throw new InvalidOperationException($"No signature follows '{lines[heading]}'.");
+        var end = Array.IndexOf(lines, "```", start + 1);
+        return string.Join(' ', lines[(start + 1)..end].SelectMany(line => line.Split(' ', StringSplitOptions.RemoveEmptyEntries)));
     }
 
     private static bool Included(string path, string assembly, Type[] types)

@@ -1,4 +1,5 @@
 ---
+title: "ResponseStream.Complete method"
 mdx:
   format: md
 ---

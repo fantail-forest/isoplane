@@ -1,4 +1,5 @@
 ---
+title: "InitializerAttribute class"
 mdx:
   format: md
 ---

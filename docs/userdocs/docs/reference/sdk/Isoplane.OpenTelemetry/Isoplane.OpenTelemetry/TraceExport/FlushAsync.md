@@ -1,4 +1,5 @@
 ---
+title: "TraceExport.FlushAsync method"
 mdx:
   format: md
 ---

@@ -1,4 +1,5 @@
 ---
+title: "ResponseStream class"
 mdx:
   format: md
 ---

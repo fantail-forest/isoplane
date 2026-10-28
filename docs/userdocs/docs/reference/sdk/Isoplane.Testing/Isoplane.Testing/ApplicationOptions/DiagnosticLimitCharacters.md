@@ -1,4 +1,5 @@
 ---
+title: "ApplicationOptions.DiagnosticLimitCharacters property"
 mdx:
   format: md
 ---

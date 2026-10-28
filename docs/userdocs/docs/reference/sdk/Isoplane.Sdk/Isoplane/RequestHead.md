@@ -1,4 +1,5 @@
 ---
+title: "RequestHead class"
 mdx:
   format: md
 ---

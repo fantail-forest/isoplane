@@ -40,3 +40,33 @@ the guide. Both links and anchors are checked by the static build.
 
 Starting or building the site generates the local limits table through Task and
 Cargo. Building also checks the retained SDK reference against the .NET assemblies.
+
+## Versions
+
+`docs/` describes the next release and is never published: a local server shows
+it as "Next", and the built site leaves it out. What is published are the
+snapshots under `versioned_docs/`, one per release line. A line begins with a
+breaking release (`0.1`, `0.2`, then `1`, `2`); the newest line is served at
+`/docs/` and the others at `/docs/<line>/`, with a version menu in the navbar.
+
+Every release, breaking or not, re-snapshots its line from `docs/`:
+
+```bash
+pnpm run snapshot          # the version in Directory.Build.props
+pnpm run snapshot 0.1.3
+```
+
+The script stamps the release into `since.json` and regenerates the reference,
+resolves release markers, replaces the line's snapshot, and leaves the result
+to commit with the release. Nothing under `versioned_docs/` is edited by hand;
+a fix to a published line is a change to `docs/` and a new patch release.
+
+### Release markers
+
+Write `:since[next]` after the name of anything added since the last release,
+in a table cell or in a heading below the page title. It renders as a small
+pill. A snapshot turns it into `:since[0.1.3]`, and drops a marker for a release
+no later than the line's first, since every reader of that line has the item.
+Generated reference pages mark their own items from `since.json`, which records
+the release that added each documented type, member, overload, error code,
+setting, template option, launch key, telemetry field and debugger attribute.

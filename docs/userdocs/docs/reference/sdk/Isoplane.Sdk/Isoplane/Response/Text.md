@@ -1,4 +1,5 @@
 ---
+title: "Response.Text method"
 mdx:
   format: md
 ---

@@ -1,4 +1,5 @@
 ---
+title: "Request class"
 mdx:
   format: md
 ---
