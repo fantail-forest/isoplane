@@ -14,6 +14,8 @@ overrides:
 allowBuilds:
   # Its postinstall prints a funding banner and builds nothing.
   core-js: false
+  # Its postinstall prints a version note and builds nothing.
+  typesense-instantsearch-adapter: false
   # Wrangler's two native binaries, installed for the current platform.
   esbuild: true
   workerd: true
