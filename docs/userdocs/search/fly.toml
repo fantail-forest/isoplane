@@ -7,7 +7,7 @@ primary_region = "syd"
   dockerfile = "Dockerfile"
 
 [http_service]
-  internal_port = 8108
+  internal_port = 8080
   force_https = true
   # The machine suspends a few minutes after the last search and resumes, index
   # still in memory, on the next one.

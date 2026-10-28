@@ -97,21 +97,31 @@ keyword matching plus an embedding of each section, computed by the model named
 in `search/scraper.config.json` through its provider's API. Nothing under
 `search/` is reachable from the site except through the Worker.
 
+The search bar itself is ejected into `src/theme/SearchBar` so that typing is
+debounced, a refused or failed search is retried after a pause, prefixes under
+four characters are keyword-only, and each page load tags its searches with a
+random in-memory id that the search log records as `session`.
+
 `pnpm run search:index` (`search/build-index.sh`) runs after `pnpm run build`.
 It starts a throwaway Typesense and an nginx serving `build/` in Docker, crawls
 the built site into it, creates the one search-only key the server will answer,
 snapshots the result into `search/snapshot/` and tears everything down. The
-server is deployed as that snapshot baked into the Typesense image
-(`search/Dockerfile`, `search/fly.toml`), so production has no write path, no
-volume and no admin key in use. `pnpm run search:deploy` (`search/deploy.sh`)
+server is deployed as that snapshot baked into an image (`search/Dockerfile`,
+`search/fly.toml`) in which Typesense listens on loopback and an nginx on the
+machine's port admits only `POST /multi_search`, with the search-only key and
+one query per call, and `GET /health`; every other route is 404 before it
+reaches Typesense. nginx also limits each client address, so the machine is
+protected even from traffic that bypasses Cloudflare. Production therefore has
+no write path, no volume and no admin key in use. `pnpm run search:deploy` (`search/deploy.sh`)
 deploys the image to Fly and then the site to Cloudflare, with the snapshot's
 version as the edge cache key. The Fly machine suspends when idle and resumes
 on the next search.
 
 `search/worker.js` is the site's Worker. Pages are static assets; requests under
 `/docs/search` are proxied to the Fly server with the search-only key, rate
-limited per client address, cached at the edge per distinct query, and logged
-as `docs_search` events (query, hit count, status, cache) in Workers Logs.
+limited per client address, cached at the edge per distinct query, retried
+with backoff when the server is resuming or refusing, and logged as
+`docs_search` events (query, hit count, status, cache, session) in Workers Logs.
 
 Configuration lives in `search/.env`, which Git ignores:
 
@@ -123,15 +133,19 @@ DOCS_SEARCH_EMBEDDING_API_KEY=   # for the model in search/scraper.config.json
 ```
 
 The server's own admin key is a Fly secret, `TYPESENSE_API_KEY`, set once and
-never used by the site. Searches at query time embed the query with the same
-provider, so the server holds the provider key too, inside the baked snapshot.
+never used by the site; `DOCS_SEARCH_KEY` is a Fly secret as well, for nginx to
+admit. Searches at query time embed the query with the same provider, so the
+server holds the provider key too, inside the baked snapshot. To change model
+or provider, edit `model_config` in `search/scraper.config.json` (an
+OpenAI-compatible provider other than OpenAI also takes
+`DOCS_SEARCH_EMBEDDING_URL`), then index and deploy.
 
 The first deploy creates the Fly app and sets the two secrets; later deploys
 need none of this:
 
 ```sh
 fly apps create isoplane-docs-search
-fly secrets set --app isoplane-docs-search TYPESENSE_API_KEY=$(openssl rand -hex 24)
+fly secrets set --app isoplane-docs-search TYPESENSE_API_KEY=$(openssl rand -hex 24) DOCS_SEARCH_KEY=...
 wrangler secret put DOCS_SEARCH_KEY     # the DOCS_SEARCH_KEY value from search/.env
 ```
 
