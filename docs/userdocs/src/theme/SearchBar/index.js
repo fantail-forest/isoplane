@@ -26,7 +26,7 @@ let DocSearchModal = null;
 // in the search log. The id lives in memory only; nothing is stored on the
 // device. It is disabled pending a consent implementation.
 const DEBOUNCE_MS = 250;
-const RETRY_DELAYS_MS = {429: [2000], 503: [1000, 3000], 502: [1000, 3000]};
+const RETRY_DELAYS_MS = {429: [5000], 503: [2000, 4000], 502: [2000, 4000]};
 const SEARCH_SESSION_ENABLED = false;
 const pageSessionId = SEARCH_SESSION_ENABLED && typeof crypto !== 'undefined' && crypto.randomUUID
     ? crypto.randomUUID()
@@ -51,8 +51,9 @@ function debounceSearch(search) {
 }
 
 // The Typesense client surfaces a refused or failed search as an error with
-// its HTTP status and nothing else, so the pauses are fixed rather than read
-// from the Retry-After header the Worker sends.
+// its HTTP status and nothing else, so the pauses cannot be read from the
+// Retry-After header and instead match what the Worker and the search server
+// send: 5 s on a refusal, 2 s on an outage.
 async function searchWithRetry(search, requests) {
     for (let attempt = 0; ; attempt++) {
         try {

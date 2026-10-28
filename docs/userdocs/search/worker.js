@@ -21,7 +21,7 @@ export async function search(request, env, ctx) {
   const client = request.headers.get('cf-connecting-ip') ?? 'unknown';
   const {success} = await env.SEARCH_RATE_LIMIT.limit({key: client});
   if (!success) {
-    return new Response('Too many searches; slow down.', {status: 429, headers: {'retry-after': '10'}});
+    return new Response('Too many searches; slow down.', {status: 429, headers: {'retry-after': '5'}});
   }
 
   let body = '';
