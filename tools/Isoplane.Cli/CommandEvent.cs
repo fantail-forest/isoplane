@@ -11,6 +11,8 @@ internal enum TelemetryCommand
     Dev, DebugAdapter, Setup, UninstallSdk, Doctor, Cache, Bundle, PrepareRuntime, Agent, Unknown
 }
 
+internal enum CommandInterface { Cli, Mcp }
+
 internal enum CommandMode { Run, Debug, Test }
 
 internal enum CommandOutcome { Succeeded, Failed, Cancelled, Crashed }
@@ -22,8 +24,8 @@ internal enum CommandFailure { Usage, InvalidData, InvalidOperation, FileSystem,
 /// value is a number, a flag or a name from a fixed list, so nothing a user typed can be recorded.
 /// </summary>
 internal sealed record CommandEvent(
-    Guid Id, string OccurredAt, Guid? InstallId, bool Ci, string? CiProvider, CodingAgent Agent, TelemetryCommand Command, CommandMode Mode,
-    CommandOutcome Outcome, int? ExitCode, CommandFailure? Failure, long DurationMs, string CliVersion,
+    Guid Id, string OccurredAt, Guid? InstallId, bool Ci, string? CiProvider, CodingAgent Agent, CommandInterface Interface,
+    TelemetryCommand Command, CommandMode Mode, CommandOutcome Outcome, int? ExitCode, CommandFailure? Failure, long DurationMs, string CliVersion,
     string Platform, string OsArchitecture, string OsVersion, string? Distribution,
     string? DistributionVersion, string RuntimeVersion, string? Locale)
 {

@@ -5,27 +5,9 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "event",
-    "id",
-    "occurredAt",
-    "installId",
-    "ci",
-    "ciProvider",
-    "agent",
-    "command",
-    "mode",
-    "outcome",
-    "exitCode",
-    "failure",
-    "durationMs",
-    "cliVersion",
-    "platform",
-    "osArchitecture",
-    "osVersion",
-    "distribution",
-    "distributionVersion",
-    "runtimeVersion",
-    "locale"
+    "event", "id", "occurredAt", "installId", "ci", "ciProvider", "agent", "interface", "command", "mode", "outcome", "exitCode",
+    "failure", "durationMs", "cliVersion", "platform", "osArchitecture", "osVersion", "distribution", "distributionVersion",
+    "runtimeVersion", "locale"
   ],
   "properties": {
     "event": {
@@ -44,10 +26,7 @@
     },
     "installId": {
       "description": "The random identifier of this installation, from telemetry/state.json in the Isoplane home directory. Absent on continuous integration machines.",
-      "type": [
-        "string",
-        "null"
-      ],
+      "type": ["string", "null"],
       "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
     },
     "ci": {
@@ -57,105 +36,48 @@
     "ciProvider": {
       "description": "The continuous integration service the command ran on, or other for one the CLI does not recognise. Absent when it did not run on one.",
       "enum": [
-        null,
-        "github-actions",
-        "azure-pipelines",
-        "gitlab",
-        "bitbucket",
-        "buildkite",
-        "circleci",
-        "travis",
-        "appveyor",
-        "drone",
-        "teamcity",
-        "jenkins",
-        "aws-codebuild",
-        "other"
+        null, "github-actions", "azure-pipelines", "gitlab", "bitbucket", "buildkite", "circleci", "travis", "appveyor",
+        "drone", "teamcity", "jenkins", "aws-codebuild", "other"
       ]
     },
     "agent": {
       "description": "The coding agent that ran the command, when its environment identifies one.",
       "enum": [
-        "none",
-        "cowork",
-        "claude",
-        "cursor",
-        "gemini",
-        "copilot-cli",
-        "copilot-app",
-        "copilot-vscode",
-        "codex",
-        "aider",
-        "plandex",
-        "amp",
-        "qwen",
-        "droid",
-        "opencode",
-        "zed",
-        "kimi",
-        "openhands",
-        "goose",
-        "cline",
-        "roo",
-        "windsurf",
-        "replit",
-        "augment",
-        "antigravity",
-        "pi",
-        "other"
+        "none", "cowork", "claude", "cursor", "gemini", "copilot-cli", "copilot-app", "copilot-vscode", "codex", "aider",
+        "plandex", "amp", "qwen", "droid", "opencode", "zed", "kimi", "openhands", "goose", "cline", "roo", "windsurf",
+        "replit", "augment", "antigravity", "pi", "other"
       ]
+    },
+    "interface": {
+      "description": "How the command was invoked: cli from a command line, and mcp as a tool call a coding agent made to the server `isoplane agent mcp` runs.",
+      "enum": ["cli", "mcp"]
     },
     "command": {
       "description": "The command that ran. A name the CLI does not recognise is recorded as unknown, never as typed.",
       "enum": [
-        "dev",
-        "debug-adapter",
-        "setup",
-        "uninstall-sdk",
-        "doctor",
-        "cache",
-        "bundle",
-        "prepare-runtime",
-        "agent",
-        "unknown"
+        "dev", "debug-adapter", "setup", "uninstall-sdk", "doctor", "cache",
+        "bundle", "prepare-runtime", "agent", "unknown"
       ]
     },
     "mode": {
       "description": "Why the command ran: test when Isoplane.Testing started it, debug for a debugging session, and run otherwise.",
-      "enum": [
-        "run",
-        "debug",
-        "test"
-      ]
+      "enum": ["run", "debug", "test"]
     },
     "outcome": {
       "description": "How the command ended.",
-      "enum": [
-        "succeeded",
-        "failed",
-        "cancelled",
-        "crashed"
-      ]
+      "enum": ["succeeded", "failed", "cancelled", "crashed"]
     },
     "exitCode": {
       "description": "The exit code the command returned. Absent when the command crashed.",
-      "type": [
-        "integer",
-        "null"
-      ],
+      "type": ["integer", "null"],
       "minimum": 0,
       "maximum": 255
     },
     "failure": {
       "description": "The category of the error that ended the command, when one did. Error messages are never recorded.",
       "enum": [
-        null,
-        "usage",
-        "invalid-data",
-        "invalid-operation",
-        "file-system",
-        "process",
-        "unexpected"
+        null, "usage", "invalid-data", "invalid-operation", "file-system",
+        "process", "unexpected"
       ]
     },
     "durationMs": {
@@ -186,18 +108,12 @@
     },
     "distribution": {
       "description": "The Linux distribution's identifier from os-release, such as ubuntu. Absent on other systems and when the file is missing.",
-      "type": [
-        "string",
-        "null"
-      ],
+      "type": ["string", "null"],
       "pattern": "^[a-z0-9._-]{1,32}$"
     },
     "distributionVersion": {
       "description": "The Linux distribution's version from os-release, such as 24.04. Absent on other systems and on distributions without one.",
-      "type": [
-        "string",
-        "null"
-      ],
+      "type": ["string", "null"],
       "pattern": "^[0-9A-Za-z._~^+-]{1,32}$"
     },
     "runtimeVersion": {
@@ -207,10 +123,7 @@
     },
     "locale": {
       "description": "The language and region the CLI would display messages in, such as en-NZ. Absent when the machine sets none.",
-      "type": [
-        "string",
-        "null"
-      ],
+      "type": ["string", "null"],
       "pattern": "^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8}){0,3}$"
     }
   }

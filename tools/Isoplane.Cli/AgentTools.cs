@@ -7,16 +7,32 @@ namespace Isoplane.Cli;
 
 /// <summary>What a coding agent can do on this machine through the agent server.</summary>
 [McpServerToolType]
-internal sealed class AgentTools(AgentSessions sessions)
+internal sealed class AgentTools(AgentSessions sessions, CommandTelemetry telemetry)
 {
     [McpServerTool(Name = AgentToolCatalogue.CheckMachine, Title = "Check this machine", ReadOnly = true, OpenWorld = false)]
     [Description(AgentToolCatalogue.CheckMachineDescription)]
     public async Task<string> CheckMachineAsync(CancellationToken cancellation)
     {
-        try { return await EnvironmentDoctor.CheckAsync(TextWriter.Null, cancellation); }
+        var run = telemetry.ToolCall(TelemetryCommand.Doctor);
+        try
+        {
+            var ready = await EnvironmentDoctor.CheckAsync(TextWriter.Null, cancellation);
+            run.Ended(0);
+            return ready;
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+            run.Cancelled(0);
+            throw;
+        }
         catch (Exception error) when (error is InvalidOperationException or IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
         {
+            run.Failed(error, 1);
             throw new McpException(error.Message);
+        }
+        catch (Exception) when (run.Crashed())
+        {
+            throw;
         }
     }
 

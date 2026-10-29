@@ -37,7 +37,7 @@ After that, each command writes one event to `telemetry/pending` in the Isoplane
 
 ## What is collected
 
-One event for each command. `--help`, `--version`, `isoplane telemetry` and `isoplane completions` record nothing.
+One event for each command. `--help`, `--version`, `isoplane telemetry` and `isoplane completions` record nothing. A tool call a coding agent makes to `isoplane agent mcp` that does what a command does is recorded as that command, with `interface` set to `mcp`: `start_session` as `dev`, ending when the session does, and `check_machine` as `doctor`. The other tools record nothing.
 
 | Field | What it records | Values |
 | --- | --- | --- |
@@ -47,6 +47,7 @@ One event for each command. `--help`, `--version`, `isoplane telemetry` and `iso
 | `ci` | Whether the command ran on a continuous integration machine. |  |
 | `ciProvider` | The continuous integration service the command ran on, or other for one the CLI does not recognise. Absent when it did not run on one. | `github-actions`, `azure-pipelines`, `gitlab`, `bitbucket`, `buildkite`, `circleci`, `travis`, `appveyor`, `drone`, `teamcity`, `jenkins`, `aws-codebuild`, `other` |
 | `agent` | The coding agent that ran the command, when its environment identifies one. | `none`, `cowork`, `claude`, `cursor`, `gemini`, `copilot-cli`, `copilot-app`, `copilot-vscode`, `codex`, `aider`, `plandex`, `amp`, `qwen`, `droid`, `opencode`, `zed`, `kimi`, `openhands`, `goose`, `cline`, `roo`, `windsurf`, `replit`, `augment`, `antigravity`, `pi`, `other` |
+| `interface` :since[next] | How the command was invoked: cli from a command line, and mcp as a tool call a coding agent made to the server `isoplane agent mcp` runs. | `cli`, `mcp` |
 | `command` | The command that ran. A name the CLI does not recognise is recorded as unknown, never as typed. | `dev`, `debug-adapter`, `setup`, `uninstall-sdk`, `doctor`, `cache`, `bundle`, `prepare-runtime`, `agent`, `unknown` |
 | `mode` | Why the command ran: test when Isoplane.Testing started it, debug for a debugging session, and run otherwise. | `run`, `debug`, `test` |
 | `outcome` | How the command ended. | `succeeded`, `failed`, `cancelled`, `crashed` |

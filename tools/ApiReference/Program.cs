@@ -457,7 +457,7 @@ After that, each command writes one event to `telemetry/pending` in the Isoplane
 
 ## What is collected
 
-One event for each command. `--help`, `--version`, `isoplane telemetry` and `isoplane completions` record nothing.
+One event for each command. `--help`, `--version`, `isoplane telemetry` and `isoplane completions` record nothing. A tool call a coding agent makes to `isoplane agent mcp` that does what a command does is recorded as that command, with `interface` set to `mcp`: `start_session` as `dev`, ending when the session does, and `check_machine` as `doctor`. The other tools record nothing.
 
 {fields}
 

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using ModelContextProtocol.Client;
 using Xunit;
@@ -26,6 +27,35 @@ public sealed class AgentServerTests
         var missing = await client.CallToolAsync(AgentToolCatalogue.SessionEvents, new Dictionary<string, object?> { ["sessionId"] = "nope" }, cancellationToken: deadline.Token);
         Assert.True(missing.IsError, "an unknown session must be a tool error the model can act on");
         Assert.Contains("list_sessions", string.Concat(missing.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().Select(block => block.Text)));
+    }
+
+    [Fact]
+    public async Task a_tool_call_is_reported_to_telemetry_as_the_command_it_does_over_mcp()
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        var reported = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var transport = new StdioClientTransport(new StdioClientTransportOptions
+        {
+            Name = "isoplane",
+            Command = "dotnet",
+            Arguments = [typeof(CliPaths).Assembly.Location, "agent", "mcp"],
+            EnvironmentVariables = new Dictionary<string, string?>
+            {
+                ["ISOPLANE_HOME"] = Directory.CreateTempSubdirectory("isoplane-agent-").FullName,
+                [TelemetryVariables.Debug.Name] = "1",
+            },
+            StandardErrorLines = line =>
+            {
+                if (line.StartsWith("isoplane telemetry", StringComparison.Ordinal))
+                    reported.TrySetResult(JsonDocument.Parse(line[line.IndexOf('{')..]).RootElement);
+            },
+        });
+        await using var client = await McpClient.CreateAsync(transport, cancellationToken: deadline.Token);
+        await client.CallToolAsync(AgentToolCatalogue.CheckMachine, cancellationToken: deadline.Token);
+        var recorded = await reported.Task.WaitAsync(deadline.Token);
+        Assert.Equal("doctor", recorded.GetProperty("command").GetString());
+        Assert.Equal("mcp", recorded.GetProperty("interface").GetString());
+        Assert.Contains(recorded.GetProperty("outcome").GetString(), new[] { "succeeded", "failed" });
     }
 
     [Fact]

@@ -39,9 +39,9 @@ internal sealed record TelemetryHost(
 }
 
 /// <summary>
-/// Records one command run. Events recorded by earlier runs are sent while this one works, and its own
-/// event waits for a later run. A command waits on the network only when it ends with an upload still
-/// under way, and then for at most <see cref="TelemetryHost.UploadGrace"/>.
+/// Records one command run, once, when it ends. Events recorded by earlier runs are sent while this one
+/// works, and its own event waits for a later run. A command waits on the network only when it ends with
+/// an upload still under way, and then for at most <see cref="TelemetryHost.UploadGrace"/>.
 /// </summary>
 internal sealed class CommandTelemetry
 {
@@ -51,14 +51,18 @@ internal sealed class CommandTelemetry
         $"To opt out, run `isoplane telemetry disable` or set {TelemetryVariables.OptOut.Name}=1.\n" +
         "Details: https://isoplane.dev/docs/reference/telemetry";
 
+    private static readonly Lock installing = new();
+
     private readonly TelemetryHost? host;
     private readonly TelemetryCommand? command;
+    private readonly CommandInterface via;
     private readonly CommandMode mode;
     private readonly TelemetryContext? context;
     private readonly bool debug;
     private readonly bool recording;
     private readonly long started = Stopwatch.GetTimestamp();
     private readonly CancellationTokenSource uploading = new();
+    private int completed;
 
     /// <summary>Completes when this run has stopped sending earlier runs' events.</summary>
     internal Task Upload { get; } = Task.CompletedTask;
@@ -89,6 +93,23 @@ internal sealed class CommandTelemetry
             recording = true;
         }
     }
+
+    private CommandTelemetry(CommandTelemetry server, TelemetryCommand command)
+    {
+        host = server.host;
+        context = server.context;
+        debug = server.debug;
+        recording = server.recording;
+        this.command = command;
+        via = CommandInterface.Mcp;
+        mode = host is null ? CommandMode.Run : CommandNames.Mode([], command, host.Environment);
+    }
+
+    /// <summary>
+    /// A command a coding agent invoked as a tool of the server this run serves, timed from now and
+    /// recorded on this run's terms: not at all while this run records nothing. End it as a run is ended.
+    /// </summary>
+    internal CommandTelemetry ToolCall(TelemetryCommand command) => new(this, command);
 
     internal static CommandTelemetry Begin(string[] args) => Begin(args, TelemetryHost.OfRunningCli);
 
@@ -121,6 +142,7 @@ internal sealed class CommandTelemetry
 
     private int Complete(CommandOutcome outcome, int? exitCode, CommandFailure? failure)
     {
+        if (Interlocked.Exchange(ref completed, 1) == 1) return exitCode ?? 0;
         if (host is not null && context is not null && command is { } name && (debug || recording))
         {
             try { Record(host, context, name, outcome, exitCode, failure); }
@@ -148,8 +170,7 @@ internal sealed class CommandTelemetry
         // Time-ordered, so that the service's index on (occurredAt, id) grows at its end.
         var entry = new CommandEvent(Guid.CreateVersion7(now), CommandEvent.Timestamp(now),
             context.Ci ? null : debug ? host.State.Load()?.InstallId : InstallId(host), context.Ci, context.CiProvider, context.Agent,
-            name, mode,
-            outcome, exitCode is >= 0 and <= 255 ? exitCode : null, failure,
+            via, name, mode, outcome, exitCode is >= 0 and <= 255 ? exitCode : null, failure,
             Math.Min((long)Stopwatch.GetElapsedTime(started).TotalMilliseconds, CommandEvent.LongestDurationMs),
             context.CliVersion, context.Platform, context.OsArchitecture, context.OsVersion, context.Distribution.Id,
             context.Distribution.Version, context.RuntimeVersion, context.Locale);
@@ -157,16 +178,20 @@ internal sealed class CommandTelemetry
         else host.Outbox.Add(entry.Id, entry.ToJson());
     }
 
+    // Tool calls end concurrently; the lock keeps two first events from each creating an identifier.
     private static Guid InstallId(TelemetryHost host)
     {
-        var state = host.State.Load() ?? throw new IOException($"Cannot read {host.State.Pathname}.");
-        if (state.InstallId is { } known) return known;
-        var created = Guid.NewGuid();
-        host.State.Save(state with { InstallId = created });
-        var now = host.Time.GetUtcNow();
-        var registration = new InstallationEvent(Guid.CreateVersion7(now), CommandEvent.Timestamp(now), created);
-        host.Outbox.Add(registration.Id, registration.ToJson());
-        return created;
+        lock (installing)
+        {
+            var state = host.State.Load() ?? throw new IOException($"Cannot read {host.State.Pathname}.");
+            if (state.InstallId is { } known) return known;
+            var created = Guid.NewGuid();
+            host.State.Save(state with { InstallId = created });
+            var now = host.Time.GetUtcNow();
+            var registration = new InstallationEvent(Guid.CreateVersion7(now), CommandEvent.Timestamp(now), created);
+            host.Outbox.Add(registration.Id, registration.ToJson());
+            return created;
+        }
     }
 
     private static async Task UploadAsync(TelemetryHost host, Uri endpoint, CancellationToken cancellation)

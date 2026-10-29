@@ -432,6 +432,29 @@ public sealed class TelemetryTests : IDisposable
     }
 
     [Fact]
+    public void A_tool_call_is_recorded_once_as_the_command_it_does_through_the_server_run()
+    {
+        Seen();
+        var server = CommandTelemetry.Begin(["agent", "mcp"], Host());
+        server.ToolCall(TelemetryCommand.Doctor).Ended(0);
+        var session = server.ToolCall(TelemetryCommand.Dev);
+        session.Cancelled(0);
+        session.Ended(0);
+        server.Ended(0);
+        Assert.Equal([("agent", "cli", "succeeded"), ("dev", "mcp", "cancelled"), ("doctor", "mcp", "succeeded")],
+            Pending().Select(Recorded).Select(entry => (entry.GetProperty("command").GetString(), entry.GetProperty("interface").GetString(), entry.GetProperty("outcome").GetString())).Order());
+    }
+
+    [Fact]
+    public void A_tool_call_records_nothing_while_the_server_run_records_nothing()
+    {
+        var server = CommandTelemetry.Begin(["agent", "mcp"], Host() with { ErrorRedirected = true });
+        server.ToolCall(TelemetryCommand.Dev).Ended(0);
+        server.Ended(0);
+        Assert.False(Directory.Exists(Path.Combine(home.Path, "pending")));
+    }
+
+    [Fact]
     public void Every_command_the_parser_accepts_has_a_telemetry_name_or_is_excluded()
     {
         var commands = CliCommandLine.Create().Subcommands.Select(command => command.Name).ToArray();
@@ -468,6 +491,8 @@ public sealed class TelemetryTests : IDisposable
         foreach (var property in properties.EnumerateObject().Where(property => property.Value.TryGetProperty("pattern", out _)))
             Assert.Matches(property.Value.GetProperty("pattern").GetString()!, recorded.GetProperty(property.Name).GetString() ?? "en");
         Assert.Equal(Allowed("agent"), Names<CodingAgent>());
+        Assert.Equal(Allowed("interface"), Names<CommandInterface>());
+        Assert.Equal("cli", recorded.GetProperty("interface").GetString());
         Assert.Equal(Allowed("command"), Names<TelemetryCommand>());
         Assert.Equal(Allowed("outcome"), Names<CommandOutcome>());
         Assert.Equal(Allowed("mode"), Names<CommandMode>());
@@ -488,7 +513,7 @@ public sealed class TelemetryTests : IDisposable
 
     private string Queue(Guid id)
     {
-        Host().Outbox.Add(id, new CommandEvent(id, CommandEvent.Timestamp(DateTimeOffset.UtcNow), null, false, null, CodingAgent.None, TelemetryCommand.Dev,
+        Host().Outbox.Add(id, new CommandEvent(id, CommandEvent.Timestamp(DateTimeOffset.UtcNow), null, false, null, CodingAgent.None, CommandInterface.Cli, TelemetryCommand.Dev,
             CommandMode.Run, CommandOutcome.Succeeded, 0, null, 1, "0.1.0", "linux-x64", "x64", "6.8", null, null, "10.0.0", null).ToJson());
         return Path.Combine(home.Path, "pending", id + ".json");
     }
@@ -496,8 +521,9 @@ public sealed class TelemetryTests : IDisposable
     private string[] Pending() => Directory.Exists(Path.Combine(home.Path, "pending"))
         ? Directory.GetFiles(Path.Combine(home.Path, "pending")).Select(path => Path.GetFileName(path)).ToArray() : [];
 
-    private string Kind(string file) =>
-        JsonDocument.Parse(File.ReadAllText(Path.Combine(home.Path, "pending", file))).RootElement.GetProperty("event").GetString()!;
+    private string Kind(string file) => Recorded(file).GetProperty("event").GetString()!;
+
+    private JsonElement Recorded(string file) => JsonDocument.Parse(File.ReadAllText(Path.Combine(home.Path, "pending", file))).RootElement;
 
     private string Command(string file) =>
         JsonDocument.Parse(File.ReadAllText(Path.Combine(home.Path, "pending", file))).RootElement.GetProperty("command").GetString()!;

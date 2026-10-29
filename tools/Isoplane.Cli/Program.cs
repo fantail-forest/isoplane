@@ -31,9 +31,7 @@ async Task<int> RunAsync()
     }
     var parsed = CliCommandLine.Create().Parse(args.Length == 0 ? ["--help"] : args);
     if (parsed.Action is System.CommandLine.Help.HelpAction)
-    {
         return await parsed.InvokeAsync();
-    }
     if (parsed.Errors.Count > 0)
         throw new ArgumentException(string.Join(Environment.NewLine, parsed.Errors.Select(error => error.Message)));
     if (args[0] == "completions")
@@ -60,7 +58,7 @@ async Task<int> RunAsync()
     if (args is ["uninstall-sdk"])
         return await SdkRemoval.RunAsync(CliPaths.Home, dotnet => new DotnetRegistrations(dotnet, CliPaths.Home), cancellation.Token);
     if (args is ["doctor"]) return await EnvironmentDoctor.RunAsync(cancellation.Token);
-    if (args[0] == "agent") return await AgentCommands.RunAsync(args, cancellation.Token);
+    if (args[0] == "agent") return await AgentCommands.RunAsync(args, telemetry, cancellation.Token);
     if (args[0] == "bundle")
     {
         var options = BundleOptions.Parse(args[1..]);
