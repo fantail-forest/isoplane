@@ -4,8 +4,7 @@
 mod common;
 #[path = "common/filesystem.rs"]
 mod filesystem;
-#[path = "common/published_files.rs"]
-mod published_files;
+use isoplane_test_support::published_files;
 use std::sync::Arc;
 
 use common::{activate, small_engine_config, test_engine, DONE};

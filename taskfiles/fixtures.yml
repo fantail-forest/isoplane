@@ -169,11 +169,10 @@ tasks:
     generates:
       - '{{.TEST_COMPILED_RUNTIME}}/runtime.wasm'
     cmds:
-      # The directory is left read-only so a test configured for another engine fails instead of compiling into it.
+      # Replaced whatever permissions it was left with.
       - '[ ! -d "{{.TEST_COMPILED_RUNTIME}}" ] || chmod -R u+w "{{.TEST_COMPILED_RUNTIME}}"'
       - rm -rf "{{.TEST_COMPILED_RUNTIME}}"
       - '{{.DEVELOPMENT_COMMAND}}cargo run --locked --quiet -p isoplane-prepare --example precompile_test_runtime -- "{{.MODULES}}/Isoplane.MonoRuntime.wasm" "{{.TEST_COMPILED_RUNTIME}}"'
-      - chmod -R a-w "{{.TEST_COMPILED_RUNTIME}}"
 
   runtime:inputs:
     internal: true

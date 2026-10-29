@@ -119,12 +119,9 @@ fn prepared_product_uses_only_the_callers_storage_and_removes_its_scratch() {
     let restored = engine
         .load_prepared_product_in(&product, storage.path())
         .expect("restore");
-    assert_eq!(
-        std::fs::read_dir(storage.path())
-            .expect("storage entries")
-            .count(),
-        0,
-        "mapped preparation files must be unlinked after restoration"
+    isoplane_test_support::assert_empty_directory(
+        storage.path(),
+        "mapped preparation files must be unlinked after restoration",
     );
     let mut fresh = activate(&engine, &restored);
     assert_eq!(

@@ -14,6 +14,7 @@ use isoplane_engine::{
     Completion, InstanceOps, IsoplaneEngine, OccupancyBudget, Template, TemplateStorageFailed,
     TrapKind,
 };
+use isoplane_test_support::mapped_backing::truncate;
 
 fn identity() -> PreparedIdentity {
     PreparedIdentity {
@@ -66,19 +67,6 @@ fn publish_layer(engine: &IsoplaneEngine, path: &Path) {
         .expect("capture the layer")
         .publish(path)
         .expect("publish the layer");
-}
-
-/// Shrinks a published payload in place, as failed storage under a live
-/// mapping would.
-fn truncate(payload: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(payload, std::fs::Permissions::from_mode(0o600))
-        .expect("make payload writable");
-    std::fs::OpenOptions::new()
-        .write(true)
-        .open(payload)
-        .and_then(|file| file.set_len(0))
-        .expect("truncate payload");
 }
 
 /// A mapped layer, an instance of it, and its baseline truncated beneath both.

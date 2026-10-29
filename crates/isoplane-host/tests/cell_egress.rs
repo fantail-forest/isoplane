@@ -1,7 +1,9 @@
 //! A guest cannot reach a private or link-local address through `http_fetch`.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use isoplane_test_support::wait_for;
 
 use isoplane_abi::config::Limits;
 use isoplane_abi::dispatch::{DispatchRecord, HttpRequest};
@@ -36,17 +38,6 @@ fn http(cell: &Cell, module: &ModuleId, path: &str) -> DispatchRecord {
             body: vec![],
         },
     )
-}
-
-fn wait_for(mut cond: impl FnMut() -> bool, within: Duration) -> bool {
-    let t0 = Instant::now();
-    while t0.elapsed() < within {
-        if cond() {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(2));
-    }
-    cond()
 }
 
 #[test]

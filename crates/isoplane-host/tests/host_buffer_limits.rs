@@ -139,7 +139,7 @@ fn repeating_a_small_response_write_cannot_exceed_the_effective_application_buff
         streaming: false,
     })
     .expect("encode response head");
-    let encoded: String = head.iter().map(|byte| format!("\\{byte:02x}")).collect();
+    let encoded = isoplane_test_support::wat_bytes(&head);
     let (cell, module) = rig(
         &format!(
             r#"(module
@@ -183,7 +183,7 @@ fn repeated_response_heads_exhaust_the_configured_handle_count() {
         streaming: false,
     })
     .expect("encode response head");
-    let encoded: String = head.iter().map(|byte| format!("\\{byte:02x}")).collect();
+    let encoded = isoplane_test_support::wat_bytes(&head);
     let (cell, module) = rig(
         &format!(
             r#"(module

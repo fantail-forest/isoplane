@@ -32,7 +32,6 @@ opentelemetry_sdk = { workspace = true }
 opentelemetry-appender-tracing = { workspace = true }
 opentelemetry-otlp = { workspace = true }
 url = { workspace = true }
-reqwest = { workspace = true }
 reqwest-otlp = { workspace = true }
 rand = { workspace = true }
 tokio = { workspace = true }
@@ -48,7 +47,6 @@ hyper-util = { workspace = true }
 http-body-util = { workspace = true }
 bytes = { workspace = true }
 blake3 = { workspace = true }
-base64 = { workspace = true }
 hex = { workspace = true }
 sha2 = { workspace = true }
 rustls = { workspace = true }
@@ -80,11 +78,14 @@ real-backends = [
 ]
 
 [dev-dependencies]
+base64 = { workspace = true }
+reqwest = { workspace = true }
 opentelemetry-proto = { workspace = true }
 prost = { workspace = true }
 wat = { workspace = true }
 tempfile = { workspace = true }
 isoplane-fixtures = { workspace = true }
+isoplane-test-support = { workspace = true }
 tar = { workspace = true }
 
 [[example]]

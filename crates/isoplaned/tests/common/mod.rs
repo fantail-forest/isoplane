@@ -47,16 +47,11 @@ pub fn config(dir: &std::path::Path) -> NodeConfig {
 /// Gives the node in `dir` the shared runtime Task compiled for the test engine, so that
 /// deploying a managed guest prepares it without compiling the runtime again. The files are
 /// hard links on Unix: the compilation cache replaces entries by renaming, never in place.
-/// Windows needs writable private copies so cleanup can remove read-only fixture files.
+/// Windows gets private copies.
 fn seed_compiled_runtime(dir: &std::path::Path) {
     let artifacts = isoplaned::real::RealPaths::under(dir).artifacts;
-    std::fs::create_dir_all(&artifacts).expect("create the node's artifact store");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&artifacts, std::fs::Permissions::from_mode(0o700))
-            .expect("make the artifact store private to its node");
-    }
+    isoplane_engine::CompilationCache::create_directory(&artifacts)
+        .expect("create the node's private artifact store");
     let seed = isoplane_fixtures::compiled_runtime_artifacts();
     for entry in std::fs::read_dir(&seed).expect("list the compiled shared runtime") {
         let entry = entry.expect("read the compiled shared runtime");
@@ -78,13 +73,7 @@ fn seed_compiled_runtime(dir: &std::path::Path) {
             .or_else(|_| std::fs::copy(entry.path(), &target).map(drop))
             .unwrap_or_else(|e| panic!("seed {}: {e}", target.display()));
         #[cfg(windows)]
-        {
-            std::fs::copy(entry.path(), &target).expect("copy the compiled runtime fixture");
-            let mut permissions = std::fs::metadata(&target).unwrap().permissions();
-            permissions.set_readonly(false);
-            std::fs::set_permissions(&target, permissions)
-                .expect("make the private compiled runtime removable");
-        }
+        std::fs::copy(entry.path(), &target).expect("copy the compiled runtime fixture");
     }
 }
 

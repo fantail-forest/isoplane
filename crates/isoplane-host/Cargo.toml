@@ -38,6 +38,7 @@ tempfile = { workspace = true }
 tracing-subscriber = { workspace = true }
 wat = { workspace = true }
 isoplane-fixtures = { workspace = true }
+isoplane-test-support = { workspace = true }
 isoplane-harness = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]

@@ -378,10 +378,10 @@ fn guest_module(body: &str, message: Option<&str>) -> Vec<u8> {
         streaming: false,
     };
     let bytes = isoplane_abi::encode(&response).unwrap();
-    let escaped: String = bytes.iter().map(|b| format!("\\{b:02x}")).collect();
+    let escaped = isoplane_test_support::wat_bytes(&bytes);
     let log = message.map_or_else(String::new, |message| {
         let bytes = message.as_bytes();
-        let escaped: String = bytes.iter().map(|byte| format!("\\{byte:02x}")).collect();
+        let escaped = isoplane_test_support::wat_bytes(bytes);
         format!(
             "(import \"isoplane\" \"log_emit\" (func $log (param i32 i32 i32)))\n\
              (data (i32.const 8192) \"{escaped}\")"

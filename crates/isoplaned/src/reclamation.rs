@@ -390,10 +390,7 @@ mod tests {
             streaming: false,
         })
         .expect("encode the fixture HTTP response");
-        let escaped: String = response
-            .iter()
-            .map(|byte| format!("\\{byte:02x}"))
-            .collect();
+        let escaped = isoplane_test_support::wat_bytes(&response);
         let pending = isoplane_abi::status::PollStatus::Pending.encode();
         let wasm = wat::parse_str(format!(r#"(module
             (import "isoplane" "clock_deadline_in" (func $timer (param i64) (result i64)))

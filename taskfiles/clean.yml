@@ -40,7 +40,7 @@ tasks:
             echo "Would remove $directory"
           else
             echo "Removing $directory"
-            # Some test fixtures are left read-only so tests cannot add to them.
+            # Removed whatever permissions it was left with.
             chmod -R u+w -- "$directory"
             rm -rf -- "$directory"
           fi

@@ -34,5 +34,6 @@ hex.workspace = true
 
 [dev-dependencies]
 isoplane-fixtures.workspace = true
+isoplane-test-support.workspace = true
 wasmtime.workspace = true
 wat.workspace = true

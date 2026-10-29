@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
-use isoplane_engine::{CompilationCache, EngineConfig, IsoplaneEngine, Template};
+use isoplane_engine::{ArtifactPaths, CompilationCache, EngineConfig, IsoplaneEngine, Template};
 
 /// Pool tables for every test engine. Fixing them lets each test choose its
 /// pool size without changing the code Task compiled.
@@ -101,21 +101,25 @@ fn link_artifacts(artifacts: &Path, cache: &Path) {
 }
 
 /// [`instrumented_runtime`] loaded on `engine` from the artifacts Task
-/// compiled. Fails when `engine` was not configured by [`engine_config`].
+/// compiled. Fails, before compiling anything into Task's directory, when
+/// `engine` was not configured by [`engine_config`].
 pub fn load_compiled_runtime(engine: &IsoplaneEngine) -> Template {
+    let wasm = instrumented_runtime();
+    let directory = directory();
+    let paths = ArtifactPaths::new(&directory, &engine.artifact_key(&wasm));
+    assert!(
+        paths.meta.is_file() && paths.cwasm.is_file(),
+        "the shared runtime was not compiled for this engine; configure it with \
+         isoplane_fixtures::engine_config, or rerun task fixtures:compiled-runtime"
+    );
     // SAFETY: only `task fixtures:compiled-runtime` writes this directory, through
-    // `IsoplaneEngine::precompile_to_files`, and then makes it read-only, so an engine
-    // configured otherwise fails to compile into it instead of quietly compiling for itself.
-    let artifacts = unsafe { CompilationCache::from_trusted_directory(directory()) }
+    // `IsoplaneEngine::precompile_to_files`, and the entry for this engine is present,
+    // so loading maps it and compiles nothing.
+    let artifacts = unsafe { CompilationCache::from_trusted_directory(directory) }
         .expect("open the compiled shared runtime");
     let (template, compiled) = artifacts
-        .load(engine, &instrumented_runtime())
-        .unwrap_or_else(|error| {
-            panic!(
-                "the shared runtime was not compiled for this engine; configure it with \
-                 isoplane_fixtures::engine_config, or rerun task fixtures:compiled-runtime: {error:#}"
-            )
-        });
+        .load(engine, &wasm)
+        .expect("load the shared runtime Task compiled");
     assert!(
         !compiled,
         "the shared runtime compiled at test time; rerun task fixtures:compiled-runtime"

@@ -245,7 +245,6 @@ mod tests {
     #[test]
     fn a_reload_that_yields_a_different_template_is_refused() {
         use isoplane_engine::prepared::PreparedIdentity;
-        use std::os::unix::fs::PermissionsExt;
         let engine = Arc::new(
             IsoplaneEngine::new(EngineConfig {
                 max_instances: 2,
@@ -273,14 +272,7 @@ mod tests {
         // failed before any guest execution below.
         let template =
             unsafe { engine.load_prepared(&path, identity, &[]) }.expect("map the template");
-        let baseline = path.join("baseline.bin");
-        std::fs::set_permissions(&baseline, std::fs::Permissions::from_mode(0o600))
-            .expect("make the baseline writable");
-        std::fs::OpenOptions::new()
-            .write(true)
-            .open(&baseline)
-            .and_then(|file| file.set_len(0))
-            .expect("truncate the baseline");
+        isoplane_test_support::mapped_backing::truncate(&path.join("baseline.bin"));
         template
             .memory_image_arc()
             .page_eq(0, &[0; isoplane_engine::PAGE]);

@@ -14,6 +14,7 @@ members = [
     "crates/isoplaned",
     "crates/isoplane-native",
     "crates/isoplane-fixtures",
+    "crates/isoplane-test-support",
     "crates/isoplane-runtime-acceptance",
     "crates/isoplane-harness",
 ]
@@ -44,6 +45,7 @@ isoplane-prepare   = { path = "crates/isoplane-prepare" }
 isoplane-control   = { path = "crates/isoplane-control" }
 isoplane-proxy     = { path = "crates/isoplane-proxy" }
 isoplane-fixtures  = { path = "crates/isoplane-fixtures" }
+isoplane-test-support = { path = "crates/isoplane-test-support" }
 isoplane-harness   = { path = "crates/isoplane-harness" }
 
 anyhow      = "1"

@@ -37,6 +37,7 @@ isoplane-cache.workspace = true
 # engine bug.
 wat = { workspace = true }
 isoplane-fixtures = { workspace = true }
+isoplane-test-support = { workspace = true }
 serde_json = { workspace = true }
 
 [build-dependencies]

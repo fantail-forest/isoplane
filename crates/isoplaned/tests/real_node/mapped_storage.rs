@@ -1,10 +1,9 @@
 //! A node serves every application's mapped template from its own process;
 //! failed storage beneath one application fails only that application's requests.
 
-#[path = "../common/mapped_backing.rs"]
-mod mapped_backing;
-
 use std::path::{Path, PathBuf};
+
+use isoplane_test_support::mapped_backing;
 
 use super::{config, get, guest_with_functions, serve, Node, ResponseHead};
 use crate::common::manifest;

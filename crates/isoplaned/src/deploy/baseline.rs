@@ -18,8 +18,7 @@ const PREPARED: &str = "prepared";
 #[derive(Default)]
 pub(super) struct Baselines(parking_lot::Mutex<HashMap<String, Template>>);
 
-/// A baseline held for preparing over it: maintenance does not remove it
-/// while this is alive.
+/// A baseline held throughout application preparation.
 pub(super) struct HeldBaseline {
     pub name: String,
     pub published: PublishedBaseline,
@@ -41,9 +40,6 @@ impl Deployer {
         let name = name(&identity);
         let directory = self.root.join(&name);
         let prepared = directory.join(PREPARED);
-        // Publishing takes the lock exclusively and then gives it up, rather than
-        // converting it: a conversion releases the lock first, so reclamation
-        // could remove the baseline between the two.
         let lock = loop {
             let lock = hold(&directory, Hold::Shared).await?;
             if prepared.exists() {
@@ -70,8 +66,7 @@ impl Deployer {
         let digest = context.engine.prepared_manifest_sha256(&prepared)?;
         let template = self.base(context.engine, &name, request.runtime.digest()?)?;
         // SAFETY: this deployer publishes only controlled local compiler output in its
-        // operator-owned root and never modifies a published baseline; maintenance removes one only when no retained version names it and no
-        // preparation holds its lock, which the returned value does.
+        // operator-owned root and never modifies a published baseline.
         let published = unsafe { PublishedBaseline::new(prepared, digest) };
         Ok(HeldBaseline {
             name,
@@ -137,8 +132,7 @@ enum Hold {
 }
 
 /// Takes the baseline in `directory` as `hold`, creating its directory and
-/// lock file when absent. A lock taken on a file that reclamation removed
-/// while this waited does not hold the baseline, so it retries.
+/// lock file when absent. Retries if the lock's path changed while waiting.
 async fn hold(directory: &Path, hold: Hold) -> anyhow::Result<File> {
     loop {
         std::fs::create_dir_all(directory)?;
@@ -184,6 +178,10 @@ async fn acquire(lock: File, hold: Hold) -> anyhow::Result<File> {
 
 /// Lets the preparation container's unprivileged user list and read a
 /// published baseline it mounts.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the deploy owns the permissions of the baselines it publishes"
+)]
 fn readable_by_preparation(path: &Path) -> anyhow::Result<()> {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))?;

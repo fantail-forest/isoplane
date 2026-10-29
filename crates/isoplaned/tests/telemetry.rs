@@ -58,7 +58,7 @@ async fn an_actual_http_guest_completion_crosses_the_otlp_boundary() {
         streaming: false,
     })
     .unwrap();
-    let encoded: String = head.iter().map(|byte| format!("\\{byte:02x}")).collect();
+    let encoded = isoplane_test_support::wat_bytes(&head);
     let guest = wat::parse_str(format!(r#"(module
         (import "isoplane" "resp_new" (func $response (param i32 i32) (result i32)))
         (import "isoplane" "clock_deadline_in" (func $timer (param i64) (result i64)))

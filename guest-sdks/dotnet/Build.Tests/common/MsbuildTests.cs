@@ -44,8 +44,10 @@ public abstract class MsbuildTests : IDisposable
 
     protected static void WriteExecutable(string path, string unix, string windows)
     {
-        File.WriteAllText(path, (OperatingSystem.IsWindows() ? windows : unix) + "\n");
-        if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        var options = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write };
+        if (!OperatingSystem.IsWindows()) options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
+        using var writer = new StreamWriter(path, options);
+        writer.Write((OperatingSystem.IsWindows() ? windows : unix) + "\n");
     }
 
     public void Dispose() => Directory.Delete(directory, recursive: true);

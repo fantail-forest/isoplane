@@ -319,7 +319,6 @@ fn a_layer_refuses_to_load_without_or_over_another_base() {
 #[cfg(target_os = "linux")]
 #[test]
 fn a_failed_baseline_marks_every_layer_over_it_failed() {
-    use std::os::unix::fs::PermissionsExt;
     let engine = test_engine();
     let directory = tempfile::tempdir().expect("directory");
     let base = baseline(
@@ -330,14 +329,7 @@ fn a_failed_baseline_marks_every_layer_over_it_failed() {
     layer(&engine, &base, &directory.path().join("app"));
     let template =
         load_over(&engine, &base, &directory.path().join("app")).expect("load the layer");
-    let payload = directory.path().join("base/baseline.bin");
-    std::fs::set_permissions(&payload, std::fs::Permissions::from_mode(0o600))
-        .expect("make the baseline writable");
-    std::fs::OpenOptions::new()
-        .write(true)
-        .open(&payload)
-        .and_then(|file| file.set_len(0))
-        .expect("truncate the baseline");
+    isoplane_test_support::mapped_backing::truncate(&directory.path().join("base/baseline.bin"));
     template
         .memory_image_arc()
         .page_eq(0, &[0; isoplane_engine::PAGE]);

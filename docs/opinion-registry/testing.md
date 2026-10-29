@@ -66,6 +66,8 @@ When our code talks to a third-party service, test our side against a stand-in f
 
 Tests may write temporary files wherever keeps them fast, including local disk outside the work tree. Anything outside the work tree is removed as soon as nothing needs it, by the end of the test run at the latest. Output in `.build/` may stay when later runs are likely to use it.
 
+A permission a test changes reverts when the test ends, however it ends, so a failure never leaves a path that cleanup cannot delete. Rust tests hold `isoplane_test_support::TemporaryPermissions`, which the lint on `set_permissions` points at; managed tests hold `TemporaryFilePermissions` with `using`. A file or directory the test creates gets its mode at creation, which leaves nothing to revert.
+
 ## Ask the owner for acceptance criteria
 
 Ask before inventing product behaviour or performance targets for a test to check.
@@ -76,4 +78,4 @@ The suite runs on a developer machine with the toolchain installed. It may start
 
 ## Put tests where they belong
 
-Unit tests go in the module, integration tests in `crates/<crate>/tests/`, end-to-end scenarios in `scenario-tests/`, and shared setup in each crate's `tests/common`. Name a test as a sentence stating its behaviour.
+Unit tests go in the module, integration tests in `crates/<crate>/tests/`, end-to-end scenarios in `scenario-tests/`, and shared setup in each crate's `tests/common`. A helper more than one crate's tests want goes in `isoplane-test-support` when it needs only the standard library, so the lowest crates' unit tests can use it without building the engine, and in `isoplane-fixtures` when it reads what Task prepared. Name a test as a sentence stating its behaviour.

@@ -379,9 +379,8 @@ fn changing_a_slots_nullness_refuses_a_lossy_checkpoint() {
 #[cfg(unix)]
 #[test]
 fn a_compilation_cache_refuses_group_writable_directories() {
-    use std::os::unix::fs::PermissionsExt;
     let directory = tempfile::tempdir().expect("owned cache fixture");
-    std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o770))
+    let _shared = isoplane_test_support::TemporaryPermissions::mode(directory.path(), 0o770)
         .expect("shared writer fixture");
     // SAFETY: the directory is empty and test-owned; refusal occurs before native loading.
     let result = unsafe {

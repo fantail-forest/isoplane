@@ -13,10 +13,6 @@ use isoplane_host::egress::DestinationPolicy;
 
 use super::{common, config, get, manifest, serve, InitSandbox, Node, Rig};
 
-fn escaped(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("\\{byte:02x}")).collect()
-}
-
 fn fetching_guest(destination: SocketAddr) -> Vec<u8> {
     let request = isoplane_abi::encode(&FetchRequest {
         method: "GET".into(),
@@ -64,9 +60,9 @@ fn fetching_guest(destination: SocketAddr) -> Vec<u8> {
                 (then (call $response (i32.const 2048) (i32.const {})))
                 (else (call $response (i32.const 3072) (i32.const {})))))
               (i64.const 32))))"#,
-        escaped(&request),
-        escaped(&success),
-        escaped(&failure),
+        isoplane_test_support::wat_bytes(&request),
+        isoplane_test_support::wat_bytes(&success),
+        isoplane_test_support::wat_bytes(&failure),
         request.len(),
         success.len(),
         failure.len()

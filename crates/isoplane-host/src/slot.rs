@@ -408,11 +408,7 @@ mod tests {
             network: Some(isoplane_abi::native_io::ResourceHandle(3)),
             next_handle: 5,
         };
-        let bytes = postcard::to_allocvec(&prepared)
-            .unwrap()
-            .into_iter()
-            .map(|byte| format!("\\{byte:02x}"))
-            .collect::<String>();
+        let bytes = isoplane_test_support::wat_bytes(&postcard::to_allocvec(&prepared).unwrap());
         let wasm = wat::parse_str(format!(r#"(module
           (@custom "{}" "{bytes}")
           (import "wasi:sockets/instance-network@0.2.0" "instance-network" (func $network (result i32)))

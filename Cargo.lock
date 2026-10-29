@@ -1553,6 +1553,7 @@ version = "0.1.0"
 dependencies = [
  "file-id",
  "fs4",
+ "isoplane-test-support",
  "parking_lot",
  "tempfile",
  "thiserror 2.0.20",
@@ -1599,6 +1600,7 @@ dependencies = [
  "isoplane-abi",
  "isoplane-cache",
  "isoplane-fixtures",
+ "isoplane-test-support",
  "libc",
  "memmap2",
  "parking_lot",
@@ -1694,6 +1696,7 @@ dependencies = [
  "isoplane-fixtures",
  "isoplane-harness",
  "isoplane-hibernate",
+ "isoplane-test-support",
  "libc",
  "parking_lot",
  "postcard",
@@ -1734,6 +1737,7 @@ dependencies = [
  "isoplane-prepare",
  "isoplane-proxy",
  "isoplane-runtime",
+ "isoplane-test-support",
  "isoplane-trust",
  "libc",
  "libproc",
@@ -1774,6 +1778,7 @@ dependencies = [
  "isoplane-fixtures",
  "isoplane-host",
  "isoplane-runtime",
+ "isoplane-test-support",
  "parking_lot",
  "postcard",
  "rand 0.9.5",
@@ -1873,6 +1878,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "isoplane-test-support"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+]
+
+[[package]]
 name = "isoplane-trust"
 version = "0.1.0"
 dependencies = [
@@ -1913,6 +1925,7 @@ dependencies = [
  "isoplane-prepare",
  "isoplane-proxy",
  "isoplane-runtime",
+ "isoplane-test-support",
  "isoplane-trust",
  "libc",
  "opentelemetry",

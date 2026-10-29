@@ -118,7 +118,7 @@ fn response_cell(imports: &str, before_response: &str) -> Arc<isoplane_host::Cel
         streaming: false,
     })
     .expect("canonical early response");
-    let encoded: String = head.iter().map(|byte| format!("\\{byte:02x}")).collect();
+    let encoded = isoplane_test_support::wat_bytes(&head);
     let wasm = wat::parse_str(format!(r#"(module
         {imports}
         (import "isoplane" "resp_new" (func $response (param i32 i32) (result i32)))

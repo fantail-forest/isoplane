@@ -41,7 +41,7 @@ async fn response_program_with(
         streaming: true,
     })
     .expect("the response head must encode");
-    let encoded: String = head.iter().map(|byte| format!("\\{byte:02x}")).collect();
+    let encoded = isoplane_test_support::wat_bytes(&head);
     let handle = handle.replace("{head_len}", &head.len().to_string());
     let wasm = wat::parse_str(format!(
         r#"(module

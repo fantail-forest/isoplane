@@ -628,7 +628,7 @@ async fn ended_real_guest_response(transport_failure: bool) {
         streaming: true,
     })
     .expect("response contract");
-    let encoded: String = head.iter().map(|byte| format!("\\{byte:02x}")).collect();
+    let encoded = isoplane_test_support::wat_bytes(&head);
     let wasm = real_completion_wasm(
             r#"(import "isoplane" "resp_new" (func $response (param i32 i32) (result i32)))
             (import "isoplane" "clock_deadline_in" (func $timer (param i64) (result i64)))"#,

@@ -368,7 +368,7 @@ async fn a_gc_hint_cannot_hide_a_new_fetch_from_capture() {
         let mut server = Server::start().await;
         let svc = services(server.address);
         let payload = postcard::to_allocvec(&isoplane_abi::calls::FetchRequest { method: "GET".into(), url: "http://upstream.test/".into(), headers: vec![], body: vec![] }).expect("the GC fetch request must encode");
-        let data: String = payload.iter().map(|byte| format!("\\{byte:02x}")).collect();
+        let data = isoplane_test_support::wat_bytes(&payload);
         let wasm = wat::parse_str(format!(r#"(module
             (import "isoplane" "clock_deadline_in" (func $timer (param i64) (result i64)))
             (import "isoplane" "http_fetch" (func $fetch (param i32 i32) (result i64)))

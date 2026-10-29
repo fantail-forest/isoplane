@@ -1,7 +1,6 @@
 //! Prepared templates execute through the same activation/capture interface as portable input.
 mod common;
-#[path = "common/published_files.rs"]
-mod published_files;
+use isoplane_test_support::published_files;
 
 use common::*;
 use isoplane_engine::prepared::{PreparedError, PreparedIdentity};

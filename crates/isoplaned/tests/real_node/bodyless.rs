@@ -18,7 +18,7 @@ fn guest(status: u16, after_headers: &str) -> Vec<u8> {
         streaming: true,
     })
     .expect("encode the actual response contract");
-    let encoded: String = head.iter().map(|byte| format!("\\{byte:02x}")).collect();
+    let encoded = isoplane_test_support::wat_bytes(&head);
     wat::parse_str(format!(
         r#"(module
         (import "isoplane" "resp_new" (func $response (param i32 i32) (result i32)))

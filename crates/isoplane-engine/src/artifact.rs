@@ -150,7 +150,7 @@ impl IsoplaneEngine {
 
     /// The artifact-cache key for a template on this engine, from the wasm
     /// alone so the cache can be consulted before paying for a compile.
-    fn artifact_key(&self, template_wasm: &[u8]) -> String {
+    pub fn artifact_key(&self, template_wasm: &[u8]) -> String {
         format!(
             "{}-{}",
             ModuleHash::of(template_wasm).hex(),

@@ -149,6 +149,10 @@ impl PreparedTemplate {
             // Windows refuses to delete a file carrying its read-only attribute, which would
             // strand a published artifact in a cache or a scratch directory.
             #[cfg(unix)]
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "publication owns the permissions of the payloads it writes"
+            )]
             {
                 let mut permissions = std::fs::metadata(&path)
                     .map_err(|e| io("stat published payload", &path, e))?

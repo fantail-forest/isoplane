@@ -1,0 +1,7 @@
+# A test that changes permissions directly can leave a path nothing can delete
+# when it fails. Tests go through isoplane_test_support::TemporaryPermissions;
+# product code that owns a path's permissions expects the lint at the call.
+disallowed-methods = [
+    { path = "std::fs::set_permissions", reason = "tests change permissions through isoplane_test_support::TemporaryPermissions, which reverts them when dropped; product code that owns the path expects this lint at the call" },
+    { path = "std::fs::File::set_permissions", reason = "tests change permissions through isoplane_test_support::TemporaryPermissions, which reverts them when dropped; product code that owns the path expects this lint at the call" },
+]

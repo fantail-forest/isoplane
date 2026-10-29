@@ -13,6 +13,8 @@
     <EmbeddedResource Remove="fixtures/**/*" />
     <Compile Include="../TestSupport/FileSystemTestDirectory.cs" Link="FileSystemTestDirectory.cs" />
     <Compile Include="../TestSupport/PosixTheoryAttribute.cs" Link="PosixTheoryAttribute.cs" />
+    <Compile Include="../TestSupport/PosixFactAttribute.cs" Link="PosixFactAttribute.cs" />
+    <Compile Include="../TestSupport/TemporaryFilePermissions.cs" Link="TemporaryFilePermissions.cs" />
     <None Include="../../guest-sdks/dotnet/Build/Isoplane.ManagedBundle.targets" Link="Isoplane.ManagedBundle.targets" CopyToOutputDirectory="PreserveNewest" />
     <None Include="../TelemetryProtocol/*.json" Link="TelemetryProtocol/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <PackageReference Include="ModelContextProtocol" Version="2.2.0" />

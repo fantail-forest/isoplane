@@ -449,7 +449,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn an_entry_that_cannot_be_deleted_yet_frees_its_key() {
-        use std::os::unix::fs::PermissionsExt;
+        use isoplane_test_support::TemporaryPermissions;
         let root = tempfile::tempdir().unwrap();
         let cache = Cache::new(root.path().into(), CacheBytes(0)).unwrap();
         let reader = cache.lease(CacheKey([1; 32])).unwrap();
@@ -460,8 +460,8 @@ mod tests {
         let sealed = path.join("sealed");
         fs::create_dir(&sealed).unwrap();
         fs::write(sealed.join("module.cwasm"), b"compiled").unwrap();
-        let open = File::open(sealed.join("module.cwasm")).unwrap();
-        fs::set_permissions(&sealed, fs::Permissions::from_mode(0o500)).unwrap();
+        let _open = File::open(sealed.join("module.cwasm")).unwrap();
+        let _sealed = TemporaryPermissions::mode(&sealed, 0o500).unwrap();
         drop(reader);
         let waiting = root.path().join(EVICTED).join("0");
         assert!(
@@ -481,8 +481,6 @@ mod tests {
             !path.exists() && waiting.is_dir() && !waiting.with_file_name("1").exists(),
             "a later eviction must complete beside the one still waiting"
         );
-        drop(open);
-        fs::set_permissions(waiting.join("sealed"), fs::Permissions::from_mode(0o700)).unwrap();
     }
 
     #[test]

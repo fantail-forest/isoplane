@@ -61,6 +61,7 @@ csbindgen.workspace = true
 http-body-util.workspace = true
 wat.workspace = true
 isoplane-fixtures.workspace = true
+isoplane-test-support.workspace = true
 reqwest.workspace = true
 portable-pty.workspace = true
 strip-ansi-escapes.workspace = true

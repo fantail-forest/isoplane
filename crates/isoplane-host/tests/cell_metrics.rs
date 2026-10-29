@@ -3,6 +3,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use isoplane_test_support::wait_for;
+
 use isoplane_abi::config::Limits;
 use isoplane_abi::dispatch::{DispatchRecord, HttpRequest};
 
@@ -34,17 +36,6 @@ fn http(cell: &Cell, module: &ModuleId, path: &str) -> DispatchRecord {
             body: vec![],
         },
     )
-}
-
-fn wait_for(mut cond: impl FnMut() -> bool, within: Duration) -> bool {
-    let t0 = std::time::Instant::now();
-    while t0.elapsed() < within {
-        if cond() {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(2));
-    }
-    cond()
 }
 
 const T: Duration = Duration::from_secs(10);
