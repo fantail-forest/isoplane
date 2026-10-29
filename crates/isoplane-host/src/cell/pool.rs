@@ -182,6 +182,7 @@ pub(super) mod cell_tests {
     use super::*;
     use crate::fakes::*;
     use isoplane_abi::config::{AppManifest, Bindings};
+    use isoplane_test_support::wait_for;
 
     struct NoResolver;
     #[async_trait::async_trait]
@@ -247,17 +248,6 @@ pub(super) mod cell_tests {
 
     pub(in crate::cell) fn cell(cfg: CellConfig) -> Arc<Cell> {
         Cell::new(cfg, services()).expect("a cell starts")
-    }
-
-    pub(in crate::cell) fn wait_for(mut p: impl FnMut() -> bool, within: Duration) -> bool {
-        let deadline = Instant::now() + within;
-        while Instant::now() < deadline {
-            if p() {
-                return true;
-            }
-            std::thread::sleep(Duration::from_millis(1));
-        }
-        false
     }
 
     #[test]

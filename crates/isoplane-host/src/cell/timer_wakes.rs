@@ -110,8 +110,9 @@ mod tests {
 
     #[test]
     fn retained_non_timer_work_arms_the_idle_stop() {
-        use crate::cell::pool::cell_tests::{app, cell, http, wait_for};
+        use crate::cell::pool::cell_tests::{app, cell, http};
         use crate::fakes::FakeBehaviour;
+        use isoplane_test_support::wait_for;
         for hibernate in [false, true] {
             let cell = cell(CellConfig::for_test("background-idle-stop"));
             let module = app(&cell, "background-idle-stop", FakeBehaviour::done());

@@ -1,6 +1,7 @@
 //! Prepared templates execute through the same activation/capture interface as portable input.
 mod common;
 use isoplane_test_support::published_files;
+use isoplane_test_support::{run_successfully, ChildTest};
 
 use common::*;
 use isoplane_engine::prepared::{PreparedError, PreparedIdentity};
@@ -354,24 +355,13 @@ fn receipt_checks_do_not_read_native_or_baseline_payloads() {
 #[cfg(target_os = "linux")]
 #[test]
 fn profiling_an_existing_template_emits_native_symbols_without_rebuilding_it() {
-    const CHILD: &str = "ISOPLANE_PREPARED_PROFILE_TEST_CHILD";
-    if std::env::var_os(CHILD).is_none() {
+    const CHILD: ChildTest =
+        ChildTest::new("profiling_an_existing_template_emits_native_symbols_without_rebuilding_it");
+    if CHILD.child_value().is_none() {
         let directory = tempfile::tempdir().expect("owned profiler output directory");
-        let output = std::process::Command::new(std::env::current_exe().expect("test executable"))
-            .args([
-                "--exact",
-                "profiling_an_existing_template_emits_native_symbols_without_rebuilding_it",
-                "--nocapture",
-            ])
-            .env(CHILD, "1")
-            .current_dir(directory.path())
-            .output()
-            .expect("isolated profiler test");
-        assert!(
-            output.status.success(),
-            "profiling must work in an isolated process: {}\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
+        run_successfully(
+            CHILD.command("1").current_dir(directory.path()),
+            "profile in an isolated process",
         );
         return;
     }

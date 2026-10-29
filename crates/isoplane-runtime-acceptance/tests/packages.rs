@@ -18,6 +18,7 @@ use isoplane_prepare::{
     BuildProduct, BuildRequest, BuildStage, Initialization, InitializationNetwork,
     LocalPreparation, PortableTemplate, Preparation, PrepareError, RuntimeProfile,
 };
+use isoplane_test_support::hex_bytes as hex;
 use tokio_util::sync::CancellationToken;
 
 #[path = "common/admitted.rs"]
@@ -259,13 +260,6 @@ async fn refusal(files: Vec<PlatformFile>) -> String {
         }
         Err(error) => panic!("the refusal must be the worker's structured one: {error}"),
     }
-}
-
-fn hex(text: &str) -> Vec<u8> {
-    (0..text.len())
-        .step_by(2)
-        .map(|index| u8::from_str_radix(&text[index..index + 2], 16).expect("hex digits"))
-        .collect()
 }
 
 #[tokio::test(start_paused = true)]

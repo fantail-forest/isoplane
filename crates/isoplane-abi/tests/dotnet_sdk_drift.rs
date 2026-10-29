@@ -4,7 +4,6 @@
 //! Rust type. Runs on the stable toolchain with no .NET installed.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 
 use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest, TraceContext};
 use isoplane_abi::imports::{self, Ty};
@@ -12,8 +11,8 @@ use isoplane_abi::result::{FutureError, };
 use isoplane_abi::status::{PollStatus, TrapCode};
 
 fn sdk_file(name: &str) -> String {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../guest-sdks/dotnet/Abi")
+    let path = isoplane_test_support::repository_root(env!("CARGO_MANIFEST_DIR"))
+        .join("guest-sdks/dotnet/Abi")
         .join(name);
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()))
 }

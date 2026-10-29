@@ -1,9 +1,19 @@
 //! Test support any crate's tests can carry without building the engine.
 #![forbid(unsafe_code)]
 
+pub mod files;
 pub mod mapped_backing;
+pub mod prepared;
+pub mod process;
 pub mod published_files;
 
+pub use files::{copy_tree, directories_under, link_files};
+pub use prepared::{prepared_path, repository_root};
+pub use process::{
+    assert_success, forward_lines, recv_before, run_successfully, ChildGuard, ChildTest, TestChild,
+};
+
+use std::ffi::{OsStr, OsString};
 use std::path::Path;
 use std::time::Duration;
 
@@ -33,6 +43,50 @@ pub fn wait_for(mut condition: impl FnMut() -> bool, within: Duration) -> bool {
 /// `bytes` escaped for a WAT data segment, as `(data (i32.const 0) "...")` takes them.
 pub fn wat_bytes(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("\\{byte:02x}")).collect()
+}
+
+/// The bytes `text` spells in hex, two digits each. Fails the test on
+/// anything else.
+pub fn hex_bytes(text: &str) -> Vec<u8> {
+    assert!(
+        text.len().is_multiple_of(2),
+        "{text:?} is not whole bytes in hex"
+    );
+    (0..text.len())
+        .step_by(2)
+        .map(|at| {
+            u8::from_str_radix(&text[at..at + 2], 16)
+                .unwrap_or_else(|error| panic!("{text:?} is not hex: {error}"))
+        })
+        .collect()
+}
+
+/// An environment variable set for as long as the guard lives. Dropping it,
+/// including while a failed assertion unwinds, restores what the process
+/// had. Bind the guard to a name: `let _ = ...` drops it at once.
+#[must_use = "the variable reverts when the guard drops; bind it to a name for as long as it is needed"]
+pub struct EnvironmentVariable {
+    name: OsString,
+    previous: Option<OsString>,
+}
+
+impl EnvironmentVariable {
+    /// Sets `name` to `value` until the guard drops.
+    pub fn set(name: impl AsRef<OsStr>, value: impl AsRef<OsStr>) -> Self {
+        let name = name.as_ref().to_os_string();
+        let previous = std::env::var_os(&name);
+        std::env::set_var(&name, value);
+        Self { name, previous }
+    }
+}
+
+impl Drop for EnvironmentVariable {
+    fn drop(&mut self) {
+        match &self.previous {
+            Some(previous) => std::env::set_var(&self.name, previous),
+            None => std::env::remove_var(&self.name),
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -106,9 +160,44 @@ impl Drop for TemporaryPermissions {
 
 #[cfg(test)]
 mod helper_tests {
+    use super::EnvironmentVariable;
+
     #[test]
     fn wat_bytes_escapes_every_byte_as_two_hex_digits() {
         assert_eq!(super::wat_bytes(&[0, 0x0a, 0xff]), "\\00\\0a\\ff");
+    }
+
+    #[test]
+    fn hex_bytes_reads_two_digits_a_byte_and_rejects_anything_else() {
+        assert_eq!(super::hex_bytes("000aFF"), [0, 0x0a, 0xff]);
+        assert_eq!(super::hex_bytes(""), []);
+        for bad in ["0", "zz"] {
+            assert!(
+                std::panic::catch_unwind(|| super::hex_bytes(bad)).is_err(),
+                "{bad:?} must fail"
+            );
+        }
+    }
+
+    #[test]
+    fn an_environment_variable_holds_while_the_guard_lives_and_reverts_when_it_drops() {
+        let name = format!("ISOPLANE_TEST_SUPPORT_VARIABLE_{}", std::process::id());
+        let guard = EnvironmentVariable::set(&name, "set");
+        assert_eq!(std::env::var(&name).as_deref(), Ok("set"));
+        {
+            let _inner = EnvironmentVariable::set(&name, "replaced");
+            assert_eq!(std::env::var(&name).as_deref(), Ok("replaced"));
+        }
+        assert_eq!(
+            std::env::var(&name).as_deref(),
+            Ok("set"),
+            "an inner guard restores the outer value"
+        );
+        drop(guard);
+        assert!(
+            std::env::var_os(&name).is_none(),
+            "the outer guard removes a variable the process did not have"
+        );
     }
 
     #[test]

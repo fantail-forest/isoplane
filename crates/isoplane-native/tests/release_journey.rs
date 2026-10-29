@@ -2,8 +2,10 @@
 
 #![cfg(all(target_os = "linux", target_arch = "x86_64"))]
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
+
+use isoplane_test_support::{assert_success, repository_root, run_successfully};
 
 struct Release {
     directory: PathBuf,
@@ -12,7 +14,7 @@ struct Release {
 }
 
 fn prepared_release() -> Release {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let root = repository_root(env!("CARGO_MANIFEST_DIR"));
     let directory = std::env::var_os("ISOPLANE_TEST_RELEASE")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
@@ -86,11 +88,7 @@ fn customer_image(release: &Release) -> String {
     )
     .expect("hand docker the image definition");
     let output = child.wait_with_output().expect("docker build must finish");
-    assert!(
-        output.status.success(),
-        "the customer image must build:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assert_success(&output, "build the customer image");
     tag
 }
 
@@ -98,13 +96,14 @@ fn customer_image(release: &Release) -> String {
 fn a_prepared_release_installs_builds_applications_and_uninstalls() {
     let release = prepared_release();
     let image = customer_image(&release);
-    let output = Command::new("docker")
-        .args(["run", "--rm", "--init", "--volume"])
-        .arg(format!("{}:/release:ro", release.directory.display()))
-        .args(["--env", &format!("RELEASE_VERSION={}", release.version)])
-        .args(["--env", &format!("RELEASE_REVISION={}", release.revision)])
-        .arg(image)
-        .args(["bash", "-euo", "pipefail", "-c", r#"
+    let output = run_successfully(
+        Command::new("docker")
+            .args(["run", "--rm", "--init", "--volume"])
+            .arg(format!("{}:/release:ro", release.directory.display()))
+            .args(["--env", &format!("RELEASE_VERSION={}", release.version)])
+            .args(["--env", &format!("RELEASE_REVISION={}", release.revision)])
+            .arg(image)
+            .args(["bash", "-euo", "pipefail", "-c", r#"
 export PATH="$HOME/.dotnet/tools:$PATH"
 dotnet tool install --global Isoplane.Cli --version "$RELEASE_VERSION" --add-source /release/packages
 test "$(isoplane --version)" = "isoplane $RELEASE_VERSION+$RELEASE_REVISION"
@@ -124,14 +123,8 @@ if dotnet new list | grep -q isoplane-web; then
     echo 'Uninstall left the Isoplane template registered' >&2
     exit 1
 fi
-"#])
-        .output()
-        .expect("Docker is required for the prepared-release installation journey");
-    assert!(
-        output.status.success(),
-        "the prepared release must install, build applications and uninstall:\n{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+"#]),
+        "install the prepared release, build applications and uninstall it, in Docker",
     );
     let output = String::from_utf8_lossy(&output.stdout);
     for entry in [

@@ -179,17 +179,12 @@ fn a_prepared_runtime_spares_the_first_sessions_its_compilation() {
         .to_owned();
     let cache = directory.path().join("cache");
     let prepare = || {
-        let output = std::process::Command::new(&cli)
-            .args(["prepare-runtime", "--runtime"])
-            .arg(&runtime)
-            .env("ISOPLANE_CACHE_DIR", &cache)
-            .output()
-            .expect("run isoplane prepare-runtime");
-        assert!(
-            output.status.success(),
-            "prepare-runtime failed:\n{}{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
+        let output = isoplane_test_support::run_successfully(
+            std::process::Command::new(&cli)
+                .args(["prepare-runtime", "--runtime"])
+                .arg(&runtime)
+                .env("ISOPLANE_CACHE_DIR", &cache),
+            "run isoplane prepare-runtime",
         );
         String::from_utf8_lossy(&output.stdout).into_owned()
     };
@@ -345,12 +340,12 @@ fn installed_debug_acceptance(mode: &str) {
             .arg(&app);
     }
     let result = debugger::drive(dev.as_mut(), &mut command);
-    assert!(
-        result.status.success(),
-        "installed debug {mode} acceptance failed: {}{}\nRuntime output:\n{}",
-        String::from_utf8_lossy(&result.stdout),
-        String::from_utf8_lossy(&result.stderr),
-        dev.as_ref().map(Dev::diagnostics).unwrap_or_default()
+    isoplane_test_support::assert_success(
+        &result,
+        &format!(
+            "installed debug {mode} acceptance, with runtime output:\n{}",
+            dev.as_ref().map(Dev::diagnostics).unwrap_or_default()
+        ),
     );
     if let Some(dev) = &mut dev {
         dev.wait_exit();

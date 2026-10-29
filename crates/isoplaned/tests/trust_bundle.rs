@@ -1,6 +1,7 @@
 //! The shipped root bundle, as X.509: every entry decodes and is a
 //! self-signed root, and there are enough of them to be a public store.
 
+use isoplane_test_support::{repository_root, run_successfully};
 use rustls_pki_types::pem::PemObject;
 use rustls_pki_types::CertificateDer;
 
@@ -24,9 +25,8 @@ fn the_shipped_bundle_is_a_store_of_self_signed_roots() {
         "a public root store holds at least {ROOT_FLOOR} roots; this bundle holds {}",
         roots.len()
     );
-    let output = review_bundle(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../trust/ca-bundle.pem"),
-    );
+    let output =
+        review_bundle(&repository_root(env!("CARGO_MANIFEST_DIR")).join("trust/ca-bundle.pem"));
     assert_eq!(
         output.matches("  self-signed  yes\n").count(),
         roots.len(),
@@ -56,18 +56,13 @@ fn the_review_verifies_the_signature_of_a_self_issued_certificate() {
 
 fn review_bundle(bundle: &std::path::Path) -> String {
     let empty = tempfile::NamedTempFile::new().expect("create empty previous bundle");
-    let script =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../trust/review-bundle.sh");
-    let output = std::process::Command::new("bash")
-        .arg(script)
-        .arg(empty.path())
-        .arg(bundle)
-        .output()
-        .expect("run trust/review-bundle.sh with bash and OpenSSL installed");
-    assert!(
-        output.status.success(),
-        "bundle review failed: {}",
-        String::from_utf8_lossy(&output.stderr)
+    let script = repository_root(env!("CARGO_MANIFEST_DIR")).join("trust/review-bundle.sh");
+    let output = run_successfully(
+        std::process::Command::new("bash")
+            .arg(script)
+            .arg(empty.path())
+            .arg(bundle),
+        "review the bundle with bash and OpenSSL installed",
     );
     String::from_utf8(output.stdout).expect("review output is UTF-8")
 }

@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use isoplane_test_support::mapped_backing;
+use isoplane_test_support::{directories_under, mapped_backing};
 
 use super::{config, get, guest_with_functions, serve, Node, ResponseHead};
 use crate::common::manifest;
@@ -35,19 +35,11 @@ fn baseline(data: &Path, deployed: &isoplaned::real::Deployed) -> PathBuf {
     )
     .expect("encode the artifact key");
     let key = key.as_str().expect("an artifact key is a string");
-    let mut pending = vec![data.to_path_buf()];
-    while let Some(directory) = pending.pop() {
-        for entry in std::fs::read_dir(&directory).expect("read node data") {
-            let path = entry.expect("node data entry").path();
-            if path.is_dir() {
-                if path.file_name().is_some_and(|name| name == key) {
-                    return path.join("prepared").join("baseline.bin");
-                }
-                pending.push(path);
-            }
-        }
-    }
-    panic!("the deployment's artifact directory must exist under the node's data")
+    directories_under(data)
+        .into_iter()
+        .find(|path| path.file_name().is_some_and(|name| name == key))
+        .map(|path| path.join("prepared").join("baseline.bin"))
+        .expect("the deployment's artifact directory must exist under the node's data")
 }
 
 /// Deploys `name` as `acme`'s prepared application answering its own name.

@@ -2,8 +2,9 @@
 
 use super::test_events::Events;
 use super::*;
-use crate::cell::pool::cell_tests::{app, cell, http, manifest, wait_for};
+use crate::cell::pool::cell_tests::{app, cell, http, manifest};
 use crate::fakes::*;
+use isoplane_test_support::wait_for;
 
 #[test]
 fn terminal_dispatches_release_the_breaker_probe_before_their_last_reference() {

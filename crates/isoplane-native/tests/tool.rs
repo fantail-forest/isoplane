@@ -1,19 +1,17 @@
+use isoplane_test_support::run_successfully;
 use std::process::Command;
 
 #[test]
 fn the_installed_dotnet_tool_reports_its_package_version() {
     let cli = isoplane_fixtures::managed_cli();
-    let installed = Command::new("dotnet")
-        .args(["tool", "list", "--tool-path"])
-        .arg(
-            cli.parent()
-                .expect("the installed CLI has a tool directory"),
-        )
-        .output()
-        .expect("query the installed tool registry");
-    assert!(
-        installed.status.success(),
-        "the installed tool registry must be readable"
+    let installed = run_successfully(
+        Command::new("dotnet")
+            .args(["tool", "list", "--tool-path"])
+            .arg(
+                cli.parent()
+                    .expect("the installed CLI has a tool directory"),
+            ),
+        "read the installed tool registry",
     );
     let installed = String::from_utf8(installed.stdout).expect("the tool registry must emit UTF-8");
     let package_version = installed
@@ -27,14 +25,9 @@ fn the_installed_dotnet_tool_reports_its_package_version() {
                 .flatten()
         })
         .expect("the local tool registry must contain Isoplane.Cli");
-    let output = Command::new(cli)
-        .arg("--version")
-        .output()
-        .expect("run the installed CLI");
-    assert!(
-        output.status.success(),
-        "version inspection must succeed: {}",
-        String::from_utf8_lossy(&output.stderr)
+    let output = run_successfully(
+        Command::new(cli).arg("--version"),
+        "inspect the installed CLI's version",
     );
     let output = String::from_utf8(output.stdout).expect("the CLI version must emit UTF-8");
     let version = output

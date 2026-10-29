@@ -5,9 +5,7 @@ use std::process::Command;
 fn cli() -> &'static std::path::Path {
     static ASSEMBLY: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
     ASSEMBLY.get_or_init(|| {
-        let path = std::env::var_os("ISOPLANE_TEST_CLI_ASSEMBLY")
-            .map(std::path::PathBuf::from)
-            .expect("run tests through Task to select the prepared CLI");
+        let path = isoplane_test_support::prepared_path("ISOPLANE_TEST_CLI_ASSEMBLY", "task cli");
         assert!(
             path.is_file(),
             "prepared CLI is missing at {}",

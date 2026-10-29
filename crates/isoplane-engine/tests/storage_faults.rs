@@ -15,6 +15,7 @@ use isoplane_engine::{
     TrapKind,
 };
 use isoplane_test_support::mapped_backing::truncate;
+use isoplane_test_support::ChildTest;
 
 fn identity() -> PreparedIdentity {
     PreparedIdentity {
@@ -192,9 +193,9 @@ fn a_mapped_template_keeps_running_after_its_native_payload_is_truncated() {
 
 #[test]
 fn a_fault_outside_every_watch_still_terminates_the_process() {
-    const CHILD: &str = "ISOPLANE_UNWATCHED_STORAGE_FAULT";
-    const NAME: &str = "a_fault_outside_every_watch_still_terminates_the_process";
-    if std::env::var_os(CHILD).is_some() {
+    const CHILD: ChildTest =
+        ChildTest::new("a_fault_outside_every_watch_still_terminates_the_process");
+    if CHILD.child_value().is_some() {
         let _engine = test_engine();
         let file = tempfile::tempfile().expect("backing file");
         file.set_len(4096).expect("size backing file");
@@ -204,9 +205,8 @@ fn a_fault_outside_every_watch_still_terminates_the_process() {
         std::hint::black_box(mapping[0]);
         panic!("an unwatched read of failed storage returned");
     }
-    let status = std::process::Command::new(std::env::current_exe().expect("test binary"))
-        .args(["--exact", NAME, "--test-threads=1"])
-        .env(CHILD, "1")
+    let status = CHILD
+        .command("1")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()

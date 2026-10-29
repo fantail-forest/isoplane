@@ -1160,8 +1160,9 @@ impl Cell {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cell::pool::cell_tests::{app, cell, http, wait_for};
+    use crate::cell::pool::cell_tests::{app, cell, http};
     use crate::fakes::{FakeBehaviour, Step};
+    use isoplane_test_support::wait_for;
 
     #[test]
     fn queued_instances_are_joined_only_when_activation_cannot_serve() {

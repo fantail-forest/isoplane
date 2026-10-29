@@ -12,6 +12,7 @@ use isoplane_engine::{Completion, EngineConfig, IsoplaneEngine};
 use isoplane_host::bindings::GuestResourceLimits;
 use isoplane_host::cell::{Cell, CellConfig, DispatchResult, Target};
 use isoplane_host::{EngineActivator, ModuleId};
+use isoplane_test_support::wait_for;
 
 fn rig(program: &str, resources: GuestResourceLimits) -> (Arc<Cell>, ModuleId) {
     let wasm = wat::parse_str(program).expect("hostile module assembles");
@@ -117,14 +118,13 @@ fn repeated_trace_names_and_empty_spans_are_bounded_and_released_between_warm_re
                 );
             }
             instance = Some(result.instance);
-            let deadline = std::time::Instant::now() + Duration::from_secs(10);
-            while cell.idle_instances(&module) != Some(1) {
-                assert!(
-                    std::time::Instant::now() < deadline,
-                    "the completed instance never returned to its warm pool"
-                );
-                std::thread::yield_now();
-            }
+            assert!(
+                wait_for(
+                    || cell.idle_instances(&module) == Some(1),
+                    Duration::from_secs(10)
+                ),
+                "the completed instance never returned to its warm pool"
+            );
         }
         cell.shutdown();
     }

@@ -46,13 +46,9 @@ fn telemetry_configuration_uses_flag_then_environment_then_file() {
             if let Some(endpoint) = flag {
                 command.arg(flag_name).arg(endpoint);
             }
-            let output = command
-                .output()
-                .expect("the actual daemon configuration command must run");
-            assert!(
-                output.status.success(),
-                "valid telemetry config must print: {}",
-                String::from_utf8_lossy(&output.stderr)
+            let output = isoplane_test_support::run_successfully(
+                &mut command,
+                "print a valid telemetry config",
             );
             let effective: NodeConfig =
                 toml::from_str(std::str::from_utf8(&output.stdout).unwrap()).unwrap();
@@ -74,15 +70,12 @@ fn telemetry_configuration_uses_flag_then_environment_then_file() {
 
 #[test]
 fn a_daemon_without_an_export_endpoint_keeps_export_disabled() {
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_isoplaned"))
-        .arg("--print-config")
-        .env_remove("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT")
-        .env_remove("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")
-        .output()
-        .expect("the actual daemon configuration command must run");
-    assert!(
-        output.status.success(),
-        "the existing default configuration must still print"
+    let output = isoplane_test_support::run_successfully(
+        std::process::Command::new(env!("CARGO_BIN_EXE_isoplaned"))
+            .arg("--print-config")
+            .env_remove("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT")
+            .env_remove("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"),
+        "print the default configuration",
     );
     let effective: NodeConfig =
         toml::from_str(std::str::from_utf8(&output.stdout).unwrap()).unwrap();

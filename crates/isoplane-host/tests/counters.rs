@@ -160,12 +160,11 @@ fn a_trapped_instance_is_evicted() {
         .unwrap();
     assert_eq!(out.status, 500, "a trap is a 500");
     // The response precedes the instance's release.
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    while r.cell.slot(out.instance).is_some() && std::time::Instant::now() < deadline {
-        std::thread::yield_now();
-    }
     assert!(
-        r.cell.slot(out.instance).is_none(),
+        wait_for(
+            || r.cell.slot(out.instance).is_none(),
+            Duration::from_secs(10)
+        ),
         "a trapped instance is no longer in the cell"
     );
     assert_eq!(

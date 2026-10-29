@@ -4,7 +4,7 @@ use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use isoplane_abi::config::{AppManifest, Bindings, GuestMemoryBytes, Limits};
 use isoplane_engine::{Completion, EngineConfig, IsoplaneEngine};
@@ -20,6 +20,7 @@ use isoplane_host::egress::{
 };
 use isoplane_host::fakes::FakeFetcher;
 use isoplane_host::{EngineActivator, InstanceId, LifecycleTier, ModuleId, Resolver};
+use isoplane_test_support::wait_for;
 
 #[path = "common/managed.rs"]
 mod managed;
@@ -270,12 +271,8 @@ impl Drop for Rig {
     }
 }
 
-fn wait_until(mut check: impl FnMut() -> bool, message: &str) {
-    let deadline = Instant::now() + DEADLINE;
-    while !check() {
-        assert!(Instant::now() < deadline, "hung test: {message}");
-        std::thread::yield_now();
-    }
+fn wait_until(check: impl FnMut() -> bool, message: &str) {
+    assert!(wait_for(check, DEADLINE), "hung test: {message}");
 }
 
 #[test]

@@ -23,6 +23,7 @@ host = ["dep:async-trait", "dep:anyhow"]
 
 [dev-dependencies]
 serde_json.workspace = true
+isoplane-test-support.workspace = true
 
 [build-dependencies]
 roxmltree.workspace = true

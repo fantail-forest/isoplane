@@ -3,6 +3,7 @@
 #[path = "common/dev.rs"]
 pub mod common;
 
+use isoplane_test_support::{directories_under, run_successfully};
 use std::process::Command;
 
 #[test]
@@ -18,16 +19,9 @@ fn templates_build_under_names_that_are_not_identifiers() {
     ] {
         let directory = tempfile::tempdir().expect("isolate the template build");
         let solution = isoplane_fixtures::template_project(directory.path(), template);
-        let output = Command::new("dotnet")
-            .arg("build")
-            .current_dir(&solution)
-            .output()
-            .expect("build the generated solution with the .NET SDK");
-        assert!(
-            output.status.success(),
-            "{template} must build under its prepared name, which its files carry and its namespaces derive from:\n{}{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
+        run_successfully(
+            Command::new("dotnet").arg("build").current_dir(&solution),
+            &format!("build {template} under its prepared name, which its files carry and its namespaces derive from"),
         );
     }
 }
@@ -37,20 +31,16 @@ fn installed_sandbox_projects_do_not_advertise_clr_hot_reload() {
     let directory = tempfile::tempdir().expect("isolate installed SDK capability evaluation");
     let app = isoplane_fixtures::handler_project(directory.path());
     for configuration in ["Debug", "Release"] {
-        let output = Command::new("dotnet")
-            .args(["msbuild", "-getItem:ProjectCapability"])
-            .arg(format!("-p:Configuration={configuration}"))
-            .env(
-                "ISOPLANE_GUEST_RUNTIME_FEED",
-                isoplane_fixtures::guest_runtime_feed(),
-            )
-            .current_dir(&app)
-            .output()
-            .expect("evaluate installed .NET project capabilities");
-        assert!(
-            output.status.success(),
-            "project capability evaluation must succeed: {}",
-            String::from_utf8_lossy(&output.stdout)
+        let output = run_successfully(
+            Command::new("dotnet")
+                .args(["msbuild", "-getItem:ProjectCapability"])
+                .arg(format!("-p:Configuration={configuration}"))
+                .env(
+                    "ISOPLANE_GUEST_RUNTIME_FEED",
+                    isoplane_fixtures::guest_runtime_feed(),
+                )
+                .current_dir(&app),
+            "evaluate the installed project's capabilities with the .NET SDK",
         );
         let evaluation: serde_json::Value =
             serde_json::from_slice(&output.stdout).expect("MSBuild returns capability JSON");
@@ -73,23 +63,19 @@ async fn dotnet_run_executes_an_application_package_with_an_existing_library() {
     let cli = isoplane_fixtures::managed_cli();
     {
         let configuration = "Debug";
-        let evaluated = Command::new("dotnet")
-            .args([
-                "msbuild",
-                "-getProperty:IsoplaneManagedBundleBuild,RuntimeIdentifier",
-            ])
-            .arg(format!("-p:Configuration={configuration}"))
-            .env(
-                "ISOPLANE_GUEST_RUNTIME_FEED",
-                isoplane_fixtures::guest_runtime_feed(),
-            )
-            .current_dir(&app)
-            .output()
-            .expect("evaluate the installed project with the .NET SDK");
-        assert!(
-            evaluated.status.success(),
-            "project evaluation must succeed: {}",
-            String::from_utf8_lossy(&evaluated.stdout)
+        let evaluated = run_successfully(
+            Command::new("dotnet")
+                .args([
+                    "msbuild",
+                    "-getProperty:IsoplaneManagedBundleBuild,RuntimeIdentifier",
+                ])
+                .arg(format!("-p:Configuration={configuration}"))
+                .env(
+                    "ISOPLANE_GUEST_RUNTIME_FEED",
+                    isoplane_fixtures::guest_runtime_feed(),
+                )
+                .current_dir(&app),
+            "evaluate the installed project with the .NET SDK",
         );
         let properties: serde_json::Value = serde_json::from_slice(&evaluated.stdout)
             .expect("MSBuild property queries produce JSON");
@@ -179,31 +165,18 @@ async fn an_unchanged_interpreted_run_reuses_its_prepared_template() {
 /// The application layers published under the project: directories named by an identity that
 /// hold a prepared manifest.
 fn application_layers(project: &std::path::Path) -> Vec<std::path::PathBuf> {
-    let mut found = Vec::new();
-    let mut pending = vec![project.to_path_buf()];
-    while let Some(directory) = pending.pop() {
-        for entry in std::fs::read_dir(&directory)
-            .into_iter()
-            .flatten()
-            .flatten()
-        {
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
+    let mut found: Vec<_> = directories_under(project)
+        .into_iter()
+        .filter(|path| {
             let named = path
                 .file_name()
                 .and_then(|name| name.to_str())
                 .is_some_and(|name| {
                     name.len() == 64 && name.bytes().all(|byte| byte.is_ascii_hexdigit())
                 });
-            if named && path.join("manifest.bin").is_file() {
-                found.push(path);
-            } else {
-                pending.push(path);
-            }
-        }
-    }
+            named && path.join("manifest.bin").is_file()
+        })
+        .collect();
     found.sort();
     found
 }

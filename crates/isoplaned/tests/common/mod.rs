@@ -45,36 +45,13 @@ pub fn config(dir: &std::path::Path) -> NodeConfig {
 }
 
 /// Gives the node in `dir` the shared runtime Task compiled for the test engine, so that
-/// deploying a managed guest prepares it without compiling the runtime again. The files are
-/// hard links on Unix: the compilation cache replaces entries by renaming, never in place.
-/// Windows gets private copies.
+/// deploying a managed guest prepares it without compiling the runtime again. Links are
+/// safe because the compilation cache replaces entries by renaming, never in place.
 fn seed_compiled_runtime(dir: &std::path::Path) {
     let artifacts = isoplaned::real::RealPaths::under(dir).artifacts;
     isoplane_engine::CompilationCache::create_directory(&artifacts)
         .expect("create the node's private artifact store");
-    let seed = isoplane_fixtures::compiled_runtime_artifacts();
-    for entry in std::fs::read_dir(&seed).expect("list the compiled shared runtime") {
-        let entry = entry.expect("read the compiled shared runtime");
-        let compiled = entry
-            .path()
-            .extension()
-            .is_some_and(|extension| extension == "cwasm" || extension == "meta");
-        if !compiled {
-            continue;
-        }
-        let target = artifacts.join(entry.file_name());
-        // A node restarted on the same directory already holds the entry. Copying onto it
-        // would truncate the shared file before reading it.
-        if target.exists() {
-            continue;
-        }
-        #[cfg(unix)]
-        std::fs::hard_link(entry.path(), &target)
-            .or_else(|_| std::fs::copy(entry.path(), &target).map(drop))
-            .unwrap_or_else(|e| panic!("seed {}: {e}", target.display()));
-        #[cfg(windows)]
-        std::fs::copy(entry.path(), &target).expect("copy the compiled runtime fixture");
-    }
+    isoplane_fixtures::link_compiled_runtime(&artifacts);
 }
 
 pub struct Rig {

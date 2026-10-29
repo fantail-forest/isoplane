@@ -1,14 +1,18 @@
 //! A local development process, observed through its output and HTTP listener.
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::Write;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::process::{ChildStdin, Command, Stdio};
 use std::sync::mpsc::{channel, Receiver};
 use std::time::Duration;
 
+use isoplane_test_support::{
+    forward_lines, recv_before, run_successfully, wait_for, ChildGuard, TestChild,
+};
+
 pub struct Dev {
-    child: Box<dyn portable_pty::Child + Send>,
+    child: ChildGuard<PtyChild>,
     terminal: Option<Terminal>,
     input: Option<ChildStdin>,
     lines: Receiver<String>,
@@ -21,6 +25,30 @@ pub struct Dev {
 struct Terminal {
     input: Box<dyn Write + Send>,
     _master: Box<dyn portable_pty::MasterPty + Send>,
+}
+
+/// The development process as the terminal library holds it, whether it
+/// runs in a terminal or on pipes; either way it leads its own process group.
+pub struct PtyChild(Box<dyn portable_pty::Child + Send>);
+
+impl TestChild for PtyChild {
+    fn id(&self) -> u32 {
+        self.0
+            .process_id()
+            .expect("development child has a process identifier")
+    }
+
+    fn has_exited(&mut self) -> std::io::Result<bool> {
+        self.0.try_wait().map(|status| status.is_some())
+    }
+
+    fn kill(&mut self) -> std::io::Result<()> {
+        self.0.kill()
+    }
+
+    fn wait(&mut self) -> std::io::Result<()> {
+        self.0.wait().map(drop)
+    }
 }
 
 pub fn managed_command(
@@ -162,33 +190,25 @@ impl Dev {
         };
         let (tx, lines) = channel();
         for (stream, machine) in streams {
-            let tx = tx.clone();
-            std::thread::spawn(move || {
-                for line in BufReader::new(stream).lines() {
-                    let line = line.expect("development output remains readable");
-                    let line = if structured_stdout {
-                        line
-                    } else {
-                        strip_ansi_escapes::strip_str(line)
-                    };
-                    if !structured_stdout {
-                        eprintln!("{line}");
-                    }
-                    let line =
-                        if machine && serde_json::from_str::<serde_json::Value>(&line).is_err() {
-                            format!("invalid machine output: {line}")
-                        } else {
-                            line
-                        };
-                    if tx.send(line).is_err() {
-                        break;
-                    }
+            forward_lines(stream, tx.clone(), move |line| {
+                let line = if structured_stdout {
+                    line
+                } else {
+                    strip_ansi_escapes::strip_str(line)
+                };
+                if !structured_stdout {
+                    eprintln!("{line}");
+                }
+                if machine && serde_json::from_str::<serde_json::Value>(&line).is_err() {
+                    format!("invalid machine output: {line}")
+                } else {
+                    line
                 }
             });
         }
         drop(tx);
         let mut dev = Self {
-            child,
+            child: ChildGuard::new(PtyChild(child), "the development process"),
             terminal,
             input,
             lines,
@@ -231,15 +251,12 @@ impl Dev {
         let deadline = std::time::Instant::now() + self.output_timeout;
         let mut output = String::new();
         loop {
-            let line = self
-                .lines
-                .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
-                .unwrap_or_else(|e| {
-                    panic!(
-                        "local dev never reported {marker:?}: {e}; process status: {:?}\n{output}",
-                        self.child.try_wait()
-                    )
-                });
+            let line = recv_before(&self.lines, deadline).unwrap_or_else(|e| {
+                panic!(
+                    "local dev never reported {marker:?}: {e}; process status: {:?}\n{output}",
+                    self.child.0.try_wait()
+                )
+            });
             assert!(
                 !line.starts_with("invalid machine output:"),
                 "dev --json must reserve stdout for structured records: {line}"
@@ -269,13 +286,9 @@ impl Dev {
         } else if let Some(input) = self.input.take() {
             drop(input);
         } else {
-            let status = Command::new("kill")
-                .args(["-INT", "--", &format!("-{}", self.pid())])
-                .status()
-                .unwrap();
-            assert!(
-                status.success(),
-                "the local process must receive its shutdown signal"
+            run_successfully(
+                Command::new("kill").args(["-INT", "--", &format!("-{}", self.pid())]),
+                "send the local process its shutdown signal",
             );
         }
         self.wait_exit();
@@ -290,75 +303,27 @@ impl Dev {
     }
 
     pub fn pid(&self) -> u32 {
-        self.child
-            .process_id()
-            .expect("development child has a process identifier")
+        self.child.id()
     }
 
     pub fn wait_exit(&mut self) {
-        let deadline = std::time::Instant::now() + Duration::from_secs(120);
-        let status = loop {
-            if let Some(status) = self.child.try_wait().unwrap() {
-                break status;
-            }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "local dev hung during shutdown"
-            );
-            std::thread::sleep(Duration::from_millis(10));
-        };
+        let mut status = None;
+        assert!(
+            wait_for(
+                || {
+                    status = self.child.0.try_wait().unwrap();
+                    status.is_some()
+                },
+                Duration::from_secs(120)
+            ),
+            "local dev hung during shutdown"
+        );
+        let status = status.expect("the wait ended with a status");
         assert!(
             status.success(),
             "local dev must shut down cleanly: {status}\n{}",
             self.diagnostics()
         );
-    }
-}
-
-impl Drop for Dev {
-    fn drop(&mut self) {
-        terminate_test_tree(
-            self.child
-                .process_id()
-                .expect("development child has a process identifier"),
-            matches!(self.child.try_wait(), Ok(Some(_))),
-        );
-        match self.child.try_wait() {
-            Ok(Some(_)) => {}
-            Ok(None) => {
-                if let Err(error) = self.child.kill() {
-                    eprintln!("could not stop the development process: {error}");
-                }
-                if let Err(error) = self.child.wait() {
-                    eprintln!("could not reap the development process: {error}");
-                }
-            }
-            Err(e) => eprintln!("could not inspect development process: {e}"),
-        }
-    }
-}
-
-/// Stops the test owner's process group, including children that retain output pipes.
-pub fn terminate_test_tree(pid: u32, exited: bool) {
-    #[cfg(windows)]
-    if exited {
-        return;
-    }
-    #[cfg(windows)]
-    let result = Command::new("taskkill")
-        .args(["/PID", &pid.to_string(), "/T", "/F"])
-        .output();
-    #[cfg(unix)]
-    let result = Command::new("kill")
-        .args(["-KILL", "--", &format!("-{pid}")])
-        .output();
-    match result {
-        Ok(output) if output.status.success() || exited => {}
-        Ok(output) => eprintln!(
-            "could not stop test process tree {pid}: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ),
-        Err(error) => eprintln!("could not signal test process tree {pid}: {error}"),
     }
 }
 

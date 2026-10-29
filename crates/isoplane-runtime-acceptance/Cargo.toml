@@ -28,6 +28,7 @@ tokio-rustls = { workspace = true }
 tokio-tungstenite = { workspace = true }
 isoplane-abi = { workspace = true, features = ["host"] }
 isoplane-engine = { workspace = true }
+isoplane-test-support = { workspace = true }
 isoplane-fixtures = { workspace = true }
 isoplane-harness = { workspace = true }
 isoplane-prepare = { workspace = true }

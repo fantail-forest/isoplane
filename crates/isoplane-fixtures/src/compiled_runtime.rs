@@ -27,9 +27,10 @@ pub fn engine_config(max_instances: u32) -> EngineConfig {
 }
 
 fn directory() -> PathBuf {
-    let path = std::env::var_os("ISOPLANE_TEST_COMPILED_RUNTIME")
-        .map(PathBuf::from)
-        .expect("run task fixtures:compiled-runtime to select the compiled shared runtime");
+    let path = isoplane_test_support::prepared_path(
+        "ISOPLANE_TEST_COMPILED_RUNTIME",
+        "task fixtures:compiled-runtime",
+    );
     assert!(
         path.join("runtime.wasm").is_file(),
         "the compiled shared runtime is missing at {}; run task fixtures:compiled-runtime",
@@ -44,13 +45,7 @@ pub fn instrumented_runtime() -> Vec<u8> {
     crate::read(&directory().join("runtime.wasm"))
 }
 
-/// The compiled artifacts of [`instrumented_runtime`] for [`engine_config`],
-/// in the layout a node's artifact store and a [`CompilationCache`] share.
-pub fn compiled_runtime_artifacts() -> PathBuf {
-    directory()
-}
-
-/// A cache holding [`compiled_runtime_artifacts`] for preparation, which also
+/// A cache holding the compiled shared runtime for preparation, which also
 /// keeps working files beside the artifacts it loads. It is a writable
 /// directory in the target directory whose entries link to Task's.
 pub fn compiled_runtime_cache() -> Arc<CompilationCache> {
@@ -59,7 +54,8 @@ pub fn compiled_runtime_cache() -> Arc<CompilationCache> {
         .get_or_init(|| {
             let cache = crate::target_directory().join("test-preparation-cache");
             CompilationCache::create_directory(&cache).expect("create the test preparation cache");
-            link_artifacts(&directory(), &cache);
+            unlink_replaced_artifacts(&directory(), &cache);
+            link_compiled_runtime(&cache);
             // SAFETY: its entries are links to what `task fixtures:compiled-runtime` wrote
             // through `IsoplaneEngine::precompile_to_files`, and preparation in tests writes
             // here only through the same compiler path.
@@ -70,16 +66,26 @@ pub fn compiled_runtime_cache() -> Arc<CompilationCache> {
         .clone()
 }
 
-/// Makes `cache`'s compiled artifacts those in `artifacts`, so links to a
-/// runtime Task has since replaced do not keep its files alive.
-fn link_artifacts(artifacts: &Path, cache: &Path) {
-    let compiled = |path: &Path| {
-        path.extension()
-            .is_some_and(|extension| extension == "cwasm" || extension == "meta")
-    };
+/// Gives the artifact store at `store` the compiled artifacts of
+/// [`instrumented_runtime`] for [`engine_config`], in the layout a node's
+/// artifact store and a [`CompilationCache`] share, so that a deploy there
+/// serves the shared runtime without compiling it again. Entries `store`
+/// already holds stay.
+pub fn link_compiled_runtime(store: &Path) {
+    isoplane_test_support::link_files(&directory(), store, is_compiled_artifact);
+}
+
+fn is_compiled_artifact(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|extension| extension == "cwasm" || extension == "meta")
+}
+
+/// Removes from `cache` the compiled artifacts `artifacts` no longer holds,
+/// so links to a runtime Task has since replaced do not keep its files alive.
+fn unlink_replaced_artifacts(artifacts: &Path, cache: &Path) {
     for entry in std::fs::read_dir(cache).expect("list the test preparation cache") {
         let path = entry.expect("read the test preparation cache").path();
-        if compiled(&path)
+        if is_compiled_artifact(&path)
             && !artifacts
                 .join(path.file_name().expect("an entry has a name"))
                 .exists()
@@ -87,16 +93,6 @@ fn link_artifacts(artifacts: &Path, cache: &Path) {
             std::fs::remove_file(&path)
                 .unwrap_or_else(|e| panic!("remove the outdated {}: {e}", path.display()));
         }
-    }
-    for entry in std::fs::read_dir(artifacts).expect("list the compiled shared runtime") {
-        let source = entry.expect("read the compiled shared runtime").path();
-        let target = cache.join(source.file_name().expect("an entry has a name"));
-        if !compiled(&source) || target.exists() {
-            continue;
-        }
-        std::fs::hard_link(&source, &target)
-            .or_else(|_| std::fs::copy(&source, &target).map(drop))
-            .unwrap_or_else(|e| panic!("link {}: {e}", target.display()));
     }
 }
 

@@ -4,13 +4,14 @@
 
 use std::path::{Path, PathBuf};
 
+use isoplane_test_support::copy_tree;
+
 /// Written last by the Task step, so a directory holding it was prepared completely.
 const PREPARED_MARKER: &str = "prepared";
 
 fn prepared() -> PathBuf {
-    let path = std::env::var_os("ISOPLANE_TEST_DOTNET")
-        .map(PathBuf::from)
-        .expect("run task fixtures:projects to select the prepared .NET projects");
+    let path =
+        isoplane_test_support::prepared_path("ISOPLANE_TEST_DOTNET", "task fixtures:projects");
     assert!(
         path.join(PREPARED_MARKER).is_file(),
         "the prepared .NET projects are missing at {}; run task fixtures:projects",
@@ -88,27 +89,4 @@ pub fn managed_cli() -> PathBuf {
 fn copy_project(source: &Path, destination: &Path) -> PathBuf {
     copy_tree(source, destination);
     destination.to_owned()
-}
-
-fn copy_tree(source: &Path, destination: &Path) {
-    std::fs::create_dir_all(destination)
-        .unwrap_or_else(|e| panic!("create {}: {e}", destination.display()));
-    for entry in
-        std::fs::read_dir(source).unwrap_or_else(|e| panic!("read {}: {e}", source.display()))
-    {
-        let entry = entry.expect("list a prepared project");
-        let target = destination.join(entry.file_name());
-        let metadata = entry.metadata().expect("inspect a prepared file");
-        if metadata.is_dir() {
-            copy_tree(&entry.path(), &target);
-        } else {
-            std::fs::copy(entry.path(), &target)
-                .unwrap_or_else(|e| panic!("copy {}: {e}", entry.path().display()));
-            std::fs::File::options()
-                .write(true)
-                .open(&target)
-                .and_then(|file| file.set_modified(metadata.modified()?))
-                .unwrap_or_else(|e| panic!("date {}: {e}", target.display()));
-        }
-    }
 }

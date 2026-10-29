@@ -5,7 +5,7 @@ mod common;
 
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use isoplane_abi::config::Limits;
 use isoplane_abi::dispatch::HttpRequest;
@@ -13,6 +13,7 @@ use isoplane_engine::{Completion, IsoplaneEngine};
 use isoplane_host::cell::{Cell, CellConfig, DispatchResult, Target};
 use isoplane_host::slot::LifecycleTier;
 use isoplane_host::{EngineActivator, InstanceId, ModuleId};
+use isoplane_test_support::wait_for;
 
 /// Long enough that a waiting dispatch is still waiting when the test checks.
 const WAIT_MS: &str = "30000";
@@ -73,23 +74,24 @@ fn waiting(cell: &Cell, module: &ModuleId) -> Receiver<DispatchResult> {
 /// dispatches have their instances and every resident instance has run a
 /// slice and parked.
 fn until_parked(cell: &Cell, admitted: u64) -> Vec<InstanceId> {
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        let metrics = cell.metrics();
-        let ids = cell.resident_ids();
-        let parked = ids.iter().all(|id| {
-            cell.slot(*id)
-                .is_some_and(|slot| slot.parks() > 0 && slot.state() == LifecycleTier::Parked)
-        });
-        if metrics.served_activated + metrics.served_shared == admitted && parked {
-            return ids;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "the cell never parked {admitted} dispatches: {ids:?}"
-        );
-        std::thread::yield_now();
-    }
+    let mut ids = Vec::new();
+    assert!(
+        wait_for(
+            || {
+                let metrics = cell.metrics();
+                ids = cell.resident_ids();
+                let parked = ids.iter().all(|id| {
+                    cell.slot(*id).is_some_and(|slot| {
+                        slot.parks() > 0 && slot.state() == LifecycleTier::Parked
+                    })
+                });
+                metrics.served_activated + metrics.served_shared == admitted && parked
+            },
+            Duration::from_secs(30)
+        ),
+        "the cell never parked {admitted} dispatches: {ids:?}"
+    );
+    ids
 }
 
 #[test]

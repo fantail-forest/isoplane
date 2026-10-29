@@ -1,4 +1,5 @@
 use hyper::StatusCode;
+use isoplane_test_support::ChildTest;
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use opentelemetry_proto::tonic::common::v1::any_value::Value;
 
@@ -7,9 +8,13 @@ mod otlp;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn terminating_a_process_drops_its_unfinished_trace() {
-    const CHILD_ENDPOINT: &str = "ISOPLANE_TRACE_ABORT_TEST_ENDPOINT";
-    if let Ok(endpoint) = std::env::var(CHILD_ENDPOINT) {
-        let endpoint = endpoint.parse().expect("test collector endpoint");
+    const CHILD: ChildTest = ChildTest::new("terminating_a_process_drops_its_unfinished_trace");
+    if let Some(endpoint) = CHILD.child_value() {
+        let endpoint = endpoint
+            .to_str()
+            .expect("the parent passes an endpoint")
+            .parse()
+            .expect("test collector endpoint");
         let _logging = tokio::task::spawn_blocking(move || {
             isoplaned::logs::init(true, std::io::sink, "abort-test", None, Some(&endpoint))
                 .expect("trace exporter")
@@ -26,13 +31,7 @@ async fn terminating_a_process_drops_its_unfinished_trace() {
         return;
     }
     let mut collector = otlp::Collector::<ExportTraceServiceRequest>::start(StatusCode::OK).await;
-    let mut child = tokio::process::Command::new(std::env::current_exe().expect("test executable"))
-        .args([
-            "--exact",
-            "terminating_a_process_drops_its_unfinished_trace",
-            "--nocapture",
-        ])
-        .env(CHILD_ENDPOINT, &collector.endpoint)
+    let mut child = tokio::process::Command::from(CHILD.command(&collector.endpoint))
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .kill_on_drop(true)

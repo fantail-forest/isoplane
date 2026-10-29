@@ -9,6 +9,7 @@ use isoplane_abi::dispatch::{DispatchRecord, HttpRequest};
 use isoplane_host::cell::{Cell, CellConfig, Target};
 use isoplane_host::fakes::*;
 use isoplane_host::{Activator, ModuleId};
+use isoplane_test_support::wait_for;
 
 mod common;
 use common::manifest;
@@ -166,14 +167,10 @@ fn a_retired_module_refuses_new_work_and_discards_its_idle_instances() {
         served.status, 200,
         "the module must serve before it retires"
     );
-    let deadline = std::time::Instant::now() + T;
-    while r.cell.idle_instances(&module) != Some(1) {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the served instance must return to the pool"
-        );
-        std::thread::yield_now();
-    }
+    assert!(
+        wait_for(|| r.cell.idle_instances(&module) == Some(1), T),
+        "the served instance must return to the pool"
+    );
     assert!(r.cell.retire_module(&module), "the module was registered");
     assert_eq!(
         r.cell.metrics().live,

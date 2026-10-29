@@ -348,6 +348,7 @@ fn read_exact_vectored(file: &mut File, mut rest: &mut [IoSliceMut<'_>]) -> io::
 #[cfg(test)]
 mod tests {
     use super::*;
+    use isoplane_test_support::ChildTest;
 
     fn save(reservation: &mut dyn SnapshotReservation, bytes: &[u8]) -> Result<(), SnapshotError> {
         reservation.save(&[IoSlice::new(bytes)])
@@ -413,10 +414,12 @@ mod tests {
         use std::io::BufRead;
         use std::os::fd::AsRawFd;
         use std::os::unix::fs::MetadataExt;
-        use std::process::{Command, Stdio};
+        use std::process::Stdio;
 
-        const CHILD_ROOT: &str = "ISOPLANE_SNAPSHOT_RESERVATION_TEST_ROOT";
-        if let Some(root) = std::env::var_os(CHILD_ROOT) {
+        const CHILD: ChildTest = ChildTest::new(
+            "snapshot::tests::process_termination_reclaims_anonymous_snapshot_files",
+        );
+        if let Some(root) = CHILD.child_value() {
             let storage = LocalSnapshotStorage::new(PathBuf::from(root))
                 .expect("open child snapshot storage");
             let reservation = storage
@@ -430,13 +433,8 @@ mod tests {
         }
 
         let root = tempfile::tempdir().expect("create owned snapshot directory");
-        let mut child = Command::new(std::env::current_exe().expect("locate test executable"))
-            .args([
-                "--exact",
-                "snapshot::tests::process_termination_reclaims_anonymous_snapshot_files",
-                "--nocapture",
-            ])
-            .env(CHILD_ROOT, root.path())
+        let mut child = CHILD
+            .command(root.path())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()

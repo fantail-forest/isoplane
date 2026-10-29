@@ -15,6 +15,7 @@ use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use tokio::task::JoinHandle;
 
+use isoplane_test_support::hex_bytes as hex;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 
 use crate::chain_material::{
@@ -269,13 +270,6 @@ fn not_found() -> Response<PeerBody> {
         .status(StatusCode::NOT_FOUND)
         .body(Full::new(Bytes::new()).boxed())
         .expect("a static response builds")
-}
-
-fn hex(text: &str) -> Vec<u8> {
-    text.as_bytes()
-        .chunks(2)
-        .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).expect("hex"), 16).expect("hex"))
-        .collect()
 }
 
 async fn hold() -> Response<PeerBody> {

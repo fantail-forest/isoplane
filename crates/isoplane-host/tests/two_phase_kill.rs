@@ -16,6 +16,7 @@ use isoplane_host::cell::{Cell, CellConfig, DispatchResult, Services, Target};
 use isoplane_host::egress::HostEgressPolicy;
 use isoplane_host::fakes::*;
 use isoplane_host::{ModuleId, Resolver};
+use isoplane_test_support::wait_for;
 
 /// Large enough that the grace window takes its 10% branch rather than the
 /// floor: B = 40 ms, G = 4 ms.
@@ -86,11 +87,7 @@ fn cell_with(act: Arc<dyn isoplane_host::Activator>) -> (Arc<Cell>, ModuleId) {
 /// Whether `instance` has left the cell. The response precedes its release,
 /// so this waits for it, within a deadline.
 fn evicted(cell: &Cell, instance: isoplane_host::InstanceId) -> bool {
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    while cell.slot(instance).is_some() && std::time::Instant::now() < deadline {
-        std::thread::yield_now();
-    }
-    cell.slot(instance).is_none()
+    wait_for(|| cell.slot(instance).is_none(), Duration::from_secs(10))
 }
 
 fn get(cell: &Cell, module: &ModuleId, path: &str) -> DispatchResult {
@@ -176,14 +173,13 @@ fn a_budget_exit_is_recorded_and_its_instance_serves_the_next_dispatch_warm() {
     assert_eq!(meters.budget_exits(), 1);
     assert_eq!(meters.budget_kills(), 0);
     assert_eq!(meters.overage_ns(), 123);
-    let deadline = std::time::Instant::now() + Duration::from_secs(30);
-    while cell.idle_instances(&module) != Some(1) {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the exited instance must return to the pool"
-        );
-        std::thread::yield_now();
-    }
+    assert!(
+        wait_for(
+            || cell.idle_instances(&module) == Some(1),
+            Duration::from_secs(30)
+        ),
+        "the exited instance must return to the pool"
+    );
     let next = get(&cell, &module, "/ok");
     assert_eq!(
         (next.status, next.instance, next.acquired),

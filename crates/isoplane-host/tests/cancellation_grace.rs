@@ -5,7 +5,7 @@ mod common;
 
 use std::sync::mpsc::Receiver;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use isoplane_abi::config::Limits;
 use isoplane_abi::dispatch::HttpRequest;
@@ -13,6 +13,7 @@ use isoplane_host::cell::{Cell, CellConfig, DispatchResult, Target};
 use isoplane_host::fakes::{FakeActivator, FakeBehaviour, Step};
 use isoplane_host::slot::LifecycleTier;
 use isoplane_host::{Activator, InstanceId, ModuleId};
+use isoplane_test_support::wait_for;
 
 const GRACE_MS: u64 = 200;
 
@@ -68,19 +69,24 @@ fn result(dispatch: &Receiver<DispatchResult>) -> DispatchResult {
 /// Waits, within a deadline that fails a hung test, until the cell's only
 /// instance has run a slice and parked, and returns it.
 fn parked(cell: &Cell) -> InstanceId {
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        if let [id] = cell.resident_ids()[..] {
-            if cell
-                .slot(id)
-                .is_some_and(|slot| slot.parks() > 0 && slot.state() == LifecycleTier::Parked)
-            {
-                return id;
-            }
-        }
-        assert!(Instant::now() < deadline, "the instance never parked");
-        std::thread::yield_now();
-    }
+    let mut parked = None;
+    assert!(
+        wait_for(
+            || {
+                if let [id] = cell.resident_ids()[..] {
+                    if cell.slot(id).is_some_and(|slot| {
+                        slot.parks() > 0 && slot.state() == LifecycleTier::Parked
+                    }) {
+                        parked = Some(id);
+                    }
+                }
+                parked.is_some()
+            },
+            Duration::from_secs(30)
+        ),
+        "the instance never parked"
+    );
+    parked.expect("the wait ended with the parked instance")
 }
 
 #[test]
@@ -115,14 +121,10 @@ fn a_dispatch_still_waiting_when_its_grace_runs_out_is_killed_with_its_instance(
         killed.instance, instance,
         "both dispatches ran on one instance"
     );
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while cell.slot(instance).is_some() {
-        assert!(
-            Instant::now() < deadline,
-            "the killed dispatch's instance must be evicted"
-        );
-        std::thread::yield_now();
-    }
+    assert!(
+        wait_for(|| cell.slot(instance).is_none(), Duration::from_secs(30)),
+        "the killed dispatch's instance must be evicted"
+    );
     assert_eq!(cell.metrics().cancellation_grace_kills, 1);
     cell.shutdown();
 }
@@ -168,27 +170,32 @@ fn a_dispatch_goes_to_another_instance_while_one_in_its_grace_holds_the_first() 
         WAIT_MS,
     );
     let _ignoring = submit(&cell, &module);
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while cell.metrics().instance_holds == 0 {
-        assert!(
-            Instant::now() < deadline,
-            "the dispatch never entered its grace"
-        );
-        std::thread::yield_now();
-    }
+    assert!(
+        wait_for(
+            || cell.metrics().instance_holds > 0,
+            Duration::from_secs(30)
+        ),
+        "the dispatch never entered its grace"
+    );
     let held = cell.resident_ids()[0];
     let _next = submit(&cell, &module);
-    while cell.metrics().served_activated < 2 {
-        assert!(
-            Instant::now() < deadline,
-            "the next dispatch never got an instance"
-        );
-        std::thread::yield_now();
-    }
+    // The next dispatch enters a grace of its own on the instance it gets,
+    // so the cell is at rest once both holds exist.
+    assert!(
+        wait_for(
+            || cell.metrics().instance_holds == 2,
+            Duration::from_secs(30)
+        ),
+        "the next dispatch never got an instance"
+    );
     let metrics = cell.metrics();
     assert_eq!(
-        (metrics.served_shared, metrics.activations_for_holds),
-        (0, 1),
+        (
+            metrics.served_activated,
+            metrics.served_shared,
+            metrics.activations_for_holds
+        ),
+        (2, 0, 1),
         "the next dispatch must not join the held instance"
     );
     assert_eq!(
@@ -202,7 +209,7 @@ fn a_dispatch_goes_to_another_instance_while_one_in_its_grace_holds_the_first() 
     let meters = cell.meters(&module).expect("module meters");
     assert_eq!(
         (meters.instance_holds(), meters.activations_for_holds()),
-        (1, 1)
+        (2, 1)
     );
     cell.shutdown();
 }

@@ -11,3 +11,4 @@ description = "Test support: locates and reads the fixtures Task prepared"
 tar.workspace = true
 isoplane-abi.workspace = true
 isoplane-engine.workspace = true
+isoplane-test-support.workspace = true

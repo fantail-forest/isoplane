@@ -5,7 +5,7 @@ mod compiled_runtime;
 mod dotnet_projects;
 
 pub use compiled_runtime::{
-    compiled_runtime_artifacts, compiled_runtime_cache, engine_config, instrumented_runtime,
+    compiled_runtime_cache, engine_config, instrumented_runtime, link_compiled_runtime,
     load_compiled_runtime,
 };
 
@@ -17,29 +17,24 @@ pub use dotnet_projects::{
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+use isoplane_test_support::{prepared_path, repository_root};
+
 pub(crate) fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .expect("crates/isoplane-fixtures has a grandparent")
-        .to_path_buf()
+    repository_root(env!("CARGO_MANIFEST_DIR"))
 }
 
 /// The debugger test interpreter prepared by Task.
 pub fn debugger_python() -> PathBuf {
-    std::env::var_os("ISOPLANE_TEST_DEBUGGER_PYTHON")
-        .map(PathBuf::from)
-        .expect("run tests through Task to select the prepared debugger Python environment")
+    prepared_path(
+        "ISOPLANE_TEST_DEBUGGER_PYTHON",
+        "task test:debugger:environment",
+    )
 }
 
 /// Cargo output selected by Task through `CARGO_TARGET_DIR`.
 pub fn target_directory() -> &'static Path {
     static TARGET: OnceLock<PathBuf> = OnceLock::new();
-    TARGET.get_or_init(|| {
-        let path = std::env::var_os("CARGO_TARGET_DIR")
-            .unwrap_or_else(|| panic!("CARGO_TARGET_DIR is unset; run tests through task test"));
-        repo_root().join(path)
-    })
+    TARGET.get_or_init(|| repo_root().join(prepared_path("CARGO_TARGET_DIR", "task test")))
 }
 
 fn read(path: &Path) -> Vec<u8> {
@@ -162,9 +157,7 @@ pub fn mono_package(name: &str) -> PathBuf {
 
 /// Host-specific compiler baseline and deltas shared by Hot Reload scenarios.
 pub fn hot_reload_artifacts() -> PathBuf {
-    std::env::var_os("ISOPLANE_TEST_HOT_RELOAD_ARTIFACTS")
-        .map(PathBuf::from)
-        .expect("run task test:debugger to select the prepared Hot Reload fixture")
+    prepared_path("ISOPLANE_TEST_HOT_RELOAD_ARTIFACTS", "task test:debugger")
 }
 
 /// The runtime package feed prepared or explicitly selected by Task.
@@ -178,9 +171,7 @@ pub fn guest_runtime_feed() -> PathBuf {
 /// `prepare-runtime`, which sessions of the installed CLI reuse instead of
 /// compiling the shared runtime themselves.
 pub fn runtime_cache() -> PathBuf {
-    let path = std::env::var_os("ISOPLANE_TEST_RUNTIME_CACHE")
-        .map(PathBuf::from)
-        .expect("run task fixtures:runtime to select the prepared runtime cache");
+    let path = prepared_path("ISOPLANE_TEST_RUNTIME_CACHE", "task fixtures:runtime");
     assert!(
         path.is_dir(),
         "the prepared runtime cache is missing at {}; run task fixtures:runtime",

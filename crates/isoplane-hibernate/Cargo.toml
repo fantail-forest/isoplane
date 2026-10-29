@@ -23,4 +23,5 @@ tempfile = { workspace = true }
 nix = { workspace = true }
 
 [dev-dependencies]
+isoplane-test-support = { workspace = true }
 libc = { workspace = true }

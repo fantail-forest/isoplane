@@ -381,6 +381,7 @@ fn existing_size(path: &Path) -> Result<u64, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use isoplane_test_support::{run_successfully, ChildTest};
     use std::time::{Duration, UNIX_EPOCH};
 
     #[test]
@@ -405,8 +406,10 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_child_process_holding_a_released_lease_file_does_not_delay_reclamation() {
-        const CHILD: &str = "ISOPLANE_CACHE_TEST_HOLDS_LEASE_FILE";
-        if std::env::var_os(CHILD).is_some() {
+        const CHILD: ChildTest = ChildTest::new(
+            "tests::a_child_process_holding_a_released_lease_file_does_not_delay_reclamation",
+        );
+        if CHILD.child_value().is_some() {
             // Keeps its inherited copy of the lease file open until the parent closes this pipe.
             std::io::copy(&mut std::io::stdin(), &mut std::io::sink()).unwrap();
             return;
@@ -420,14 +423,8 @@ mod tests {
         // from its fork until it executes. Passing the file as standard error
         // keeps it open for the child's whole life.
         let inherited = reader.file.as_ref().unwrap().try_clone().unwrap();
-        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        let mut command = CHILD.command("1");
         command
-            .args([
-                "--exact",
-                "tests::a_child_process_holding_a_released_lease_file_does_not_delay_reclamation",
-                "--nocapture",
-            ])
-            .env(CHILD, "1")
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::null())
             .stderr(inherited);
@@ -533,8 +530,10 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn pruning_reclaims_an_entry_another_process_recreated_beside_an_old_reader() {
-        const CHILD_ROOT: &str = "ISOPLANE_CACHE_TEST_RECREATED_ROOT";
-        if let Some(root) = std::env::var_os(CHILD_ROOT) {
+        const CHILD: ChildTest = ChildTest::new(
+            "tests::pruning_reclaims_an_entry_another_process_recreated_beside_an_old_reader",
+        );
+        if let Some(root) = CHILD.child_value() {
             let cache = Cache::new(root.into(), CacheBytes(u64::MAX)).unwrap();
             assert!(cache.clear().unwrap().is_empty());
             let replacement = cache.lease(CacheKey([1; 32])).unwrap();
@@ -545,20 +544,9 @@ mod tests {
         let cache = Cache::new(root.path().into(), CacheBytes(0)).unwrap();
         let original = cache.lease(CacheKey([1; 32])).unwrap();
         fs::write(original.directory().join("module"), b"original").unwrap();
-        let child = std::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "tests::pruning_reclaims_an_entry_another_process_recreated_beside_an_old_reader",
-                "--nocapture",
-            ])
-            .env(CHILD_ROOT, root.path())
-            .output()
-            .unwrap();
-        assert!(
-            child.status.success(),
-            "{}\n{}",
-            String::from_utf8_lossy(&child.stdout),
-            String::from_utf8_lossy(&child.stderr)
+        run_successfully(
+            &mut CHILD.command(root.path()),
+            "recreate the entry from another process",
         );
         assert_eq!(cache.entries().unwrap()[0].bytes, 11);
         cache.prune().unwrap();
@@ -582,8 +570,9 @@ mod tests {
 
     #[test]
     fn another_cache_owner_cannot_evict_a_live_reader() {
-        const CHILD_ENTRY: &str = "ISOPLANE_CACHE_TEST_LEASED_ENTRY";
-        if let Some(path) = std::env::var_os(CHILD_ENTRY) {
+        const CHILD: ChildTest =
+            ChildTest::new("tests::another_cache_owner_cannot_evict_a_live_reader");
+        if let Some(path) = CHILD.child_value() {
             let path = PathBuf::from(path);
             Cache::new(path.parent().unwrap().into(), CacheBytes(0))
                 .unwrap()
@@ -606,20 +595,9 @@ mod tests {
             second.directory().exists(),
             "a second independent owner must retain its mapped artifact"
         );
-        let child = std::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "tests::another_cache_owner_cannot_evict_a_live_reader",
-                "--nocapture",
-            ])
-            .env(CHILD_ENTRY, second.directory())
-            .output()
-            .unwrap();
-        assert!(
-            child.status.success(),
-            "{}\n{}",
-            String::from_utf8_lossy(&child.stdout),
-            String::from_utf8_lossy(&child.stderr)
+        run_successfully(
+            &mut CHILD.command(second.directory()),
+            "prune from another cache owner",
         );
         let path = second.directory().to_path_buf();
         drop(second);

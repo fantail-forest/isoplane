@@ -1,4 +1,5 @@
 use hyper::StatusCode;
+use isoplane_test_support::{assert_success, ChildTest};
 use opentelemetry_proto::tonic::collector::logs::v1::{
     ExportLogsPartialSuccess, ExportLogsServiceRequest, ExportLogsServiceResponse,
 };
@@ -9,17 +10,19 @@ use prost::Message;
 pub mod otlp;
 
 const SENTINEL: &str = "collector-echoed-authorization-secret-9c47";
-const CHILD_CASE: &str = "ISOPLANE_DIAGNOSTIC_TEST_CASE";
+const CHILD: ChildTest =
+    ChildTest::new("collector_payloads_never_reach_diagnostics_even_with_verbose_logging");
 
 #[test]
 fn collector_payloads_never_reach_diagnostics_even_with_verbose_logging() {
-    if let Ok(case) = std::env::var(CHILD_CASE) {
+    if let Some(case) = CHILD.child_value() {
+        let case = case.to_str().expect("the parent passes a case name");
         tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
             .build()
             .unwrap()
-            .block_on(exercise_collector(&case));
+            .block_on(exercise_collector(case));
         return;
     }
     for level in ["debug", "trace"] {
@@ -31,25 +34,16 @@ fn collector_payloads_never_reach_diagnostics_even_with_verbose_logging() {
             "trace_partial",
             "trace_error",
         ] {
-            let output = std::process::Command::new(std::env::current_exe().unwrap())
-                .args([
-                    "--exact",
-                    "collector_payloads_never_reach_diagnostics_even_with_verbose_logging",
-                    "--nocapture",
-                ])
-                .env(CHILD_CASE, case)
-                .env("RUST_LOG", level)
-                .output()
-                .unwrap();
+            let output = CHILD.command(case).env("RUST_LOG", level).output().unwrap();
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
             assert!(
                 !stdout.contains(SENTINEL) && !stderr.contains(SENTINEL),
                 "collector response text escaped through raw diagnostics at {level} for {case}"
             );
-            assert!(
-                output.status.success(),
-                "global exporter diagnostic child failed for {case}/{level}: {stdout}\n{stderr}"
+            assert_success(
+                &output,
+                &format!("the global exporter diagnostic child for {case}/{level}"),
             );
         }
     }

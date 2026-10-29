@@ -7,6 +7,7 @@ use isoplane_abi::config::{GuestMemoryBytes, Limits};
 use isoplane_engine::{Completion, EngineConfig, IsoplaneEngine};
 use isoplane_host::cell::Target;
 use isoplane_host::{CellConfig, EngineActivator, ModuleId};
+use isoplane_test_support::wait_for;
 
 mod common;
 
@@ -108,14 +109,13 @@ fn dispatch_growth(
             "an instance is retired exactly when its memory passes its limit"
         );
         if expected_retirements > 0 {
-            let deadline = std::time::Instant::now() + Duration::from_secs(10);
-            while cell.slot(result.instance).is_some() {
-                assert!(
-                    std::time::Instant::now() < deadline,
-                    "a retired instance must be discarded once its dispatch ends"
-                );
-                std::thread::yield_now();
-            }
+            assert!(
+                wait_for(
+                    || cell.slot(result.instance).is_none(),
+                    Duration::from_secs(10)
+                ),
+                "a retired instance must be discarded once its dispatch ends"
+            );
         }
         cell.shutdown();
         drop(cell);
@@ -279,26 +279,24 @@ fn a_dispatch_does_not_join_an_instance_at_its_memory_limit() {
         .expect("the cell admits the dispatch")
     };
     let _first = submit();
-    let deadline = std::time::Instant::now() + Duration::from_secs(30);
-    while !cell
-        .resident_ids()
-        .into_iter()
-        .any(|id| cell.slot(id).is_some_and(|slot| slot.parks() > 0))
-    {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the first request never parked"
-        );
-        std::thread::yield_now();
-    }
+    assert!(
+        wait_for(
+            || cell
+                .resident_ids()
+                .into_iter()
+                .any(|id| cell.slot(id).is_some_and(|slot| slot.parks() > 0)),
+            Duration::from_secs(30)
+        ),
+        "the first request never parked"
+    );
     let _second = submit();
-    while cell.metrics().served_activated < 2 {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the second dispatch never got an instance"
-        );
-        std::thread::yield_now();
-    }
+    assert!(
+        wait_for(
+            || cell.metrics().served_activated >= 2,
+            Duration::from_secs(30)
+        ),
+        "the second dispatch never got an instance"
+    );
     assert_eq!(
         cell.metrics().served_shared,
         0,
