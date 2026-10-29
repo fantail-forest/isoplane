@@ -69,7 +69,7 @@ async fn a_failed_package_build_preserves_the_running_app_and_allows_repair() {
     );
 
     std::fs::write(app.join("omit-publication"), "").unwrap();
-    dev.wait_for("rebuild failed; keeping the last working application");
+    dev.wait_event("build_failed");
     assert_eq!(
         body(&dev).await,
         "working publication",

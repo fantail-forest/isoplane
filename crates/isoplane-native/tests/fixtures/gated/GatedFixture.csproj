@@ -4,6 +4,10 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
+  <!-- A session rebuilds when a file on the SDK's watch list changes, so the gate files must be on it for creating one to start the build the test observes. -->
+  <ItemGroup>
+    <Watch Include="omit-publication;hold-publication" />
+  </ItemGroup>
   <Target Name="FixtureBuildGate" BeforeTargets="CoreCompile">
     <Error Condition="Exists('omit-publication')" Text="fixture package build refused" />
     <Exec Condition="Exists('hold-publication')" Command="sh wait-build.sh" />
