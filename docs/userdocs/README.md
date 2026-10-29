@@ -21,8 +21,9 @@ preview accessible from another machine. Nothing is published by these commands.
 ## Publishing
 
 The site is served at `https://isoplane.dev/docs/` by its own Cloudflare Worker,
-`isoplane-docs`. `pnpm run deploy:prod` builds the site, builds its search index,
-deploys the search server and uploads the site; see [Search](#search).
+`isoplane-docs`. `pnpm run deploy:prod` builds the site, builds its search index
+(`pnpm run search:index`), and deploys the search server and then the site
+(`pnpm run search:deploy`). Authenticate the Fly and Wrangler CLIs before deploying.
 
 The site permits indexing and generates a sitemap at `/docs/sitemap.xml`.
 
@@ -134,23 +135,16 @@ again by keyword alone, answered uncached and logged with `mode: keyword`.
 
 Configuration lives in `search/.env`, which Git ignores; copy
 `search/.env.example` and fill it in. The Worker's own settings are in
-`wrangler.jsonc`; it needs no `.dev.vars`.
-
-`search/deploy.sh` sets the secrets from `search/.env` over stdin, so no secret
-is typed into a shell: `DOCS_SEARCH_KEY` on Fly, for nginx to admit, and on the
-Worker; and the server's own admin key, `TYPESENSE_API_KEY`, generated on the
-first deploy and never used by the site. Searches at query time embed the
-query with the same provider, so the server holds the provider key too, inside
-the baked snapshot. To change model or provider, edit `model_config` in
-`search/scraper.config.json`: any OpenAI-compatible provider works as
-`openai/<model id>` with its base `url`, and `query_prefix` carries whatever
-instruction the model wants in front of a query. Then index and deploy.
-Documents and queries must be embedded by the same provider at the same
+`wrangler.jsonc`; it needs no `.dev.vars`. `DOCS_SEARCH_KEY` is the search-only
+key, baked into the index for nginx to admit and set as a secret on Fly and on
+the Worker; the server's own admin key, `TYPESENSE_API_KEY`, is generated on the
+first deploy and never used by the site. Searches at query time embed the query
+with the same provider, so the baked snapshot holds the provider key too. To
+change model or provider, edit `model_config` in `search/scraper.config.json`:
+any OpenAI-compatible provider works as `openai/<model id>` with its base `url`,
+and `query_prefix` carries whatever instruction the model wants in front of a
+query. Documents and queries must be embedded by the same provider at the same
 precision, so a provider change is a reindex, not a redeploy.
-
-The first deploy needs only `fly auth login` and `wrangler login`; it creates
-the Fly app itself. Changing `DOCS_SEARCH_KEY` in `search/.env` is a reindex
-and a deploy, nothing more.
 
 To run the search box against a local server: `pnpm run search:serve` runs the
 production image from `search/snapshot/`, and `pnpm run search:start` points a
