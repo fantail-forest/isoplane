@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and discussion
+    url: https://github.com/fantail-forest/isoplane/discussions
+    about: Ask how to do something, or share what you are building.
+  - name: Documentation
+    url: https://isoplane.dev/docs/
+    about: Quickstart, tutorials, how-to guides and reference.
+  - name: Security report
+    url: https://github.com/fantail-forest/isoplane/security/advisories/new
+    about: Report a vulnerability privately. Please do not open a public issue.

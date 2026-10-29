@@ -1,0 +1,48 @@
+name: Bug report
+description: Something in the SDK, CLI or templates does not behave as documented.
+labels: ["bug"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Isoplane version
+      description: Output of `isoplane --version`.
+      placeholder: "Paste the version it prints"
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Operating system and architecture
+      placeholder: "Ubuntu 24.04 x64, macOS 15 arm64, Windows 11 x64"
+    validations:
+      required: true
+  - type: input
+    id: dotnet
+    attributes:
+      label: .NET SDK version
+      description: Output of `dotnet --version`.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you saw, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: The smallest sequence of commands or a link to a minimum reproducible example - the smallest possible complete project that shows the problem.
+      placeholder: |
+        1. dotnet new isoplane-web --name Repro
+        2. cd Repro && dotnet run
+        3. curl http://localhost:...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Output and logs
+      description: Command output, `isoplane doctor` output, or daemon logs. Remove anything secret.
+      render: text
