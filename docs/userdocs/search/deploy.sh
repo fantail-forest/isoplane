@@ -2,7 +2,8 @@
 # Deploy the search server to Fly and the site, with the matching index
 # version, to Cloudflare. Run after `pnpm run build` and `pnpm run search:index`.
 # Creates the Fly app on first use and sets both platforms' secrets from
-# search/.env over stdin; no secret is ever passed on a command line.
+# search/.env without passing one on a command line. Authenticate the
+# Fly and Wrangler CLIs before running this script.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
@@ -29,8 +30,10 @@ printf '%s\n' "$fly_secrets" | fly secrets import --app "$app" --stage
 fly deploy --ha=false
 
 cd ..
-# A new index version is a new edge cache key for every search.
-wrangler deploy --var "SEARCH_INDEX_VERSION:$version"
-# After the deploy so that the first one can create the Worker; a secret
-# outlives deploys, so later ones only ever update it.
-printf 'DOCS_SEARCH_KEY=%s\n' "$DOCS_SEARCH_KEY" | wrangler secret bulk
+# One deploy carries the index version, a new edge cache key for every search,
+# and the Worker's secret, which Wrangler reads from a file only it opens. The
+# Cloudflare authentication comes from Wrangler configuration or environment.
+worker_secrets="$(mktemp)"
+trap 'rm -f "$worker_secrets"' EXIT
+printf 'DOCS_SEARCH_KEY=%s\n' "$DOCS_SEARCH_KEY" > "$worker_secrets"
+pnpm exec wrangler deploy --secrets-file "$worker_secrets" --var "SEARCH_INDEX_VERSION:$version"
