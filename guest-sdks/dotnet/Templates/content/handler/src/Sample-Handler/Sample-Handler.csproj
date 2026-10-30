@@ -6,7 +6,7 @@
   An ASP.NET Core application uses Isoplane.AspNetCore in place of Isoplane.Sdk;
   `dotnet new isoplane-web` creates one.
 -->
-<Project Sdk="Isoplane.Sdk/0.1.0-preview.4">
+<Project Sdk="Isoplane.Sdk/0.1.0">
 
   <PropertyGroup>
     <!-- The SDK sets TargetFramework to net10.0, the framework it supports. -->

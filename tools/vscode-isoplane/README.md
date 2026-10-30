@@ -5,7 +5,7 @@
 Build and debug Isoplane applications directly in VS Code: launch your API, set
 breakpoints, inspect variables, and rebuild source edits for the next request.
 
-This is a pre-release extension for local development. It requires VS Code
+This extension supports local development. It requires VS Code
 1.95 or later, the .NET 10 SDK, and the Isoplane CLI and SDK installed separately.
 The CLI must be available on VS Code's PATH, or selected with `cliPath`.
 See [isoplane.dev](https://isoplane.dev) for the platform.

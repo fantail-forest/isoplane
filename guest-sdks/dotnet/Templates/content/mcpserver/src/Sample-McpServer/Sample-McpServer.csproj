@@ -4,7 +4,7 @@
   Microsoft.NET.Sdk.Web. The number after the slash is the SDK version, which
   also selects the runtime the application runs on.
 -->
-<Project Sdk="Isoplane.AspNetCore/0.1.0-preview.4">
+<Project Sdk="Isoplane.AspNetCore/0.1.0">
 
   <PropertyGroup>
     <!-- The SDK sets TargetFramework to net10.0, the framework it supports. -->

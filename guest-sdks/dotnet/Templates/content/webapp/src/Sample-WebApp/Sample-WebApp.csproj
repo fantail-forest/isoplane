@@ -5,7 +5,7 @@
   packaged as they are there. The number after the slash is the SDK version,
   which also selects the runtime the application runs on.
 -->
-<Project Sdk="Isoplane.AspNetCore/0.1.0-preview.4">
+<Project Sdk="Isoplane.AspNetCore/0.1.0">
 
   <PropertyGroup>
     <!-- The SDK sets TargetFramework to net10.0, the framework it supports. -->
@@ -60,10 +60,10 @@
       above does not depend on it. Keep this version equal to the SDK version
       in the <Project> line, and change both together when you update.
     -->
-    <PackageReference Include="Isoplane.AspNetCore.DataProtection.EntityFrameworkCore" Version="0.1.0-preview.4" />
+    <PackageReference Include="Isoplane.AspNetCore.DataProtection.EntityFrameworkCore" Version="0.1.0" />
     <!-- Used by `dotnet ef` on your machine only; PrivateAssets keeps it out of the application package. -->
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.13" PrivateAssets="all" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.13" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.14" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.14" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
   </ItemGroup>
 

@@ -8,7 +8,7 @@
          another artifacts path keeps it. -->
     <UseArtifactsOutput Condition="'$(ArtifactsPath)' == ''">true</UseArtifactsOutput>
     <ArtifactsPath Condition="'$(ArtifactsPath)' == ''">$(MSBuildThisFileDirectory).build/clr-anycpu/managed</ArtifactsPath>
-    <Version>0.1.0-preview.4</Version>
+    <Version>0.1.0</Version>
     <RepositoryUrl>https://github.com/fantail-forest/isoplane</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
   </PropertyGroup>

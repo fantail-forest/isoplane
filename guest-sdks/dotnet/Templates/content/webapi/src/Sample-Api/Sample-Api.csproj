@@ -4,7 +4,7 @@
   Microsoft.NET.Sdk.Web. The number after the slash is the SDK version, which
   also selects the runtime the application runs on.
 -->
-<Project Sdk="Isoplane.AspNetCore/0.1.0-preview.4">
+<Project Sdk="Isoplane.AspNetCore/0.1.0">
 
   <PropertyGroup>
     <!-- The SDK sets TargetFramework to net10.0, the framework it supports. -->
@@ -47,10 +47,10 @@
       .NET project:
         dotnet add src/Sample-Api package <name>
     -->
-    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.12" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.14" />
     <!-- Used by `dotnet ef` on your machine only; PrivateAssets keeps it out of the application package. -->
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.12" PrivateAssets="all" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.12" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.14" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.14" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
   </ItemGroup>
 

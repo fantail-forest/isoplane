@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.1 — Pre-release
+## 0.1.0
 
 - Launch and attach to local Isoplane .NET applications.
 - Debug Isoplane projects from C# launch configurations.

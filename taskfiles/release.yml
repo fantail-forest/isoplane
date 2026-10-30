@@ -11,7 +11,7 @@ vars:
 
 tasks:
   editor:
-    desc: Package the pre-release Isoplane VS Code extension
+    desc: Package the Isoplane VS Code extension
     deps: [':test:editor:environment']
     cmds:
       - npm --prefix tools/vscode-isoplane run package

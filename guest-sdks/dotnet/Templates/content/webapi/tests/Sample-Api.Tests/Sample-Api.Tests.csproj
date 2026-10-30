@@ -9,7 +9,7 @@
 
   <ItemGroup>
     <!-- Starts an application in the Isoplane sandbox from a test. Keep its version equal to the one the `isoplane` tool reports. -->
-    <PackageReference Include="Isoplane.Testing" Version="0.1.0-preview.4" />
+    <PackageReference Include="Isoplane.Testing" Version="0.1.0" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <!-- Starts the disposable database the sandbox tests run against; it needs Docker. -->
     <PackageReference Include="Testcontainers.PostgreSql" Version="4.15.0" />
