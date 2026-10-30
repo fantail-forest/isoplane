@@ -2,6 +2,7 @@
 #![forbid(unsafe_code)]
 
 pub mod files;
+#[cfg(unix)]
 pub mod mapped_backing;
 pub mod prepared;
 pub mod process;
