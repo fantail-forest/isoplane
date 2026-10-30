@@ -20,7 +20,7 @@ DECLARATION = 'Directory.Build.props'
 SCANNED_SUFFIXES = ('.csproj', '.props', '.targets')
 EXCLUDED_PATHS = frozenset({'vendor', 'tools/debugger-libs', 'guest-runtime/work', 'handoffs', 'target'})
 EXCLUDED_DIRECTORIES = frozenset({'bin', 'obj', 'node_modules'})
-PIN = re.compile(r'(?P<prefix>\bSdk="(?:Isoplane\.Sdk|Isoplane\.AspNetCore)/|<PackageReference Include="(?:Isoplane\.Sdk|Isoplane\.AspNetCore|Isoplane\.AspNetCore\.DataProtection\.EntityFrameworkCore|Isoplane\.OpenTelemetry|Isoplane\.Testing)" Version=")(?P<version>[^"]+)"')
+PIN = re.compile(r'(?P<prefix>\bSdk="(?:Isoplane\.Sdk|Isoplane\.AspNetCore)/|<PackageReference Include="(?:Isoplane\.Sdk|Isoplane\.AspNetCore|Isoplane\.AspNetCore\.DataProtection\.EntityFrameworkCore|Isoplane\.OpenTelemetry|Isoplane\.Testing)" Version=")(?P<version>(?!\$\()[^"]+)"')
 
 
 def declared(root=ROOT):
