@@ -486,6 +486,7 @@ fn real_completion_cell(wasm: Vec<u8>, slice_wall_ms_cap: u32) -> (Arc<Cell>, Mo
     let engine = Arc::new(
         isoplane_engine::IsoplaneEngine::new(isoplane_engine::EngineConfig {
             pooling: false,
+            max_memory_bytes: 2 * isoplane_abi::WASM_PAGE_SIZE as u64,
             ..Default::default()
         })
         .expect("real completion engine"),
