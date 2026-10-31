@@ -72,7 +72,7 @@ public sealed class AgentHarnessTests
         {
             File.WriteAllText(Path.Combine(directory, "opencode.jsonc"), "{\"model\": \"fast\"}");
             Assert.Equal(Path.Combine(directory, "opencode.jsonc"), AgentHarness.Named("opencode").Register(directory));
-            Assert.Equal(Path.Combine(directory, ".codex", "config.toml"), AgentHarness.Named("codex").Register(directory));
+            Assert.Equal(Path.Combine(directory, ".codex", "config.toml"), Path.GetFullPath(AgentHarness.Named("codex").Register(directory)));
             Assert.Contains("[mcp_servers.isoplane]", File.ReadAllText(Path.Combine(directory, ".codex", "config.toml")));
             Assert.Equal("fast", JsonNode.Parse(File.ReadAllText(Path.Combine(directory, "opencode.jsonc")))!["model"]!.GetValue<string>());
         }

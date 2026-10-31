@@ -73,8 +73,9 @@ function csharpLaunches() {
         fs.writeFileSync(library, '<Project Sdk="Microsoft.NET.Sdk">\n</Project>\n');
         const folder = { uri: vscode.Uri.file(directory) };
         const named = { type: 'dotnet', request: 'launch', name: 'Debug', projectPath: '${workspaceFolder}/app/App.csproj' };
-        assert.deepEqual(isoplaneLaunch(folder, named),
-            { type: 'isoplane', request: 'launch', name: 'Debug', project: path.dirname(application), configuration: 'Debug' },
+        const launch = isoplaneLaunch(folder, named);
+        assert.deepEqual({ ...launch, project: fs.realpathSync.native(launch.project) },
+            { type: 'isoplane', request: 'launch', name: 'Debug', project: fs.realpathSync.native(path.dirname(application)), configuration: 'Debug' },
             'a launch naming an Isoplane project file must become an Isoplane launch of its directory');
         assert.equal(isoplaneLaunch(folder, { ...named, projectPath: library }), undefined, 'any other project keeps the C# debugger');
         assert.equal(isoplaneLaunch(folder, { ...named, noDebug: true }), undefined, 'running without debugging keeps the project run command');

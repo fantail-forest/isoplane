@@ -72,7 +72,7 @@ tasks:
     internal: true
     cmds:
       # Windows loads PE images with execute access, including over SMB.
-      - 'find "{{.MANAGED}}/bin" "{{.MANAGED}}/publish" -type f -name "*.dll" ! -perm -a=x -exec chmod a+x {} +'
+      - 'find "{{.MANAGED}}" -type f -name "*.dll" ! -perm -a=x -exec chmod a+x {} +'
 
   skill:
     run: once

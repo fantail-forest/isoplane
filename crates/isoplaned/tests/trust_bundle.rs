@@ -57,11 +57,14 @@ fn the_review_verifies_the_signature_of_a_self_issued_certificate() {
 fn review_bundle(bundle: &std::path::Path) -> String {
     let empty = tempfile::NamedTempFile::new().expect("create empty previous bundle");
     let script = repository_root(env!("CARGO_MANIFEST_DIR")).join("trust/review-bundle.sh");
+    let mut command = std::process::Command::new("bash");
+    // Windows searches System32 before an inherited PATH, where bash is the WSL launcher.
+    command.env(
+        "PATH",
+        std::env::var_os("PATH").expect("Task provides PATH for native test tools"),
+    );
     let output = run_successfully(
-        std::process::Command::new("bash")
-            .arg(script)
-            .arg(empty.path())
-            .arg(bundle),
+        command.arg(script).arg(empty.path()).arg(bundle),
         "review the bundle with bash and OpenSSL installed",
     );
     String::from_utf8(output.stdout).expect("review output is UTF-8")
