@@ -65,12 +65,10 @@ fn documented_bootstrap_packages(release: &Release) -> Vec<String> {
     packages
 }
 
-/// A fresh Ubuntu 24.04 image with the documented bootstrap SDK and an ordinary user; nothing of Isoplane.
-fn customer_image(release: &Release) -> String {
-    let dockerfile = format!(
-        "FROM ubuntu:24.04\nRUN apt-get update && apt-get install -y --no-install-recommends {} && rm -rf /var/lib/apt/lists/*\nRUN useradd --create-home dev\nUSER dev\nWORKDIR /home/dev\n",
-        documented_bootstrap_packages(release).join(" ")
-    );
+/// Adds an ordinary user to a clean SDK environment without installing Isoplane.
+fn customer_image(bootstrap: &str) -> String {
+    let dockerfile =
+        format!("{bootstrap}\nRUN useradd --create-home dev\nUSER dev\nWORKDIR /home/dev\n");
     let tag = format!(
         "isoplane-release-journey:{}",
         blake3::hash(dockerfile.as_bytes()).to_hex()
@@ -95,16 +93,35 @@ fn customer_image(release: &Release) -> String {
 #[test]
 fn a_prepared_release_installs_builds_applications_and_uninstalls() {
     let release = prepared_release();
-    let image = customer_image(&release);
+    let bootstrap = format!(
+        "FROM ubuntu:24.04\nRUN apt-get update && apt-get install -y --no-install-recommends {} && rm -rf /var/lib/apt/lists/*",
+        documented_bootstrap_packages(&release).join(" ")
+    );
+    let image = customer_image(&bootstrap);
+    assert_journey(&release, &image, "");
+}
+
+#[test]
+fn a_prepared_release_works_with_the_first_dotnet_10_sdk_without_upgrading_it() {
+    let release = prepared_release();
+    let image = customer_image("FROM mcr.microsoft.com/dotnet/sdk:10.0.100");
+    assert_journey(&release, &image, "10.0.100");
+}
+
+fn assert_journey(release: &Release, image: &str, expected_sdk: &str) {
     let output = run_successfully(
         Command::new("docker")
             .args(["run", "--rm", "--init", "--volume"])
             .arg(format!("{}:/release:ro", release.directory.display()))
             .args(["--env", &format!("RELEASE_VERSION={}", release.version)])
             .args(["--env", &format!("RELEASE_REVISION={}", release.revision)])
+            .args(["--env", &format!("EXPECTED_SDK_VERSION={expected_sdk}")])
             .arg(image)
             .args(["bash", "-euo", "pipefail", "-c", r#"
 export PATH="$HOME/.dotnet/tools:$PATH"
+if test -n "$EXPECTED_SDK_VERSION"; then
+    test "$(dotnet --version)" = "$EXPECTED_SDK_VERSION"
+fi
 dotnet tool install --global Isoplane.Cli --version "$RELEASE_VERSION" --add-source /release/packages
 test "$(isoplane --version)" = "isoplane $RELEASE_VERSION+$RELEASE_REVISION"
 isoplane setup --source /release --yes
@@ -122,6 +139,9 @@ test -f JourneyApp.csproj
 if dotnet new list | grep -q isoplane-web; then
     echo 'Uninstall left the Isoplane template registered' >&2
     exit 1
+fi
+if test -n "$EXPECTED_SDK_VERSION"; then
+    test "$(dotnet --version)" = "$EXPECTED_SDK_VERSION"
 fi
 "#]),
         "install the prepared release, build applications and uninstall it, in Docker",

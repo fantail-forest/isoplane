@@ -49,7 +49,7 @@ async fn an_installed_dotnet_tool_runs_and_reloads_an_application() {
         "editing source must publish and reload through the installed .NET tool"
     );
     std::fs::write(&source, "invalid C#").unwrap();
-    dev.wait_for("rebuild failed; keeping the last working application");
+    dev.wait_event("build_failed");
     assert_eq!(
         client
             .get(&dev.url)
