@@ -8,7 +8,10 @@ vars:
   USER_HOME: '{{env "HOME" | default (env "USERPROFILE")}}'
   DOTNET: '{{env "DOTNET_ROOT" | default (printf "%s/.dotnet" .USER_HOME)}}/dotnet{{if eq OS "windows"}}.exe{{end}}'
   PATH_SEPARATOR: '{{if eq OS "windows"}};{{else}}:{{end}}'
-  PYTHON: '{{.ISOPLANE_PYTHON | default (ternary "python" "python3" (eq OS "windows"))}}'
+  DEFAULT_PYTHON:
+    # MSYS2's Python uses a POSIX virtualenv layout; the Windows launcher selects native Python.
+    sh: '{{if and (eq OS "windows") (not .ISOPLANE_PYTHON)}}py -3 -c "import pathlib, sys; print(pathlib.Path(sys.executable).as_posix())"{{else}}printf python3{{end}}'
+  PYTHON: '{{.ISOPLANE_PYTHON | default .DEFAULT_PYTHON}}'
   PLATFORM: '{{if eq OS "darwin"}}osx{{else if eq OS "windows"}}win{{else}}{{OS}}{{end}}-{{if eq ARCH "amd64"}}x64{{else}}{{ARCH}}{{end}}'
   RELEASE_PYTHON_DIRECTORY: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/release-python'
   RELEASE_PYTHON: '{{.RELEASE_PYTHON_DIRECTORY}}/{{if eq OS "windows"}}Scripts/python.exe{{else}}bin/python{{end}}'
