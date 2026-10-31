@@ -9,7 +9,9 @@ if (!process.env.ISOPLANE_TEST_CLI) throw new Error('ISOPLANE_TEST_CLI must name
 const suite = process.argv[2] || 'suite';
 if (!['suite', 'launch'].includes(suite)) throw new Error('Choose suite or launch.');
 if (suite === 'launch' && !process.env.ISOPLANE_TEST_PROJECT) throw new Error('ISOPLANE_TEST_PROJECT must name the prepared debugger test application.');
-const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'isoplane-editor-test-'));
+// Unix sockets inside the editor profile need a short pathname.
+const temporary = process.platform === 'win32' ? os.tmpdir() : '/tmp';
+const profile = fs.mkdtempSync(path.join(temporary, 'isoplane-editor-test-'));
 runTests({
     cachePath,
     extensionDevelopmentPath: path.resolve(__dirname, '..'),
@@ -17,4 +19,4 @@ runTests({
     launchArgs: ['--no-sandbox', '--disable-gpu', '--disable-workspace-trust', '--skip-welcome',
         '--user-data-dir=' + path.join(profile, 'user-data'), '--extensions-dir=' + path.join(profile, 'extensions')]
 }).catch(error => { console.error(error); process.exitCode = 1; })
-    .finally(() => fs.rmSync(profile, { recursive: true, force: true }));
+    .finally(() => fs.promises.rm(profile, { recursive: true, force: true, maxRetries: 10 }));

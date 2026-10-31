@@ -38,6 +38,7 @@ async function run() {
                     if (message.type === 'response' && message.command === 'disconnect') {
                         disconnected = message.success;
                         console.log('Adapter disconnect: ' + JSON.stringify(message));
+                        events.emit('disconnected', message);
                     }
                     if (message.type === 'response' && message.command === 'isoplane/hotReload') events.emit('hotreload', message);
                     if (message.type !== 'event') return;
@@ -52,6 +53,7 @@ async function run() {
                     if (!disconnected) events.emit('error', error);
                     else console.log('Adapter transport closed after disconnect: ' + error.message);
                 },
+                onWillStopSession() { events.emit('adapter-stop'); },
                 onExit(code, signal) { reportExit(); events.emit('adapter-exit', { code, signal }); }
             };
         }
@@ -133,6 +135,8 @@ async function run() {
             throw new Error(`The request completed without its breakpoint: HTTP ${response.status}`);
         })]);
         const disconnecting = once(events, 'disconnect', { signal });
+        const acknowledged = once(events, 'disconnected', { signal });
+        const disposing = once(events, 'adapter-stop', { signal });
         const ending = once(events, 'session-ended', { signal });
         const exiting = once(events, 'adapter-exit', { signal });
         stage = 'editor Disconnect command';
@@ -140,10 +144,13 @@ async function run() {
         stage = 'disconnect request';
         const [disconnect] = await disconnecting;
         assert.equal(disconnect.terminateDebuggee, false, 'the editor Disconnect command must preserve the application');
+        const [acknowledgement] = await acknowledged;
+        assert.equal(acknowledgement.success, true, 'the adapter must acknowledge detach before the editor closes it');
         stage = 'debug session termination';
         await ending;
-        const [exit] = await exiting;
-        assert.equal(exit.code, 0, 'acknowledged detach must end the adapter cleanly');
+        // VS Code forcibly terminates Windows adapters when disposing their debug sessions.
+        await disposing;
+        await exiting;
         session = undefined;
         assert.equal(await (await activeRequest).text(), '42', 'detach must resume the active request');
         stage = 'request after detach';
@@ -183,12 +190,22 @@ async function run() {
             await vscode.debug.stopDebugging(session);
             await adapterExit;
         }
-        if (terminal) terminal.dispose();
+        if (terminal && vscode.window.terminals.includes(terminal)) {
+            const closing = terminal;
+            await new Promise(resolve => {
+                const subscription = vscode.window.onDidCloseTerminal(value => {
+                    if (value !== closing) return;
+                    subscription.dispose();
+                    resolve();
+                });
+                closing.dispose();
+            });
+        }
         terminals.dispose();
         terminated.dispose();
         vscode.debug.removeBreakpoints([breakpoint, runningBreakpoint]);
         tracker.dispose();
-        fs.rmSync(project, { recursive: true, force: true });
+        await fs.promises.rm(project, { recursive: true, force: true, maxRetries: 10 });
     }
 }
 module.exports = { run };
