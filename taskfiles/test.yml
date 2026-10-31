@@ -46,7 +46,62 @@ tasks:
 
   managed:
     desc: Run all managed tests using prepared assemblies
-    deps: [managed:standard]
+    deps: [managed:standard, managed:sdk-compatibility]
+
+  managed:sdk-compatibility:
+    desc: Exercise Hot Reload with the oldest supported .NET 10 SDK and runtime
+    platforms: [linux]
+    deps: [':managed:tests', sdk-compatibility-fixture]
+    vars: &sdk_compatibility_vars
+      DIRECTORY: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/sdk-compatibility'
+      SDK_VERSION: '10.0.100'
+    cmds:
+      - |
+        docker run --rm --network none \
+          -v "{{.ROOT_DIR}}:/repo:ro" -v "{{.DIRECTORY}}:/input:ro" \
+          -e DOTNET_NOLOGO=1 -e DOTNET_CLI_TELEMETRY_OPTOUT=1 \
+          mcr.microsoft.com/dotnet/sdk:{{.SDK_VERSION}} bash -euc '
+            mkdir /fixture
+            cp -R /input/. /fixture/
+            cd /fixture
+            test "$(dotnet --version)" = "{{.SDK_VERSION}}"
+            dotnet /repo/.build/clr-anycpu/managed/bin/Isoplane.Debugging.Tests/release/Isoplane.Debugging.Tests.dll \
+              --compiler /fixture/hotreload/HotReloadFixture.csproj /fixture/application.tar /fixture/artifacts
+            test "$(dotnet --version)" = "{{.SDK_VERSION}}"
+          '
+
+  sdk-compatibility-fixture:
+    internal: true
+    platforms: [linux]
+    deps: [':initialize']
+    vars: *sdk_compatibility_vars
+    sources:
+      - tools/Isoplane.Debugging.Tests/fixtures/SdkCompatibility/*
+      - guest-runtime/tests/packages/debugger/hotreload/*.cs
+      - guest-runtime/tests/packages/debugger/hotreload.cs
+      - taskfiles/test.yml
+    generates:
+      - '{{.DIRECTORY}}/application.tar'
+      - '{{.DIRECTORY}}/artifacts/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.dll'
+      - '{{.DIRECTORY}}/artifacts/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.pdb'
+    cmds:
+      - |
+        mkdir -p "{{.DIRECTORY}}/hotreload"
+        cp guest-runtime/tests/packages/debugger/hotreload/*.cs "{{.DIRECTORY}}/hotreload/"
+        cp guest-runtime/tests/packages/debugger/hotreload.cs "{{.DIRECTORY}}/"
+        cp tools/Isoplane.Debugging.Tests/fixtures/SdkCompatibility/HotReloadFixture.csproj.in "{{.DIRECTORY}}/hotreload/HotReloadFixture.csproj"
+        printf '%s\n' '{"sdk":{"version":"{{.SDK_VERSION}}","rollForward":"disable"}}' > "{{.DIRECTORY}}/global.json"
+        printf '%s\n' '<configuration><packageSources><clear /></packageSources></configuration>' > "{{.DIRECTORY}}/nuget.config"
+        docker run --rm --network none --user "$(id -u):$(id -g)" \
+          -v "{{.DIRECTORY}}:/fixture" -w /fixture \
+          -e DOTNET_CLI_HOME=/tmp/dotnet -e NUGET_PACKAGES=/tmp/nuget \
+          -e DOTNET_NOLOGO=1 -e DOTNET_CLI_TELEMETRY_OPTOUT=1 \
+          mcr.microsoft.com/dotnet/sdk:{{.SDK_VERSION}} bash -euc '
+            dotnet build hotreload/HotReloadFixture.csproj -c Release --artifacts-path /fixture/artifacts
+            mkdir -p package/assemblies
+            cp artifacts/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.{dll,pdb} package/assemblies/
+            tar -cf application.tar -C package assemblies
+          '
 
   managed:prepare:
     internal: true

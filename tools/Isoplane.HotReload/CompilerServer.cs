@@ -36,7 +36,7 @@ internal static class CompilerServer
                 output.WithGeneratedFilesOutputDirectory(generated).WithAssemblyPath(assembly));
         }
         await Task.WhenAll(solution.Projects.SelectMany(project => project.Documents).Select(document => document.GetTextAsync()));
-        using var compiler = new EditCompiler(workspace, solution, project.Id, start.Capabilities);
+        using var compiler = await EditCompiler.CreateAsync(workspace, solution, project.Id, start.Capabilities);
         await HotReloadProtocol.WriteAsync(Console.Out, new CompilerReply([], [], false)
         {
             Documents = solution.Projects.SelectMany(project => project.Documents).Select(document => document.FilePath)

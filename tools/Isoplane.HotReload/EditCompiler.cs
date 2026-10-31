@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Collections.Immutable;
+using System.Linq.Expressions;
 using System.Reflection;
 using Isoplane.Build;
 using Microsoft.CodeAnalysis;
@@ -18,24 +19,75 @@ internal sealed class EditCompiler : IDisposable
     private readonly CompilerDebugger debugger;
     private Solution? pending;
 
-    internal EditCompiler(Workspace workspace, Solution baseline, ProjectId entry, string[] capabilities)
+    private EditCompiler(Solution baseline, object service, Type contract, object session,
+        object runningProjects, Type spanProvider, CompilerDebugger debugger)
     {
         this.baseline = baseline;
+        this.service = service;
+        this.contract = contract;
+        this.session = session;
+        this.runningProjects = runningProjects;
+        this.spanProvider = spanProvider;
+        this.debugger = debugger;
+    }
+
+    internal static async Task<EditCompiler> CreateAsync(Workspace workspace, Solution baseline, ProjectId entry, string[] capabilities)
+    {
         var features = Assembly.Load("Microsoft.CodeAnalysis.Features");
-        contract = features.GetType("Microsoft.CodeAnalysis.EditAndContinue.IEditAndContinueService", throwOnError: true)!;
+        var contract = features.GetType("Microsoft.CodeAnalysis.EditAndContinue.IEditAndContinueService", throwOnError: true)!;
         var workspaceContract = features.GetType("Microsoft.CodeAnalysis.EditAndContinue.IEditAndContinueWorkspaceService", throwOnError: true)!;
         var workspaceService = typeof(HostWorkspaceServices).GetMethod("GetService")!.MakeGenericMethod(workspaceContract).Invoke(workspace.Services, null)!;
-        service = Member(workspaceService, "Service");
+        var service = Member(workspaceService, "Service");
+        UseOwnedOutputs(service, features);
         var debuggerContract = features.GetType("Microsoft.CodeAnalysis.Contracts.EditAndContinue.IManagedHotReloadService", throwOnError: true)!;
-        debugger = (CompilerDebugger)DispatchProxy.Create(debuggerContract, typeof(CompilerDebugger));
+        var debugger = (CompilerDebugger)DispatchProxy.Create(debuggerContract, typeof(CompilerDebugger));
         debugger.Initialize(features, capabilities);
         var pdbSource = features.GetType("Microsoft.CodeAnalysis.EditAndContinue.NullPdbMatchingSourceTextProvider", throwOnError: true)!.GetField("Instance")!.GetValue(null)!;
-        session = Call("StartDebuggingSession", baseline, debugger, pdbSource, false)!;
         var emit = contract.GetMethod("EmitSolutionUpdateAsync")!;
         var mapType = emit.GetParameters()[2].ParameterType;
-        runningProjects = mapType.GetMethod("Add")!.Invoke(mapType.GetField("Empty")!.GetValue(null),
+        var runningProjects = mapType.GetMethod("Add")!.Invoke(mapType.GetField("Empty")!.GetValue(null),
             [entry, Activator.CreateInstance(mapType.GetGenericArguments()[1])])!;
-        spanProvider = emit.GetParameters()[3].ParameterType;
+        var spanProvider = emit.GetParameters()[3].ParameterType;
+        var session = await StartSessionAsync(contract, service, baseline, debugger, pdbSource);
+        return new(baseline, service, contract, session, runningProjects, spanProvider, debugger);
+    }
+
+    private static async Task<object> StartSessionAsync(Type contract, object service, Solution baseline,
+        CompilerDebugger debugger, object pdbSource)
+    {
+        if (contract.GetMethod("StartDebuggingSession") is { } synchronous)
+            return synchronous.Invoke(service, [baseline, debugger, pdbSource, false])
+                ?? throw new IOException("The SDK did not start the Hot Reload session.");
+        var asynchronous = contract.GetMethod("StartDebuggingSessionAsync")
+            ?? throw new NotSupportedException("The SDK cannot start a Hot Reload debugging session.");
+        var operation = asynchronous.Invoke(service,
+            [baseline, debugger, pdbSource, ImmutableArray<DocumentId>.Empty, false, false, CancellationToken.None])!;
+        var task = (Task)operation.GetType().GetMethod("AsTask")!.Invoke(operation, null)!;
+        await task;
+        return Member(task, "Result");
+    }
+
+    private static void UseOwnedOutputs(object service, Assembly features)
+    {
+        // Roslyn's default reader follows the original CodeView path instead of the owned symbol snapshot.
+        var accessorMethod = service.GetType().GetMethod("GetTestAccessor", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new NotSupportedException("The SDK cannot configure the Hot Reload compiler's output provider.");
+        var accessor = accessorMethod.Invoke(service, null)
+            ?? throw new NotSupportedException("The SDK did not expose its Hot Reload output provider.");
+        var configure = accessor.GetType().GetMethod("SetOutputProvider")
+            ?? throw new NotSupportedException("The SDK cannot select owned Hot Reload compilation outputs.");
+        var outputs = features.GetType("Microsoft.CodeAnalysis.Emit.CompilationOutputFiles", throwOnError: true)!;
+        var constructor = outputs.GetConstructor([typeof(string), typeof(string)])
+            ?? throw new NotSupportedException("The SDK cannot read explicit assembly and symbol paths.");
+        var project = Expression.Parameter(typeof(Project), "project");
+        var assembly = Expression.Property(Expression.Property(project, nameof(Project.CompilationOutputInfo)),
+            nameof(CompilationOutputInfo.AssemblyPath));
+        var symbols = Expression.Call(typeof(Path), nameof(Path.ChangeExtension), null, assembly, Expression.Constant(".pdb"));
+        var symbolPath = Expression.Condition(Expression.Call(typeof(File), nameof(File.Exists), null, symbols),
+            symbols, Expression.Constant(null, typeof(string)));
+        var factory = Expression.Lambda(configure.GetParameters()[0].ParameterType,
+            Expression.New(constructor, assembly, symbolPath), project).Compile();
+        configure.Invoke(accessor, [factory]);
     }
 
     internal async Task<CompilerReply> EmitAsync(Solution updated, CompilerEdit edit)

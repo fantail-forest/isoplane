@@ -14,15 +14,7 @@ internal static class HotReloadAcceptance
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(3));
         using var baseline = HotReloadBaseline.Read(package);
-        await using var compiler = await HotReloadCompiler.StartAsync(project,
-            new() { ["Configuration"] = "Release", ["ArtifactsPath"] = artifacts }, baseline.Assemblies, [], deadline.Token);
-        Assert.Contains(compiler.Documents, document => Path.GetFileName(document) == "hotreload.cs");
         string source = Path.Combine(Path.GetDirectoryName(project)!, "..", "hotreload.cs");
-        var unchanged = await compiler.SendAsync(new("update", new([], [], [],
-            [new(source, await File.ReadAllTextAsync(source, deadline.Token))])), deadline.Token);
-        Assert.Empty(unchanged.Diagnostics);
-        Assert.Empty(unchanged.Updates);
-        Assert.False(unchanged.Pending);
         using var image = File.OpenRead(baseline.Assemblies["Debugger.HotReload.Fixture"]);
         using var pe = new PEReader(image);
         var metadata = pe.GetMetadataReader();
@@ -30,14 +22,33 @@ internal static class HotReloadAcceptance
         string original = await File.ReadAllTextAsync(source, deadline.Token);
         string edited = original.Replace("value += 10; // HOT_RELOAD_BODY", "value += 20; // HOT_RELOAD_BODY", StringComparison.Ordinal);
         Assert.NotEqual(original, edited);
-        var update = await compiler.SendAsync(new("update", new([], [module], ["Baseline"], [new(source, edited)])), deadline.Token);
-        foreach (string diagnostic in update.Diagnostics) Console.Error.WriteLine(diagnostic);
-        Assert.Empty(update.Diagnostics);
-        Assert.False(update.RestartRequired);
-        Assert.Equal(module, Assert.Single(update.Updates).Module);
-        Assert.True(update.Pending);
-        await compiler.SendAsync(new("discard"), deadline.Token);
-        Console.WriteLine("The compiler loaded the prepared baseline and emitted an update for its source document.");
+        await using (var compiler = await HotReloadCompiler.StartAsync(project,
+            new() { ["Configuration"] = "Release", ["ArtifactsPath"] = artifacts }, baseline.Assemblies, [], deadline.Token))
+        {
+            Assert.Contains(compiler.Documents, document => Path.GetFileName(document) == "hotreload.cs");
+            var unchanged = await compiler.SendAsync(new("update", new([], [], [], [new(source, original)])), deadline.Token);
+            Assert.Empty(unchanged.Diagnostics);
+            Assert.Empty(unchanged.Updates);
+            Assert.False(unchanged.Pending);
+            var update = await compiler.SendAsync(new("update", new([], [module], ["Baseline"], [new(source, edited)])), deadline.Token);
+            foreach (string diagnostic in update.Diagnostics) Console.Error.WriteLine(diagnostic);
+            Assert.Empty(update.Diagnostics);
+            Assert.False(update.RestartRequired);
+            Assert.Equal(module, Assert.Single(update.Updates).Module);
+            Assert.True(update.Pending);
+            await compiler.SendAsync(new("discard"), deadline.Token);
+        }
+        await File.WriteAllTextAsync(Path.ChangeExtension(baseline.Assemblies["Debugger.HotReload.Fixture"], ".pdb"),
+            "corrupt owned symbols", deadline.Token);
+        await using (var compiler = await HotReloadCompiler.StartAsync(project,
+            new() { ["Configuration"] = "Release", ["ArtifactsPath"] = artifacts }, baseline.Assemblies, [], deadline.Token))
+        {
+            var update = await compiler.SendAsync(new("update", new([], [module], ["Baseline"], [new(source, edited)])), deadline.Token);
+            Assert.NotEmpty(update.Diagnostics);
+            Assert.Empty(update.Updates);
+            await compiler.SendAsync(new("discard"), deadline.Token);
+        }
+        Console.WriteLine("The compiler emitted an update from its owned baseline and rejected corrupt owned symbols.");
         return 0;
     }
 
