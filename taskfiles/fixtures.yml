@@ -52,7 +52,7 @@ tasks:
   projects:
     desc: Install the CLI and build the .NET projects the native tests copy
     run: once
-    deps: [':initialize', 'runtime:inputs']
+    deps: [':initialize', 'runtime:inputs', ':managed:native-packages']
     vars:
       VERSION:
         sh: '"{{.DOTNET}}" msbuild Directory.Build.props -nologo -getProperty:Version'
