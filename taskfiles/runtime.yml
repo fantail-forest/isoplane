@@ -25,6 +25,7 @@ tasks:
       # worktree's extraction fails another's digest check.
       NUGET_PACKAGES: '{{.MODULES}}/intermediates/packages'
     sources:
+      - '{{.SOURCE_REF}}'
       - '{{.ROOT_DIR}}/tools/BuildProtocol/WasmMemory.props'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/MonoRuntime/{src/**/*,sqlite/*,build.sh,manifest.py}'
       - '{{.SQLITE}}/{e_sqlite3.a,SqliteImports.g.cs,native-imports.txt}'
