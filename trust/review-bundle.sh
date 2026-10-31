@@ -5,7 +5,7 @@
 #
 # Certificates are matched by SHA-256 fingerprint. Each added or removed
 # certificate is printed with its fingerprint, subject, issuer, validity,
-# key algorithm and size, and whether it is self-signed. Needs openssl.
+# key algorithm and size, and whether it is self-signed. Needs OpenSSL 3 or newer.
 set -euo pipefail
 
 if [[ $# -ne 2 || ! -f "$1" || ! -f "$2" ]]; then
@@ -13,6 +13,10 @@ if [[ $# -ne 2 || ! -f "$1" || ! -f "$2" ]]; then
     exit 2
 fi
 command -v openssl >/dev/null || { echo "$0: needs openssl" >&2; exit 2; }
+if ! openssl verify -no-CAfile -no-CApath -no-CAstore -check_ss_sig -no_check_time -auth_level 0 -help >/dev/null 2>&1; then
+    echo "$0: needs OpenSSL 3 or newer for certificate self-signature checks" >&2
+    exit 2
+fi
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
