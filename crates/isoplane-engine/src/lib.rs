@@ -35,7 +35,7 @@ mod storage_fault;
 mod watchdog;
 mod wtconfig;
 
-pub use artifact::{ArtifactPaths, CompilationCache};
+pub use artifact::{publish_staged_artifact, ArtifactPaths, CompilationCache};
 pub use bindings::{HostBindings, ImportCall};
 pub use budget::{
     DispatchOutcome, ExecutionLimit, GraceEnd, OccupancyBudget, OccupancyMeasurement, TrapInfo,

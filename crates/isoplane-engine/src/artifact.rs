@@ -382,9 +382,7 @@ fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
     temporary
         .write_all(bytes)
         .with_context(|| format!("writing artifact {}", path.display()))?;
-    match publish_noclobber(temporary.into_temp_path(), path, |temporary, path| {
-        temporary.persist_noclobber(path)
-    }) {
+    match publish_staged_artifact(temporary.into_temp_path(), path) {
         Ok(()) => {}
         Err(error)
             if matches!(
@@ -404,6 +402,17 @@ fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Publishes a staged artifact without replacing an existing destination.
+/// Returns a filesystem error if publication fails, including when the destination exists.
+pub fn publish_staged_artifact(
+    temporary: tempfile::TempPath,
+    path: &std::path::Path,
+) -> std::io::Result<()> {
+    publish_noclobber(temporary, path, |temporary, path| {
+        temporary.persist_noclobber(path)
+    })
 }
 
 /// Give `temporary` the name `path` unless something already has it, which
