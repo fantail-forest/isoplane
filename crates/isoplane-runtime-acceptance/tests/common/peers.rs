@@ -148,11 +148,11 @@ pub async fn ipv6_peer(peer: Peer) -> SocketAddr {
 }
 
 /// Starts an IPv6-only peer while reserving its IPv4 port without listening.
-/// Keep the returned socket alive to make IPv4 connections refuse reliably.
-pub fn ipv6_peer_with_refused_ipv4(peer: Peer) -> (SocketAddr, TcpSocket) {
+/// Keep the returned socket alive to prevent another IPv4 listener from taking its port.
+pub fn ipv6_peer_with_reserved_ipv4(peer: Peer) -> (SocketAddr, TcpSocket) {
     let socket = bound_ipv6_socket(0).expect("the IPv6 test peer must bind");
-    let (listener, reservation) = reserve_ipv4_refusal(socket)
-        .expect("the IPv6 peer and refused IPv4 endpoint must reserve the same port");
+    let (listener, reservation) = reserve_ipv4_endpoint(socket)
+        .expect("the IPv6 peer and reserved IPv4 endpoint must reserve the same port");
     (serve_peer(peer, listener), reservation)
 }
 
@@ -163,7 +163,7 @@ fn bound_ipv6_socket(port: u16) -> std::io::Result<TcpSocket> {
     Ok(socket)
 }
 
-fn reserve_ipv4_refusal(mut ipv6: TcpSocket) -> std::io::Result<(TcpListener, TcpSocket)> {
+fn reserve_ipv4_endpoint(mut ipv6: TcpSocket) -> std::io::Result<(TcpListener, TcpSocket)> {
     loop {
         let ipv4 = TcpSocket::new_v4()?;
         match ipv4.bind((Ipv4Addr::LOCALHOST, ipv6.local_addr()?.port()).into()) {
@@ -344,20 +344,22 @@ mod tests {
             }
         };
         let conflict_address = conflict.local_addr().expect("the conflict has an address");
-        let (listener, reservation) = reserve_ipv4_refusal(ipv6)
+        let (listener, reservation) = reserve_ipv4_endpoint(ipv6)
             .expect("the peer must retry the conflicting port and reserve both endpoints");
-        let refused = reservation
+        let reserved = reservation
             .local_addr()
             .expect("the reservation has an address");
         let endpoint = serve_peer(Peer::Echo, listener);
         assert_ne!(endpoint.port(), conflict_address.port());
-        assert_eq!(endpoint.port(), refused.port());
+        assert_eq!(endpoint.port(), reserved.port());
+        let ipv4 = socket2::SockRef::from(&reservation);
+        ipv4.set_nonblocking(true)
+            .expect("the reservation must stay nonblocking");
         assert_eq!(
-            TcpStream::connect(refused)
-                .await
-                .expect_err("the reserved IPv4 endpoint must refuse connections")
+            ipv4.accept()
+                .expect_err("the reserved IPv4 endpoint must not listen")
                 .kind(),
-            std::io::ErrorKind::ConnectionRefused
+            std::io::ErrorKind::InvalidInput
         );
         let mut stream = TcpStream::connect(endpoint)
             .await

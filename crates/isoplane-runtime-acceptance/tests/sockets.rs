@@ -970,7 +970,7 @@ in_mono_runtime! {
 async fn configured_tcp_client(runtime: GuestRuntime, mode: &str, ipv6: bool) {
     isoplane_harness::LogCapture::global();
     let (endpoint, guard) = if mode == "mixed" {
-        let (endpoint, reservation) = peers::ipv6_peer_with_refused_ipv4(Peer::Echo);
+        let (endpoint, reservation) = peers::ipv6_peer_with_reserved_ipv4(Peer::Echo);
         (endpoint, Some(reservation))
     } else if ipv6 {
         (peers::ipv6_peer(Peer::Echo).await, None)
@@ -1066,7 +1066,7 @@ in_mono_runtime! {
         configured_tcp_client(runtime, "list", true).await;
     }
     #[tokio::test]
-    async fn a_default_tcp_client_retries_ipv6_after_ipv4_refusal(runtime: GuestRuntime) {
+    async fn a_default_tcp_client_reaches_ipv6_when_ipv4_is_not_listening(runtime: GuestRuntime) {
         configured_tcp_client(runtime, "mixed", true).await;
     }
     #[tokio::test]
