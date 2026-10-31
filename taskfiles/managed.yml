@@ -144,6 +144,7 @@ tasks:
     desc: Pack the prepared application templates without building the guest runtime
     deps: [build]
     sources:
+      - '{{.SOURCE_REF}}'
       - '{{.MANAGED}}/bin/Isoplane.Templates/release/*'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/Templates/**/*'
       - '{{.ROOT_DIR}}/Directory.Build.props'
