@@ -17,6 +17,12 @@
     <TemplateProject Include="content/**/*.csproj" />
     <Content Include="content/**" Exclude="content/**/bin/**;content/**/obj/**;content/**/.isoplane/**;@(TemplateProject)" />
   </ItemGroup>
+  <!-- The assembly is not shipped, but its source revision changes the package metadata. -->
+  <Target Name="TrackTemplateAssemblyForPacking" BeforeTargets="GenerateNuspec">
+    <ItemGroup>
+      <NuGetPackInput Include="$(TargetPath)" />
+    </ItemGroup>
+  </Target>
   <!-- A generated project names the SDK and test library of the release that generated it. -->
   <Target Name="StampTemplateVersions" BeforeTargets="_GetPackageFiles">
     <PropertyGroup>
