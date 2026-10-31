@@ -159,6 +159,7 @@ tasks:
 
   compiled-runtime:
     desc: Compile the shared runtime for the engine tests load it under
+    label: 'fixtures:compiled-runtime:{{.TEST_COMPILED_RUNTIME}}'
     run: once
     deps: [':initialize', ':runtime']
     sources:
@@ -169,8 +170,8 @@ tasks:
     generates:
       - '{{.TEST_COMPILED_RUNTIME}}/runtime.wasm'
     cmds:
-      # Replaced whatever permissions it was left with.
-      - '[ ! -d "{{.TEST_COMPILED_RUNTIME}}" ] || chmod -R u+w "{{.TEST_COMPILED_RUNTIME}}"'
+      # Unix publications are read-only; Windows outputs stay writable for removal.
+      - '[ "{{OS}}" = windows ] || [ ! -d "{{.TEST_COMPILED_RUNTIME}}" ] || chmod -R u+w "{{.TEST_COMPILED_RUNTIME}}"'
       - rm -rf "{{.TEST_COMPILED_RUNTIME}}"
       - '{{.DEVELOPMENT_COMMAND}}cargo run --locked --quiet -p isoplane-prepare --example precompile_test_runtime -- "{{.MODULES}}/Isoplane.MonoRuntime.wasm" "{{.TEST_COMPILED_RUNTIME}}"'
 
