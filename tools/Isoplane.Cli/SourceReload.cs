@@ -6,9 +6,16 @@ internal static class SourceReload
     {
         while (true)
         {
-            var changed = changes.WaitAsync(cancellation);
+            using var watchLifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+            var changed = changes.WaitAsync(watchLifetime.Token);
             if (await Task.WhenAny(exited, changed) == exited)
             {
+                watchLifetime.Cancel();
+                try { await changed; }
+                catch (OperationCanceledException) when (watchLifetime.IsCancellationRequested)
+                {
+                    // The exited runtime no longer needs discovery, but its process cleanup still has to finish.
+                }
                 await exited;
                 return;
             }
