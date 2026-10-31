@@ -348,7 +348,6 @@ fn read_exact_vectored(file: &mut File, mut rest: &mut [IoSliceMut<'_>]) -> io::
 #[cfg(test)]
 mod tests {
     use super::*;
-    use isoplane_test_support::ChildTest;
 
     fn save(reservation: &mut dyn SnapshotReservation, bytes: &[u8]) -> Result<(), SnapshotError> {
         reservation.save(&[IoSlice::new(bytes)])
@@ -411,6 +410,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn process_termination_reclaims_anonymous_snapshot_files() {
+        use isoplane_test_support::ChildTest;
         use std::io::BufRead;
         use std::os::fd::AsRawFd;
         use std::os::unix::fs::MetadataExt;

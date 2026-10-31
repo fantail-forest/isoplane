@@ -1,7 +1,6 @@
 //! Prepared templates execute through the same activation/capture interface as portable input.
 mod common;
 use isoplane_test_support::published_files;
-use isoplane_test_support::{run_successfully, ChildTest};
 
 use common::*;
 use isoplane_engine::prepared::{PreparedError, PreparedIdentity};
@@ -355,6 +354,8 @@ fn receipt_checks_do_not_read_native_or_baseline_payloads() {
 #[cfg(target_os = "linux")]
 #[test]
 fn profiling_an_existing_template_emits_native_symbols_without_rebuilding_it() {
+    use isoplane_test_support::{run_successfully, ChildTest};
+
     const CHILD: ChildTest =
         ChildTest::new("profiling_an_existing_template_emits_native_symbols_without_rebuilding_it");
     if CHILD.child_value().is_none() {

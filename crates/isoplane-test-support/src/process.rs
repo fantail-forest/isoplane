@@ -231,9 +231,10 @@ pub fn recv_before<T>(receiver: &Receiver<T>, deadline: Instant) -> Result<T, Re
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        assert_success, forward_lines, recv_before, run_successfully, ChildGuard, ChildTest,
-    };
+    #[cfg(unix)]
+    use super::{assert_success, ChildGuard};
+    use super::{forward_lines, recv_before, run_successfully, ChildTest};
+    #[cfg(unix)]
     use std::process::Command;
     use std::sync::mpsc::{channel, RecvTimeoutError};
     use std::time::{Duration, Instant};
