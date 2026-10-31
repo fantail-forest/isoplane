@@ -444,6 +444,8 @@ async fn a_timer_left_pending_keeps_its_instance() {
     })
     .await
     .expect("the background timer driver must arm its retained timer");
+    // Timer registration is visible before the background slice returns to the pool.
+    wait_until_idle(&cell, &module).await;
     let waiting = dispatch_at_idle(&cell, &module, "/observe").await;
     assert_eq!(
         (waiting.instance, waiting.body.as_slice()),
