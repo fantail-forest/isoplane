@@ -25,4 +25,9 @@
     <Compile Include="../../../tools/BuildProtocol/ManagedApplication.cs" Link="ManagedApplication.cs" />
   </ItemGroup>
   <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
+  <!-- Windows loads PE images with execute access, including over SMB. -->
+  <Target Name="MakeConformanceLoadableFromWindows" AfterTargets="Build"
+          Condition="'$(OS)' != 'Windows_NT' AND Exists('$(TargetPath)')">
+    <Exec Command="chmod a+x &quot;$(TargetPath)&quot;" />
+  </Target>
 </Project>
