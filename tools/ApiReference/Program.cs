@@ -435,7 +435,7 @@ The `isoplane` CLI records anonymous usage data and sends it to Isoplane. It sho
 
 This page lists everything that is collected and how to turn it off. Its tables are generated from the definitions the CLI uses, for the source version used to build this documentation.
 
-A CLI built from source collects nothing. `isoplane telemetry status` says whether yours does.
+Release builds enable telemetry by default. Debug builds collect nothing unless a telemetry endpoint was configured when building. `isoplane telemetry status` says whether yours does.
 
 ## Turn it off
 

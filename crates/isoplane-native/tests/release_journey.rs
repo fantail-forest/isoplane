@@ -124,6 +124,9 @@ if test -n "$EXPECTED_SDK_VERSION"; then
 fi
 dotnet tool install --global Isoplane.Cli --version "$RELEASE_VERSION" --add-source /release/packages
 test "$(isoplane --version)" = "isoplane $RELEASE_VERSION+$RELEASE_REVISION"
+isoplane telemetry status | grep -q '^Telemetry is enabled\.'
+isoplane telemetry disable
+isoplane telemetry status | grep -q '^Telemetry is disabled\.'
 isoplane setup --source /release --yes
 isoplane doctor
 dotnet new isoplane-web --name JourneyApp --output JourneyApp

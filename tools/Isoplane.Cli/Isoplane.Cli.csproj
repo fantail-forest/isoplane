@@ -11,6 +11,9 @@
     <PackageReadmeFile>PackageReadme.md</PackageReadmeFile>
     <Description>Isoplane local application development using the shared WASM runtime.</Description>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <IsoplaneTelemetryEndpoint Condition="'$(IsoplaneTelemetryEndpoint)' == ''">https://telemetry.isoplane.dev/v1/events</IsoplaneTelemetryEndpoint>
+  </PropertyGroup>
   <ItemGroup>
     <Compile Include="../BuildProtocol/DebugSessionProtocol.cs" Link="DebugSessionProtocol.cs" />
     <ProjectReference Include="../Isoplane.Native/Isoplane.Native.csproj" />

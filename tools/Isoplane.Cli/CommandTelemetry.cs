@@ -14,8 +14,8 @@ internal sealed record TelemetryHost(
     internal TelemetryOutbox Outbox => new(Path.Combine(Directory, "pending"), Time);
 
     /// <summary>
-    /// The running CLI's host. Only a build given <c>-p:IsoplaneTelemetryEndpoint</c> has an endpoint, so a
-    /// CLI built from source records and sends nothing.
+    /// The running CLI's host. Release builds configure the production endpoint; other builds record
+    /// and send nothing unless given <c>-p:IsoplaneTelemetryEndpoint</c>.
     /// </summary>
     internal static TelemetryHost OfRunningCli()
     {
