@@ -44,8 +44,7 @@ pub fn copy_tree(source: &Path, destination: &Path) {
     {
         let entry = entry.unwrap_or_else(|error| panic!("list {}: {error}", source.display()));
         let target = destination.join(entry.file_name());
-        let metadata = entry
-            .metadata()
+        let metadata = std::fs::metadata(entry.path())
             .unwrap_or_else(|error| panic!("inspect {}: {error}", entry.path().display()));
         if metadata.is_dir() {
             copy_tree(&entry.path(), &target);
@@ -139,6 +138,26 @@ mod tests {
                 .expect("mtime"),
             dated,
             "the copy keeps the source's modification time"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_copied_tree_includes_files_reached_through_a_directory_link() {
+        let directory = tempfile::tempdir().expect("directory");
+        let source = directory.path().join("source");
+        std::fs::create_dir_all(source.join(".agents/skills")).expect("skill directory");
+        std::fs::create_dir_all(source.join(".claude")).expect("link directory");
+        std::fs::write(source.join(".agents/skills/SKILL.md"), b"skill").expect("skill");
+        std::os::unix::fs::symlink("../.agents/skills", source.join(".claude/skills"))
+            .expect("directory link");
+        let destination = directory.path().join("destination");
+
+        copy_tree(&source, &destination);
+
+        assert_eq!(
+            std::fs::read(destination.join(".claude/skills/SKILL.md")).expect("copied skill"),
+            b"skill"
         );
     }
 
