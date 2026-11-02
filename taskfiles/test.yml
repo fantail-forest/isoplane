@@ -3,11 +3,20 @@ version: '3'
 tasks:
   default:
     desc: Prepare fixtures, then run the Rust test suite
-    deps: [':initialize', ':fixtures']
+    deps: [':initialize', ':fixtures', guests]
     env: &test_env
       ISOPLANE_TEST_SKIP_PUBLICATION_FLUSH: '1'
     cmds:
       - '{{.DEVELOPMENT_COMMAND}}cargo test --workspace {{.CLI_ARGS}}'
+
+  guests:
+    desc: Run the internal Rust guest SDK unit and integration tests
+    deps: [':initialize']
+    env:
+      CARGO_TARGET_DIR: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/rust-guest-tests'
+      CARGO_BUILD_BUILD_DIR: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/rust-guest-tests'
+    cmds:
+      - '{{.DEVELOPMENT_COMMAND}}cargo test --locked --manifest-path guests/Cargo.toml -p isoplane-guest --all-features'
 
   unit:
     desc: Run Rust library tests without preparing integration fixtures

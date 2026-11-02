@@ -14,6 +14,7 @@ const temporary = process.platform === 'win32' ? os.tmpdir() : '/tmp';
 const profile = fs.mkdtempSync(path.join(temporary, 'isoplane-editor-test-'));
 runTests({
     cachePath,
+    version: process.env.ISOPLANE_TEST_VSCODE_VERSION || 'stable',
     extensionDevelopmentPath: path.resolve(__dirname, '..'),
     extensionTestsPath: path.resolve(__dirname, suite + '.js'),
     launchArgs: ['--no-sandbox', '--disable-gpu', '--disable-workspace-trust', '--skip-welcome',
