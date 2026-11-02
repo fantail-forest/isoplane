@@ -18,6 +18,9 @@ ENV TYPESENSE_DATA_DIR=/data \
     TYPESENSE_CACHE_NUM_ENTRIES=10000 \
     TYPESENSE_EMBEDDING_CACHE_NUM_ENTRIES=5000
 
+# Remote embeddings call the leader's API through its peering address.
+ENV TYPESENSE_PEERING_ADDRESS=${TYPESENSE_API_ADDRESS}
+
 # TYPESENSE_API_KEY, the admin key, and DOCS_SEARCH_KEY, the search-only key
 # nginx admits, come from the environment at run time (Fly secrets).
 EXPOSE 8080

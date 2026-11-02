@@ -109,7 +109,8 @@ function parseSearch(text) {
   const q = typeof query.q === 'string' ? query.q.trim() : '';
   if (q.length < MIN_SEMANTIC_QUERY_LENGTH) return keywordOnly(query);
   if (!query.vector_query) return query;
-  return {...query, remote_embedding_timeout_ms: EMBEDDING_TIMEOUT_MS, remote_embedding_num_tries: 1};
+  // Typesense's remote embedders reject prefix searches.
+  return {...query, prefix: false, remote_embedding_timeout_ms: EMBEDDING_TIMEOUT_MS, remote_embedding_num_tries: 1};
 }
 
 function keywordOnly(query) {
