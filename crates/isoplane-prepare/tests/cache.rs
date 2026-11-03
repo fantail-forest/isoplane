@@ -33,10 +33,9 @@ fn request(wasm: &[u8]) -> BuildRequest {
         application_files: isoplane_engine::PlatformFiles::default(),
         engine: common::engine().configuration(),
         runtime: RuntimeProfile::raw_wasm(),
-        limits: isoplane_abi::config::Limits::default(),
+        memory_limit: isoplane_abi::config::GuestMemoryBytes::default(),
         initialization: common::request(),
         input_hash: *blake3::hash(wasm).as_bytes(),
-        portable_template: isoplane_prepare::PortableTemplate::Returned,
     }
 }
 fn files(directory: &Path) -> Vec<PathBuf> {
@@ -86,13 +85,14 @@ async fn compiled_input_is_reused_while_each_initialization_draws_a_fresh_seed_a
     let mut seeds = Vec::new();
     for (product, config) in [(first, b"first".as_slice()), (second, b"second".as_slice())] {
         let engine = common::engine();
-        let template = engine
-            .load_template(
-                product
-                    .portable_template()
-                    .expect("a requested portable template is returned"),
-            )
-            .expect("initialized output");
+        let mut expected = request.clone();
+        expected.initialization.config = config.to_vec();
+        // SAFETY: the local preparation provider above produced this native code.
+        let prepared = unsafe {
+            engine.decode_builder_output(product.prepared_bytes(), expected.identity().unwrap())
+        }
+        .unwrap();
+        let template = engine.load_prepared_product(&prepared).unwrap();
         let memory = template.memory_image_arc().to_dense();
         seeds.push(memory[64..80].to_vec());
         assert_eq!(
@@ -223,28 +223,31 @@ fn preparation_identity_binds_the_independent_memory_authorization() {
         "different memory authorizations must not reuse the same prepared identity"
     );
     assert_eq!(
-        input.limits,
-        isoplane_abi::config::Limits::default(),
-        "memory authorization must not change CPU or resource plans"
+        input.memory_limit,
+        isoplane_abi::config::GuestMemoryBytes::default(),
+        "declaration authorization must preserve the explicit soft memory limit"
     );
 }
 
-#[test]
-fn preparation_rejects_memory_authorization_above_worker_capacity() {
+#[tokio::test]
+async fn preparation_rejects_memory_authorization_above_worker_capacity() {
     let wasm = wasm(42);
     let mut input = request(&wasm);
     input.engine.max_memory_bytes = 128 << 20;
     input.guest_memory_bytes =
         Some(isoplane_abi::config::GuestMemoryBytes::new(512 << 20).expect("valid budget"));
-    let result = isoplane_prepare::prepare_in_current_process(&wasm, &input);
+    let result = LocalPreparation::new()
+        .unwrap()
+        .prepare(&wasm, &input, &CancellationToken::new())
+        .await;
     assert!(
-        matches!(result, Err(ref failure) if failure.stage == isoplane_prepare::BuildStage::Input),
+        matches!(result, Err(isoplane_prepare::PrepareError::Rejected(ref failure)) if failure.stage == isoplane_prepare::BuildStage::Input),
         "an incompatible worker must refuse preparation before executing the guest"
     );
 }
 
-#[test]
-fn structural_admission_policy_binds_preparation_identity_and_is_enforced() {
+#[tokio::test]
+async fn structural_admission_policy_binds_preparation_identity_and_is_enforced() {
     let wasm = wasm(42);
     let mut input = request(&wasm);
     let before = input.identity().expect("original identity");
@@ -254,24 +257,17 @@ fn structural_admission_policy_binds_preparation_identity_and_is_enforced() {
         input.identity().expect("restricted identity"),
         "changing structural admission policy must invalidate prepared cache identity"
     );
-    let result = isoplane_prepare::prepare_in_current_process(&wasm, &input);
-    assert!(matches!(result, Err(ref failure) if failure.stage == isoplane_prepare::BuildStage::Input),
+    let result = LocalPreparation::new()
+        .unwrap()
+        .prepare(&wasm, &input, &CancellationToken::new())
+        .await;
+    assert!(matches!(result, Err(isoplane_prepare::PrepareError::Rejected(ref failure)) if failure.stage == isoplane_prepare::BuildStage::Input),
         "the preparation worker must reject functions forbidden by the supplied policy before initialization");
 }
 
-#[test]
-fn initialization_without_a_memory_maximum_obeys_the_application_budget() {
-    let budget_bytes = isoplane_abi::config::Limits {
-        instances_per_application: 3,
-        module_bytes_compressed: 5242880,
-        package_bytes: 52428800,
-        instance_memory_max: 134217728,
-        occupancy_ms_per_dispatch: 100,
-        instance_open_connections: 32,
-        pending_futures_per_dispatch: 6,
-    }
-    .limits()
-    .instance_memory_max;
+#[tokio::test]
+async fn initialization_without_a_memory_maximum_obeys_the_application_budget() {
+    let budget_bytes = isoplane_abi::config::Limits::default().instance_memory_max;
     let ceiling_pages = isoplane_abi::config::memory_ceiling_bytes(budget_bytes) / (64 << 10);
     let wasm = wat::parse_str(format!(
         r#"(module
@@ -285,38 +281,22 @@ fn initialization_without_a_memory_maximum_obeys_the_application_budget() {
     .expect("bounded initialization fixture assembles");
     let mut input = request(&wasm);
     input.engine.max_memory_bytes = 2 * budget_bytes;
-    input.limits = isoplane_abi::config::Limits {
-        instances_per_application: 3,
-        module_bytes_compressed: 5242880,
-        package_bytes: 52428800,
-        instance_memory_max: 134217728,
-        occupancy_ms_per_dispatch: 100,
-        instance_open_connections: 32,
-        pending_futures_per_dispatch: 6,
-    };
+    input.memory_limit = isoplane_abi::config::GuestMemoryBytes::default();
     assert!(
-        isoplane_prepare::prepare_in_current_process(&wasm, &input).is_ok(),
-        "initialization must refuse growth past the ceiling of the Free plan's {budget_bytes}-byte budget on an engine allowing twice that"
+        LocalPreparation::new().unwrap().prepare(&wasm, &input, &CancellationToken::new()).await.is_ok(),
+        "initialization must refuse growth past the ceiling of the application's {budget_bytes}-byte budget on an engine allowing twice that"
     );
 }
 
 #[test]
-fn preparation_identity_binds_the_plan_memory_default() {
+fn preparation_identity_binds_the_fallback_memory_budget() {
     let wasm = wasm(42);
     let mut input = request(&wasm);
-    let standard = input.identity().expect("standard identity");
-    input.limits = isoplane_abi::config::Limits {
-        instances_per_application: 3,
-        module_bytes_compressed: 5242880,
-        package_bytes: 52428800,
-        instance_memory_max: 134217728,
-        occupancy_ms_per_dispatch: 100,
-        instance_open_connections: 32,
-        pending_futures_per_dispatch: 6,
-    };
+    let before = input.identity().expect("original identity");
+    input.memory_limit = isoplane_abi::config::GuestMemoryBytes::new(128 << 20).unwrap();
     assert_ne!(
-        standard,
-        input.identity().expect("free identity"),
+        before,
+        input.identity().expect("changed memory identity"),
         "different implicit memory budgets must not share preparation identity"
     );
 }
@@ -329,4 +309,39 @@ fn preparation_identity_binds_the_guest_visible_engine_memory_ceiling() {
     input.engine.max_memory_bytes *= 2;
     assert_ne!(before, input.identity().expect("changed memory identity"),
         "a runtime initialized with another visible memory ceiling must not reuse captured GC state");
+}
+
+#[tokio::test]
+async fn cancellation_before_preparation_refuses_to_enter_the_initializer() {
+    let wasm = common::guest("", "unreachable");
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+    let result = LocalPreparation::new()
+        .unwrap()
+        .prepare(&wasm, &request(&wasm), &cancellation)
+        .await;
+    assert!(matches!(
+        result,
+        Err(isoplane_prepare::PrepareError::Cancelled)
+    ));
+}
+
+#[tokio::test]
+async fn a_mismatched_source_digest_is_refused_before_initialization() {
+    let wasm = common::guest("", "unreachable");
+    let mut input = request(&wasm);
+    input.input_hash = [0; 32];
+    let result = LocalPreparation::new()
+        .unwrap()
+        .prepare(&wasm, &input, &CancellationToken::new())
+        .await;
+    assert!(matches!(
+        result,
+        Err(isoplane_prepare::PrepareError::Rejected(
+            isoplane_prepare::WorkerFailure {
+                stage: isoplane_prepare::BuildStage::Input,
+                ..
+            }
+        ))
+    ));
 }

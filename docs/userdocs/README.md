@@ -2,10 +2,7 @@
 
 Customer-facing documentation for the Isoplane SDK and tools.
 
-Google Tag Manager is optional. Set `DOCS_GTM_CONTAINER_ID` in a `.env` file
-beside `docusaurus.config.js` to include it. An absent file or blank value
-leaves it out; Git ignores the file. Rebuild after changing the value. Requires
-Node.js 20.12 or newer in the 20.x line, or Node.js 21.7 or newer.
+Requires Node.js 20.12 or newer in the 20.x line, or Node.js 21.7 or newer.
 
 ```bash
 cd docs/userdocs
@@ -17,6 +14,11 @@ pnpm run serve
 
 The servers bind loopback by default. Pass `--host 0.0.0.0` to make a local
 preview accessible from another machine. Nothing is published by these commands.
+
+Google Tag Manager is optional. Copy `.env.example` to `.env` and populate
+`DOCS_GTM_CONTAINER_ID` to include it when building the site. The configuration
+reads that file beside `docusaurus.config.js`; an absent file or a blank value
+leaves GTM out. The file is ignored by Git. Rebuild after changing the value.
 
 ## Publishing
 
@@ -41,11 +43,12 @@ agent and points at the sitemap. `pnpm test` runs the unit tests of the
 negotiation and the conversion; a local server has no Markdown pages, since the
 plugin only runs in a build.
 
-The site takes its palette from `docs/userdocs/src/css/tokens.css` and uses
-root-relative addresses for its wordmark and Blog links.
-The site honors the visitor’s light or dark and operating-system preferences.
-The operating-system choice comes from `docs/userdocs/src/platform/preference.ts`;
-pages show per-platform content with `src/components/Platform.js`.
+The documentation palette comes from `src/css/tokens.css`. The site remembers
+the visitor's light or dark preference and operating system choice. Platform
+detection and storage live in `src/platform/preference.ts`; pages show
+platform-specific content with `src/components/Platform.js`. The wordmark and
+Blog links use root-relative addresses outside the documentation base path;
+a local documentation server does not serve those destinations.
 
 Follow [the Diátaxis opinion](../opinion-registry/frameworks/docusaurus.md):
 keep tutorials, how-to guides, generated reference and explanation distinct.

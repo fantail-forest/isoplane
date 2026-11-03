@@ -17,7 +17,7 @@ ASP.NET applications read all of them through `IConfiguration`. Other
 applications read the last two with `RuntimeConfiguration.ReadValues()`.
 
 These sources apply to local sessions and sandbox tests. Only the `appsettings`
-files travel with the application.
+files travel with a [deployment](deploy-an-application.md).
 
 The application does not see your machine's environment variables. A sandbox
 test can add settings of its own, as [Test an application](test-an-application.md)

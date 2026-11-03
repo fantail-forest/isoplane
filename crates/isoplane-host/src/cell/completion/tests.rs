@@ -393,7 +393,7 @@ fn recorded_fault(
                 .expect("registered module meters")
                 .incomplete_intervals(),
             1,
-            "an incomplete engine interval must be counted rather than recorded as a complete zero"
+            "an incomplete engine interval must be counted rather than reported as a complete zero"
         );
     }
     cell.shutdown();
@@ -470,7 +470,7 @@ fn a_wake_panic_preserves_prior_slice_occupancy_and_marks_the_interrupted_slice_
     );
     assert_eq!(
         records[0]["occupancy_complete"], false,
-        "the interrupted wake cannot be recorded as a complete zero"
+        "the interrupted wake cannot be reported as a complete zero"
     );
     assert_eq!(
         records[0]["slice_wall_complete"], false,
@@ -1223,12 +1223,12 @@ fn completion_waits_for_the_active_poll_but_not_transferred_operations_or_childr
     assert_eq!(
         meters.occupancy_ns(),
         100,
-        "later polls remain attributed to the application"
+        "later polls remain charged to the application"
     );
     assert_eq!(
         owner.usage().occupancy_ns,
         50,
-        "later polls are no longer attributed to the request"
+        "later polls no longer charge the request"
     );
     owner.finish();
     assert_eq!(events.records().len(), 1);

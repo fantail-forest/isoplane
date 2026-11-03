@@ -1,6 +1,5 @@
-#![cfg(feature = "real-backends")]
-
 use hyper::StatusCode;
+
 use isoplane_abi::result::ResultRecord;
 use isoplane_host::futures::{FutureTable, WakeTarget};
 use isoplane_host::InstanceId;
@@ -20,7 +19,7 @@ async fn host_future_waits_export_one_terminal_outcome() {
     })
     .await
     .expect("logging task");
-    for outcome in ["ready", "cancelled", "lost", "discarded"] {
+    for outcome in ["ready", "cancelled", "discarded"] {
         tracing::info_span!(target: "isoplane_test", "operation", outcome).in_scope(|| {
             let table = FutureTable::new(1024);
             let owner = InstanceId(1);
@@ -37,10 +36,6 @@ async fn host_future_waits_export_one_terminal_outcome() {
                 "cancelled" => assert!(
                     table.cancel_owned(owner, id.into()),
                     "cancellation must remove the owned operation"
-                ),
-                "lost" => assert!(
-                    table.capture(owner).shed.contains(&id),
-                    "capture must shed the unbounded operation"
                 ),
                 "discarded" => drop(table),
                 _ => unreachable!("the case list defines every terminal outcome"),
@@ -64,8 +59,8 @@ async fn host_future_waits_export_one_terminal_outcome() {
         .collect();
     assert_eq!(
         waits.len(),
-        4,
-        "only the four host operations, not implicit cancellation futures, represent waits"
+        3,
+        "only the three host operations, not implicit cancellation futures, represent waits"
     );
     for waiting in waits {
         let parent = spans

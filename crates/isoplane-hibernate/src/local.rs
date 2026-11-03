@@ -17,9 +17,9 @@ use serde::{Deserialize, Serialize};
 
 use isoplane_engine::{InstanceImage, MemoryImage};
 
-use crate::delta::{Binding, PAGE};
 use crate::snapshot::{SnapshotError, SnapshotReservation};
 use crate::{wake_error, Result, WakeFallback};
+use crate::{Binding, PAGE};
 
 /// The guest shape a reservation has to hold.
 #[derive(Debug, Clone, Copy)]

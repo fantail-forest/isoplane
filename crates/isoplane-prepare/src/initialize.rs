@@ -118,7 +118,6 @@ pub(crate) enum CaptureMode<'a> {
     Layered {
         wasm: &'a [u8],
         identity: isoplane_engine::prepared::PreparedIdentity,
-        portable: crate::PortableTemplate,
     },
     /// Only the runtime's own initializer, as a baseline that applications
     /// are prepared over.
@@ -237,10 +236,9 @@ fn run_stage(
 pub(crate) enum Captured {
     /// The initialized portable module, which portable consumers compile.
     Portable(Vec<u8>),
-    /// The initialized layer, and the portable module only when requested.
+    /// Initialized native code and explicit state.
     Layered {
         prepared: Box<isoplane_engine::prepared::PreparedTemplate>,
-        portable: Option<Vec<u8>>,
     },
 }
 
@@ -385,18 +383,12 @@ pub(crate) fn initialize_with_cache(
             let captured = match capture {
                 CaptureMode::Portable { wasm } => Captured::Portable(wasm.to_vec()),
                 #[cfg(target_os = "linux")]
-                CaptureMode::Layered {
-                    wasm,
-                    identity,
-                    portable,
-                } => Captured::Layered {
+                CaptureMode::Layered { wasm, identity } => Captured::Layered {
                     prepared: Box::new(
                         engine
                             .prepare_template_with_files(wasm, identity, application_files.clone())
                             .map_err(|error| PrepareError::State(error.into()))?,
                     ),
-                    portable: (portable == crate::PortableTemplate::Returned)
-                        .then(|| wasm.to_vec()),
                 },
                 CaptureMode::RuntimeBaseline { .. } | CaptureMode::Over { .. } => {
                     return Err(PrepareError::InvalidRequest(
@@ -474,9 +466,7 @@ pub(crate) fn initialize_with_cache(
                 (template, captured, Captured::Portable(module))
             }
             #[cfg(target_os = "linux")]
-            CaptureMode::Layered {
-                identity, portable, ..
-            } => {
+            CaptureMode::Layered { identity, .. } => {
                 let prepared = engine
                     .prepare_initialized_template(
                         &template,
@@ -489,23 +479,6 @@ pub(crate) fn initialize_with_cache(
                 let captured = instance
                     .capture_mutable_state()
                     .map_err(PrepareError::State)?;
-                let portable = match (portable, &instrumented) {
-                    (crate::PortableTemplate::Returned, Some(instrumented)) => {
-                        Some(portable_module(
-                            instrumented,
-                            instance.memory(),
-                            &captured.globals,
-                            &deferred,
-                            &prepared_resources,
-                        )?)
-                    }
-                    (crate::PortableTemplate::Returned, None) => {
-                        return Err(PrepareError::InvalidRequest(
-                            "a portable capture needs the instrumented module",
-                        ))
-                    }
-                    (crate::PortableTemplate::Omitted, _) => None,
-                };
                 let template = engine
                     .load_prepared_product_in(
                         &prepared,
@@ -517,7 +490,6 @@ pub(crate) fn initialize_with_cache(
                     captured,
                     Captured::Layered {
                         prepared: Box::new(prepared),
-                        portable,
                     },
                 )
             }
@@ -545,7 +517,6 @@ pub(crate) fn initialize_with_cache(
                     captured,
                     Captured::Layered {
                         prepared: Box::new(prepared),
-                        portable: None,
                     },
                 )
             }
@@ -574,7 +545,6 @@ pub(crate) fn initialize_with_cache(
                     captured,
                     Captured::Layered {
                         prepared: Box::new(prepared),
-                        portable: None,
                     },
                 )
             }

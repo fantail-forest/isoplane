@@ -3,36 +3,25 @@ use std::time::Instant;
 
 use isoplane_engine::prepared::PreparedIdentity;
 use isoplane_engine::IsoplaneEngine;
-use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 use crate::{BuildRequest, BuildStage, Initialized, PrepareError, WorkerFailure};
 
 /// Complete preparation output and the actual work recorded by its producer.
-#[derive(Serialize, Deserialize)]
 pub struct BuildProduct {
     /// What initialization observed and the replay state it leaves.
     pub initialized: Initialized,
     /// Initialization, compilation and state-verification wall time.
     pub preinit_ms: f64,
-    /// Prepared-state encoding and, for portable output, final native compilation wall time.
+    /// Native output encoding and any final compilation of portable captured state.
     pub compile_ms: f64,
-    #[serde(with = "serde_bytes")]
     prepared: Vec<u8>,
-    #[serde(with = "serde_bytes")]
-    portable: Option<Vec<u8>>,
 }
 
 impl BuildProduct {
     /// Native and explicit-state transport for the matching engine's trusted decoder.
     pub fn prepared_bytes(&self) -> &[u8] {
         &self.prepared
-    }
-
-    /// The initialized portable module, with its init export removed, when the
-    /// request asked for it with [`crate::PortableTemplate::Returned`].
-    pub fn portable_template(&self) -> Option<&[u8]> {
-        self.portable.as_deref()
     }
 }
 
@@ -173,14 +162,6 @@ impl Preparation for LocalPreparation {
     }
 }
 
-/// Run preparation in the caller's process under supplied sandbox limits.
-pub fn prepare_in_current_process(
-    wasm: &[u8],
-    request: &BuildRequest,
-) -> Result<BuildProduct, WorkerFailure> {
-    prepare(wasm, request, None)
-}
-
 fn prepare(
     wasm: &[u8],
     request: &BuildRequest,
@@ -191,11 +172,7 @@ fn prepare(
     let engine = IsoplaneEngine::new(request.engine.clone())
         .map_err(|error| WorkerFailure::new(BuildStage::Engine, error))?;
     #[cfg(target_os = "linux")]
-    let capture = crate::initialize::CaptureMode::Layered {
-        wasm,
-        identity,
-        portable: request.portable_template,
-    };
+    let capture = crate::initialize::CaptureMode::Layered { wasm, identity };
     #[cfg(not(target_os = "linux"))]
     let capture = crate::initialize::CaptureMode::Portable { wasm };
     Ok(produce(&engine, request, cache, identity, capture)?.0)
@@ -217,7 +194,7 @@ pub(crate) fn produce(
         cache,
         &request.application_files,
         Some(request.guest_memory_bytes.map_or(
-            request.limits.instance_memory_max,
+            request.memory_limit.get(),
             isoplane_abi::config::GuestMemoryBytes::get,
         )),
         capture,
@@ -232,18 +209,14 @@ pub(crate) fn produce(
     })?;
     let preinit_ms = start.elapsed().as_secs_f64() * 1000.0;
     let start = Instant::now();
-    let (prepared, portable) = match output.captured {
-        crate::initialize::Captured::Layered { prepared, portable } => (
-            prepared
-                .encode_builder_output()
-                .map_err(|error| WorkerFailure::new(BuildStage::Artifact, error.into()))?,
-            portable,
-        ),
-        crate::initialize::Captured::Portable(module) => (
+    let prepared = match output.captured {
+        crate::initialize::Captured::Layered { prepared } => prepared
+            .encode_builder_output()
+            .map_err(|error| WorkerFailure::new(BuildStage::Artifact, error.into()))?,
+        crate::initialize::Captured::Portable(module) => {
             encode(engine, &module, identity, request.application_files.clone())
-                .map_err(|error| WorkerFailure::new(BuildStage::Artifact, error))?,
-            (request.portable_template == crate::PortableTemplate::Returned).then_some(module),
-        ),
+                .map_err(|error| WorkerFailure::new(BuildStage::Artifact, error))?
+        }
     };
     let compile_ms = start.elapsed().as_secs_f64() * 1000.0;
     Ok((
@@ -252,7 +225,6 @@ pub(crate) fn produce(
             preinit_ms,
             compile_ms,
             prepared,
-            portable,
         },
         output.restored,
     ))
@@ -272,7 +244,7 @@ pub(crate) fn validate(wasm: &[u8], request: &BuildRequest) -> anyhow::Result<Pr
     );
     isoplane_runtime::validate_with_limits(
         wasm,
-        request.limits,
+        request.memory_limit,
         request
             .runtime
             .declared_memory_ceiling(request.guest_memory_bytes),

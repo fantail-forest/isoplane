@@ -1,5 +1,15 @@
 use isoplane_abi::config::{AppManifest, InitSandbox};
-use isoplaned::real::{Deployed, RealCells};
+use isoplaned::real::RealCells;
+
+#[allow(
+    dead_code,
+    reason = "shared fixture results are inspected by different integration binaries"
+)]
+pub struct Deployed {
+    pub initialized: isoplane_prepare::Initialized,
+    pub prepared: isoplaned::deploy::PreparedReceipt,
+    pub stages: Vec<isoplaned::node::DeployStage>,
+}
 
 #[derive(Clone)]
 pub struct Guest {
@@ -93,17 +103,27 @@ impl LocalDeployment for RealCells {
             cancellation: &cancellation,
         };
         manifest.name = app.to_string();
-        self.deploy_prepared_version(
-            manifest,
-            &guest.wasm,
-            isoplane_control::DeployOptions {
-                version: isoplane_control::VersionId(version.to_string()),
-                tenant: tenant.to_string(),
-                init_sandbox: sandbox,
-            },
-            &context,
-        )
-        .await
+        let prepared = self
+            .deployer
+            .prepare_application(
+                &manifest,
+                &guest.wasm,
+                &isoplane_control::DeployOptions {
+                    version: isoplane_control::VersionId(version.to_string()),
+                    tenant: tenant.to_string(),
+                    init_sandbox: sandbox,
+                },
+                &context,
+            )
+            .await?;
+        let (installed, initialized, stages) = prepared.into_application();
+        let receipt = installed.receipt.clone();
+        self.install_application(tenant, installed).await?;
+        Ok(Deployed {
+            prepared: receipt,
+            stages,
+            initialized,
+        })
     }
 }
 

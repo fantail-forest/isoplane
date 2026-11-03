@@ -71,7 +71,8 @@ fn fetching_guest(destination: SocketAddr) -> Vec<u8> {
 }
 
 async fn node_for(destination: SocketAddr, policy: Option<Arc<dyn DestinationPolicy>>) -> Rig {
-    let directory = tempfile::tempdir().expect("the node must own a unique directory");
+    let directory =
+        crate::common::private_directory().expect("the node must own a unique directory");
     let configuration = config(directory.path());
     let node = match policy {
         Some(policy) => Node::build_with_destinations(configuration, policy),
@@ -80,7 +81,6 @@ async fn node_for(destination: SocketAddr, policy: Option<Arc<dyn DestinationPol
     .expect("the real node must assemble");
     node.real
         .as_ref()
-        .expect("the node must use real backends")
         .deploy_locally(
             "quotes",
             "v1",
@@ -113,7 +113,6 @@ async fn a_default_node_refuses_private_outbound_destinations() {
         .node
         .real
         .as_ref()
-        .expect("real cells")
         .cells()
         .iter()
         .map(|cell| cell.metrics().egress_denials)
@@ -177,13 +176,13 @@ async fn a_managed_network_stream_exchanges_partial_payloads_through_a_real_node
     let address = listener
         .local_addr()
         .expect("the upstream must have an endpoint");
-    let directory = tempfile::tempdir().expect("the native stream node must own its directory");
+    let directory =
+        crate::common::private_directory().expect("the native stream node must own its directory");
     let node =
         Node::build_with_destinations(config(directory.path()), Arc::new(OwnedEndpoint(address)))
             .expect("the real native stream node must assemble");
     node.real
         .as_ref()
-        .expect("the node must use real backends")
         .deploy_locally(
             "quotes",
             "v1",
@@ -195,13 +194,7 @@ async fn a_managed_network_stream_exchanges_partial_payloads_through_a_real_node
         .await
         .expect("the ordinary NetworkStream fixture must deploy");
     let rig = serve(node, directory).await;
-    let cell = rig
-        .node
-        .real
-        .as_ref()
-        .expect("the native stream node must retain its cells")
-        .cells()[0]
-        .clone();
+    let cell = rig.node.real.as_ref().cells()[0].clone();
     let proxy = rig.proxy;
     let request = tokio::spawn(async move {
         get(

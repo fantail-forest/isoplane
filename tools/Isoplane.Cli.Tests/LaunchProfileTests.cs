@@ -73,7 +73,7 @@ public sealed class LaunchProfileTests : IDisposable
     }
 
     [Theory]
-    [InlineData("""{ "unsupported": 1 }""", "does not support 'unsupported'")]
+    [InlineData("""{ "plan": 1 }""", "does not support 'plan'")]
     [InlineData("""{ "subrequestsPerDispatch": 20 }""", "does not support 'subrequestsPerDispatch'")]
     [InlineData("""{ "concurrentConnectionsPerInstance": 0 }""", "must be a positive whole number")]
     [InlineData("""{ "memoryBytes": "64MB" }""", "must be a positive whole number")]
@@ -95,7 +95,7 @@ public sealed class LaunchProfileTests : IDisposable
     }
 
     [Fact]
-    public void session_options_apply_numeric_budgets_and_profile_overrides()
+    public void session_options_request_the_largest_limits_and_apply_the_profile_overrides()
     {
         Settings(TwoProfiles);
         var settings = new DevelopmentSettings("App", 0, [], LaunchProfile.Read(directory.FullName, "tight")!.Limits, null,
@@ -103,7 +103,7 @@ public sealed class LaunchProfileTests : IDisposable
         using var options = System.Text.Json.JsonDocument.Parse(new LocalProject(directory.FullName).SessionOptions(settings));
         var manifest = options.RootElement.GetProperty("manifest");
         Assert.Equal("App", manifest.GetProperty("name").GetString());
-        Assert.Equal(536870912UL, manifest.GetProperty("limits").GetProperty("instance_memory_max").GetUInt64());
+        Assert.False(manifest.TryGetProperty("limits", out _));
         Assert.Equal(67108864UL, manifest.GetProperty("guest_memory_bytes").GetUInt64());
         Assert.Equal(100UL, manifest.GetProperty("resource_limits").GetProperty("occupancy_ms_per_dispatch").GetUInt64());
         Assert.False(options.RootElement.TryGetProperty("machine_roots", out _), "A session without exported roots must leave the platform bundle selected.");

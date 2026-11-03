@@ -1,4 +1,7 @@
-# The 128 MiB ceiling supplies the guest fixture limit.
+# Declare the instance memory ceiling in the module itself.
+#
+# Rust's wasm linker emits no memory maximum by default. These fixtures declare
+# 128 MiB so the validator can compare that bound with its configured ceiling.
 #
 # The host captures a guest's globals only through their exports, and V1
 # rejects a mutable global the module does not export. `__stack_pointer` is the

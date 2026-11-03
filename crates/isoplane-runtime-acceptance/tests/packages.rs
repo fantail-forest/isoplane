@@ -2,7 +2,7 @@
 //! application packages it was never built with. Each package is served as
 //! application files, loaded by the runtime's fixed loader during real
 //! preparation, and executed through the reactor across a park and a
-//! Store restoration.
+//! hibernation delta.
 
 use std::io::Read;
 use std::sync::{Arc, OnceLock};
@@ -16,7 +16,7 @@ use isoplane_harness::{engine_configuration, ReturnedGuest};
 use isoplane_prepare::package::PackageLimits;
 use isoplane_prepare::{
     BuildProduct, BuildRequest, BuildStage, Initialization, InitializationNetwork,
-    LocalPreparation, PortableTemplate, Preparation, PrepareError, RuntimeProfile,
+    LocalPreparation, Preparation, PrepareError, RuntimeProfile,
 };
 use isoplane_test_support::hex_bytes as hex;
 use tokio_util::sync::CancellationToken;
@@ -37,7 +37,7 @@ pub mod tls_material;
 /// Limits used when reading package fixtures.
 fn limits() -> PackageLimits {
     PackageLimits {
-        bytes: isoplane_harness::GUEST_LIMITS.package_bytes,
+        bytes: isoplane_abi::config::Limits::default().package_bytes,
         files: ValidationLimits::DEFAULT.max_package_files,
         manifest_bytes: ValidationLimits::DEFAULT.max_package_manifest_bytes,
     }
@@ -97,12 +97,8 @@ fn network() -> InitializationNetwork {
         },
         limits: Default::default(),
         native_handles: host.guest_resources.native_handles,
-        open_connections: isoplane_harness::GUEST_LIMITS
-            .limits()
-            .instance_open_connections,
-        pending_futures: isoplane_harness::GUEST_LIMITS
-            .limits()
-            .pending_futures_per_dispatch,
+        open_connections: isoplane_abi::config::Limits::default().instance_open_connections,
+        pending_futures: isoplane_abi::config::Limits::default().pending_futures_per_dispatch,
         buffered_bytes: host.buffered_future_bytes,
     }
 }
@@ -115,7 +111,7 @@ fn request(runtime: &[u8], files: Vec<PlatformFile>) -> BuildRequest {
         runtime: RuntimeProfile::SharedRuntime {
             sdk_version: isoplane_fixtures::release_version(),
         },
-        limits: isoplane_harness::GUEST_LIMITS,
+        memory_limit: isoplane_abi::config::GuestMemoryBytes::default(),
         guest_memory_bytes: None,
         validation_limits: Default::default(),
         initialization: Initialization {
@@ -130,7 +126,6 @@ fn request(runtime: &[u8], files: Vec<PlatformFile>) -> BuildRequest {
             log_bytes: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_LOG_BYTES,
         },
         input_hash: *blake3::hash(runtime).as_bytes(),
-        portable_template: PortableTemplate::Omitted,
     }
 }
 
@@ -162,9 +157,9 @@ fn decode(product: &BuildProduct, request: &BuildRequest) -> PreparedTemplate {
 }
 
 /// Prepares `files` on the shared runtime and answers `path` across a park
-/// on its host timer and a Store restoration at every later park, returning
+/// on its host timer and a hibernation delta at every later park, returning
 /// the response body.
-async fn answer_across_restored_stores(files: Vec<PlatformFile>, path: &str) -> String {
+async fn answer_across_a_delta(files: Vec<PlatformFile>, path: &str) -> String {
     let (product, request) = prepare_on_the_shared_runtime(files).await;
     answer_on_an_instance(&product, &request, isoplane_host::InstanceId::alloc(), path).await
 }
@@ -197,7 +192,7 @@ async fn prepared_package(name: &'static str) -> Arc<(BuildProduct, BuildRequest
 }
 
 /// Answers `path` on a fresh instance of the shared preparation of package `name`, as
-/// [`answer_across_restored_stores`] does.
+/// [`answer_across_a_delta`] does.
 async fn answer_package(name: &'static str, path: &str) -> String {
     let prepared = prepared_package(name).await;
     answer_on_an_instance(
@@ -210,7 +205,7 @@ async fn answer_package(name: &'static str, path: &str) -> String {
 }
 
 /// Activates `instance` from the prepared template and answers `path` on it
-/// as [`answer_across_restored_stores`] does.
+/// as [`answer_across_a_delta`] does.
 async fn answer_on_an_instance(
     product: &BuildProduct,
     request: &BuildRequest,
@@ -220,12 +215,12 @@ async fn answer_on_an_instance(
     let reactor = isoplane_harness::Reactor::new(instance);
     reactor.context.begin_slice(1, 1);
     let guest = ReturnedGuest::prepared(decode(product, request), &reactor);
-    finish_across_restored_stores(guest, &reactor, path).await
+    finish_across_a_delta(guest, &reactor, path).await
 }
 
 /// Answers `path` on `guest` across a park on its host timer and a
-/// Store restoration at every later park, returning the response body.
-async fn finish_across_restored_stores(
+/// hibernation delta at every later park, returning the response body.
+async fn finish_across_a_delta(
     mut guest: ReturnedGuest,
     reactor: &isoplane_harness::Reactor,
     path: &str,
@@ -241,7 +236,7 @@ async fn finish_across_restored_stores(
     tokio::task::yield_now().await;
     tokio::time::advance(std::time::Duration::from_millis(60)).await;
     reactor.context.begin_slice(61, 1);
-    guest.finish(reactor, 8).await
+    guest.finish_through_deltas(reactor, 8).await
 }
 
 /// The detail of a preparation whose initialization on the shared runtime was refused.
@@ -263,7 +258,7 @@ async fn refusal(files: Vec<PlatformFile>) -> String {
 }
 
 #[tokio::test(start_paused = true)]
-async fn the_smallest_package_runs_on_the_shared_runtime_across_restored_stores() {
+async fn the_smallest_package_runs_on_the_shared_runtime_across_a_delta() {
     assert_eq!(
         answer_package("alpha", "/greeting").await,
         "alpha:/greeting",
@@ -272,7 +267,7 @@ async fn the_smallest_package_runs_on_the_shared_runtime_across_restored_stores(
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_package_with_its_own_dependencies_runs_on_the_shared_runtime_across_restored_stores() {
+async fn a_package_with_its_own_dependencies_runs_on_the_shared_runtime_across_a_delta() {
     let body = answer_package("beta", "/beta").await;
     let report: serde_json::Value =
         serde_json::from_str(&body).unwrap_or_else(|error| panic!("{body} is JSON: {error}"));
@@ -314,7 +309,7 @@ async fn a_packages_initialization_hook_runs_once_before_its_template_is_capture
 }
 
 #[tokio::test(start_paused = true)]
-async fn an_aspnet_package_answers_across_restored_stores_after_one_warmup() {
+async fn an_aspnet_package_answers_across_a_delta_after_one_warmup() {
     let body = answer_package("web", "/hello/isoplane").await;
     assert!(
         body.starts_with("hello, isoplane;"),
@@ -357,7 +352,7 @@ async fn logged_with(calls: &str) -> Vec<(u8, String)> {
     let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
     reactor.context.begin_slice(1, 1);
     let guest = ReturnedGuest::prepared(decode(&product, &request), &reactor);
-    let body = finish_across_restored_stores(guest, &reactor, "/log").await;
+    let body = finish_across_a_delta(guest, &reactor, "/log").await;
     assert_eq!(
         body,
         "logged",
@@ -790,14 +785,14 @@ async fn a_second_package_reuses_the_runtimes_native_compilation() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn an_unused_package_assembly_loads_on_demand_and_survives_store_restoration() {
+async fn an_unused_package_assembly_loads_on_demand_and_survives_hibernation() {
     let library = package_file(&package("beta"), "assemblies/Beta.Library.dll");
     let files = with_package_file(package("alpha"), "assemblies/Beta.Library.dll", &library);
-    let body = answer_across_restored_stores(files, "/load-library").await;
+    let body = answer_across_a_delta(files, "/load-library").await;
     assert_eq!(
         body,
         "initialized=False;loaded=Beta.Library",
-        "an unused dependency must remain unloaded during preparation and load successfully before a parked request resumes"
+        "an unused dependency must remain unloaded during preparation and load successfully before a hibernating request resumes"
     );
 }
 
@@ -1008,7 +1003,6 @@ fn serving_cell(
 ) -> Arc<isoplane_host::cell::Cell> {
     let services = Arc::new(isoplane_host::cell::Services {
         fetcher: Arc::new(isoplane_host::fakes::FakeFetcher::default()),
-        hibernation: Arc::new(isoplane_host::fakes::FakeHibernationStore::default()),
         egress: Arc::new(isoplane_host::egress::HostEgressPolicy::new(
             Box::new(fixed_dns::FixedDns(vec![])),
             isoplane_host::egress::ConnectionLimits::uniform(8).expect("connection limits"),
@@ -1040,12 +1034,7 @@ fn prepared_cell(
     let template = engine
         .load_prepared_product(&decode(product, request))
         .expect("the prepared template must load");
-    let cell = isoplane_host::cell::Cell::new(
-        config,
-        services,
-        Arc::new(isoplane_host::fakes::FakeHibernator),
-    )
-    .expect("the cell must start");
+    let cell = isoplane_host::cell::Cell::new(config, services).expect("the cell must start");
     cell.register_module(
         "tenant",
         Arc::new(isoplane_host::activator::EngineActivator::new(
@@ -1059,7 +1048,6 @@ fn prepared_cell(
             validation_limits: Default::default(),
             name: module.app.clone(),
             bindings: Default::default(),
-            limits: isoplane_harness::GUEST_LIMITS,
             init_visible_vars: vec![],
         },
     )
@@ -1200,7 +1188,7 @@ async fn a_request_that_unblocks_another_on_its_instance_leaves_it_to_resume_in_
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn idle_timers_run_by_default_without_recording_http_requests_and_stop_after_inactivity() {
+async fn idle_timers_run_by_default_without_counting_http_requests_and_stop_after_inactivity() {
     isoplane_harness::LogCapture::global();
     let (product, request) = alpha_initialized_by("StartHeartbeatAsync").await;
     let module = isoplane_host::ModuleId::new("alpha", "v1");
@@ -1308,7 +1296,7 @@ async fn a_package_delegate_marshalled_to_a_function_pointer_is_refused() {
 }
 
 /// The `sqlite` package's answer for one use of SQLite, after a park and
-/// across a Store restoration.
+/// across a hibernation delta.
 async fn sqlite_use(path: &str) -> String {
     answer_package("sqlite", path).await
 }
@@ -1602,7 +1590,7 @@ mod over_the_runtime_baseline {
         let (base, layer) = layer_over(&baseline, &runtime, package("beta")).await;
         let whole_reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
         whole_reactor.context.begin_slice(1, 1);
-        let whole = finish_across_restored_stores(
+        let whole = finish_across_a_delta(
             ReturnedGuest::prepared(decode(&whole, &request), &whole_reactor),
             &whole_reactor,
             "/beta",
@@ -1610,7 +1598,7 @@ mod over_the_runtime_baseline {
         .await;
         let layered_reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
         layered_reactor.context.begin_slice(1, 1);
-        let layered = finish_across_restored_stores(
+        let layered = finish_across_a_delta(
             ReturnedGuest::layered(base, layer, &layered_reactor),
             &layered_reactor,
             "/beta",
@@ -1618,7 +1606,7 @@ mod over_the_runtime_baseline {
         .await;
         assert_eq!(
             layered, whole,
-            "layered and whole preparation must preserve the same application response across Store restoration"
+            "layered and whole preparation must preserve the same application response across hibernation"
         );
         let report: serde_json::Value = serde_json::from_str(&layered)
             .expect("the captured application must return its JSON report");
@@ -1629,14 +1617,14 @@ mod over_the_runtime_baseline {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn packages_over_one_runtime_baseline_each_answer_across_restored_stores() {
+    async fn packages_over_one_runtime_baseline_each_answer_across_a_delta() {
         let runtime = isoplane_fixtures::mono_runtime();
         let baseline = runtime_baseline(&runtime);
         let (alpha_base, alpha) = layer_over(&baseline, &runtime, package("alpha")).await;
         let (beta_base, beta) = layer_over(&baseline, &runtime, package("beta")).await;
         let alpha_reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
         alpha_reactor.context.begin_slice(1, 1);
-        let alpha = finish_across_restored_stores(
+        let alpha = finish_across_a_delta(
             ReturnedGuest::layered(alpha_base, alpha, &alpha_reactor),
             &alpha_reactor,
             "/greeting",
@@ -1644,7 +1632,7 @@ mod over_the_runtime_baseline {
         .await;
         let beta_reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
         beta_reactor.context.begin_slice(1, 1);
-        let beta = finish_across_restored_stores(
+        let beta = finish_across_a_delta(
             ReturnedGuest::layered(beta_base, beta, &beta_reactor),
             &beta_reactor,
             "/beta",

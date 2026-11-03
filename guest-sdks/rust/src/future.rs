@@ -223,7 +223,7 @@ pub struct JoinAll<F: Future> {
     items: Vec<MaybeDone<F>>,
 }
 
-/// Fan-out over N host operations. Bounded by the plan's
+/// Fan-out over N host operations. Bounded by the application's
 /// `pending_futures_per_dispatch` -- one of the three factors in the
 /// structural anti-abuse residency bound, which is why park time is free.
 pub fn join_all<F: Future>(futs: impl IntoIterator<Item = F>) -> JoinAll<F> {

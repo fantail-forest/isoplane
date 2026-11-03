@@ -152,7 +152,7 @@ in_mono_runtime! {
 
 in_mono_runtime! {
     #[tokio::test(start_paused = true)]
-    async fn a_named_culture_remains_usable_after_a_store_restoration_delta(runtime: GuestRuntime) {
+    async fn a_named_culture_remains_usable_after_a_hibernation_delta(runtime: GuestRuntime) {
         let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId(333));
         reactor.context.begin_slice(1, 1);
         let mut guest = guest(&reactor, runtime);
@@ -161,7 +161,7 @@ in_mono_runtime! {
         tokio::task::yield_now().await;
         tokio::time::advance(std::time::Duration::from_millis(60)).await;
         reactor.context.begin_slice(61, 1);
-        let mut outcome = guest.wake(&reactor).await;
+        let mut outcome = guest.wake_through_delta(&reactor).await;
         for _ in 0..8 {
             if outcome.completion != Completion::Parked {
                 break;
@@ -169,7 +169,7 @@ in_mono_runtime! {
             outcome = guest.wake(&reactor).await;
         }
         assert_eq!(outcome.completion, Completion::Done, "ICU must remain usable after restoring the guest: {outcome:?}");
-        assert_eq!(reactor.response_text(1), "tr-TR/İSTANBUL", "the current culture and its ICU-backed casing must survive Store restoration");
+        assert_eq!(reactor.response_text(1), "tr-TR/İSTANBUL", "the current culture and its ICU-backed casing must survive hibernation");
     }
 }
 

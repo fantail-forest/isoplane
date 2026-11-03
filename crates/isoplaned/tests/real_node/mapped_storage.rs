@@ -25,15 +25,9 @@ fn initialized(body: &[u8]) -> Vec<u8> {
 }
 
 /// The published baseline of `deployed`, found under the node's data directory.
-fn baseline(data: &Path, deployed: &isoplaned::real::Deployed) -> PathBuf {
-    let key = serde_json::to_value(
-        &deployed
-            .prepared
-            .as_ref()
-            .expect("a prepared deployment")
-            .artifact_key,
-    )
-    .expect("encode the artifact key");
+fn baseline(data: &Path, deployed: &crate::common::preparation::Deployed) -> PathBuf {
+    let key =
+        serde_json::to_value(&deployed.prepared.artifact_key).expect("encode the artifact key");
     let key = key.as_str().expect("an artifact key is a string");
     directories_under(data)
         .into_iter()
@@ -43,7 +37,10 @@ fn baseline(data: &Path, deployed: &isoplaned::real::Deployed) -> PathBuf {
 }
 
 /// Deploys `name` as `acme`'s prepared application answering its own name.
-async fn deploy(real: &isoplaned::real::RealCells, name: &str) -> isoplaned::real::Deployed {
+async fn deploy(
+    real: &isoplaned::real::RealCells,
+    name: &str,
+) -> crate::common::preparation::Deployed {
     real.deploy_locally(
         name,
         "v1",
@@ -58,14 +55,14 @@ async fn deploy(real: &isoplaned::real::RealCells, name: &str) -> isoplaned::rea
 
 #[tokio::test(flavor = "multi_thread")]
 async fn failed_storage_beneath_one_application_fails_only_its_requests() {
-    let directory = tempfile::tempdir().expect("owned node files");
+    let directory = crate::common::private_directory().expect("owned node files");
     let mut cfg = config(directory.path());
     let mut ledger = cfg.apps[0].clone();
-    ledger.name = "ledger".into();
+    ledger.manifest.name = "ledger".into();
     ledger.hosts = vec!["ledger.isoplane.dev".into()];
     cfg.apps.push(ledger);
     let node = Node::build(cfg).expect("real node");
-    let real = node.real.clone().expect("real cells");
+    let real = node.real.clone();
     let failed = baseline(directory.path(), &deploy(&real, "quotes").await);
     deploy(&real, "ledger").await;
     drop(real);
@@ -93,9 +90,9 @@ async fn failed_storage_beneath_one_application_fails_only_its_requests() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_application_serves_again_once_its_failed_storage_reads_back() {
-    let directory = tempfile::tempdir().expect("owned node files");
+    let directory = crate::common::private_directory().expect("owned node files");
     let node = Node::build(config(directory.path())).expect("real node");
-    let real = node.real.clone().expect("real cells");
+    let real = node.real.clone();
     let failed = baseline(directory.path(), &deploy(&real, "quotes").await);
     drop(real);
     let original = std::fs::read(&failed).expect("read the published baseline");
@@ -104,6 +101,14 @@ async fn an_application_serves_again_once_its_failed_storage_reads_back() {
         get(rig.proxy, "quotes.isoplane.dev", "/").await.body,
         "quotes",
         "the application must serve while its storage is intact"
+    );
+    isoplaned::installed::InstalledApplications::open(&rig.node.cfg.data_dir)
+        .unwrap()
+        .collect()
+        .unwrap();
+    assert!(
+        failed.is_file(),
+        "the activator pins its recovery pathname even without a selected record"
     );
     mapped_backing::truncate(&failed);
     assert!(

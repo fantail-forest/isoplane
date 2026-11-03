@@ -1,8 +1,8 @@
 //! Initialization inputs and captured state.
 
 use isoplane_abi::config::InitSandbox;
-use isoplane_control::preinit::{PreInitError, PreInitRequest, PreInitializer};
 use isoplane_engine::ModuleHash;
+use isoplane_prepare::preinit::{PreInitError, PreInitRequest, PreInitializer};
 
 /// Four explicit guest units build a seed-derived table, request a clock,
 /// write a high-memory marker and draw application entropy. The clock defers;

@@ -1,27 +1,24 @@
-//! Node configuration and measurements.
+//! Local multi-application host and deployment pipeline.
 
 pub mod admin;
 pub mod cli;
 pub mod config;
-#[cfg(feature = "real-backends")]
 pub mod deploy;
+pub mod http;
 pub mod logs;
 pub mod metrics;
 pub mod node;
-#[cfg(feature = "real-backends")]
-#[cfg(feature = "real-backends")]
 pub mod preparation;
-#[cfg(feature = "real-backends")]
 pub mod real;
-#[cfg(feature = "real-backends")]
 mod reclamation;
-#[cfg(feature = "real-backends")]
 pub mod runtimes;
 pub use isoplane_trust as trust;
 
 pub use config::{ConfigError, NodeConfig};
-pub use node::DeployStage;
+pub use node::{DeployStage, Node};
+pub mod installed;
 
+/// Unix wall-clock milliseconds for operator timestamps and lifecycle sweeps.
 pub fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -29,5 +26,4 @@ pub fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-#[cfg(feature = "real-backends")]
-pub mod development;
+pub mod settings;

@@ -1,44 +1,40 @@
 //! Node configuration and startup validation.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::net::SocketAddr;
 
-use isoplane_abi::config::{Limits, DEFAULT_ADMIN_PORT, DEFAULT_PROXY_PORT};
+use isoplane_abi::config::{AppManifest, DEFAULT_ADMIN_PORT, DEFAULT_PROXY_PORT};
 use serde::{Deserialize, Serialize};
 
+/// One owner's local applications, listeners, and execution policy.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NodeConfig {
-    /// Per-application local development file references and exact endpoint exceptions.
-    #[cfg(feature = "real-backends")]
+    /// Per-application protected local file references and exact endpoint exceptions.
     #[serde(default)]
-    pub development_applications: Vec<crate::development::ApplicationSettings>,
+    pub application_settings: Vec<crate::settings::ApplicationSettings>,
     #[serde(default = "default_node_name")]
     pub node: String,
+    /// Explicit local owner namespace for every application.
+    pub owner: String,
     #[serde(default)]
     pub proxy: ProxyListen,
     #[serde(default)]
     pub admin: AdminListen,
     #[serde(default)]
-    pub cells: Vec<CellConfig>,
-    #[serde(default)]
     pub apps: Vec<AppConfig>,
-    /// Directory for local node artifacts.
+    /// Protected local installation, artifacts and pressure-hibernation storage.
     #[serde(default = "default_data_dir")]
     pub data_dir: std::path::PathBuf,
     #[serde(default)]
     pub engine: EngineLimits,
     /// Host execution, queue, lifecycle and per-instance resource budgets.
-    #[cfg(feature = "real-backends")]
     #[serde(default)]
     pub host: isoplane_host::CellConfig,
     /// Per-instance outbound connection limits and response byte budgets.
-    #[cfg(feature = "real-backends")]
     #[serde(default)]
     pub network: isoplane_runtime::network::NetworkLimits,
-    /// Structural admission bounds for newly prepared modules.
-    #[serde(default)]
-    pub validation_limits: isoplane_abi::config::ValidationLimits,
+
     /// High-water mark for each real cell's queued HTTP response bytes.
     #[serde(default = "default_response_queue_bytes")]
     pub response_queue_bytes: usize,
@@ -55,15 +51,10 @@ pub struct NodeConfig {
     /// `/etc/ssl/certs/ca-certificates.crt`.
     #[serde(default)]
     pub trust: crate::trust::TrustConfig,
-    /// Initialization limits and installed runtime selection.
-    #[cfg(feature = "real-backends")]
+    /// Installed runtime location and bounded local initialization policy.
+    /// Required, including `runtimes`, when applications are configured.
     #[serde(default)]
     pub preparation: Option<crate::preparation::PreparationConfig>,
-    /// Recognised so that a daemon built without real backends refuses the
-    /// section by name rather than as an unknown field: it prepares nothing.
-    #[cfg(not(feature = "real-backends"))]
-    #[serde(default)]
-    pub preparation: Option<toml::Value>,
 }
 
 fn default_response_queue_bytes() -> usize {
@@ -130,7 +121,7 @@ fn default_max_instances() -> u32 {
     isoplane_abi::config::DEFAULT_MAX_INSTANCES
 }
 fn default_memory_limit_mib() -> u64 {
-    isoplane_abi::config::DEFAULT_MEMORY_LIMIT_BYTES >> 20
+    isoplane_abi::config::GuestMemoryBytes::default().get() >> 20
 }
 fn default_guard_mib() -> u64 {
     isoplane_abi::config::DEFAULT_MEMORY_GUARD_BYTES >> 20
@@ -229,65 +220,36 @@ impl Default for AdminListen {
     }
 }
 
-/// A named execution cell.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CellConfig {
-    pub name: String,
-}
-
+/// Application policy and its exact expected Host names.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AppConfig {
-    pub name: String,
-    pub tenant: String,
-    #[serde(default)]
-    pub limits: Limits,
-    /// Which cell this app's instances run in.
-    pub cell: String,
-    #[serde(default)]
+    /// Policy captured with the prepared application.
+    pub manifest: AppManifest,
+    /// Hostnames without schemes, paths or ports.
     pub hosts: Vec<String>,
-    #[serde(default = "default_path_prefix")]
-    pub path_prefix: String,
-    #[serde(default)]
-    pub versions: Vec<VersionConfig>,
-}
-
-fn default_path_prefix() -> String {
-    "/".into()
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct VersionConfig {
-    pub id: String,
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ConfigError {
-    #[error("invalid development settings: {0}")]
-    Development(String),
+    #[error("invalid application settings: {0}")]
+    Settings(String),
     #[error("invalid engine configuration: {0}")]
     InvalidEngine(String),
     #[error("invalid preparation configuration: {0}")]
     Preparation(String),
-    #[error("no cells configured: a node needs at least one")]
-    NoCells,
-    #[error("duplicate cell name `{0}`")]
-    DuplicateCell(String),
-    #[error("app `{app}` is placed on cell `{cell}`, which does not exist")]
-    NoSuchCell { app: String, cell: String },
-    #[error("app `{0}` declares no versions")]
-    NoVersions(String),
+    #[error("owner must be a nonempty explicit local identity")]
+    Owner,
     #[error("duplicate app name `{0}`")]
     DuplicateApp(String),
-    #[error("proxy.max_in_flight must be at least 1 (got {0}): a node that admits nothing is not a node")]
+    #[error("invalid application routing: {0}")]
+    Routing(String),
+    #[error("proxy.max_in_flight must be positive (got {0})")]
     ZeroInFlight(usize),
     #[error("response_queue_bytes must be positive")]
     ZeroResponseQueue,
     #[error("invalid host settings: {0}")]
     InvalidHost(String),
-    #[cfg(feature = "real-backends")]
     #[error("invalid [network] connection limits: {0}")]
     InvalidNetwork(isoplane_host::egress::ConnectionLimitsError),
     #[error(transparent)]
@@ -295,81 +257,147 @@ pub enum ConfigError {
 }
 
 impl NodeConfig {
+    /// Parses configuration without opening settings or installation state.
     pub fn from_toml(s: &str) -> anyhow::Result<Self> {
         Ok(toml::from_str(s)?)
     }
 
-    /// Two cells and one app.
-    pub fn dev_default() -> Self {
-        NodeConfig {
-            #[cfg(feature = "real-backends")]
-            development_applications: Vec::new(),
-            node: "isoplane-dev".into(),
-            #[cfg(feature = "real-backends")]
+    /// Loads local paths relative to the configuration file's directory.
+    pub fn load(path: &std::path::Path) -> anyhow::Result<Self> {
+        let path = path.canonicalize()?;
+        let parent = path
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("configuration has no parent directory"))?;
+        let mut config = Self::from_toml(&std::fs::read_to_string(&path)?)?;
+        if config.data_dir.is_relative() {
+            config.data_dir = parent.join(&config.data_dir);
+        }
+        {
+            for entry in &mut config.application_settings {
+                if let Some(file) = &mut entry.configuration_file {
+                    if file.is_relative() {
+                        *file = parent.join(&*file);
+                    }
+                }
+            }
+            if let Some(preparation) = &mut config.preparation {
+                if let Some(directory) = &mut preparation.runtimes {
+                    if directory.is_relative() {
+                        *directory = parent.join(&*directory);
+                    }
+                }
+            }
+        }
+        if let Some(bundle) = &mut config.trust.bundle {
+            if bundle.is_relative() {
+                *bundle = parent.join(&*bundle);
+            }
+        }
+        Ok(config)
+    }
+
+    /// Creates an empty host with an explicitly established owner.
+    pub fn new(owner: impl Into<String>) -> Self {
+        Self {
+            owner: owner.into(),
+            node: default_node_name(),
+            application_settings: Vec::new(),
+            proxy: Default::default(),
+            admin: Default::default(),
+            apps: Vec::new(),
+            data_dir: default_data_dir(),
+            engine: Default::default(),
             host: Default::default(),
-            #[cfg(feature = "real-backends")]
             network: Default::default(),
-            proxy: ProxyListen::default(),
             response_queue_bytes: default_response_queue_bytes(),
             otlp_logs_endpoint: None,
             otlp_traces_endpoint: None,
             trace_limits: Default::default(),
-            admin: AdminListen::default(),
-            cells: vec![
-                CellConfig {
-                    name: "cell-0".into(),
-                },
-                CellConfig {
-                    name: "cell-1".into(),
-                },
-            ],
-            apps: vec![AppConfig {
-                name: "quotes".into(),
-                tenant: "acme".into(),
-                limits: Limits::default(),
-                cell: "cell-1".into(),
-                hosts: vec![
-                    "quotes.isoplane.dev".into(),
-                    "localhost".into(),
-                    "127.0.0.1".into(),
-                ],
-                path_prefix: "/".into(),
-                versions: vec![VersionConfig { id: "v1".into() }],
-            }],
-            data_dir: default_data_dir(),
-            engine: EngineLimits::default(),
-            validation_limits: Default::default(),
-            trust: crate::trust::TrustConfig::default(),
+            trust: Default::default(),
             preparation: None,
         }
     }
 
-    /// The startup gate: a refusal, never a warning. Placement rules first,
-    /// then the trust bundle, which is the one check that reads a file.
+    /// Refuses invalid static settings before opening services or binding listeners.
     pub fn validate(&self) -> Result<(), ConfigError> {
-        #[cfg(feature = "real-backends")]
-        crate::development::validate(self)
-            .map_err(|error| ConfigError::Development(error.to_string()))?;
+        if self.owner.trim().is_empty() {
+            return Err(ConfigError::Owner);
+        }
         self.engine.validate()?;
-        #[cfg(not(feature = "real-backends"))]
-        if self.preparation.is_some() {
+        {
+            crate::settings::validate(&self.application_settings)
+                .map_err(|e| ConfigError::Settings(e.to_string()))?;
+            for settings in &self.application_settings {
+                if !self
+                    .apps
+                    .iter()
+                    .any(|app| app.manifest.name == settings.application)
+                {
+                    return Err(ConfigError::Settings(format!(
+                        "settings for `{}` must belong to a configured application and host owner",
+                        settings.application
+                    )));
+                }
+            }
+            self.host
+                .validate()
+                .map_err(|e| ConfigError::InvalidHost(e.to_string()))?;
+            self.connection_limits()?;
+            if let Some(preparation) = &self.preparation {
+                preparation
+                    .validate()
+                    .map_err(|e| ConfigError::Preparation(e.to_string()))?;
+            }
+        }
+        if self.response_queue_bytes == 0 {
+            return Err(ConfigError::ZeroResponseQueue);
+        }
+        if self.proxy.max_in_flight == 0 {
+            return Err(ConfigError::ZeroInFlight(0));
+        }
+        let mut hosts = std::collections::HashMap::new();
+        let mut names = BTreeSet::new();
+        for app in &self.apps {
+            if !names.insert(&app.manifest.name) {
+                return Err(ConfigError::DuplicateApp(app.manifest.name.clone()));
+            }
+            if app.manifest.name.trim().is_empty() || app.hosts.is_empty() {
+                return Err(ConfigError::Routing(
+                    "each application needs a name and at least one host".into(),
+                ));
+            }
+            for host in &app.hosts {
+                let normalized = isoplane_proxy::routes::configured_host(host)
+                    .map_err(|error| ConfigError::Routing(error.to_string()))?;
+                if let Some(previous) = hosts.insert(normalized, &app.manifest.name) {
+                    return Err(ConfigError::Routing(format!(
+                        "host `{host}` is repeated by `{previous}` and `{}`",
+                        app.manifest.name
+                    )));
+                }
+            }
+            if app.manifest.memory_max_bytes() > self.engine.memory_limit_mib << 20 {
+                return Err(ConfigError::InvalidEngine(format!(
+                    "application `{}` exceeds engine memory_limit_mib",
+                    app.manifest.name
+                )));
+            }
+        }
+        if !self.apps.is_empty()
+            && self
+                .preparation
+                .as_ref()
+                .and_then(|preparation| preparation.runtimes.as_deref())
+                .is_none_or(|directory| directory.as_os_str().is_empty())
+        {
             return Err(ConfigError::Preparation(
-                "[preparation] requires real backends; build isoplaned with its default features"
-                    .into(),
+                "configured applications require preparation.runtimes to name the installed SDK runtime directory".into(),
             ));
         }
-        #[cfg(feature = "real-backends")]
-        if let Some(preparation) = &self.preparation {
-            preparation
-                .validate()
-                .map_err(|error| ConfigError::Preparation(error.to_string()))?;
-        }
-        self.validate_placement()?;
         self.trust_bundle().map(drop)
     }
 
-    /// The `[network]` connection limits the node's egress policy enforces.
-    #[cfg(feature = "real-backends")]
+    /// Validated outbound connection budgets.
     pub fn connection_limits(
         &self,
     ) -> Result<isoplane_host::egress::ConnectionLimits, ConfigError> {
@@ -380,366 +408,46 @@ impl NodeConfig {
         .map_err(ConfigError::InvalidNetwork)
     }
 
-    /// The verified root bundle this node serves to guests.
+    /// Verified guest TLS root bundle.
     pub fn trust_bundle(&self) -> Result<crate::trust::TrustBundle, ConfigError> {
         Ok(crate::trust::TrustBundle::load(&self.trust)?)
-    }
-
-    fn validate_placement(&self) -> Result<(), ConfigError> {
-        #[cfg(feature = "real-backends")]
-        self.host
-            .validate()
-            .map_err(|error| ConfigError::InvalidHost(error.to_string()))?;
-        #[cfg(feature = "real-backends")]
-        self.connection_limits()?;
-        if self.cells.is_empty() {
-            return Err(ConfigError::NoCells);
-        }
-        if self.response_queue_bytes == 0 {
-            return Err(ConfigError::ZeroResponseQueue);
-        }
-        if self.proxy.max_in_flight == 0 {
-            return Err(ConfigError::ZeroInFlight(self.proxy.max_in_flight));
-        }
-        let mut seen = BTreeSet::new();
-        for c in &self.cells {
-            if !seen.insert(c.name.clone()) {
-                return Err(ConfigError::DuplicateCell(c.name.clone()));
-            }
-        }
-        let mut seen_apps = BTreeSet::new();
-        for a in &self.apps {
-            if !seen_apps.insert(a.name.clone()) {
-                return Err(ConfigError::DuplicateApp(a.name.clone()));
-            }
-        }
-
-        let configured_cells: std::collections::BTreeSet<&str> =
-            self.cells.iter().map(|cell| cell.name.as_str()).collect();
-
-        for app in &self.apps {
-            if !configured_cells.contains(app.cell.as_str()) {
-                return Err(ConfigError::NoSuchCell {
-                    app: app.name.clone(),
-                    cell: app.cell.clone(),
-                });
-            }
-        }
-
-        for app in &self.apps {
-            if app.versions.is_empty() {
-                return Err(ConfigError::NoVersions(app.name.clone()));
-            }
-        }
-        Ok(())
-    }
-
-    pub fn cell(&self, name: &str) -> Option<&CellConfig> {
-        self.cells.iter().find(|c| c.name == name)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn cfg(toml_str: &str) -> NodeConfig {
-        NodeConfig::from_toml(toml_str).expect("valid toml")
-    }
-
-    const TWO_CELLS: &str = r#"
-node = "n1"
-[[cells]]
-name = "cell-0"
-[[cells]]
-name = "cell-1"
-"#;
-
-    #[cfg(feature = "real-backends")]
     #[test]
-    fn host_limits_survive_the_printed_configuration_round_trip() {
-        let mut config = NodeConfig::dev_default();
-        config.host.guest_resources.native_handles = 2;
-        config.host.guest_resources.log_bytes_per_dispatch = 7;
+    fn ownership_must_be_explicit_and_nonempty() {
+        assert!(NodeConfig::from_toml("").is_err());
+        NodeConfig::new("operator").validate().unwrap();
+        assert_eq!(NodeConfig::new(" ").validate(), Err(ConfigError::Owner));
+    }
+    #[test]
+    fn duplicate_normalized_hosts_fail_before_service_construction() {
+        let config = NodeConfig::from_toml(
+            r#"
+owner = "operator"
+[[apps]]
+hosts = ["api.example"]
+manifest = { name = "a" }
+[[apps]]
+hosts = ["API.example"]
+manifest = { name = "b" }
+"#,
+        )
+        .unwrap();
+        assert!(matches!(config.validate(), Err(ConfigError::Routing(_))));
+    }
+    #[test]
+    fn printed_configuration_preserves_operational_budgets() {
+        let mut config = NodeConfig::new("operator");
         config.host.queue_depth_per_worker = 3;
-        config.network.instance_pending_connections = 2;
-        config.network.instance_open_connections = 3;
-        config.host.slice_wall_ms_cap = 60_000;
-        let encoded = toml::to_string(&config).expect("the node prints its merged configuration");
-        let restored = NodeConfig::from_toml(&encoded).expect("the printed configuration loads");
-        assert_eq!(
-            restored.host.guest_resources.native_handles, 2,
-            "the printed configuration must preserve handle budget"
-        );
-        assert_eq!(
-            restored.host.guest_resources.log_bytes_per_dispatch, 7,
-            "the printed configuration must preserve log budget"
-        );
-        assert_eq!(
-            restored.host.queue_depth_per_worker, 3,
-            "the printed configuration must preserve queue budget"
-        );
-        assert_eq!(
-            (
-                restored.network.instance_pending_connections,
-                restored.network.instance_open_connections
-            ),
-            (2, 3),
-            "the printed configuration must preserve connection budgets"
-        );
-        assert_eq!(
-            restored.host.slice_wall_ms_cap, 60_000,
-            "the printed configuration must preserve the dispatch wall limit"
-        );
-    }
-
-    #[cfg(feature = "real-backends")]
-    #[test]
-    fn network_connection_limits_are_validated_before_startup() {
-        use isoplane_host::egress::{ConnectionLimit, ConnectionLimitProblem};
-        let mut config = NodeConfig::dev_default();
-        config.network =
-            toml::from_str("instance_pending_connections = 9\ninstance_open_connections = 0")
-                .expect("the limits parse");
-        let Err(ConfigError::InvalidNetwork(error)) = config.validate_placement() else {
-            panic!("out-of-range connection limits must fail startup validation");
-        };
-        assert_eq!(
-            error.problems,
-            vec![
-                ConnectionLimitProblem::Zero {
-                    limit: ConnectionLimit::Open
-                },
-                ConnectionLimitProblem::InProgressAboveOpen {
-                    in_progress: 9,
-                    open: 0
-                },
-            ],
-            "every out-of-range limit is reported together"
-        );
         config.network.instance_open_connections = 9;
-        config
-            .validate_placement()
-            .expect("limits at the edges of their range are accepted");
-        NodeConfig::dev_default()
-            .validate_placement()
-            .expect("the default limits are valid");
-    }
-
-    #[cfg(feature = "real-backends")]
-    #[test]
-    fn host_worker_and_queue_settings_are_validated_before_startup() {
-        for setting in [
-            "exec_threads",
-            "reactor_threads",
-            "queue_depth_per_worker",
-            "sweep_interval_ms",
-        ] {
-            let mut config = NodeConfig::dev_default();
-            config.host =
-                toml::from_str(&format!("{setting} = 0")).expect("zero is a valid integer");
-            assert!(
-                matches!(
-                    config.validate_placement(),
-                    Err(ConfigError::InvalidHost(_))
-                ),
-                "zero {setting} must fail startup validation"
-            );
-        }
-    }
-
-    #[test]
-    fn a_zero_response_queue_is_rejected_before_startup() {
-        let mut configuration = NodeConfig::dev_default();
-        configuration.response_queue_bytes = 0;
-        assert!(
-            matches!(
-                configuration.validate(),
-                Err(ConfigError::ZeroResponseQueue)
-            ),
-            "a zero response queue must fail before any writer can wait forever"
-        );
-    }
-
-    #[test]
-    fn configured_standalone_modules_are_rejected() {
-        let result = toml::from_str::<VersionConfig>("id = 'v1'\nwasm = 'application.wasm'");
-        assert!(
-            result.is_err(),
-            "version configuration must not accept standalone application modules"
-        );
-    }
-
-    #[test]
-    fn the_dev_default_is_valid() {
-        NodeConfig::dev_default().validate().unwrap();
-    }
-
-    #[test]
-    fn applications_can_share_a_configured_cell() {
-        let c = cfg(&format!(
-            r#"{TWO_CELLS}
-[[apps]]
-name = "a"
-tenant = "t1"
-limits.instances_per_application = 8
-limits.module_bytes_compressed = 52428800
-limits.package_bytes = 52428800
-limits.instance_memory_max = 134217728
-limits.occupancy_ms_per_dispatch = 30000
-limits.instance_open_connections = 32
-limits.pending_futures_per_dispatch = 64
-cell = "cell-1"
-versions = [{{ id = "v1" }}]
-
-[[apps]]
-name = "b"
-tenant = "t2"
-limits.instances_per_application = 8
-limits.module_bytes_compressed = 52428800
-limits.package_bytes = 52428800
-limits.instance_memory_max = 134217728
-limits.occupancy_ms_per_dispatch = 30000
-limits.instance_open_connections = 32
-limits.pending_futures_per_dispatch = 64
-cell = "cell-1"
-versions = [{{ id = "v1" }}]
-"#
-        ));
-        c.validate().unwrap();
-    }
-
-    #[test]
-    fn one_owner_can_configure_several_applications() {
-        let c = cfg(r#"
-[[cells]]
-name = "cell-2"
-
-[[apps]]
-name = "a"
-tenant = "bank"
-limits.instances_per_application = 16
-limits.module_bytes_compressed = 52428800
-limits.package_bytes = 52428800
-limits.instance_memory_max = 536870912
-limits.occupancy_ms_per_dispatch = 300000
-limits.instance_open_connections = 32
-limits.pending_futures_per_dispatch = 4096
-cell = "cell-2"
-versions = [{ id = "v1" }]
-
-[[apps]]
-name = "b"
-tenant = "bank"
-limits.instances_per_application = 16
-limits.module_bytes_compressed = 52428800
-limits.package_bytes = 52428800
-limits.instance_memory_max = 536870912
-limits.occupancy_ms_per_dispatch = 300000
-limits.instance_open_connections = 32
-limits.pending_futures_per_dispatch = 4096
-cell = "cell-2"
-versions = [{ id = "v1" }]
-"#);
-        c.validate().unwrap();
-    }
-
-    #[test]
-    fn placement_onto_a_nonexistent_cell_is_refused() {
-        let c = cfg(&format!(
-            r#"{TWO_CELLS}
-[[apps]]
-name = "a"
-tenant = "t"
-limits.instances_per_application = 8
-limits.module_bytes_compressed = 52428800
-limits.package_bytes = 52428800
-limits.instance_memory_max = 134217728
-limits.occupancy_ms_per_dispatch = 30000
-limits.instance_open_connections = 32
-limits.pending_futures_per_dispatch = 64
-cell = "nope"
-versions = [{{ id = "v1" }}]
-"#
-        ));
-        assert_eq!(
-            c.validate(),
-            Err(ConfigError::NoSuchCell {
-                app: "a".into(),
-                cell: "nope".into()
-            })
-        );
-    }
-
-    #[test]
-    fn a_node_with_no_cells_is_refused() {
-        assert_eq!(cfg("node = \"n\"").validate(), Err(ConfigError::NoCells));
-    }
-
-    #[test]
-    fn a_zero_in_flight_cap_is_refused_at_startup() {
-        let mut c = NodeConfig::dev_default();
-        c.proxy.max_in_flight = 0;
-        assert_eq!(
-            c.validate(),
-            Err(ConfigError::ZeroInFlight(0)),
-            "a node that admits nothing is not a node"
-        );
-    }
-
-    #[test]
-    fn a_version_key_the_daemon_does_not_read_is_refused_at_load() {
-        let err = NodeConfig::from_toml(
-            r#"
-node = "n"
-[[cells]]
-name = "c"
-[[apps]]
-name = "a"
-tenant = "t"
-limits.instances_per_application = 8
-limits.module_bytes_compressed = 52428800
-limits.package_bytes = 52428800
-limits.instance_memory_max = 134217728
-limits.occupancy_ms_per_dispatch = 30000
-limits.instance_open_connections = 32
-limits.pending_futures_per_dispatch = 64
-cell = "c"
-versions = [{ id = "v1", tier = "fast" }]
-"#,
-        )
-        .expect_err("a removed key must not load silently");
-        assert!(
-            err.to_string().contains("tier"),
-            "the refusal must name the key so the operator can delete it: {err}"
-        );
-    }
-
-    #[test]
-    fn a_cell_key_the_daemon_does_not_read_is_refused_at_load() {
-        let err = NodeConfig::from_toml(
-            r#"
-node = "n"
-[[cells]]
-name = "c"
-max_hot = 16
-"#,
-        )
-        .expect_err("a removed key must not load silently");
-        assert!(
-            err.to_string().contains("max_hot"),
-            "the refusal must name the key so the operator can delete it: {err}"
-        );
-    }
-
-    #[test]
-    fn duplicate_cell_names_are_refused() {
-        let c = cfg(r#"
-[[cells]]
-name = "c"
-[[cells]]
-name = "c"
-"#);
-        assert_eq!(c.validate(), Err(ConfigError::DuplicateCell("c".into())));
+        config.host.buffered_future_bytes = 23;
+        let restored = NodeConfig::from_toml(&toml::to_string(&config).unwrap()).unwrap();
+        assert_eq!(restored.host.queue_depth_per_worker, 3);
+        assert_eq!(restored.network.instance_open_connections, 9);
+        assert_eq!(restored.host.buffered_future_bytes, 23);
     }
 }

@@ -135,7 +135,7 @@ fn a_deferred_unit_is_skipped_at_init_and_runs_on_first_touch() {
 /// activation. The blob is tenant-authored deploy input, so parsing it inside
 /// an init unit is safe to pre-run and the *parsed* result is what lands in the
 /// template. This drives the real probe-then-fill idiom against a host stub
-/// that mirrors `isoplane_control::preinit`.
+/// that mirrors `isoplane_prepare::preinit`.
 #[cfg(feature = "json")]
 #[test]
 fn config_is_readable_at_init_and_only_at_init() {

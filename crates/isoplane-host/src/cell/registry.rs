@@ -15,14 +15,12 @@ pub(super) struct ModuleEntry {
     /// may join; pruned as they are found to have none.
     pub(super) shared: Mutex<Vec<Weak<Slot>>>,
     pub(super) tenant: String,
-    pub(super) limits: Limits,
     pub(super) debug_occupancy_ms: Option<u32>,
     pub(super) manifest: AppManifest,
     pub(super) activator: Arc<dyn Activator>,
     pub(super) pool: InstancePool,
     pub(super) meters: Arc<Meters>,
     pub(super) endpoint_exceptions: Arc<[std::net::SocketAddr]>,
-    // Fields drop in declaration order; retain admission through pool cleanup.
 }
 
 /// The cell's bookkeeping for one resident instance.
@@ -380,7 +378,6 @@ impl Cell {
             !tenant.trim().is_empty(),
             "module registration requires tenant identity"
         );
-        let limits = manifest.limits;
         let module = activator.module().clone();
         let instances = {
             let mut applications = self.applications.lock();
@@ -401,7 +398,6 @@ impl Cell {
             instances,
             shared: Mutex::new(Vec::new()),
             tenant: tenant.to_string(),
-            limits,
             debug_occupancy_ms,
             manifest,
             pool: InstancePool::new(
@@ -452,13 +448,12 @@ impl Cell {
             Tenancy {
                 module: entry.activator.module().clone(),
                 tenant: entry.tenant.clone(),
-                limits: entry.limits,
+                limits: entry.manifest.effective_limits(),
                 allowlist: entry.manifest.bindings.fetch_allowlist.clone(),
             },
             entry.meters.clone(),
             Some(self.rt.clone()),
         );
-        context.limits = entry.manifest.effective_limits();
         context.endpoint_exceptions = entry.endpoint_exceptions.clone();
         context.configure_resources(self.cfg.guest_resources);
         Arc::new(context)
@@ -590,98 +585,33 @@ mod tests {
     use crate::cell::pool::cell_tests::{cell, http, manifest};
     use crate::fakes::{FakeActivator, FakeBehaviour};
 
-    struct MappingActivator {
-        inner: FakeActivator,
-        entered: std::sync::mpsc::Sender<()>,
-        release: Mutex<std::sync::mpsc::Receiver<()>>,
-        fail: bool,
-    }
-
-    impl Activator for MappingActivator {
-        fn map_activation(
-            &self,
-            _: isoplane_abi::config::GuestMemoryBytes,
-        ) -> anyhow::Result<Option<Box<dyn isoplane_engine::DormantInstance>>> {
-            self.entered.send(())?;
-            self.release.lock().recv_timeout(Duration::from_secs(10))?;
-            anyhow::ensure!(!self.fail, "preparation failed");
-            Ok(None)
-        }
-
-        fn module(&self) -> &ModuleId {
-            self.inner.module()
-        }
-
-        fn module_hash(&self) -> isoplane_engine::ModuleHash {
-            self.inner.module_hash()
-        }
-
-        fn abi_rev(&self) -> u32 {
-            self.inner.abi_rev()
-        }
-
-        fn snapshot_size_bound(&self, max_memory_bytes: u64) -> anyhow::Result<u64> {
-            self.inner.snapshot_size_bound(max_memory_bytes)
-        }
-
-        fn template_image(&self) -> Arc<isoplane_engine::MemoryImage> {
-            self.inner.template_image()
-        }
-
-        fn activate(
-            &self,
-            bindings: Box<dyn isoplane_engine::HostBindings>,
-        ) -> anyhow::Result<Box<dyn isoplane_engine::InstanceOps + Send>> {
-            self.inner.activate(bindings)
-        }
-    }
-
-    fn registration_cell() -> Arc<Cell> {
-        Cell::build(
+    #[test]
+    fn replacing_a_registered_module_discards_its_previous_idle_guests() {
+        let snapshots = tempfile::tempdir().expect("snapshot directory");
+        let cell = Cell::build(
             CellConfig {
                 exec_threads: 1,
-                ..CellConfig::for_test("dedicated-admission")
+                ..CellConfig::for_test("replacement")
             },
             crate::cell::pool::cell_tests::services(),
             Arc::new(
-                isoplane_hibernate::snapshot::LocalSnapshotStorage::new(std::env::temp_dir())
+                isoplane_hibernate::snapshot::LocalSnapshotStorage::new(snapshots.path())
                     .expect("snapshot storage"),
             ),
         )
-        .expect("cell without workers")
-    }
-
-    fn large_budget_manifest(app: &str) -> AppManifest {
-        AppManifest {
-            limits: Limits {
-                instances_per_application: 16,
-                module_bytes_compressed: 52428800,
-                package_bytes: 52428800,
-                instance_memory_max: 536870912,
-                occupancy_ms_per_dispatch: 300000,
-                instance_open_connections: 32,
-                pending_futures_per_dispatch: 4096,
-            },
-            ..manifest(app)
-        }
-    }
-
-    fn register_test_module(cell: &Arc<Cell>, tenant: &str, app: &str) -> crate::Result<()> {
-        cell.register_module(
-            tenant,
-            Arc::new(FakeActivator::named(
-                ModuleId::new(app, "v1"),
-                FakeBehaviour::done(),
-            )),
-            large_budget_manifest(app),
-        )
-    }
-
-    #[test]
-    fn replacing_a_registered_module_discards_its_previous_idle_guests() {
-        let cell = registration_cell();
+        .expect("cell without workers");
+        let register = |tenant: &str, app: &str| {
+            cell.register_module(
+                tenant,
+                Arc::new(FakeActivator::named(
+                    ModuleId::new(app, "v1"),
+                    FakeBehaviour::done(),
+                )),
+                manifest(app),
+            )
+        };
         let module = ModuleId::new("replaced", "v1");
-        register_test_module(&cell, "first", "replaced").expect("first registration");
+        register("first", "replaced").expect("first registration");
         let response = cell
             .submit(&module, Target::Handler { route: "/".into() }, http(1))
             .expect("request");
@@ -695,14 +625,14 @@ mod tests {
             .slot(response.try_recv().expect("response").instance)
             .expect("idle guest");
         assert_eq!(slot.state(), LifecycleTier::Parked);
-        register_test_module(&cell, "first", "replaced").expect("replacement registration");
+        register("first", "replaced").expect("replacement registration");
         assert_eq!(
             slot.state(),
             LifecycleTier::Discarded,
             "replacement retires the old pool"
         );
         assert!(cell.retire_module(&module));
-        register_test_module(&cell, "second", "second").expect("discarded guests release capacity");
+        register("second", "second").expect("discarded guests release capacity");
         cell.shutdown();
     }
 

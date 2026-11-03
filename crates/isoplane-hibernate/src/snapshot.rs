@@ -1,5 +1,5 @@
-//! Owned local storage for same-process suspension. Reservations never enter
-//! the expiring or regional spool and remain allocated until their owner drops.
+//! Owned local storage for same-process suspension. Reservations remain
+//! allocated until their owner drops.
 
 use std::fs::File;
 use std::io::{self, IoSlice, IoSliceMut, Read, Seek, SeekFrom, Write};

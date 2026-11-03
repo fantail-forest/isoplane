@@ -12,5 +12,7 @@ install -d -o isoplane -g isoplane -m 0700 /var/lib/isoplane
 install -d -o root -g isoplane -m 0750 /etc/isoplane
 install -m 0644 isoplaned.service /etc/systemd/system/isoplaned.service
 ln -sfn "$release" /opt/isoplane/current
+install -d -m 0755 /usr/local/bin
+ln -sfn /opt/isoplane/current/isoplaned /usr/local/bin/isoplaned
 systemctl daemon-reload
 systemctl enable isoplaned.service

@@ -10,6 +10,8 @@ public sealed class CompletionTests
     [Theory]
     [InlineData("isoplane de", "dev")]
     [InlineData("isoplane bu", "bundle")]
+    [InlineData("isoplane da", "daemon")]
+    [InlineData("isoplane deploy --lo", "--local")]
     [InlineData("isoplane bundle --out", "--output")]
     [InlineData("isoplane dev --no-w", "--no-watch")]
     [InlineData("isoplane dev --launch-", "--launch-profile")]

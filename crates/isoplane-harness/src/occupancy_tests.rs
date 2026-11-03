@@ -1,4 +1,5 @@
 use super::*;
+
 use isoplane_abi::status::PollStatus;
 use isoplane_engine::ExecutionLimit;
 
@@ -22,7 +23,7 @@ fn ready(reactor: &Reactor) {
             reactor.context.instance,
             reactor.context.dispatch_id(),
             "sleep",
-            GUEST_LIMITS.pending_futures_per_dispatch,
+            isoplane_abi::config::Limits::default().pending_futures_per_dispatch,
         )
         .expect("allocate the controlled completion");
     reactor

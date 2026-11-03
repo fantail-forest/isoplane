@@ -21,6 +21,8 @@ The commands of the `isoplane` CLI, with the arguments and options of each. They
 | [`isoplane doctor`](cli/doctor.md) | Check this machine's .NET SDK, native library and templates. |
 | [`isoplane agent`](cli/agent.md) :since[next] | Connect a coding agent to this machine's Isoplane tools. |
 | [`isoplane bundle`](cli/bundle.md) :since[next] | Build a managed application archive. |
+| [`isoplane daemon`](cli/daemon.md) :since[next] | Run the local multi-application host in the foreground. Requires isoplaned on PATH. |
+| [`isoplane deploy`](cli/deploy.md) :since[next] | Prepare a bundle on this machine and select it for the next daemon start. Requires isoplaned on PATH. |
 | [`isoplane telemetry`](cli/telemetry.md) | Manage anonymous usage data. ISOPLANE_TELEMETRY_OPTOUT=1 or DO_NOT_TRACK=1 also disables it; ISOPLANE_TELEMETRY_DEBUG=1 prints events without sending them. |
 | [`isoplane completions`](cli/completions.md) | Print a shell completion script. See the installation guide for shell setup. |
 

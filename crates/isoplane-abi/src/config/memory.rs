@@ -17,6 +17,12 @@ pub struct GuestMemoryBytes(u64);
     maximum_bytes = WASM32_MEMORY_MAX_BYTES)]
 pub struct InvalidGuestMemory;
 
+impl Default for GuestMemoryBytes {
+    fn default() -> Self {
+        Self(512 << 20)
+    }
+}
+
 impl GuestMemoryBytes {
     /// The complete wasm32 address range, independent of an application's allowance.
     pub const WASM32_MAX: Self = Self(WASM32_MEMORY_MAX_BYTES);

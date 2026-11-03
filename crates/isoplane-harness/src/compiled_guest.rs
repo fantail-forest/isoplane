@@ -74,8 +74,10 @@ pub fn engine_configuration(files: PlatformFiles) -> EngineConfig {
     };
     assert_eq!(
         config.max_memory_bytes,
-        isoplane_abi::config::memory_ceiling_bytes(crate::GUEST_LIMITS.instance_memory_max),
-        "returned guests' engine holds their plan's memory ceiling"
+        isoplane_abi::config::memory_ceiling_bytes(
+            isoplane_abi::config::DEFAULT_MEMORY_LIMIT_BYTES
+        ),
+        "returned guests' engine holds their application's memory ceiling"
     );
     config
 }
@@ -93,6 +95,17 @@ pub(super) fn engine_serving(module: &[u8], files: PlatformFiles) -> (IsoplaneEn
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn fixture_tenancy_and_prepared_engine_share_the_memory_budget() {
+        let reactor = crate::Reactor::new(isoplane_host::InstanceId(1));
+        let engine = super::engine_configuration(Default::default());
+        assert_eq!(
+            isoplane_abi::config::memory_ceiling_bytes(reactor.context.limits.instance_memory_max),
+            engine.max_memory_bytes,
+            "fixture tenancy must fit the engine profile Task compiled"
+        );
+    }
+
     use super::*;
     use isoplane_engine::{HostBindings, ImportCall, InstanceOps};
     use std::sync::atomic::{AtomicUsize, Ordering};

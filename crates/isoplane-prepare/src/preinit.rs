@@ -1,8 +1,8 @@
-//! Local portable initialization through the worker execution engine.
+//! Portable SDK initialization through the shared execution engine.
 
 use crate::{BuildRequest, Initialization, PrepareError, RuntimeProfile};
 use isoplane_abi::{
-    config::{GuestMemoryBytes, InitSandbox, Limits},
+    config::{GuestMemoryBytes, InitSandbox},
     imports,
 };
 use isoplane_engine::{EngineConfig, IsoplaneEngine, ModuleHash, PlatformFiles};
@@ -16,7 +16,7 @@ pub const DEFAULT_INITIALIZATION_PASSES: u32 = 16;
 /// Default retained initialization log bytes.
 pub const DEFAULT_INITIALIZATION_LOG_BYTES: usize = 64 * 1024;
 
-/// Configures local initialization; hosted callers select an isolated Preparation provider.
+/// Configures portable initialization for local SDK consumers.
 #[derive(Default)]
 pub struct PreInitializer {
     pal: InitSandbox,
@@ -154,7 +154,10 @@ impl PreInitializer {
         if !has_initializer {
             return Err(PreInitError::NoInitFunc(imports::exports::INITIALIZE));
         }
-        let limit = self.memory_limit.map_or(536870912, GuestMemoryBytes::get);
+        let limit = self.memory_limit.map_or(
+            isoplane_abi::config::Limits::default().instance_memory_max,
+            GuestMemoryBytes::get,
+        );
         let declaration_limit = self
             .runtime
             .declared_memory_ceiling(self.memory_limit)
@@ -203,18 +206,9 @@ impl PreInitializer {
                 engine: configuration,
                 application_files: PlatformFiles::default(),
                 runtime: self.runtime.clone(),
-                limits: Limits {
-                    instances_per_application: 16,
-                    module_bytes_compressed: 52428800,
-                    package_bytes: 52428800,
-                    instance_memory_max: 536870912,
-                    occupancy_ms_per_dispatch: 300000,
-                    instance_open_connections: 32,
-                    pending_futures_per_dispatch: 4096,
-                },
+                memory_limit: self.memory_limit.unwrap_or_default(),
                 initialization: request,
                 input_hash: req.module_hash.0,
-                portable_template: crate::PortableTemplate::Returned,
             }
             .identity()
             .map_err(|error| PreInitError::Trapped(error.into()))?

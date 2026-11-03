@@ -55,7 +55,7 @@ async fn request(runtime: GuestRuntime, reactor: &Reactor, path: &str) -> String
         "the managed protocol must start real asynchronous socket I/O; logs: {:?}",
         reactor.context.emitted_logs()
     );
-    let answer = guest.finish(reactor, 64).await;
+    let answer = guest.finish_through_deltas(reactor, 64).await;
     admitted::released(reactor).await;
     answer
 }
@@ -153,14 +153,14 @@ in_mono_runtime! {
     }
 
     #[tokio::test]
-    async fn a_websocket_text_message_and_close_survive_each_store_restoration_delta(runtime: GuestRuntime) {
+    async fn a_websocket_text_message_and_close_survive_each_hibernation_delta(runtime: GuestRuntime) {
         let (answer, peer) = exchange(runtime, "ws-text").await;
         assert_eq!(answer, "echo and close", "ClientWebSocket must send fragmented text and receive its complete echo across restored Stores");
         assert!(peer.observed_close(), "the guest must perform the WebSocket close handshake before completing");
     }
 
     #[tokio::test]
-    async fn a_secure_websocket_uses_normal_tls_validation_across_store_restoration(runtime: GuestRuntime) {
+    async fn a_secure_websocket_uses_normal_tls_validation_across_hibernation(runtime: GuestRuntime) {
         let (answer, peer) = exchange(runtime, "ws-secure").await;
         assert_eq!(answer, "echo and close", "ClientWebSocket must validate the configured trust root and hostname before exchanging messages through TLS");
         assert!(peer.observed_close(), "the TLS connection must carry the WebSocket close handshake");
@@ -174,7 +174,7 @@ in_mono_runtime! {
     }
 
     #[tokio::test]
-    async fn a_websocket_binary_message_survives_each_store_restoration_delta(runtime: GuestRuntime) {
+    async fn a_websocket_binary_message_survives_each_hibernation_delta(runtime: GuestRuntime) {
         let (answer, peer) = exchange(runtime, "ws-binary").await;
         assert_eq!(answer, "echo and close", "ClientWebSocket must preserve binary message type and bytes across restored Stores");
         assert!(peer.observed_close(), "the binary exchange must end with a close handshake");

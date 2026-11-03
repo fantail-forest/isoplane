@@ -2,7 +2,6 @@
 
 mod common;
 
-use isoplane_abi::config::Limits;
 use isoplane_abi::dispatch::HttpRequest;
 use isoplane_abi::result::{FutureError, ResultRecord, WakeRecord};
 use isoplane_engine::{Completion, EngineConfig, IsoplaneEngine};
@@ -73,12 +72,8 @@ fn request_body_reads_reject_zero_and_negative_sizes_through_the_real_import() {
             activator.template().imports("isoplane", "req_body_read"),
             "the compiled import must advertise upload delivery capability"
         );
-        cell.register_module(
-            "owner",
-            activator,
-            common::manifest("read-size", Limits::default()),
-        )
-        .expect("register hostile read guest");
+        cell.register_module("owner", activator, common::manifest("read-size"))
+            .expect("register hostile read guest");
         let result = cell
             .dispatch_blocking(
                 &module,
@@ -141,12 +136,8 @@ fn response_cell(imports: &str, before_response: &str) -> Arc<isoplane_host::Cel
     let activator =
         Arc::new(EngineActivator::load(engine, module, &wasm).expect("upload-aware guest"));
     let (cell, _) = common::rig_resolving(CellConfig::for_test("early-upload"), "93.184.216.34:80");
-    cell.register_module(
-        "owner",
-        activator,
-        common::manifest("early-upload", Limits::default()),
-    )
-    .expect("register early response guest");
+    cell.register_module("owner", activator, common::manifest("early-upload"))
+        .expect("register early response guest");
     cell
 }
 
@@ -164,7 +155,6 @@ async fn an_early_response_releases_the_unread_upload_at_dispatch_settlement() {
                 app: "early-upload".into(),
                 version: "v1".into(),
                 tenant: "owner".into(),
-
                 tier: CodeTier::Fast,
             },
             HttpUpload {
@@ -245,7 +235,6 @@ async fn a_guest_without_upload_imports_receives_the_complete_inline_body() {
                 app: "early-upload".into(),
                 version: "v1".into(),
                 tenant: "owner".into(),
-
                 tier: CodeTier::Fast,
             },
             HttpUpload {
@@ -296,7 +285,6 @@ async fn a_metadata_only_guest_distinguishes_unknown_length_empty_uploads_from_b
                     app: "early-upload".into(),
                     version: "v1".into(),
                     tenant: "owner".into(),
-
                     tier: CodeTier::Fast,
                 },
                 HttpUpload {

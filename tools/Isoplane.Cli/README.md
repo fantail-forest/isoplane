@@ -4,7 +4,7 @@ The package includes the managed CLI and `isoplane-native` support library.
 Native code validates modules and runs local dev/debug sessions through the host;
 project discovery, builds, watching and output are managed.
 Application builds use the .NET SDK and restore the shared WASM runtime from NuGet.
-Node operators use the daemon's HTTP administration API.
+The local host commands require the separately installed `isoplaned` executable on PATH.
 
 The .NET tool owns publication and source watching; its bundled native runtime
 validates, prepares and executes WASM. Release builds share Linux-built managed assemblies and attach native support
@@ -63,7 +63,7 @@ when its caller closes stdin; interactive sessions retain normal Ctrl+C behavior
 SDK. Debug and Release select managed compilation settings. The archive contains
 application assemblies, their managed dependencies and available portable symbols;
 embedded resources and generated application code remain in those assemblies.
-Runtime exports and platform implementation assemblies are supplied by the server.
+Runtime exports and platform implementation assemblies come from the host's matching runtime installation.
 Copied content assets and
 satellite assemblies retain their output paths in the archive.
 

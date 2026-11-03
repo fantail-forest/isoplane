@@ -8,7 +8,7 @@
 //! | `/cooperative` | the same loop in chunks, awaiting between them | **clean** kill inside grace: `Drop` runs, slot reusable |
 //! | `/gc_pin` | spins with the *unsafe-to-trap* bit pinned | **hard** kill at B+G anyway — a pinned bit buys exactly G |
 //! | `/sync_over_async` | polls a host future in a loop without returning | **can never** be woken, so it dies at the cap |
-//! | `/alloc_bomb` | grows memory past the plan ceiling | allocation fails -> trap (the plan ceiling, and validator rule V3) |
+//! | `/alloc_bomb` | grows memory past the configured memory ceiling | allocation fails -> trap (the configured memory ceiling, and validator rule V3) |
 //! | `/trap` | explicit `unreachable` | trapped; instance discarded, never retried on the same memory |
 //! | `/ok` | returns 200 | the control: the module itself is fine |
 //!
@@ -78,7 +78,7 @@ fn sync_over_async() -> ! {
     }
 }
 
-/// Grow linear memory until the plan ceiling refuses (`instance_memory_max`,
+/// Grow linear memory until the configured memory ceiling refuses (`instance_memory_max`,
 /// and V3 caps the declared maximum at deploy time).
 /// The allocation failure becomes an abort, which is a wasm trap.
 fn alloc_bomb(mb: usize) -> ! {

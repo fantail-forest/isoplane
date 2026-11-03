@@ -6,15 +6,16 @@ We bound what one instance and one
 [dispatch](dotnet-runtime-differences.md#dispatches-and-slices) can use, so
 that no neighbour on the same hardware can take resources from your
 application, and so that one runaway request can't take down the rest of it.
-A typical request stays well inside every limit on this page.
+The table shows defaults; local development settings and host application
+configuration can override resource budgets.
 
 :::note[Preliminary limits]
-The limits listed on this page are preliminary and may change in later releases.
+These defaults match the preview SDK. They may change in later releases.
 :::
 
 ## The limits {#local-defaults}
 
-| Limit | Applies to | Current limit | At the limit |
+| Limit | Applies to | Default limit | At the limit |
 | --- | --- | --- | --- |
 | Live instances | Application | 16 | A request that needs a new instance gets `503` with `Retry-After: 1` |
 | Active requests | Instance | 8 | Further requests go to another instance |

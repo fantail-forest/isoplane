@@ -1,8 +1,10 @@
 # The engine every test node runs: isoplane_fixtures::engine_config with room for 16 instances,
 # so the nodes load the shared runtime task fixtures:compiled-runtime compiled. Several nodes are
 # built concurrently in one process, and the default address-space reservation fits only a handful.
-deployment = "development"
+owner = "acme"
 
 [engine]
 max_instances = 16
 total_tables = 64
+
+memory_limit_mib = 128

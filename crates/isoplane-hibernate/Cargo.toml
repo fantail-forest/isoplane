@@ -5,7 +5,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license-file.workspace = true
-description = "Snapshot identity and local storage primitives"
+description = "Local pressure snapshots: reserved backing, template-relative memory capture, and verified restore"
 
 [dependencies]
 anyhow = { workspace = true }
@@ -24,4 +24,3 @@ nix = { workspace = true }
 
 [dev-dependencies]
 isoplane-test-support = { workspace = true }
-libc = { workspace = true }

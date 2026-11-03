@@ -23,7 +23,7 @@ pub enum ViolationCode {
     /// feature off, which is the point.
     V2ForbiddenFeature,
     /// **V3** — more than one linear memory, a shared memory, or a declared
-    /// memory maximum exceeding the plan's ceiling.
+    /// memory maximum exceeding the configured memory ceiling.
     V3MemoryShape,
     /// **V4** — structural resource-bomb heuristics: function count, local
     /// counts, table sizes, custom-section size beyond published limits.

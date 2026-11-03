@@ -6,9 +6,8 @@ slug: /
 Build and run a .NET application inside Isoplane's sandbox using installed tools
 and ordinary .NET commands.
 
-This initial release is the SDK for local development and testing. The hosted
-Isoplane service is not available yet; no account or sign-in is needed to use
-the SDK.
+Use the SDK for local development, testing and debugging, or deploy applications
+to your own host. No account or sign-in is required.
 
 ## Tutorials
 

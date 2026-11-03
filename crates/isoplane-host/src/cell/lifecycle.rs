@@ -649,7 +649,7 @@ impl Cell {
                 );
                 let msg = format!(
                     "budget_exceeded: occupancy budget elapsed; the dispatch returned inside its \
-                     grace window with {:.3} ms of recorded overage",
+                     grace window and used {:.3} ms of overage",
                     overage as f64 / 1e6
                 );
                 let result = owner.result(
@@ -1169,13 +1169,10 @@ mod tests {
         use crate::cell::pool::cell_tests::manifest;
         use crate::fakes::FakeActivator;
         for limit in [1, 2] {
-            let cell = cell(
-                CellConfig {
-                    exec_threads: 0,
-                    ..CellConfig::for_test("join-fallback")
-                },
-                Arc::new(FakeHibernator),
-            );
+            let cell = cell(CellConfig {
+                exec_threads: 0,
+                ..CellConfig::for_test("join-fallback")
+            });
             let module = ModuleId::new("join-fallback", "v1");
             let mut manifest = manifest("join-fallback");
             manifest.resource_limits.instances_per_application = Some(limit);
@@ -1250,7 +1247,6 @@ mod tests {
                 ..CellConfig::for_test("join-recheck")
             },
             crate::cell::pool::cell_tests::services(),
-            Arc::new(FakeHibernator),
             Arc::new(
                 isoplane_hibernate::snapshot::LocalSnapshotStorage::new(storage.path())
                     .expect("snapshot storage"),

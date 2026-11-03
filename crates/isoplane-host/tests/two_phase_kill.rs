@@ -7,7 +7,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use isoplane_abi::config::{AppManifest, Bindings, Limits};
+use isoplane_abi::config::{AppManifest, Bindings};
 use isoplane_abi::dispatch::HttpRequest;
 use isoplane_engine::{Completion, EngineConfig, IsoplaneEngine};
 
@@ -55,7 +55,6 @@ fn manifest(name: &str) -> AppManifest {
         validation_limits: Default::default(),
         name: name.into(),
         bindings: Bindings::default(),
-        limits: Limits::default(),
         init_visible_vars: vec![],
     }
 }
@@ -151,7 +150,7 @@ fn conformance_1_a_killed_instance_is_evicted_and_never_called_again() {
 }
 
 #[test]
-fn a_budget_exit_is_recorded_and_its_instance_serves_the_next_dispatch_warm() {
+fn a_budget_exit_is_measured_and_its_instance_serves_the_next_dispatch_warm() {
     let (cell, module) = cell_with(Arc::new(FakeActivator::named(
         ModuleId::new("misbehaver", "v1"),
         FakeBehaviour::program([Step::BudgetExit { overage_ns: 123 }]),

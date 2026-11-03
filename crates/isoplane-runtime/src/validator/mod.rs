@@ -8,7 +8,6 @@ mod checks;
 mod report;
 mod scan;
 
-use isoplane_abi::config::Limits;
 use wasmparser::{Validator, WasmFeatures};
 
 pub use checks::limits;
@@ -76,35 +75,35 @@ pub const ENGINE_FEATURES: WasmFeatures = {
 /// artifact in one round trip.
 pub fn validate(
     wasm: &[u8],
-    budgets: Limits,
+    memory_limit: isoplane_abi::config::GuestMemoryBytes,
 ) -> std::result::Result<ValidationReport, Vec<Violation>> {
-    validate_with_memory_limit(wasm, budgets, None)
+    validate_with_memory_limit(wasm, memory_limit, None)
 }
 
 /// Validates an explicitly marked local debugger artifact with all sandbox checks retained.
 pub fn validate_local_debug(
     wasm: &[u8],
-    budgets: Limits,
+    memory_limit: isoplane_abi::config::GuestMemoryBytes,
     memory: Option<isoplane_abi::config::GuestMemoryBytes>,
 ) -> std::result::Result<ValidationReport, Vec<Violation>> {
     validate_for_execution(
         wasm,
-        budgets,
+        memory_limit,
         memory,
         true,
         &isoplane_abi::config::ValidationLimits::default(),
     )
 }
 
-/// Validate with an independently authorized memory ceiling and unchanged application budgets.
+/// Validate with a fallback memory allowance and an optional explicit declaration ceiling.
 pub fn validate_with_memory_limit(
     wasm: &[u8],
-    budgets: Limits,
+    memory_limit: isoplane_abi::config::GuestMemoryBytes,
     memory: Option<isoplane_abi::config::GuestMemoryBytes>,
 ) -> std::result::Result<ValidationReport, Vec<Violation>> {
     validate_with_limits(
         wasm,
-        budgets,
+        memory_limit,
         memory,
         &isoplane_abi::config::ValidationLimits::default(),
     )
@@ -113,26 +112,26 @@ pub fn validate_with_memory_limit(
 /// Validates with operator-selected structural and memory limits.
 pub fn validate_with_limits(
     wasm: &[u8],
-    budgets: Limits,
+    memory_limit: isoplane_abi::config::GuestMemoryBytes,
     memory: Option<isoplane_abi::config::GuestMemoryBytes>,
     limits: &isoplane_abi::config::ValidationLimits,
 ) -> std::result::Result<ValidationReport, Vec<Violation>> {
-    validate_for_execution(wasm, budgets, memory, false, limits)
+    validate_for_execution(wasm, memory_limit, memory, false, limits)
 }
 
 /// Validates a local debugger artifact with operator-selected limits.
 pub fn validate_local_debug_with_limits(
     wasm: &[u8],
-    budgets: Limits,
+    memory_limit: isoplane_abi::config::GuestMemoryBytes,
     memory: Option<isoplane_abi::config::GuestMemoryBytes>,
     limits: &isoplane_abi::config::ValidationLimits,
 ) -> std::result::Result<ValidationReport, Vec<Violation>> {
-    validate_for_execution(wasm, budgets, memory, true, limits)
+    validate_for_execution(wasm, memory_limit, memory, true, limits)
 }
 
 fn validate_for_execution(
     wasm: &[u8],
-    budgets: Limits,
+    memory_limit: isoplane_abi::config::GuestMemoryBytes,
     memory: Option<isoplane_abi::config::GuestMemoryBytes>,
     local_debug: bool,
     limits: &isoplane_abi::config::ValidationLimits,
@@ -170,7 +169,7 @@ fn validate_for_execution(
             check_memory(
                 &scan,
                 memory.map_or(
-                    budgets.instance_memory_max,
+                    memory_limit.get(),
                     isoplane_abi::config::GuestMemoryBytes::get,
                 ),
                 memory.is_some(),

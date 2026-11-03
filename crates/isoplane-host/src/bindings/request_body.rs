@@ -238,7 +238,7 @@ mod tests {
     #[tokio::test]
     async fn abandoned_reads_preserve_the_source_and_undelivered_bytes() {
         use crate::futures::FutureTable;
-        use isoplane_abi::{result::ResultRecord};
+        use isoplane_abi::result::ResultRecord;
         let scope = RequestBodyScope::new(
             Some(Box::new(Chunks(VecDeque::from([b"ABCD".to_vec()])))),
             true,

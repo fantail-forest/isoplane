@@ -132,7 +132,9 @@ pub(crate) fn classify(live: &Live, err: &wasmtime::Error) -> TrapInfo {
     if d.limits.oom {
         return TrapInfo {
             kind: TrapKind::OutOfMemory,
-            message: format!("linear memory growth refused at the plan ceiling: {err}"),
+            message: format!(
+                "linear memory growth refused at the configured memory ceiling: {err}"
+            ),
         };
     }
 

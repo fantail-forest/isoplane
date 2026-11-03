@@ -10,7 +10,7 @@ use std::time::Instant;
 static CLOCK_READ_FAILURES: AtomicU64 = AtomicU64::new(0);
 
 /// How many worker-occupancy clock reads have failed in this process. Non-zero means
-/// some recorded interval is a floor rather than a measurement.
+/// some measured interval is a floor rather than a measurement.
 pub fn clock_read_failures() -> u64 {
     CLOCK_READ_FAILURES.load(Ordering::Relaxed)
 }

@@ -358,7 +358,7 @@ pub(crate) fn deliver(id: u64, res: ResultRecord) {
     });
 }
 
-/// Futures registered and not yet delivered. Bounded by the plan's
+/// Futures registered and not yet delivered. Bounded by the application's
 /// `pending_futures_per_dispatch`.
 pub fn pending_futures() -> usize {
     with(|rt| rt.futures.len())

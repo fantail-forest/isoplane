@@ -4,7 +4,7 @@ mod common;
 use common::GuestRuntime;
 use isoplane_engine::Completion;
 
-async fn after_restore(runtime: GuestRuntime, path: &str) -> String {
+async fn after_delta(runtime: GuestRuntime, path: &str) -> String {
     let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId(5600));
     reactor.context.begin_slice(1, 1);
     let mut guest = common::guest(&reactor, runtime);
@@ -18,26 +18,26 @@ async fn after_restore(runtime: GuestRuntime, path: &str) -> String {
     tokio::task::yield_now().await;
     tokio::time::advance(std::time::Duration::from_millis(60)).await;
     reactor.context.begin_slice(61, 1);
-    let resumed = guest.wake(&reactor).await;
+    let resumed = guest.wake_through_delta(&reactor).await;
     assert_eq!(
         resumed.completion,
         Completion::Done,
-        "native boundary probe must remain usable after Store restoration: {resumed:?}"
+        "native boundary probe must remain usable after hibernation: {resumed:?}"
     );
     reactor.response_text(1)
 }
 
 in_mono_runtime! {
     #[tokio::test(start_paused = true)]
-    async fn a_missing_native_library_is_refused_before_and_after_store_restoration(runtime: GuestRuntime) {
-        let result = after_restore(runtime, "/reflection/native-library-after-park/missing").await;
+    async fn a_missing_native_library_is_refused_before_and_after_hibernation(runtime: GuestRuntime) {
+        let result = after_delta(runtime, "/reflection/native-library-after-park/missing").await;
         assert!(matches!(result.as_str(), "DllNotFoundException/DllNotFoundException" | "PlatformNotSupportedException/PlatformNotSupportedException"), "missing native library loading must be refused consistently: {result}");
     }
 }
 
 #[tokio::test(start_paused = true)]
 async fn a_loaded_assembly_cannot_invoke_an_unknown_native_library() {
-    let result = after_restore(
+    let result = after_delta(
         GuestRuntime::Mono,
         "/reflection/native-payload-after-park/library",
     )
@@ -50,7 +50,7 @@ async fn a_loaded_assembly_cannot_invoke_an_unknown_native_library() {
 
 #[tokio::test(start_paused = true)]
 async fn a_loaded_assembly_cannot_invoke_an_unknown_prelinked_symbol() {
-    let result = after_restore(
+    let result = after_delta(
         GuestRuntime::Mono,
         "/reflection/native-payload-after-park/symbol",
     )
@@ -63,21 +63,21 @@ async fn a_loaded_assembly_cannot_invoke_an_unknown_prelinked_symbol() {
 
 #[tokio::test(start_paused = true)]
 async fn a_loaded_assembly_can_call_a_prelinked_guest_function_without_host_native_loading() {
-    let result = after_restore(
+    let result = after_delta(
         GuestRuntime::Mono,
         "/reflection/native-payload-after-park/timestamp",
     )
     .await;
     assert_eq!(
         result, "prelinked-call-returned/prelinked-call-returned",
-        "native dispatch may reach existing guest-Wasm functions across Store restoration"
+        "native dispatch may reach existing guest-Wasm functions across hibernation"
     );
 }
 
 in_mono_runtime! {
     #[tokio::test(start_paused = true)]
     async fn a_host_native_library_is_not_available_to_the_guest(runtime: GuestRuntime) {
-        let result = after_restore(runtime, "/reflection/native-library-after-park/host").await;
+        let result = after_delta(runtime, "/reflection/native-library-after-park/host").await;
         assert!(matches!(result.as_str(), "DllNotFoundException/DllNotFoundException" | "PlatformNotSupportedException/PlatformNotSupportedException"), "host libc must not become available through guest native-library loading: {result}");
     }
 }
@@ -85,7 +85,7 @@ in_mono_runtime! {
 #[tokio::test(start_paused = true)]
 async fn byte_loading_an_impostor_cannot_replace_the_existing_core_library() {
     assert_eq!(
-        after_restore(
+        after_delta(
             GuestRuntime::Mono,
             "/reflection/trusted-identity-after-park/corelib"
         )
@@ -98,7 +98,7 @@ async fn byte_loading_an_impostor_cannot_replace_the_existing_core_library() {
 #[tokio::test(start_paused = true)]
 async fn byte_loading_an_impostor_cannot_replace_a_trusted_bcl_default_binding() {
     assert_eq!(
-        after_restore(
+        after_delta(
             GuestRuntime::Mono,
             "/reflection/trusted-identity-after-park/bcl"
         )
@@ -111,7 +111,7 @@ async fn byte_loading_an_impostor_cannot_replace_a_trusted_bcl_default_binding()
 #[tokio::test(start_paused = true)]
 async fn byte_loading_an_impostor_cannot_replace_the_sdk_default_binding() {
     assert_eq!(
-        after_restore(
+        after_delta(
             GuestRuntime::Mono,
             "/reflection/trusted-identity-after-park/sdk"
         )
@@ -123,8 +123,8 @@ async fn byte_loading_an_impostor_cannot_replace_the_sdk_default_binding() {
 
 in_mono_runtime! {
     #[tokio::test(start_paused = true)]
-    async fn invoking_an_unknown_native_declaration_is_refused_before_and_after_store_restoration(runtime: GuestRuntime) {
-        let result = after_restore(runtime, "/reflection/native-declaration-after-park").await;
+    async fn invoking_an_unknown_native_declaration_is_refused_before_and_after_hibernation(runtime: GuestRuntime) {
+        let result = after_delta(runtime, "/reflection/native-declaration-after-park").await;
         assert!(matches!(result.as_str(), "DllNotFoundException/DllNotFoundException" | "PlatformNotSupportedException/PlatformNotSupportedException"), "a reached unsupported native declaration must be refused consistently: {result}");
     }
 }
@@ -132,23 +132,23 @@ in_mono_runtime! {
 in_mono_runtime! {
     #[tokio::test(start_paused = true)]
     async fn a_static_declaration_for_an_absent_prelinked_symbol_is_refused_when_called(runtime: GuestRuntime) {
-        let result = after_restore(runtime, "/reflection/native-symbol-after-park/symbol").await;
-        assert!(matches!(result.as_str(), "EntryPointNotFoundException/EntryPointNotFoundException" | "DllNotFoundException/DllNotFoundException" | "PlatformNotSupportedException/PlatformNotSupportedException"), "a missing prelinked entry point must be a managed refusal before and after Store restoration: {result}");
+        let result = after_delta(runtime, "/reflection/native-symbol-after-park/symbol").await;
+        assert!(matches!(result.as_str(), "EntryPointNotFoundException/EntryPointNotFoundException" | "DllNotFoundException/DllNotFoundException" | "PlatformNotSupportedException/PlatformNotSupportedException"), "a missing prelinked entry point must be a managed refusal before and after hibernation: {result}");
     }
 }
 
 in_mono_runtime! {
     #[tokio::test(start_paused = true)]
     async fn an_absent_internal_symbol_is_refused_when_called(runtime: GuestRuntime) {
-        let result = after_restore(runtime, "/reflection/native-symbol-after-park/internal").await;
+        let result = after_delta(runtime, "/reflection/native-symbol-after-park/internal").await;
         assert!(matches!(result.as_str(), "EntryPointNotFoundException/EntryPointNotFoundException" | "DllNotFoundException/DllNotFoundException" | "PlatformNotSupportedException/PlatformNotSupportedException"), "an internal declaration must not bind an absent symbol: {result}");
     }
 }
 
 in_mono_runtime! {
     #[tokio::test(start_paused = true)]
-    async fn a_supported_static_native_export_remains_callable_across_store_restoration(runtime: GuestRuntime) {
-        let result = after_restore(runtime, "/reflection/native-symbol-after-park/timestamp").await;
+    async fn a_supported_static_native_export_remains_callable_across_hibernation(runtime: GuestRuntime) {
+        let result = after_delta(runtime, "/reflection/native-symbol-after-park/timestamp").await;
         assert_eq!(result, "prelinked-call-returned/prelinked-call-returned", "available exports must retain strong archive extraction and correct binding");
     }
 }
@@ -156,7 +156,7 @@ in_mono_runtime! {
 in_mono_runtime! {
     #[tokio::test(start_paused = true)]
     async fn an_absent_star_module_symbol_is_a_managed_refusal(runtime: GuestRuntime) {
-        let result = after_restore(runtime, "/reflection/native-symbol-after-park/star").await;
+        let result = after_delta(runtime, "/reflection/native-symbol-after-park/star").await;
         assert!(matches!(result.as_str(), "EntryPointNotFoundException/EntryPointNotFoundException" | "DllNotFoundException/DllNotFoundException" | "PlatformNotSupportedException/PlatformNotSupportedException"), "a missing star-module symbol must refuse with a catchable managed exception rather than trap: {result}");
     }
 }

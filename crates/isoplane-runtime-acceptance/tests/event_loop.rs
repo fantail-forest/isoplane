@@ -95,10 +95,10 @@ in_mono_runtime! {
 }
 
 in_mono_runtime! {
-    /// A parked timer survives Store restoration: its continuation runs after the
-    /// guest's captured memory was restored into a new Store.
+    /// A parked timer survives hibernation: its continuation runs after the
+    /// guest's memory went through the local snapshot.
     #[tokio::test(start_paused = true)]
-    async fn a_parked_delay_survives_a_store_restoration_delta_round_trip(runtime: GuestRuntime) {
+    async fn a_parked_delay_survives_a_hibernation_delta_round_trip(runtime: GuestRuntime) {
         let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
         reactor.context.begin_slice(1, 1);
         let mut guest = guest(&reactor, runtime);
@@ -107,7 +107,7 @@ in_mono_runtime! {
         tokio::task::yield_now().await;
         tokio::time::advance(std::time::Duration::from_millis(60)).await;
         reactor.context.begin_slice(61, 1);
-        let outcome = guest.wake(&reactor).await;
+        let outcome = guest.wake_through_delta(&reactor).await;
         assert_eq!(
             outcome.completion,
             Completion::Done,
@@ -117,7 +117,7 @@ in_mono_runtime! {
         assert_eq!(
             reactor.response_text(1),
             "resumed",
-            "the continuation must run after the Store restoration"
+            "the continuation must run after the hibernation"
         );
     }
 }
@@ -357,7 +357,7 @@ async fn replacement_timer_resumes(runtime: GuestRuntime, path: &str) {
     tokio::task::yield_now().await;
     tokio::time::advance(std::time::Duration::from_millis(201)).await;
     reactor.context.begin_slice(202, 1);
-    let outcome = guest.wake(&reactor).await;
+    let outcome = guest.wake_through_delta(&reactor).await;
     assert_eq!(
         outcome.completion,
         Completion::Done,
@@ -406,13 +406,13 @@ in_mono_runtime! {
         tokio::task::yield_now().await;
         tokio::time::advance(std::time::Duration::from_millis(201)).await;
         reactor.context.begin_slice(402, 2);
-        let outcome = guest.wake(&reactor).await;
+        let outcome = guest.wake_through_delta(&reactor).await;
         assert_eq!(outcome.completion, Completion::Done, "the next request's delay must resume: {outcome:?}");
         assert_eq!(reactor.response_text(2), "resumed", "the next request's delay must complete");
     }
 }
 
-async fn scheduling_survives_store_restoration(runtime: GuestRuntime, scenario: &str) {
+async fn scheduling_survives_delta(runtime: GuestRuntime, scenario: &str) {
     isoplane_harness::LogCapture::global();
     let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
     reactor.context.begin_slice(1, 1);
@@ -427,7 +427,7 @@ async fn scheduling_survives_store_restoration(runtime: GuestRuntime, scenario: 
     tokio::task::yield_now().await;
     tokio::time::advance(std::time::Duration::from_millis(60)).await;
     reactor.context.begin_slice(61, 1);
-    let answer = guest.finish(&reactor, 8).await;
+    let answer = guest.finish_through_deltas(&reactor, 8).await;
     assert_eq!(
         answer,
         format!("{scenario} resumed"),
@@ -443,18 +443,18 @@ async fn scheduling_survives_store_restoration(runtime: GuestRuntime, scenario: 
 in_mono_runtime! {
     #[tokio::test(start_paused = true)]
     async fn a_customer_synchronization_context_resumes_after_a_delta(runtime: GuestRuntime) {
-        scheduling_survives_store_restoration(runtime, "custom-context").await;
+        scheduling_survives_delta(runtime, "custom-context").await;
     }
     #[tokio::test(start_paused = true)]
     async fn a_customer_task_scheduler_resumes_after_a_delta(runtime: GuestRuntime) {
-        scheduling_survives_store_restoration(runtime, "custom-scheduler").await;
+        scheduling_survives_delta(runtime, "custom-scheduler").await;
     }
     #[tokio::test(start_paused = true)]
     async fn a_customer_awaiter_resumes_after_a_delta(runtime: GuestRuntime) {
-        scheduling_survives_store_restoration(runtime, "custom-awaiter").await;
+        scheduling_survives_delta(runtime, "custom-awaiter").await;
     }
     #[tokio::test(start_paused = true)]
     async fn async_void_work_observed_by_its_dispatch_resumes_after_a_delta(runtime: GuestRuntime) {
-        scheduling_survives_store_restoration(runtime, "async-void").await;
+        scheduling_survives_delta(runtime, "async-void").await;
     }
 }

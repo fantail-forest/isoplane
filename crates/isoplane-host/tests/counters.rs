@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use isoplane_test_support::wait_for;
 
-use isoplane_abi::config::{AppManifest, Bindings, Limits};
+use isoplane_abi::config::{AppManifest, Bindings};
 use isoplane_abi::dispatch::{DispatchRecord, HttpRequest};
 use isoplane_abi::status::TrapCode;
 
@@ -56,7 +56,6 @@ fn manifest(name: &str) -> AppManifest {
         validation_limits: Default::default(),
         name: name.into(),
         bindings: Bindings::default(),
-        limits: Limits::default(),
         init_visible_vars: vec![],
     }
 }

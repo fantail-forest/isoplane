@@ -20,6 +20,8 @@ public sealed class CommandCancellationTests
     [InlineData("dev", 0)]
     [InlineData("bundle", 130)]
     [InlineData("prepare-runtime", 130)]
+    [InlineData("deploy", 130)]
+    [InlineData("daemon", 0)]
     public void Other_commands_preserve_their_shutdown_status(string command, int expected)
     {
         using var error = new StringWriter();

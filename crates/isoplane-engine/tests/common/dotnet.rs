@@ -40,7 +40,7 @@ pub struct Fixture {
     pub engine: &'static IsoplaneEngine,
     pub template: Template,
     /// The limit each activation's bindings give the guest, below the engine's ceiling, as a
-    /// plan's limit does; `None` leaves the engine's.
+    /// application's limit does; `None` leaves the engine's.
     pub memory_limit_bytes: Option<u64>,
 }
 

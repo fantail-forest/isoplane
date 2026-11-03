@@ -1,4 +1,4 @@
-#![forbid(unsafe_code)]
+#![cfg_attr(not(target_os = "linux"), forbid(unsafe_code))]
 
 mod common;
 
@@ -78,8 +78,8 @@ fn timer_guest() -> Vec<u8> {
 }
 
 #[cfg(target_os = "linux")]
-#[test]
-fn layered_preparation_captures_the_completed_async_initializer() {
+#[tokio::test]
+async fn layered_preparation_captures_the_completed_async_initializer() {
     let engine = common::engine();
     let wasm = timer_guest();
     let build = isoplane_prepare::BuildRequest {
@@ -88,29 +88,29 @@ fn layered_preparation_captures_the_completed_async_initializer() {
         application_files: Default::default(),
         engine: engine.configuration(),
         runtime: isoplane_prepare::RuntimeProfile::raw_wasm(),
-        limits: isoplane_abi::config::Limits::default(),
+        memory_limit: isoplane_abi::config::GuestMemoryBytes::default(),
         initialization: request(),
         input_hash: *blake3::hash(&wasm).as_bytes(),
-        portable_template: isoplane_prepare::PortableTemplate::Returned,
     };
-    let product = isoplane_prepare::prepare_in_current_process(&wasm, &build).expect(
+    use isoplane_prepare::Preparation;
+    let product = isoplane_prepare::LocalPreparation::new().unwrap()
+        .prepare(&wasm, &build, &tokio_util::sync::CancellationToken::new()).await.expect(
         "layered capture and fresh-instance state verification must succeed after the timer wake",
     );
     assert_eq!(
         product.initialized.passes, 1,
         "asynchronous completion must not rerun the initializer"
     );
-    let portable = engine
-        .load_template(
-            product
-                .portable_template()
-                .expect("a requested portable template is returned"),
-        )
-        .unwrap();
+    // SAFETY: the local preparation provider above produced this native code.
+    let artifact = unsafe {
+        engine.decode_builder_output(product.prepared_bytes(), build.identity().unwrap())
+    }
+    .unwrap();
+    let prepared = engine.load_prepared_product(&artifact).unwrap();
     assert_eq!(
-        portable.memory_image_arc().to_dense()[128],
+        prepared.memory_image_arc().to_dense()[128],
         42,
-        "both captured outputs must contain initialization work performed after the timer wake"
+        "prepared state must contain initialization work performed after the timer wake"
     );
 }
 

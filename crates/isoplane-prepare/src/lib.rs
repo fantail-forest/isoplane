@@ -1,4 +1,4 @@
-//! Restricted application initialization, separate from execution and deployment coordination.
+//! Local application initialization and prepared state production.
 
 // On Linux, preparation loads a published runtime baseline's native code.
 #![cfg_attr(not(target_os = "linux"), forbid(unsafe_code))]
@@ -63,14 +63,14 @@ pub enum PrepareError {
 }
 mod profile;
 pub use profile::RuntimeProfile;
-mod process;
-pub use process::{BuildRequest, PortableTemplate};
+mod request;
+pub use request::BuildRequest;
 
 mod failure;
 pub use failure::{BuildStage, WorkerFailure};
 
 mod product;
-pub use product::{prepare_in_current_process, BuildProduct, LocalPreparation, Preparation};
+pub use product::{BuildProduct, LocalPreparation, Preparation};
 
 /// The module preparation compiles for `wasm`: `wasm` itself, or, when it has an initializer,
 /// `wasm` rewritten so that what initialization leaves can be captured. A compile of this module

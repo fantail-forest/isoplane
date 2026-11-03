@@ -1,11 +1,11 @@
-//! Validation and initializer replay against prepared guest modules.
+//! Built Rust guests through admission and preparation, including hostile modules.
 
-
-use isoplane_abi::config::{InitSandbox, Limits};
-use isoplane_control::preinit::{PreInitRequest, PreInitializer};
+use isoplane_abi::config::AppManifest;
+use isoplane_control::admission::admit;
 use isoplane_control::validator::{self, ViolationCode as V};
+use isoplane_prepare::preinit::{PreInitRequest, PreInitializer};
 
-/// The verdict `validate(.., default numeric limits)` must reach for each module in
+/// The verdict `validate(.., isoplane_abi::config::GuestMemoryBytes::default())` must reach for each module in
 /// the build script's manifest, as `(code, subject)` pairs; empty means the
 /// module is accepted.
 const VERDICTS: &[(&str, &[(V, &str)])] = &[
@@ -23,10 +23,6 @@ const VERDICTS: &[(&str, &[(V, &str)])] = &[
     ),
 ];
 
-/// `default numeric limits` because it is the ceiling the guests are linked at
-/// (`guests/.cargo/config.toml` passes its `instance_memory_max`). The plans
-/// differ on memory alone, which the test holds to: everything `restricted numeric limits`
-/// adds must be `V3MemoryShape`, and nothing Standard finds may vanish.
 #[test]
 fn every_module_build_sh_writes_draws_the_verdict_recorded_for_it() {
     let built = isoplane_fixtures::rust_manifest();
@@ -49,46 +45,17 @@ fn every_module_build_sh_writes_draws_the_verdict_recorded_for_it() {
             continue;
         }
         let wasm = isoplane_fixtures::rust(name);
-        let std_v = verdict(&wasm, Limits::default());
+        let std_v = verdict(&wasm, isoplane_abi::config::GuestMemoryBytes::default());
         let mut want_sorted: Vec<String> = want.iter().map(|(c, s)| format!("{c:?} {s}")).collect();
         want_sorted.sort();
         let mut got_sorted = std_v.clone();
         got_sorted.sort();
         if got_sorted != want_sorted {
             problems.push(format!(
-                "{name}.wasm on default numeric limits\n     wanted: {}\n        got: {}",
+                "{name}.wasm on isoplane_abi::config::GuestMemoryBytes::default()\n     wanted: {}\n        got: {}",
                 render(&want_sorted),
                 render(&got_sorted)
             ));
-        }
-
-        let free_v = verdict(
-            &wasm,
-            Limits {
-                instances_per_application: 3,
-                module_bytes_compressed: 5242880,
-                package_bytes: 52428800,
-                instance_memory_max: 134217728,
-                occupancy_ms_per_dispatch: 100,
-                instance_open_connections: 32,
-                pending_futures_per_dispatch: 6,
-            },
-        );
-        for f in &free_v {
-            if !std_v.contains(f) && !f.starts_with(&format!("{:?} ", V::V3MemoryShape)) {
-                problems.push(format!(
-                    "{name}.wasm is rejected on restricted numeric limits for `{f}`, which default numeric limits does \
-                     not report and which is not a memory-ceiling difference"
-                ));
-            }
-        }
-        for s in &std_v {
-            if !free_v.contains(s) {
-                problems.push(format!(
-                    "{name}.wasm is rejected on default numeric limits for `{s}` and accepted for it on \
-                     the stricter restricted numeric limits"
-                ));
-            }
         }
     }
 
@@ -102,8 +69,8 @@ fn every_module_build_sh_writes_draws_the_verdict_recorded_for_it() {
 
 /// A module's violations as sortable `"<code> <subject>"` strings; an accepted
 /// module yields none.
-fn verdict(wasm: &[u8], limits: Limits) -> Vec<String> {
-    validator::validate(wasm, limits).map_or_else(
+fn verdict(wasm: &[u8], memory: isoplane_abi::config::GuestMemoryBytes) -> Vec<String> {
+    validator::validate(wasm, memory).map_or_else(
         |vs| {
             vs.iter()
                 .map(|v| format!("{:?} {}", v.code, v.subject.as_deref().unwrap_or("-")))
@@ -124,7 +91,8 @@ fn render(v: &[String]) -> String {
 #[test]
 fn the_impure_cctor_guest_defers_and_converges() {
     let wasm = isoplane_fixtures::rust("impure-cctor");
-    let report = validator::validate(&wasm, Limits::default()).expect("impure-cctor must validate");
+    let report = validator::validate(&wasm, isoplane_abi::config::GuestMemoryBytes::default())
+        .expect("impure-cctor must validate");
     assert!(
         report.has_initialize(),
         "the guest SDK must export isoplane_initialize"
@@ -173,4 +141,29 @@ fn exports_init(wasm: &[u8]) -> bool {
             .any(|e| e.name == isoplane_abi::imports::exports::INITIALIZE),
         _ => false,
     })
+}
+
+#[test]
+fn a_real_guest_is_admitted_and_initialized_without_a_version_catalog() {
+    let wasm = isoplane_fixtures::rust("quotes-api");
+    let manifest = AppManifest {
+        guest_memory_bytes: None,
+        resource_limits: Default::default(),
+        validation_limits: Default::default(),
+        name: "quotes".into(),
+        bindings: Default::default(),
+        init_visible_vars: vec![],
+    };
+    let report = admit(&manifest, &wasm).expect("admission");
+    assert!(report.has_initialize());
+    assert!(!report.capabilities.is_empty());
+    let request = PreInitRequest {
+        module_hash: isoplane_engine::ModuleHash::of(&wasm),
+        init_blob: Vec::new(),
+    };
+    let output = PreInitializer::new()
+        .run(&wasm, &request)
+        .expect("initialization");
+    assert!(!exports_init(&output.template_wasm));
+    assert_ne!(output.template_wasm, wasm);
 }

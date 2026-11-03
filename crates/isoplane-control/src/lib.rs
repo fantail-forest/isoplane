@@ -1,12 +1,9 @@
-//! Local module validation and preparation primitives.
+//! Local preparation admission and protected file operations.
 
 #![forbid(unsafe_code)]
 
-pub mod aot;
-#[cfg(feature = "preinit")]
-pub use isoplane_prepare::preinit;
+pub mod admission;
+pub mod private_files;
 pub use isoplane_runtime::validator;
 
-#[cfg(feature = "preinit")]
-pub use preinit::{PreInitError, PreInitOutcome, PreInitRequest, PreInitializer};
-pub use validator::{validate, ValidationReport, Violation, ViolationCode};
+pub use admission::{AdmissionError, DeployOptions, VersionId};

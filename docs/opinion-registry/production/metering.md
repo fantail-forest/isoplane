@@ -14,7 +14,7 @@ realtime delivery. Use controlled clocks for exact boundary checks.
 
 ## Export meter output as events, not internal counters
 
-Use per-dispatch completion events and exported aggregates to assess resource usage. An in-process counter alone does not provide durable accounting.
+Export per-dispatch completion events and resource aggregates for operational analysis. In-process counters reset with the process; keep that limitation explicit.
 
 **Not this:** Treating a gauge that resets on restart as a durable usage record.
 
@@ -52,7 +52,7 @@ Enforce a worker-occupancy budget in the engine that meters it, a memory ceiling
 
 ## Share production defaults and choose test budgets deliberately
 
-Define production worker-occupancy defaults once and test that production wiring applies them. Qualify budget enforcement with explicit boundary and rejection cases. Tests of unrelated behavior may supply a budget that lets that behavior complete; their result does not establish that the workload fits a production tier.
+Define production worker-occupancy defaults once and test that production wiring applies them. Qualify budget enforcement with explicit boundary and rejection cases. Tests of unrelated behavior may supply a budget that lets that behavior complete; their result does not establish that the workload fits the configured production limits.
 
 **Not this:** An implicit test-only default presented as production qualification, or an unrelated behavior test failing because it inherited a tight production budget.
 

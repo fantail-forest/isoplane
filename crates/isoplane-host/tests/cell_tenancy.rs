@@ -1,8 +1,6 @@
-//! Runtime configuration is available only to the registered module owner.
+//! Runtime configuration stays scoped to its registered application owner.
 
 use std::sync::Arc;
-
-use isoplane_abi::config::Limits;
 
 use isoplane_host::cell::{Cell, CellConfig};
 use isoplane_host::fakes::*;
@@ -37,7 +35,7 @@ fn runtime_configuration_requires_the_registered_module_owner() {
         .register_module(
             "acme",
             Arc::new(FakeActivator::named(module.clone(), FakeBehaviour::done())),
-            manifest("app", Limits::default()),
+            manifest("app"),
         )
         .expect("register module");
     assert!(

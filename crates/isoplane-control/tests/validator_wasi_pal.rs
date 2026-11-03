@@ -1,6 +1,5 @@
 //! The WASI PAL adapter corpus, and rule V1 around it.
 
-use isoplane_abi::config::Limits;
 use isoplane_control::validator::{self, ViolationCode as V};
 
 #[path = "common/validate.rs"]
@@ -31,7 +30,7 @@ fn wasi_wat() -> String {
 #[test]
 fn v1_accepts_a_module_whose_wasi_imports_are_all_whitelisted() {
     let wasm = parse(&wasi_wat());
-    let report = validator::validate(&wasm, Limits::default())
+    let report = validator::validate(&wasm, isoplane_abi::config::GuestMemoryBytes::default())
         .unwrap_or_else(|vs| panic!("whitelisted wasi imports must validate: {vs:?}"));
 
     // Five wasi imports composed: four delegated, one trap-on-call.
@@ -80,7 +79,7 @@ fn v1_rejects_a_wasi_import_outside_the_whitelist() {
             r#""get-random-bytes" (func $rand (param i64 i32))"#,
             r#""get-insecure-random-bytes" (func $rand (param i64 i32))"#,
         ),
-        Limits::default(),
+        isoplane_abi::config::GuestMemoryBytes::default(),
         V::V1UndeclaredImport,
     );
     // A near-miss spelling of an admitted function.
@@ -90,7 +89,7 @@ fn v1_rejects_a_wasi_import_outside_the_whitelist() {
             r#""now"          (func $now  (result i64))"#,
             r#""now-fine"     (func $now  (result i64))"#,
         ),
-        Limits::default(),
+        isoplane_abi::config::GuestMemoryBytes::default(),
         V::V1UndeclaredImport,
     );
     // A different WASI generation entirely. preview1 is not preview2, and the
@@ -101,7 +100,7 @@ fn v1_rejects_a_wasi_import_outside_the_whitelist() {
             r#"(import "wasi:cli/environment@0.2.0"    "get-environment"  (func $env  (param i32)))"#,
             r#"(import "wasi_snapshot_preview1" "fd_write" (func $env (param i32)))"#,
         ),
-        Limits::default(),
+        isoplane_abi::config::GuestMemoryBytes::default(),
         V::V1UndeclaredImport,
     );
     // A future WASI version of an admitted interface. The adapter implements
@@ -109,7 +108,7 @@ fn v1_rejects_a_wasi_import_outside_the_whitelist() {
     assert_violates(
         "wasi-0.3.0",
         &wasi_wat().replace("wasi:random/random@0.2.0", "wasi:random/random@0.3.0"),
-        Limits::default(),
+        isoplane_abi::config::GuestMemoryBytes::default(),
         V::V1UndeclaredImport,
     );
 }
@@ -125,7 +124,7 @@ fn v1_checks_the_signature_of_a_delegated_wasi_import() {
             r#""get-random-bytes" (func $rand (param i64 i32))"#,
             r#""get-random-bytes" (func $rand (param i32 i32))"#,
         ),
-        Limits::default(),
+        isoplane_abi::config::GuestMemoryBytes::default(),
         V::V1SignatureMismatch,
     );
     assert_violates(
@@ -134,7 +133,7 @@ fn v1_checks_the_signature_of_a_delegated_wasi_import() {
             r#""now"          (func $now  (result i64))"#,
             r#""now"          (func $now  (result i32))"#,
         ),
-        Limits::default(),
+        isoplane_abi::config::GuestMemoryBytes::default(),
         V::V1SignatureMismatch,
     );
 }
@@ -151,8 +150,11 @@ fn v1_does_not_pin_the_signature_of_a_trap_on_call_stub() {
         r#""[method]output-stream.blocking-flush" (func $flush (param i32 i32))"#,
         r#""[method]output-stream.blocking-flush" (func $flush (param i32 i32 i32 i32) (result i32))"#,
     );
-    let report = validator::validate(&parse(&wat), Limits::default())
-        .expect("a trap-on-call stub is shape-agnostic");
+    let report = validator::validate(
+        &parse(&wat),
+        isoplane_abi::config::GuestMemoryBytes::default(),
+    )
+    .expect("a trap-on-call stub is shape-agnostic");
     assert_eq!(report.pal.len(), 5);
 }
 
@@ -165,7 +167,10 @@ fn v1_rejects_a_non_function_wasi_import() {
         r#"(import "wasi:clocks/monotonic-clock@0.2.0" "now"          (func $now  (result i64)))"#,
         r#"(import "wasi:clocks/monotonic-clock@0.2.0" "now" (global i64))"#,
     );
-    let got = codes(&parse(&wat), Limits::default());
+    let got = codes(
+        &parse(&wat),
+        isoplane_abi::config::GuestMemoryBytes::default(),
+    );
     assert!(got.contains(&V::V1SignatureMismatch), "got {got:?}");
 }
 
@@ -177,7 +182,7 @@ fn a_native_socket_delegation_requires_its_full_canonical_signature() {
             r#"(import "wasi:io/streams@0.2.0" "[method]output-stream.blocking-flush" (func $flush (param i32 i32)))"#,
             r#"(import "wasi:sockets/tcp@0.2.0" "[method]tcp-socket.start-connect" (func $c (param i32 i32)))"#,
         ),
-        Limits::default(),
+        isoplane_abi::config::GuestMemoryBytes::default(),
         V::V1SignatureMismatch,
     );
 }
@@ -185,12 +190,15 @@ fn a_native_socket_delegation_requires_its_full_canonical_signature() {
 #[test]
 fn launch_arguments_validate_only_with_the_canonical_return_area_signature() {
     let source = wasi_wat().replace("get-environment", "get-arguments");
-    validator::validate(&parse(&source), Limits::default())
-        .expect("empty launch arguments must be declared");
+    validator::validate(
+        &parse(&source),
+        isoplane_abi::config::GuestMemoryBytes::default(),
+    )
+    .expect("empty launch arguments must be declared");
     assert_violates(
         "arguments-wrong-return-area",
         &source.replace("(func $env  (param i32))", "(func $env  (param i64))"),
-        Limits::default(),
+        isoplane_abi::config::GuestMemoryBytes::default(),
         V::V1SignatureMismatch,
     );
 }
@@ -202,8 +210,11 @@ fn wall_clock_resolution_is_reported_as_denied() {
       (import "wasi:clocks/wall-clock@0.2.0" "resolution" (func (param i32)))
       {REQUIRED_EXPORTS})"#
     );
-    let report = validator::validate(&parse(&source), Limits::default())
-        .expect("a declared denial must validate");
+    let report = validator::validate(
+        &parse(&source),
+        isoplane_abi::config::GuestMemoryBytes::default(),
+    )
+    .expect("a declared denial must validate");
     assert_eq!(
         report.pal.len(),
         1,

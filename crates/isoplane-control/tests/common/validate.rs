@@ -1,6 +1,5 @@
 //! Fixture helpers shared by the validator corpus and the WASI PAL corpus.
 
-use isoplane_abi::config::Limits;
 use isoplane_control::validator::{self, ViolationCode as V};
 
 /// The four exports every deployable module must have, with the
@@ -16,8 +15,8 @@ pub fn parse(wat: &str) -> Vec<u8> {
     wat::parse_str(wat).expect("fixture must be assemblable")
 }
 
-pub fn codes(wasm: &[u8], limits: Limits) -> Vec<V> {
-    match validator::validate(wasm, limits) {
+pub fn codes(wasm: &[u8], memory: isoplane_abi::config::GuestMemoryBytes) -> Vec<V> {
+    match validator::validate(wasm, memory) {
         Ok(_) => vec![],
         Err(vs) => {
             for v in &vs {
@@ -32,9 +31,14 @@ pub fn codes(wasm: &[u8], limits: Limits) -> Vec<V> {
 /// Several fixtures legitimately trip two rules at once — a `shared` memory is
 /// both a memory-shape violation (V3) and a threads-proposal violation (V2) —
 /// and reporting both is better tenant feedback than picking one.
-pub fn assert_violates(name: &str, wat: &str, limits: Limits, want: V) {
+pub fn assert_violates(
+    name: &str,
+    wat: &str,
+    memory: isoplane_abi::config::GuestMemoryBytes,
+    want: V,
+) {
     println!("fixture `{name}`:");
-    let got = codes(&parse(wat), limits);
+    let got = codes(&parse(wat), memory);
     assert!(
         got.contains(&want),
         "fixture `{name}`: expected {want:?}, got {got:?}"

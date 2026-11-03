@@ -136,7 +136,7 @@ async fn dropping_a_streaming_client_releases_guest_io_and_dispatch_futures() {
             0,
             "client disconnect must release the guest's pending TCP connection"
         );
-        let cell = &rig.node.real.as_ref().expect("real cells").cells()[0];
+        let cell = &rig.node.real.as_ref().cells()[0];
         while cell.futures().live_futures() != 0 {
             tokio::task::yield_now().await;
         }
@@ -188,7 +188,7 @@ async fn an_open_http_response_cannot_be_captured_while_waiting_on_guest_io() {
     tokio::time::timeout(Duration::from_secs(30), async {
         let mut client = first_chunk(&rig, &gate).await;
         let (mut peer, _) = gate.accept().await.expect("the guest must await the gate");
-        let cell = rig.node.real.as_ref().expect("real cells").cells()[0].clone();
+        let cell = rig.node.real.as_ref().cells()[0].clone();
         let instance = *cell
             .resident_ids()
             .first()
@@ -225,7 +225,7 @@ async fn dropping_a_requester_before_headers_cancels_the_parked_dispatch() {
             tokio::spawn(
                 async move { common::get(address, "quotes.isoplane.dev", "/cancel").await },
             );
-        let cell = &rig.node.real.as_ref().expect("real cells").cells()[0];
+        let cell = &rig.node.real.as_ref().cells()[0];
         loop {
             if cell.resident_ids().iter().any(|id| {
                 cell.slot(*id)

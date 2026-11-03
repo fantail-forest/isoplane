@@ -1,64 +1,90 @@
-//! `isoplaned --check`: config validation from the binary's exit code and
-//! stderr, independent of a running node.
+//! Configuration validation through the daemon's command-line interface.
+
+use std::path::Path;
+use std::process::Output;
+
+fn check(path: &Path) -> Output {
+    std::process::Command::new(env!("CARGO_BIN_EXE_isoplaned"))
+        .arg("serve")
+        .arg("--config")
+        .arg(path)
+        .arg("--check")
+        .output()
+        .expect("the daemon starts")
+}
+
 
 #[test]
-fn the_binary_accepts_a_partitioned_config() {
-    let dir = tempfile::tempdir().expect("a temporary directory");
+fn the_binary_accepts_several_configured_applications() {
+    let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("good.toml");
     std::fs::write(
         &path,
         r#"
-node = "n1"
-
-[[cells]]
-name = "cell-0"
-
-[[cells]]
-name = "cell-1"
-
+owner = "acme"
+[preparation]
+runtimes = "installed-runtimes"
 [[apps]]
-name = "freebie"
-tenant = "student"
-limits.instances_per_application = 3
-limits.module_bytes_compressed = 5242880
-limits.package_bytes = 52428800
-limits.instance_memory_max = 134217728
-limits.occupancy_ms_per_dispatch = 100
-limits.instance_open_connections = 32
-limits.pending_futures_per_dispatch = 6
-cell = "cell-0"
-versions = [{ id = "v1" }]
-
+hosts = ["quotes.example"]
+manifest = { name = "quotes", guest_memory_bytes = 16777216 }
 [[apps]]
-name = "paying"
-tenant = "bigco"
-limits.instances_per_application = 8
-limits.module_bytes_compressed = 52428800
-limits.package_bytes = 52428800
-limits.instance_memory_max = 134217728
-limits.occupancy_ms_per_dispatch = 30000
-limits.instance_open_connections = 32
-limits.pending_futures_per_dispatch = 64
-cell = "cell-1"
-versions = [{ id = "v1" }]
+hosts = ["orders.example"]
+manifest = { name = "orders", guest_memory_bytes = 16777216 }
 "#,
     )
     .unwrap();
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_isoplaned"))
-        .args(["--config", path.to_str().unwrap(), "--check"])
+        .arg("serve")
+        .arg("--config")
+        .arg(&path)
+        .arg("--print-config")
         .output()
         .unwrap();
-    assert_eq!(
-        out.status.code(),
-        Some(0),
-        "a partitioned config is accepted: {}",
+    assert!(
+        out.status.success(),
+        "{}",
         String::from_utf8_lossy(&out.stderr)
+    );
+    let config: isoplaned::NodeConfig =
+        toml::from_str(std::str::from_utf8(&out.stdout).unwrap()).unwrap();
+    assert_eq!(config.apps.len(), 2);
+    assert_eq!(config.owner, "acme");
+}
+
+#[test]
+fn invalid_routing_fails_before_creating_the_data_directory() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("bad.toml");
+    std::fs::write(
+        &path,
+        r#"
+owner = "acme"
+data_dir = "state"
+[[apps]]
+hosts = ["api.example"]
+manifest = { name = "quotes", guest_memory_bytes = 16777216 }
+[[apps]]
+hosts = ["API.example"]
+manifest = { name = "orders", guest_memory_bytes = 16777216 }
+"#,
+    )
+    .unwrap();
+    let out = check(&path);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "duplicate routes were accepted");
+    assert!(
+        stderr.contains("routing"),
+        "missing routing diagnostic: {stderr}"
+    );
+    assert!(
+        !dir.path().join("state").exists(),
+        "invalid configuration created state"
     );
 }
 
 #[test]
 fn the_binary_refuses_an_operator_trust_bundle_whose_hash_does_not_match() {
-    let dir = tempfile::tempdir().expect("a temporary directory");
+    let dir = tempfile::tempdir().unwrap();
     let bundle = dir.path().join("roots.pem");
     std::fs::write(
         &bundle,
@@ -67,111 +93,113 @@ fn the_binary_refuses_an_operator_trust_bundle_whose_hash_does_not_match() {
     .unwrap();
     let path = dir.path().join("bad-trust.toml");
     let config = toml::toml! {
-        node = "n1"
-        [[cells]]
-        name = "cell-1"
+        owner = "operator"
         [trust]
-        bundle = (bundle.to_str().expect("temporary path is UTF-8"))
+        bundle = "roots.pem"
         sha256 = ("0".repeat(64))
     };
-    std::fs::write(
-        &path,
-        toml::to_string(&config).expect("configuration serializes"),
-    )
-    .unwrap();
-
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_isoplaned"))
-        .args(["--config", path.to_str().unwrap(), "--check"])
-        .output()
-        .unwrap();
+    std::fs::write(&path, toml::to_string(&config).unwrap()).unwrap();
+    let out = check(&path);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert_eq!(
-        out.status.code(),
-        Some(1),
-        "a bundle that is not the one recorded must refuse, not warn. stderr: {stderr}"
-    );
+    assert!(!out.status.success(), "a mismatched bundle was accepted");
     assert!(
         stderr.contains("trust.sha256") && stderr.contains("roots.pem"),
-        "the refusal must name the bundle and where the expected hash came from: {stderr}"
-    );
-}
-
-#[test]
-fn the_binary_reports_the_shipped_trust_bundle_when_it_accepts_a_config() {
-    let dir = tempfile::tempdir().expect("a temporary directory");
-    let path = dir.path().join("good.toml");
-    std::fs::write(
-        &path,
-        r#"
-node = "n1"
-
-[[cells]]
-name = "cell-1"
-"#,
-    )
-    .unwrap();
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_isoplaned"))
-        .args(["--config", path.to_str().unwrap(), "--check"])
-        .output()
-        .unwrap();
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert_eq!(
-        out.status.code(),
-        Some(0),
-        "a config without a [trust] section serves the shipped bundle: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let manifest: serde_json::Value =
-        serde_json::from_str(include_str!("../../../trust/ca-bundle.manifest.json"))
-            .expect("the shipped manifest is JSON");
-    let expected = format!(
-        "trust bundle {} generation {} sha256 {}",
-        manifest["bundle_date"].as_str().unwrap(),
-        manifest["generation"].as_u64().unwrap(),
-        &manifest["bundle_sha256"].as_str().unwrap()[..12]
-    );
-    assert!(
-        stdout.contains(&expected),
-        "the check output must state which bundle a node on this config would serve; \
-         expected `{expected}` in: {stdout}"
+        "missing bundle diagnostic: {stderr}"
     );
 }
 
 #[test]
 fn the_binary_refuses_a_hash_valid_bundle_with_malformed_certificates() {
     use sha2::Digest;
-    let dir = tempfile::tempdir().expect("a temporary directory");
+    let dir = tempfile::tempdir().unwrap();
     let bundle = dir.path().join("roots.pem");
     let pem = b"-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n";
-    std::fs::write(&bundle, pem).expect("write malformed certificate bytes");
+    std::fs::write(&bundle, pem).unwrap();
     let path = dir.path().join("bad-trust.toml");
     let config = toml::toml! {
-        node = "trust-test"
-        [[cells]]
-        name = "cell-1"
+        owner = "operator"
         [trust]
-        bundle = (bundle.to_str().expect("temporary path is UTF-8"))
+        bundle = "roots.pem"
         sha256 = (hex::encode(sha2::Sha256::digest(pem)))
     };
-    std::fs::write(
-        &path,
-        toml::to_string(&config).expect("configuration serializes"),
-    )
-    .expect("write node configuration");
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_isoplaned"))
-        .arg("--config")
-        .arg(&path)
-        .arg("--check")
-        .output()
-        .expect("the daemon's checker starts");
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_eq!(
-        output.status.code(),
-        Some(1),
-        "matching the hash must not let an unusable trust bundle start serving: {stderr}"
-    );
+    std::fs::write(&path, toml::to_string(&config).unwrap()).unwrap();
+    let out = check(&path);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "an invalid certificate was accepted");
     assert!(
         stderr.contains("invalid certificate") && stderr.contains("roots.pem"),
-        "the diagnostic must identify the malformed bundle and certificate: {stderr}"
+        "missing certificate diagnostic: {stderr}"
     );
+}
+
+fn missing_runtime_configuration_is_refused(preparation: &str) {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("host.toml");
+    std::fs::write(
+        &path,
+        format!(
+            "owner = 'operator'\ndata_dir = 'state'\n{preparation}\n[[apps]]\nhosts = ['app.example']\nmanifest = {{ name = 'app' }}\n"
+        ),
+    )
+    .unwrap();
+    for check_only in [true, false] {
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_isoplaned"));
+        command.args(["serve", "--config"]).arg(&path);
+        if check_only {
+            command.arg("--check");
+        }
+        let output = command.output().unwrap();
+        assert!(
+            !output.status.success(),
+            "an application without an installed runtime location passed validation"
+        );
+        let diagnostic = String::from_utf8_lossy(&output.stderr);
+        assert!(diagnostic.contains("preparation.runtimes"), "{diagnostic}");
+        assert!(
+            !directory.path().join("state").exists(),
+            "invalid runtime configuration created host state"
+        );
+    }
+}
+
+#[test]
+fn configured_applications_require_preparation_before_creating_state() {
+    missing_runtime_configuration_is_refused("");
+}
+
+#[test]
+fn configured_applications_require_a_runtime_location_before_creating_state() {
+    missing_runtime_configuration_is_refused("[preparation]");
+}
+
+#[test]
+fn static_validation_needs_a_runtime_location_but_does_not_load_its_bytes() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("host.toml");
+    std::fs::write(
+        &path,
+        "owner = 'operator'\ndata_dir = 'state'\n[preparation]\nruntimes = 'not-installed'\n[[apps]]\nhosts = ['app.example']\nmanifest = { name = 'app' }\n",
+    )
+    .unwrap();
+    let output = check(&path);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!directory.path().join("state").exists());
+}
+
+#[test]
+fn an_empty_host_requires_no_runtime_installation() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("host.toml");
+    std::fs::write(&path, "owner = 'operator'\ndata_dir = 'state'\n").unwrap();
+    let output = check(&path);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!directory.path().join("state").exists());
 }

@@ -1,5 +1,4 @@
 //! Packaged ASP.NET ILogger output through the real node logging boundary.
-#![cfg(feature = "real-backends")]
 
 pub mod common;
 

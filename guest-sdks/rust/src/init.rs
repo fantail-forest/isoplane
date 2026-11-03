@@ -17,7 +17,7 @@ pub struct InitUnit {
     pub run: fn(),
 }
 
-/// "No unit in scope". `isoplane_control::preinit::NO_UNIT` is `u32::MAX`; this is
+/// "No unit in scope". The host represents the sentinel as `u32::MAX`; this is
 /// the same bit pattern as an `i32`, because the import takes `i32`.
 ///
 /// Deliberately **not** 0: unit 0 is the first static initializer in every
@@ -262,8 +262,8 @@ pub fn config_is_bound() -> bool {
 /// The init-visible vars as `(name, value)` pairs.
 ///
 /// CONTRACT GAP: the blob's encoding is not declared in `isoplane-abi`. The
-/// control plane emits `serde_json::to_vec(&Vec<(String, String)>)`
-/// (`isoplane_control::pipeline::encode_init_vars`), so that is what this decodes.
+/// local host serializes `AppManifest::init_visible_vars` as JSON name/value
+/// pairs, so that is what this decodes.
 /// Two sides guessing the same thing is not the same as a contract.
 #[cfg(feature = "json")]
 pub fn config_vars() -> Vec<(String, String)> {

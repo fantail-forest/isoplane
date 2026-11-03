@@ -7,7 +7,6 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 use std::sync::Arc;
 use std::time::Duration;
 
-use isoplane_abi::config::Limits;
 use isoplane_abi::dispatch::HttpRequest;
 use isoplane_engine::{Completion, IsoplaneEngine};
 use isoplane_host::cell::{Cell, CellConfig, DispatchResult, Target};
@@ -29,12 +28,8 @@ fn rig() -> (Arc<Cell>, ModuleId) {
     )
     .expect("quotes-api.wasm must compile");
     let (cell, _) = common::rig_resolving(CellConfig::for_test("interleaving"), "93.184.216.34:80");
-    cell.register_module(
-        "acme",
-        Arc::new(activator),
-        common::manifest("quotes-api", Limits::default()),
-    )
-    .expect("register quotes-api");
+    cell.register_module("acme", Arc::new(activator), common::manifest("quotes-api"))
+        .expect("register quotes-api");
     (cell, module)
 }
 

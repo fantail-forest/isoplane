@@ -163,23 +163,13 @@ impl Context for PreparationIo {
     fn alloc(&self, import: &'static str) -> Option<u64> {
         self.runtime
             .futures
-            .alloc(
-                self.instance(),
-                0,
-                import,
-                self.config.pending_futures,
-            )
+            .alloc(self.instance(), 0, import, self.config.pending_futures)
             .ok()
     }
     fn alloc_rearmable(&self, import: &'static str) -> Option<u64> {
         self.runtime
             .futures
-            .alloc_rearmable(
-                self.instance(),
-                0,
-                import,
-                self.config.pending_futures,
-            )
+            .alloc_rearmable(self.instance(), 0, import, self.config.pending_futures)
             .ok()
     }
 }
@@ -421,9 +411,7 @@ mod tests {
             .unwrap(),
         );
         let future = io
-            .alloc(
-                isoplane_abi::native_io::canonical::POLL_IMPORT,
-            )
+            .alloc(isoplane_abi::native_io::canonical::POLL_IMPORT)
             .unwrap();
         io.runtime
             .settle_future(future, ResultRecord::Ok(Vec::new()));

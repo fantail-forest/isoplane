@@ -2,20 +2,16 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::Limits;
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AppManifest {
     pub name: String,
     #[serde(default)]
     pub bindings: Bindings,
-    #[serde(default)]
-    pub limits: Limits,
-    /// Operator-selected memory ceiling; other numeric budgets remain unchanged.
+    /// Operator-selected soft memory ceiling.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub guest_memory_bytes: Option<super::GuestMemoryBytes>,
-    /// Operator-selected resource budgets applied to the numeric defaults.
+    /// Operator-selected resource budgets, resolved against the defaults.
     #[serde(default)]
     pub resource_limits: super::ResourceLimitOverrides,
     /// Structural module bounds enforced before preparation.
@@ -59,16 +55,55 @@ pub struct Bindings {
 impl AppManifest {
     /// Resource ceilings after applying operator overrides.
     pub fn effective_limits(&self) -> super::Limits {
-        let mut limits = self.resource_limits.resolve(self.limits);
+        let mut limits = self.resource_limits.resolve();
         limits.instance_memory_max = self.memory_max_bytes();
         limits
     }
 
     /// Memory ceiling after applying the independent operator override.
     pub fn memory_max_bytes(&self) -> u64 {
-        self.guest_memory_bytes.map_or(
-            self.limits.instance_memory_max,
-            super::GuestMemoryBytes::get,
-        )
+        self.memory_limit().get()
     }
+
+    /// Validated soft linear-memory allowance for initialization and execution.
+    pub fn memory_limit(&self) -> super::GuestMemoryBytes {
+        self.guest_memory_bytes.unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AppManifest;
+
+    #[test]
+    fn defaults_and_numeric_overrides_define_the_application_budgets() {
+        let defaults: AppManifest = serde_json::from_str(r#"{"name":"app"}"#).unwrap();
+        let limits = defaults.effective_limits();
+        assert_eq!(limits.instances_per_application, 16);
+        assert_eq!(limits.instance_memory_max, 512 << 20);
+        assert_eq!(limits.occupancy_ms_per_dispatch, 300_000);
+        assert_eq!(limits.pending_futures_per_dispatch, 4096);
+        assert_eq!(limits.instance_open_connections, 32);
+        assert_eq!(limits.package_bytes, 50 << 20);
+        assert_eq!(limits.module_bytes_compressed, 50 << 20);
+
+        let configured: AppManifest = serde_json::from_str(
+            r#"{
+            "name":"bounded", "guest_memory_bytes":67108864,
+            "resource_limits": {"instances_per_application":0,
+                "occupancy_ms_per_dispatch":17,"pending_futures_per_dispatch":3,
+                "instance_open_connections":4,"package_bytes":1024}
+        }"#,
+        )
+        .unwrap();
+        let limits = configured.effective_limits();
+        assert_eq!(limits.instances_per_application, 0);
+        assert_eq!(limits.instance_memory_max, 64 << 20);
+        assert_eq!(limits.occupancy_ms_per_dispatch, 17);
+        assert_eq!(limits.pending_futures_per_dispatch, 3);
+        assert_eq!(limits.instance_open_connections, 4);
+        assert_eq!(limits.package_bytes, 1024);
+        assert_eq!(limits.module_bytes_compressed, 50 << 20);
+    }
+
 }

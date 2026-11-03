@@ -1,6 +1,6 @@
 //! The retained Mono runtime through both capability admission boundaries.
 
-use isoplane_abi::config::{GuestMemoryBytes, Limits};
+use isoplane_abi::config::GuestMemoryBytes;
 use isoplane_control::validator::{self, ViolationCode};
 use isoplane_engine::IsoplaneEngine;
 
@@ -13,7 +13,7 @@ fn the_mono_module_links_exactly_the_platform_imports_admitted_by_the_validator(
     let wasm = isoplane_fixtures::mono_runtime();
     let report = validator::validate_with_memory_limit(
         &wasm,
-        Limits::default(),
+        isoplane_abi::config::GuestMemoryBytes::default(),
         Some(GuestMemoryBytes::WASM32_MAX),
     )
     .expect("the Mono fixture must satisfy admission");
@@ -42,7 +42,7 @@ fn an_undeclared_mono_platform_interface_is_refused_by_admission_and_execution()
     let mutated = rename_import(&wasm, "wasi:io/poll@0.2.0", "wasi:io/poll@0.9.0");
     let violations = validator::validate_with_memory_limit(
         &mutated,
-        Limits::default(),
+        isoplane_abi::config::GuestMemoryBytes::default(),
         Some(GuestMemoryBytes::WASM32_MAX),
     )
     .expect_err("an unknown platform interface must fail admission");

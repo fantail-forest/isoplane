@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use hyper::body::Frame;
-use isoplane_abi::config::Limits;
+
 use isoplane_abi::result::{FetchResponse, FutureError, ResultRecord};
 use isoplane_engine::{HostBindings, ImportCall};
 use isoplane_host::bindings::{
@@ -148,8 +148,7 @@ impl Rig {
             Tenancy {
                 module: ModuleId::new("http-owner", "v1"),
                 tenant: tenant.into(),
-                limits: Limits::default(),
-
+                limits: isoplane_abi::config::Limits::default(),
                 allowlist: None,
             },
             Arc::new(Meters::new()),
@@ -239,7 +238,6 @@ pub fn cell(
             validation_limits: Default::default(),
             name: module.app.clone(),
             bindings: Default::default(),
-            limits: Limits::default(),
             init_visible_vars: vec![],
         },
     )

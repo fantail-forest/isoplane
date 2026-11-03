@@ -64,13 +64,9 @@ impl crate::admin::NodeAdmin for RealNodeAdmin {
 
 
 
-
-
     fn snapshot(&self) -> crate::admin::NodeSnapshot {
         let Some(m) = self.merged() else {
-            return crate::admin::NodeSnapshot {
-                ..Default::default()
-            };
+            return crate::admin::NodeSnapshot::default();
         };
         let cells = self.cells.cells();
         let activation_count = cells
@@ -108,14 +104,20 @@ impl crate::admin::NodeAdmin for RealNodeAdmin {
             instances_hot: m.hot,
             instances_parked: m.parked,
             instances_hibernated: m.hibernated,
-            dirty_set_bytes: vec![
-                m.dirty_pages_p50 * isoplane_abi::PAGE_SIZE as u64,
-                m.dirty_pages_p99 * isoplane_abi::PAGE_SIZE as u64,
-            ]
-            .into_iter()
-            .filter(|b| *b > 0)
-            .collect(),
-            delta_storage_bytes: m.delta_bytes,
+            dirty_set: crate::admin::SnapshotSizes {
+                p50_bytes: m.dirty_pages_p50 * isoplane_abi::PAGE_SIZE as u64,
+                p99_bytes: m.dirty_pages_p99 * isoplane_abi::PAGE_SIZE as u64,
+                count: cells
+                    .iter()
+                    .map(|cell| cell.metrics_raw().dirty_pages.count())
+                    .sum(),
+                sum_bytes: cells
+                    .iter()
+                    .map(|cell| cell.metrics_raw().dirty_pages.sum())
+                    .sum::<u128>() as f64
+                    * isoplane_abi::PAGE_SIZE as f64,
+            },
+            snapshot_written_bytes: m.delta_bytes,
             traps_total: m.traps,
             breaker_trips: m.breaker_rejections,
         }

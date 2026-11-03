@@ -1,6 +1,6 @@
 //! Scripted guests and outbound HTTP doubles for host tests.
 
-use std::collections::{VecDeque};
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -9,7 +9,7 @@ use parking_lot::Mutex;
 
 use isoplane_abi::calls::*;
 use isoplane_abi::dispatch::DispatchRecord;
-use isoplane_abi::host::{PinnedTarget};
+use isoplane_abi::host::PinnedTarget;
 use isoplane_abi::result::*;
 use isoplane_abi::status::{PollStatus, TrapCode};
 use isoplane_abi::PAGE_SIZE;
@@ -584,10 +584,6 @@ impl Activator for FakeActivator {
         }))
     }
 }
-
-
-
-
 
 /// Records the address it was told to connect to.
 #[derive(Default)]

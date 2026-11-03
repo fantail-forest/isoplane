@@ -8,7 +8,7 @@ namespace Isoplane.Cli;
 
 internal enum TelemetryCommand
 {
-    Dev, DebugAdapter, Setup, UninstallSdk, Doctor, Cache, Bundle, PrepareRuntime, Agent, Unknown
+    Dev, DebugAdapter, Setup, UninstallSdk, Doctor, Cache, Bundle, PrepareRuntime, Agent, Daemon, Deploy, Unknown
 }
 
 internal enum CommandInterface { Cli, Mcp }

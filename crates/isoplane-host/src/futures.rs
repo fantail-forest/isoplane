@@ -73,7 +73,6 @@ enum State {
     Ready,
 }
 
-
 /// Commits a consumed resource only when its result reaches the guest.
 /// Dropping before delivery restores the resource's readable state.
 pub(crate) trait ResultDelivery: Send {
@@ -81,10 +80,10 @@ pub(crate) trait ResultDelivery: Send {
 }
 
 struct Entry {
-    /// Owner for completion routing.
     owner: Arc<OwnedFutures>,
     dispatch: u64,
     import: &'static str,
+
     /// A wake whose condition the host can recreate in a later dispatch, so
     /// cancelling it with its dispatch abandons no guest work.
     rearmable: bool,
@@ -165,7 +164,7 @@ impl Default for Owned {
             closed: false,
             entry_limit: retained_entry_limit(
                 crate::bindings::GuestResourceLimits::default().native_handles,
-                6,
+                isoplane_abi::config::Limits::default().pending_futures_per_dispatch,
             ),
             retained_entries: 0,
             buffered_bytes: 0,
@@ -208,8 +207,7 @@ impl Owned {
 /// One instance's retained results and in-flight read reservations.
 #[derive(Debug)]
 pub struct OwnedFutures {
-    /// Instance identifier returned by completion routing.
-    instance: AtomicU64,
+    instance: InstanceId,
     inner: Mutex<Owned>,
     space_available: tokio::sync::Notify,
 }
@@ -217,16 +215,15 @@ pub struct OwnedFutures {
 impl OwnedFutures {
     pub fn new(instance: InstanceId) -> Arc<OwnedFutures> {
         Arc::new(OwnedFutures {
-            instance: AtomicU64::new(instance.0),
+            instance,
             inner: Mutex::new(Owned::default()),
             space_available: tokio::sync::Notify::new(),
         })
     }
 
     pub fn instance(&self) -> InstanceId {
-        InstanceId(self.instance.load(Ordering::Acquire))
+        self.instance
     }
-
 }
 
 /// Space held for a read's undelivered result.
@@ -328,9 +325,10 @@ impl FutureTable {
         owner: InstanceId,
         dispatch: u64,
         import: &'static str,
+
         limit: u32,
     ) -> Result<u64, PendingCapError> {
-        self.alloc_entry(owner, dispatch, import, class, limit, false)
+        self.alloc_entry(owner, dispatch, import, limit, false)
     }
 
     /// Like [`FutureTable::alloc`], for a wake the host recreates when the
@@ -341,9 +339,10 @@ impl FutureTable {
         owner: InstanceId,
         dispatch: u64,
         import: &'static str,
+
         limit: u32,
     ) -> Result<u64, PendingCapError> {
-        self.alloc_entry(owner, dispatch, import, class, limit, true)
+        self.alloc_entry(owner, dispatch, import, limit, true)
     }
 
     fn alloc_entry(
@@ -351,6 +350,7 @@ impl FutureTable {
         owner: InstanceId,
         dispatch: u64,
         import: &'static str,
+
         limit: u32,
         rearmable: bool,
     ) -> Result<u64, PendingCapError> {
@@ -382,6 +382,7 @@ impl FutureTable {
                 owner: arc,
                 dispatch,
                 import,
+
                 rearmable,
                 state: State::Pending,
                 result: None,
@@ -854,8 +855,6 @@ impl FutureTable {
         }
     }
 
-
-
     /// Every live future id, ascending.
     pub fn live_future_ids(&self) -> Vec<u64> {
         let mut v = Vec::new();
@@ -881,7 +880,6 @@ impl FutureTable {
         v
     }
 
-
     pub fn live_futures(&self) -> usize {
         self.entries.len()
     }
@@ -893,7 +891,7 @@ pub struct Ready {
     pub future: u64,
     pub dispatch: u64,
     pub result: ResultRecord,
-    /// Duration since the result became ready, when a timestamp is available.
+    /// How long the result waited for the instance's thread, when measured.
     pub waited: Option<std::time::Duration>,
 }
 
@@ -904,11 +902,9 @@ impl Ready {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
 
     #[tokio::test]
     async fn reads_wait_for_space_and_release_it_on_delivery_or_cancellation() {
@@ -1090,8 +1086,6 @@ mod tests {
         assert_cancelled(task).await;
     }
 
-
-
     #[test]
     fn ids_are_never_zero_and_never_reused() {
         let t = table();
@@ -1174,7 +1168,6 @@ mod tests {
         let t = table();
         let i = InstanceId(1);
         let limit = 6;
-
         for n in 0..limit {
             assert!(
                 t.alloc(i, 7, "clock_deadline_in", limit).is_ok(),
@@ -1323,8 +1316,7 @@ mod tests {
         let t = table();
         let owner = InstanceId(1);
         let work = t.alloc(owner, 1, "clock_deadline_in", 8).expect("alloc");
-        t.alloc_rearmable(owner, 1, "poll_call", 8)
-            .expect("alloc");
+        t.alloc_rearmable(owner, 1, "poll_call", 8).expect("alloc");
         t.alloc_cancellation(owner, 1);
         assert_eq!(
             t.hand_to_instance(owner, 1),
@@ -1362,8 +1354,6 @@ mod tests {
         t.release_instance(owner);
         assert_eq!(t.live_futures(), 0, "discarding the instance releases it");
     }
-
-
 
     #[test]
     fn retained_results_and_handover_share_one_instance_limit() {
@@ -1434,9 +1424,7 @@ mod tests {
     fn ending_a_dispatch_reclaims_only_its_own_handles() {
         let t = table();
         let owner = InstanceId(1);
-        let doomed = t
-            .alloc(owner, 1, "clock_deadline_in", 64)
-            .expect("alloc");
+        let doomed = t.alloc(owner, 1, "clock_deadline_in", 64).expect("alloc");
         let other = t.alloc(owner, 2, "queue_send", 64).expect("alloc");
         assert!(
             t.end_dispatch(owner, 1),
@@ -1459,14 +1447,11 @@ mod tests {
         );
     }
 
-
     #[test]
     fn a_completed_but_undelivered_result_does_not_outlive_its_dispatch() {
         let t = table();
         let owner = InstanceId(1);
-        let id = t
-            .alloc(owner, 1, "clock_deadline_in", 64)
-            .expect("alloc");
+        let id = t.alloc(owner, 1, "clock_deadline_in", 64).expect("alloc");
         assert_eq!(
             t.complete(id, ResultRecord::Ok(vec![1])),
             WakeTarget::Instance(owner),

@@ -23,7 +23,7 @@ pub(super) fn template(
 struct Cache {
     path: PathBuf,
     key: blake3::Hash,
-    limits: isoplane_abi::config::Limits,
+    memory_limit: isoplane_abi::config::GuestMemoryBytes,
     validation_limits: isoplane_abi::config::ValidationLimits,
     declared_memory_ceiling: Option<isoplane_abi::config::GuestMemoryBytes>,
 }
@@ -59,7 +59,7 @@ impl Cache {
                 .clone()
                 .join("preinitialized.wasm-cache"),
             key: key.finalize(),
-            limits: project.manifest.limits,
+            memory_limit: project.manifest.memory_limit(),
             validation_limits: project.manifest.validation_limits,
             declared_memory_ceiling: project
                 .runtime_profile
@@ -74,7 +74,7 @@ impl Cache {
         if let Some(wasm) = self.read()? {
             match isoplane_runtime::validate_with_limits(
                 &wasm,
-                self.limits,
+                self.memory_limit,
                 self.declared_memory_ceiling,
                 &self.validation_limits,
             ) {
@@ -163,7 +163,7 @@ fn hash_part(hash: &mut blake3::Hasher, bytes: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use isoplane_abi::config::{InitSandbox, Limits};
+    use isoplane_abi::config::InitSandbox;
     use isoplane_engine::{PlatformFile, PlatformFiles};
 
     struct Fixture {
@@ -313,10 +313,10 @@ mod tests {
     fn an_independent_memory_override_is_retained_when_reusing_local_preparation() {
         let mut fixture = Fixture::new();
         fixture.project.manifest.guest_memory_bytes =
-            Some(isoplane_abi::config::GuestMemoryBytes::new(512 << 20).unwrap());
+            Some(isoplane_abi::config::GuestMemoryBytes::new(160 << 20).unwrap());
         fixture.wasm = wat::parse_str(
             r#"(module
-                (memory (export "memory") 1 8192)
+                (memory (export "memory") 1 2560)
                 (func (export "isoplane_initialize") (result i64) i64.const 0)
                 (func (export "isoplane_alloc") (param i32 i32) (result i32) (i32.const 0))
                 (func (export "isoplane_handle") (param i32 i32) (result i64) (i64.const 1))
@@ -337,9 +337,9 @@ mod tests {
             "cached preparation must preserve the authorized memory ceiling"
         );
         assert_eq!(
-            fixture.project.manifest.limits,
-            Limits::default(),
-            "reusing a large memory template must not require a different application memory budget"
+            fixture.project.manifest.memory_limit(),
+            isoplane_abi::config::GuestMemoryBytes::new(160 << 20).unwrap(),
+            "reusing preparation must retain the configured memory limit"
         );
     }
 
@@ -391,15 +391,8 @@ mod tests {
             "changed initialization sandbox",
         );
         project = fixture.project.clone();
-        project.manifest.limits = Limits {
-            instances_per_application: 3,
-            module_bytes_compressed: 5242880,
-            package_bytes: 52428800,
-            instance_memory_max: 134217728,
-            occupancy_ms_per_dispatch: 100,
-            instance_open_connections: 32,
-            pending_futures_per_dispatch: 6,
-        };
+        project.manifest.guest_memory_bytes =
+            Some(isoplane_abi::config::GuestMemoryBytes::new(128 << 20).unwrap());
         assert_miss(
             &project,
             &fixture.wasm,
@@ -566,7 +559,8 @@ mod tests {
         )
         .unwrap();
         let violations =
-            isoplane_runtime::validate(&hostile, fixture.project.manifest.limits).unwrap_err();
+            isoplane_runtime::validate(&hostile, fixture.project.manifest.memory_limit())
+                .unwrap_err();
         assert_eq!(
             violations.len(),
             1,

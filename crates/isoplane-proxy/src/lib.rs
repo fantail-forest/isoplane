@@ -1,4 +1,4 @@
-//! HTTP proxy routing, admission and request measurements.
+//! HTTP proxy, route resolution and admission control.
 
 #![forbid(unsafe_code)]
 
@@ -13,6 +13,6 @@ pub mod server;
 pub mod shed;
 
 pub use metrics::{Histogram, ProxyMetrics};
-pub use routes::{LocalRouteTable, RouteError, RouteResolver, };
+pub use routes::{LocalRouteTable, RouteError, RouteResolver};
 pub use server::{Proxy, ProxyConfig};
 pub use shed::{AdmissionControl, ShedConfig};

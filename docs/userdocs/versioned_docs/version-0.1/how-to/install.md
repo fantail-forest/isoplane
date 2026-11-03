@@ -149,7 +149,7 @@ and open a new terminal.
 `isoplane completions` prints the setup script for your shell. The script asks
 the installed CLI for command names, options and supported shell names as you
 type, so suggestions stay current when you update the CLI. Completion does not
-require setup, sign-in or a configured server.
+require setup or a host configuration.
 
 **Bash:** add this line to `~/.bashrc`, then open a new terminal:
 
@@ -261,7 +261,7 @@ dotnet tool uninstall --global Isoplane.Cli
 ```
 
 The first command removes what setup installed and the second removes the CLI.
-Your projects, the CLI's configuration and your sign-in state stay.
+Your projects and local CLI preferences stay.
 
 <OnlyOn platforms="mac linux">
 

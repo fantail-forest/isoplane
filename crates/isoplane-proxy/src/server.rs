@@ -195,8 +195,7 @@ impl Proxy {
             }
         };
 
-
-        let Some(target) = self.routes.resolve(&host, &path, ) else {
+        let Some(target) = self.routes.resolve(&host, &path) else {
             self.metrics.requests_404.fetch_add(1, Relaxed);
             return text(StatusCode::NOT_FOUND, "no route", &[]);
         };

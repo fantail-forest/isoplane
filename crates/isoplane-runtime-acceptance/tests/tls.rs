@@ -1,6 +1,6 @@
 //! TLS over the delegated sockets with the guest's own OpenSSL: an
 //! `SslStream` handshake and its reads park on socket readiness like any
-//! other socket I/O and survive Store restorations, bytes flow both ways,
+//! other socket I/O and survive hibernation deltas, bytes flow both ways,
 //! the server certificate is validated against a root the guest trusts
 //! (name, validity, chain), and every failure the peer can produce reaches
 //! the ordinary .NET exception.
@@ -147,7 +147,7 @@ in_mono_runtime! {
     }
 
     #[tokio::test]
-    async fn a_tls_session_survives_a_store_restoration_delta_round_trip_at_every_park(runtime: GuestRuntime) {
+    async fn a_tls_session_survives_a_hibernation_delta_round_trip_at_every_park(runtime: GuestRuntime) {
         let peer = tls_peer(Certificate::Leaf, Behaviour::Echo).await;
         let reactor = reactor_for_peers(vec![peer]);
         let mut guest = guest(&reactor, runtime);
@@ -162,7 +162,7 @@ in_mono_runtime! {
             Completion::Parked,
             "the handshake parks: {outcome:?}"
         );
-        let text = guest.finish(&reactor, 64).await;
+        let text = guest.finish_through_deltas(&reactor, 64).await;
         assert_eq!(
             text, payload,
             "the TLS state and the connection must survive every park being captured and restored; logs: {:?}",
@@ -637,7 +637,7 @@ in_mono_runtime! {
     }
 
     #[tokio::test]
-    async fn a_pending_retrieval_survives_a_store_restoration_at_every_park(runtime: GuestRuntime) {
+    async fn a_pending_retrieval_survives_a_hibernation_delta_at_every_park(runtime: GuestRuntime) {
         let material = MaterialPeer::start(Issuers::Served, Crl::Good, Ocsp::Unavailable).await;
         let peer = tls_peer(Certificate::RemoteAlone, Behaviour::Echo).await;
         let reactor = reactor_for_peers(vec![peer, material.address()]);
@@ -652,7 +652,7 @@ in_mono_runtime! {
             Completion::Parked,
             "the connect parks: {outcome:?}"
         );
-        let text = guest.finish(&reactor, 64).await;
+        let text = guest.finish_through_deltas(&reactor, 64).await;
         assert!(
             text.starts_with("protocol=Tls1") && text.ends_with(" peer=CN=remote.acceptance.test"),
             "the half-built chain and its pending retrievals survive every park being captured and restored: {text}; logs: {:?}",
@@ -1681,10 +1681,10 @@ in_mono_runtime! {
     }
 
     #[tokio::test]
-    async fn a_removed_root_is_untrusted_by_a_parked_guest_once_restored(runtime: GuestRuntime) {
+    async fn a_removed_root_is_untrusted_by_a_hibernated_guest_once_restored(runtime: GuestRuntime) {
         // Start with cached roots, rotate the served bundle, then connect
-        // after the recheck interval. Every parked wake restores the saved
-        // instance before this handshake reports its result.
+        // after the recheck interval. Every parked wake crosses a local
+        // snapshot round trip before this handshake reports its result.
         let peer = tls_peer(Certificate::Leaf, Behaviour::Echo).await;
         let (reactor, mut guest) = validated_then_rotated(
             runtime,
@@ -1701,10 +1701,10 @@ in_mono_runtime! {
             isoplane_engine::Completion::Parked,
             "the connect parks: {outcome:?}"
         );
-        let text = guest.finish(&reactor, 32).await;
+        let text = guest.finish_through_deltas(&reactor, 32).await;
         assert!(
             text.starts_with("AuthenticationException: ") && text.contains("UntrustedRoot"),
-            "restored after the rotation, the guest validates against the served bundle: {text}; logs: {:?}",
+            "restored from a delta after the rotation, the guest validates against the served bundle: {text}; logs: {:?}",
             reactor.context.emitted_logs()
         );
     }

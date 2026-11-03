@@ -4,11 +4,11 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 
 use async_trait::async_trait;
+
 use isoplane_abi::dispatch::HttpRequest;
 use isoplane_abi::host::{CodeTier, Dispatcher, HttpReply, RouteTarget};
 use parking_lot::Mutex;
 
-/// HTTP dispatcher double for proxy boundary tests.
 pub struct FakeCell {
     http_dispatches: AtomicU64,
     breaker_tripped: Mutex<HashMap<String, bool>>,
@@ -21,7 +21,6 @@ impl Default for FakeCell {
 }
 
 impl FakeCell {
-    /// Construct an untripped dispatcher with no accepted requests.
     pub fn new() -> Self {
         FakeCell {
             http_dispatches: AtomicU64::new(0),
@@ -29,22 +28,15 @@ impl FakeCell {
         }
     }
 
-    /// Return the accepted HTTP dispatch count.
     pub fn http_dispatches(&self) -> u64 {
         self.http_dispatches.load(Relaxed)
     }
-
-    /// Make requests to this application/path key return the breaker response.
     pub fn trip_breaker(&self, route: &str) {
         self.breaker_tripped.lock().insert(route.to_string(), true);
     }
-
-    /// Allow requests to this application/path key again.
     pub fn reset_breaker(&self, route: &str) {
         self.breaker_tripped.lock().insert(route.to_string(), false);
     }
-
-    /// Return whether this application/path key is tripped.
     pub fn breaker_is_tripped(&self, route: &str) -> bool {
         *self.breaker_tripped.lock().get(route).unwrap_or(&false)
     }

@@ -3,16 +3,16 @@
 mod common;
 #[path = "common/managed.rs"]
 mod managed;
-use isoplane_abi::config::Limits;
+
 use isoplane_abi::dispatch::HttpRequest;
 use isoplane_engine::IsoplaneEngine;
 use isoplane_fixtures::GuestRuntime;
-use isoplane_harness::EmittedGuestLogs as _;
 use isoplane_host::activator::EngineActivator;
 use isoplane_host::cell::{Cell, CellConfig, Target};
 use isoplane_host::ModuleId;
 use std::sync::Arc;
 use std::time::Duration;
+use isoplane_harness::EmittedGuestLogs as _;
 
 /// The shared runtime Task compiled, loaded once for every test in this binary on an engine
 /// with room for each test's instances.
@@ -73,7 +73,7 @@ fn cleanup_cell_with(
     cell.register_module(
         "tenant",
         Arc::new(activator),
-        common::manifest("managed-cleanup", Limits::default()),
+        common::manifest("managed-cleanup"),
     )
     .expect("the cleanup module must register");
     (cell, module)
@@ -355,7 +355,6 @@ async fn managed_request_failures_leave_other_requests_and_instance_state_intact
                             app: module.app.clone(),
                             version: module.version.clone(),
                             tenant: "tenant".into(),
-
                             tier: CodeTier::Fast,
                         },
                         request(path),
@@ -681,7 +680,7 @@ fn upload_cell() -> (Arc<Cell>, ModuleId) {
     cell.register_module(
         "tenant",
         Arc::new(activator),
-        common::manifest("managed-upload", Limits::default()),
+        common::manifest("managed-upload"),
     )
     .expect("the upload module must register");
     (cell, module)
@@ -779,7 +778,6 @@ async fn upload(
         app: "managed-upload".into(),
         version: "v1".into(),
         tenant: "tenant".into(),
-
         tier: CodeTier::Fast,
     };
     let request = HttpRequest {

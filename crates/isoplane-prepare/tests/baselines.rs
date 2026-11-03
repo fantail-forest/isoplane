@@ -8,8 +8,8 @@ use isoplane_abi::config::InitSandbox;
 use isoplane_engine::prepared::PreparedIdentity;
 use isoplane_engine::{IsoplaneEngine, Template};
 use isoplane_prepare::{
-    BuildProduct, BuildRequest, BuildStage, LocalPreparation, PortableTemplate, Preparation,
-    PreparedBaseline, RuntimeBaseline, RuntimeProfile, WorkerFailure,
+    BuildProduct, BuildRequest, BuildStage, LocalPreparation, Preparation, PreparedBaseline,
+    RuntimeBaseline, RuntimeProfile, WorkerFailure,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -30,7 +30,7 @@ fn request(wasm: &[u8], sandbox: InitSandbox) -> BuildRequest {
         engine: common::engine().configuration(),
         application_files: Default::default(),
         runtime: RuntimeProfile::raw_wasm(),
-        limits: isoplane_abi::config::Limits::default(),
+        memory_limit: isoplane_abi::config::GuestMemoryBytes::default(),
         guest_memory_bytes: None,
         validation_limits: Default::default(),
         initialization: isoplane_prepare::Initialization {
@@ -38,7 +38,6 @@ fn request(wasm: &[u8], sandbox: InitSandbox) -> BuildRequest {
             ..common::request()
         },
         input_hash: *blake3::hash(wasm).as_bytes(),
-        portable_template: PortableTemplate::Omitted,
     }
 }
 
@@ -223,23 +222,7 @@ async fn an_application_is_refused_over_a_baseline_prepared_for_other_limits() {
     );
 }
 
-#[tokio::test]
-async fn an_application_over_a_baseline_cannot_return_a_portable_module() {
-    let wasm = staged::staged_guest(SEED, RUNTIME, APPLICATION);
-    let request = request(&wasm, InitSandbox::Sealed);
-    let runtime = baseline(&wasm, &request).await.expect("the baseline");
-    let portable = BuildRequest {
-        portable_template: PortableTemplate::Returned,
-        ..request
-    };
-    assert_eq!(
-        layer_refusal(&runtime.baseline, &portable).await,
-        BuildStage::Input,
-        "a layer has no portable module to return"
-    );
-}
-
-/// Preparation over a locally published baseline and its manifest receipt.
+/// Local preparation over a published runtime baseline and its manifest receipt.
 #[cfg(target_os = "linux")]
 mod published {
     use isoplane_prepare::{PrepareError, PublishedBaseline};

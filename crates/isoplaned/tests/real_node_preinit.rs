@@ -2,7 +2,11 @@
 //! guest fixture from the rest of the real-node suite, asserted against the
 //! deploy record rather than a dispatch.
 
-#![cfg(feature = "real-backends")]
+#[path = "common/runtime_inventory.rs"]
+mod runtime_inventory;
+
+#[path = "common/private_files.rs"]
+mod private_files;
 
 #[path = "common/preparation.rs"]
 mod preparation;
@@ -16,12 +20,12 @@ use http_body_util::{BodyExt, Full};
 use hyper::{Request, StatusCode};
 use hyper_util::rt::TokioIo;
 
-use isoplaned::config::{AppConfig, CellConfig, NodeConfig, VersionConfig};
+use isoplaned::config::{AppConfig, NodeConfig};
 use isoplaned::node::Node;
 use tokio::net::TcpStream;
 
 fn config(dir: &std::path::Path) -> NodeConfig {
-    let mut cfg = NodeConfig::dev_default();
+    let mut cfg = NodeConfig::new("acme");
     cfg.node = "real-node".into();
     cfg.data_dir = dir.to_path_buf();
     cfg.engine = isoplaned::config::EngineLimits {
@@ -30,17 +34,11 @@ fn config(dir: &std::path::Path) -> NodeConfig {
         guard_mib: 64,
         ..Default::default()
     };
-    cfg.cells = vec![CellConfig {
-        name: "cell-1".into(),
-    }];
+    cfg.preparation = Some(toml::from_str("").unwrap());
+    cfg.preparation.as_mut().unwrap().runtimes = Some(runtime_inventory::install(dir));
     cfg.apps = vec![AppConfig {
-        name: "quotes".into(),
-        tenant: "acme".into(),
-        limits: Default::default(),
-        cell: "cell-1".into(),
+        manifest: toml::from_str("name = 'quotes'\nguest_memory_bytes = 134217728").unwrap(),
         hosts: vec!["quotes.isoplane.dev".into()],
-        path_prefix: "/".into(),
-        versions: vec![VersionConfig { id: "v1".into() }],
     }];
     cfg
 }
@@ -61,6 +59,17 @@ impl Rig {
 }
 
 async fn serve(node: Arc<Node>, dir: tempfile::TempDir) -> Rig {
+    node.routes
+        .insert(
+            isoplane_abi::host::RouteTarget {
+                app: "quotes".into(),
+                tenant: "acme".into(),
+                version: "v1".into(),
+                tier: isoplane_abi::host::CodeTier::Fast,
+            },
+            &["quotes.isoplane.dev".into()],
+        )
+        .unwrap();
     let p = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let a = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let (proxy, admin) = (p.local_addr().unwrap(), a.local_addr().unwrap());
@@ -106,7 +115,7 @@ async fn get(addr: SocketAddr, host: &str, path: &str) -> Resp {
 async fn a_real_guests_init_visible_config_is_consumed_at_preinit_not_at_runtime() {
     let path = isoplane_fixtures::rust_path("quotes-api");
 
-    let dir = tempfile::tempdir().expect("a temporary directory");
+    let dir = private_files::directory().expect("a temporary directory");
     let cfg = config(dir.path());
     let wasm = std::fs::read(path).expect("the guest fixture is built");
     let mut manifest: isoplane_abi::config::AppManifest =
@@ -116,24 +125,15 @@ async fn a_real_guests_init_visible_config_is_consumed_at_preinit_not_at_runtime
     let rec = node
         .real
         .as_ref()
-        .expect("real cells")
         .deploy_locally("quotes", "v1", "acme", manifest, &wasm, Default::default())
         .await
         .expect("explicit local preparation");
-    assert!(
-        rec.from_template,
-        "a guest that exports isoplane_initialize must yield a template"
-    );
     assert!(
         rec.stages.iter().any(|s| s.name == "preinit"),
         "the startup deploy ran the pipeline: {:?}",
         rec.stages
     );
-    let pre = rec
-        .inner
-        .preinit
-        .as_ref()
-        .expect("a template implies a pre-init summary");
+    let pre = &rec.initialized;
     assert_eq!(
         pre.deferred_reasons
             .iter()
@@ -141,10 +141,6 @@ async fn a_real_guests_init_visible_config_is_consumed_at_preinit_not_at_runtime
             .collect::<Vec<_>>(),
         vec!["clock_now_coarse"],
         "exactly the clock-reading initializer defers"
-    );
-    assert_eq!(
-        pre.init_pal, "sealed",
-        "a Rust SDK guest needs no runtime PAL"
     );
 
     let rig = serve(node, dir).await;

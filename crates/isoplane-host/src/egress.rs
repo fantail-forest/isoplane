@@ -901,16 +901,10 @@ mod tests {
     async fn application_connection_caps_are_bounded_by_the_host_and_include_pending_attempts() {
         for (application_limit, effective_limit) in [(1, 1), (3, 2)] {
             let policy = limited(2, 2);
-            let mut limits = isoplane_abi::config::Limits {
-                instances_per_application: 16,
-                module_bytes_compressed: 52428800,
-                package_bytes: 52428800,
-                instance_memory_max: 536870912,
-                occupancy_ms_per_dispatch: 300000,
-                instance_open_connections: 32,
-                pending_futures_per_dispatch: 4096,
+            let limits = isoplane_abi::config::Limits {
+                instance_open_connections: application_limit,
+                ..Default::default()
             };
-            limits.instance_open_connections = application_limit;
             let owner = owner("a", 1).with_application_limits(&limits);
             let mut held = Vec::new();
             for _ in 0..effective_limit {

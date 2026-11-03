@@ -8,7 +8,6 @@
 
 mod common;
 
-use isoplane_abi::config::Limits;
 use isoplane_abi::dispatch::HttpRequest;
 use isoplane_engine::{Completion, EngineConfig, IsoplaneEngine};
 use isoplane_host::cell::{CellConfig, DispatchResult, Target};
@@ -55,12 +54,8 @@ fn dispatch(handle: &str, wake: &str) -> DispatchResult {
         CellConfig::for_test("timer-side-channels"),
         "93.184.216.34:80",
     );
-    cell.register_module(
-        "owner",
-        activator,
-        common::manifest("timer-side-channels", Limits::default()),
-    )
-    .expect("register the hostile module");
+    cell.register_module("owner", activator, common::manifest("timer-side-channels"))
+        .expect("register the hostile module");
     let record = cell.http_record(
         &module,
         HttpRequest {

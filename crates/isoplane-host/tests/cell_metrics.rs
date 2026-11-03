@@ -5,7 +5,6 @@ use std::time::Duration;
 
 use isoplane_test_support::wait_for;
 
-use isoplane_abi::config::Limits;
 use isoplane_abi::dispatch::{DispatchRecord, HttpRequest};
 
 use isoplane_host::cell::{Cell, CellConfig, Target};
@@ -48,9 +47,7 @@ fn the_metrics_endpoint_decomposes_the_lifecycle() {
         FakeBehaviour::done(),
     ));
     let module = act.module().clone();
-    r.cell
-        .register_module("acme", act, manifest("m", Limits::default()))
-        .unwrap();
+    r.cell.register_module("acme", act, manifest("m")).unwrap();
     for i in 0..5 {
         let mut rec = http(&r.cell, &module, "/");
         rec.dispatch_id = i;
@@ -120,10 +117,10 @@ fn logging_is_charged_to_the_dispatch_that_logs() {
     let qm = quiet.module().clone();
     let lm = loud.module().clone();
     r.cell
-        .register_module("acme", quiet, manifest("quiet-logger", Limits::default()))
+        .register_module("acme", quiet, manifest("quiet-logger"))
         .unwrap();
     r.cell
-        .register_module("acme", loud, manifest("loud-logger", Limits::default()))
+        .register_module("acme", loud, manifest("loud-logger"))
         .unwrap();
 
     let q = r

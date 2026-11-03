@@ -6,10 +6,9 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::Duration;
 
-use isoplane_abi::config::{AppManifest, Bindings, GuestMemoryBytes, Limits};
+use isoplane_abi::config::{AppManifest, Bindings, GuestMemoryBytes};
 use isoplane_engine::{Completion, EngineConfig, IsoplaneEngine};
 use isoplane_fixtures::GuestRuntime;
-use isoplane_harness::EmittedGuestLogs as _;
 use isoplane_hibernate::snapshot::{
     LocalSnapshotStorage, SnapshotBytes, SnapshotError, SnapshotReservation, SnapshotStorage,
 };
@@ -21,6 +20,7 @@ use isoplane_host::egress::{
 use isoplane_host::fakes::FakeFetcher;
 use isoplane_host::{EngineActivator, InstanceId, LifecycleTier, ModuleId, Resolver};
 use isoplane_test_support::wait_for;
+use isoplane_harness::EmittedGuestLogs as _;
 
 #[path = "common/managed.rs"]
 mod managed;
@@ -213,7 +213,6 @@ impl Rig {
                 resource_limits: Default::default(),
                 validation_limits: Default::default(),
                 bindings: Bindings::default(),
-                limits: Limits::default(),
                 init_visible_vars: vec![],
             },
         )

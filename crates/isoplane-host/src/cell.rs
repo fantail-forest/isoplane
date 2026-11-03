@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use parking_lot::{Mutex, RwLock};
 
-use isoplane_abi::config::{AppManifest, Limits};
+use isoplane_abi::config::AppManifest;
 use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, TraceContext};
 use isoplane_abi::status::{PollStatus, TrapCode};
 use isoplane_engine::{Completion, DispatchOutcome, GraceEnd, OccupancyBudget};
@@ -77,7 +77,7 @@ pub struct CellConfig {
     /// This does not limit the total size of a response.
     #[serde(skip)]
     pub response_queue_bytes: usize,
-    /// Wall-clock backstop for one slice; reported separately from active execution time.
+    /// Elapsed-time backstop for one slice, independent of occupancy.
     pub slice_wall_ms_cap: u32,
     /// How long a dispatch has to finish once its cancellation is requested,
     /// by its CPU budget or its client going away, before the host kills it,

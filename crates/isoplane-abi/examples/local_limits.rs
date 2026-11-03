@@ -1,17 +1,7 @@
 #![forbid(unsafe_code)]
 
-use isoplane_abi::config::Limits;
-
 fn main() {
-    let limits = Limits {
-        instances_per_application: 16,
-        module_bytes_compressed: 52428800,
-        package_bytes: 52428800,
-        instance_memory_max: 536870912,
-        occupancy_ms_per_dispatch: 300000,
-        instance_open_connections: 32,
-        pending_futures_per_dispatch: 4096,
-    };
+    let limits = isoplane_abi::config::Limits::default();
     println!("| Resource | Local default |\n| --- | --- |");
     println!("| Live instances | {} |", limits.instances_per_application);
     println!(

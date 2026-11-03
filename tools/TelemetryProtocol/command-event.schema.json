@@ -56,7 +56,7 @@
       "description": "The command that ran. A name the CLI does not recognise is recorded as unknown, never as typed.",
       "enum": [
         "dev", "debug-adapter", "setup", "uninstall-sdk", "doctor", "cache",
-        "bundle", "prepare-runtime", "agent", "unknown"
+        "bundle", "prepare-runtime", "agent", "daemon", "deploy", "unknown"
       ]
     },
     "mode": {

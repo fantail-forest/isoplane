@@ -1,5 +1,4 @@
 //! Managed guest logging through real cells and the node JSON output.
-#![cfg(feature = "real-backends")]
 
 pub mod common;
 

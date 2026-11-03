@@ -188,7 +188,11 @@ mod tests {
             assert_eq!(future.as_mut().poll(&mut context), Poll::Pending);
             assert_eq!(meters.occupancy_ns(), 40);
             assert_eq!(future.as_mut().poll(&mut context), Poll::Pending);
-            assert_eq!(meters.occupancy_ns(), 100, "time between polls is outside active occupancy");
+            assert_eq!(
+                meters.occupancy_ns(),
+                100,
+                "time between polls is unmeasured"
+            );
         });
         assert_eq!(observed.0.load(std::sync::atomic::Ordering::Relaxed), 0);
         drop(future);

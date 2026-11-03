@@ -51,7 +51,7 @@ cargo metadata --no-deps --format-version 1 \
 | **Lint**                 | `task lint`                                             | Full Rust gate before merging or releasing code changes; lint affected packages (`task lint -- -p <name>`) during development. See the validation workflow. |
 | **Format**               | `rustfmt.toml` (root and `guests/`)                     | Check affected workspaces during development; `task format:check` is the full format gate. Default rustfmt settings, without `#[rustfmt::skip]`. |
 | **Tests**                | `task test`, `task test:unit`, `task test:rust`         | The test tasks prepare their prerequisites before running `cargo test`. Fixture helpers resolve and load prepared artifacts. |
-| **Database** | PostgreSQL for relational integrations | Use the PostgreSQL protocol; local PostgreSQL containers are suitable for tests. See the relational-storage opinion. |
+| **Database**             | PostgreSQL for relational integrations | Use the PostgreSQL protocol. Local PostgreSQL containers are suitable for tests. See the relational-storage opinion. |
 | **HTTP**                 | hyper 1, tokio                                          |                                                                                                                                                  |
 | **Wire formats**         | postcard (guest boundary, deltas), JSON (operator API)  |                                                                                                                                                  |
 | **Logging**              | `tracing` + `tracing-subscriber` (JSON)                 |                                                                                                                                                  |
@@ -82,9 +82,10 @@ scripts/dev cargo <args>                           # Any other Cargo command; pl
 scripts/dev guests/build.sh                        # Rust guests -> .build/wasm32/rust-guests/*.wasm
 scripts/dev guests/build-dotnet.sh --if-stale      # managed probes -> .build/clr-anycpu/probes/*.tar
 
-task daemon -- --config isoplaned.toml            # Run a node
-task daemon -- --config isoplaned.toml --check    # Validate a config without running
-isoplane deploy --app <name> --project <directory> --team <name>
+task daemon -- serve --config isoplaned.toml            # Run a node
+task daemon -- serve --config isoplaned.toml --check    # Validate a config without running
+isoplane bundle --project <directory> --output application.tar
+isoplane deploy --local --config host.toml --app <name> --bundle application.tar
 
 cd docs/userdocs && pnpm run start                 # Serve customer docs
 
@@ -259,7 +260,7 @@ Keep the host interface to one definition. Generate every other representation o
 - Keep configuration layered: let a value come from more than one source (a file, the environment, a flag), give the sources a defined precedence, and let the daemon print the merged result it is actually running with. Which sources exist and how they rank is the daemon's decision, not a rule here.
 - Never commit secrets. Make anything that holds a development-only key or credential refuse to run anywhere it could be mistaken for production.
 - Treat every template and derived snapshot as potentially secret-bearing. Applications choose initialization-time or activation-time configuration/secret reads; changes to any guest-readable configuration trigger redeployment and regeneration of captured state, even with unchanged code. See the [isolation opinion](docs/opinion-registry/production/isolation.md).
-- Use PostgreSQL and EF Core for managed relational integrations, with EF migrations owning their schemas. Keep persistence and application settings behind consumed interfaces. .NET User Secrets may supply local development configuration; they are not encrypted vault storage. See [relational storage](docs/opinion-registry/frameworks/postgresql.md).
+- Use PostgreSQL and EF Core for managed relational integrations, with EF migrations owning their schemas. Keep persistence and application settings behind consumed interfaces. The standalone host uses protected local files for its selected deployments and application settings; it does not require a database service. Settings protection belongs to the settings store; .NET User Secrets may supply local development configuration but are not encrypted vault storage. See [relational storage](docs/opinion-registry/frameworks/postgresql.md).
 - Expose a port, hostname, limit, or deadline as configuration when there is an operational need to vary it, and validate the supported range. Fixed policy and protocol facts may remain constants. Define a shared concept's value or default once in its owning crate; unrelated policies may have equal values without sharing a definition.
 - Never default identity. Treat a tenant, org, or app that a request did not establish as an error, not as `"unknown"`.
 

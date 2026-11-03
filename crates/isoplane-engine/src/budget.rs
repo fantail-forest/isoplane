@@ -34,7 +34,7 @@ pub struct OccupancyBudget {
 }
 
 impl Default for OccupancyBudget {
-    /// The budget for slices outside application dispatch, such as the pre-capture GC hint.
+    /// The budget for host-initiated slices, such as the pre-capture GC hint.
     fn default() -> Self {
         Self {
             occupancy_ms: 50,
@@ -137,7 +137,7 @@ pub struct DispatchOutcome {
     pub occupancy_measurement: OccupancyMeasurement,
     /// Typed discriminator for a budget or wall backstop outcome.
     pub execution_limit: Option<ExecutionLimit>,
-    /// For observability only.
+    /// Elapsed time for diagnostics, separate from occupied-worker time.
     pub wall_ns: u64,
     pub trap: Option<TrapInfo>,
     /// `Some` when this slice ended a dispatch that entered grace.
@@ -231,11 +231,11 @@ mod tests {
     }
 
     #[test]
-    fn configured_occupancy_budgets_get_deliverable_grace_windows() {
+    fn configured_occupancy_budgets_get_a_deliverable_grace_window() {
         let tick_ns = crate::EngineConfig::default().epoch_tick_us * 1_000;
-        for budget_ms in [100, 30000, 300000] {
+        for occupancy_ms in [1, 100, 30_000, 300_000] {
             let b = OccupancyBudget {
-                occupancy_ms: budget_ms,
+                occupancy_ms,
                 ..OccupancyBudget::default()
             };
             let g = b.grace_ns();

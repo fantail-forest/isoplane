@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use isoplane_abi::calls::FetchRequest;
-use isoplane_abi::config::Limits;
+
 use isoplane_abi::result::{FetchResponse, FutureError, ResultRecord};
 use isoplane_engine::{HostBindings, ImportCall};
 
@@ -38,7 +38,11 @@ struct Vt {
     wake: Arc<RecordingWake>,
 }
 
-fn vtable(limits: Limits, resolve_to: &str, allowlist: Option<Vec<String>>) -> Vt {
+fn vtable(
+    limits: isoplane_abi::config::Limits,
+    resolve_to: &str,
+    allowlist: Option<Vec<String>>,
+) -> Vt {
     vtable_with_resolver(
         limits,
         Box::new(Fixed(vec![resolve_to
@@ -49,7 +53,7 @@ fn vtable(limits: Limits, resolve_to: &str, allowlist: Option<Vec<String>>) -> V
 }
 
 fn vtable_with_resolver(
-    limits: Limits,
+    limits: isoplane_abi::config::Limits,
     resolver: Box<dyn Resolver>,
     allowlist: Option<Vec<String>>,
 ) -> Vt {
@@ -79,7 +83,6 @@ fn vtable_with_resolver(
             module: ModuleId::new("app", "v1"),
             tenant: "acme".into(),
             limits,
-
             allowlist,
         },
         meters.clone(),
@@ -124,7 +127,7 @@ async fn settle(v: &Vt, id: u64) -> ResultRecord {
 
 #[tokio::test]
 async fn fetch_to_a_private_address_is_denied_through_the_future() {
-    let mut v = vtable(Limits::default(), "10.0.0.5:80", None);
+    let mut v = vtable(isoplane_abi::config::Limits::default(), "10.0.0.5:80", None);
     let id = v.bindings.call_future(ImportCall {
         import: "http_fetch",
         payload: &fetch_payload("http://internal.example/"),
@@ -149,7 +152,11 @@ async fn fetch_to_a_private_address_is_denied_through_the_future() {
 
 #[tokio::test]
 async fn the_fetch_connects_to_the_pinned_address() {
-    let mut v = vtable(Limits::default(), "93.184.216.34:80", None);
+    let mut v = vtable(
+        isoplane_abi::config::Limits::default(),
+        "93.184.216.34:80",
+        None,
+    );
     let id = v.bindings.call_future(ImportCall {
         import: "http_fetch",
         payload: &fetch_payload("http://example.com/"),
@@ -171,7 +178,7 @@ async fn the_fetch_connects_to_the_pinned_address() {
 #[tokio::test]
 async fn a_host_off_the_allowlist_is_refused() {
     let mut v = vtable(
-        Limits::default(),
+        isoplane_abi::config::Limits::default(),
         "93.184.216.34:80",
         Some(vec!["api.example.com".into()]),
     );
@@ -191,7 +198,11 @@ async fn logging_enforces_the_dispatch_byte_limit() {
     let output = TestLogCapture::default();
     let subscriber = output.dispatch();
     let _subscriber = tracing::dispatcher::set_default(&subscriber);
-    let mut v = vtable(Limits::default(), "93.184.216.34:80", None);
+    let mut v = vtable(
+        isoplane_abi::config::Limits::default(),
+        "93.184.216.34:80",
+        None,
+    );
     assert_eq!(v.meters.log_occupancy_ns(), 0, "nothing has logged yet");
     let line = vec![b'x'; 512];
     for _ in 0..200 {
@@ -219,7 +230,11 @@ async fn logging_enforces_the_dispatch_byte_limit() {
 
 #[tokio::test]
 async fn completions_signal_the_wake_router() {
-    let mut v = vtable(Limits::default(), "93.184.216.34:80", None);
+    let mut v = vtable(
+        isoplane_abi::config::Limits::default(),
+        "93.184.216.34:80",
+        None,
+    );
     let id = v.bindings.call_future(ImportCall {
         import: "clock_deadline_in",
         payload: &[],
@@ -244,8 +259,16 @@ async fn completions_signal_the_wake_router() {
 
 #[tokio::test]
 async fn entropy_is_never_reused_across_calls_or_instances() {
-    let mut a = vtable(Limits::default(), "93.184.216.34:80", None);
-    let mut b = vtable(Limits::default(), "93.184.216.34:80", None);
+    let mut a = vtable(
+        isoplane_abi::config::Limits::default(),
+        "93.184.216.34:80",
+        None,
+    );
+    let mut b = vtable(
+        isoplane_abi::config::Limits::default(),
+        "93.184.216.34:80",
+        None,
+    );
     let mut seen = std::collections::HashSet::new();
     let mut buf = [0u8; 32];
     for _ in 0..100 {
@@ -280,7 +303,11 @@ impl Resolver for FailedDns {
 
 #[tokio::test]
 async fn an_http_dns_failure_is_io_and_does_not_count_as_a_policy_denial() {
-    let mut v = vtable_with_resolver(Limits::default(), Box::new(FailedDns), None);
+    let mut v = vtable_with_resolver(
+        isoplane_abi::config::Limits::default(),
+        Box::new(FailedDns),
+        None,
+    );
     let id = v.bindings.call_future(ImportCall {
         import: "http_fetch",
         payload: &fetch_payload("http://absent.test/"),
@@ -312,13 +339,18 @@ async fn an_http_dns_failure_is_io_and_does_not_count_as_a_policy_denial() {
 
 #[tokio::test]
 async fn cancelling_a_future_through_the_import_cannot_affect_another_instance() {
-    let mut owner = vtable(Limits::default(), "93.184.216.34:80", None);
+    let mut owner = vtable(
+        isoplane_abi::config::Limits::default(),
+        "93.184.216.34:80",
+        None,
+    );
     let future = owner.bindings.call_future(ImportCall {
         import: "clock_deadline_in",
         payload: &[],
         scalars: [60_000, 0, 0],
     });
-    let mut other_context = InstanceCtx::for_test(InstanceId(2), Limits::default());
+    let mut other_context =
+        InstanceCtx::for_test(InstanceId(2), isoplane_abi::config::Limits::default());
     other_context.rt = owner.ctx.rt.clone();
     let mut other = CellBindings::new(Arc::new(other_context));
     let cancel = || ImportCall {
@@ -338,15 +370,7 @@ async fn cancelling_a_future_through_the_import_cannot_affect_another_instance()
 #[tokio::test]
 async fn aggregate_future_pressure_refuses_allocation_without_trapping_other_requests() {
     let mut v = vtable(
-        Limits {
-            instances_per_application: 3,
-            module_bytes_compressed: 5242880,
-            package_bytes: 52428800,
-            instance_memory_max: 134217728,
-            occupancy_ms_per_dispatch: 100,
-            instance_open_connections: 32,
-            pending_futures_per_dispatch: 6,
-        },
+        isoplane_abi::config::Limits::default(),
         "93.184.216.34:80",
         None,
     );

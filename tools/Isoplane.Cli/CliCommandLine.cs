@@ -56,6 +56,26 @@ internal static class CliCommandLine
         Value(bundle, "--configuration", "Build configuration (default: Release).");
         Value(bundle, "--output", "Output archive file.");
         root.Add(bundle);
+        var daemon = new Command("daemon", "Run the local multi-application host in the foreground. Requires isoplaned on PATH.");
+        Value(daemon, "--config", "Host configuration file.").Required = true;
+        Flag(daemon, "--check", "Validate the host configuration without serving traffic.");
+        Flag(daemon, "--print-config", "Print effective host configuration without application secrets.");
+        daemon.Validators.Add(result =>
+        {
+            if (result.GetValue<bool>("--check") && result.GetValue<bool>("--print-config"))
+                result.AddError("Choose either --check or --print-config.");
+        });
+        root.Add(daemon);
+        var deploy = new Command("deploy", "Prepare a bundle on this machine and select it for the next daemon start. Requires isoplaned on PATH.");
+        Flag(deploy, "--local", "Deploy on this machine; required.");
+        Value(deploy, "--config", "Host configuration file.").Required = true;
+        Value(deploy, "--app", "Application name from the host configuration.").Required = true;
+        Value(deploy, "--bundle", "Portable application archive created by isoplane bundle.").Required = true;
+        deploy.Validators.Add(result =>
+        {
+            if (!result.GetValue<bool>("--local")) result.AddError("Local deployment requires --local.");
+        });
+        root.Add(deploy);
         root.Add(new Command("telemetry", $"Manage anonymous usage data. {TelemetryVariables.OptOut.Name}=1 or {TelemetryVariables.DoNotTrack.Name}=1 also disables it; {TelemetryVariables.Debug.Name}=1 prints events without sending them.")
         {
             new Command("status", "Show telemetry status."),

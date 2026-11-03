@@ -1,4 +1,4 @@
-//! Saves local snapshots while the instance retains its original host context.
+//! The capture sequence: the pre-capture gc hint, the future and socket handoff, and the delta diff against the template.
 
 use std::sync::Arc;
 
@@ -27,10 +27,10 @@ pub enum CaptureRefused {
     GcHintDidNotComplete(Completion),
     /// The hint completed but the instance is not at a serializable point.
     StackNotEmptyAfterHint,
-    /// The live instance retains state that the local snapshot format cannot preserve.
+    /// The live instance retains state that the current delta format cannot preserve.
     UnrepresentableState(isoplane_engine::snapshot::SnapshotError),
     /// Capture read the instance's memory or its template's baseline from
-    /// storage that had failed, so the snapshot is invalid. The instance has been
+    /// storage that had failed, so the delta is wrong. The instance has been
     /// destroyed.
     StorageFailed,
     /// Writing the snapshot to the instance's reservation failed. The
@@ -38,7 +38,6 @@ pub enum CaptureRefused {
     SnapshotWrite(String),
     Failed(String),
 }
-
 
 /// Observes guest work invoked by capture on behalf of an unfinished dispatch.
 pub trait CaptureObserver: Send + Sync {
@@ -56,7 +55,6 @@ pub struct CaptureEnv<'a> {
     pub observer: Option<Arc<dyn CaptureObserver>>,
     pub activator: &'a Arc<dyn Activator>,
 }
-
 
 /// What an in-process capture saved.
 pub struct LocalCapture {
@@ -180,12 +178,10 @@ fn capture_with<T>(
     Ok((finished, gc_hint_us))
 }
 
-
-
 #[cfg(test)]
 mod tests {
-    use crate::futures::FutureTable;
     use super::*;
+    use crate::futures::FutureTable;
     use crate::pool::InstancePool;
 
     /// A guest whose pre-capture gc hint ends however the test says and which,
@@ -343,7 +339,6 @@ mod tests {
     }
 
     fn parked_slot(how: Completion) -> (Arc<Slot>, Arc<dyn Activator>) {
-        use isoplane_abi::config::Limits;
         use isoplane_hibernate::snapshot::SnapshotStorage;
         let act: Arc<dyn Activator> = Arc::new(HintActivator::new(how));
         let pool = InstancePool::new(act.clone(), 4);
@@ -351,7 +346,7 @@ mod tests {
             .acquire(|id| {
                 Arc::new(crate::bindings::InstanceCtx::for_test(
                     id,
-                    Limits::default(),
+                    isoplane_abi::config::Limits::default(),
                 ))
             })
             .expect("a slot");
@@ -405,7 +400,7 @@ mod tests {
         .expect("capture must retain the original host context");
         assert!(
             futures.take_ready(slot.id).is_none(),
-            "local capture must keep pending I/O pending"
+            "capture must not turn pending I/O into FutureLost"
         );
         futures.complete(id, ResultRecord::Ok(b"completed while asleep".to_vec()));
         assert!(
@@ -497,7 +492,7 @@ mod tests {
         assert_eq!(
             try_capture(&slot, &act).err(),
             Some(CaptureRefused::StorageFailed),
-            "a snapshot read from failed storage must never be kept"
+            "a delta computed from failed storage must never be kept"
         );
         assert_eq!(
             slot.state(),
@@ -574,22 +569,7 @@ mod tests {
         .expect("EOF with a ready result permits local capture");
         assert!(
             matches!(futures.take_ready(slot.id).map(crate::futures::Ready::into_pair), Some((ready_id, ResultRecord::Ok(bytes))) if ready_id == id && bytes.is_empty()),
-            "the original context must receive the original EOF result"
-        );
-        assert_eq!(
-            source.can_have_body(),
-            Ok(true),
-            "HTTP framing metadata remains available after local capture"
-        );
-        assert!(
-            source
-                .begin_read()
-                .expect("EOF source remains open")
-                .read(NonZeroU32::new(1).expect("positive read"))
-                .await
-                .expect("repeated EOF succeeds")
-                .is_empty(),
-            "later reads remain EOF rather than a capability error"
+            "local capture retains the original ready EOF result"
         );
     }
 

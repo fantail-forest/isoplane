@@ -63,21 +63,13 @@ internal sealed class LocalProject(string directory, string? targetDirectory)
     }
 
     /// <summary>
-    /// The manifest a local session uses, with explicit numeric budgets and
-    /// <paramref name="overrides"/> applied to them. Runtime preparation uses the same manifest.
+    /// The manifest a development session runs an application under. A session uses the default resource budgets unless <paramref name="overrides"/>
+    /// narrow them. The compiled runtime depends on these limits, so <c>isoplane prepare-runtime</c>
+    /// uses them too.
     /// </summary>
     internal static Dictionary<string, object?> Manifest(string name, LimitOverrides overrides)
     {
-        Dictionary<string, object?> manifest = new() { ["name"] = name, ["limits"] = new Dictionary<string, object>
-            {
-                ["instances_per_application"] = 16UL,
-                ["module_bytes_compressed"] = 52428800UL,
-                ["package_bytes"] = 52428800UL,
-                ["instance_memory_max"] = 536870912UL,
-                ["occupancy_ms_per_dispatch"] = 300000UL,
-                ["instance_open_connections"] = 32UL,
-                ["pending_futures_per_dispatch"] = 4096UL,
-            } };
+        Dictionary<string, object?> manifest = new() { ["name"] = name };
         if (overrides.MemoryBytes is { } memory) manifest["guest_memory_bytes"] = memory;
         if (overrides.ResourceLimits is { Count: > 0 } limits) manifest["resource_limits"] = limits;
         return manifest;

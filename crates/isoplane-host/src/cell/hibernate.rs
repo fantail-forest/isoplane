@@ -109,10 +109,8 @@ impl Cell {
         slot: &Arc<Slot>,
         entry: &Arc<ModuleEntry>,
     ) -> Result<u64, hibernate_policy::CaptureRefused> {
-        let capture = crate::hibernate_capture::capture_in_context(
-            slot,
-            self.capture_env(entry, slot),
-        );
+        let capture =
+            crate::hibernate_capture::capture_in_context(slot, self.capture_env(entry, slot));
         let res = match capture {
             Ok(r) => r,
             Err(hibernate_policy::CaptureRefused::SnapshotWrite(e)) => {
@@ -172,8 +170,7 @@ impl Cell {
         Ok(bytes)
     }
 
-    /// Activates from the template, applies the delta, rebinds the manifest's
-    /// handles, and delivers the losses the capture promised.
+    /// Restores sandbox memory while retaining the original host-owned resources.
     #[tracing::instrument(name = "restore", skip_all, fields(tenant = %entry.tenant,
         app = %entry.activator.module().app, version = %entry.activator.module().version,
         instance = %slot.id))]
@@ -230,7 +227,6 @@ impl Cell {
             }
         };
         let inst = restored?;
-
         slot.rehydrate(inst);
         tracing::info!(target: "isoplane_host::cell::transition",
             event = "instance_transition", tenant = %entry.tenant,

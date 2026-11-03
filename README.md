@@ -9,8 +9,9 @@ Rust; the guest SDK is C#.
 
 [`AGENTS.md`](AGENTS.md) is the engineering handbook: architecture, tooling,
 the rules code is held to, and the four invariants every host mechanism
-derives from.
-[Customer guides](docs/userdocs/) cover using Isoplane.
+derives from. [Customer guides](docs/userdocs/) cover local development, testing,
+debugging and [self-hosted deployment](docs/userdocs/docs/how-to/deploy-an-application.md).
+One host serves multiple applications by their configured Host names.
 
 ## Building and testing
 
@@ -29,8 +30,6 @@ on Linux; customer applications compile to IL packages for that shared runtime.
 The optional repository toolchain image is available through
 `scripts/dev --container --build`.
 
-See `scripts/dev` for native commands and the optional container workflow.
-
 Task prepares guest modules before starting tests. Fixture helpers load those
 artifacts and fail with the preparation command if an input is missing. The
 installation journey additionally requires an explicitly prepared release.
@@ -47,10 +46,15 @@ cargo metadata --no-deps --format-version 1 \
 
 | Path                  | What it is                                                                |
 | --------------------- | ------------------------------------------------------------------------- |
-| `crates/`              | The host: the contract, engine, local snapshots, proxy, cell, control plane, `isoplaned` and the native Isoplane support library. |
+| `crates/`              | The host: the contract, engine, local snapshots, proxy, execution pool, preparation, `isoplaned` and the native Isoplane support library. |
 | `guest-sdks/dotnet`    | The C# guest SDK. |
 | `guest-sdks/rust`      | Internal Rust helpers for guest test fixtures. |
 | `guests/`             | The guest modules: fixtures the host tests drive.                         |
 | `docs/userdocs` | Customer guides for Isoplane. |
 | `docs/opinion-registry` | How software is built here.                                             |
 | `scripts/`            | `scripts/dev` runs a local command; `scripts/clean` reclaims build intermediates. |
+
+## License
+
+First-party code is available under the [Elastic License 2.0](LICENSE.txt).
+Third-party dependencies and forks retain their original licenses and notices.

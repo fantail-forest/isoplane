@@ -304,14 +304,14 @@ fn validate(
     let admission = if local_debug {
         isoplane_runtime::validate_local_debug_with_limits(
             wasm,
-            manifest.limits,
+            manifest.memory_limit(),
             declaration,
             &manifest.validation_limits,
         )
     } else {
         isoplane_runtime::validate_with_limits(
             wasm,
-            manifest.limits,
+            manifest.memory_limit(),
             declaration,
             &manifest.validation_limits,
         )
@@ -441,7 +441,7 @@ impl LocalApp {
 
 struct AppRoute(RouteTarget);
 impl isoplane_proxy::RouteResolver for AppRoute {
-    fn resolve(&self, _host: &str, _path: &str, _key: Option<&str>) -> Option<RouteTarget> {
+    fn resolve(&self, _host: &str, _path: &str) -> Option<RouteTarget> {
         Some(self.0.clone())
     }
     fn generation(&self) -> u64 {
@@ -500,7 +500,7 @@ mod storage_tests {
         use isoplane_host::bindings::{CellBindings, InstanceCtx, Tenancy};
 
         for manifest in [
-            r#"{"name":"app","limits":"enterprise"}"#,
+            r#"{"name":"app"}"#,
             r#"{"name":"app","guest_memory_bytes":167772160}"#,
         ] {
             let (_directory, mut project) = project();
@@ -539,7 +539,7 @@ mod storage_tests {
                 Tenancy {
                     module: ModuleId::new("app", "test"),
                     tenant: "test".into(),
-                    limits: project.manifest.limits,
+                    limits: project.manifest.effective_limits(),
                     allowlist: None,
                 },
                 Arc::default(),

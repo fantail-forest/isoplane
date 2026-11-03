@@ -357,11 +357,14 @@ mod tests {
     use super::*;
     use crate::disposition::{decide, DispatchEnd};
     use crate::fakes::{FakeActivator, FakeBehaviour};
-    use isoplane_abi::config::Limits;
+
     use isoplane_engine::Completion;
 
     fn ctx_for(id: InstanceId) -> Arc<InstanceCtx> {
-        Arc::new(InstanceCtx::for_test(id, Limits::default()))
+        Arc::new(InstanceCtx::for_test(
+            id,
+            isoplane_abi::config::Limits::default(),
+        ))
     }
 
     fn pool() -> InstancePool {

@@ -5,6 +5,14 @@ internal static class Program
 {
     private static async Task<int> Main(string[] args)
     {
+        if (args is ["serve" or "deploy", ..])
+        {
+            Console.WriteLine(JsonSerializer.Serialize(args));
+            if (args[0] == "deploy") return 23;
+            await Console.In.ReadToEndAsync();
+            Console.WriteLine("host stopped");
+            return 0;
+        }
         if (args is ["wait"])
         {
             await Task.Delay(Timeout.Infinite);

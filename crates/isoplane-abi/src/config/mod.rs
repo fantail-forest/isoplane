@@ -1,4 +1,4 @@
-//! The app manifest, its resource limits, and
+//! The app manifest, its resource budgets, and
 //! the node-level facts the daemon and the command share.
 
 mod lifecycle;

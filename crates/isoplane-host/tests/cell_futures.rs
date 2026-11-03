@@ -5,7 +5,6 @@ use std::time::Duration;
 
 use isoplane_test_support::wait_for;
 
-use isoplane_abi::config::Limits;
 use isoplane_abi::dispatch::{DispatchRecord, HttpRequest};
 use isoplane_engine::Completion;
 
@@ -48,22 +47,8 @@ const PARK_MS: u64 = 600_000;
 
 #[test]
 fn the_pending_futures_cap_refuses_the_extra_operation_and_keeps_the_instance_serving() {
-    let free = rig(CellConfig {
-        ..CellConfig::for_test("cap-free")
-    });
-    let paid = rig(CellConfig::for_test("cap-paid"));
-    let r = &free;
-    let limit = Limits {
-        instances_per_application: 3,
-        module_bytes_compressed: 5242880,
-        package_bytes: 52428800,
-        instance_memory_max: 134217728,
-        occupancy_ms_per_dispatch: 100,
-        instance_open_connections: 32,
-        pending_futures_per_dispatch: 6,
-    }
-    .pending_futures_per_dispatch;
-    assert_eq!(limit, 6, "the free plan's cap");
+    let r = rig(CellConfig::for_test("independent-app-limits"));
+    let limit = 6;
 
     let act = Arc::new(FakeActivator::named(
         ModuleId::new("greedy", "v1"),
@@ -80,24 +65,9 @@ fn the_pending_futures_cap_refuses_the_extra_operation_and_keeps_the_instance_se
         ]),
     ));
     let module = act.module().clone();
-    r.cell
-        .register_module(
-            "limited-app",
-            act,
-            manifest(
-                "greedy",
-                Limits {
-                    instances_per_application: 3,
-                    module_bytes_compressed: 5242880,
-                    package_bytes: 52428800,
-                    instance_memory_max: 134217728,
-                    occupancy_ms_per_dispatch: 100,
-                    instance_open_connections: 32,
-                    pending_futures_per_dispatch: 6,
-                },
-            ),
-        )
-        .unwrap();
+    let mut bounded = manifest("greedy");
+    bounded.resource_limits.pending_futures_per_dispatch = Some(limit);
+    r.cell.register_module("acme", act, bounded).unwrap();
 
     let mut rec = http(&r.cell, &module, "/greedy");
     rec.dispatch_id = 1;
@@ -167,12 +137,12 @@ fn the_pending_futures_cap_refuses_the_extra_operation_and_keeps_the_instance_se
         }]),
     ));
     let ok_mod = ok.module().clone();
-    paid.cell
-        .register_module("acme", ok, manifest("higher-limit-app", Limits::default()))
+    r.cell
+        .register_module("acme", ok, manifest("higher-limit-app"))
         .unwrap();
-    let mut rec = http(&paid.cell, &ok_mod, "/ok");
+    let mut rec = http(&r.cell, &ok_mod, "/ok");
     rec.dispatch_id = 2;
-    let rx = paid
+    let rx = r
         .cell
         .submit(
             &ok_mod,
@@ -184,20 +154,19 @@ fn the_pending_futures_cap_refuses_the_extra_operation_and_keeps_the_instance_se
         .unwrap();
     assert!(
         wait_for(
-            || paid.cell.futures().live_futures() >= (limit + 3) as usize,
+            || r.cell.futures().live_futures() >= (limit + 3) as usize,
             Duration::from_secs(5)
         ),
-        "the higher configured future cap was not applied"
+        "the sibling application was capped by another application's allowance"
     );
     assert_eq!(
-        paid.cell.metrics().pending_cap_rejections,
-        0,
-        "the standard plan was never capped"
+        r.cell.metrics().pending_cap_rejections,
+        1,
+        "only the application with the small allowance was capped"
     );
     drop(rx);
     drop(greedy);
-    free.cell.shutdown();
-    paid.cell.shutdown();
+    r.cell.shutdown();
 }
 
 #[test]
@@ -219,7 +188,7 @@ fn response_completion_hands_work_to_background_without_holding_the_request_open
     ));
     let module = act.module().clone();
     r.cell
-        .register_module("acme", act, manifest("handover", Limits::default()))
+        .register_module("acme", act, manifest("handover"))
         .unwrap();
     let send = || {
         r.cell
@@ -293,11 +262,7 @@ fn entering_grace_wakes_the_dispatch_cancellation_future() {
     ));
     let module = activator.module().clone();
     rig.cell
-        .register_module(
-            "tenant",
-            activator,
-            manifest("cancellation", Limits::default()),
-        )
+        .register_module("tenant", activator, manifest("cancellation"))
         .expect("registering the cancellation guest");
     let result = rig
         .cell
@@ -324,7 +289,7 @@ fn operator_budgets_reach_the_dispatch_and_pending_future_table() {
         }]),
     ));
     let module = act.module().clone();
-    let mut app = manifest("bounded", Limits::default());
+    let mut app = manifest("bounded");
     app.resource_limits.pending_futures_per_dispatch = Some(2);
     app.resource_limits.occupancy_ms_per_dispatch = Some(1234);
     r.cell

@@ -6,7 +6,7 @@ use std::mem::size_of;
 use std::sync::Arc;
 use std::time::Duration;
 
-use isoplane_abi::config::{GuestMemoryBytes, Limits};
+use isoplane_abi::config::GuestMemoryBytes;
 use isoplane_abi::dispatch::{HttpRequest, ResponseHead};
 use isoplane_engine::{Completion, EngineConfig, IsoplaneEngine};
 use isoplane_host::bindings::GuestResourceLimits;
@@ -36,7 +36,7 @@ fn rig(program: &str, resources: GuestResourceLimits) -> (Arc<Cell>, ModuleId) {
         },
         "93.184.216.34:80",
     );
-    let mut manifest = common::manifest("host-buffers", Limits::default());
+    let mut manifest = common::manifest("host-buffers");
     manifest.guest_memory_bytes = Some(GuestMemoryBytes::new(65536).expect("one-page allowance"));
     cell.register_module("owner", activator, manifest)
         .expect("register hostile guest");

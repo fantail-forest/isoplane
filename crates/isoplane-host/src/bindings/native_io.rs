@@ -1740,9 +1740,11 @@ mod timer_tests {
         egress: Arc<crate::egress::HostEgressPolicy>,
         limits: isoplane_abi::config::Limits,
     ) -> (Arc<crate::bindings::InstanceCtx>, Arc<Woken>) {
-        use isoplane_abi::config::Limits;
         let woken = Arc::new(Woken(Mutex::new(Vec::new())));
-        let mut context = crate::bindings::InstanceCtx::for_test(InstanceId(7), Limits::default());
+        let mut context = crate::bindings::InstanceCtx::for_test(
+            InstanceId(7),
+            isoplane_abi::config::Limits::default(),
+        );
         context.limits = limits;
         context.rt = Some(Arc::new(crate::bindings::CellRuntime {
             runtime_configuration: Default::default(),

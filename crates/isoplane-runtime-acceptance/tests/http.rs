@@ -1,6 +1,6 @@
 //! Outbound HTTP through the runtime's own `SocketsHttpHandler` over the
 //! delegated sockets: connections and reads park on socket readiness and
-//! survive Store restorations mid-request, bodies stream both ways in guest
+//! survive hibernation deltas mid-request, bodies stream both ways in guest
 //! memory, redirects, decompression and pooling are the client's own, TLS
 //! is the guest's `SslStream` with a root the application supplies, HTTP/2
 //! is negotiated through that TLS's ALPN or spoken h2c with prior
@@ -98,13 +98,13 @@ async fn restore_at_body_checkpoint(
     })
     .await
     .expect("the guest and peer must establish body progress before the test deadline");
-    let outcome = guest.poll();
+    let outcome = guest.poll_through_delta().await;
     assert_eq!(outcome.completion, Completion::Parked,
         "the partially transferred body must restore and park while its remainder is withheld: {outcome:?}");
     progress
 }
 
-async fn response_body_survives_store_restoration(runtime: GuestRuntime, owner: u64, http2: bool) {
+async fn response_body_survives_delta(runtime: GuestRuntime, owner: u64, http2: bool) {
     isoplane_harness::LogCapture::global();
     let mut peer = midstream_peer(BODY_PREFIX_BYTES, 300_000).await;
     let reactor = reactor(owner, vec![peer.address]);
@@ -129,7 +129,7 @@ async fn response_body_survives_store_restoration(runtime: GuestRuntime, owner: 
         "the guest must hash the exact prefix before the selected park is captured"
     );
     peer.release();
-    let text = guest.finish(&reactor, 64).await;
+    let text = guest.finish_through_deltas(&reactor, 64).await;
     let version = if http2 { " version=2.0" } else { "" };
     assert!(
         text.starts_with(&format!("status=200{version} content-type=application/octet-stream length=300000 "))
@@ -139,7 +139,7 @@ async fn response_body_survives_store_restoration(runtime: GuestRuntime, owner: 
     );
 }
 
-async fn request_body_survives_store_restoration(runtime: GuestRuntime, owner: u64, http2: bool) {
+async fn request_body_survives_delta(runtime: GuestRuntime, owner: u64, http2: bool) {
     isoplane_harness::LogCapture::global();
     let mut peer = midstream_peer(BODY_PREFIX_BYTES, 200_000).await;
     let reactor = reactor(owner, vec![peer.address]);
@@ -164,7 +164,7 @@ async fn request_body_survives_store_restoration(runtime: GuestRuntime, owner: u
         "the peer must receive the exact prefix while the guest producer withholds the remainder"
     );
     peer.release();
-    let text = guest.finish(&reactor, 64).await;
+    let text = guest.finish_through_deltas(&reactor, 64).await;
     let version = if http2 { " version=2.0" } else { "" };
     assert_eq!(text,
         format!("status=200{version} content-type=application/octet-stream sent={POST_DIGEST} echoed={POST_DIGEST}"),
@@ -213,8 +213,8 @@ in_mono_runtime! {
     }
 
     #[tokio::test]
-    async fn a_response_body_mid_stream_survives_a_store_restoration_delta(runtime: GuestRuntime) {
-        response_body_survives_store_restoration(runtime, 3, false).await;
+    async fn a_response_body_mid_stream_survives_a_hibernation_delta(runtime: GuestRuntime) {
+        response_body_survives_delta(runtime, 3, false).await;
     }
 
     #[tokio::test]
@@ -232,8 +232,8 @@ in_mono_runtime! {
     }
 
     #[tokio::test]
-    async fn a_request_body_mid_stream_survives_a_store_restoration_delta(runtime: GuestRuntime) {
-        request_body_survives_store_restoration(runtime, 5, false).await;
+    async fn a_request_body_mid_stream_survives_a_hibernation_delta(runtime: GuestRuntime) {
+        request_body_survives_delta(runtime, 5, false).await;
     }
 
     #[tokio::test]
@@ -599,8 +599,8 @@ in_mono_runtime! {
     }
 
     #[tokio::test]
-    async fn an_http_2_response_body_mid_stream_survives_a_store_restoration_delta(runtime: GuestRuntime) {
-        response_body_survives_store_restoration(runtime, 29, true).await;
+    async fn an_http_2_response_body_mid_stream_survives_a_hibernation_delta(runtime: GuestRuntime) {
+        response_body_survives_delta(runtime, 29, true).await;
     }
 
     #[tokio::test]
@@ -618,8 +618,8 @@ in_mono_runtime! {
     }
 
     #[tokio::test]
-    async fn an_http_2_request_body_mid_stream_survives_a_store_restoration_delta(runtime: GuestRuntime) {
-        request_body_survives_store_restoration(runtime, 31, true).await;
+    async fn an_http_2_request_body_mid_stream_survives_a_hibernation_delta(runtime: GuestRuntime) {
+        request_body_survives_delta(runtime, 31, true).await;
     }
 
     #[tokio::test]

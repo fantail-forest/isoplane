@@ -9,7 +9,7 @@ application, and so that one runaway request can't take down the rest of it.
 A typical request stays well inside every limit on this page.
 
 :::note[Preliminary limits]
-The limits listed on this page are preliminary and may change in later releases.
+These defaults match the preview SDK. They may change in later releases.
 :::
 
 ## The limits {#local-defaults}

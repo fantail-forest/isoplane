@@ -25,7 +25,7 @@ pub struct DispatchRecord {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DispatchKind {
     Http(HttpRequest),
-    /// Instance work metered against its background allowance.
+    /// Instance work consuming its background allowance, separate from HTTP requests.
     Background,
 }
 

@@ -1,6 +1,6 @@
 //! Compression through the runtime pack: the stream codecs round-trip
 //! and reject corrupt input, zip and tar archives build and read back in
-//! memory, a codec's native state survives a Store restoration between its
+//! memory, a codec's native state survives a hibernation delta between its
 //! writes, and the helpers that need a directory fail on the empty disk.
 
 #[macro_use]
@@ -114,10 +114,10 @@ in_mono_runtime! {
 in_mono_runtime! {
     /// An encoder is fed four chunks with a timer park between each, the
     /// guest parks once more, then decodes in four exact reads with a park
-    /// between each: nine parks, each crossing a Store restoration with live
+    /// between each: nine parks, each crossing a hibernation delta with live
     /// zlib state in the guest's memory.
     #[tokio::test(start_paused = true)]
-    async fn a_gzip_stream_mid_write_survives_a_store_restoration_delta_at_every_park(runtime: GuestRuntime) {
+    async fn a_gzip_stream_mid_write_survives_a_hibernation_delta_at_every_park(runtime: GuestRuntime) {
         let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
         reactor.context.begin_slice(1, 1);
         let mut guest = guest(&reactor, runtime);
@@ -129,7 +129,7 @@ in_mono_runtime! {
             tokio::task::yield_now().await;
             tokio::time::advance(std::time::Duration::from_millis(20)).await;
             reactor.context.begin_slice(1 + 20 * wakes, 1);
-            outcome = guest.wake(&reactor).await;
+            outcome = guest.wake_through_delta(&reactor).await;
         }
         assert_eq!(
             outcome.completion,

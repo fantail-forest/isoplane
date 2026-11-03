@@ -9,7 +9,7 @@ export default {
       'how-to/install', 'how-to/onboard-an-application', 'how-to/handle-requests-without-aspnet', 'how-to/run-and-rebuild',
       'how-to/debug-an-application', 'how-to/local-settings', 'how-to/connect-postgresql', 'how-to/keep-data-protection-keys',
       'how-to/find-and-fix-blocking-calls', 'how-to/run-work-on-a-schedule', 'how-to/handle-uploads-and-generated-files',
-      'how-to/test-an-application',
+      'how-to/test-an-application', 'how-to/deploy-an-application',
       'how-to/work-with-an-ai-coding-agent',
       'how-to/troubleshooting',
     ]},

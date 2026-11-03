@@ -86,20 +86,11 @@ impl CellBindings {
     /// limit is reached. Neither stops the instance: the caller defers or
     /// refuses the one operation, and the guest is told its cap in its
     /// dispatch record so it can queue before asking.
-    pub(super) fn alloc(
-        &self,
-        import: &'static str,
-        rearmable: bool,
-    ) -> Option<u64> {
+    pub(super) fn alloc(&self, import: &'static str, rearmable: bool) -> Option<u64> {
         self.alloc_for(self.ctx.dispatch_id(), import, rearmable)
     }
 
-    fn alloc_for(
-        &self,
-        dispatch: u64,
-        import: &'static str,
-        rearmable: bool,
-    ) -> Option<u64> {
+    fn alloc_for(&self, dispatch: u64, import: &'static str, rearmable: bool) -> Option<u64> {
         let rt = self.rt()?;
         let limit = self.ctx.pending_futures_limit(dispatch);
         rt.futures.set_entry_limit(
@@ -113,8 +104,7 @@ impl CellBindings {
             rt.futures
                 .alloc_rearmable(self.ctx.instance, dispatch, import, limit)
         } else {
-            rt.futures
-                .alloc(self.ctx.instance, dispatch, import, limit)
+            rt.futures.alloc(self.ctx.instance, dispatch, import, limit)
         };
         match allocated {
             Ok(id) => Some(id),
@@ -269,7 +259,7 @@ impl HostBindings for CellBindings {
             }
         };
         match def.kind {
-            ImportKind::Future => (),
+            ImportKind::Future => {}
             ImportKind::Sync => {
                 self.ctx.latch_trap(TrapCode::Protocol);
                 return INVALID_FUTURE;
@@ -483,7 +473,7 @@ impl HostBindings for CellBindings {
 mod tests {
     use super::*;
     use crate::InstanceId;
-    use isoplane_abi::config::Limits;
+
     use isoplane_abi::imports::IMPORTS;
 
     /// Scalars an import carries, per the contract crate's `BufSpec`.
@@ -497,7 +487,10 @@ mod tests {
     }
 
     pub(super) fn ctx() -> Arc<InstanceCtx> {
-        Arc::new(InstanceCtx::for_test(InstanceId(1), Limits::default()))
+        Arc::new(InstanceCtx::for_test(
+            InstanceId(1),
+            isoplane_abi::config::Limits::default(),
+        ))
     }
 
     pub(super) fn call<'a>(
@@ -642,8 +635,14 @@ mod tests {
 
     #[test]
     fn clones_do_not_share_an_rng_stream() {
-        let a = Arc::new(InstanceCtx::for_test(InstanceId(1), Limits::default()));
-        let z = Arc::new(InstanceCtx::for_test(InstanceId(2), Limits::default()));
+        let a = Arc::new(InstanceCtx::for_test(
+            InstanceId(1),
+            isoplane_abi::config::Limits::default(),
+        ));
+        let z = Arc::new(InstanceCtx::for_test(
+            InstanceId(2),
+            isoplane_abi::config::Limits::default(),
+        ));
         let mut ba = CellBindings::new(a);
         let mut bz = CellBindings::new(z);
         let (mut x, mut y) = ([0u8; 32], [0u8; 32]);

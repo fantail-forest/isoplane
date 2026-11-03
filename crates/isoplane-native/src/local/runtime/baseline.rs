@@ -222,7 +222,7 @@ fn request(
         engine: super::engine_configuration(project),
         application_files: project.application_files.clone(),
         runtime: project.runtime_profile.clone(),
-        plan: manifest.limits,
+        memory_limit: manifest.memory_limit(),
         guest_memory_bytes: manifest.guest_memory_bytes,
         validation_limits: manifest.validation_limits,
         initialization: isoplane_prepare::Initialization {
@@ -236,7 +236,6 @@ fn request(
             log_bytes: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_LOG_BYTES,
         },
         input_hash: *blake3::hash(wasm).as_bytes(),
-        portable_template: isoplane_prepare::PortableTemplate::Omitted,
     })
 }
 

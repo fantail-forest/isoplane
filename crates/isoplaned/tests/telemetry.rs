@@ -1,5 +1,10 @@
-#![cfg(feature = "real-backends")]
+#[path = "common/runtime_inventory.rs"]
+mod runtime_inventory;
+
 use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
+
+#[path = "common/private_files.rs"]
+mod private_files;
 
 #[path = "common/preparation.rs"]
 mod preparation;
@@ -42,14 +47,31 @@ async fn an_actual_http_guest_completion_crosses_the_otlp_boundary() {
     })
     .await
     .unwrap();
-    let directory = tempfile::tempdir().unwrap();
-    let mut cfg = isoplaned::config::NodeConfig::dev_default();
+    let directory = private_files::directory().unwrap();
+    let mut cfg = isoplaned::config::NodeConfig::new("acme");
     cfg.data_dir = directory.path().to_owned();
     cfg.engine.max_instances = 4;
     cfg.engine.memory_limit_mib = 128;
     cfg.engine.guard_mib = 64;
+    cfg.preparation = Some(toml::from_str("").unwrap());
+    cfg.preparation.as_mut().unwrap().runtimes = Some(runtime_inventory::install(directory.path()));
+    cfg.apps.push(isoplaned::config::AppConfig {
+        manifest: toml::from_str("name = 'quotes'\nguest_memory_bytes = 134217728").unwrap(),
+        hosts: vec!["quotes.isoplane.dev".into()],
+    });
     let node = tokio::task::spawn_blocking(move || isoplaned::node::Node::build(cfg).unwrap())
         .await
+        .unwrap();
+    node.routes
+        .insert(
+            isoplane_abi::host::RouteTarget {
+                app: "quotes".into(),
+                tenant: "acme".into(),
+                version: "v1".into(),
+                tier: isoplane_abi::host::CodeTier::Fast,
+            },
+            &["quotes.isoplane.dev".into()],
+        )
         .unwrap();
     let head = isoplane_abi::encode(&ResponseHead {
         status: 204,
@@ -73,7 +95,6 @@ async fn an_actual_http_guest_completion_crosses_the_otlp_boundary() {
     let manifest: AppManifest = toml::from_str("name = 'quotes'").unwrap();
     node.real
         .as_ref()
-        .unwrap()
         .deploy_locally(
             "quotes",
             "v1",
@@ -133,7 +154,6 @@ async fn an_actual_http_guest_completion_crosses_the_otlp_boundary() {
         let cell = node
             .real
             .as_ref()
-            .unwrap()
             .cells()
             .iter()
             .find(|cell| !cell.resident_ids().is_empty())

@@ -2,7 +2,6 @@
 
 mod common;
 
-use isoplane_abi::config::Limits;
 use isoplane_abi::dispatch::HttpRequest;
 use isoplane_engine::{Completion, EngineConfig, IsoplaneEngine};
 use isoplane_host::activator::EngineActivator;
@@ -44,7 +43,7 @@ fn rig(pending: bool) -> (Arc<Cell>, ModuleId) {
     cell.register_module(
         "owner",
         Arc::new(activator),
-        common::manifest("capture-lifetime", Limits::default()),
+        common::manifest("capture-lifetime"),
     )
     .unwrap();
     (cell, id)

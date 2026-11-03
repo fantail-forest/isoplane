@@ -386,7 +386,7 @@ fn sys_grow(h: &mut Heap, need: usize) -> bool {
     let pages = align_up(need, WASM_PAGE) / WASM_PAGE;
     let prev = core::arch::wasm32::memory_grow::<0>(pages);
     if prev == usize::MAX {
-        return false; // the plan's instance memory ceiling; surfaces as OOM
+        return false; // the application's instance memory ceiling; surfaces as OOM
     }
     let new_base = prev * WASM_PAGE;
     if h.end == 0 {
@@ -582,7 +582,7 @@ mod tests {
         let mut h = Heap::over(Box::leak(vec![0u8; 8192].into_boxed_slice()));
         unsafe {
             assert!(!h.alloc(l(4096)).is_null());
-            // The plan's memory ceiling shows up here as a failed grow. The
+            // The application's memory ceiling shows up here as a failed grow. The
             // guest must surface OutOfMemory, not corrupt itself.
             assert!(h.alloc(l(1 << 20)).is_null());
         }

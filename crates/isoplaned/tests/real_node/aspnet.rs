@@ -1,5 +1,4 @@
 //! The maintained ASP.NET adapter through the real deploy pipeline and HTTP listener.
-#![cfg(feature = "real-backends")]
 
 use super::common;
 

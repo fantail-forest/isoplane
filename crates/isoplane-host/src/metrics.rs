@@ -139,7 +139,7 @@ pub struct Metrics {
     pub work_handed_to_instance: AtomicU64,
     /// Epoch ticks that found the unsafe-to-trap bit set and deferred grace.
     pub grace_deferrals: AtomicU64,
-    /// occupancy recorded past the budget on kills of either phase; already inside
+    /// occupancy consumed past the budget on kills of either phase; already inside
     /// the tenant's `occupancy_ns`.
     pub overage_ns: AtomicU64,
 
@@ -159,22 +159,13 @@ pub struct Metrics {
 
     /// Captures whose delta reached the store.
     pub captures: AtomicU64,
-    /// Delta bytes that reached the store.
+    /// Cumulative bytes written to local snapshot reservations.
     pub delta_bytes: AtomicU64,
     /// Captures whose store write failed; the instance stays Parked and
     /// capturable.
     pub capture_write_failures: AtomicU64,
     pub hibernation_wakes: AtomicU64,
     pub delta_fallbacks: AtomicU64,
-    /// Futures shed at capture: Unbounded futures and sensitive ones. Not a
-    /// load signal; it moves when hibernation works. The load-path counters
-    /// are `pending_cap_rejections` and `shed`.
-    pub futures_shed: AtomicU64,
-    /// Equal to `futures_shed` by construction; the aggregate name stays for
-    /// existing dashboards.
-    pub futures_shed_capture: AtomicU64,
-    pub futures_buffered: AtomicU64,
-
     pub activation_us: Histogram,
     pub wake_us: Histogram,
     pub hibernation_wake_us: Histogram,
@@ -274,9 +265,6 @@ impl Metrics {
             capture_write_failures: l(&self.capture_write_failures),
             hibernation_wakes: l(&self.hibernation_wakes),
             delta_fallbacks: l(&self.delta_fallbacks),
-            futures_shed: l(&self.futures_shed),
-            futures_shed_capture: l(&self.futures_shed_capture),
-            futures_buffered: l(&self.futures_buffered),
             served_warm: l(&self.served_warm),
             served_shared: l(&self.served_shared),
             served_hibernation_wake: l(&self.served_hibernation_wake),
@@ -299,7 +287,7 @@ impl Metrics {
             thread_wait_p50_us: self.thread_wait_us.p50(),
             thread_wait_p99_us: self.thread_wait_us.p99(),
             // Process-wide, and both crates' clocks: the engine's is where the
-            // recorded `occupancy_ns` comes from, this crate's is the log-occupancy share.
+            // measured `occupancy_ns` comes from, this crate's is the log-occupancy share.
             clock_read_failures: crate::meters::clock_read_failures()
                 + isoplane_engine::clock_read_failures(),
             trap_rate: {
@@ -405,9 +393,6 @@ pub struct MetricsSnapshot {
     pub capture_write_failures: u64,
     pub hibernation_wakes: u64,
     pub delta_fallbacks: u64,
-    pub futures_shed: u64,
-    pub futures_shed_capture: u64,
-    pub futures_buffered: u64,
     pub served_warm: u64,
     pub served_shared: u64,
     pub served_hibernation_wake: u64,
@@ -555,15 +540,6 @@ impl MetricsSnapshot {
                 MetricValue::Count(self.hibernation_wakes),
             ),
             ("delta_fallbacks", MetricValue::Count(self.delta_fallbacks)),
-            ("futures_shed", MetricValue::Count(self.futures_shed)),
-            (
-                "futures_shed_capture",
-                MetricValue::Count(self.futures_shed_capture),
-            ),
-            (
-                "futures_buffered",
-                MetricValue::Count(self.futures_buffered),
-            ),
             ("served_warm", MetricValue::Count(self.served_warm)),
             ("served_shared", MetricValue::Count(self.served_shared)),
             (

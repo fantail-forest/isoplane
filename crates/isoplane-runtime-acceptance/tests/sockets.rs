@@ -103,10 +103,10 @@ in_mono_runtime! {
 }
 
 in_mono_runtime! {
-    /// A parked read survives Store restoration: the guest's captured memory is
-    /// restored between the park and the wake that delivers the bytes.
+    /// A parked read survives hibernation: the guest's memory goes through the
+    /// local snapshot between the park and the wake that delivers the bytes.
     #[tokio::test]
-    async fn a_parked_read_survives_a_store_restoration_delta_round_trip(runtime: GuestRuntime) {
+    async fn a_parked_read_survives_a_hibernation_delta_round_trip(runtime: GuestRuntime) {
         let echo = peer(Peer::Echo).await;
         let reactor = reactor_for_peers(25, vec![echo]);
         reactor.context.begin_slice(1, 1);
@@ -123,7 +123,7 @@ in_mono_runtime! {
                 wakes <= 8,
                 "the echo must finish within a few wakes: {outcome:?}"
             );
-            outcome = guest.wake(&reactor).await;
+            outcome = guest.wake_through_delta(&reactor).await;
         }
         assert_eq!(
             outcome.completion,
@@ -134,7 +134,7 @@ in_mono_runtime! {
         assert_eq!(
             reactor.response_text(1),
             "77697370",
-            "the bytes must reach the read that was parked across the Store restoration"
+            "the bytes must reach the read that was parked across the hibernation"
         );
     }
 }
@@ -627,7 +627,7 @@ in_mono_runtime! {
     /// is on the host's socket once it connects, what it sets afterwards
     /// lands at once, and each timing is clamped by the host and read back
     /// as clamped. The settings stay with the host's socket across guest
-    /// store restoration.
+    /// snapshot restoration.
     #[tokio::test]
     async fn keep_alive_reaches_the_host_socket_with_clamped_timings(runtime: GuestRuntime) {
         for (owner, configured, unconnected) in [
@@ -649,7 +649,7 @@ in_mono_runtime! {
                 "the connect parks: {outcome:?}; logs: {:?}",
                 reactor.context.emitted_logs()
             );
-            let answer = guest.finish(&reactor, 8).await;
+            let answer = guest.finish_through_deltas(&reactor, 8).await;
             assert_eq!(
                 answer,
                 format!("unconnected={unconnected} connected=True/10/5/127 zero=InvalidArgument after=True/10/5/127 echo=77697370"),
@@ -683,7 +683,7 @@ in_mono_runtime! {
 }
 
 in_mono_runtime! {
-    /// The guest reads its clamped requests back across connection and store restoration.
+    /// The guest reads its clamped requests back across connection and hibernation.
     /// Kernel application of these settings is checked before traffic in the host tests;
     /// TCP autotuning may resize the actual buffers during this exchange.
     #[tokio::test]
@@ -707,7 +707,7 @@ in_mono_runtime! {
                 "the connect parks: {outcome:?}; logs: {:?}",
                 reactor.context.emitted_logs()
             );
-            let answer = guest.finish(&reactor, 8).await;
+            let answer = guest.finish_through_deltas(&reactor, 8).await;
             assert_eq!(
                 answer,
                 format!("unconnected={unconnected} connected=4096/212992 zero=InvalidArgument after=4096/212992 echo=77697370"),
@@ -745,9 +745,9 @@ in_mono_runtime! {
 /// How a test resumes its parked guest.
 #[derive(Clone, Copy)]
 enum WakePath {
-    /// Restore the saved instance and resume.
+    /// Restore saved in-memory state and resume.
     Direct,
-    /// Restore the saved instance for the alternate scenario.
+    /// Save and restore a local snapshot before resuming.
     ThroughDelta,
 }
 
@@ -758,7 +758,7 @@ async fn wake_as(
 ) -> isoplane_engine::DispatchOutcome {
     match wake {
         WakePath::Direct => guest.wake(reactor).await,
-        WakePath::ThroughDelta => guest.wake(reactor).await,
+        WakePath::ThroughDelta => guest.wake_through_delta(reactor).await,
     }
 }
 
@@ -849,9 +849,9 @@ in_mono_runtime! {
 }
 
 in_mono_runtime! {
-    /// The partially sent buffer and send-loop position survive store restoration.
+    /// The partially sent buffer and send-loop position survive local snapshot restoration.
     #[tokio::test]
-    async fn a_large_send_under_backpressure_survives_store_restoration_at_every_park(runtime: GuestRuntime) {
+    async fn a_large_send_under_backpressure_survives_a_hibernation_delta_at_every_park(runtime: GuestRuntime) {
         a_large_send_under_backpressure(runtime, 35, WakePath::ThroughDelta).await;
     }
 }
@@ -1135,19 +1135,19 @@ async fn socket_apm(runtime: GuestRuntime, mode: &str) {
         Completion::Parked,
         "APM fixture must first park while connecting"
     );
-    let answer = guest.finish(&reactor, 64).await;
-    assert_eq!(answer, "APM callbacks restored; unfinished End refused", "task-backed APM callbacks, state, completed End calls and unfinished-wait refusal must survive Store restoration");
+    let answer = guest.finish_through_deltas(&reactor, 64).await;
+    assert_eq!(answer, "APM callbacks restored; unfinished End refused", "task-backed APM callbacks, state, completed End calls and unfinished-wait refusal must survive guest deltas");
     released(&reactor).await;
 }
 in_mono_runtime! {
     #[tokio::test]
-    async fn network_stream_apm_callbacks_survive_store_restoration(runtime: GuestRuntime) { socket_apm(runtime, "stream").await; }
+    async fn network_stream_apm_callbacks_survive_hibernation(runtime: GuestRuntime) { socket_apm(runtime, "stream").await; }
     #[tokio::test]
-    async fn socket_apm_callbacks_survive_store_restoration(runtime: GuestRuntime) { socket_apm(runtime, "socket").await; }
+    async fn socket_apm_callbacks_survive_hibernation(runtime: GuestRuntime) { socket_apm(runtime, "socket").await; }
     #[tokio::test]
-    async fn socket_apm_error_code_overloads_survive_store_restoration(runtime: GuestRuntime) { socket_apm(runtime, "socket-error").await; }
+    async fn socket_apm_error_code_overloads_survive_hibernation(runtime: GuestRuntime) { socket_apm(runtime, "socket-error").await; }
     #[tokio::test]
-    async fn socket_apm_vector_callbacks_survive_store_restoration(runtime: GuestRuntime) { socket_apm(runtime, "vector").await; }
+    async fn socket_apm_vector_callbacks_survive_hibernation(runtime: GuestRuntime) { socket_apm(runtime, "vector").await; }
     #[tokio::test]
-    async fn socket_apm_vector_error_code_overloads_survive_store_restoration(runtime: GuestRuntime) { socket_apm(runtime, "vector-error").await; }
+    async fn socket_apm_vector_error_code_overloads_survive_hibernation(runtime: GuestRuntime) { socket_apm(runtime, "vector-error").await; }
 }

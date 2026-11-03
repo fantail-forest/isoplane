@@ -288,7 +288,7 @@ mod tests {
     }
 
     #[test]
-    fn logging_records_its_occupancy_share_without_billing_it_twice() {
+    fn logging_records_its_occupancy_share_without_counting_it_twice() {
         let output = TestLogCapture::default();
         let subscriber = output.dispatch();
         let _subscriber = tracing::dispatcher::set_default(&subscriber);
@@ -302,7 +302,7 @@ mod tests {
         assert_eq!(
             context.meters.occupancy_ns(),
             0,
-            "the enclosing slice owns accounting"
+            "the enclosing slice records occupied time"
         );
         assert_eq!(output.records().len(), 1);
     }

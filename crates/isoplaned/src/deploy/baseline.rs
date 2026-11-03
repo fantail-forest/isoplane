@@ -59,8 +59,6 @@ impl Deployer {
                         .decode_builder_output(product.prepared_bytes(), identity)
                 }?;
                 artifact.publish(&prepared)?;
-                readable_by_preparation(&directory)?;
-                readable_by_preparation(&prepared)?;
             }
         };
         let digest = context.engine.prepared_manifest_sha256(&prepared)?;
@@ -174,18 +172,6 @@ async fn acquire(lock: File, hold: Hold) -> anyhow::Result<File> {
         .map(|()| lock)
     })
     .await??)
-}
-
-/// Lets the preparation container's unprivileged user list and read a
-/// published baseline it mounts.
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the deploy owns the permissions of the baselines it publishes"
-)]
-fn readable_by_preparation(path: &Path) -> anyhow::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))?;
-    Ok(())
 }
 
 #[cfg(test)]

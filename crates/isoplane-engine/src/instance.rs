@@ -308,8 +308,10 @@ impl Instance {
             Some(TrapKind::BudgetExceeded)
         );
         let dispatch_occupancy_ns = budget.spent_ns.saturating_add(occupancy_ns);
-        // A guest can return between epoch ticks; compare its active execution time
-        // with the budget even when the epoch callback did not run.
+        // Crossing B counts as grace whether or not the epoch callback fired
+        // first: a guest can return between ticks, and classifying only on
+        // `grace_at_ns` would report it as an ordinary `done` with unmeasured
+        // overage.
         let in_grace = grace_at_ns.is_some() || dispatch_occupancy_ns >= budget.budget_ns();
         if let Some(bindings) = live.store.data_mut().bindings.as_mut() {
             // A slice can cross B between epoch ticks, so grace is entered here

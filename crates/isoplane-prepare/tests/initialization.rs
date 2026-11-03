@@ -76,7 +76,7 @@ fn a_sealed_initializer_clock_attempt_fails_before_a_host_effect() {
     assert_eq!(
         failure.completion,
         Some(isoplane_engine::Completion::Trapped),
-        "capability refusals must retain the guest completion in the isolated worker report"
+        "capability refusals must retain the guest completion in the preparation failure"
     );
 }
 
@@ -274,7 +274,7 @@ fn ignoring_a_deferred_unit_does_not_reenter_runtime_bringup() {
 }
 
 #[test]
-fn preparation_transport_preserves_only_declared_platform_files() {
+fn engine_configuration_preserves_only_declared_platform_files() {
     let mut configuration = engine().configuration();
     configuration.platform_files =
         isoplane_engine::PlatformFiles::new(vec![isoplane_engine::PlatformFile {
@@ -283,18 +283,18 @@ fn preparation_transport_preserves_only_declared_platform_files() {
             modified_ns: 123,
         }])
         .expect("declared platform files");
-    let encoded = serde_json::to_vec(&configuration).expect("encode worker configuration");
+    let encoded = serde_json::to_vec(&configuration).expect("encode engine configuration");
     let restored: isoplane_engine::EngineConfig =
-        serde_json::from_slice(&encoded).expect("decode worker configuration");
+        serde_json::from_slice(&encoded).expect("decode engine configuration");
     let files = restored.platform_files.files();
     assert_eq!(
         files.len(),
         1,
-        "isolated preparation must receive exactly the declared files"
+        "the decoded engine configuration must contain exactly the declared files"
     );
     assert_eq!(
         files[0].path, "/etc/ssl/certs/ca-certificates.crt",
-        "the declared trust path must survive process transport"
+        "the declared trust path must survive encoding"
     );
     assert_eq!(
         &*files[0].bytes, b"declared root material",
@@ -307,14 +307,14 @@ fn preparation_transport_preserves_only_declared_platform_files() {
 }
 
 #[test]
-fn preparation_transport_rejects_unvalidated_platform_file_paths() {
+fn engine_configuration_rejects_unvalidated_platform_file_paths() {
     let configuration = engine().configuration();
-    let mut encoded = serde_json::to_value(configuration).expect("worker configuration");
+    let mut encoded = serde_json::to_value(configuration).expect("engine configuration");
     encoded["platform_files"] =
         serde_json::json!([{"path":"/etc/../secret", "bytes":[], "modified_ns":0}]);
     assert!(
         serde_json::from_value::<isoplane_engine::EngineConfig>(encoded).is_err(),
-        "deserializing worker configuration must enforce the platform filesystem boundary"
+        "deserializing engine configuration must enforce the platform filesystem boundary"
     );
 }
 
@@ -327,10 +327,9 @@ fn initialization_identity_changes_with_the_declared_trust_snapshot() {
         application_files: isoplane_engine::PlatformFiles::default(),
         engine: engine().configuration(),
         runtime: isoplane_prepare::RuntimeProfile::RawWasm,
-        limits: isoplane_abi::config::Limits::default(),
+        memory_limit: isoplane_abi::config::GuestMemoryBytes::default(),
         initialization: request(),
         input_hash: *blake3::hash(&wasm).as_bytes(),
-        portable_template: isoplane_prepare::PortableTemplate::Returned,
     };
     let old = request.identity().expect("initial identity");
     request.engine.platform_files =
@@ -360,10 +359,9 @@ fn initialization_identity_binds_application_content_independently_of_the_runtim
         application_files: isoplane_engine::PlatformFiles::default(),
         engine: engine().configuration(),
         runtime: isoplane_prepare::RuntimeProfile::RawWasm,
-        limits: isoplane_abi::config::Limits::default(),
+        memory_limit: isoplane_abi::config::GuestMemoryBytes::default(),
         initialization: request(),
         input_hash: *blake3::hash(&wasm).as_bytes(),
-        portable_template: isoplane_prepare::PortableTemplate::Returned,
     };
     let before = request.identity().expect("original identity");
     request.application_files =

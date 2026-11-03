@@ -73,16 +73,16 @@ in_mono_runtime! {
 }
 
 in_mono_runtime! {
-    /// A parked lookup survives Store restoration: the answer reaches the continuation
-    /// after the guest's captured memory was restored into a new Store.
+    /// A parked lookup survives hibernation: the answer reaches the continuation
+    /// after the guest's memory went through the local snapshot.
     #[tokio::test]
-    async fn a_parked_lookup_survives_a_store_restoration_delta_round_trip(runtime: GuestRuntime) {
+    async fn a_parked_lookup_survives_a_hibernation_delta_round_trip(runtime: GuestRuntime) {
         let reactor = reactor_for_dns(40, dual_stack());
         reactor.context.begin_slice(1, 1);
         let mut guest = guest(&reactor, runtime);
         let outcome = guest.start("/dns/resolve/owned.test");
         assert_eq!(outcome.completion, Completion::Parked, "{outcome:?}");
-        let outcome = guest.wake(&reactor).await;
+        let outcome = guest.wake_through_delta(&reactor).await;
         assert_eq!(
             outcome.completion,
             Completion::Done,
@@ -92,7 +92,7 @@ in_mono_runtime! {
         assert_eq!(
             reactor.response_text(1),
             format!("{PUBLIC_V4},{PUBLIC_V6}"),
-            "the host's answer must reach the lookup parked across the Store restoration"
+            "the host's answer must reach the lookup parked across the hibernation"
         );
     }
 }

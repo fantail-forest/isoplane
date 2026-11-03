@@ -375,16 +375,20 @@ impl Cell {
     }
 
     pub(crate) fn occupancy_budget_ms(&self, module: &ModuleId) -> u32 {
-        self.modules.read().get(module).map_or(30000, |m| {
-            m.debug_occupancy_ms
-                .unwrap_or(m.manifest.effective_limits().occupancy_ms_per_dispatch)
-        })
+        self.modules.read().get(module).map_or(
+            isoplane_abi::config::Limits::default().occupancy_ms_per_dispatch,
+            |m| {
+                m.debug_occupancy_ms
+                    .unwrap_or(m.manifest.effective_limits().occupancy_ms_per_dispatch)
+            },
+        )
     }
 
     pub(crate) fn pending_futures_limit(&self, module: &ModuleId) -> u32 {
-        self.modules.read().get(module).map_or(64, |m| {
-            m.manifest.effective_limits().pending_futures_per_dispatch
-        })
+        self.modules.read().get(module).map_or(
+            isoplane_abi::config::Limits::default().pending_futures_per_dispatch,
+            |m| m.manifest.effective_limits().pending_futures_per_dispatch,
+        )
     }
 
     pub fn http_record(&self, module: &ModuleId, req: isoplane_abi::HttpRequest) -> DispatchRecord {

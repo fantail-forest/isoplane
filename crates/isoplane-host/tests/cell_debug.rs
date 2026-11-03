@@ -2,7 +2,6 @@
 
 mod common;
 
-use isoplane_abi::config::Limits;
 use isoplane_abi::dispatch::HttpRequest;
 use isoplane_abi::result::ResultRecord;
 use isoplane_engine::{Completion, EngineConfig, IsoplaneEngine};
@@ -67,12 +66,8 @@ fn rig(park: bool) -> Rig {
         },
         "93.184.216.34:80",
     );
-    cell.register_debug_module(
-        "owner",
-        activator.clone(),
-        common::manifest("debug-cell", Limits::default()),
-    )
-    .expect("debug registration must succeed under the debug wall backstop");
+    cell.register_debug_module("owner", activator.clone(), common::manifest("debug-cell"))
+        .expect("debug registration must succeed under the debug wall backstop");
     Rig { cell, module }
 }
 
@@ -224,11 +219,7 @@ fn debug_registration_refuses_a_production_wall_backstop() {
     let rig = Rig { cell, module };
     assert!(
         rig.cell
-            .register_debug_module(
-                "owner",
-                activator,
-                common::manifest("debug-registration", Limits::default())
-            )
+            .register_debug_module("owner", activator, common::manifest("debug-registration"))
             .is_err(),
         "debug registration must not silently inherit production wall limits"
     );

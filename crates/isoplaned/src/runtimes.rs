@@ -313,12 +313,12 @@ mod tests {
     }
 
     #[test]
-    fn an_application_package_is_held_to_its_configured_size() {
+    fn a_package_is_held_to_the_configured_size() {
         let root = installation(&["1.0.0"]);
         let runtimes = Runtimes::load(root.path()).expect("loads");
-        let free: isoplane_abi::config::AppManifest =
-            toml::from_str("name = \"app\"\nlimits.instances_per_application = 3\nlimits.module_bytes_compressed = 5242880\nlimits.package_bytes = 52428800\nlimits.instance_memory_max = 134217728\nlimits.occupancy_ms_per_dispatch = 100\nlimits.instance_open_connections = 32\nlimits.pending_futures_per_dispatch = 6").expect("an explicit small-budget manifest");
-        let limits = isoplane_prepare::package::PackageLimits::of(&free);
+        let manifest: isoplane_abi::config::AppManifest =
+            toml::from_str("name = \"app\"").expect("an application manifest");
+        let limits = isoplane_prepare::package::PackageLimits::of(&manifest);
         let maximum_package_bytes = 50 << 20;
         let identity = identity_json("1.0.0", MODULE);
         let package = |bytes: u64| {
@@ -343,7 +343,7 @@ mod tests {
             runtimes
                 .resolve(&package(maximum_package_bytes), limits)
                 .is_ok(),
-            "a 50 MiB package must be admitted on the configured application budget"
+            "a 50 MiB package must be admitted within the configured limit"
         );
         assert!(
             matches!(
@@ -352,7 +352,7 @@ mod tests {
                     isoplane_prepare::package::PackageError::TooLarge { .. }
                 ))
             ),
-            "a package one byte over 50 MiB must be refused on the configured application budget"
+            "a package one byte over 50 MiB must be refused within the configured limit"
         );
     }
 

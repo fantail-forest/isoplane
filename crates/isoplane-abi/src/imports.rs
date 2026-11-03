@@ -21,7 +21,6 @@ pub struct Sig {
     pub results: &'static [Ty],
 }
 
-
 /// Position and direction of an import buffer; scalar parameters do not describe it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BufSpec {
@@ -35,7 +34,7 @@ pub enum BufSpec {
 }
 
 /// The most an out-buffer import may ask the host to produce in one call.
-/// Application budgets cap the guest's own memory; this caps what the guest can make
+/// Resource limits cap the guest's own memory; this caps what the guest can make
 /// the host allocate on its behalf.
 pub const MAX_OUT_BUFFER_BYTES: usize = 1 << 20;
 
@@ -237,7 +236,6 @@ pub fn init_visible() -> impl Iterator<Item = &'static ImportDef> {
     IMPORTS.iter().filter(|i| i.init_visible)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -324,5 +322,4 @@ mod tests {
             "the set of imports that write into guest memory has changed"
         );
     }
-
 }

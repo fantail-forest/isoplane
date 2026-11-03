@@ -42,9 +42,7 @@ impl Addresses {
             .runtime()
             .ok_or(Error::Unsupported("DNS without reactor"))?
             .clone();
-        let Some(future) = bindings.alloc(
-            isoplane_abi::native_io::canonical::SOCKET_IMPORT,
-        ) else {
+        let Some(future) = bindings.alloc(isoplane_abi::native_io::canonical::SOCKET_IMPORT) else {
             self.deferred = Some(lookup);
             return Ok(());
         };

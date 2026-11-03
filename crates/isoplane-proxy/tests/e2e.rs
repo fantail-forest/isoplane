@@ -5,8 +5,9 @@ mod common;
 use std::sync::Arc;
 use std::time::Duration;
 
-use common::*;
 use common::fake::FakeCell;
+use common::*;
+use isoplane_abi::host::CodeTier;
 use isoplane_proxy::ProxyConfig;
 
 #[tokio::test]
@@ -23,7 +24,7 @@ async fn http_request_resolves_to_a_version_and_reaches_the_cell() {
     assert_eq!(
         r.header("x-isoplane-version"),
         Some("v1"),
-        "the selected version served it"
+        "the installed deployment served it"
     );
     assert_eq!(
         r.header("x-isoplane-tier"),
@@ -54,8 +55,54 @@ async fn an_unrouted_host_is_a_404_and_never_reaches_a_cell() {
     assert_eq!(rig.cell.http_dispatches(), 0, "no cell was consulted");
 }
 
+#[tokio::test]
+async fn malformed_hosts_never_dispatch_or_fall_back_to_an_installed_application() {
+    let rig = start(
+        Arc::new(FakeCell::new()),
+        standard_routes(),
+        ProxyConfig::default(),
+    )
+    .await;
+    for host in [
+        "quotes.isoplane.dev:invalid",
+        "quotes.isoplane.dev:+80",
+        "quotes.isoplane.dev:65536",
+        "quotes.isoplane.dev:",
+        "user@quotes.isoplane.dev",
+        "https://quotes.isoplane.dev",
+        "quotes.isoplane.dev/path",
+    ] {
+        let response = get(rig.addr, host, "/", &[]).await;
+        assert_eq!(
+            response.status, 404,
+            "malformed Host {host} must not select an application"
+        );
+    }
+    assert_eq!(rig.cell.http_dispatches(), 0);
+}
 
-
+#[tokio::test]
+async fn one_ingress_port_routes_independent_applications_by_their_expected_hosts() {
+    let routes = standard_routes();
+    routes
+        .insert(
+            isoplane_abi::host::RouteTarget {
+                app: "orders".into(),
+                tenant: "acme".into(),
+                version: "orders-current".into(),
+                tier: CodeTier::Fast,
+            },
+            &["orders.isoplane.dev".into()],
+        )
+        .expect("install sibling application");
+    let rig = start(Arc::new(FakeCell::new()), routes, ProxyConfig::default()).await;
+    let quotes = get(rig.addr, "QUOTES.isoplane.dev:8080", "/anything", &[]).await;
+    let orders = get(rig.addr, "orders.isoplane.dev", "/anything", &[]).await;
+    assert_eq!(quotes.json()["app"], "quotes");
+    assert_eq!(orders.json()["app"], "orders");
+    assert_eq!(orders.json()["tenant"], "acme");
+    assert_eq!(rig.cell.http_dispatches(), 2);
+}
 
 #[tokio::test]
 async fn a_cell_s_503_reaches_the_client_with_its_headers() {
@@ -103,7 +150,12 @@ async fn a_cell_s_503_reaches_the_client_with_its_headers() {
 async fn a_guest_cannot_forge_platform_headers() {
     let cell = Arc::new(FakeCell::new());
     let rig = start(cell.clone(), standard_routes(), ProxyConfig::default()).await;
-    rig.routes.insert(quotes_target("v2", isoplane_abi::host::CodeTier::Fast), &["quotes.isoplane.dev".into()]).expect("install deployment");
+    rig.routes
+        .insert(
+            quotes_target("v2", CodeTier::Fast),
+            &["quotes.isoplane.dev".into()],
+        )
+        .expect("install deployment");
     let r = get(rig.addr, "quotes.isoplane.dev", "/", &[]).await;
     // The fake's reply sets x-isoplane-version itself.
     assert_eq!(
@@ -123,6 +175,53 @@ async fn a_guest_cannot_forge_platform_headers() {
     );
 }
 
+#[tokio::test]
+async fn tier_is_reported_per_dispatch() {
+    let rig = start(
+        Arc::new(FakeCell::new()),
+        standard_routes(),
+        ProxyConfig::default(),
+    )
+    .await;
+    rig.routes
+        .insert(
+            quotes_target("v2", CodeTier::Fast),
+            &["quotes.isoplane.dev".into()],
+        )
+        .expect("install deployment");
+    assert_eq!(
+        get(rig.addr, "quotes.isoplane.dev", "/", &[])
+            .await
+            .header("x-isoplane-tier"),
+        Some("fast"),
+        "a fresh version reports the fast tier"
+    );
+    rig.routes
+        .insert(
+            quotes_target("v3", CodeTier::Optimized),
+            &["quotes.isoplane.dev".into()],
+        )
+        .expect("replace deployment");
+    assert_eq!(
+        get(rig.addr, "quotes.isoplane.dev", "/", &[])
+            .await
+            .header("x-isoplane-tier"),
+        Some("optimized"),
+        "a version at the optimized tier reports it"
+    );
+
+    use std::sync::atomic::Ordering::Relaxed;
+    assert_eq!(
+        rig.metrics.dispatches_tier_fast.load(Relaxed),
+        1,
+        "one dispatch was counted against the fast tier"
+    );
+    assert_eq!(
+        rig.metrics.dispatches_tier_optimized.load(Relaxed),
+        1,
+        "one dispatch was counted against the optimized tier"
+    );
+}
 
 #[tokio::test]
 async fn connection_headers_stop_at_the_proxy_while_application_headers_reach_the_guest() {
@@ -313,7 +412,13 @@ async fn proxy_shutdown_drops_a_blocked_response_body_before_returning() {
     let mut rig = start_with_dispatcher(
         cell,
         standard_routes(),
-        ProxyConfig::default(),
+        ProxyConfig {
+            shed: isoplane_proxy::shed::ShedConfig {
+                max_in_flight: 1,
+                max_queued: 0,
+            },
+            ..ProxyConfig::default()
+        },
         dispatcher.clone(),
     )
     .await;
@@ -332,6 +437,30 @@ async fn proxy_shutdown_drops_a_blocked_response_body_before_returning() {
     tokio::time::timeout(Duration::from_secs(10), dispatcher.polled.cancelled())
         .await
         .expect("the response body must actually be pending before shutdown");
+    let refused = tokio::time::timeout(
+        Duration::from_secs(10),
+        get(rig.addr, "quotes.isoplane.dev", "/second", &[]),
+    )
+    .await
+    .expect("overload refusal must not wait for the first response body");
+    assert_eq!(
+        refused.status, 503,
+        "a streaming response retains its admission slot"
+    );
+    assert_eq!(refused.header("retry-after"), Some("1"));
+    assert_eq!(
+        rig.metrics
+            .requests_shed
+            .load(std::sync::atomic::Ordering::Relaxed),
+        1
+    );
+    assert_eq!(
+        rig.metrics
+            .route_resolutions_total
+            .load(std::sync::atomic::Ordering::Relaxed),
+        1,
+        "the refused request never reaches route selection"
+    );
     rig.shutdown().await;
     assert!(
         dispatcher.dropped.is_cancelled(),

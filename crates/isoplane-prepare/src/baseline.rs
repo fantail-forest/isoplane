@@ -7,10 +7,7 @@ use isoplane_engine::prepared::PreparedIdentity;
 use isoplane_engine::{IsoplaneEngine, Template};
 
 use crate::product::{produce, validate};
-use crate::{
-    BuildProduct, BuildRequest, BuildStage, Initialization, PortableTemplate, PrepareError,
-    WorkerFailure,
-};
+use crate::{BuildProduct, BuildRequest, BuildStage, Initialization, PrepareError, WorkerFailure};
 
 /// What a runtime's own initialization sees: an application's request
 /// without its files, deployment configuration, network or entropy, so every
@@ -26,7 +23,7 @@ impl BuildRequest {
             engine: self.engine.clone(),
             application_files: isoplane_engine::PlatformFiles::default(),
             runtime: self.runtime.clone(),
-            limits: self.limits,
+            memory_limit: self.memory_limit,
             guest_memory_bytes: self.guest_memory_bytes,
             validation_limits: self.validation_limits,
             initialization: Initialization {
@@ -40,7 +37,6 @@ impl BuildRequest {
                 log_bytes: initialization.log_bytes,
             },
             input_hash: self.input_hash,
-            portable_template: PortableTemplate::Omitted,
         })
     }
 }
@@ -49,12 +45,6 @@ impl BaselineRequest {
     /// The identity the baseline is prepared, published and loaded under.
     pub fn identity(&self) -> Result<PreparedIdentity, postcard::Error> {
         self.0.identity()
-    }
-
-    /// The request as a worker receives it; its own `baseline()` is itself.
-    #[cfg(target_os = "linux")]
-    pub(crate) fn build_request(&self) -> &BuildRequest {
-        &self.0
     }
 }
 
@@ -259,10 +249,6 @@ fn layer_identity(
     anyhow::ensure!(
         request.baseline().identity()? == baseline.0.identity,
         "the runtime baseline was prepared for a different runtime, engine or limits"
-    );
-    anyhow::ensure!(
-        request.portable_template == PortableTemplate::Omitted,
-        "a layer over a runtime baseline has no portable module"
     );
     Ok(request.identity()?)
 }

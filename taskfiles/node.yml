@@ -3,11 +3,13 @@ version: '3'
 vars:
   ARCHIVE: '{{.ROOT_DIR}}/.build/releases/isoplane-node.tar'
   METADATA: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/node-package'
+  NOTICES: '{{.ROOT_DIR}}/.build/clr-anycpu/notices'
 
 tasks:
   package:
     desc: Package qualified node binaries and runtime directories without copying their payloads
     platforms: [linux]
+    deps: [':notices:node']
     requires:
       vars: [BINARIES, RUNTIMES]
     preconditions:
@@ -16,9 +18,12 @@ tasks:
     cmds:
       - defer: 'rm -rf "{{.METADATA}}"; rm -f "{{.ARCHIVE}}"'
       - 'mkdir -p "{{.METADATA}}/runtimes" "{{dir .ARCHIVE}}"'
-      - 'tar -cf "{{.ARCHIVE}}" -C "{{.BINARIES}}" isoplaned -C "{{.ROOT_DIR}}/deploy/local" isoplaned.service install-node.sh'
+      - 'tar -cf "{{.ARCHIVE}}" -C "{{.BINARIES}}" isoplaned -C "{{.ROOT_DIR}}" LICENSE.txt -C "{{.ROOT_DIR}}/deploy/local" isoplaned.service install-node.sh'
       - 'sha256sum "{{.BINARIES}}/isoplaned" | sed "s|  .*|  isoplaned|" > "{{.METADATA}}/SHA256SUMS"'
       - 'cd deploy/local && sha256sum isoplaned.service install-node.sh >> "{{.METADATA}}/SHA256SUMS"'
+      - 'sha256sum LICENSE.txt >> "{{.METADATA}}/SHA256SUMS"'
+      - 'tar -rf "{{.ARCHIVE}}" --transform "s|^|notices/|" -C "{{.NOTICES}}" node-rust-dependencies.json dotnet-runtime icu openssl trust sqlite'
+      - 'cd "{{.NOTICES}}" && find node-rust-dependencies.json dotnet-runtime icu openssl trust sqlite -type f -exec sha256sum {} + | sed "s|  |  notices/|" >> "{{.METADATA}}/SHA256SUMS"'
       - for: {var: RUNTIMES}
         task: runtime
         vars: {DIRECTORY: '{{.ITEM}}'}

@@ -294,7 +294,7 @@ mod queue_tests {
     use super::*;
     use crate::bindings::InstanceCtx;
     use crate::pool::InstancePool;
-    use isoplane_abi::config::Limits;
+
     use std::time::{Duration, Instant};
 
     /// The queue never looks inside a job, so the payload is minimal.
@@ -331,14 +331,12 @@ mod queue_tests {
             shared: Mutex::new(Vec::new()),
             tenant: "queue-test".into(),
             debug_occupancy_ms: None,
-            limits: Limits::default(),
             manifest: isoplane_abi::config::AppManifest {
                 guest_memory_bytes: None,
                 resource_limits: Default::default(),
                 validation_limits: Default::default(),
                 name: "queue-test".into(),
                 bindings: Default::default(),
-                limits: Limits::default(),
                 init_visible_vars: vec![],
             },
             pool: InstancePool::new(activator.clone(), 1),
@@ -373,7 +371,12 @@ mod queue_tests {
             16,
         );
         let (slot, _) = pool
-            .acquire(|id| Arc::new(InstanceCtx::for_test(id, Limits::default())))
+            .acquire(|id| {
+                Arc::new(InstanceCtx::for_test(
+                    id,
+                    isoplane_abi::config::Limits::default(),
+                ))
+            })
             .expect("a slot");
         slot
     }

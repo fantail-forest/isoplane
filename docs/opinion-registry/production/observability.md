@@ -8,7 +8,7 @@ across service boundaries. Qualify adoption incrementally without replacing
 working instrumentation solely to standardize its transport.
 
 **Not this:** Separate proprietary telemetry plumbing for each service or treating
-sampled diagnostic telemetry as complete usage data.
+sampled diagnostic telemetry as complete resource-usage data.
 
 **Exception:** Native profiling tools and existing metric endpoints remain useful
 where they provide better evidence or an integration has not yet been qualified.
@@ -25,13 +25,13 @@ A wide event brings the identifiers, operation, outcome, duration, resource use,
 
 The execution boundary that catches a host panic owns the dispatch outcome; a completion guard or equivalent ownership mechanism prevents early returns and caught unwinding from dropping or duplicating the record. Exercise success, failure, cancellation, and caught-panic paths through that boundary and observe the completion event. Event emission and durable export are separate concerns: a guard cannot promise delivery after an abort, forced termination, crash, or exporter failure.
 
-**Not this:** Calling a `Drop` guard an exactly-once delivery guarantee, or treating missing telemetry as evidence of zero usage.
+**Not this:** Calling a `Drop` guard an exactly-once delivery guarantee, or treating missing telemetry as evidence of zero resource usage.
 
 **Exception:** Abrupt process loss is outside the handled-outcome guarantee; represent incomplete evidence as incomplete.
 
 ## Emit lifecycle transitions as events with before and after
 
-When an instance changes tier (hot, parked, hibernated, discarded) or a version changes route state, emit a structured event with the previous state, the new state, the cause, and the identifiers. These are where investigations start.
+When an instance changes tier (hot, parked, hibernated, discarded) or an application is selected for deployment, emit a structured event with the previous state, the new state, the cause, and the identifiers. These are where investigations start.
 
 **Not this:** Inferring a transition from a counter delta.
 
@@ -47,7 +47,7 @@ Put tenant, app, version, instance, and dispatch identifiers on the enclosing sp
 
 ## Validate telemetry according to the decisions it drives
 
-Keep dashboard figures traceable to real measurements with clear meanings. Test canonical completion records, resource usage and telemetry that drives critical alerts or control decisions through their owning boundaries. Reuse behavior tests and shared schema or export checks where they provide coverage. Diagnostic counters and dashboard presentations do not each require a dedicated test; verify their wiring according to the risk of an incorrect or missing value.
+Keep dashboard figures traceable to real measurements with clear meanings. Test canonical completion records, resource measurements and telemetry that drives critical alerts or control decisions through their owning boundaries. Reuse behavior tests and shared schema or export checks where they provide coverage. Diagnostic counters and dashboard presentations do not each require a dedicated test; verify their wiring according to the risk of an incorrect or missing value.
 
 **Not this:** Counters for an instrument that no longer exists, or a separate expensive end-to-end test for every label and display value.
 

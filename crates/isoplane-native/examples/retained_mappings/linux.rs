@@ -1,7 +1,7 @@
 //! Internal mapping microbenchmark: unique overlays over one shared baseline.
 #![forbid(unsafe_code)]
 use anyhow::{ensure, Context, Result};
-use isoplane_abi::config::Limits;
+
 use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest, TraceContext};
 use isoplane_engine::prepared::PreparedIdentity;
 use isoplane_engine::{
@@ -14,16 +14,6 @@ use std::path::Path;
 use std::sync::{Arc, Barrier};
 use std::time::Instant;
 
-const PLAN: Limits = Limits {
-    instances_per_application: 16,
-    module_bytes_compressed: 52428800,
-    package_bytes: 52428800,
-    instance_memory_max: 536870912,
-    occupancy_ms_per_dispatch: 300000,
-    instance_open_connections: 32,
-    pending_futures_per_dispatch: 4096,
-};
-
 fn initialization_budget() -> OccupancyBudget {
     OccupancyBudget {
         occupancy_ms: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_OCCUPANCY_MS,
@@ -34,7 +24,7 @@ fn initialization_budget() -> OccupancyBudget {
 
 fn request_budget() -> OccupancyBudget {
     OccupancyBudget {
-        occupancy_ms: PLAN.limits().occupancy_ms_per_dispatch,
+        occupancy_ms: isoplane_abi::config::Limits::default().occupancy_ms_per_dispatch,
         slice_wall_ms_cap: isoplane_host::CellConfig::default().slice_wall_ms_cap,
         spent_ns: 0,
     }
@@ -46,8 +36,7 @@ fn bindings(id: usize) -> Box<dyn HostBindings> {
         Tenancy {
             module: ModuleId::new(format!("unique-{id}"), "v1"),
             tenant: "mapping-experiment".into(),
-            limits: PLAN,
-
+            limits: isoplane_abi::config::Limits::default(),
             allowlist: None,
         },
         Arc::new(isoplane_host::meters::Meters::new()),

@@ -3,7 +3,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use isoplane_abi::config::Limits;
 use isoplane_abi::dispatch::{DispatchRecord, HttpRequest};
 
 use isoplane_host::cell::{Cell, CellConfig, Target};
@@ -68,7 +67,7 @@ fn a_reused_instance_keeps_its_residue() {
     ));
     let module = act.module().clone();
     r.cell
-        .register_module("acme", act, manifest("reuse-app", Limits::default()))
+        .register_module("acme", act, manifest("reuse-app"))
         .unwrap();
 
     let mut observed = Vec::new();
@@ -115,7 +114,7 @@ fn clones_of_one_template_never_share_entropy() {
     ));
     let module = act.module().clone();
     r.cell
-        .register_module("acme", act.clone(), manifest("rng", Limits::default()))
+        .register_module("acme", act.clone(), manifest("rng"))
         .unwrap();
 
     for i in 0..50 {
@@ -156,7 +155,7 @@ fn a_retired_module_refuses_new_work_and_discards_its_idle_instances() {
     ));
     let module = act.module().clone();
     r.cell
-        .register_module("acme", act, manifest("retired-app", Limits::default()))
+        .register_module("acme", act, manifest("retired-app"))
         .unwrap();
     let handler = || Target::Handler { route: "/".into() };
     let served = r

@@ -1,4 +1,4 @@
-//! Numeric application resource budgets.
+//! Per-application resource budgets and operator overrides.
 
 use serde::{Deserialize, Serialize};
 
@@ -6,9 +6,7 @@ use serde::{Deserialize, Serialize};
 pub const DEFAULT_INSTANCE_OPEN_CONNECTIONS: u64 = 32;
 
 /// Effective per-application resource budgets.
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
     /// Maximum zstd-compressed module bytes at admission.
     pub module_bytes_compressed: u64,
@@ -30,19 +28,19 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
-            instances_per_application: 8,
-            module_bytes_compressed: 52428800,
-            package_bytes: 52428800,
-            instance_memory_max: 134217728,
-            occupancy_ms_per_dispatch: 30000,
-            instance_open_connections: 32,
-            pending_futures_per_dispatch: 64,
+            instances_per_application: 16,
+            module_bytes_compressed: 50 << 20,
+            package_bytes: 50 << 20,
+            instance_memory_max: super::GuestMemoryBytes::default().get(),
+            occupancy_ms_per_dispatch: 300_000,
+            instance_open_connections: DEFAULT_INSTANCE_OPEN_CONNECTIONS,
+            pending_futures_per_dispatch: 4096,
         }
     }
 }
 
 /// Operator overrides for the resource budgets enforced for an application.
-/// Unspecified values retain the supplied numeric defaults.
+/// Unspecified values retain the default resource budgets.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ResourceLimitOverrides {
@@ -61,8 +59,9 @@ pub struct ResourceLimitOverrides {
 }
 
 impl ResourceLimitOverrides {
-    /// Apply explicit overrides to the supplied numeric budgets.
-    pub fn resolve(self, defaults: Limits) -> Limits {
+    /// Resolve explicit budgets against the default resource budgets.
+    pub fn resolve(self) -> Limits {
+        let defaults = Limits::default();
         Limits {
             instances_per_application: self
                 .instances_per_application

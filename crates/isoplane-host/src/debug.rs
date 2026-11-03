@@ -295,7 +295,7 @@ fn unsupported(message: &'static str) -> DispatchOutcome {
 mod tests {
     use super::*;
     use crate::{CellBindings, InstanceCtx, InstanceId};
-    use isoplane_abi::config::Limits;
+
     use isoplane_abi::dispatch::{DispatchKind, HttpRequest, TraceContext};
 
     fn activator(initialize: Option<&str>) -> Result<DebugActivator, DebugError> {
@@ -342,7 +342,10 @@ mod tests {
     }
 
     fn activate(activator: DebugActivator) -> Box<dyn InstanceOps + Send> {
-        let ctx = Arc::new(InstanceCtx::for_test(InstanceId(1), Limits::default()));
+        let ctx = Arc::new(InstanceCtx::for_test(
+            InstanceId(1),
+            isoplane_abi::config::Limits::default(),
+        ));
         ctx.begin_dispatch(1, 1);
         activator
             .activate(CellBindings::boxed(ctx))
@@ -539,15 +542,7 @@ mod tests {
     fn debug_bindings_preserve_the_application_memory_ceiling() {
         let context = Arc::new(crate::bindings::InstanceCtx::for_test(
             crate::InstanceId(1),
-            isoplane_abi::config::Limits {
-                instances_per_application: 3,
-                module_bytes_compressed: 5242880,
-                package_bytes: 52428800,
-                instance_memory_max: 134217728,
-                occupancy_ms_per_dispatch: 100,
-                instance_open_connections: 32,
-                pending_futures_per_dispatch: 6,
-            },
+            isoplane_abi::config::Limits::default(),
         ));
         let bindings = DebugBindings(
             Box::new(crate::bindings::CellBindings::new(context)),
@@ -555,7 +550,7 @@ mod tests {
         );
         assert_eq!(
             bindings.memory_limit_bytes(),
-            Some(134217728),
+            Some(isoplane_abi::config::Limits::default().instance_memory_max),
             "debugging must retain the application's memory limit"
         );
     }

@@ -1,13 +1,16 @@
-//! Local preparation and execution cells behind the HTTP dispatcher.
+//! The local data plane behind the proxy's `Dispatcher`.
+//!
+//! Connects configured application versions to the shared engine and execution pool.
 
 mod admin;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 
 use isoplane_abi::dispatch::HttpRequest;
 use isoplane_abi::host::{Dispatcher, HttpReply};
+use isoplane_host::cell::Services;
 use isoplane_host::ModuleId;
 use isoplane_host::{Cell, CellConfig, EngineActivator};
 use parking_lot::RwLock;
@@ -51,25 +54,30 @@ pub fn engine_config(
 
 /// The node's cells on one engine, and the cell hosting each registered version.
 pub struct RealCells {
-    runtime_settings: Arc<dyn crate::development::RuntimeSettingsSource>,
     engine: Arc<isoplane_engine::IsoplaneEngine>,
+    preparation: Option<crate::preparation::PreparationConfig>,
+    /// The shared runtimes application packages are prepared on.
+    runtimes: Option<crate::runtimes::Runtimes>,
     /// Compiled template artifacts, mapped rather than read, so a restart
     /// does not recompile.
     artifacts: std::path::PathBuf,
     cells: Vec<Arc<Cell>>,
-    /// Configured installation destinations for local applications.
-    configured_placement: HashMap<String, usize>,
-    /// Exact registered app/version identities and their index into `cells`.
-    modules: RwLock<HashMap<ModuleId, usize>>,
+    /// Applications admitted by the operator configuration.
+    configured_applications: HashSet<String>,
+    /// Exact deployments registered in this process.
+    modules: RwLock<HashSet<ModuleId>>,
+    registration: tokio::sync::Mutex<()>,
     /// app -> tenant.
     tenants: Arc<RwLock<HashMap<String, String>>>,
-    /// The only way a module reaches a cell.
-    deployer: Arc<crate::deploy::Deployer>,
+    /// Controlled local artifact preparation and restoration for this host.
+    pub deployer: Arc<crate::deploy::Deployer>,
 }
 
 /// What a real node keeps on disk.
 pub struct RealPaths {
-    /// Private local preparation output.
+    /// Local pressure snapshot reservations.
+    pub snapshots: std::path::PathBuf,
+    /// The private artifact store populated by this host's compiler.
     pub registry: std::path::PathBuf,
     /// Compiled templates, one `.meta` and `.cwasm` pair per
     /// `(module hash, engine version, micro-architecture)`. Apart from the
@@ -80,6 +88,7 @@ pub struct RealPaths {
 impl RealPaths {
     pub fn under(root: &Path) -> Self {
         RealPaths {
+            snapshots: root.join("snapshots"),
             registry: root.join("registry"),
             artifacts: root.join("artifacts"),
         }
@@ -87,30 +96,166 @@ impl RealPaths {
 }
 
 impl RealCells {
-    /// Returns the owner of an exact version registered with its serving cell.
-    pub fn registered_owner(&self, app: &str, version: &str) -> Option<String> {
-        let module = ModuleId::new(app, version);
-        let modules = self.modules.read();
-        let index = *modules.get(&module)?;
-        self.cells[index].module_tenant(&module)
+    /// Returns the deployment currently registered for this owner's application.
+    pub fn registered_deployment(&self, app: &str, owner: &str) -> Option<String> {
+        if self.tenants.read().get(app).map(String::as_str) != Some(owner) {
+            return None;
+        }
+        self.modules
+            .read()
+            .iter()
+            .find(|module| module.app == app)
+            .map(|module| module.version.clone())
+    }
+
+    /// Builds one shared execution pool with per-application sandbox and resource bounds.
+    pub fn build(cfg: &crate::config::NodeConfig, paths: &RealPaths) -> anyhow::Result<Arc<Self>> {
+        Self::build_with_destinations(
+            cfg,
+            paths,
+            Arc::new(isoplane_host::egress::PublicDestinations),
+            &cfg.trust_bundle()?,
+        )
+    }
+
+    /// Builds cells sharing the address policy used by their outbound
+    /// transports, serving `trust` to every guest as its root store.
+    pub fn build_with_destinations(
+        cfg: &crate::config::NodeConfig,
+        paths: &RealPaths,
+        destinations: Arc<dyn isoplane_host::egress::DestinationPolicy>,
+        trust: &crate::trust::TrustBundle,
+    ) -> anyhow::Result<Arc<Self>> {
+        let network = cfg.network;
+        let egress = Arc::new(
+            isoplane_host::HostEgressPolicy::system(cfg.connection_limits()?)?
+                .with_destinations(destinations),
+        );
+        let engine = Arc::new(isoplane_engine::IsoplaneEngine::new(engine_config(
+            cfg, trust,
+        )?)?);
+
+        let tenants: Arc<RwLock<HashMap<String, String>>> = Arc::new(RwLock::new(HashMap::new()));
+        let fetcher = Arc::new(isoplane_host::PinnedHttpFetcher::new(
+            network.inline_response_bytes,
+        ));
+
+        let mut cells = Vec::with_capacity(1);
+        {
+            let name = &cfg.host.name;
+            let services = Arc::new(Services {
+                egress: egress.clone(),
+                fetcher: fetcher.clone(),
+            });
+            cells.push(Cell::with_snapshot_storage(
+                CellConfig {
+                    name: name.clone(),
+
+                    response_queue_bytes: cfg.response_queue_bytes,
+                    ..cfg.host.clone()
+                },
+                services,
+                Arc::new(isoplane_hibernate::snapshot::LocalSnapshotStorage::new(
+                    &paths.snapshots,
+                )?),
+            )?);
+        }
+
+        if let Some(preparation) = &cfg.preparation {
+            preparation.validate()?;
+        }
+        let runtimes = match cfg.preparation.as_ref().and_then(|p| p.runtimes.as_deref()) {
+            Some(directory) => {
+                let runtimes = crate::runtimes::Runtimes::load(directory)?;
+                tracing::info!(
+                    directory = %directory.display(),
+                    sdk_versions = ?runtimes.sdk_versions().collect::<Vec<_>>(),
+                    "installed shared runtimes checked"
+                );
+                Some(runtimes)
+            }
+            None => None,
+        };
+        let configured_applications = cfg.apps.iter().map(|a| a.manifest.name.clone()).collect();
+        for a in &cfg.apps {
+            tenants
+                .write()
+                .insert(a.manifest.name.clone(), cfg.owner.clone());
+        }
+
+        let deployer = Arc::new(crate::deploy::Deployer::open(&paths.registry)?);
+        tracing::info!(
+            registry = %paths.registry.display(),
+            "deploy pipeline ready (validate -> pre-init -> compile -> publish -> register)"
+        );
+
+        isoplane_engine::CompilationCache::create_directory(&paths.artifacts)?;
+        let me = Arc::new(RealCells {
+            engine,
+            preparation: cfg.preparation.clone(),
+            runtimes,
+            artifacts: paths.artifacts.clone(),
+            cells,
+            configured_applications,
+            modules: RwLock::new(HashSet::new()),
+            registration: tokio::sync::Mutex::new(()),
+            tenants,
+            deployer,
+        });
+        Ok(me)
     }
 
     pub fn cells(&self) -> &[Arc<Cell>] {
         &self.cells
     }
 
+    fn ensure_configured(&self, app: &str) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.configured_applications.contains(app),
+            "application `{app}` is not configured on this host"
+        );
+        Ok(())
+    }
+
     fn cell_for(&self, app: &str, version: &str) -> anyhow::Result<Arc<Cell>> {
         let module = ModuleId::new(app, version);
-        let idx = *self.modules.read().get(&module).ok_or_else(|| {
-            anyhow::anyhow!("module `{module}` is not registered on any cell of this node")
+        anyhow::ensure!(
+            self.modules.read().contains(&module),
+            "deployment `{module}` is not registered on this host"
+        );
+        self.cells
+            .first()
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("host execution pool is absent"))
+    }
+
+    /// Restore a locally selected application without compilation or initialization.
+    pub async fn restore_application(
+        &self,
+        tenant: &str,
+        installed: crate::installed::InstalledApplication,
+    ) -> anyhow::Result<ModuleId> {
+        let receipt = &installed.receipt;
+        self.preparation.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("restoration requires installed runtime configuration")
         })?;
-        Ok(self.cells[idx].clone())
+        match &receipt.runtime_profile {
+            isoplane_prepare::RuntimeProfile::SharedRuntime { sdk_version } => anyhow::ensure!(
+                self.runtimes
+                    .as_ref()
+                    .is_some_and(|runtimes| runtimes.supports(sdk_version)),
+                "installed deployment {} was prepared on SDK {sdk_version}'s runtime, which this node does not install",
+                receipt.version
+            ),
+            isoplane_prepare::RuntimeProfile::RawWasm => anyhow::bail!("installed deployments must be prepared from an application package on an installed shared runtime"),
+        }
+        self.install_application(tenant, installed).await
     }
 
     /// Local preparation using this node's existing compiler-owned artifact cache.
     pub fn local_preparation(&self) -> anyhow::Result<isoplane_prepare::LocalPreparation> {
         // SAFETY: the node owns this cache and uses only the atomic, content-addressed
-        // compiler writer, the same provenance required by its legacy mapped loader.
+        // compiler writer required by the mapped loader.
         let cache = unsafe {
             isoplane_engine::CompilationCache::from_trusted_directory(self.artifacts.clone())
         }?;
@@ -119,16 +264,70 @@ impl RealCells {
         ))?)
     }
 
+    /// Loads a newly prepared publication, retaining its backing lease in the activator.
+    pub async fn install_application(
+        &self,
+        owner: &str,
+        installed: crate::installed::InstalledApplication,
+    ) -> anyhow::Result<ModuleId> {
+        let (receipt, lease) = installed.into_parts();
+        self.ensure_configured(&receipt.manifest.name)?;
+        let template = self.deployer.restore_prepared(&self.engine, &receipt)?;
+        self.install_prepared_on_cell(
+            ModuleId::new(&receipt.manifest.name, &receipt.version),
+            owner,
+            receipt.manifest.clone(),
+            template,
+            Some(receipt.clone()),
+            Some(lease),
+        )
+        .await
+    }
+
     async fn install_prepared_on_cell(
         &self,
-        index: usize,
         module: ModuleId,
         tenant: &str,
         manifest: isoplane_abi::config::AppManifest,
         template: isoplane_engine::Template,
         receipt: Option<crate::deploy::PreparedReceipt>,
+        lease: Option<Arc<isoplane_prepare::PreparationOwner>>,
     ) -> anyhow::Result<ModuleId> {
-        let cell = &self.cells[index];
+        let _registration = self.registration.lock().await;
+        anyhow::ensure!(
+            !self
+                .modules
+                .read()
+                .iter()
+                .any(|registered| registered.app == module.app),
+            "application `{}` is already registered; deployment `{}` requires a host restart",
+            module.app,
+            module.version
+        );
+        anyhow::ensure!(
+            !tenant.trim().is_empty() && manifest.name == module.app,
+            "module registration requires the established application and owner"
+        );
+        if let Some(owner) = self.tenants.read().get(&module.app) {
+            anyhow::ensure!(
+                owner == tenant,
+                "module registration cannot change application ownership"
+            );
+        }
+        let cell = self
+            .cells
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("host execution pool is absent"))?;
+        let settings = match receipt.as_ref() {
+            Some(receipt) => {
+                anyhow::ensure!(
+                    receipt.manifest.name == module.app && receipt.version == module.version,
+                    "prepared settings receipt does not match the registered application version"
+                );
+                self.deployer.runtime_settings(tenant, receipt).await?
+            }
+            None => crate::settings::RuntimeSettings::default(),
+        };
         let activator = match receipt {
             Some(receipt) => {
                 let deployer = self.deployer.clone();
@@ -137,17 +336,14 @@ impl RealCells {
                     self.engine.clone(),
                     template,
                     module.clone(),
-                    Box::new(move || deployer.restore_prepared(&engine, &receipt)),
+                    Box::new(move || {
+                        let _held = &lease;
+                        deployer.restore_prepared(&engine, &receipt)
+                    }),
                 )
             }
             None => EngineActivator::new(self.engine.clone(), template, module.clone()),
         };
-        let settings = self
-            .runtime_settings
-            .settings(crate::development::SettingsOwner {
-                tenant,
-                application: &module.app,
-            })?;
         cell.register_module_with_exceptions(
             tenant,
             Arc::new(activator),
@@ -158,7 +354,7 @@ impl RealCells {
         self.tenants
             .write()
             .insert(module.app.clone(), tenant.to_owned());
-        self.modules.write().insert(module.clone(), index);
+        self.modules.write().insert(module.clone());
         tracing::info!(app = %module.app, version = %module.version, cell = %cell.cfg.name, "prepared module registered");
         Ok(module)
     }
@@ -169,7 +365,7 @@ impl RealCells {
     }
 }
 
-/// Dispatches to the application's configured local cell.
+/// Exact registered deployment dispatch through the shared execution pool.
 #[async_trait::async_trait]
 impl Dispatcher for RealCells {
     async fn dispatch_http(
@@ -202,7 +398,7 @@ impl Dispatcher for RealCells {
     }
 }
 
-fn initialization_network(
+pub(crate) fn initialization_network(
     tenant: &str,
     manifest: &isoplane_abi::config::AppManifest,
     allowed_destinations: Vec<std::net::SocketAddr>,
@@ -224,117 +420,4 @@ fn initialization_network(
 }
 
 #[cfg(test)]
-mod engine_policy_tests {
-    #[test]
-    fn preparation_uses_the_application_owner_and_execution_network_budgets() {
-        let mut config = crate::config::NodeConfig::dev_default();
-        config.network.instance_pending_connections = 1;
-        config.network.instance_open_connections = 2;
-        config.host.guest_resources.native_handles = 7;
-        config.host.buffered_future_bytes = 4096;
-        let manifest: isoplane_abi::config::AppManifest = toml::from_str(
-            "name='app'\n[bindings]\nfetch_allowlist=['db.example:5432']\n[resource_limits]\npending_futures_per_dispatch=2",
-        ).expect("application policy");
-        let endpoint = "127.0.0.1:5432".parse().expect("local database endpoint");
-        let policy = super::initialization_network(
-            "owner",
-            &manifest,
-            vec![endpoint],
-            config.network,
-            &config.host,
-        );
-        assert_eq!(
-            policy.tenant, "owner",
-            "initialization must retain the established owner"
-        );
-        assert_eq!(
-            policy.allowlist, manifest.bindings.fetch_allowlist,
-            "application egress restrictions must also apply before capture"
-        );
-        assert_eq!(
-            policy.destinations,
-            isoplane_prepare::InitializationDestinations::Public {
-                exceptions: vec![endpoint]
-            },
-            "the explicit local database allowance must reach preparation"
-        );
-        assert_eq!(
-            (
-                policy.limits.instance_pending_connections,
-                policy.limits.instance_open_connections
-            ),
-            (1, 2),
-            "initialization must obey the host connection limits"
-        );
-        assert_eq!(
-            policy.native_handles, 7,
-            "initialization must obey the host native resource limit"
-        );
-        assert_eq!(
-            policy.buffered_bytes, 4096,
-            "initialization must obey the host buffering limit"
-        );
-        assert_eq!(
-            policy.pending_futures, 2,
-            "initialization must obey application resource overrides"
-        );
-    }
-
-    #[test]
-    fn operator_profiling_configuration_reaches_the_engine() {
-        let mut config = crate::config::NodeConfig::dev_default();
-        let trust = config.trust_bundle().expect("the bundled roots must load");
-        assert!(
-            !super::engine_config(&config, &trust)
-                .expect("valid engine configuration")
-                .perf_jitdump,
-            "normal node operation must not write profiling artifacts"
-        );
-        config.engine = toml::from_str("perf_jitdump=true")
-            .expect("operator profiling configuration must deserialize");
-        assert!(
-            super::engine_config(&config, &trust)
-                .expect("valid engine configuration")
-                .perf_jitdump,
-            "an operator must be able to enable native guest symbols"
-        );
-    }
-
-    #[test]
-    fn configured_engine_resource_limits_reach_the_execution_engine() {
-        let mut config = crate::config::NodeConfig::dev_default();
-        config.engine = toml::from_str(
-            "max_core_instance_size_bytes=8388608\ntable_elements=262144\nmax_tables_per_module=8\ncompiler_stack_bytes=16777216\nmax_wasm_stack_bytes=1048576\ntotal_tables=20",
-        ).expect("operator engine limits must deserialize");
-        let trust = config.trust_bundle().expect("the bundled roots must load");
-        let engine = super::engine_config(&config, &trust).expect("platform files must be valid");
-        assert_eq!(
-            engine.total_tables,
-            Some(20),
-            "aggregate table slots must reach the engine"
-        );
-        assert_eq!(
-            engine.max_wasm_stack_bytes,
-            1 << 20,
-            "guest stack limit must reach the engine"
-        );
-        assert_eq!(
-            engine.max_core_instance_size_bytes,
-            8 << 20,
-            "node metadata limit must reach the engine"
-        );
-        assert_eq!(
-            engine.table_elements, 262144,
-            "node table size must reach the engine"
-        );
-        assert_eq!(
-            engine.max_tables_per_module, 8,
-            "node table count must reach the engine"
-        );
-        assert_eq!(
-            engine.compiler_stack_bytes,
-            16 << 20,
-            "node compiler stack must reach the engine"
-        );
-    }
-}
+mod tests;

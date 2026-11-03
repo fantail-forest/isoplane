@@ -1,4 +1,4 @@
-//! Legacy BCL networking through socket-backed asynchronous I/O and restored guest state.
+//! Legacy BCL networking through socket-backed asynchronous I/O and guest deltas.
 
 #[macro_use]
 mod common;
@@ -44,7 +44,7 @@ async fn request(runtime: GuestRuntime, reactor: &Reactor, path: &str) -> String
         },
         reactor.context.emitted_logs()
     );
-    guest.finish(reactor, 128).await
+    guest.finish_through_deltas(reactor, 128).await
 }
 
 async fn http_exchange(runtime: GuestRuntime, mode: &str) -> String {
@@ -160,13 +160,13 @@ async fn mail_exchange(runtime: GuestRuntime, tls: bool, cancel: bool) {
 
 in_mono_runtime! {
     #[tokio::test]
-    async fn legacy_http_request_upload_and_response_survive_store_restoration(runtime: GuestRuntime) {
-        assert_eq!(http_exchange(runtime, "request").await, "legacy async body", "HttpWebRequest must upload and consume a response using asynchronous socket I/O across Store restorations");
+    async fn legacy_http_request_upload_and_response_survive_hibernation(runtime: GuestRuntime) {
+        assert_eq!(http_exchange(runtime, "request").await, "legacy async body", "HttpWebRequest must upload and consume a response using asynchronous socket I/O across deltas");
     }
 
     #[tokio::test]
-    async fn web_client_download_survives_store_restoration(runtime: GuestRuntime) {
-        assert_eq!(http_exchange(runtime, "web-client").await, "hello from peer", "WebClient async download must use the enabled Requests runtime implementation across Store restorations");
+    async fn web_client_download_survives_hibernation(runtime: GuestRuntime) {
+        assert_eq!(http_exchange(runtime, "web-client").await, "hello from peer", "WebClient async download must use the enabled Requests runtime implementation across deltas");
     }
 
     #[tokio::test]
@@ -175,12 +175,12 @@ in_mono_runtime! {
     }
 
     #[tokio::test]
-    async fn smtp_multipart_delivery_and_async_close_survive_store_restoration(runtime: GuestRuntime) {
+    async fn smtp_multipart_delivery_and_async_close_survive_hibernation(runtime: GuestRuntime) {
         mail_exchange(runtime, false, false).await;
     }
 
     #[tokio::test]
-    async fn smtp_starttls_and_multipart_delivery_survive_store_restoration(runtime: GuestRuntime) {
+    async fn smtp_starttls_and_multipart_delivery_survive_hibernation(runtime: GuestRuntime) {
         mail_exchange(runtime, true, false).await;
     }
 

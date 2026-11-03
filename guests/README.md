@@ -25,7 +25,8 @@ Tests read those artifacts through `isoplane-fixtures`; they do not invoke build
 `guests/build.sh` writes `.build/wasm32/rust-guests/manifest` after validating each
 module with threads, shared memory, atomics, relaxed SIMD and exceptions disabled.
 
-Each Rust module declares one linear memory with a 128 MiB maximum, set by `--max-memory` in `guests/.cargo/config.toml`; Rust's linker
+Each Rust module declares one linear memory with a 128 MiB maximum,
+set by `--max-memory` in `guests/.cargo/config.toml`; Rust's linker
 emits no maximum by default. The same file exports `__stack_pointer`, because the
 validator rejects a mutable global the module does not export.
 

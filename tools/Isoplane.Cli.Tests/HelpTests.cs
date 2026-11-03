@@ -13,6 +13,8 @@ public sealed class HelpTests
     [InlineData("completions", "--help")]
     [InlineData("cache", "clean", "--help")]
     [InlineData("bundle", "-h")]
+    [InlineData("daemon", "--help")]
+    [InlineData("deploy", "--help")]
     [InlineData("agent", "init", "--help")]
     public async Task Command_help_does_not_require_configuration_or_start_the_command(params string[] arguments)
     {

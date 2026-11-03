@@ -1,12 +1,11 @@
 use isoplane_engine::Completion;
-use serde::{Deserialize, Serialize};
 
-/// The worker operation that refused preparation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// The operation that refused preparation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuildStage {
     /// Reading and validating immutable inputs.
     Input,
-    /// Constructing the worker-compatible engine.
+    /// Constructing the host-compatible engine.
     Engine,
     /// Running and preserving initialization.
     Initialization,
@@ -17,8 +16,8 @@ pub enum BuildStage {
     Artifact,
 }
 
-/// Structured child refusal, distinct from a launcher failure or process crash.
-#[derive(Debug, Serialize, Deserialize)]
+/// Structured preparation refusal, retaining the stage and guest outcome.
+#[derive(Debug)]
 pub struct WorkerFailure {
     /// Operation that failed.
     pub stage: BuildStage,

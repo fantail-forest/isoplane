@@ -1,16 +1,18 @@
-//! Local application preparation and immutable compiler-owned artifacts.
+//! Locally compiled preparation artifacts and immutable application snapshots.
 
 use std::path::Path;
 
 use isoplane_abi::config::AppManifest;
+use isoplane_control::DeployOptions;
 
 #[cfg(target_os = "linux")]
 mod baseline;
+mod settings;
 
 /// The file in a layered version's artifact directory naming its baseline.
 const BASELINE_FILE: &str = "baseline";
 
-/// Local compiler output store and preparation entry point.
+/// Prepares immutable local artifacts without retaining deployment history.
 pub struct Deployer {
     root: std::path::PathBuf,
     #[cfg(target_os = "linux")]
@@ -20,8 +22,8 @@ pub struct Deployer {
 impl Deployer {
     /// Opens the private store populated by this host's preparation compiler.
     pub fn open(root: &Path) -> anyhow::Result<Self> {
-        private_artifact_directory(root)?;
-        Ok(Self {
+        isoplane_control::private_files::directory(root)?;
+        Ok(Deployer {
             root: root.to_path_buf(),
             #[cfg(target_os = "linux")]
             baselines: baseline::Baselines::default(),
@@ -55,14 +57,43 @@ pub struct PreparationContext<'a> {
     pub cancellation: &'a tokio_util::sync::CancellationToken,
 }
 
-/// A published artifact directory, still owned until its caller keeps it.
-struct Published {
-    _publication_lock: isoplane_prepare::PreparationOwner,
-    publication: tempfile::TempDir,
-    receipt: PreparedReceipt,
+/// A publication protected from collection until selected or discarded.
+pub struct PreparedInstallation {
+    /// The exact immutable output to select.
+    pub receipt: PreparedReceipt,
+    pub(crate) lease: isoplane_prepare::PreparationOwner,
+    /// Actual initialization observations.
+    pub initialized: isoplane_prepare::Initialized,
+    /// Measured producer stages.
+    pub stages: Vec<crate::node::DeployStage>,
 }
 
-/// An opaque directory name beneath this node's private artifact root.
+impl PreparedInstallation {
+    /// Transfers artifact ownership and returns the producer observations separately.
+    pub fn into_application(
+        self,
+    ) -> (
+        crate::installed::InstalledApplication,
+        isoplane_prepare::Initialized,
+        Vec<crate::node::DeployStage>,
+    ) {
+        (
+            crate::installed::InstalledApplication::new(self.receipt, self.lease),
+            self.initialized,
+            self.stages,
+        )
+    }
+}
+
+/// A published artifact directory, still owned until its caller keeps it.
+struct Published {
+    lock: isoplane_prepare::PreparationOwner,
+    publication: tempfile::TempDir,
+    receipt: PreparedReceipt,
+    publication_ms: f64,
+}
+
+/// An opaque directory name beneath this node's prepared-artifact registry.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct ArtifactKey(String);
@@ -88,7 +119,7 @@ impl From<ArtifactKey> for String {
     }
 }
 
-/// Immutable local preparation output selected by its content receipt.
+/// Immutable local preparation output selected for an application.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PreparedReceipt {
@@ -98,6 +129,8 @@ pub struct PreparedReceipt {
     pub artifact_key: ArtifactKey,
     /// SHA256 of the complete prepared manifest.
     pub manifest_sha256: String,
+    /// Content digest of the owner-bound private settings snapshot alongside the artifact.
+    pub settings_digest: String,
     /// Exact trusted producer provenance.
     pub runtime_profile: isoplane_prepare::RuntimeProfile,
     /// Runtime policy and application registration data.
@@ -129,98 +162,138 @@ impl Deployer {
                 )
             }?);
         }
-        // SAFETY: this checked operator-owned root holds controlled local compiler output; publication
-        // creates new files and never modifies payloads. The engine contains a later storage fault.
+        // SAFETY: this operator-owned root contains only controlled local compiler output
+        // published by this deployer. Publication never modifies payloads, and the engine
+        // contains a later storage fault.
         Ok(unsafe {
             engine.restore_prepared(&artifact.join("prepared"), digest, runtime_profile, &[])
         }?)
     }
-
-    /// Prepare and publish a local immutable artifact.
+    /// Publish an application without retaining deployment history.
     /// Initializes the installed platform runtime as a shared baseline and
     /// the application as a layer over it on Linux.
-    pub async fn prepare_local(
+    pub async fn prepare_application(
         &self,
         manifest: &AppManifest,
         wasm: &[u8],
         options: &DeployOptions,
         context: &PreparationContext<'_>,
-    ) -> anyhow::Result<PreparedReceipt> {
-        let (admitted, request, identity) = self
-            .admit_request(
-                manifest,
-                wasm,
-                options,
-                context,
-                isoplane_prepare::PortableTemplate::Omitted,
-            )
+    ) -> anyhow::Result<PreparedInstallation> {
+        let (report, request, identity) =
+            self.admit_request(manifest, wasm, options, context).await?;
+        let (product, artifact, baseline) = match &context.runtime {
+            #[cfg(target_os = "linux")]
+            isoplane_prepare::RuntimeProfile::SharedRuntime { .. } => {
+                anyhow::ensure!(
+                    report.has_initialize()
+                        && report
+                            .optional_exports
+                            .contains(&isoplane_abi::imports::exports::INITIALIZE_RUNTIME),
+                    "installed runtime needs runtime and application initialization exports"
+                );
+                let held = self.baseline(wasm, &request, context).await?;
+                let product = context
+                    .provider
+                    .prepare_over(&held.published, &request, context.cancellation)
+                    .await?;
+                // SAFETY: only the host-selected provider supplies native output; the baseline remains owned.
+                let artifact = unsafe {
+                    context.engine.decode_builder_output_over(
+                        &held.template,
+                        product.prepared_bytes(),
+                        identity,
+                    )
+                }?;
+                (product, artifact, Some(held.name))
+            }
+            isoplane_prepare::RuntimeProfile::RawWasm => {
+                let product = context
+                    .provider
+                    .prepare(wasm, &request, context.cancellation)
+                    .await?;
+                // SAFETY: native output comes only from the selected trusted producer, never a bundle.
+                let artifact = unsafe {
+                    context
+                        .engine
+                        .decode_builder_output(product.prepared_bytes(), identity)
+                }?;
+                (product, artifact, None)
+            }
+            #[cfg(not(target_os = "linux"))]
+            isoplane_prepare::RuntimeProfile::SharedRuntime { .. } => {
+                anyhow::ensure!(
+                    report.has_initialize(),
+                    "installed runtime needs application initialization"
+                );
+                let product = context
+                    .provider
+                    .prepare(wasm, &request, context.cancellation)
+                    .await?;
+                // SAFETY: as for RawWasm above; the profile changes admission, not producer trust.
+                let artifact = unsafe {
+                    context
+                        .engine
+                        .decode_builder_output(product.prepared_bytes(), identity)
+                }?;
+                (product, artifact, None)
+            }
+        };
+        let published = self
+            .publish(&artifact, manifest, options, context, baseline.as_deref())
             .await?;
-        anyhow::ensure!(
-            admitted.has_initialize()
-                && admitted
-                    .optional_exports
-                    .contains(&isoplane_abi::imports::exports::INITIALIZE_RUNTIME),
-            "the installed runtime requires both runtime and application initialization exports"
-        );
-        #[cfg(target_os = "linux")]
-        {
-            let held = self.baseline(wasm, &request, context).await?;
-            let product = context
-                .provider
-                .prepare_over(&held.published, &request, context.cancellation)
-                .await?;
-            // SAFETY: as for whole output below.
-            let artifact = unsafe {
-                context.engine.decode_builder_output_over(
-                    &held.template,
-                    product.prepared_bytes(),
-                    identity,
-                )
-            }?;
-            let published =
-                self.publish(&artifact, manifest, options, context, Some(&held.name))?;
-            let _directory = published.publication.keep();
-            Ok(published.receipt)
-        }
-        // Only Linux maps a layer over a baseline, so elsewhere every module prepares whole.
-        #[cfg(not(target_os = "linux"))]
-        {
-            drop(admitted);
-            let product = context
-                .provider
-                .prepare(wasm, &request, context.cancellation)
-                .await?;
-            // SAFETY: only the host-selected trusted Preparation provider supplies these bytes;
-            // source uploads never reach this decoder as native artifacts.
-            let artifact = unsafe {
-                context
-                    .engine
-                    .decode_builder_output(product.prepared_bytes(), identity)
-            }?;
-            let published = self.publish(&artifact, manifest, options, context, None)?;
-            let _directory = published.publication.keep();
-            Ok(published.receipt)
-        }
+        let stages = vec![
+            crate::node::DeployStage {
+                name: "preinit".into(),
+                ms: product.preinit_ms,
+            },
+            crate::node::DeployStage {
+                name: "prepared_encoding".into(),
+                ms: product.compile_ms,
+            },
+            crate::node::DeployStage {
+                name: "publish".into(),
+                ms: published.publication_ms,
+            },
+        ];
+        let _path = published.publication.keep();
+        Ok(PreparedInstallation {
+            receipt: published.receipt,
+            lease: published.lock,
+            initialized: product.initialized,
+            stages,
+        })
     }
 
     /// Admits `wasm` and builds the request that prepares it.
-    async fn admit_request(
+    async fn admit_request<'a>(
         &self,
-        manifest: &AppManifest,
-        wasm: &[u8],
+        manifest: &'a AppManifest,
+        wasm: &'a [u8],
         opts: &DeployOptions,
         context: &PreparationContext<'_>,
-        portable_template: isoplane_prepare::PortableTemplate,
     ) -> anyhow::Result<(
-        isoplane_control::validator::ValidationReport,
+        isoplane_runtime::validator::ValidationReport,
         isoplane_prepare::BuildRequest,
         isoplane_engine::prepared::PreparedIdentity,
     )> {
+        anyhow::ensure!(
+            !opts.tenant.trim().is_empty() && context.network.tenant == opts.tenant,
+            "preparation requires the established application owner"
+        );
+        anyhow::ensure!(
+            matches!(
+                context.network.destinations,
+                isoplane_prepare::InitializationDestinations::Public { .. }
+            ),
+            "daemon preparation requires explicit public destination policy"
+        );
         let admitted = match context.runtime {
             isoplane_prepare::RuntimeProfile::SharedRuntime { .. } => {
-                admit_local_shared_runtime(manifest, wasm)?
+                isoplane_control::admission::admit_shared_runtime(manifest, wasm)?
             }
-            isoplane_prepare::RuntimeProfile::RawWasm => admit_local(manifest, wasm)?,
+            isoplane_prepare::RuntimeProfile::RawWasm => {
+                isoplane_control::admission::admit(manifest, wasm)?
+            }
         };
         let mut runtime_config = Vec::new();
         context
@@ -242,18 +315,17 @@ impl Deployer {
             application_files: context.application_files.clone(),
             engine: context.engine.configuration(),
             runtime: context.runtime.clone(),
-            plan: manifest.limits,
+            memory_limit: manifest.memory_limit(),
             initialization,
             input_hash: *blake3::hash(wasm).as_bytes(),
-            portable_template,
         };
         let identity = request.identity()?;
         Ok((admitted, request, identity))
     }
 
     /// Publishes `artifact` in a new artifact directory, naming the baseline
-    /// it was prepared over, if any, and returns its content receipt.
-    fn publish(
+    /// it was prepared over, if any, and returns its selection receipt.
+    async fn publish(
         &self,
         artifact: &isoplane_engine::prepared::PreparedTemplate,
         manifest: &AppManifest,
@@ -261,18 +333,17 @@ impl Deployer {
         context: &PreparationContext<'_>,
         baseline: Option<&str>,
     ) -> anyhow::Result<Published> {
-        let publication = tempfile::Builder::new()
-            .prefix("artifact-")
-            .tempdir_in(&self.root)?;
-        let publication_lock = isoplane_prepare::PreparationOwner::create(publication.path())?;
-        std::fs::write(publication.path().join("version"), &opts.version.0)?;
+        let (publication, publication_lock) = crate::installed::new_publication(&self.root)?;
         if let Some(name) = baseline {
-            std::fs::write(publication.path().join(BASELINE_FILE), name)?;
+            isoplane_control::private_files::write_new(
+                &publication.path().join(BASELINE_FILE),
+                name.as_bytes(),
+            )?;
         }
         let directory = publication.path().join("prepared");
         let clock = std::time::Instant::now();
         artifact.publish(&directory)?;
-        let receipt = PreparedReceipt {
+        let mut receipt = PreparedReceipt {
             version: opts.version.0.clone(),
             artifact_key: publication
                 .path()
@@ -283,15 +354,36 @@ impl Deployer {
                 .try_into()
                 .map_err(anyhow::Error::msg)?,
             manifest_sha256: hex::encode(context.engine.prepared_manifest_sha256(&directory)?),
+            settings_digest: String::new(),
             runtime_profile: context.runtime.clone(),
             manifest: manifest.clone(),
         };
+        receipt.settings_digest = self
+            .write_runtime_settings(
+                publication.path(),
+                &opts.tenant,
+                &receipt,
+                &context.runtime_configuration,
+                match &context.network.destinations {
+                    isoplane_prepare::InitializationDestinations::Public { exceptions } => {
+                        exceptions.clone()
+                    }
+                    isoplane_prepare::InitializationDestinations::LocalDevelopment => {
+                        anyhow::bail!(
+                            "daemon preparation requires explicit public destination policy"
+                        )
+                    }
+                },
+            )
+            .await?;
+        std::fs::File::open(publication.path())?.sync_all()?;
+        std::fs::File::open(&self.root)?.sync_all()?;
         let publication_ms = clock.elapsed().as_secs_f64() * 1000.0;
-        tracing::info!(publication_ms, "local compiler artifact published");
         Ok(Published {
             publication,
-            _publication_lock: publication_lock,
+            lock: publication_lock,
             receipt,
+            publication_ms,
         })
     }
 }
@@ -301,7 +393,7 @@ mod receipt_tests {
     use super::ArtifactKey;
 
     #[test]
-    fn artifact_keys_cannot_escape_the_private_artifact_root() {
+    fn artifact_keys_cannot_escape_the_node_owned_registry() {
         for key in [
             "",
             ".",
@@ -314,7 +406,7 @@ mod receipt_tests {
         ] {
             assert!(
                 ArtifactKey::try_from(key.to_owned()).is_err(),
-                "local artifact key must not name arbitrary paths: {key}"
+                "catalog artifact key must not name arbitrary paths: {key}"
             );
         }
         assert!(
@@ -325,98 +417,5 @@ mod receipt_tests {
             ArtifactKey::try_from("artifact-abc_123".to_owned()).is_ok(),
             "generated opaque artifact names must be accepted"
         );
-    }
-}
-
-/// The application version selected by the local preparation caller.
-#[derive(Clone, Debug)]
-pub struct VersionId(pub String);
-
-/// Inputs used by local artifact publication and initialization.
-#[derive(Clone, Debug)]
-pub struct DeployOptions {
-    /// Version named by the resulting local receipt.
-    pub version: VersionId,
-    /// Local initialization import policy.
-    pub init_sandbox: isoplane_abi::config::InitSandbox,
-}
-
-fn admit_local(
-    manifest: &AppManifest,
-    wasm: &[u8],
-) -> anyhow::Result<isoplane_control::validator::ValidationReport> {
-    let report = isoplane_control::validator::validate_with_limits(
-        wasm,
-        manifest.limits,
-        manifest.guest_memory_bytes,
-        &manifest.validation_limits,
-    )
-    .map_err(|violations| {
-        anyhow::anyhow!(
-            "module rejected:\n{}",
-            violations
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join("\n")
-        )
-    })?;
-    let compressed_bytes = zstd::encode_all(wasm, 19)?.len() as u64;
-    let limit_bytes = manifest.limits.module_bytes_compressed;
-    anyhow::ensure!(compressed_bytes <= limit_bytes, "compressed module is {compressed_bytes} bytes, exceeding the configured {limit_bytes} byte limit");
-    Ok(report)
-}
-
-fn admit_local_shared_runtime(
-    manifest: &AppManifest,
-    wasm: &[u8],
-) -> anyhow::Result<isoplane_control::validator::ValidationReport> {
-    isoplane_control::validator::validate_with_limits(
-        wasm,
-        manifest.limits,
-        Some(isoplane_abi::config::GuestMemoryBytes::new(
-            isoplane_abi::config::WASM32_MEMORY_MAX_BYTES,
-        )?),
-        &manifest.validation_limits,
-    )
-    .map_err(|violations| {
-        anyhow::anyhow!(
-            "shared runtime rejected:\n{}",
-            violations
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join("\n")
-        )
-    })
-}
-
-/// Creates or checks the operator-owned directory that holds local compiler output.
-fn private_artifact_directory(root: &std::path::Path) -> anyhow::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::{DirBuilderExt, MetadataExt};
-        match std::fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(root)
-        {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(error) => return Err(error.into()),
-        }
-        let metadata = std::fs::symlink_metadata(root)?;
-        anyhow::ensure!(
-            metadata.is_dir()
-                && metadata.uid() == rustix::process::geteuid().as_raw()
-                && metadata.mode() & 0o7077 == 0,
-            "prepared artifact directory must be owned by this user, accessible only to its owner and contain no links: {}",
-            root.display()
-        );
-        Ok(())
-    }
-    #[cfg(not(unix))]
-    {
-        anyhow::bail!("private prepared artifacts require Unix filesystem ownership and modes")
     }
 }

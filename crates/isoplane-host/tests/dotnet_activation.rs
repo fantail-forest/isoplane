@@ -2,7 +2,6 @@
 
 mod common;
 
-use isoplane_abi::config::Limits;
 use isoplane_abi::dispatch::HttpRequest;
 use isoplane_engine::{IsoplaneEngine, PlatformFile, PlatformFiles};
 use isoplane_host::activator::EngineActivator;
@@ -39,7 +38,7 @@ fn activation_cell(settings: &[u8]) -> (Arc<Cell>, ModuleId) {
     cell.register_module(
         "tenant",
         Arc::new(activator),
-        common::manifest("managed-activation", Limits::default()),
+        common::manifest("managed-activation"),
     )
     .expect("the activation module must register");
     cell.set_runtime_configuration(

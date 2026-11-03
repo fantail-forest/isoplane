@@ -27,7 +27,7 @@ internal sealed class CommandCancellation : IDisposable
             error.WriteLine($"isoplane: {command} cancelled before completion. Run isoplane {command} again to retry.");
             return 130;
         }
-        return command is "bundle" or "prepare-runtime" ? 130 : 0;
+        return command is "bundle" or "prepare-runtime" or "deploy" ? 130 : 0;
     }
 
     private void Cancel(object? sender, ConsoleCancelEventArgs arguments)

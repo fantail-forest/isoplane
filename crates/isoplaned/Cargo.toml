@@ -16,7 +16,6 @@ name = "isoplaned"
 path = "src/main.rs"
 
 [dependencies]
-zstd.workspace = true
 prometheus = { workspace = true }
 fs4.workspace = true
 isoplane-trust = { workspace = true }
@@ -54,28 +53,14 @@ rustls-pki-types = { workspace = true }
 isoplane-abi = { workspace = true, features = ["host"] }
 isoplane-proxy = { workspace = true }
 
-# Optional so that a `--no-default-features` build is a fake-cell daemon
-# without wasmtime; on by default.
-isoplane-control   = { workspace = true, optional = true }
-isoplane-host      = { workspace = true, optional = true }
-isoplane-hibernate = { workspace = true, optional = true }
-isoplane-prepare   = { workspace = true, optional = true }
-tempfile       = { workspace = true, optional = true }
-isoplane-engine    = { workspace = true, optional = true }
+isoplane-control   = { workspace = true }
+isoplane-host      = { workspace = true }
+isoplane-hibernate = { workspace = true }
+isoplane-prepare   = { workspace = true }
+tempfile       = { workspace = true }
+isoplane-engine    = { workspace = true }
 
-isoplane-runtime = { workspace = true, optional = true, features = ["local"] }
-
-[features]
-default = ["real-backends"]
-real-backends = [
-    "dep:isoplane-control",
-    "dep:isoplane-runtime",
-    "dep:isoplane-host",
-    "dep:isoplane-hibernate",
-    "dep:isoplane-engine",
-    "dep:isoplane-prepare",
-    "dep:tempfile",
-]
+isoplane-runtime = { workspace = true, features = ["local"] }
 
 [dev-dependencies]
 base64 = { workspace = true }
@@ -91,7 +76,3 @@ tar = { workspace = true }
 [[example]]
 name = "mapped-load"
 path = "examples/mapped_load/main.rs"
-required-features = ["real-backends"]
-
-[target.'cfg(unix)'.dependencies]
-rustix.workspace = true

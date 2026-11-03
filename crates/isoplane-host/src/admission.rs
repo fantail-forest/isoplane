@@ -21,7 +21,7 @@ pub(crate) struct InstanceReservation {
 }
 
 impl ApplicationInstances {
-    /// Starts counting live instances of one application.
+    /// Counts live application instances across activations and draining work.
     pub(crate) fn new() -> Self {
         Self {
             live: AtomicU32::new(0),

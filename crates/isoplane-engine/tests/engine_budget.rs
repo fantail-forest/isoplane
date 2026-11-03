@@ -131,7 +131,7 @@ fn a_discarded_instance_refuses_the_next_call() {
     );
     assert_eq!(
         refused.occupancy_ns, 0,
-        "a refused call bills nothing, since nothing ran"
+        "a refused call adds no occupied time, since nothing ran"
     );
 
     let woke = i.wake(1, 1, &ResultRecord::Ok(vec![]), b);
@@ -264,7 +264,7 @@ fn a_failed_isoplane_alloc_is_out_of_memory() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn the_wall_clock_backstop_reports_its_distinct_cap() {
+fn the_wall_clock_backstop_trips_independently_of_occupancy_measurement() {
     let e = test_engine();
     let wasm = guest(4, "", SPIN, "(call $spin) (i64.const 0)", DONE);
     let t = e.load_template(&wasm).expect("template");

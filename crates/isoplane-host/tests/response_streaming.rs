@@ -8,7 +8,6 @@ mod common;
 use std::sync::Arc;
 use std::time::Duration;
 
-use isoplane_abi::config::Limits;
 use isoplane_abi::dispatch::{HttpRequest, ResponseHead};
 use isoplane_abi::host::{CodeTier, Dispatcher, HttpExchange, ResponseDisposition, RouteTarget};
 use isoplane_engine::{EngineConfig, IsoplaneEngine};
@@ -69,17 +68,12 @@ async fn response_program_with(
     let activator =
         Arc::new(EngineActivator::load(engine, module, &wasm).expect("real response guest"));
     let (cell, _) = common::rig_resolving(config, "93.184.216.34:80");
-    cell.register_module(
-        "owner",
-        activator,
-        common::manifest("response", Limits::default()),
-    )
-    .expect("register response guest");
+    cell.register_module("owner", activator, common::manifest("response"))
+        .expect("register response guest");
     let target = RouteTarget {
         app: "response".into(),
         version: "v1".into(),
         tenant: "owner".into(),
-
         tier: CodeTier::Fast,
     };
     let exchange = cell

@@ -13,33 +13,36 @@ use hyper::{Request, StatusCode};
 use hyper_util::rt::TokioIo;
 use isoplane_abi::config::{AppManifest, InitSandbox};
 use isoplane_host::egress::DestinationPolicy;
-use isoplaned::config::{AppConfig, CellConfig, NodeConfig, VersionConfig};
+use isoplaned::config::{AppConfig, NodeConfig};
 use isoplaned::node::Node;
 use tokio::net::TcpStream;
+
+mod private_files;
+mod runtime_inventory;
+pub use private_files::directory as private_directory;
 
 pub fn manifest(name: &str) -> AppManifest {
     toml::from_str(&format!("name = \"{name}\"")).expect("a minimal manifest is valid")
 }
 
 pub fn config(dir: &std::path::Path) -> NodeConfig {
-    let mut cfg = NodeConfig::dev_default();
+    seed_compiled_runtime(dir);
+    bare_config(dir)
+}
+
+/// A node for raw-WASM tests that do not consume the shared managed runtime.
+pub fn bare_config(dir: &std::path::Path) -> NodeConfig {
+    let mut cfg = NodeConfig::new("acme");
     cfg.node = "real-node".into();
     cfg.data_dir = dir.to_path_buf();
     cfg.engine = NodeConfig::from_toml(include_str!("../fixtures/node.toml"))
         .expect("the test node configuration parses")
         .engine;
-    seed_compiled_runtime(dir);
-    cfg.cells = vec![CellConfig {
-        name: "cell-1".into(),
-    }];
+    cfg.preparation = Some(toml::from_str("").unwrap());
+    cfg.preparation.as_mut().unwrap().runtimes = Some(runtime_inventory::install(dir));
     cfg.apps = vec![AppConfig {
-        name: "quotes".into(),
-        tenant: "acme".into(),
-        limits: Default::default(),
-        cell: "cell-1".into(),
+        manifest: toml::from_str("name = 'quotes'\nguest_memory_bytes = 134217728").unwrap(),
         hosts: vec!["quotes.isoplane.dev".into()],
-        path_prefix: "/".into(),
-        versions: vec![VersionConfig { id: "v1".into() }],
     }];
     cfg
 }
@@ -106,7 +109,7 @@ pub async fn start_with_policy(
     destinations: Option<Arc<dyn DestinationPolicy>>,
     configure: impl FnOnce(&mut NodeConfig),
 ) -> Rig {
-    let dir = tempfile::tempdir().expect("a temporary directory");
+    let dir = private_directory().expect("a private temporary directory");
     let mut cfg = config(dir.path());
     configure(&mut cfg);
     let node = match destinations {
@@ -114,10 +117,7 @@ pub async fn start_with_policy(
         None => Node::build(cfg),
     }
     .expect("a real node must assemble");
-    let real = node
-        .real
-        .clone()
-        .expect("the node has its execution backend");
+    let real = node.real.clone();
     real.deploy_locally("quotes", "v1", "acme", manifest("quotes"), wasm, sandbox)
         .await
         .expect("deploying the module");
@@ -126,6 +126,23 @@ pub async fn start_with_policy(
 
 /// `node` on ephemeral proxy and admin ports.
 pub async fn serve(node: Arc<Node>, dir: tempfile::TempDir) -> Rig {
+    for app in &node.cfg.apps {
+        let version = node
+            .real
+            .registered_deployment(&app.manifest.name, &node.cfg.owner);
+        let version = version.expect("a fixture must register its application before serving");
+        node.routes
+            .insert(
+                isoplane_abi::host::RouteTarget {
+                    app: app.manifest.name.clone(),
+                    tenant: node.cfg.owner.clone(),
+                    version: version.clone(),
+                    tier: isoplane_abi::host::CodeTier::Optimized,
+                },
+                &app.hosts,
+            )
+            .expect("fixture host routes");
+    }
     let p = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let a = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let (proxy, admin) = (p.local_addr().unwrap(), a.local_addr().unwrap());

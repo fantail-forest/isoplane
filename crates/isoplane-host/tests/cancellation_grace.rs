@@ -7,7 +7,6 @@ use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 use std::time::Duration;
 
-use isoplane_abi::config::Limits;
 use isoplane_abi::dispatch::HttpRequest;
 use isoplane_host::cell::{Cell, CellConfig, DispatchResult, Target};
 use isoplane_host::fakes::{FakeActivator, FakeBehaviour, Step};
@@ -35,12 +34,8 @@ fn rig_with_grace(program: Vec<Step>, grace_ms: u64) -> (Arc<Cell>, ModuleId) {
     );
     let activator = Arc::new(FakeActivator::new(FakeBehaviour::program(program)));
     let module = activator.module().clone();
-    cell.register_module(
-        "acme",
-        activator,
-        common::manifest("grace", Limits::default()),
-    )
-    .expect("register the scripted guest");
+    cell.register_module("acme", activator, common::manifest("grace"))
+        .expect("register the scripted guest");
     (cell, module)
 }
 

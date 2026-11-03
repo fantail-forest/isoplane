@@ -1,4 +1,4 @@
-//! Renders node and proxy measurements as Prometheus text.
+//! `/metrics`: the node's meters as Prometheus text.
 
 use isoplane_proxy::ProxyMetrics;
 use prometheus::{proto, TextEncoder};
@@ -52,13 +52,31 @@ fn gauge(labels: &[(&str, &str)], value: f64) -> proto::Metric {
 }
 
 fn latency_family(node: &str, name: &str, help: &str, latency: Latency) -> proto::MetricFamily {
+    summary_family(
+        node,
+        name,
+        help,
+        latency.count,
+        latency.sum_us,
+        &[(0.5, latency.p50_us as f64), (0.99, latency.p99_us as f64)],
+    )
+}
+
+fn summary_family(
+    node: &str,
+    name: &str,
+    help: &str,
+    count: u64,
+    sum: f64,
+    quantiles: &[(f64, f64)],
+) -> proto::MetricFamily {
     let mut summary = proto::Summary::default();
-    summary.set_sample_count(latency.count);
-    summary.set_sample_sum(latency.sum_us);
+    summary.set_sample_count(count);
+    summary.set_sample_sum(sum);
     summary.set_quantile(
-        [(0.5, latency.p50_us as f64), (0.99, latency.p99_us as f64)]
-            .into_iter()
-            .map(|(quantile, value)| {
+        quantiles
+            .iter()
+            .map(|&(quantile, value)| {
                 let mut sample = proto::Quantile::default();
                 sample.set_quantile(quantile);
                 sample.set_value(value);
@@ -69,34 +87,6 @@ fn latency_family(node: &str, name: &str, help: &str, latency: Latency) -> proto
     let mut metric = metric(&[("node", node)]);
     metric.set_summary(summary);
     family(name, help, proto::MetricType::SUMMARY, vec![metric])
-}
-
-fn histogram_family(
-    node: &str,
-    name: &str,
-    help: &str,
-    samples: &[u64],
-    buckets: &[u64],
-) -> proto::MetricFamily {
-    let mut histogram = proto::Histogram::default();
-    histogram.set_sample_count(samples.len() as u64);
-    histogram.set_sample_sum(samples.iter().map(|value| u128::from(*value)).sum::<u128>() as f64);
-    histogram.set_bucket(
-        buckets
-            .iter()
-            .map(|bound| {
-                let mut bucket = proto::Bucket::default();
-                bucket.set_upper_bound(*bound as f64);
-                bucket.set_cumulative_count(
-                    samples.iter().filter(|sample| **sample <= *bound).count() as u64,
-                );
-                bucket
-            })
-            .collect(),
-    );
-    let mut metric = metric(&[("node", node)]);
-    metric.set_histogram(histogram);
-    family(name, help, proto::MetricType::HISTOGRAM, vec![metric])
 }
 
 /// Encodes one node snapshot using Prometheus text exposition version 0.0.4.
@@ -140,7 +130,7 @@ pub fn render(node: &str, proxy: &ProxyMetrics, snap: NodeSnapshot) -> String {
         latency_family(
             node,
             "isoplane_wake_us",
-            "Reported local wake latency",
+            "Hibernation wake from the instance's local snapshot reservation",
             snap.wake,
         ),
         family(
@@ -156,18 +146,22 @@ pub fn render(node: &str, proxy: &ProxyMetrics, snap: NodeSnapshot) -> String {
             .map(|(tier, value)| gauge(&[("node", node), ("tier", tier)], value as f64))
             .collect(),
         ),
-        histogram_family(
+        summary_family(
             node,
             "isoplane_dirty_set_bytes",
-            "Dirty bytes per instance at capture",
-            &snap.dirty_set_bytes,
-            &[64 * 1024, 256 * 1024, 1 << 20, 4 << 20, 16 << 20, 64 << 20],
+            "Dirty bytes per completed local capture",
+            snap.dirty_set.count,
+            snap.dirty_set.sum_bytes,
+            &[
+                (0.5, snap.dirty_set.p50_bytes as f64),
+                (0.99, snap.dirty_set.p99_bytes as f64),
+            ],
         ),
         family(
-            "isoplane_delta_storage_bytes",
-            "Hibernation delta bytes held",
-            proto::MetricType::GAUGE,
-            vec![gauge(&node_labels, snap.delta_storage_bytes as f64)],
+            "isoplane_snapshot_written_bytes_total",
+            "Bytes written by completed local snapshot captures",
+            proto::MetricType::COUNTER,
+            vec![counter(&node_labels, snap.snapshot_written_bytes as f64)],
         ),
         family(
             "isoplane_traps_total",
@@ -222,7 +216,7 @@ pub fn render(node: &str, proxy: &ProxyMetrics, snap: NodeSnapshot) -> String {
     }
     families.push(family(
         "isoplane_proxy_route_generation",
-        "Route-table generation",
+        "Generation of the installed application routing snapshot",
         proto::MetricType::GAUGE,
         vec![gauge(
             &node_labels,
@@ -278,17 +272,27 @@ mod tests {
             instances_hot: 1,
             instances_parked: 3,
             instances_hibernated: 7,
-            dirty_set_bytes: vec![100 * 1024, 900 * 1024, 3 << 20],
-            delta_storage_bytes: 5 << 20,
+            dirty_set: crate::admin::SnapshotSizes {
+                p50_bytes: 900 * 1024,
+                p99_bytes: 3 << 20,
+                count: 3,
+                sum_bytes: (100 * 1024 + 900 * 1024 + (3 << 20)) as f64,
+            },
+            snapshot_written_bytes: 5 << 20,
             traps_total: 1,
             breaker_trips: 0,
         }
     }
 
     #[test]
-    fn summary_and_histogram_totals_come_from_the_observations() {
+    fn summaries_and_capture_totals_come_from_the_observations() {
         let mut snapshot = snap();
-        snapshot.dirty_set_bytes = vec![u64::MAX, u64::MAX];
+        snapshot.dirty_set = crate::admin::SnapshotSizes {
+            p50_bytes: u64::MAX,
+            p99_bytes: u64::MAX,
+            count: 2,
+            sum_bytes: u128::from(u64::MAX) as f64 * 2.0,
+        };
         let proxy = ProxyMetrics::new();
         proxy.request_latency.record_us(1);
         proxy.request_latency.record_us(3);
@@ -301,7 +305,7 @@ mod tests {
             "isoplane_proxy_request_latency_us_sum{node=\"n1\"} 4",
             "isoplane_proxy_request_latency_us_count{node=\"n1\"} 2",
             "isoplane_dirty_set_bytes_count{node=\"n1\"} 2",
-            "isoplane_dirty_set_bytes_bucket{node=\"n1\",le=\"+Inf\"} 2",
+            "isoplane_snapshot_written_bytes_total{node=\"n1\"} 5242880",
         ] {
             assert!(
                 text.lines().any(|line| line == sample),
@@ -331,7 +335,7 @@ mod tests {
             "isoplane_wake_us",
             "isoplane_instances",
             "isoplane_dirty_set_bytes",
-            "isoplane_delta_storage_bytes",
+            "isoplane_snapshot_written_bytes_total",
             "isoplane_trap_rate",
         ] {
             assert!(out.contains(series), "missing {series} from /metrics");
@@ -354,7 +358,6 @@ mod tests {
             "{out}"
         );
     }
-
 
     #[test]
     fn an_empty_node_renders_without_dividing_by_zero() {

@@ -1,7 +1,5 @@
 //! Drives the real proxy over a real TCP socket; the only fake is the cell.
 
-pub mod fake;
-
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -10,8 +8,11 @@ use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::{HeaderMap, Request, StatusCode};
 use hyper_util::rt::TokioIo;
-use isoplane_abi::host::{CodeTier, Dispatcher};
-use self::fake::FakeCell;
+
+use isoplane_abi::host::{CodeTier, Dispatcher, RouteTarget};
+pub mod fake;
+
+use fake::FakeCell;
 use isoplane_proxy::{LocalRouteTable, Proxy, ProxyConfig, ProxyMetrics};
 use tokio::net::TcpStream;
 
@@ -20,6 +21,7 @@ pub struct Rig {
     pub proxy: Arc<Proxy>,
     pub cell: Arc<FakeCell>,
     pub routes: Arc<LocalRouteTable>,
+    pub metrics: Arc<ProxyMetrics>,
     server: Option<tokio::task::JoinHandle<anyhow::Result<()>>>,
 }
 
@@ -45,6 +47,7 @@ pub async fn start_with_dispatcher(
         proxy,
         cell,
         routes,
+        metrics,
         server: Some(server),
     }
 }
@@ -72,9 +75,8 @@ impl Drop for Rig {
     }
 }
 
-/// Select the application identity and execution tier for an HTTP request.
-pub fn quotes_target(version: &str, tier: CodeTier) -> isoplane_abi::host::RouteTarget {
-    isoplane_abi::host::RouteTarget {
+pub fn quotes_target(version: &str, tier: CodeTier) -> RouteTarget {
+    RouteTarget {
         app: "quotes".into(),
         tenant: "acme".into(),
         version: version.into(),
@@ -85,10 +87,12 @@ pub fn quotes_target(version: &str, tier: CodeTier) -> isoplane_abi::host::Route
 /// One installed application on its expected Host.
 pub fn standard_routes() -> Arc<LocalRouteTable> {
     let table = LocalRouteTable::new();
-    table.insert(
-        quotes_target("v1", CodeTier::Optimized),
-        &["quotes.isoplane.dev".into()],
-    ).expect("route setup");
+    table
+        .insert(
+            quotes_target("v1", CodeTier::Optimized),
+            &["quotes.isoplane.dev".into()],
+        )
+        .expect("route setup");
     Arc::new(table)
 }
 

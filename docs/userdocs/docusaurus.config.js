@@ -6,8 +6,7 @@ import {visitorPlatformExpression} from './src/platform/preference.ts';
 import since from './src/remark/since.js';
 import markdownPages from './src/plugins/markdown-pages/index.mjs';
 
-// Set DOCS_GTM_CONTAINER_ID in .env beside this config to enable the tag;
-// an absent file or blank value leaves it out.
+// A nonblank DOCS_GTM_CONTAINER_ID in this site's .env enables optional GTM.
 let siteEnvironment = {};
 try {
   siteEnvironment = parseEnv(readFileSync(new URL('.env', import.meta.url), 'utf8'));
@@ -59,7 +58,6 @@ const onBrandSurface = (theme) => ({
   plain: {color: 'var(--foreground)', backgroundColor: 'var(--surface)'},
 });
 
-// The marketing Worker serves the rest of this origin; see wrangler.jsonc.
 const baseUrl = '/docs/';
 
 /** @type {import('@docusaurus/types').Config} */

@@ -2,7 +2,7 @@ use super::*;
 use crate::disposition::{decide, DispatchEnd, Disposition};
 use crate::fakes::{FakeActivator, FakeBehaviour};
 use crate::LifecycleTier;
-use isoplane_abi::config::Limits;
+
 use isoplane_engine::Completion;
 use std::time::Duration;
 
@@ -11,9 +11,14 @@ fn pool() -> InstancePool {
 }
 
 fn acquire(pool: &InstancePool) -> Arc<Slot> {
-    pool.acquire(|id| Arc::new(InstanceCtx::for_test(id, Limits::default())))
-        .expect("test pool activation must succeed")
-        .0
+    pool.acquire(|id| {
+        Arc::new(InstanceCtx::for_test(
+            id,
+            isoplane_abi::config::Limits::default(),
+        ))
+    })
+    .expect("test pool activation must succeed")
+    .0
 }
 
 /// The way back to the idle list: a completed dispatch stays warm.

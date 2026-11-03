@@ -42,6 +42,7 @@ Put responsibilities that discover, place, distribute, replicate, coordinate, se
 | Egress infrastructure | Caching DNS services, NAT, routing rules, private tunnels, proxies and connection placement |
 | Operational observability | Exporters, collectors, aggregation, retention, dashboards, alerting, SLO calculation and durable usage delivery |
 | Identity and security operations | User/service authentication, IAM, vault/KMS, credential issuance, key rotation and audit retention |
+| Commercial and abuse policy | Pricing, subscription entitlements, global quotas, billing, fraud detection and account suspension |
 | Management surfaces | Operator APIs, consoles, support tooling, remote diagnostics and configuration distribution |
 
 **Not this:** Making every local test start a node supervisor, telemetry exporter and distributed directory, or implement no-op substitutes for them.
@@ -50,9 +51,9 @@ Put responsibilities that discover, place, distribute, replicate, coordinate, se
 
 ## Introduce only the infrastructure interfaces execution consumes
 
-Supply infrastructure through [deep, consumed interfaces](interfaces.md#make-a-trait-a-boundary-between-concerns-not-a-mirror-of-one-implementation) that hide deployment machinery. A connection provider exists because the guest opens a connection; external operations can consume outcomes or supply existing inputs without acquiring corresponding engine traits.
+Supply infrastructure through [deep, consumed interfaces](interfaces.md#make-a-trait-a-boundary-between-concerns-not-a-mirror-of-one-implementation) that hide deployment machinery. A connection provider exists because the guest opens a connection; fleet management and billing can consume outcomes or supply existing inputs without acquiring corresponding engine traits.
 
-**Not this:** A universal plugin system with unused registry, fleet and telemetry-storage interfaces, or a socket API that exposes network namespace names to the engine.
+**Not this:** A universal plugin system with unused registry, fleet, billing and telemetry-storage interfaces, or a socket API that exposes network namespace names to the engine.
 
 **Exception:** None. Exclusion from the core does not by itself create an extension point.
 

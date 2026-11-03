@@ -1,13 +1,13 @@
 //! A real node: real engine, cells, guest wasm, proxy and TCP.
 
-#![cfg(feature = "real-backends")]
-
 mod common;
 #[path = "real_node/egress.rs"]
 mod egress;
 #[cfg(target_os = "linux")]
 #[path = "real_node/mapped_storage.rs"]
 mod mapped_storage;
+#[path = "real_node/prepared_deploy.rs"]
+mod prepared_deploy;
 
 use common::{config, get, manifest, serve, start_with, Rig};
 use isoplane_abi::config::InitSandbox;
@@ -28,6 +28,7 @@ fn guest_with_functions(head: &ResponseHead, functions: &str, before_response: &
         r#"
 (module
   (import "isoplane" "resp_new" (func $resp_new (param i32 i32) (result i32)))
+  {functions}
   (memory (export "memory") 2 2)
   (data (i32.const 4096) "{escaped}")
   (global $bump (export "g_bump") (mut i32) (i32.const 16384))
@@ -51,7 +52,6 @@ fn guest_with_functions(head: &ResponseHead, functions: &str, before_response: &
 
   (func (export "isoplane_wake") (param $future i64) (param $ptr i32) (param $len i32) (result i64)
     (i64.const 0))
-  {functions}
 )
 "#
     );
@@ -97,7 +97,7 @@ async fn an_http_request_runs_real_guest_wasm_end_to_end() {
                 .unwrap(),
             r.headers.get("x-isoplane-tier").unwrap().to_str().unwrap()
         ),
-        ("v1", "fast"),
+        ("v1", "optimized"),
         "the platform headers are the proxy's"
     );
     rig.shutdown().await;
@@ -113,7 +113,7 @@ async fn the_guest_chosen_status_code_reaches_the_client() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_node_reports_measurements_from_served_requests() {
+async fn a_real_node_reports_dispatch_measurements() {
     let rig = start(head(200, "ok")).await;
     for i in 0..20 {
         assert_eq!(
@@ -146,7 +146,7 @@ async fn a_node_reports_measurements_from_served_requests() {
     );
     assert!(
         metric("isoplane_occupancy_ms_total").unwrap() > 0.0,
-        "twenty dispatches of real guest code recorded some occupancy: {text}"
+        "twenty dispatches of real guest code consumed some occupied time: {text}"
     );
     assert!(!text.contains("NaN"), "nothing renders as NaN");
     rig.shutdown().await;
@@ -165,10 +165,6 @@ async fn a_csharp_handler_receives_request_fields_for_every_standard_http_method
     )
     .await;
     // CONNECT's authority-form target has no path; this route also admits OPTIONS *.
-    rig.node
-        .routes
-        .add_route("quotes.isoplane.dev", "", "quotes")
-        .unwrap();
     let base64 = base64::engine::general_purpose::STANDARD;
     for method in [
         "GET", "HEAD", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "TRACE", "CONNECT",
@@ -369,10 +365,6 @@ async fn response_framing_respects_methods_and_statuses_that_forbid_content() {
             streaming: false,
         })
         .await;
-        rig.node
-            .routes
-            .add_route("quotes.isoplane.dev", "", "quotes")
-            .unwrap();
         let uri = if method == "CONNECT" {
             "quotes.isoplane.dev:443"
         } else {
@@ -468,3 +460,7 @@ mod bodyless;
 
 #[path = "real_node/app_identity.rs"]
 mod app_identity;
+
+#[cfg(target_os = "linux")]
+#[path = "real_node/local_installation.rs"]
+mod local_installation;

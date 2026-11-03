@@ -17,6 +17,7 @@ isoplane-fixtures = { workspace = true }
 isoplane-engine = { workspace = true }
 isoplane-host = { workspace = true }
 isoplane-runtime = { workspace = true }
+isoplane-hibernate = { workspace = true }
 tokio = { workspace = true }
 fs4 = { workspace = true }
 parking_lot.workspace = true

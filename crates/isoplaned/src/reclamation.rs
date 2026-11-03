@@ -214,7 +214,12 @@ impl Coordinator {
 }
 
 #[cfg(test)]
+#[path = "../tests/common/runtime_inventory.rs"]
+mod runtime_inventory;
+
+#[cfg(test)]
 mod tests {
+    use super::runtime_inventory;
     use super::*;
     use isoplane_host::memory_pressure::{MemoryBytes, MemoryPressureError, MemorySample};
 
@@ -360,29 +365,42 @@ mod tests {
         use isoplane_abi::result::ResultRecord;
         use isoplane_host::LifecycleTier;
 
-        let directory = tempfile::tempdir().expect("create owned node snapshot directory");
-        let mut config = crate::NodeConfig::dev_default();
+        let mut directory_builder = tempfile::Builder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            directory_builder.permissions(std::fs::Permissions::from_mode(0o700));
+        }
+        let directory = directory_builder
+            .tempdir()
+            .expect("create owned node snapshot directory");
+        let mut config = crate::NodeConfig::new("acme");
+        let app = "app".to_owned();
+        let version = "v1".to_owned();
+        let tenant = config.owner.clone();
+        let hostname = "app.example".to_owned();
+        let manifest: isoplane_abi::config::AppManifest =
+            serde_json::from_value(serde_json::json!({
+                "name": app,
+                "guest_memory_bytes": 2 * isoplane_abi::WASM_PAGE_SIZE,
+            }))
+            .expect("fixture manifest must describe its memory ceiling");
+        config.preparation = Some(toml::from_str("").unwrap());
+        config.preparation.as_mut().unwrap().runtimes =
+            Some(runtime_inventory::install(directory.path()));
+        config.apps.push(crate::config::AppConfig {
+            manifest: manifest.clone(),
+            hosts: vec![hostname.clone()],
+        });
         config.data_dir = directory.path().to_path_buf();
         config.engine.max_instances = 2;
         config.engine.memory_limit_mib = 16;
         config.engine.guard_mib = 16;
         config.host.hibernate.handler_after_ms = 0;
-        let application = config.apps.remove(0);
-        config.cells.retain(|cell| cell.name == application.cell);
-        let app = application.name.clone();
-        let version = application.versions[0].id.clone();
-        let tenant = application.tenant.clone();
-        let hostname = application.hosts[0].clone();
-        let limits = application.limits;
-        config.apps = vec![application];
         let node = crate::Node::build(config).expect("assemble a real node");
         // This test drives reclamation itself, under a pressure it controls.
         node.background.cancel();
-        let real = node
-            .real
-            .as_ref()
-            .expect("node must use real cells")
-            .clone();
+        let real = node.real.clone();
         let response = isoplane_abi::encode(&isoplane_abi::dispatch::ResponseHead {
             status: 200,
             headers: vec![],
@@ -413,14 +431,20 @@ mod tests {
             .engine()
             .load_template(&wasm)
             .expect("load real guest template");
-        let manifest = serde_json::from_value(serde_json::json!({
-            "name": app, "limits": limits,
-            "guest_memory_bytes": 2 * isoplane_abi::WASM_PAGE_SIZE,
-        }))
-        .expect("fixture manifest must describe its memory ceiling");
-        real.install_prepared(&app, &version, &tenant, manifest, template, None)
+        real.install_prepared(&app, &version, &tenant, manifest, template)
             .await
             .expect("register the real guest for local snapshot capture");
+        node.routes
+            .insert(
+                isoplane_abi::host::RouteTarget {
+                    app: app.clone(),
+                    tenant: tenant.clone(),
+                    version: version.clone(),
+                    tier: isoplane_abi::host::CodeTier::Fast,
+                },
+                std::slice::from_ref(&hostname),
+            )
+            .expect("publish the fixture route");
         let cell = real.cells().first().expect("one real cell").clone();
         let pressure = Arc::new(ControlledPressure(std::sync::atomic::AtomicU64::new(100)));
         let coordinator = Coordinator {

@@ -2,10 +2,12 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// Failed clock reads across this process.
+/// Clock reads that failed, process-wide. A failed read is a different fact
+/// from a zero interval: a failed end read under-records a dispatch and a failed
+/// start read must not become a fabricated zero timestamp.
 static CLOCK_READ_FAILURES: AtomicU64 = AtomicU64::new(0);
 
-/// Exported on the scrape as `clock_read_failures`; non-zero means some recorded
+/// Exported on the scrape as `clock_read_failures`; non-zero means some measured
 /// interval is a floor rather than a measurement.
 pub fn clock_read_failures() -> u64 {
     CLOCK_READ_FAILURES.load(Ordering::Relaxed)
@@ -141,11 +143,11 @@ pub fn read_occupancy_ns() -> u64 {
 }
 
 /// A worker-occupancy measurement over one slice or reactor poll, the only
-/// interval recorded. Time between them is inside no `OccupancyInterval`, which is why a
+/// interval measured. Time between them is inside no `OccupancyInterval`, which is why a
 /// parked instance costs zero occupancy.
 pub struct OccupancyInterval {
     /// `None` when the clock could not be read at `start`; a zero start would
-    /// attribute time before this interval to it.
+    /// attribute time before this interval to this interval.
     start: Option<u64>,
 }
 

@@ -1,16 +1,21 @@
 //! Structural resource policy is independent of capability validation.
-use isoplane_abi::config::{Limits, ValidationLimits};
+use isoplane_abi::config::ValidationLimits;
 use isoplane_runtime::validator::{validate_with_limits, ViolationCode};
 
 fn resource_refused(wat: &str, limits: &ValidationLimits) -> bool {
     let wasm = wat::parse_str(wat).expect("the structural fixture must assemble");
-    validate_with_limits(&wasm, Limits::default(), None, limits)
-        .err()
-        .is_some_and(|errors| {
-            errors
-                .iter()
-                .any(|error| error.code == ViolationCode::V4ResourceBomb)
-        })
+    validate_with_limits(
+        &wasm,
+        isoplane_abi::config::GuestMemoryBytes::default(),
+        None,
+        limits,
+    )
+    .err()
+    .is_some_and(|errors| {
+        errors
+            .iter()
+            .any(|error| error.code == ViolationCode::V4ResourceBomb)
+    })
 }
 
 macro_rules! boundary {

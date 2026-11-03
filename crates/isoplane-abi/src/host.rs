@@ -11,7 +11,6 @@ pub use http::{
 pub type Result<T> = anyhow::Result<T>;
 
 
-
 #[derive(Debug, Clone)]
 pub struct PinnedTarget {
     pub url: String,

@@ -13,7 +13,6 @@ use compiled_guest::engine_serving;
 use std::sync::Arc;
 use std::time::Duration;
 
-use isoplane_abi::config::Limits;
 use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest, TraceContext};
 use isoplane_abi::result::ResultRecord;
 use isoplane_engine::prepared::PreparedTemplate;
@@ -35,17 +34,6 @@ use isoplane_host::{InstanceId, ModuleId};
 
 /// How long a test waits on the reactor, a peer or a resolver before it is a hung test.
 pub const WAKE_DEADLINE: Duration = Duration::from_secs(60);
-
-/// The production plan used for preparation and execution of returned guests.
-pub const GUEST_LIMITS: Limits = Limits {
-    instances_per_application: 8,
-    module_bytes_compressed: 52428800,
-    package_bytes: 52428800,
-    instance_memory_max: 134217728,
-    occupancy_ms_per_dispatch: 30000,
-    instance_open_connections: 32,
-    pending_futures_per_dispatch: 64,
-};
 
 /// Controlled network dependencies with production budgets, which tests cannot override.
 ///
@@ -213,13 +201,24 @@ fn context(owner: InstanceId, runtime: Arc<CellRuntime>) -> Arc<InstanceCtx> {
         Tenancy {
             module: ModuleId::new("returned-guest", "v1"),
             tenant: "returned-guest-test".into(),
-            limits: GUEST_LIMITS,
-
+            limits: isoplane_abi::config::Limits {
+                instance_memory_max: isoplane_abi::config::DEFAULT_MEMORY_LIMIT_BYTES,
+                ..Default::default()
+            },
             allowlist: None,
         },
         Arc::new(Meters::new()),
         Some(runtime),
     ))
+}
+
+/// How a finishing loop wakes a parked guest.
+#[derive(Clone, Copy)]
+enum WakePath {
+    /// Restore saved in-memory state and resume.
+    Direct,
+    /// Save and restore a local snapshot before resuming.
+    ThroughDelta,
 }
 
 /// What a guest's template is loaded from on each engine that serves it.
@@ -455,6 +454,83 @@ impl ReturnedGuest {
     pub fn poll(&mut self) -> DispatchOutcome {
         self.restore_and_wake(0, &ResultRecord::Ok(Vec::new()))
     }
+
+    /// Saves the parked guest in a local snapshot reservation and restores it
+    /// on another worker before waking. Host resources stay in the same context.
+    pub async fn wake_through_delta(&mut self, reactor: &Reactor) -> DispatchOutcome {
+        let (future, result) = self.await_completion(reactor).await;
+        self.restore_delta_and_wake(future, &result).await
+    }
+
+    /// Restores the parked guest from a local snapshot and polls its ready
+    /// managed work without delivering a host result. Held I/O stays held.
+    pub async fn poll_through_delta(&mut self) -> DispatchOutcome {
+        self.restore_delta_and_wake(0, &ResultRecord::Ok(Vec::new()))
+            .await
+    }
+
+    async fn restore_delta_and_wake(
+        &mut self,
+        future: u64,
+        result: &ResultRecord,
+    ) -> DispatchOutcome {
+        let (image, memory) = self
+            .snapshot
+            .take()
+            .expect("a wake must follow an empty-stack park");
+        use isoplane_hibernate::snapshot::SnapshotStorage;
+        let storage = isoplane_hibernate::snapshot::LocalSnapshotStorage::new(std::env::temp_dir())
+            .expect("local snapshot storage");
+        let bytes =
+            isoplane_hibernate::local::size_bound(isoplane_hibernate::local::SnapshotShape {
+                max_memory_bytes: memory.len() as u64,
+                mutable_globals: image.globals.len(),
+            })
+            .expect("bound the parked guest snapshot");
+        let mut reservation = storage
+            .reserve(isoplane_hibernate::snapshot::SnapshotBytes(bytes))
+            .expect("reserve backing for the parked guest");
+        let binding = isoplane_hibernate::Binding::new(self.template.hash, isoplane_abi::ABI_REV);
+        isoplane_hibernate::local::save(
+            reservation.as_mut(),
+            binding,
+            image,
+            &memory,
+            &self.template.memory_image_arc(),
+            None,
+        )
+        .expect("capture the parked guest into its local reservation");
+        let saved = isoplane_hibernate::local::Snapshot::open(reservation.as_mut(), binding)
+            .expect("validate the local snapshot binding and header");
+        let (outcome, snapshot) = std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    let mut instance = self
+                        .engine
+                        .activate(&self.template, CellBindings::boxed(self.context.clone()))
+                        .expect("the guest must activate on another worker");
+                    instance
+                        .restore_mutable_state(saved.image())
+                        .expect("restore parked mutable state");
+                    saved
+                        .apply(reservation.as_mut(), instance.memory())
+                        .expect("restore parked memory over the template");
+                    let outcome = instance.wake(
+                        self.context.dispatch_id(),
+                        future,
+                        result,
+                        self.dispatch_budget,
+                    );
+                    let snapshot = capture(&mut instance, &outcome);
+                    (outcome, snapshot)
+                })
+                .join()
+                .expect("the worker must not panic")
+        });
+        self.record_return(&outcome, snapshot);
+        outcome
+    }
+
     /// Starts `path` and wakes the guest until it finishes, failing after
     /// `max_wakes` wakes so a guest that never finishes is a failed test
     /// rather than a hung one.
@@ -497,8 +573,24 @@ impl ReturnedGuest {
         reactor: &Reactor,
         max_wakes: usize,
     ) -> (String, usize) {
+        self.finish_with(reactor, max_wakes, WakePath::Direct).await
+    }
+
+    /// As [`Self::finish`], saving and restoring a local snapshot before each wake.
+    pub async fn finish_through_deltas(&mut self, reactor: &Reactor, max_wakes: usize) -> String {
+        self.finish_with(reactor, max_wakes, WakePath::ThroughDelta)
+            .await
+            .0
+    }
+
+    async fn finish_with(
+        &mut self,
+        reactor: &Reactor,
+        max_wakes: usize,
+        wake: WakePath,
+    ) -> (String, usize) {
         let mut wakes = 0;
-        let mut outcome = self.wake(reactor).await;
+        let mut outcome = self.wake_as(reactor, wake).await;
         wakes += 1;
         while outcome.completion == Completion::Parked {
             assert!(
@@ -506,10 +598,17 @@ impl ReturnedGuest {
                 "the dispatch must finish within {max_wakes} wakes; logs: {:?}",
                 self.context.emitted_logs()
             );
-            outcome = self.wake(reactor).await;
+            outcome = self.wake_as(reactor, wake).await;
             wakes += 1;
         }
         (self.text_of("the dispatch", outcome), wakes)
+    }
+
+    async fn wake_as(&mut self, reactor: &Reactor, wake: WakePath) -> DispatchOutcome {
+        match wake {
+            WakePath::Direct => self.wake(reactor).await,
+            WakePath::ThroughDelta => self.wake_through_delta(reactor).await,
+        }
     }
 
     /// The text a completed dispatch answered with, failing on any other
@@ -658,9 +757,42 @@ mod occupancy_tests;
 #[cfg(test)]
 mod completion_tests {
     use super::*;
+
     use isoplane_host::futures::WakeTarget;
     use std::future::Future;
     use std::task::{Context, Poll, Waker};
+
+    #[tokio::test]
+    async fn the_harness_enforces_the_live_buffer_limit() {
+        let owner = InstanceId(1);
+        let reactor = Reactor::new(owner);
+        let limit = isoplane_host::CellConfig::default().buffered_future_bytes;
+        let retained = alloc(&reactor.futures, owner);
+        let shed = alloc(&reactor.futures, owner);
+        reactor
+            .futures
+            .complete(retained, ResultRecord::Ok(vec![0; limit]));
+        reactor.futures.complete(shed, ResultRecord::Ok(vec![1]));
+        assert_eq!(
+            reactor
+                .futures
+                .take_ready(owner)
+                .expect("retained result")
+                .into_pair(),
+            (retained, ResultRecord::Ok(vec![0; limit]))
+        );
+        assert_eq!(
+            reactor
+                .futures
+                .take_ready(owner)
+                .expect("rejected result")
+                .into_pair(),
+            (
+                shed,
+                ResultRecord::Err(isoplane_abi::result::FutureError::BufferLimit)
+            )
+        );
+    }
 
     fn complete(table: &FutureTable, owner: InstanceId, id: u64) {
         assert_eq!(
@@ -672,7 +804,12 @@ mod completion_tests {
 
     fn alloc(table: &FutureTable, owner: InstanceId) -> u64 {
         table
-            .alloc(owner, 1, "sleep", GUEST_LIMITS.pending_futures_per_dispatch)
+            .alloc(
+                owner,
+                1,
+                "sleep",
+                isoplane_abi::config::Limits::default().pending_futures_per_dispatch,
+            )
             .expect("the test dispatch must have a free future slot")
     }
 

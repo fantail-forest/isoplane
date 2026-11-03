@@ -5,6 +5,23 @@ namespace Isoplane.Cli.Tests;
 
 public sealed class CliCommandLineTests
 {
+    [Theory]
+    [InlineData("deploy", "--config", "host.toml", "--app", "api", "--bundle", "app.tar")]
+    [InlineData("daemon", "--config", "host.toml", "--check", "--print-config")]
+    public void local_host_parsing_rejects_ambiguous_or_unsupported_operations(params string[] args)
+    {
+        Assert.NotEmpty(CliCommandLine.Create().Parse(args).Errors);
+    }
+
+    [Theory]
+    [InlineData("deploy", "--local", "--config", "host path.toml", "--app", "api", "--bundle", "bundle path.tar")]
+    [InlineData("daemon", "--config", "host path.toml")]
+    [InlineData("daemon", "--config", "host path.toml", "--check")]
+    public void local_host_parsing_accepts_explicit_local_operations(params string[] args)
+    {
+        Assert.Empty(CliCommandLine.Create().Parse(args).Errors);
+    }
+
     [Fact]
     public void development_parsing_preserves_aliases_paths_and_switches()
     {

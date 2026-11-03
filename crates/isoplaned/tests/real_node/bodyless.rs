@@ -71,7 +71,7 @@ async fn no_body_framing_returns_the_wire_response_and_preserves_background_work
             let response = request(&rig, method.clone()).await;
             assert_eq!(response.status.as_u16(), status, "{method}/{status} must finish successfully rather than being classified as requester cancellation");
             assert!(response.body.is_empty(), "HTTP no-body framing must suppress the guest's queued payload");
-            let cell = &rig.node.real.as_ref().expect("real cells").cells()[0];
+            let cell = &rig.node.real.as_ref().cells()[0];
             while cell.metrics_raw().dispatch_us.count() == 0 {
                 tokio::task::yield_now().await;
             }
@@ -92,7 +92,7 @@ async fn a_same_slice_trap_cannot_be_hidden_by_no_body_response_headers() {
             StatusCode::BAD_GATEWAY,
             "the proxy must not publish 204 success before the trapping hot slice settles"
         );
-        let cell = &rig.node.real.as_ref().expect("real cells").cells()[0];
+        let cell = &rig.node.real.as_ref().cells()[0];
         assert_eq!(
             cell.metrics_raw().dispatch_us.count(),
             1,

@@ -96,7 +96,7 @@ fn listing(roots: &[&Root]) -> String {
 struct Rotation {
     a: Root,
     b: Root,
-    template: Vec<u8>,
+    template: managed::Prepared,
 }
 
 fn rotation(runtime: GuestRuntime) -> &'static Rotation {
@@ -108,10 +108,7 @@ fn rotation(runtime: GuestRuntime) -> &'static Rotation {
         let b = self_signed_root(dir.path(), "root-b");
         let prepared = managed::prepare("isoplane_guest_dotnet_bcl", bundle(&[&a]))
             .expect("prepare the trust application with the supplied bundle");
-        let template = prepared
-            .portable_template()
-            .expect("portable prepared output")
-            .to_vec();
+        let template = prepared;
         Rotation { a, b, template }
     })
 }
@@ -127,18 +124,18 @@ impl Resolver for NoDns {
 
 /// A node serving `files`, with the template activated on it and the guest
 /// clock at `clock_ms` for the first dispatch.
-fn node_serving(files: PlatformFiles, template: &[u8], clock_ms: u64) -> (Reactor, ReturnedGuest) {
+fn node_serving(
+    files: PlatformFiles,
+    template: &managed::Prepared,
+    clock_ms: u64,
+) -> (Reactor, ReturnedGuest) {
     let reactor = Reactor::with_platform_files(
         InstanceId::alloc(),
         isoplane_harness::Network::with_resolver(Box::new(NoDns)),
         files,
     );
     reactor.context.begin_slice(clock_ms, 1);
-    let guest = ReturnedGuest::with_application_files(
-        template,
-        managed::files("isoplane_guest_dotnet_bcl"),
-        &reactor,
-    );
+    let guest = ReturnedGuest::prepared(template.artifact(), &reactor);
     (reactor, guest)
 }
 

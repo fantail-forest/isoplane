@@ -1,17 +1,14 @@
 [Unit]
-Description=Isoplane cell node
-After=network-online.target docker.service
+Description=Isoplane application host
+After=network-online.target
 Wants=network-online.target
-Requires=docker.service
 
 [Service]
 Type=simple
 User=isoplane
 Group=isoplane
-SupplementaryGroups=docker
 WorkingDirectory=/var/lib/isoplane
-EnvironmentFile=/etc/isoplane/node.env
-ExecStart=/opt/isoplane/current/isoplaned --config /etc/isoplane/node.toml
+ExecStart=/opt/isoplane/current/isoplaned serve --config /etc/isoplane/node.toml
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=180

@@ -5,7 +5,6 @@ use std::time::Duration;
 
 use isoplane_test_support::wait_for;
 
-use isoplane_abi::config::Limits;
 use isoplane_abi::dispatch::{DispatchRecord, HttpRequest};
 use isoplane_abi::result::{FutureError, ResultRecord};
 
@@ -52,7 +51,7 @@ fn a_guest_cannot_fetch_a_private_address() {
     ));
     let module = act.module().clone();
     r.cell
-        .register_module("acme", act.clone(), manifest("prober", Limits::default()))
+        .register_module("acme", act.clone(), manifest("prober"))
         .unwrap();
 
     let rx = r
@@ -102,16 +101,12 @@ fn an_endpoint_exception_lets_only_its_own_application_reach_a_private_peer() {
         .register_module_with_exceptions(
             "acme",
             excepted.clone(),
-            manifest("database-client", Limits::default()),
+            manifest("database-client"),
             Arc::new(["10.0.0.5:80".parse().expect("endpoint")]),
         )
         .unwrap();
     r.cell
-        .register_module(
-            "acme",
-            other.clone(),
-            manifest("neighbour", Limits::default()),
-        )
+        .register_module("acme", other.clone(), manifest("neighbour"))
         .unwrap();
     let mut pending = Vec::new();
     for act in [&excepted, &other] {

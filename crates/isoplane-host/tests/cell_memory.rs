@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use isoplane_abi::config::{GuestMemoryBytes, Limits};
+use isoplane_abi::config::GuestMemoryBytes;
 use isoplane_engine::{Completion, EngineConfig, IsoplaneEngine};
 use isoplane_host::cell::Target;
 use isoplane_host::{CellConfig, EngineActivator, ModuleId};
@@ -66,18 +66,7 @@ fn dispatch_growth(
             ),
         )
         .expect("a cell starts");
-        let mut manifest = common::manifest(
-            "memory-budget",
-            Limits {
-                instances_per_application: 3,
-                module_bytes_compressed: 5242880,
-                package_bytes: 52428800,
-                instance_memory_max: 134217728,
-                occupancy_ms_per_dispatch: 100,
-                instance_open_connections: 32,
-                pending_futures_per_dispatch: 6,
-            },
-        );
+        let mut manifest = common::manifest("memory-budget");
         manifest.guest_memory_bytes = memory_override
             .map(|bytes| GuestMemoryBytes::new(bytes).expect("override is a valid memory size"));
         cell.register_module("tenant", activator, manifest)
@@ -127,80 +116,35 @@ fn dispatch_growth(
 
 #[test]
 fn a_guest_without_a_declared_maximum_cannot_grow_past_its_limits_ceiling() {
-    let limit = Limits {
-        instances_per_application: 3,
-        module_bytes_compressed: 5242880,
-        package_bytes: 52428800,
-        instance_memory_max: 134217728,
-        occupancy_ms_per_dispatch: 100,
-        instance_open_connections: 32,
-        pending_futures_per_dispatch: 6,
-    }
-    .instance_memory_max;
+    let limit = isoplane_abi::config::Limits::default().instance_memory_max;
     let ceiling = isoplane_abi::config::memory_ceiling_bytes(limit);
-    // The engine could hold twice the plan's limit, so only the ceiling refuses.
+    // The engine could hold twice the application's limit, so only the ceiling refuses.
     dispatch_growth(None, 2 * limit, ceiling / PAGE, -1, 0);
 }
 
 #[test]
 fn a_guest_may_grow_past_its_limit_up_to_its_ceiling_and_its_instance_is_retired() {
-    let limit = Limits {
-        instances_per_application: 3,
-        module_bytes_compressed: 5242880,
-        package_bytes: 52428800,
-        instance_memory_max: 134217728,
-        occupancy_ms_per_dispatch: 100,
-        instance_open_connections: 32,
-        pending_futures_per_dispatch: 6,
-    }
-    .instance_memory_max;
+    let limit = isoplane_abi::config::Limits::default().instance_memory_max;
     let ceiling = isoplane_abi::config::memory_ceiling_bytes(limit);
     dispatch_growth(None, 2 * limit, ceiling / PAGE - 1, 1, 1);
 }
 
 #[test]
-fn an_operator_memory_override_allows_growth_above_the_plan_default() {
-    let ceiling = Limits {
-        instances_per_application: 3,
-        module_bytes_compressed: 5242880,
-        package_bytes: 52428800,
-        instance_memory_max: 134217728,
-        occupancy_ms_per_dispatch: 100,
-        instance_open_connections: 32,
-        pending_futures_per_dispatch: 6,
-    }
-    .instance_memory_max;
+fn an_operator_memory_override_allows_growth_above_the_default_budget() {
+    let ceiling = isoplane_abi::config::Limits::default().instance_memory_max;
     dispatch_growth(Some(2 * ceiling), 2 * ceiling, ceiling / PAGE, 1, 0);
 }
 
 #[test]
 fn the_engine_capacity_still_bounds_a_larger_application_override() {
-    let ceiling = Limits {
-        instances_per_application: 3,
-        module_bytes_compressed: 5242880,
-        package_bytes: 52428800,
-        instance_memory_max: 134217728,
-        occupancy_ms_per_dispatch: 100,
-        instance_open_connections: 32,
-        pending_futures_per_dispatch: 6,
-    }
-    .instance_memory_max;
+    let ceiling = isoplane_abi::config::Limits::default().instance_memory_max;
     dispatch_growth(Some(2 * ceiling), ceiling, ceiling / PAGE, -1, 0);
 }
 
 #[test]
 fn a_template_larger_than_the_application_budget_is_refused_at_activation() {
-    // One page more than the application's plan allows, within the engine.
-    let ceiling = Limits {
-        instances_per_application: 3,
-        module_bytes_compressed: 5242880,
-        package_bytes: 52428800,
-        instance_memory_max: 134217728,
-        occupancy_ms_per_dispatch: 100,
-        instance_open_connections: 32,
-        pending_futures_per_dispatch: 6,
-    }
-    .instance_memory_max;
+    // One page more than the configured application limit allows, within the engine.
+    let ceiling = isoplane_abi::config::Limits::default().instance_memory_max;
     let wasm = wat::parse_str(format!(
         r#"(module
         (memory (export "memory") {})
@@ -224,15 +168,7 @@ fn a_template_larger_than_the_application_budget_is_refused_at_activation() {
             .expect("template fits the engine capacity");
         let context = Arc::new(isoplane_host::bindings::InstanceCtx::for_test(
             isoplane_host::InstanceId(1),
-            Limits {
-                instances_per_application: 3,
-                module_bytes_compressed: 5242880,
-                package_bytes: 52428800,
-                instance_memory_max: 134217728,
-                occupancy_ms_per_dispatch: 100,
-                instance_open_connections: 32,
-                pending_futures_per_dispatch: 6,
-            },
+            isoplane_abi::config::Limits::default(),
         ));
         assert!(
             engine
@@ -258,7 +194,7 @@ fn a_dispatch_does_not_join_an_instance_at_its_memory_limit() {
     behaviour.memory_bytes = PAGE as usize;
     let activator = Arc::new(isoplane_host::fakes::FakeActivator::new(behaviour));
     let module = isoplane_host::Activator::module(&*activator).clone();
-    let mut manifest = common::manifest("memory-retiring", Limits::default());
+    let mut manifest = common::manifest("memory-retiring");
     manifest.guest_memory_bytes = Some(GuestMemoryBytes::new(PAGE).expect("one page"));
     cell.register_module("tenant", activator, manifest)
         .expect("application registers");

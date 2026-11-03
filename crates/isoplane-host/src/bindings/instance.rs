@@ -20,7 +20,7 @@ use crate::{InstanceId, ModuleId};
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct DispatchGeneration(pub(super) u64);
 
-/// Established ownership and numeric budgets for an instance.
+/// The instance owner, module and resolved resource bounds.
 #[derive(Debug, Clone)]
 pub struct Tenancy {
     pub module: ModuleId,

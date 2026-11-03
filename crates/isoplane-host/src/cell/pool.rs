@@ -203,7 +203,6 @@ pub(super) mod cell_tests {
                 crate::egress::ConnectionLimits::uniform(64).expect("connection limits"),
             )),
             fetcher: Arc::new(FakeFetcher::default()),
-            hibernation: Arc::new(FakeHibernationStore::default()),
         })
     }
 
@@ -214,7 +213,6 @@ pub(super) mod cell_tests {
             validation_limits: Default::default(),
             name: name.into(),
             bindings: Bindings::default(),
-            limits: Limits::default(),
             init_visible_vars: vec![],
         }
     }
@@ -774,7 +772,7 @@ pub(super) mod cell_tests {
     }
 
     #[tokio::test]
-    async fn a_streaming_dispatch_bills_every_hot_slice_once_at_final_completion() {
+    async fn a_streaming_dispatch_records_every_hot_slice_once_at_final_completion() {
         let events = Events::default();
         let cell = cell(CellConfig::for_test("stream-occupancy"));
         let mut behaviour = FakeBehaviour::program([
@@ -868,7 +866,7 @@ pub(super) mod cell_tests {
         assert_eq!(
             meters.dispatches(),
             1,
-            "parks and EOF must not record extra dispatches"
+            "parks and EOF must not count extra dispatches"
         );
         assert_eq!(
             cell.futures().live_futures(),

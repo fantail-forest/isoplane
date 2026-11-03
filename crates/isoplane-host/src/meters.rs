@@ -1,5 +1,5 @@
-//! Per-application worker occupancy during execution and attributed host work.
-//! Parked time is recorded separately.
+//! Per-tenant worker occupancy, measured during execution and attributed host
+//! work. Parked time is recorded separately from occupied-worker time.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -10,19 +10,19 @@ pub use crate::occupancy_clock::{
     OccupancyInterval,
 };
 
-/// Dispatch and lifecycle counters for one registered module.
+/// All counters are monotonic; the control plane reads deltas.
 #[derive(Debug, Default)]
 pub struct Meters {
-    /// Accumulated worker occupancy.
+    /// The sole compute meter.
     occupancy_ns: AtomicU64,
-    /// Recorded separately from active execution time.
+    /// Telemetry only; excluded from occupied-worker time.
     wall_ns: AtomicU64,
     dispatches: AtomicU64,
     hibernation_wakes: AtomicU64,
-    /// Accumulated captured delta bytes.
+    /// Snapshot bytes captured, for storage diagnostics.
     delta_bytes: AtomicU64,
     captures: AtomicU64,
-    /// Recorded separately from active execution time.
+    /// Telemetry only; excluded from occupied-worker time.
     observed_park_ms: AtomicU64,
     /// Already inside `occupancy_ns`; broken out so the share is visible.
     log_occupancy_ns: AtomicU64,
@@ -33,10 +33,13 @@ pub struct Meters {
     activations_for_holds: AtomicU64,
     memory_limit_retirements: AtomicU64,
     budget_kills: AtomicU64,
-    /// Occupancy past the budget, already included in `occupancy_ns`.
+    /// occupancy burned past the budget on kills of either phase. Already inside
+    /// `occupancy_ns`; counted again only so the share is reportable, and never
+    /// discarded, so over-budget execution remains visible.
     overage_ns: AtomicU64,
     shed: AtomicU64,
-    /// Slices and reactor polls with an unreadable monotonic clock endpoint.
+    /// Slices and reactor polls whose monotonic clock could not be read at one end and
+    /// which are marked incomplete.
     incomplete_intervals: AtomicU64,
 }
 
@@ -54,7 +57,7 @@ impl Meters {
         self.wall_ns.fetch_add(out.wall_ns, Ordering::Relaxed);
     }
 
-    /// Record active time, counting an unreadable interval separately.
+    /// `None`, an unreadable clock, records no occupied time and counts the gap.
     pub fn record_interval(&self, ns: Option<u64>) {
         match ns {
             Some(ns) => {
@@ -243,7 +246,7 @@ mod tests {
         assert_eq!(m.overage_ns(), 8_400_000, "every overage is summed");
         assert!(
             m.occupancy_ns() > 3 * budget_ns,
-            "three over-budget dispatches measured {} ns, which is at most 3xB; the overage was \
+            "three over-budget dispatches used {} ns, which is at most 3xB; the overage was \
              dropped somewhere",
             m.occupancy_ns()
         );
@@ -254,16 +257,20 @@ mod tests {
     }
 
     #[test]
-    fn wall_clock_is_recorded_separately_from_active_time() {
+    fn wall_clock_is_recorded_separately_from_occupancy() {
         let m = Meters::new();
         m.record_occupancy(&outcome(1_000, 1_000_000_000));
         m.record_park(60_000);
         assert_eq!(
             m.occupancy_ns(),
             1_000,
-            "only the occupancy interval is measured"
+            "only the occupancy interval is recorded"
         );
         assert_eq!(m.observed_park_ms(), 60_000, "park time is recorded");
-        assert_eq!(m.occupancy_ms(), 0.001, "a second parked adds no occupied time");
+        assert_eq!(
+            m.occupancy_ms(),
+            0.001,
+            "a second parked adds no occupied time"
+        );
     }
 }

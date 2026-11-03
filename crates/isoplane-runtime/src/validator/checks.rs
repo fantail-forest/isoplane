@@ -457,7 +457,6 @@ pub mod limits {
 
 #[cfg(test)]
 mod tests {
-    use isoplane_abi::config::Limits;
 
     use crate::validator::{validate, Violation, ViolationCode};
 
@@ -474,7 +473,7 @@ mod tests {
     }
 
     fn missing_global_exports(wasm: &[u8]) -> Vec<(ViolationCode, Option<String>)> {
-        validate(wasm, Limits::default())
+        validate(wasm, isoplane_abi::config::GuestMemoryBytes::default())
             .err()
             .unwrap_or_default()
             .iter()
@@ -494,7 +493,7 @@ mod tests {
         ] {
             let wasm = wat::parse_str(format!("(module {tables})"))
                 .expect("the oversized table fixture must assemble");
-            let violations = validate(&wasm, Limits::default())
+            let violations = validate(&wasm, isoplane_abi::config::GuestMemoryBytes::default())
                 .expect_err("oversized table64 sizes must be rejected");
             assert_eq!(
                 violations
@@ -520,8 +519,11 @@ mod tests {
     fn an_unvalidated_memory_maximum_is_rejected_with_accurate_units() {
         let wasm = wat::parse_str("(module (memory i64 0 18446744073709551615))")
             .expect("the oversized memory fixture must assemble");
-        let violations = validate(&wasm, Limits::default())
-            .expect_err("an oversized memory64 maximum must be rejected");
+        let violations = validate(
+            &wasm,
+            isoplane_abi::config::GuestMemoryBytes::new(128 << 20).unwrap(),
+        )
+        .expect_err("an oversized memory64 maximum must be rejected");
         assert_eq!(
             violations
                 .iter()
@@ -545,7 +547,7 @@ mod tests {
     #[test]
     fn an_unexported_mutable_global_is_rejected_by_name() {
         let wasm = guest("(global $counter (mut i64) (i64.const 0))");
-        let violations = validate(&wasm, Limits::default())
+        let violations = validate(&wasm, isoplane_abi::config::GuestMemoryBytes::default())
             .expect_err("an unexported mutable global must be rejected");
         assert_eq!(
             violations
@@ -564,13 +566,15 @@ mod tests {
     #[test]
     fn an_exported_mutable_global_is_admitted() {
         let wasm = guest(r#"(global $counter (export "counter") (mut i64) (i64.const 0))"#);
-        validate(&wasm, Limits::default()).expect("an exported mutable global is restorable");
+        validate(&wasm, isoplane_abi::config::GuestMemoryBytes::default())
+            .expect("an exported mutable global is restorable");
     }
 
     #[test]
     fn an_unexported_immutable_global_is_admitted() {
         let wasm = guest("(global $limit i64 (i64.const 0))");
-        validate(&wasm, Limits::default()).expect("an immutable global holds no state");
+        validate(&wasm, isoplane_abi::config::GuestMemoryBytes::default())
+            .expect("an immutable global holds no state");
     }
 
     #[test]

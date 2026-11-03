@@ -112,7 +112,7 @@ pub(crate) fn stub_call(name: &'static str, args: &[i64]) -> i64 {
     }
     // Config blob: write up to `cap` bytes, return the FULL length so a
     // zero-length probe sizes the buffer. Mirrors the host in
-    // `isoplane_control::preinit`.
+    // `isoplane_prepare::preinit`.
     if name == "init_config_get" {
         return CONFIG.with(|c| {
             let blob = c.borrow();
