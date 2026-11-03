@@ -56,7 +56,7 @@ The tools it offers:
 
 | Tool | Description |
 | --- | --- |
-| `check_machine` :since[next] | Checks that this machine can build and run Isoplane applications: the .NET SDK, the native host library, the project templates and saved-session permissions. Returns the ready message, or an error saying what to install or run. |
+| `check_machine` :since[next] | Checks that this machine can build and run Isoplane applications: the .NET SDK, the native host library and the project templates. Returns the ready message, or an error saying what to install or run. |
 | `start_session` :since[next] | Builds an Isoplane application project and runs it in the sandbox on this machine, as `isoplane dev` does. Returns the session's id and the address the application answers at. With watching on, a saved source change rebuilds and reloads it. A build that fails returns its errors and starts nothing. |
 | `session_events` :since[next] | Returns what a session has reported since a given event number: ready and reloaded with the application's address, reload_pending, reload_failed and build_failed with their detail, and diagnostic for each line the application logged. Pass the last number seen to read only newer events; a wait of some seconds returns as soon as one arrives. |
 | `stop_session` :since[next] | Stops a session started by start_session and frees its port. |

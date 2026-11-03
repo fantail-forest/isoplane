@@ -20,6 +20,7 @@ The commands of the `isoplane` CLI, with the arguments and options of each. They
 | [`isoplane prepare-runtime`](cli/prepare-runtime.md) | Compile a shared runtime into the local cache. |
 | [`isoplane doctor`](cli/doctor.md) | Check this machine's .NET SDK, native library and templates. |
 | [`isoplane agent`](cli/agent.md) :since[next] | Connect a coding agent to this machine's Isoplane tools. |
+| [`isoplane bundle`](cli/bundle.md) :since[next] | Build a managed application archive. |
 | [`isoplane telemetry`](cli/telemetry.md) | Manage anonymous usage data. ISOPLANE_TELEMETRY_OPTOUT=1 or DO_NOT_TRACK=1 also disables it; ISOPLANE_TELEMETRY_DEBUG=1 prints events without sending them. |
 | [`isoplane completions`](cli/completions.md) | Print a shell completion script. See the installation guide for shell setup. |
 
