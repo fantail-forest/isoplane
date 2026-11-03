@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
+use isoplane_harness::fakes::*;
 use isoplane_host::cell::{Cell, CellConfig};
-use isoplane_host::fakes::*;
 use isoplane_host::ModuleId;
 
 mod common;

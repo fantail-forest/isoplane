@@ -10,9 +10,9 @@ use isoplane_abi::config::{AppManifest, Bindings};
 use isoplane_abi::dispatch::{DispatchRecord, HttpRequest};
 use isoplane_abi::status::TrapCode;
 
+use isoplane_harness::fakes::*;
 use isoplane_host::cell::{Cell, CellConfig, Services, Target};
 use isoplane_host::egress::HostEgressPolicy;
-use isoplane_host::fakes::*;
 use isoplane_host::{Activator, ModuleId, Resolver};
 
 const T: Duration = Duration::from_secs(10);

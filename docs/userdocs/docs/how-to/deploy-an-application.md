@@ -100,9 +100,11 @@ Check routing directly:
 curl -H 'Host: api.example.com' http://127.0.0.1:8080/
 ```
 
-Configure your reverse proxy to preserve the application's Host name. Missing,
-unknown or malformed Host values do not select an application. TLS termination,
-public DNS and any routing between machines belong to your deployment setup.
+Configure your reverse proxy to preserve the application's Host name. Unknown or
+malformed Host values do not select an application. Without a Host header, an
+absolute request URL can select its configured hostname; other requests without
+a Host do not select an application. TLS termination, public DNS and any routing
+between machines belong to your deployment setup.
 
 ## Supply application settings
 

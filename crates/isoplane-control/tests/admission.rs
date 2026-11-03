@@ -1,6 +1,6 @@
 //! Local admission enforces sandbox capabilities and operator-supplied limits.
 
-use isoplane_abi::config::{AppManifest, Bindings};
+use isoplane_abi::config::AppManifest;
 use isoplane_control::admission::{admit, admit_shared_runtime};
 use isoplane_control::AdmissionError;
 
@@ -21,10 +21,7 @@ fn manifest(name: &str) -> AppManifest {
         resource_limits: Default::default(),
         validation_limits: Default::default(),
         name: name.into(),
-        bindings: Bindings {
-            services: vec!["sessions".into()],
-            ..Default::default()
-        },
+        bindings: Default::default(),
         init_visible_vars: vec![("REGION".into(), "eu-west".into())],
     }
 }

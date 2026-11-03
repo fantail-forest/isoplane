@@ -232,6 +232,35 @@ async fn two_portable_apps_redeploy_on_restart_and_failed_preparation_preserves_
         "alpha:/settings-missing"
     );
     isoplane_control::private_files::write_new(&source, br#"{"key":"captured-second"}"#).unwrap();
+    let mut oversized = config.clone();
+    oversized.apps[0]
+        .manifest
+        .init_visible_vars
+        .push(("large".into(), "x".repeat(1024 * 1024)));
+    let error = isoplaned::node::deploy::deploy(
+        oversized,
+        "quotes",
+        &isoplane_fixtures::mono_package("beta"),
+        &cancellation,
+    )
+    .await
+    .err()
+    .expect("an unreadable selection must not replace the current deployment");
+    assert!(
+        matches!(
+            error.downcast_ref::<isoplaned::installed::InstallError>(),
+            Some(isoplaned::installed::InstallError::TooLarge(_))
+        ),
+        "{error:#}"
+    );
+    assert_eq!(selection_bytes(&config, "quotes"), before);
+    assert_eq!(selection_bytes(&config, "ledger"), ledger);
+    assert_eq!(
+        common::get(running.address, "quotes.isoplane.dev", "/still-current")
+            .await
+            .body,
+        "alpha:/still-current"
+    );
     isoplaned::node::deploy::deploy(
         config.clone(),
         "quotes",

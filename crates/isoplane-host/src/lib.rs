@@ -32,6 +32,11 @@ pub mod debug;
 pub mod dispatcher;
 pub mod disposition;
 pub mod egress;
+// Unit-test doubles implement this compilation's host types, including its controlled clock.
+#[cfg(test)]
+extern crate self as isoplane_host;
+#[cfg(test)]
+#[path = "../../isoplane-harness/src/fakes.rs"]
 pub mod fakes;
 pub mod fetcher;
 pub mod futures;

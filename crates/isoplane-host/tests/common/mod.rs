@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use isoplane_abi::config::{AppManifest, Bindings};
 
+use isoplane_harness::fakes::FakeFetcher;
 use isoplane_host::cell::{Cell, CellConfig, Services};
 use isoplane_host::egress::HostEgressPolicy;
-use isoplane_host::fakes::FakeFetcher;
 use isoplane_host::Resolver;
 
 pub struct Fixed(pub Vec<std::net::SocketAddr>);

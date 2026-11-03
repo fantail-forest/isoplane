@@ -82,6 +82,47 @@ async fn malformed_hosts_never_dispatch_or_fall_back_to_an_installed_application
 }
 
 #[tokio::test]
+async fn only_absent_hosts_use_the_absolute_request_authority() {
+    use http_body_util::BodyExt;
+    use hyper::header::{HeaderValue, HOST};
+    use hyper::{Request, StatusCode};
+
+    let rig = start(
+        Arc::new(FakeCell::new()),
+        standard_routes(),
+        ProxyConfig::default(),
+    )
+    .await;
+    for (host, expected) in [
+        (None, StatusCode::OK),
+        (Some(&b"quotes.isoplane.dev"[..]), StatusCode::OK),
+        (Some(&b"other.example"[..]), StatusCode::NOT_FOUND),
+        (
+            Some(&b"quotes.isoplane.dev:invalid"[..]),
+            StatusCode::NOT_FOUND,
+        ),
+        (Some(&b"\xff"[..]), StatusCode::NOT_FOUND),
+    ] {
+        let (mut sender, driver) = http_connection(rig.addr).await;
+        let mut request = Request::builder()
+            .uri("http://quotes.isoplane.dev/absolute")
+            .body(http_body_util::Full::new(bytes::Bytes::new()))
+            .unwrap();
+        if let Some(host) = host {
+            request
+                .headers_mut()
+                .insert(HOST, HeaderValue::from_bytes(host).unwrap());
+        }
+        let response = sender.send_request(request).await.unwrap();
+        assert_eq!(response.status(), expected, "Host {host:?}");
+        response.into_body().collect().await.unwrap();
+        drop(sender);
+        driver.await.unwrap().unwrap();
+    }
+    assert_eq!(rig.cell.http_dispatches(), 2);
+}
+
+#[tokio::test]
 async fn one_ingress_port_routes_independent_applications_by_their_expected_hosts() {
     let routes = standard_routes();
     routes

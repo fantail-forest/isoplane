@@ -11,10 +11,10 @@ use isoplane_abi::config::{AppManifest, Bindings};
 use isoplane_abi::dispatch::HttpRequest;
 use isoplane_engine::{Completion, EngineConfig, IsoplaneEngine};
 
+use isoplane_harness::fakes::*;
 use isoplane_host::activator::EngineActivator;
 use isoplane_host::cell::{Cell, CellConfig, DispatchResult, Services, Target};
 use isoplane_host::egress::HostEgressPolicy;
-use isoplane_host::fakes::*;
 use isoplane_host::{ModuleId, Resolver};
 use isoplane_test_support::wait_for;
 

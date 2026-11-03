@@ -229,12 +229,14 @@ async fn completing_a_cell_dispatch_preserves_its_body_until_instance_discard() 
     deadline(async {
         let mut server = Server::start().await;
         let svc = services(server.address);
-        let activator = std::sync::Arc::new(isoplane_host::fakes::FakeActivator::named(
+        let activator = std::sync::Arc::new(isoplane_harness::fakes::FakeActivator::named(
             isoplane_host::ModuleId::new("outbound-end", "v1"),
-            isoplane_host::fakes::FakeBehaviour::program([isoplane_host::fakes::Step::Fetch {
-                url: "http://upstream.test/".into(),
-                times: 1,
-            }]),
+            isoplane_harness::fakes::FakeBehaviour::program([
+                isoplane_harness::fakes::Step::Fetch {
+                    url: "http://upstream.test/".into(),
+                    times: 1,
+                },
+            ]),
         ));
         let (cell, response) = common::cell(svc.clone(), activator);
         let exchange = server
@@ -273,14 +275,14 @@ async fn capture_refuses_pending_fetches_retained_bodies_and_inflight_reads() {
     deadline(async {
         let mut server = Server::start().await;
         let svc = services(server.address);
-        let activator = std::sync::Arc::new(isoplane_host::fakes::FakeActivator::named(
+        let activator = std::sync::Arc::new(isoplane_harness::fakes::FakeActivator::named(
             isoplane_host::ModuleId::new("outbound-capture", "v1"),
-            isoplane_host::fakes::FakeBehaviour::program([
-                isoplane_host::fakes::Step::Fetch {
+            isoplane_harness::fakes::FakeBehaviour::program([
+                isoplane_harness::fakes::Step::Fetch {
                     url: "http://upstream.test/".into(),
                     times: 1,
                 },
-                isoplane_host::fakes::Step::Park { imports: vec![] },
+                isoplane_harness::fakes::Step::Park { imports: vec![] },
             ]),
         ));
         let (cell, response) = common::cell(svc.clone(), activator.clone());
@@ -399,14 +401,14 @@ async fn a_discarded_slot_releases_its_body_while_its_context_remains_reachable(
     deadline(async {
         let mut server = Server::start().await;
         let svc = services(server.address);
-        let activator = std::sync::Arc::new(isoplane_host::fakes::FakeActivator::named(
+        let activator = std::sync::Arc::new(isoplane_harness::fakes::FakeActivator::named(
             isoplane_host::ModuleId::new("outbound-discard", "v1"),
-            isoplane_host::fakes::FakeBehaviour::program([
-                isoplane_host::fakes::Step::Fetch {
+            isoplane_harness::fakes::FakeBehaviour::program([
+                isoplane_harness::fakes::Step::Fetch {
                     url: "http://upstream.test/".into(),
                     times: 1,
                 },
-                isoplane_host::fakes::Step::Park {
+                isoplane_harness::fakes::Step::Park {
                     imports: vec![("clock_deadline_in", 600_000)],
                 },
             ]),

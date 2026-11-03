@@ -188,11 +188,11 @@ fn a_dispatch_does_not_join_an_instance_at_its_memory_limit() {
         common::rig_resolving(CellConfig::for_test("memory-retiring"), "93.184.216.34:80");
     // Activation at the soft limit still serves a request, but has no join headroom.
     let mut behaviour =
-        isoplane_host::fakes::FakeBehaviour::program([isoplane_host::fakes::Step::Park {
+        isoplane_harness::fakes::FakeBehaviour::program([isoplane_harness::fakes::Step::Park {
             imports: vec![("clock_deadline_in", 60_000)],
         }]);
     behaviour.memory_bytes = PAGE as usize;
-    let activator = Arc::new(isoplane_host::fakes::FakeActivator::new(behaviour));
+    let activator = Arc::new(isoplane_harness::fakes::FakeActivator::new(behaviour));
     let module = isoplane_host::Activator::module(&*activator).clone();
     let mut manifest = common::manifest("memory-retiring");
     manifest.guest_memory_bytes = Some(GuestMemoryBytes::new(PAGE).expect("one page"));

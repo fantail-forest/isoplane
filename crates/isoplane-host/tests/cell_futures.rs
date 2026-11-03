@@ -8,13 +8,13 @@ use isoplane_test_support::wait_for;
 use isoplane_abi::dispatch::{DispatchRecord, HttpRequest};
 use isoplane_engine::Completion;
 
+use isoplane_harness::fakes::*;
+use isoplane_harness::EmittedGuestLogs as _;
 use isoplane_host::cell::{Cell, CellConfig, Target};
-use isoplane_host::fakes::*;
 use isoplane_host::{Activator, ModuleId};
 
 mod common;
 use common::manifest;
-use isoplane_harness::EmittedGuestLogs as _;
 
 struct Rig {
     cell: Arc<Cell>,

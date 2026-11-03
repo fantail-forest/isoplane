@@ -14,6 +14,7 @@ fn check(path: &Path) -> Output {
 }
 
 
+
 #[test]
 fn the_binary_accepts_several_configured_applications() {
     let dir = tempfile::tempdir().unwrap();

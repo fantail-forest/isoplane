@@ -65,7 +65,7 @@ fn cleanup_cell_with(
         )
         .with_connections(Arc::new(PendingConnection(work)));
         let services = Arc::new(isoplane_host::cell::Services {
-            fetcher: Arc::new(isoplane_host::fakes::FakeFetcher::default()),
+            fetcher: Arc::new(isoplane_harness::fakes::FakeFetcher::default()),
             egress: Arc::new(egress),
         });
         Cell::new(config, services).expect("the production cell must start")

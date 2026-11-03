@@ -9,8 +9,8 @@ use isoplane_abi::dispatch::{DispatchRecord, HttpRequest};
 use isoplane_abi::result::ResultRecord;
 use isoplane_engine::Completion;
 
+use isoplane_harness::fakes::*;
 use isoplane_host::cell::{Cell, CellConfig, Target};
-use isoplane_host::fakes::*;
 use isoplane_host::{Activator, ModuleId};
 
 mod common;

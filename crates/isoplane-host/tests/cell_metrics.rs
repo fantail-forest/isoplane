@@ -7,8 +7,8 @@ use isoplane_test_support::wait_for;
 
 use isoplane_abi::dispatch::{DispatchRecord, HttpRequest};
 
+use isoplane_harness::fakes::*;
 use isoplane_host::cell::{Cell, CellConfig, Target};
-use isoplane_host::fakes::*;
 use isoplane_host::{Activator, ModuleId};
 
 mod common;

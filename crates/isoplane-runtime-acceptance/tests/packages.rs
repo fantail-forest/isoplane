@@ -1002,7 +1002,7 @@ fn serving_cell(
     background_idle_limit_ms: u64,
 ) -> Arc<isoplane_host::cell::Cell> {
     let services = Arc::new(isoplane_host::cell::Services {
-        fetcher: Arc::new(isoplane_host::fakes::FakeFetcher::default()),
+        fetcher: Arc::new(isoplane_harness::fakes::FakeFetcher::default()),
         egress: Arc::new(isoplane_host::egress::HostEgressPolicy::new(
             Box::new(fixed_dns::FixedDns(vec![])),
             isoplane_host::egress::ConnectionLimits::uniform(8).expect("connection limits"),

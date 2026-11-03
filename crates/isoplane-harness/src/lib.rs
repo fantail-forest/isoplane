@@ -7,6 +7,7 @@
 //! tests. A dev-dependency only; nothing here is linked into a daemon.
 
 mod compiled_guest;
+pub mod fakes;
 
 pub use compiled_guest::engine_configuration;
 use compiled_guest::engine_serving;

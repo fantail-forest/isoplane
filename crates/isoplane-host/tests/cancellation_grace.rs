@@ -8,8 +8,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use isoplane_abi::dispatch::HttpRequest;
+use isoplane_harness::fakes::{FakeActivator, FakeBehaviour, Step};
 use isoplane_host::cell::{Cell, CellConfig, DispatchResult, Target};
-use isoplane_host::fakes::{FakeActivator, FakeBehaviour, Step};
 use isoplane_host::slot::LifecycleTier;
 use isoplane_host::{Activator, InstanceId, ModuleId};
 use isoplane_test_support::wait_for;

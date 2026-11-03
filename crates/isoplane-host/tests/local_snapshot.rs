@@ -9,6 +9,8 @@ use std::time::Duration;
 use isoplane_abi::config::{AppManifest, Bindings, GuestMemoryBytes};
 use isoplane_engine::{Completion, EngineConfig, IsoplaneEngine};
 use isoplane_fixtures::GuestRuntime;
+use isoplane_harness::EmittedGuestLogs as _;
+use isoplane_harness::fakes::FakeFetcher;
 use isoplane_hibernate::snapshot::{
     LocalSnapshotStorage, SnapshotBytes, SnapshotError, SnapshotReservation, SnapshotStorage,
 };
@@ -17,10 +19,8 @@ use isoplane_host::egress::{
     ConnectAttempt, ConnectionError, ConnectionFactory, ConnectionOwner, DenyReason,
     DestinationPolicy, HostEgressPolicy, LocalConnections,
 };
-use isoplane_host::fakes::FakeFetcher;
 use isoplane_host::{EngineActivator, InstanceId, LifecycleTier, ModuleId, Resolver};
 use isoplane_test_support::wait_for;
-use isoplane_harness::EmittedGuestLogs as _;
 
 #[path = "common/managed.rs"]
 mod managed;

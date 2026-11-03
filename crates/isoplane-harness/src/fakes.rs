@@ -1,4 +1,6 @@
-//! Scripted guests and outbound HTTP doubles for host tests.
+//! Test doubles for the cell. [`FakeInstance`] is a scripted guest that
+//! returns `Pending` as a return, issues real import calls through the real
+//! vtable, and reports scripted budget kills without depending on scheduling.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -19,9 +21,9 @@ use isoplane_engine::{
     OccupancyBudget,
 };
 
-use crate::meters::OccupancyInterval;
-use crate::pool::Activator;
-use crate::ModuleId;
+use isoplane_host::meters::OccupancyInterval;
+use isoplane_host::pool::Activator;
+use isoplane_host::ModuleId;
 
 /// What the scripted guest does for one call into it.
 #[derive(Debug, Clone)]
@@ -30,7 +32,9 @@ pub enum Step {
         status: u16,
         body: Vec<u8>,
     },
-    /// Issue imports and return `pending`.
+    /// Issue these `(import, scalars[0])` calls and return `pending`. Parking
+    /// on `("clock_deadline_in", 60_000)` holds an instance Parked for as long
+    /// as a test needs to look at it.
     Park {
         imports: Vec<(&'static str, u64)>,
     },
@@ -64,7 +68,7 @@ pub enum Step {
         url: String,
         times: usize,
     },
-    /// Record the bytes returned by `entropy_fill`.
+    /// Fill `bytes` from `entropy_fill` and record what came back.
     Entropy {
         bytes: usize,
     },
@@ -73,7 +77,9 @@ pub enum Step {
     RespondLeaving {
         imports: Vec<(&'static str, u64)>,
     },
-    /// Return the received dispatch record as the response body.
+    /// Return `done` with the dispatch record this call was handed as the
+    /// body, so the epoch and socket handle the host chose are observable
+    /// from the guest's side.
     EchoRecord,
 }
 
@@ -199,7 +205,7 @@ impl FakeInstance {
                         payload: &payload,
                         scalars: [scalar, 0, 0],
                     });
-                    if fid == crate::futures::INVALID_FUTURE {
+                    if fid == isoplane_host::futures::INVALID_FUTURE {
                         break;
                     }
                 }
@@ -413,7 +419,8 @@ fn enc<T: serde::Serialize>(v: &T) -> Vec<u8> {
     postcard::to_allocvec(v).expect("a fixed-shape payload built here encodes")
 }
 
-/// Encode the supported request payload for a scripted import.
+/// `scalar` doubles as the one variable a scripted call needs, mostly a
+/// socket handle.
 fn fake_payload_for(name: &'static str) -> Vec<u8> {
     match name {
         "http_fetch" => enc(&FetchRequest {
@@ -592,30 +599,30 @@ pub struct FakeFetcher {
 }
 
 #[async_trait]
-impl crate::bindings::Fetcher for FakeFetcher {
+impl isoplane_host::bindings::Fetcher for FakeFetcher {
     async fn fetch(
         &self,
-        _attempt: crate::egress::ConnectAttempt,
+        _attempt: isoplane_host::egress::ConnectAttempt,
         target: PinnedTarget,
         _req: FetchRequest,
-    ) -> Result<crate::bindings::OutboundResponse, FutureError> {
+    ) -> Result<isoplane_host::bindings::OutboundResponse, FutureError> {
         self.connected_to.lock().push(target.addr);
-        Ok(crate::bindings::OutboundResponse {
+        Ok(isoplane_host::bindings::OutboundResponse {
             status: 200,
             headers: vec![],
-            body: crate::bindings::OutboundBody::Inline(b"ok".to_vec()),
+            body: isoplane_host::bindings::OutboundBody::Inline(b"ok".to_vec()),
         })
     }
 }
 
-/// A [`crate::bindings::WakeSink`] that records, for tests without a cell.
+/// A [`isoplane_host::bindings::WakeSink`] that records, for tests without a cell.
 #[derive(Default)]
 pub struct RecordingWake {
-    pub signalled: Mutex<Vec<crate::InstanceId>>,
+    pub signalled: Mutex<Vec<isoplane_host::InstanceId>>,
 }
 
-impl crate::bindings::WakeSink for RecordingWake {
-    fn signal(&self, owner: crate::InstanceId) {
+impl isoplane_host::bindings::WakeSink for RecordingWake {
+    fn signal(&self, owner: isoplane_host::InstanceId) {
         self.signalled.lock().push(owner);
     }
 }

@@ -5,11 +5,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use isoplane_abi::dispatch::{DispatchKind, DispatchRecord};
+use isoplane_harness::fakes::{FakeActivator, FakeBehaviour};
 use isoplane_hibernate::snapshot::{
     SnapshotBytes, SnapshotError, SnapshotReservation, SnapshotStorage,
 };
 use isoplane_host::cell::{Cell, CellConfig, Target};
-use isoplane_host::fakes::{FakeActivator, FakeBehaviour};
 use isoplane_host::Activator;
 
 pub mod common;

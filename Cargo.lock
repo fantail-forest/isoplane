@@ -1635,6 +1635,8 @@ dependencies = [
 name = "isoplane-harness"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "async-trait",
  "fs4",
  "isoplane-abi",
  "isoplane-cache",
@@ -1644,6 +1646,7 @@ dependencies = [
  "isoplane-host",
  "isoplane-runtime",
  "parking_lot",
+ "postcard",
  "serde",
  "serde_json",
  "tempfile",

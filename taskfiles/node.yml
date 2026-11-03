@@ -17,19 +17,21 @@ tasks:
         msg: Choose a new ARCHIVE path; packaged releases are retained.
     cmds:
       - defer: 'rm -rf "{{.METADATA}}"; rm -f "{{.ARCHIVE}}"'
-      - 'mkdir -p "{{.METADATA}}/runtimes" "{{dir .ARCHIVE}}"'
-      - 'tar -cf "{{.ARCHIVE}}" -C "{{.BINARIES}}" isoplaned -C "{{.ROOT_DIR}}" LICENSE.txt -C "{{.ROOT_DIR}}/deploy/local" isoplaned.service install-node.sh'
+      - 'mkdir -p "{{.METADATA}}/runtimes" "{{.METADATA}}/notices" "{{dir .ARCHIVE}}"'
+      - 'tar -cf "{{.ARCHIVE}}" --owner=0 --group=0 --numeric-owner --mode=0755 -C "{{.BINARIES}}" isoplaned -C "{{.ROOT_DIR}}/deploy/local" install-node.sh'
+      - 'tar -rf "{{.ARCHIVE}}" --owner=0 --group=0 --numeric-owner --mode=0644 -C "{{.ROOT_DIR}}" LICENSE.txt -C "{{.ROOT_DIR}}/deploy/local" isoplaned.service'
+      - 'tar -rf "{{.ARCHIVE}}" --owner=0 --group=0 --numeric-owner --mode=0755 --no-recursion -C "{{.METADATA}}" runtimes notices'
       - 'sha256sum "{{.BINARIES}}/isoplaned" | sed "s|  .*|  isoplaned|" > "{{.METADATA}}/SHA256SUMS"'
       - 'cd deploy/local && sha256sum isoplaned.service install-node.sh >> "{{.METADATA}}/SHA256SUMS"'
       - 'sha256sum LICENSE.txt >> "{{.METADATA}}/SHA256SUMS"'
-      - 'tar -rf "{{.ARCHIVE}}" --transform "s|^|notices/|" -C "{{.NOTICES}}" node-rust-dependencies.json dotnet-runtime icu openssl trust sqlite'
+      - 'tar -rf "{{.ARCHIVE}}" --owner=0 --group=0 --numeric-owner --mode=u=rwX,go=rX --transform "s|^|notices/|" -C "{{.NOTICES}}" node-rust-dependencies.json dotnet-runtime icu openssl trust sqlite'
       - 'cd "{{.NOTICES}}" && find node-rust-dependencies.json dotnet-runtime icu openssl trust sqlite -type f -exec sha256sum {} + | sed "s|  |  notices/|" >> "{{.METADATA}}/SHA256SUMS"'
       - for: {var: RUNTIMES}
         task: runtime
         vars: {DIRECTORY: '{{.ITEM}}'}
       - 'jq -s ''{sdkVersions: sort}'' "{{.METADATA}}/versions.json" > "{{.METADATA}}/runtimes/inventory.json"'
       - 'cd "{{.METADATA}}" && sha256sum runtimes/inventory.json >> SHA256SUMS'
-      - 'tar -rf "{{.ARCHIVE}}" -C "{{.METADATA}}" SHA256SUMS runtimes/inventory.json'
+      - 'tar -rf "{{.ARCHIVE}}" --owner=0 --group=0 --numeric-owner --mode=0644 -C "{{.METADATA}}" SHA256SUMS runtimes/inventory.json'
       - 'gzip "{{.ARCHIVE}}"'
       - 'cd "{{dir .ARCHIVE}}" && sha256sum "{{base .ARCHIVE}}.gz" > "{{base .ARCHIVE}}.gz.sha256"'
 
@@ -43,7 +45,9 @@ tasks:
         cd "{{.DIRECTORY}}"
         jq -r '.modules["Isoplane.MonoRuntime.wasm"].sha256 + "  Isoplane.MonoRuntime.wasm"' runtime.json | sha256sum --check
         sha256sum Isoplane.MonoRuntime.wasm runtime.json | sed "s|  |  runtimes/$version/|" >> "{{.METADATA}}/SHA256SUMS"
-        tar -rf "{{.ARCHIVE}}" --transform "s|^|runtimes/$version/|" Isoplane.MonoRuntime.wasm runtime.json
+        mkdir -p "{{.METADATA}}/runtimes/$version"
+        tar -rf "{{.ARCHIVE}}" --owner=0 --group=0 --numeric-owner --mode=0755 --no-recursion -C "{{.METADATA}}" "runtimes/$version"
+        tar -rf "{{.ARCHIVE}}" --owner=0 --group=0 --numeric-owner --mode=0644 --transform "s|^|runtimes/$version/|" Isoplane.MonoRuntime.wasm runtime.json
 
   runtimes:
     platforms: [linux]

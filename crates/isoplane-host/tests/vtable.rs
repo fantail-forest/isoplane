@@ -9,9 +9,9 @@ use isoplane_abi::calls::FetchRequest;
 use isoplane_abi::result::{FetchResponse, FutureError, ResultRecord};
 use isoplane_engine::{HostBindings, ImportCall};
 
+use isoplane_harness::fakes::*;
 use isoplane_host::bindings::{CellBindings, CellRuntime, InstanceCtx, Services, Tenancy};
 use isoplane_host::egress::HostEgressPolicy;
-use isoplane_host::fakes::*;
 use isoplane_host::futures::{FutureTable, INVALID_FUTURE};
 use isoplane_host::meters::Meters;
 use isoplane_host::metrics::Metrics;

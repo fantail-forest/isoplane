@@ -11,6 +11,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::deploy::PreparedReceipt;
 
+const MAX_SELECTION_BYTES: usize = 1024 * 1024;
+
 /// A local installation could not be read, selected or reclaimed.
 #[derive(Debug, thiserror::Error)]
 pub enum InstallError {
@@ -197,8 +199,8 @@ impl InstalledApplications {
     }
 
     fn read(&self, path: &Path) -> Result<Selection, InstallError> {
-        let bytes = private_files::read(path, 1024 * 1024 + 1)?;
-        if bytes.len() > 1024 * 1024 {
+        let bytes = private_files::read(path, MAX_SELECTION_BYTES + 1)?;
+        if bytes.len() > MAX_SELECTION_BYTES {
             return Err(InstallError::TooLarge(path.to_owned()));
         }
         serde_json::from_slice(&bytes).map_err(|source| InstallError::Record {
@@ -269,16 +271,17 @@ impl InstalledApplications {
             owner: owner.to_owned(),
             receipt: receipt.clone(),
         };
+        let bytes = serde_json::to_vec(&selection).map_err(|source| InstallError::Record {
+            path: path.clone(),
+            source,
+        })?;
+        if bytes.len() > MAX_SELECTION_BYTES {
+            return Err(InstallError::TooLarge(path));
+        }
         let mut temporary = tempfile::NamedTempFile::new_in(&self.selected)
             .map_err(|e| io("creating selection", &path, e))?;
-        serde_json::to_writer(&mut temporary, &selection).map_err(|source| {
-            InstallError::Record {
-                path: path.clone(),
-                source,
-            }
-        })?;
         temporary
-            .flush()
+            .write_all(&bytes)
             .map_err(|e| io("writing selection", &path, e))?;
         temporary
             .as_file()
@@ -515,6 +518,54 @@ mod tests {
         oversized.push(b'x');
         std::fs::write(store.path("one"), oversized).unwrap();
         assert!(matches!(store.collect(), Err(InstallError::TooLarge(_))));
+    }
+
+    #[test]
+    fn oversized_replacements_preserve_readable_selections_and_collection() {
+        fn sized(mut receipt: PreparedReceipt, bytes: usize) -> PreparedReceipt {
+            receipt.manifest.init_visible_vars = vec![("padding".into(), String::new())];
+            let overhead = serde_json::to_vec(&Selection {
+                owner: "owner".into(),
+                receipt: receipt.clone(),
+            })
+            .unwrap()
+            .len();
+            receipt.manifest.init_visible_vars[0].1 = "x".repeat(bytes - overhead);
+            receipt
+        }
+
+        let (_root, store) = store();
+        let (first, producer, first_path) = publication(&store, "one", "first");
+        let first = sized(first, 1024 * 1024);
+        store.select_receipt("owner", &first).unwrap();
+        drop(producer);
+        let before = std::fs::read(store.path("one")).unwrap();
+        assert_eq!(before.len(), 1024 * 1024);
+        assert_eq!(
+            store.load("owner", &["one"]).unwrap()[0].receipt.version,
+            "first"
+        );
+
+        let (sibling, producer, sibling_path) = publication(&store, "two", "sibling");
+        store.select_receipt("owner", &sibling).unwrap();
+        drop(producer);
+        let sibling_before = std::fs::read(store.path("two")).unwrap();
+        let (next, producer, next_path) = publication(&store, "one", "next");
+        let next = sized(next, 1024 * 1024 + 1);
+        assert!(matches!(
+            store.select_receipt("owner", &next),
+            Err(InstallError::TooLarge(_))
+        ));
+        assert_eq!(std::fs::read(store.path("one")).unwrap(), before);
+        assert_eq!(std::fs::read(store.path("two")).unwrap(), sibling_before);
+        drop(producer);
+        store.collect().unwrap();
+        assert!(first_path.is_dir() && sibling_path.is_dir());
+        assert!(!next_path.exists());
+        assert_eq!(
+            store.load("owner", &["one"]).unwrap()[0].receipt.version,
+            "first"
+        );
     }
 
     #[test]

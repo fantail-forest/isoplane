@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use isoplane_abi::dispatch::{DispatchRecord, HttpRequest};
 
+use isoplane_harness::fakes::*;
 use isoplane_host::cell::{Cell, CellConfig, Target};
-use isoplane_host::fakes::*;
 use isoplane_host::{Activator, ModuleId};
 use isoplane_test_support::wait_for;
 

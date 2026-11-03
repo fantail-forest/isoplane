@@ -173,13 +173,11 @@ impl Proxy {
         req: Request<Incoming>,
         peer: SocketAddr,
     ) -> Response<Body> {
-        let host = req
-            .headers()
-            .get(hyper::header::HOST)
-            .and_then(|v| v.to_str().ok())
-            .map(str::to_string)
-            .or_else(|| req.uri().host().map(str::to_string))
-            .unwrap_or_default();
+        let host = match req.headers().get(hyper::header::HOST) {
+            Some(host) => host.to_str().ok(),
+            None => req.uri().host(),
+        }
+        .unwrap_or_default();
         let path = req.uri().path().to_string();
 
         // Before route resolution: an overloaded node should spend as little
@@ -195,7 +193,7 @@ impl Proxy {
             }
         };
 
-        let Some(target) = self.routes.resolve(&host, &path) else {
+        let Some(target) = self.routes.resolve(host, &path) else {
             self.metrics.requests_404.fetch_add(1, Relaxed);
             return text(StatusCode::NOT_FOUND, "no route", &[]);
         };
