@@ -83,7 +83,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -94,7 +94,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -456,24 +456,24 @@ dependencies = [
 
 [[package]]
 name = "cranelift-assembler-x64"
-version = "0.135.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
+version = "0.135.8"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=4d40e926030ede9bf9defc5cd2a1b721ec77ab23#4d40e926030ede9bf9defc5cd2a1b721ec77ab23"
 dependencies = [
  "cranelift-assembler-x64-meta",
 ]
 
 [[package]]
 name = "cranelift-assembler-x64-meta"
-version = "0.135.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
+version = "0.135.8"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=4d40e926030ede9bf9defc5cd2a1b721ec77ab23#4d40e926030ede9bf9defc5cd2a1b721ec77ab23"
 dependencies = [
  "cranelift-srcgen",
 ]
 
 [[package]]
 name = "cranelift-bforest"
-version = "0.135.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
+version = "0.135.8"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=4d40e926030ede9bf9defc5cd2a1b721ec77ab23#4d40e926030ede9bf9defc5cd2a1b721ec77ab23"
 dependencies = [
  "cranelift-entity",
  "wasmtime-internal-core",
@@ -481,8 +481,8 @@ dependencies = [
 
 [[package]]
 name = "cranelift-bitset"
-version = "0.135.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
+version = "0.135.8"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=4d40e926030ede9bf9defc5cd2a1b721ec77ab23#4d40e926030ede9bf9defc5cd2a1b721ec77ab23"
 dependencies = [
  "serde",
  "serde_derive",
@@ -491,8 +491,8 @@ dependencies = [
 
 [[package]]
 name = "cranelift-codegen"
-version = "0.135.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
+version = "0.135.8"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=4d40e926030ede9bf9defc5cd2a1b721ec77ab23#4d40e926030ede9bf9defc5cd2a1b721ec77ab23"
 dependencies = [
  "bumpalo",
  "cranelift-assembler-x64",
@@ -521,8 +521,8 @@ dependencies = [
 
 [[package]]
 name = "cranelift-codegen-meta"
-version = "0.135.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
+version = "0.135.8"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=4d40e926030ede9bf9defc5cd2a1b721ec77ab23#4d40e926030ede9bf9defc5cd2a1b721ec77ab23"
 dependencies = [
  "cranelift-assembler-x64-meta",
  "cranelift-codegen-shared",
@@ -533,21 +533,21 @@ dependencies = [
 
 [[package]]
 name = "cranelift-codegen-shared"
-version = "0.135.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
+version = "0.135.8"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=4d40e926030ede9bf9defc5cd2a1b721ec77ab23#4d40e926030ede9bf9defc5cd2a1b721ec77ab23"
 
 [[package]]
 name = "cranelift-control"
-version = "0.135.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
+version = "0.135.8"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=4d40e926030ede9bf9defc5cd2a1b721ec77ab23#4d40e926030ede9bf9defc5cd2a1b721ec77ab23"
 dependencies = [
  "arbitrary",
 ]
 
 [[package]]
 name = "cranelift-entity"
-version = "0.135.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
+version = "0.135.8"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=4d40e926030ede9bf9defc5cd2a1b721ec77ab23#4d40e926030ede9bf9defc5cd2a1b721ec77ab23"
 dependencies = [
  "cranelift-bitset",
  "serde",
@@ -557,8 +557,8 @@ dependencies = [
 
 [[package]]
 name = "cranelift-frontend"
-version = "0.135.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
+version = "0.135.8"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=4d40e926030ede9bf9defc5cd2a1b721ec77ab23#4d40e926030ede9bf9defc5cd2a1b721ec77ab23"
 dependencies = [
  "cranelift-codegen",
  "hashbrown 0.17.1",
@@ -569,13 +569,13 @@ dependencies = [
 
 [[package]]
 name = "cranelift-isle"
-version = "0.135.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
+version = "0.135.8"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=4d40e926030ede9bf9defc5cd2a1b721ec77ab23#4d40e926030ede9bf9defc5cd2a1b721ec77ab23"
 
 [[package]]
 name = "cranelift-native"
-version = "0.135.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
+version = "0.135.8"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=4d40e926030ede9bf9defc5cd2a1b721ec77ab23#4d40e926030ede9bf9defc5cd2a1b721ec77ab23"
 dependencies = [
  "cranelift-codegen",
  "libc",
@@ -584,8 +584,8 @@ dependencies = [
 
 [[package]]
 name = "cranelift-srcgen"
-version = "0.135.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
+version = "0.135.8"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=4d40e926030ede9bf9defc5cd2a1b721ec77ab23#4d40e926030ede9bf9defc5cd2a1b721ec77ab23"
 
 [[package]]
 name = "crc32fast"
@@ -764,7 +764,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2205,7 +2205,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -2516,7 +2516,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.13.0",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -2524,8 +2524,8 @@ dependencies = [
 
 [[package]]
 name = "pulley-interpreter"
-version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
+version = "48.0.8"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=4d40e926030ede9bf9defc5cd2a1b721ec77ab23#4d40e926030ede9bf9defc5cd2a1b721ec77ab23"
 dependencies = [
  "cranelift-bitset",
  "log",
@@ -2535,8 +2535,8 @@ dependencies = [
 
 [[package]]
 name = "pulley-macros"
-version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
+version = "48.0.8"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=4d40e926030ede9bf9defc5cd2a1b721ec77ab23#4d40e926030ede9bf9defc5cd2a1b721ec77ab23"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2596,7 +2596,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2885,7 +2885,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2942,7 +2942,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3265,7 +3265,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -3396,10 +3396,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3955,12 +3955,12 @@ dependencies = [
 
 [[package]]
 name = "wasm-encoder"
-version = "0.254.0"
+version = "0.254.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09480d646178e5fdd12bb06e812d0af9a3a191dbc9cd697fdc86687beade7393"
+checksum = "ebaca0b540bdb15d195ff34fb23074255948708b8916a11a339ba4513dc61906"
 dependencies = [
  "leb128fmt",
- "wasmparser 0.254.0",
+ "wasmparser 0.254.2",
 ]
 
 [[package]]
@@ -3988,9 +3988,9 @@ dependencies = [
 
 [[package]]
 name = "wasmparser"
-version = "0.254.0"
+version = "0.254.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d5769a29f799fbab136aaf65b4fe5384cd7d93fe6fc9ba0dcb6c8382a1f16e27"
+checksum = "c5ff8685b587722894b6f25958fc608d315b93b8d23647bfb567664e7006d757"
 dependencies = [
  "bitflags 2.13.1",
  "hashbrown 0.17.1",
@@ -4012,19 +4012,19 @@ dependencies = [
 
 [[package]]
 name = "wasmprinter"
-version = "0.254.0"
+version = "0.254.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "64e3ba11e024f504698f87b629b2b66c22a1231758de7607754963f7d198be39"
+checksum = "8b03c8f270f3f384f70f42869b5ff7f6253fe4f0aa8590f7edd332c1943e5f51"
 dependencies = [
  "anyhow",
  "termcolor",
- "wasmparser 0.254.0",
+ "wasmparser 0.254.2",
 ]
 
 [[package]]
 name = "wasmtime"
-version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
+version = "48.0.8"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=4d40e926030ede9bf9defc5cd2a1b721ec77ab23#4d40e926030ede9bf9defc5cd2a1b721ec77ab23"
 dependencies = [
  "addr2line",
  "async-trait",
@@ -4050,7 +4050,7 @@ dependencies = [
  "serde_json",
  "smallvec",
  "target-lexicon",
- "wasmparser 0.254.0",
+ "wasmparser 0.254.2",
  "wasmtime-environ",
  "wasmtime-internal-core",
  "wasmtime-internal-cranelift",
@@ -4065,8 +4065,8 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-environ"
-version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
+version = "48.0.8"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=4d40e926030ede9bf9defc5cd2a1b721ec77ab23#4d40e926030ede9bf9defc5cd2a1b721ec77ab23"
 dependencies = [
  "anyhow",
  "cpp_demangle",
@@ -4086,8 +4086,8 @@ dependencies = [
  "sha2",
  "smallvec",
  "target-lexicon",
- "wasm-encoder 0.254.0",
- "wasmparser 0.254.0",
+ "wasm-encoder 0.254.2",
+ "wasmparser 0.254.2",
  "wasmprinter",
  "wasmtime-internal-component-util",
  "wasmtime-internal-core",
@@ -4095,13 +4095,13 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-internal-component-util"
-version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
+version = "48.0.8"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=4d40e926030ede9bf9defc5cd2a1b721ec77ab23#4d40e926030ede9bf9defc5cd2a1b721ec77ab23"
 
 [[package]]
 name = "wasmtime-internal-core"
-version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
+version = "48.0.8"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=4d40e926030ede9bf9defc5cd2a1b721ec77ab23#4d40e926030ede9bf9defc5cd2a1b721ec77ab23"
 dependencies = [
  "anyhow",
  "hashbrown 0.17.1",
@@ -4111,8 +4111,8 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-internal-cranelift"
-version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
+version = "48.0.8"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=4d40e926030ede9bf9defc5cd2a1b721ec77ab23#4d40e926030ede9bf9defc5cd2a1b721ec77ab23"
 dependencies = [
  "cranelift-codegen",
  "cranelift-control",
@@ -4127,7 +4127,7 @@ dependencies = [
  "smallvec",
  "target-lexicon",
  "thiserror 2.0.20",
- "wasmparser 0.254.0",
+ "wasmparser 0.254.2",
  "wasmtime-environ",
  "wasmtime-internal-core",
  "wasmtime-internal-unwinder",
@@ -4136,8 +4136,8 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-internal-fiber"
-version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
+version = "48.0.8"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=4d40e926030ede9bf9defc5cd2a1b721ec77ab23#4d40e926030ede9bf9defc5cd2a1b721ec77ab23"
 dependencies = [
  "cc",
  "libc",
@@ -4149,8 +4149,8 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-internal-jit-debug"
-version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
+version = "48.0.8"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=4d40e926030ede9bf9defc5cd2a1b721ec77ab23#4d40e926030ede9bf9defc5cd2a1b721ec77ab23"
 dependencies = [
  "cc",
  "object",
@@ -4160,8 +4160,8 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-internal-jit-icache-coherence"
-version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
+version = "48.0.8"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=4d40e926030ede9bf9defc5cd2a1b721ec77ab23#4d40e926030ede9bf9defc5cd2a1b721ec77ab23"
 dependencies = [
  "libc",
  "wasmtime-internal-core",
@@ -4170,8 +4170,8 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-internal-unwinder"
-version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
+version = "48.0.8"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=4d40e926030ede9bf9defc5cd2a1b721ec77ab23#4d40e926030ede9bf9defc5cd2a1b721ec77ab23"
 dependencies = [
  "cranelift-codegen",
  "log",
@@ -4181,8 +4181,8 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-internal-versioned-export-macros"
-version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
+version = "48.0.8"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=4d40e926030ede9bf9defc5cd2a1b721ec77ab23#4d40e926030ede9bf9defc5cd2a1b721ec77ab23"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4191,15 +4191,15 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-internal-winch"
-version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
+version = "48.0.8"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=4d40e926030ede9bf9defc5cd2a1b721ec77ab23#4d40e926030ede9bf9defc5cd2a1b721ec77ab23"
 dependencies = [
  "cranelift-codegen",
  "gimli",
  "log",
  "object",
  "target-lexicon",
- "wasmparser 0.254.0",
+ "wasmparser 0.254.2",
  "wasmtime-environ",
  "wasmtime-internal-cranelift",
  "winch-codegen",
@@ -4303,7 +4303,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4314,8 +4314,8 @@ checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
 
 [[package]]
 name = "winch-codegen"
-version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
+version = "48.0.8"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=4d40e926030ede9bf9defc5cd2a1b721ec77ab23#4d40e926030ede9bf9defc5cd2a1b721ec77ab23"
 dependencies = [
  "cranelift-assembler-x64",
  "cranelift-codegen",
@@ -4324,7 +4324,7 @@ dependencies = [
  "smallvec",
  "target-lexicon",
  "thiserror 2.0.20",
- "wasmparser 0.254.0",
+ "wasmparser 0.254.2",
  "wasmtime-environ",
  "wasmtime-internal-core",
  "wasmtime-internal-cranelift",
