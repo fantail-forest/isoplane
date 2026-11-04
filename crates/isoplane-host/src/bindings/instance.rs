@@ -92,9 +92,6 @@ pub struct InstanceCtx {
     /// that returns an `i64`; the cell converts it after the slice returns.
     pub(super) trap_latch: Mutex<Option<TrapCode>>,
     dispatch_generation: AtomicU64,
-    /// Host-to-guest bytes for `entropy_fill`, copied in by the engine after
-    /// the call.
-    pub(super) out_buffer: Mutex<Vec<u8>>,
     pub responses: Mutex<ResponseTable>,
     pub(super) http: Arc<super::http_scope::HttpScope>,
     pub(super) spans: Mutex<super::observability::TraceSpans>,
@@ -223,7 +220,6 @@ impl InstanceCtx {
             entropy_calls: AtomicU64::new(0),
             trap_latch: Mutex::new(None),
             dispatch_generation: AtomicU64::new(0),
-            out_buffer: Mutex::new(Vec::new()),
             responses: Mutex::new(ResponseTable::new(
                 GuestResourceLimits::default().response_handles,
                 tenancy.limits.instance_memory_max,
@@ -380,9 +376,6 @@ impl InstanceCtx {
         if g.is_none() {
             *g = Some(code);
         }
-    }
-    pub fn take_out_buffer(&self) -> Vec<u8> {
-        std::mem::take(&mut self.out_buffer.lock())
     }
 }
 

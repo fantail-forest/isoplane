@@ -51,8 +51,8 @@ pub struct PreInitOutcome {
     pub init_occupancy_ms: u64,
     /// Length of the portable initialized module in bytes.
     pub template_bytes: u64,
-    /// Digest of explicit initialization inputs; fresh random output is excluded.
-    pub reproducible_digest: [u8; 32],
+    /// Digest binding source, configuration, policy and declared files.
+    pub initialization_identity: [u8; 32],
     /// The capability each deferred unit reached for.
     pub deferred_reasons: Vec<(u32, String)>,
     /// `log_emit` output from the final pass.
@@ -219,7 +219,7 @@ impl PreInitializer {
                 deferred_units: output.deferred,
                 passes: output.passes,
                 init_occupancy_ms: output.preparation_occupancy_ns / 1_000_000,
-                reproducible_digest: digest,
+                initialization_identity: digest,
                 deferred_reasons: output.deferred_reasons,
                 init_logs: output.logs,
                 capability_refusals: output.capability_refusals,

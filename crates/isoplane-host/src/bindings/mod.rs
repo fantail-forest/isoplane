@@ -36,8 +36,6 @@ pub use runtime_configuration::{
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use rand::RngCore;
-
 use isoplane_abi::imports::{self, ImportKind};
 use isoplane_abi::result::*;
 use isoplane_abi::status::TrapCode;
@@ -83,9 +81,6 @@ impl CellBindings {
     }
     pub fn ctx(&self) -> &Arc<InstanceCtx> {
         &self.ctx
-    }
-    pub fn take_out_buffer(&mut self) -> Vec<u8> {
-        self.ctx.take_out_buffer()
     }
 
     pub(super) fn rt(&self) -> Option<&Arc<CellRuntime>> {
@@ -402,16 +397,23 @@ impl HostBindings for CellBindings {
 
     /// The host writes into a host-side buffer and the engine copies it in, so
     /// no host pointer enters guest memory.
-    fn call_fill(&mut self, call: ImportCall<'_>, out: &mut [u8]) -> i64 {
+    fn call_fill(
+        &mut self,
+        call: ImportCall<'_>,
+        out: &mut [u8],
+    ) -> Result<i64, isoplane_engine::bindings::BindingError> {
+        use isoplane_engine::bindings::BindingError;
         match call.import {
             "entropy_fill" => {
                 if out.len() > imports::MAX_OUT_BUFFER_BYTES {
-                    return -1;
+                    return Err(BindingError::InvalidRequest(
+                        "entropy draw exceeds the output-buffer cap",
+                    ));
                 }
-                rand::rng().fill_bytes(out);
+                crate::entropy::fill(out)
+                    .map_err(|error| BindingError::Entropy(std::io::Error::other(error)))?;
                 self.ctx.entropy_calls.fetch_add(1, Ordering::Relaxed);
-                *self.ctx.out_buffer.lock() = out.to_vec();
-                out.len() as i64
+                Ok(out.len() as i64)
             }
             "runtime_config_get" => {
                 let configuration = self
@@ -421,18 +423,16 @@ impl HostBindings for CellBindings {
                             .get(&self.ctx.tenant, &self.ctx.module)
                     })
                     .unwrap_or_default();
-                configuration.fill(out)
+                Ok(configuration.fill(out))
             }
-            // Served in the sealed init sandbox by the control plane; at
-            // runtime the guest already holds the config in linear memory.
             "init_hash_seed" | "init_config_get" => {
                 self.ctx.latch_trap(TrapCode::CapabilityViolation);
-                -1
+                Err(BindingError::Unsupported(call.import))
             }
             other => {
                 tracing::error!(import = other, "fill import with no route");
                 self.ctx.latch_trap(TrapCode::Protocol);
-                -1
+                Err(BindingError::Unsupported(other))
             }
         }
     }
@@ -552,10 +552,10 @@ mod tests {
             .iter()
             .filter(|d| matches!(d.buf, imports::BufSpec::Out(_)))
         {
-            let n = b.call_fill(call(def.name, &[], [0; 3]), &mut out);
+            let result = b.call_fill(call(def.name, &[], [0; 3]), &mut out);
             let _ = c.take_trap();
             assert!(
-                n >= 0 || matches!(def.name, "init_hash_seed" | "init_config_get"),
+                result.is_ok() || matches!(def.name, "init_hash_seed" | "init_config_get"),
                 "{} has an out buffer but call_fill refuses it",
                 def.name
             );
@@ -601,7 +601,9 @@ mod tests {
         let mut seen = std::collections::HashSet::new();
         let mut buf = [0u8; 32];
         for _ in 0..64 {
-            let n = b.call_fill(call("entropy_fill", &[], [0; 3]), &mut buf);
+            let n = b
+                .call_fill(call("entropy_fill", &[], [0; 3]), &mut buf)
+                .expect("host entropy");
             assert_eq!(n, 32, "the whole buffer is filled");
             assert!(buf.iter().any(|x| *x != 0), "entropy returned zeros");
             assert!(
@@ -617,9 +619,9 @@ mod tests {
         let c = ctx();
         let mut b = CellBindings::new(c.clone());
         let mut big = vec![0u8; imports::MAX_OUT_BUFFER_BYTES + 1];
-        assert_eq!(
-            b.call_fill(call("entropy_fill", &[], [0; 3]), &mut big),
-            -1,
+        assert!(
+            b.call_fill(call("entropy_fill", &[], [0; 3]), &mut big)
+                .is_err(),
             "a fill past the out-buffer cap is refused"
         );
         assert!(big.iter().all(|x| *x == 0), "and nothing was written");
@@ -643,7 +645,7 @@ mod tests {
     }
 
     #[test]
-    fn clones_do_not_share_an_rng_stream() {
+    fn independent_contexts_receive_distinct_live_entropy_draws() {
         let a = Arc::new(InstanceCtx::for_test(
             InstanceId(1),
             isoplane_abi::config::Limits::default(),
@@ -655,9 +657,11 @@ mod tests {
         let mut ba = CellBindings::new(a);
         let mut bz = CellBindings::new(z);
         let (mut x, mut y) = ([0u8; 32], [0u8; 32]);
-        ba.call_fill(call("entropy_fill", &[], [0; 3]), &mut x);
-        bz.call_fill(call("entropy_fill", &[], [0; 3]), &mut y);
-        assert_ne!(x, y, "two clones drew the same bytes");
+        ba.call_fill(call("entropy_fill", &[], [0; 3]), &mut x)
+            .expect("first draw");
+        bz.call_fill(call("entropy_fill", &[], [0; 3]), &mut y)
+            .expect("second draw");
+        assert_ne!(x, y, "independent host draws returned the same bytes");
     }
 
     #[test]
@@ -665,9 +669,9 @@ mod tests {
         let c = ctx();
         let mut b = CellBindings::new(c.clone());
         let mut seed = [0u8; 16];
-        assert_eq!(
-            b.call_fill(call("init_hash_seed", &[], [0; 3]), &mut seed),
-            -1,
+        assert!(
+            b.call_fill(call("init_hash_seed", &[], [0; 3]), &mut seed)
+                .is_err(),
             "the init seed is refused at runtime"
         );
         assert_eq!(

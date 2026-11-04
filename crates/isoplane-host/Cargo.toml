@@ -29,6 +29,7 @@ hyper-util = { workspace = true }
 http-body-util = { workspace = true }
 bytes = { workspace = true }
 rand = { workspace = true }
+rand_chacha.workspace = true
 scc = { workspace = true }
 serde_json = { workspace = true }
 url = { workspace = true }

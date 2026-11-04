@@ -39,7 +39,7 @@ impl Cache {
         runtime
             .update_reader(File::open(executable)?)
             .with_context(|| format!("identifying local runtime {}", executable.display()))?;
-        let mut key = blake3::Hasher::new_derive_key("isoplane local preinitialization cache v1");
+        let mut key = blake3::Hasher::new_derive_key("isoplane local preinitialization cache v2");
         for bytes in [
             wasm,
             configuration,

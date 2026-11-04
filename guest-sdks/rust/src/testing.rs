@@ -51,7 +51,7 @@ impl StubHost {
     }
 
     /// Supply the init-visible config blob the sealed init sandbox will
-    /// serve. The control plane encodes it as JSON `[(name, value), ..]`.
+    /// serve. Local preparation encodes it as JSON `[(name, value), ..]`.
     pub fn set_config(&self, blob: Vec<u8>) {
         CONFIG.with(|c| *c.borrow_mut() = blob);
     }

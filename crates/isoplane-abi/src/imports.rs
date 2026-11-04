@@ -5,7 +5,7 @@
 pub const HOST_MODULE: &str = "isoplane";
 
 /// Capabilities admitted outside initialization units during runtime bring-up.
-pub const RUNTIME_INIT_CAPABILITIES: &[&str] = &["clock_now_coarse", "entropy_fill"];
+pub const RUNTIME_INIT_CAPABILITIES: &[&str] = &["clock_now_coarse"];
 
 pub use crate::exports;
 
@@ -72,7 +72,8 @@ pub struct ImportDef {
     pub buf: BufSpec,
     /// Results may contain sensitive data, including copies retained in guest state.
     pub sensitive: bool,
-    /// Included in unconditional initialization metadata; context policy governs additional admission.
+    /// Admitted by the unconditional initialization import set. Context policy
+    /// separately permits application entropy and selected runtime bring-up capabilities.
     pub init_visible: bool,
     /// What the capability is for, for a tenant reading a manifest. Required
     /// by `imp!` so a capability cannot be added without saying.
@@ -147,7 +148,7 @@ pub const IMPORTS: &[ImportDef] = &[
         init_visible: true,
         sensitive: true,
         ..ImportDef { buf: BufSpec::Out(0), ..imp!("init_hash_seed", Core, BUF_TO_VOID, SYNC,
-            "String-hash seed for this preparation; copies remain in captured guest state.") }
+            "a fresh string-hash seed, stable within one initialization attempt and captured in its guest state") }
     },
 
     // Tenant-authored deploy input, fixed for the version.
@@ -189,7 +190,8 @@ pub const IMPORTS: &[ImportDef] = &[
     ImportDef { buf: BufSpec::None, ..imp!("clock_deadline_in", Clock, Sig { params: &[I64], results: &[I64] }, FUT,
         "a timer as a host future, so waiting is never a guest loop burning budget") },
     ImportDef { buf: BufSpec::Out(0), ..imp!("entropy_fill", Entropy, BUF_TO_VOID, SYNC,
-        "Requests entropy through the host interface; guest copies remain in captured state.") },
+        "fresh bytes from the host-resident CSPRNG for each supported draw, including application initialization; \
+         values or generators the guest captures still require activation-time handling") },
 
     // ---- outbound http ----------------------------------------------------
     imp!("http_fetch", Http, BUF_TO_FUTURE, FUT,
@@ -262,7 +264,8 @@ mod tests {
         }
     }
 
-    /// This check covers static initialization metadata, not additional context admission.
+    /// The static metadata does not grant runtime capability groups unconditionally.
+    /// The engine applies explicit application-entropy and runtime bring-up policy.
     #[test]
     fn unconditional_initialization_imports_exclude_runtime_capability_groups() {
         let io = [Group::Http, Group::Socket, Group::Clock, Group::Entropy];

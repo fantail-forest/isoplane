@@ -271,7 +271,6 @@ impl StoreState {
                 .as_ref()
                 .is_some_and(|bindings| bindings.permits_initialization_entropy());
         }
-
         (isoplane_abi::imports::RUNTIME_INIT_CAPABILITIES.contains(&name)
             || (matches!(name, "socket_call" | "poll_call")
                 && self

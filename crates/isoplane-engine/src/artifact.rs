@@ -15,8 +15,8 @@ use crate::template::{self, ModuleHash, Template, TemplateInner};
 use crate::{IsoplaneEngine, Result};
 
 impl IsoplaneEngine {
-    /// Cranelift compile. Parsing hostile input: the caller runs this inside
-    /// the resource-capped validator sandbox.
+    /// Compiles portable WASM locally after checking its structural declarations.
+    /// Compilation runs in the host process; this does not provide process isolation.
     pub fn load_template(&self, template_wasm: &[u8]) -> Result<Template> {
         template::structural_check(template_wasm)?;
         let module = crate::compiler::compile(

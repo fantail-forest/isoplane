@@ -27,11 +27,12 @@ pub struct BuildRequest {
 
 impl BuildRequest {
     /// Bind the prepared state to its input, runtime and the content of the
-    /// files initialization can read. The times of those files are not bound:
+    /// files initialization can read. This input identity permits reuse of captured
+    /// state; a fresh execution may draw different entropy. File times are not bound:
     /// a file set is identified by its paths and bytes.
     pub fn identity(&self) -> Result<isoplane_engine::prepared::PreparedIdentity, postcard::Error> {
         let mut hash = blake3::Hasher::new();
-        hash.update(b"isoplane.prepared-initialization.v3\0");
+        hash.update(b"isoplane.prepared-initialization.v4\0");
         hash.update(&self.initialization.digest(self.input_hash)?);
         hash.update(&postcard::to_allocvec(&self.memory_limit)?);
         hash.update(&postcard::to_allocvec(&self.guest_memory_bytes)?);

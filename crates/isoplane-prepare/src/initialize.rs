@@ -33,7 +33,8 @@ pub struct Initialization {
 }
 
 impl Initialization {
-    /// Digest of explicit initialization inputs; fresh random output is excluded.
+    /// Identifies source, configuration and capability inputs for captured-state reuse.
+    /// Fresh random draws and execution budgets are excluded from this input identity.
     pub fn digest(&self, input_hash: [u8; 32]) -> Result<[u8; 32], postcard::Error> {
         let mut hash = blake3::Hasher::new();
         hash.update(b"isoplane.initialization-input.v2\0");
@@ -258,8 +259,6 @@ pub(crate) fn initialize_with_cache(
     memory_limit_bytes: Option<u64>,
     capture: CaptureMode<'_>,
 ) -> Result<InitializationOutput, PrepareError> {
-    let permits_entropy = !matches!(&capture, CaptureMode::RuntimeBaseline { .. });
-
     if request.runtime_config.len() > isoplane_abi::imports::MAX_RUNTIME_CONFIGURATION_BYTES
         || serde_json::from_slice::<BTreeMap<String, String>>(&request.runtime_config).is_err()
     {
@@ -289,6 +288,7 @@ pub(crate) fn initialize_with_cache(
     let initialization_start = Instant::now();
     let mut deferred = BTreeSet::new();
     let mut usage = InitializationUsage::default();
+    let permits_entropy = !matches!(capture, CaptureMode::RuntimeBaseline { .. });
     for pass in 1..=request.max_passes {
         let io = match (&request.network, &reactor) {
             (Some(network), Some(reactor)) => {
@@ -761,7 +761,6 @@ impl isoplane_engine::bindings::InitializationBindings for Bindings {
     fn permits_entropy(&self) -> bool {
         self.permits_entropy
     }
-
     fn permits_io(&self) -> bool {
         self.io.is_some() && self.runtime_bringup()
     }
@@ -851,13 +850,25 @@ impl isoplane_engine::bindings::InitializationBindings for Bindings {
                     ));
                 }
                 state.seed_reads += 1;
-                if !self.permits_entropy() {
+                if !self.permits_entropy {
                     return Err(isoplane_engine::bindings::BindingError::Unsupported(
                         "entropy in shared runtime baseline",
                     ));
                 }
-                let seed = state.seed.get_or_insert_with(rand::random);
-                output.copy_from_slice(seed);
+                let seed = match state.seed {
+                    Some(seed) => seed,
+                    None => {
+                        let mut seed = [0; 16];
+                        isoplane_host::entropy::fill(&mut seed).map_err(|error| {
+                            isoplane_engine::bindings::BindingError::Entropy(std::io::Error::other(
+                                error,
+                            ))
+                        })?;
+                        state.seed = Some(seed);
+                        seed
+                    }
+                };
+                output.copy_from_slice(&seed);
                 Ok(output.len() as i64)
             }
             "runtime_config_get" => {
@@ -870,8 +881,10 @@ impl isoplane_engine::bindings::InitializationBindings for Bindings {
                 output[..length].copy_from_slice(&state.config[..length]);
                 Ok(state.config.len() as i64)
             }
-            "entropy_fill" if self.permits_entropy() => {
-                rand::RngCore::fill_bytes(&mut rand::rng(), output);
+            "entropy_fill" if self.permits_entropy => {
+                isoplane_host::entropy::fill(output).map_err(|error| {
+                    isoplane_engine::bindings::BindingError::Entropy(std::io::Error::other(error))
+                })?;
                 state.draws += 1;
                 Ok(output.len() as i64)
             }

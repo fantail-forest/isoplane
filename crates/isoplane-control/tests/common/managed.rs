@@ -52,6 +52,7 @@ pub fn prepare(name: &str, platform_files: PlatformFiles) -> Result<Prepared, Wo
         input_hash: *blake3::hash(&wasm).as_bytes(),
         initialization: Initialization {
             network: None,
+
             config: Vec::new(),
             runtime_config: b"{}".to_vec(),
             sandbox: InitSandbox::RuntimeBringUp,

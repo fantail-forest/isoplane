@@ -132,7 +132,7 @@ mod byte_payloads {
 
 impl IsoplaneEngine {
     /// Compiles already initialized portable WASM and captures its complete baseline once.
-    /// Called by controlled local preparation before activation.
+    /// Called by local preparation before activation.
     pub fn prepare_template(
         &self,
         template_wasm: &[u8],
@@ -195,7 +195,7 @@ impl IsoplaneEngine {
         })
     }
 
-    /// Decodes successful output from the host's controlled local preparation compiler.
+    /// Decodes successful output from the host's local preparation compiler.
     ///
     /// # Safety
     /// The bytes must come exclusively from the controlled local compiler selected by the host.
@@ -338,7 +338,7 @@ impl IsoplaneEngine {
         Ok(template)
     }
 
-    /// Checks a local manifest and returns the exact content digest recorded by selection.
+    /// Checks a published manifest and returns its content digest for local selection.
     pub fn prepared_manifest_sha256(&self, directory: &Path) -> Result<[u8; 32]> {
         let (manifest, digest) = files::read_manifest_receipt(directory)?;
         self.check_prepared(&manifest, manifest.identity)?;
@@ -351,8 +351,6 @@ impl IsoplaneEngine {
     /// # Safety
     /// As for [`IsoplaneEngine::load_prepared`].
     #[tracing::instrument(name = "template_load", skip_all)]
-    /// Native bytes must originate from controlled local compilation and trusted operator-owned storage.
-    /// Checksums do not establish compiler origin.
     pub unsafe fn restore_prepared(
         &self,
         directory: &Path,
@@ -371,8 +369,6 @@ impl IsoplaneEngine {
     /// # Safety
     /// As for [`IsoplaneEngine::load_prepared`].
     #[tracing::instrument(name = "template_load", skip_all)]
-    /// Native bytes must originate from controlled local compilation and trusted operator-owned storage.
-    /// Checksums do not establish compiler origin.
     pub unsafe fn restore_prepared_over(
         &self,
         base: &Template,
@@ -386,16 +382,12 @@ impl IsoplaneEngine {
         unsafe { self.map_prepared(directory, manifest, prefetch, Some(base)) }
     }
 
-    /// Maps a local compiled artifact matching the exact manifest digest
-    /// recorded by local selection.
-    /// Refuses a manifest whose digest, identity or engine
-    /// compatibility differs from what is expected.
+    /// Maps a published local artifact matching the recorded manifest digest
+    /// and complete expected identity. Refuses different engine compatibility.
     ///
     /// # Safety
     /// As for [`IsoplaneEngine::load_prepared`].
     #[tracing::instrument(name = "template_load", skip_all)]
-    /// Native bytes must originate from controlled local compilation and trusted operator-owned storage.
-    /// Checksums do not establish compiler origin.
     pub unsafe fn restore_prepared_by_digest(
         &self,
         directory: &Path,
@@ -447,6 +439,8 @@ impl IsoplaneEngine {
     /// template storage-failed; further activation is refused until it is loaded again.
     ///
     /// # Safety
+    /// Native bytes must originate from the controlled local compiler and remain in trusted
+    /// operator-owned storage. Checksums do not establish compiler origin.
     /// Keep state and readable baseline bytes unchanged for every returned template and
     /// instance; publication read-only permissions are not an isolation boundary.
     /// On Linux, loss of whole baseline backing pages is a supported failure only through
@@ -454,8 +448,6 @@ impl IsoplaneEngine {
     /// not be used for capture or further activation. Partial-page truncation and byte
     /// overwrites remain forbidden, as do native-code and state-file mutation.
     #[tracing::instrument(name = "template_load", skip_all)]
-    /// Native bytes must originate from controlled local compilation and trusted operator-owned storage.
-    /// Checksums do not establish compiler origin.
     pub unsafe fn load_prepared(
         &self,
         directory: &Path,
@@ -475,8 +467,6 @@ impl IsoplaneEngine {
     /// # Safety
     /// As for [`IsoplaneEngine::load_prepared`], for this template's files and `base`'s.
     #[tracing::instrument(name = "template_load", skip_all)]
-    /// Native bytes must originate from controlled local compilation and trusted operator-owned storage.
-    /// Checksums do not establish compiler origin.
     pub unsafe fn load_prepared_over(
         &self,
         base: &Template,
@@ -550,7 +540,8 @@ impl IsoplaneEngine {
             (None, Some(native)) => {
                 let module = tracing::info_span!("template_native_deserialize")
                     .in_scope(|| {
-                        // SAFETY: the caller guarantees local compiler origin; the private copy matches the manifest.
+                        // SAFETY: the caller guarantees controlled local compiler origin; the verified
+                        // private copy holds exactly the payload recorded in the manifest.
                         unsafe { native.deserialize(&self.inner.wasmtime) }
                     })
                     .map_err(|e| PreparedError::Engine(e.into()))?;

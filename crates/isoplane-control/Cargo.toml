@@ -11,17 +11,15 @@ description = "Local preparation admission and protected files"
 thiserror = { workspace = true }
 serde = { workspace = true }
 isoplane-abi = { workspace = true, features = ["host"] }
-isoplane-engine = { workspace = true }
-async-trait = { workspace = true }
 isoplane-runtime = { workspace = true }
-blake3 = { workspace = true }
 rustix.workspace = true
 libc.workspace = true
 tempfile.workspace = true
-hex = { workspace = true }
 zstd = { workspace = true }
 
 [dev-dependencies]
+isoplane-engine.workspace = true
+blake3.workspace = true
 anyhow.workspace = true
 isoplane-prepare.workspace = true
 tokio-util.workspace = true

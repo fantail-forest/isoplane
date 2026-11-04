@@ -7,11 +7,11 @@ import {OnlyOn, PlatformToggle} from '@site/src/components/Platform';
 <PlatformToggle />
 
 ASP.NET Core Data Protection encrypts authentication cookies and antiforgery
-tokens. A key created during initialization is captured in the template and
-shared by its instances. Fresh initialization may create a different key;
-reusing a template retains its captured key. This guide keeps keys in the
-application's settings or database so that older protected data can still be
-read when a new template is prepared.
+tokens with keys chosen by the application. A key created during Isoplane
+initialization is captured and shared by instances of that template. Fresh
+initialization may create a different key, while reusing a prepared template
+reuses the captured key. Replacing keys can sign users out. This guide keeps
+keys across preparations through application settings or a database.
 [Initialization state snapshots](../concepts/dotnet-runtime-differences.md#initialization)
 explains why.
 

@@ -322,18 +322,19 @@ instance. The snapshot can contain secrets, and we treat it as one. Changing a
 setting runs initialization again and makes a new snapshot, so no instance
 runs with settings older than its snapshot. Two things follow:
 
-- A value created during initialization is captured in the template and
-  shared by its instances. Fresh initialization may create a different value;
-  reusing a prepared template preserves its captured value. Keep long-lived
-  values in configuration or external storage. For ASP.NET Core Data Protection,
-  retain earlier keys while cookies or antiforgery tokens protected with them
-  must remain readable.
+- Actual initialization draws fresh randomness from the host. Reusing an
+  existing prepared snapshot copies values it already captured. Anything that
+  must stay the same across fresh preparations belongs in configuration or
+  external storage.
+  The common case is ASP.NET Core's Data Protection key, which encrypts
+  authentication cookies and antiforgery tokens; replacing its captured key
+  can sign users out.
   [Keep ASP.NET Core Data Protection keys across builds](../how-to/keep-data-protection-keys.md)
   shows how.
 - A value that must be unique to each instance, such as an identifier or a
   nonce, has to be created after the snapshot. `Random.Shared`, unseeded
   `Random` instances and SQLite's `random()` are reseeded for you, and
-  cryptographic randomness is always fresh. A seeded `Random` or a value
+  new cryptographic draws use fresh host entropy. A seeded `Random` or a value
   already drawn during initialization is not.
 
 :::tip

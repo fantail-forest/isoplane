@@ -41,7 +41,7 @@ impl Baselines {
         version: &str,
         admit: impl FnOnce() -> anyhow::Result<()>,
     ) -> anyhow::Result<super::Prepared> {
-        let request = request(project, wasm, settings, version)?;
+        let request = request(project, wasm, settings)?;
         let wanted = request.baseline();
         let identity = wanted.identity()?;
         let mut current = self.current.lock();
@@ -85,7 +85,7 @@ pub(super) fn prepare_runtime(
     admit: impl FnOnce() -> anyhow::Result<()>,
 ) -> anyhow::Result<bool> {
     // A baseline's identity leaves out the application's settings and version.
-    let request = request(project, wasm, b"{}", "")?;
+    let request = request(project, wasm, b"{}")?;
     let (_, compiled) = published(project, wasm, &request.baseline(), admit)?;
     Ok(compiled)
 }
@@ -106,7 +106,8 @@ fn application(
     let directory = layers.directory().join(&name);
     let engine = baseline.engine();
     // SAFETY: the directory lies in the project's private cache, under a lease this
-    // preparation holds. Only `publish_application` writes locally compiled native output there, publishing each layer
+    // preparation holds. Only `publish_application` writes controlled local compiler output
+    // there, publishing each layer
     // atomically as files that nothing rewrites while a template maps them.
     let loaded =
         unsafe { engine.load_prepared_over(baseline.template(), &directory, identity, &[]) };
@@ -215,7 +216,6 @@ fn request(
     project: &Project,
     wasm: &[u8],
     settings: &[u8],
-    version: &str,
 ) -> anyhow::Result<isoplane_prepare::BuildRequest> {
     let manifest = &project.manifest;
     Ok(isoplane_prepare::BuildRequest {
@@ -314,7 +314,7 @@ fn load(
     identity: isoplane_engine::prepared::PreparedIdentity,
 ) -> Result<isoplane_engine::Template, isoplane_engine::prepared::PreparedError> {
     // SAFETY: the directory lies in the user's runtime cache, which
-    // `runtime_cache` checked is private. Only `published` writes baselines
+    // `runtime_cache` checked is private. Only `published` writes locally compiled baselines
     // there, publishing each atomically as files that nothing rewrites while
     // a template maps them.
     unsafe { engine.load_prepared(directory, identity, &[]) }

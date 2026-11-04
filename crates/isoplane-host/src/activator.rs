@@ -20,7 +20,7 @@ pub struct ReloadedTemplateDiffers {
     pub module: ModuleId,
 }
 
-/// Loads a module's template again from its local prepared artifact.
+/// Loads a module's template again from controlled local compiler output.
 pub type TemplateReload = Box<dyn Fn() -> crate::Result<Template> + Send + Sync>;
 
 pub struct EngineActivator {
@@ -55,9 +55,8 @@ impl EngineActivator {
         }
     }
 
-    /// Compiles and pre-stages a template. The module bytes are hostile input
-    /// to the compiler, so this expects an artifact the validator sandbox has
-    /// already produced.
+    /// Compiles and pre-stages portable WASM locally. The engine checks its
+    /// structural declarations; compilation runs in the host process.
     pub fn load(
         engine: Arc<IsoplaneEngine>,
         module: ModuleId,
@@ -259,6 +258,7 @@ mod tests {
             runtime_profile: [2; 32],
             initialization_hash: [3; 32],
         };
+
         let directory = tempfile::tempdir().expect("artifact directory");
         let path = directory.path().join("version");
         engine

@@ -19,10 +19,8 @@ const ENTROPY: &str = r#"(import "isoplane" "entropy_fill" (func $entropy (param
 /// Writes the runtime's marker into the first page.
 const RUNTIME: &str = "(i64.store (i32.const 100) (i64.const 0x656d69746e7572))";
 
-/// Reads the application's seed into the first page, sets `$state` and
-/// writes the application's marker into the second page.
-const APPLICATION: &str = "(call $seed (i32.const 64) (i32.const 16))
-    (global.set $state (i32.const 42))
+/// Sets `$state` and writes the application's marker into the second page.
+const APPLICATION: &str = "(global.set $state (i32.const 42))
     (i64.store (i32.const 70000) (i64.const 0x6170706c))";
 
 fn request(wasm: &[u8], sandbox: InitSandbox) -> BuildRequest {
@@ -70,6 +68,7 @@ fn load(
         }
     }
     .expect("the prepared output must decode");
+
     prepared.publish(directory).expect("publish");
     // SAFETY: LocalPreparation in this process produced the decoded native code.
     // The caller holds this private publication directory and leaves its files
@@ -84,7 +83,7 @@ fn load(
 }
 
 #[tokio::test]
-async fn an_application_layer_preserves_initialized_state_outside_its_fresh_seed() {
+async fn an_application_over_a_baseline_loads_to_the_memory_its_whole_initialization_leaves() {
     let wasm = staged::staged_guest(SEED, RUNTIME, APPLICATION);
     let request = request(&wasm, InitSandbox::Sealed);
     let preparation = LocalPreparation::new().expect("local preparation");
@@ -127,13 +126,10 @@ async fn an_application_layer_preserves_initialized_state_outside_its_fresh_seed
         Some(&base),
         &directory.path().join("layer"),
     );
-    // APPLICATION writes its independently drawn 16-byte seed only at 64..80.
-    let layer_memory = layer.memory_image_arc().to_dense();
-    let whole_memory = whole.memory_image_arc().to_dense();
     assert_eq!(
-        (&layer_memory[..64], &layer_memory[80..]),
-        (&whole_memory[..64], &whole_memory[80..]),
-        "layered and whole initialization must preserve the same state outside the fresh application seed"
+        layer.memory_image_arc().to_dense(),
+        whole.memory_image_arc().to_dense(),
+        "an application layer over its runtime baseline must hold the memory its whole initialization leaves"
     );
 }
 
@@ -242,6 +238,7 @@ mod published {
             .prepare_runtime_baseline(wasm, &request.baseline(), &CancellationToken::new())
             .await
             .expect("the runtime stage must prepare as a baseline");
+
         let identity = request
             .baseline()
             .identity()
@@ -259,7 +256,7 @@ mod published {
     }
 
     #[tokio::test]
-    async fn a_published_baseline_layer_preserves_initialized_state_outside_its_fresh_seed() {
+    async fn an_application_prepared_over_a_published_baseline_loads_to_its_whole_initialization() {
         let wasm = staged::staged_guest(SEED, RUNTIME, APPLICATION);
         let request = request(&wasm, InitSandbox::Sealed);
         let preparation = LocalPreparation::new().expect("local preparation");
@@ -296,13 +293,10 @@ mod published {
             None,
             &directory.path().join("whole"),
         );
-        // APPLICATION writes its independently drawn 16-byte seed only at 64..80.
-        let layer_memory = layer.memory_image_arc().to_dense();
-        let whole_memory = whole.memory_image_arc().to_dense();
         assert_eq!(
-            (&layer_memory[..64], &layer_memory[80..]),
-            (&whole_memory[..64], &whole_memory[80..]),
-            "published-baseline and whole initialization must preserve the same state outside the fresh application seed"
+            layer.memory_image_arc().to_dense(),
+            whole.memory_image_arc().to_dense(),
+            "a layer prepared over a published baseline must hold the memory its whole initialization leaves"
         );
     }
 

@@ -5,9 +5,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use super::native::NativeCopy;
-use super::{
-    Manifest, PreparedError, PreparedTemplate, Result, MANIFEST, PAYLOAD_NAMES,
-};
+use super::{Manifest, PreparedError, PreparedTemplate, Result, MANIFEST, PAYLOAD_NAMES};
 
 /// One payload in the fixed prepared-artifact schema.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -127,11 +125,7 @@ impl PreparedTemplate {
         self.publish_as(directory, Persistence::Unflushed)
     }
 
-    fn publish_as(
-        &self,
-        directory: &Path,
-        persistence: Persistence,
-    ) -> Result<()> {
+    fn publish_as(&self, directory: &Path, persistence: Persistence) -> Result<()> {
         let parent = directory.parent().ok_or(PreparedError::Invalid(
             "publication directory has no parent",
         ))?;
@@ -199,9 +193,7 @@ fn write_new(path: &Path, bytes: &[u8], persistence: Persistence) -> Result<()> 
 }
 
 #[tracing::instrument(name = "template_manifest_verify", skip_all)]
-pub(super) fn read_manifest_receipt(
-    directory: &Path,
-) -> Result<(Manifest, [u8; 32])> {
+pub(super) fn read_manifest_receipt(directory: &Path) -> Result<(Manifest, [u8; 32])> {
     use sha2::Digest;
     let bytes = read_manifest_bytes(directory)?;
     Ok((
@@ -210,8 +202,7 @@ pub(super) fn read_manifest_receipt(
     ))
 }
 
-/// The published local manifest, matching the exact digest that selection
-/// recorded for the captured artifact.
+/// The published manifest matching the content digest recorded by local selection.
 #[tracing::instrument(name = "template_manifest_verify", skip_all)]
 pub(super) fn read_manifest_by_digest(
     directory: &Path,
@@ -370,18 +361,14 @@ fn open_verified_payload(
         }
         bytes += read as u64;
         if bytes > record.bytes {
-            return Err(PreparedError::Invalid(
-                "payload differs from manifest",
-            ));
+            return Err(PreparedError::Invalid("payload differs from manifest"));
         }
         hash_pool()?.install(|| hash.update_rayon(&buffer[..read]));
         copy.write_all(&buffer[..read])
             .map_err(|e| io("copy verified payload", &path, e))?;
     }
     if bytes != record.bytes || hash.finalize().as_bytes() != &record.hash {
-        return Err(PreparedError::Invalid(
-            "payload differs from manifest",
-        ));
+        return Err(PreparedError::Invalid("payload differs from manifest"));
     }
     file.rewind()
         .map_err(|e| io("rewind verified payload", &path, e))?;
@@ -479,6 +466,7 @@ mod tests {
             runtime_profile: [8; 32],
             initialization_hash: [3; 32],
         };
+
         engine
             .prepare_template(&wasm, identity)
             .expect("prepare")

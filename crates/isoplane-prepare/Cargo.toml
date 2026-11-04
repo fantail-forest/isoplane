@@ -8,7 +8,6 @@ license-file.workspace = true
 description = "Local sandbox initialization and prepared application production"
 
 [dependencies]
-rand = { workspace = true }
 fs4.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true

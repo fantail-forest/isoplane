@@ -237,6 +237,7 @@ impl FakeInstance {
                     },
                     &mut buf,
                 );
+                let n = n.expect("the fake guest entropy draw must succeed");
                 debug_assert_eq!(n, bytes as i64);
                 self.entropy.lock().push(buf);
                 PollStatus::Done { response: 0 }

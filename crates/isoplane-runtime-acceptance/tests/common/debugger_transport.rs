@@ -65,7 +65,11 @@ impl HostBindings for FragmentedReads {
         self.inner.call_sync(call)
     }
 
-    fn call_fill(&mut self, call: ImportCall<'_>, output: &mut [u8]) -> i64 {
+    fn call_fill(
+        &mut self,
+        call: ImportCall<'_>,
+        output: &mut [u8],
+    ) -> Result<i64, isoplane_engine::bindings::BindingError> {
         self.inner.call_fill(call, output)
     }
 

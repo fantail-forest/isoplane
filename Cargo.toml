@@ -88,6 +88,7 @@ hex         = "0.4"
 httpdate    = "1"
 time = { version = "0.3", default-features = false, features = ["parsing", "macros"] }
 rand        = "0.9"
+rand_chacha = "0.9"
 scc            = "3.8"    # the future table's maps, on the wake path
 rusqlite    = { version = "0.37", features = ["bundled"] }
 hyper       = { version = "1", features = ["full"] }
@@ -103,7 +104,6 @@ http-body-util = "0.1"
 bytes       = "1"
 flate2      = "1"
 tar         = { version = "0.4", default-features = false }
-aes-gcm     = "0.10"
 clap        = { version = "4", features = ["derive", "env"] }
 wasmparser  = "0.244"
 wasm-encoder = { version = "0.244", features = ["wasmparser"] }

@@ -59,10 +59,10 @@ pub trait HostBindings: Send + 'static {
 
     /// An import whose `(ptr, cap)` pair is an out-buffer. The host writes
     /// into `out`, a host-side buffer the engine copies into linear memory
-    /// afterwards, and returns the value's full length or a negative value to
-    /// deny. The default denies unsupported fill operations.
-    fn call_fill(&mut self, _call: ImportCall<'_>, _out: &mut [u8]) -> i64 {
-        -1
+    /// afterwards, and returns the value's full length or a typed refusal.
+    /// The default refuses unsupported fill operations.
+    fn call_fill(&mut self, call: ImportCall<'_>, _out: &mut [u8]) -> Result<i64, BindingError> {
+        Err(BindingError::Unsupported(call.import))
     }
 
     /// The coarse clock sampled at slice entry and after future-returning imports.
@@ -71,8 +71,9 @@ pub trait HostBindings: Send + 'static {
 
     /// The engine is entering the guest for a slice.
     ///
-    /// The serving binding controls clock, timer and cancellation observations at
-    /// this boundary. This is not a guarantee that all I/O observations stay fixed.
+    /// The serving binding fixes exposed clock, timer and cancellation observations
+    /// at this boundary. Native socket readiness and DNS results may change during
+    /// the slice; this does not snapshot every I/O observation.
     fn begin_slice(&mut self);
 
     /// The guest has returned from a slice. Anything that changed while it ran
@@ -103,15 +104,18 @@ pub enum BindingError {
     /// The guest supplied invalid arguments for an operation.
     #[error("invalid host binding request: {0}")]
     InvalidRequest(&'static str),
+    /// The host could not obtain secure entropy for this draw.
+    #[error("host entropy unavailable: {0}")]
+    Entropy(#[source] std::io::Error),
 }
 
-/// Fallible initialization operations, with no facility for creating host futures or resources.
+/// Fallible initialization operations under explicit host capability policy.
 pub trait InitializationBindings: Send + 'static {
-    /// Whether application initialization may draw ambient entropy.
+    /// Whether this application initialization can obtain fresh host entropy.
+    /// Shared runtime baselines refuse it because their captured state is reused by applications.
     fn permits_entropy(&self) -> bool {
         false
     }
-
     /// Whether this context admits asynchronous native capabilities outside init units.
     fn permits_io(&self) -> bool {
         false
@@ -153,14 +157,12 @@ pub(crate) enum Bindings {
 }
 
 impl Bindings {
-    /// Whether the active initializer permits ambient entropy.
     pub fn permits_initialization_entropy(&self) -> bool {
         match self {
             Self::Runtime(_) => false,
             Self::Initialization(bindings) => bindings.permits_entropy(),
         }
     }
-
     pub fn permits_initialization_io(&self) -> bool {
         match self {
             Self::Runtime(_) => false,
@@ -236,7 +238,7 @@ impl Bindings {
     }
     pub fn call_fill(&mut self, call: ImportCall<'_>, out: &mut [u8]) -> Result<i64, BindingError> {
         match self {
-            Self::Runtime(bindings) => Ok(bindings.call_fill(call, out)),
+            Self::Runtime(bindings) => bindings.call_fill(call, out),
             Self::Initialization(bindings) => bindings.call_fill(call, out),
         }
     }

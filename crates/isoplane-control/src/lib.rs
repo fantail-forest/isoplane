@@ -1,4 +1,4 @@
-//! Local preparation admission and protected file operations.
+//! Local preparation admission and owner-protected files.
 
 #![forbid(unsafe_code)]
 

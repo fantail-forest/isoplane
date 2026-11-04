@@ -1,4 +1,4 @@
-//! Host HTTP dispatch and routing contracts.
+//! Local routing and HTTP dispatch interfaces consumed by the host.
 
 use async_trait::async_trait;
 
@@ -10,14 +10,13 @@ pub use http::{
 
 pub type Result<T> = anyhow::Result<T>;
 
-
 #[derive(Debug, Clone)]
 pub struct PinnedTarget {
     pub url: String,
     pub addr: std::net::SocketAddr,
 }
 
-/// Dispatches requests to a locally selected application version.
+/// Dispatches HTTP requests to the application execution layer.
 #[async_trait]
 pub trait Dispatcher: Send + Sync + 'static {
     async fn dispatch_http(

@@ -48,7 +48,7 @@ isoplane_guest::deferred_lazy! {
 #[derive(Serialize)]
 struct InitReport {
     /// The id the host sees for each unit, so a failure report can name the
-    /// same thing the control plane's `deferred_units` does.
+    /// same thing local preparation's `deferred_units` does.
     unit_ids: [(&'static str, i32); 3],
     /// 0 if it pre-ran into the template (the correct answer for a pure unit).
     pure_table_runs_in_instance: u32,

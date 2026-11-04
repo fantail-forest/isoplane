@@ -16,6 +16,7 @@ pub fn request() -> Initialization {
     Initialization {
         network: None,
         runtime_config: b"{}".to_vec(),
+
         config: b"{}".to_vec(),
         sandbox: InitSandbox::Sealed,
         occupancy_ms: 1000,

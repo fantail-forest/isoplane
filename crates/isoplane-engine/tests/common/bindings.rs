@@ -113,19 +113,25 @@ impl HostBindings for TestBindings {
         0
     }
 
-    fn call_fill(&mut self, call: ImportCall<'_>, out: &mut [u8]) -> i64 {
+    fn call_fill(
+        &mut self,
+        call: ImportCall<'_>,
+        out: &mut [u8],
+    ) -> Result<i64, isoplane_engine::bindings::BindingError> {
         self.note(&call);
         if !self.allow_fill
             || (call.import == "entropy_fill" && self.rec.deny_entropy.load(Ordering::Relaxed))
         {
-            return -1;
+            return Err(isoplane_engine::bindings::BindingError::Unsupported(
+                call.import,
+            ));
         }
         if call.import == "runtime_config_get" {
             let settings = self.rec.runtime_configuration.lock();
             let bytes = settings.as_deref().unwrap_or(b"{}");
             let length = bytes.len().min(out.len());
             out[..length].copy_from_slice(&bytes[..length]);
-            return bytes.len() as i64;
+            return Ok(bytes.len() as i64);
         }
         // A fake CSPRNG that answered the same bytes every time could not tell
         // a per-call draw from a cached one.
@@ -134,7 +140,7 @@ impl HostBindings for TestBindings {
         if call.import == "entropy_fill" {
             self.rec.entropy_draws.lock().push(out.to_vec());
         }
-        self.full_length.unwrap_or(out.len() as i64)
+        Ok(self.full_length.unwrap_or(out.len() as i64))
     }
 
     fn slice_clock_ms(&self) -> u64 {

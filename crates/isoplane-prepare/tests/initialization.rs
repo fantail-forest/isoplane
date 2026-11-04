@@ -4,6 +4,38 @@ use isoplane_abi::config::InitSandbox;
 use isoplane_prepare::{initialize, PrepareError};
 
 #[test]
+fn application_units_receive_fresh_entropy_and_a_stable_hash_seed_within_each_attempt() {
+    let wasm = guest(
+        r#"(import "isoplane" "init_unit_begin" (func $unit (param i32)))
+        (import "isoplane" "init_hash_seed" (func $seed (param i32 i32)))
+        (import "isoplane" "entropy_fill" (func $entropy (param i32 i32)))"#,
+        r#"(call $unit (i32.const 1))
+        (call $seed (i32.const 64) (i32.const 16))
+        (call $seed (i32.const 80) (i32.const 16))
+        (call $entropy (i32.const 96) (i32.const 32))"#,
+    );
+    let engine = engine();
+    let first = initialize(&engine, &wasm, &request()).unwrap();
+    let second = initialize(&engine, &wasm, &request()).unwrap();
+    let memory = |prepared: &isoplane_prepare::InitializedModule| {
+        engine
+            .load_template(&prepared.wasm)
+            .unwrap()
+            .memory_image_arc()
+            .to_dense()
+    };
+    let first_memory = memory(&first);
+    let second_memory = memory(&second);
+    for (prepared, memory) in [(&first, &first_memory), (&second, &second_memory)] {
+        assert_eq!(prepared.initialized.seed_reads, 2);
+        assert!(prepared.initialized.deferred.is_empty());
+        assert_eq!(&memory[64..80], &memory[80..96]);
+    }
+    assert_ne!(&first_memory[64..80], &second_memory[64..80]);
+    assert_ne!(&first_memory[96..128], &second_memory[96..128]);
+}
+
+#[test]
 fn initialization_failure_preserves_the_diagnosis_before_a_generic_final_log() {
     let wasm = guest(
         r#"(import "isoplane" "log_emit" (func $log (param i32 i32 i32)))

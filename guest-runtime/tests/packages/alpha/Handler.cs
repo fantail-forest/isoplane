@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 using Isoplane;
@@ -14,6 +15,7 @@ public static class Handler
     private static Timer? heartbeat;
     private static int beats;
     private static readonly SemaphoreSlim gate = new(0);
+    private static byte[] initializedRandomness = Array.Empty<byte>();
 
     /// <summary>Warms the response path before template capture.</summary>
     [Initializer]
@@ -23,6 +25,13 @@ public static class Handler
             .Any(assembly => assembly.GetName().Name == "Beta.Library");
         GC.KeepAlive(Answer("/warmup"));
         return Task.CompletedTask;
+    }
+
+    /// <summary>Captures a cryptographic draw before cloning, alongside the ordinary warmup.</summary>
+    public static Task CaptureRandomnessAsync()
+    {
+        initializedRandomness = RandomNumberGenerator.GetBytes(32);
+        return InitializeAsync();
     }
 
     /// <summary>Answers <c>alpha:</c> and the request path.</summary>
@@ -49,6 +58,9 @@ public static class Handler
             return Response.Text($"initialized={libraryLoadedDuringInitialization};loaded={library.GetName().Name}");
         }
         await Task.Delay(TimeSpan.FromMilliseconds(50)).ConfigureAwait(false);
+        if (req.Path == "/randomness")
+            return Response.Text(Convert.ToHexString(initializedRandomness) + ":" +
+                Convert.ToHexString(RandomNumberGenerator.GetBytes(32)));
         if (req.Path == "/beats") return Response.Text($"beats={beats}");
         return Answer(req.Path);
     }

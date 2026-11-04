@@ -60,6 +60,7 @@ pub struct PublishedBaseline {
 #[cfg(target_os = "linux")]
 impl PublishedBaseline {
     /// # Safety
+    /// The directory must contain output from the controlled local compiler.
     /// Nothing may change or remove the files in `directory` while any
     /// preparation or template uses the baseline: preparation maps them and
     /// runs the native code they hold.

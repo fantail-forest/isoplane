@@ -28,7 +28,7 @@ impl BuildProduct {
 /// Produces initialized state under supplied sandbox limits.
 #[async_trait::async_trait]
 pub trait Preparation: Send + Sync {
-    /// Initialize exactly once per successful replay and return complete prepared output.
+    /// Run bounded initialization attempts and return the successful captured output.
     async fn prepare(
         &self,
         wasm: &[u8],
@@ -73,7 +73,7 @@ impl LocalPreparation {
         Self::build(None)
     }
 
-    /// Reuse compiler-owned, uninitialized input across deployment configurations and seeds.
+    /// Reuse compiler-owned, uninitialized input across deployment configurations.
     pub fn with_cache(cache: Arc<isoplane_engine::CompilationCache>) -> Result<Self, PrepareError> {
         Self::build(Some(cache))
     }

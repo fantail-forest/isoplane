@@ -24,7 +24,10 @@ Isoplane runs initialization while creating a template, ahead of requests. In an
 application it runs `Program.cs` up to `RunAsync`, then raises
 [`Initialization.Initializing`](../reference/sdk/Isoplane.Sdk/Isoplane/Initialization/Initializing.md).
 When the callbacks have finished it saves the application's memory as the
-template.
+template. Preparation can retry initialization to defer a forbidden capability;
+earlier network effects are not rolled back. Make callbacks safe to repeat. An
+unchanged local session can reuse an already prepared template, which runs no
+initialization callbacks.
 
 ```csharp
 var app = builder.Build();
@@ -248,10 +251,9 @@ without rerunning initialization callbacks.
 - Keeps what must outlive a build outside the instance.
 - Does not depend on data protected by ASP.NET Core Data Protection outliving a
   build, unless it [keeps its keys across builds](../how-to/keep-data-protection-keys.md).
-  By default the key is created during initialization, so it is part of the
-  template: every instance of the same template shares it, which keeps antiforgery
-  tokens and authentication cookies working across instances. Fresh initialization
-  may create a different key; reusing a template retains its key.
+  A key created during initialization is part of the template: instances of
+  that template share it. Fresh initialization may create a different key;
+  reusing a prepared template also reuses its captured key.
 
 **What can go wrong**
 

@@ -95,6 +95,7 @@ fn guest() -> Vec<u8> {
 fn request(wasm: &[u8]) -> PreInitRequest {
     PreInitRequest {
         module_hash: ModuleHash::of(wasm),
+
         init_blob: Vec::new(),
     }
 }
@@ -179,7 +180,7 @@ fn the_local_template_identity_binds_its_declared_files() {
         .run(&wasm, &request)
         .expect("empty-file initialization");
     assert_ne!(
-        declared.reproducible_digest, empty.reproducible_digest,
+        declared.initialization_identity, empty.initialization_identity,
         "templates initialized from different declared file sets need different identities"
     );
 }

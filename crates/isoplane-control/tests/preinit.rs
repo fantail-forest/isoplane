@@ -1,4 +1,20 @@
-//! Initialization inputs and captured state.
+//! Pre-initialization in the sealed init sandbox.
+//!
+//! The guest fixture below is a stand-in for the .NET shape: a
+//! `isoplane_initialize` that runs a sequence of *init units* (static
+//! constructors), some pure and some not, announcing each one through the
+//! interposer so the host can attribute a trap and defer the offender.
+//!
+//! What is asserted here:
+//!  * the sandbox is sealed — a unit that touches a non-init-visible import
+//!    traps rather than reading a zero;
+//!  * initialization hash seeds and entropy come from the host;
+//!  * deferral converges by replay, with the right units deferred and the
+//!    pure ones still pre-run;
+//!  * the template really carries post-init memory, verified by
+//!    re-instantiating it under the *runtime* engine (wasmtime 48) with the
+//!    init-only imports bound to traps;
+//!  * input identities permit intentional captured-state reuse without forcing random draws to repeat.
 
 use isoplane_abi::config::InitSandbox;
 use isoplane_engine::ModuleHash;
@@ -103,6 +119,7 @@ fn guest_wat(impure: bool) -> String {
 fn req(wasm: &[u8]) -> PreInitRequest {
     PreInitRequest {
         module_hash: ModuleHash::of(wasm),
+
         init_blob: b"{\"greeting\":\"hello\"}".to_vec(),
     }
 }
@@ -197,7 +214,7 @@ fn impure_units_are_deferred_and_pre_init_converges() {
 fn the_engine_reads_the_deferred_units_out_of_the_template() {
     let wasm = wat::parse_str(guest_wat(true)).unwrap();
     let out = PreInitializer::new().run(&wasm, &req(&wasm)).unwrap();
-    assert_eq!(out.deferred_units, vec![2, 4], "two units are impure");
+    assert_eq!(out.deferred_units, vec![2], "the clock unit is deferred");
     let engine = isoplane_engine::IsoplaneEngine::new(isoplane_engine::EngineConfig {
         max_instances: 2,
         max_memory_bytes: 128 << 20,
@@ -264,28 +281,28 @@ fn template_carries_post_init_memory_into_the_runtime_engine() {
     );
 }
 
-/// Fresh preparations retain independent randomness and bind configuration inputs.
 #[test]
-fn fresh_preparations_capture_randomness_and_bind_configuration() {
+fn fresh_initializations_draw_fresh_seeds_under_the_same_input_identity() {
     let wasm = wat::parse_str(guest_wat(true)).unwrap();
     let a = PreInitializer::new().run(&wasm, &req(&wasm)).unwrap();
     let b = PreInitializer::new().run(&wasm, &req(&wasm)).unwrap();
     assert_ne!(
         a.template_wasm, b.template_wasm,
-        "fresh preparations capture fresh initialization randomness"
+        "new initialization must draw fresh entropy"
     );
-    assert_eq!(a.reproducible_digest, b.reproducible_digest);
+    assert_eq!(
+        a.initialization_identity, b.initialization_identity,
+        "the identity describes inputs, not random output"
+    );
     assert_eq!(a.deferred_units, b.deferred_units);
-
-    // ...and so is a different init blob.
-    let mut third = req(&wasm);
-    third.init_blob = b"{}".to_vec();
+    let mut changed = req(&wasm);
+    changed.init_blob = b"{}".to_vec();
     assert_ne!(
-        a.reproducible_digest,
+        a.initialization_identity,
         PreInitializer::new()
-            .run(&wasm, &third)
+            .run(&wasm, &changed)
             .unwrap()
-            .reproducible_digest
+            .initialization_identity
     );
 }
 
@@ -381,24 +398,18 @@ fn a_template_cannot_re_read_the_hash_seed_at_runtime() {
 
 /// Bring-up mode defers a unit clock while capturing allowed entropy.
 #[test]
-fn runtime_bringup_defers_unit_clocks_and_captures_entropy() {
+fn runtime_bringup_keeps_clock_deferral_while_entropy_is_available_in_application_units() {
     let wasm = wat::parse_str(guest_wat(true)).unwrap();
     let out = PreInitializer::new()
         .with_pal(InitSandbox::RuntimeBringUp)
         .run(&wasm, &req(&wasm))
-        .expect("pre-init must converge");
-
+        .unwrap();
     assert_eq!(out.deferred_units, vec![2]);
     assert_eq!(out.deferred_reasons, vec![(2, "clock_now_coarse".into())]);
     assert_eq!(out.pal_calls, vec![("entropy_fill".into(), 1)]);
-
-    let mut t = Template::load(&out.template_wasm);
-    assert_eq!(
-        t.i64("get_clock_at_init"),
-        0,
-        "a frozen clock must NOT have been baked"
-    );
-    assert_eq!(t.i32("get_entropy_at_init"), 1);
+    let mut template = Template::load(&out.template_wasm);
+    assert_eq!(template.i64("get_clock_at_init"), 0);
+    assert_eq!(template.i32("get_entropy_at_init"), 1);
 }
 
 /// Bring-up mode supplies the fixed clock and fresh entropy outside a unit.
@@ -428,6 +439,7 @@ fn the_runtime_pal_lets_a_runtime_come_up_outside_any_init_unit() {
         "sealed, a runtime coming up outside any unit fails the deploy: {err}"
     );
 
+    // The clock policy remains frozen; each entropy request uses the live host source.
     let out = PreInitializer::new()
         .with_pal(InitSandbox::RuntimeBringUp)
         .run(&wasm, &req(&wasm))
@@ -450,6 +462,13 @@ fn the_runtime_pal_lets_a_runtime_come_up_outside_any_init_unit() {
     );
     let entropy = t.probe(0);
     assert_ne!(entropy, 0, "entropy must be real bytes, not zeros");
+
+    let again = PreInitializer::new()
+        .with_pal(InitSandbox::RuntimeBringUp)
+        .run(&wasm, &req(&wasm))
+        .unwrap();
+    assert_ne!(out.template_wasm, again.template_wasm);
+    assert_ne!(Template::load(&again.template_wasm).probe(0), entropy);
 }
 
 /// A runtime-only operation defers the active guest unit before its state assignment.

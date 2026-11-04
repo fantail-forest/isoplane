@@ -153,7 +153,11 @@ impl HostBindings for DebugBindings {
     fn call_sync(&mut self, call: ImportCall<'_>) -> i64 {
         self.0.call_sync(call)
     }
-    fn call_fill(&mut self, call: ImportCall<'_>, output: &mut [u8]) -> i64 {
+    fn call_fill(
+        &mut self,
+        call: ImportCall<'_>,
+        output: &mut [u8],
+    ) -> Result<i64, isoplane_engine::bindings::BindingError> {
         self.0.call_fill(call, output)
     }
     fn slice_clock_ms(&self) -> u64 {

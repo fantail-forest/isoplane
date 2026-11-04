@@ -100,6 +100,7 @@ fn the_impure_cctor_guest_defers_and_converges() {
 
     let req = PreInitRequest {
         module_hash: isoplane_engine::ModuleHash::of(&wasm),
+
         init_blob: Vec::new(),
     };
     let out = PreInitializer::new()
@@ -159,6 +160,7 @@ fn a_real_guest_is_admitted_and_initialized_without_a_version_catalog() {
     assert!(!report.capabilities.is_empty());
     let request = PreInitRequest {
         module_hash: isoplane_engine::ModuleHash::of(&wasm),
+
         init_blob: Vec::new(),
     };
     let output = PreInitializer::new()

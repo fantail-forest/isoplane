@@ -108,6 +108,7 @@ async fn preserves_application_state(provider: &dyn Preparation) {
             &wasm,
             &isoplane_prepare::PreInitRequest {
                 module_hash: isoplane_engine::ModuleHash::of(&wasm),
+
                 init_blob: request.initialization.config.clone(),
             },
         )

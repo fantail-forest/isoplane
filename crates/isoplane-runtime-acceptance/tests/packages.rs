@@ -117,7 +117,7 @@ fn request(runtime: &[u8], files: Vec<PlatformFile>) -> BuildRequest {
         initialization: Initialization {
             network: Some(network()),
             runtime_config: b"{}".to_vec(),
-            hash_seed: [7; 16],
+
             config: b"{}".to_vec(),
             sandbox: InitSandbox::RuntimeBringUp,
             occupancy_ms: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_OCCUPANCY_MS,
@@ -972,7 +972,7 @@ async fn timers_initialization_leaves_running_count_from_activation() {
 }
 
 /// `alpha` prepared with `initializer` in place of its own.
-async fn alpha_initialized_by(initializer: &str) -> (BuildProduct, BuildRequest) {
+fn alpha_files_initialized_by(initializer: &str) -> Vec<PlatformFile> {
     let files = package("alpha");
     let manifest = String::from_utf8(package_file(&files, "application.json"))
         .expect("the manifest is UTF-8")
@@ -981,12 +981,11 @@ async fn alpha_initialized_by(initializer: &str) -> (BuildProduct, BuildRequest)
         manifest.contains(initializer),
         "the manifest must name its initializer for this test to replace: {manifest}"
     );
-    prepare_on_the_shared_runtime(with_package_file(
-        files,
-        "application.json",
-        manifest.as_bytes(),
-    ))
-    .await
+    with_package_file(files, "application.json", manifest.as_bytes())
+}
+
+async fn alpha_initialized_by(initializer: &str) -> (BuildProduct, BuildRequest) {
+    prepare_on_the_shared_runtime(alpha_files_initialized_by(initializer)).await
 }
 
 /// A cell serving `product` as module `module`, whose instances stop after
@@ -1642,4 +1641,80 @@ mod over_the_runtime_baseline {
             "beta's layer must answer with its own handler over the same baseline: {beta}"
         );
     }
+}
+
+#[tokio::test(start_paused = true)]
+async fn initialization_crypto_draws_are_fresh_while_activations_copy_captured_values() {
+    let runtime = isoplane_fixtures::mono_runtime();
+    let files = alpha_files_initialized_by("CaptureRandomnessAsync");
+    let preparation =
+        LocalPreparation::with_cache(shared_cache()).expect("cached local preparation");
+    let mut captured_draws = Vec::new();
+    let mut expected_identity = None;
+    for _ in 0..2 {
+        let (product, request) = prepare(&preparation, &runtime, files.clone())
+            .await
+            .expect("fresh initialization");
+        let identity = request.identity().expect("fixed preparation inputs");
+        if let Some(expected) = expected_identity {
+            assert_eq!(
+                identity, expected,
+                "both executions use the same preparation inputs"
+            );
+        } else {
+            expected_identity = Some(identity);
+        }
+        assert!(
+            !product.initialized.compiled,
+            "both preparations reuse only the uninitialized compilation"
+        );
+        let engine = IsoplaneEngine::new(request.engine.clone()).expect("captured-state engine");
+        let prepared = decode(&product, &request);
+        let captured_memory = engine
+            .load_prepared_product(&prepared)
+            .expect("restore the captured application without initialization")
+            .memory_image_arc()
+            .to_dense();
+        let mut draws = Vec::new();
+        for _ in 0..2 {
+            let body = answer_on_an_instance(
+                &product,
+                &request,
+                isoplane_host::InstanceId::alloc(),
+                "/randomness",
+            )
+            .await;
+            let (captured, live) = body
+                .split_once(':')
+                .expect("captured and live crypto draws");
+            assert_eq!(captured.len(), 64, "32 initialization bytes: {body}");
+            assert_eq!(live.len(), 64, "32 live bytes: {body}");
+            draws.push((captured.to_owned(), live.to_owned()));
+        }
+        assert_eq!(
+            draws[0].0, draws[1].0,
+            "activations copy the existing captured value"
+        );
+        assert_ne!(
+            draws[0].1, draws[1].1,
+            "new BCL crypto draws use live host entropy"
+        );
+        let captured_bytes = (0..draws[0].0.len())
+            .step_by(2)
+            .map(|index| {
+                u8::from_str_radix(&draws[0].0[index..index + 2], 16).expect("hex crypto draw")
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            captured_memory
+                .windows(captured_bytes.len())
+                .any(|bytes| bytes == captured_bytes),
+            "the initializer's draw must already exist before either activation"
+        );
+        captured_draws.push(draws[0].0.clone());
+    }
+    assert_ne!(
+        captured_draws[0], captured_draws[1],
+        "fresh initialization requests fresh entropy even when compilation is reused"
+    );
 }

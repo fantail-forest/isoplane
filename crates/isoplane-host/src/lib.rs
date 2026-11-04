@@ -32,6 +32,7 @@ pub mod debug;
 pub mod dispatcher;
 pub mod disposition;
 pub mod egress;
+pub mod entropy;
 // Unit-test doubles implement this compilation's host types, including its controlled clock.
 #[cfg(test)]
 extern crate self as isoplane_host;
