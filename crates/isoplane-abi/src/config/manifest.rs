@@ -105,5 +105,4 @@ mod tests {
         assert_eq!(limits.package_bytes, 1024);
         assert_eq!(limits.module_bytes_compressed, 50 << 20);
     }
-
 }

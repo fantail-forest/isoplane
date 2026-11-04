@@ -67,7 +67,6 @@ fn telemetry_configuration_uses_flag_then_environment_then_file() {
     }
 }
 
-
 #[test]
 fn checking_configuration_never_creates_or_retires_installation_state() {
     let directory = tempfile::tempdir().unwrap();

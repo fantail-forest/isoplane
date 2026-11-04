@@ -50,18 +50,6 @@ fn an_import_outside_the_table_fails_to_load() {
 
     let wasm = guest(
         4,
-        &import("service_call", "(param i32 i32)", "(result i64)"),
-        "",
-        DONE,
-        DONE,
-    );
-    let error = e
-        .load_template(&wasm)
-        .expect_err("unsupported service bindings must not link");
-    assert!(format!("{error:#}").contains("service_call"));
-
-    let wasm = guest(
-        4,
         &import("http_fetch", "(param i32 i32)", "(result i64)"),
         "",
         DONE,

@@ -13,8 +13,6 @@ fn check(path: &Path) -> Output {
         .expect("the daemon starts")
 }
 
-
-
 #[test]
 fn the_binary_accepts_several_configured_applications() {
     let dir = tempfile::tempdir().unwrap();
