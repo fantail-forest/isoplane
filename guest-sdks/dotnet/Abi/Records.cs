@@ -69,7 +69,6 @@ public enum DispatchKind : uint
     /// An inbound HTTP request. The only trigger a Handler receives.
     /// </summary>
     Http = 0,
-
     /// <summary>Instance work metered against the background allowance.</summary>
     Background = 1,
 }
@@ -117,7 +116,6 @@ internal sealed class WakeRecord
 /// <summary>Mirrors <c>isoplane-abi::result::FutureError</c>.</summary>
 internal enum FutureError : uint
 {
-
     Cancelled = 0,
     Denied = 1,
     NotFound = 2,

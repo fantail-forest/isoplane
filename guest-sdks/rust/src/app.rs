@@ -45,7 +45,6 @@ pub trait Handler: Sized + 'static {
     fn new() -> Self;
 
     fn handle(&'static self, req: Request, ctx: Ctx) -> impl Future<Output = Response> + 'static;
-
 }
 
 /// Guest GC pressure levels for `isoplane_gc_hint`.

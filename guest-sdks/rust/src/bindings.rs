@@ -5,15 +5,12 @@
 //! return.** No wrapper waits for anything; the awaiting happens in the app's
 //! state machine and resolves to a `return Poll::Pending` out of the guest.
 
-
 use isoplane_abi::calls::*;
 use isoplane_abi::result::{BodyChunk, FetchResponse};
 
 use crate::abi;
 use crate::error::{IsoplaneError, Result};
 use crate::future::{call, decode_postcard, decode_unit, HostFuture};
-
-
 
 // ---------------------------------------------------------------------------
 // outbound HTTP
@@ -45,7 +42,7 @@ impl HttpFetch {
     }
 }
 
-/// Reads a response body through host-owned futures.
+/// A response body read through host-owned futures.
 pub struct BodyReader {
     handle: u32,
 }
@@ -58,7 +55,7 @@ impl BodyReader {
         let id = unsafe { abi::http_body_read(self.handle as i32, max as i32) } as u64;
         HostFuture::new(id, decode_postcard::<BodyChunk>)
     }
-    /// Reads until EOF and propagates host I/O or cancellation errors.
+    /// Drain the body, returning the first host error.
     pub async fn read_to_end(&self, chunk: u32) -> Result<Vec<u8>> {
         let mut out = Vec::new();
         loop {

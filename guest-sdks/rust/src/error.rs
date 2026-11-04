@@ -1,8 +1,7 @@
 //! Typed guest-side errors.
-
 use core::fmt;
 
-use isoplane_abi::result::{FutureError, };
+use isoplane_abi::result::FutureError;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IsoplaneError {
@@ -21,11 +20,6 @@ pub enum IsoplaneError {
 }
 
 pub type Result<T> = core::result::Result<T, IsoplaneError>;
-
-impl IsoplaneError {
-
-
-}
 
 impl From<FutureError> for IsoplaneError {
     fn from(e: FutureError) -> Self {
@@ -53,4 +47,3 @@ impl fmt::Display for IsoplaneError {
 }
 
 impl std::error::Error for IsoplaneError {}
-

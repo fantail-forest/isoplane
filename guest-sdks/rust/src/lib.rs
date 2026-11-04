@@ -44,7 +44,7 @@ pub use http::{Request, RequestExt, Response, ResponseStream};
 pub use init::{InitUnit, LazyInit};
 
 pub use isoplane_abi;
-pub use isoplane_abi::result::{FutureError, };
+pub use isoplane_abi::result::FutureError;
 
 /// Items the `export_*!` macros need to name. Not a stable surface.
 #[doc(hidden)]

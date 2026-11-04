@@ -10,4 +10,3 @@ pub struct FetchRequest {
     #[serde(with = "serde_bytes")]
     pub body: Vec<u8>,
 }
-

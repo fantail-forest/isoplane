@@ -188,9 +188,7 @@ fn result_bytes(result: &ResultRecord) -> usize {
             message.capacity()
         }
         ResultRecord::Err(
-            FutureError::Cancelled
-            | FutureError::NotFound
-            | FutureError::BufferLimit,
+            FutureError::Cancelled | FutureError::NotFound | FutureError::BufferLimit,
         ) => 0,
     }
 }

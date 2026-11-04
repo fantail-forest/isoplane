@@ -4,7 +4,7 @@
 /// Core-wasm module name that every Isoplane import lives under.
 pub const HOST_MODULE: &str = "isoplane";
 
-/// Clock and entropy capability names considered during local preparation.
+/// Capabilities admitted outside initialization units during runtime bring-up.
 pub const RUNTIME_INIT_CAPABILITIES: &[&str] = &["clock_now_coarse", "entropy_fill"];
 
 pub use crate::exports;
@@ -21,7 +21,10 @@ pub struct Sig {
     pub results: &'static [Ty],
 }
 
-/// Position and direction of an import buffer; scalar parameters do not describe it.
+/// Where an import's `(ptr, len)` buffer sits in its parameter list, and
+/// which way the bytes flow. The raw signature cannot say: `(i32, i32)` is an
+/// in-buffer for `abort`, an out-buffer for `entropy_fill`, and no buffer at
+/// all for `http_body_read`, which takes `(handle, max_len)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BufSpec {
     None,
@@ -67,9 +70,9 @@ pub struct ImportDef {
     pub sig: Sig,
     pub kind: ImportKind,
     pub buf: BufSpec,
-    /// Marks values that require sensitive-data handling.
+    /// Results may contain sensitive data, including copies retained in guest state.
     pub sensitive: bool,
-    /// Included in the baseline initialization import set.
+    /// Included in unconditional initialization metadata; context policy governs additional admission.
     pub init_visible: bool,
     /// What the capability is for, for a tenant reading a manifest. Required
     /// by `imp!` so a capability cannot be added without saying.
@@ -144,7 +147,7 @@ pub const IMPORTS: &[ImportDef] = &[
         init_visible: true,
         sensitive: true,
         ..ImportDef { buf: BufSpec::Out(0), ..imp!("init_hash_seed", Core, BUF_TO_VOID, SYNC,
-            "A per-attempt string-hash seed, separate from host entropy requests.") }
+            "String-hash seed for this preparation; copies remain in captured guest state.") }
     },
 
     // Tenant-authored deploy input, fixed for the version.
@@ -185,13 +188,13 @@ pub const IMPORTS: &[ImportDef] = &[
     ImportDef { buf: BufSpec::None, ..imp!("clock_deadline_in", Clock, Sig { params: &[I64], results: &[I64] }, FUT,
         "a timer as a host future, so waiting is never a guest loop burning budget") },
     ImportDef { buf: BufSpec::Out(0), ..imp!("entropy_fill", Entropy, BUF_TO_VOID, SYNC,
-        "Host CSPRNG bytes for this request; values already stored in guest memory remain part of captured state.") },
+        "Requests entropy through the host interface; guest copies remain in captured state.") },
 
     // ---- outbound http ----------------------------------------------------
     imp!("http_fetch", Http, BUF_TO_FUTURE, FUT,
         "Issues an outbound request through the host egress policy and completes with its response head."),
     ImportDef { buf: BufSpec::None, ..imp!("http_body_read", Http, Sig { params: &[I32, I32], results: &[I64] }, FUT,
-        "Reads the next chunk of a response body through a host-owned future.") },
+        "reads the next chunk of an outbound response body through a host future") },
 
     ImportDef { buf: BufSpec::None, ..imp!("future_cancel", Core, Sig { params: &[I64], results: &[] }, SYNC,
         "releases this instance's future and aborts its host operation; unknown, completed, or foreign-instance ids have no effect") },
@@ -209,7 +212,6 @@ pub const IMPORTS: &[ImportDef] = &[
         "appends a streamed chunk to an open response") },
     ImportDef { buf: BufSpec::None, ..imp!("resp_finish", Response, Sig { params: &[I32], results: &[] }, SYNC,
         "ends the response, after which the handle is spent") },
-
 
     // ---- the kill-cooperation ABI ------------------------------------------
     // Engine-owned rather than in the bindings vtable: the bit lives in the
@@ -259,19 +261,14 @@ mod tests {
         }
     }
 
-    /// The baseline initialization import set excludes these I/O groups.
+    /// This check covers static initialization metadata, not additional context admission.
     #[test]
-    fn init_sandbox_exposes_no_io() {
-        let io = [
-            Group::Http,
-            Group::Socket,
-            Group::Clock,
-            Group::Entropy,
-        ];
+    fn unconditional_initialization_imports_exclude_runtime_capability_groups() {
+        let io = [Group::Http, Group::Socket, Group::Clock, Group::Entropy];
         for i in init_visible() {
             assert!(
                 !io.contains(&i.group),
-                "init sandbox exposes I/O via {}",
+                "unconditional initialization metadata grants a runtime capability via {}",
                 i.name
             );
         }

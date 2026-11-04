@@ -356,7 +356,7 @@ mod tests {
     #[test]
     fn native_io_delegation_cannot_reach_unrelated_capabilities() {
         use imports::Group::*;
-        let forbidden = [Http, Socket, Service, Response, Ctx];
+        let forbidden = [Http, Socket, Response, Ctx];
         for p in delegated() {
             let Some(cap) = p.disposition.capability() else {
                 continue;

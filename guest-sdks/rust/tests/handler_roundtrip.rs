@@ -111,6 +111,30 @@ fn a_dispatch_that_waits_parks_and_a_wake_completes_it() {
 }
 
 #[test]
+fn an_io_error_surfaces_as_an_error_not_a_trap() {
+    with_stub_host(|_| {
+        let enc = postcard::to_allocvec(&record("/hello")).unwrap();
+        let (ptr, len) = handoff(&enc);
+        assert_eq!(
+            PollStatus::decode(isoplane_handle(ptr, len)),
+            PollStatus::Pending
+        );
+
+        let res = ResultRecord::Err(isoplane_guest::FutureError::Io("operation failed".into()));
+        let enc = postcard::to_allocvec(&wake(res)).unwrap();
+        let (ptr, len) = handoff(&enc);
+        let st = PollStatus::decode(isoplane_wake(1, ptr, len));
+        assert_eq!(
+            st,
+            PollStatus::Done {
+                response: RESP_HANDLE as u32
+            },
+            "the I/O error must be a value the app handled, not a trap"
+        );
+    });
+}
+
+#[test]
 fn dispatch_and_wake_each_release_their_handoff_buffer() {
     with_stub_host(|host| {
         assert_eq!(host.outstanding_handoff_buffers(), 0);

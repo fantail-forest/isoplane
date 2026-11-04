@@ -1,7 +1,10 @@
-//! Shared guest ABI, capabilities, configuration and host dispatch contracts.
-//! Resumable state comprises sandbox state and explicit host-owned resources.
-//! Guests return on an empty stack, host-owned wake sources resume them, and
-//! every external capability is declared in `imports::IMPORTS`.
+//! The Isoplane contract: the guest ABI ([`status`], [`dispatch`], [`result`],
+//! [`calls`]), the capability table ([`imports`], [`pal`]), the app manifest
+//! and resource limits ([`config`]), and HTTP dispatch interfaces ([`host`], behind the
+//! `host` feature).
+//!
+//! Builds for `wasm32-unknown-unknown` so a guest SDK can share these types
+//! with the host instead of re-implementing the encoding.
 
 pub mod calls;
 pub mod config;
@@ -25,7 +28,7 @@ pub use status::{PollStatus, TrapCode};
 pub const LOCAL_DEBUG_SECTION: &str = "isoplane.local-debug";
 
 /// The version of the guest host-interface contract.
-pub const ABI_REV: u32 = 5;
+pub const ABI_REV: u32 = 6;
 
 /// The unit of copy-on-write sharing and of the hibernation page diff.
 pub const PAGE_SIZE: usize = 4096;

@@ -1,6 +1,16 @@
-//! Routes guest capabilities through host-owned services.
-//! The coarse clock is fixed for each serving slice.
-//! Scalar arguments follow declaration order after the buffer pair.
+//! The import vtable routes guest capabilities through host-owned services.
+//! `clock_now_coarse` is frozen within a slice; `entropy_fill` draws from the
+//! host CSPRNG per call. `http_fetch` enforces egress policy host-side.
+//!
+//! `ImportCall::scalars` carries the non-buffer scalar arguments in
+//! declaration order, the `(ptr, len)` pair stripped; [`SCALARS`] names them
+//! and a test checks it against the contract crate.
+//!
+//! `call_future` and `call_sync` are routers: each import's arms live in a
+//! module named for the capability it belongs to (`http`,
+//! `sockets`, `observability`); a capability with no state or subrequest to
+//! coordinate (the clock, entropy, `abort`, the budget imports
+//! and the init stubs) stays here as a sandbox primitive.
 
 mod cancellation;
 mod dispatch;
@@ -318,7 +328,6 @@ impl HostBindings for CellBindings {
             "http_body_read" => self.http_body_read(rt, id, call.scalars),
             "req_body_read" => self.req_body_read(rt, id, call.scalars),
             "resp_write" => self.resp_write(rt, id, call.payload, call.scalars),
-
 
             other => {
                 tracing::error!(import = other, "future-class import with no route");

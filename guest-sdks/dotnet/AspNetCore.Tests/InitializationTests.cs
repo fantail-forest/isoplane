@@ -115,7 +115,7 @@ public sealed class InitializationTests
         try
         {
             var router = new RecordingRouter();
-            var record = new DispatchRecord { Kind = DispatchKind.CronTick };
+            var record = new DispatchRecord { Kind = DispatchKind.Background };
             Task<Response> dispatch = RequestDispatch.RouteAsync(router, record);
             Assert.False(dispatch.IsCompleted || router.Called || Activation.IsActivated,
                 "an unfinished activation must prevent dispatch and remain inactive");

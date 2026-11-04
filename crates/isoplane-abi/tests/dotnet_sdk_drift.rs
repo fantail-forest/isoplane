@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest, TraceContext};
 use isoplane_abi::imports::{self, Ty};
-use isoplane_abi::result::{FutureError, };
+use isoplane_abi::result::FutureError;
 use isoplane_abi::status::{PollStatus, TrapCode};
 
 fn sdk_file(name: &str) -> String {

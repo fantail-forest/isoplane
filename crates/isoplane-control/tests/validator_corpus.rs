@@ -19,10 +19,11 @@ fn clean_wat() -> String {
   (import "isoplane" "log_emit"         (func $log   (param i32 i32 i32)))
   (import "isoplane" "clock_now_coarse" (func $now   (result i64)))
   (import "isoplane" "entropy_fill"     (func $rand  (param i32 i32)))
+  (import "isoplane" "resp_write"           (func $write (param i32 i32 i32) (result i64)))
   (import "isoplane" "http_fetch"       (func $fetch (param i32 i32) (result i64)))
   {REQUIRED_EXPORTS}
   (func (export "isoplane_gc_hint") (param i32))
-  (func $use (drop (call $now)))
+  (func $use (drop (call $now)) (drop (call $write (i32.const 0) (i32.const 0) (i32.const 0))))
 )"#
     )
 }
@@ -49,6 +50,7 @@ fn clean_module_validates_and_reports_its_capabilities() {
             "clock_now_coarse",
             "entropy_fill",
             "http_fetch",
+            "resp_write",
         ]
     );
     assert_eq!(report.memory_pages_initial, Some(17));
@@ -68,8 +70,8 @@ fn v1_undeclared_import() {
     assert_violates(
         "undeclared-isoplane-name",
         &clean_wat().replace(
-            r#"(import "isoplane" "http_fetch"       (func $fetch (param i32 i32) (result i64)))"#,
-            r#"(import "isoplane" "unlisted_fetch"       (func $fetch (param i32 i32) (result i64)))"#,
+            r#"(import "isoplane" "resp_write"           (func $write (param i32 i32 i32) (result i64)))"#,
+            r#"(import "isoplane" "resp_write_all"       (func $write (param i32 i32 i32) (result i64)))"#,
         ),
         isoplane_abi::config::GuestMemoryBytes::new(128 << 20).unwrap(),
         V::V1UndeclaredImport,
@@ -104,21 +106,22 @@ fn v1_undeclared_import() {
 #[test]
 fn v1_right_name_wrong_signature() {
     assert_violates(
-        "http_fetch-wrong-arity",
+        "resp_write-wrong-arity",
         &clean_wat().replace(
-            r#"(import "isoplane" "http_fetch"       (func $fetch (param i32 i32) (result i64)))"#,
-            r#"(import "isoplane" "http_fetch"       (func $fetch (param i32) (result i64)))"#,
+            r#"(import "isoplane" "resp_write"           (func $write (param i32 i32 i32) (result i64)))"#,
+            r#"(import "isoplane" "resp_write"           (func $write (param i32) (result i64)))"#,
         ),
         isoplane_abi::config::GuestMemoryBytes::new(128 << 20).unwrap(),
         V::V1SignatureMismatch,
     );
     assert_violates(
-        "http_fetch-wrong-result-type",
+        "resp_write-wrong-result-type",
         &clean_wat()
             .replace(
-                r#"(import "isoplane" "http_fetch"       (func $fetch (param i32 i32) (result i64)))"#,
-                r#"(import "isoplane" "http_fetch"       (func $fetch (param i32 i32) (result i32)))"#,
-            ),
+                r#"(import "isoplane" "resp_write"           (func $write (param i32 i32 i32) (result i64)))"#,
+                r#"(import "isoplane" "resp_write"           (func $write (param i32 i32 i32) (result i32)))"#,
+            )
+            .replace("(drop (call $write (i32.const 0) (i32.const 0) (i32.const 0)))", ""),
         isoplane_abi::config::GuestMemoryBytes::new(128 << 20).unwrap(),
         V::V1SignatureMismatch,
     );

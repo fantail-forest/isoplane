@@ -400,7 +400,7 @@ mod tests {
         .expect("capture must retain the original host context");
         assert!(
             futures.take_ready(slot.id).is_none(),
-            "capture must not turn pending I/O into FutureLost"
+            "capture must preserve pending I/O"
         );
         futures.complete(id, ResultRecord::Ok(b"completed while asleep".to_vec()));
         assert!(

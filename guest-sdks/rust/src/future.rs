@@ -106,7 +106,6 @@ pub(crate) fn decode_unit(_: &[u8]) -> Result<()> {
     Ok(())
 }
 
-
 pub(crate) fn decode_postcard<T: DeserializeOwned>(b: &[u8]) -> Result<T> {
     postcard::from_bytes(b).map_err(|e| IsoplaneError::Protocol(format!("decode: {e}")))
 }

@@ -6,7 +6,6 @@ use isoplane_control::AdmissionError;
 
 fn app_wat() -> &'static str {
     r#"(module
-      (import "isoplane" "service_call" (func (param i32 i32) (result i64)))
       (import "isoplane" "http_fetch" (func (param i32 i32) (result i64)))
       (memory (export "memory") 256 2048)
       (func (export "isoplane_initialize") (result i64) i64.const 0)
@@ -31,14 +30,13 @@ fn admission_records_capabilities_and_the_initialization_entry() {
     let wasm = wat::parse_str(app_wat()).unwrap();
     let report = admit(&manifest("shop"), &wasm).unwrap();
     assert!(report.has_initialize());
-    assert!(report.capabilities.contains(&"service_call"));
     assert!(report.capabilities.contains(&"http_fetch"));
 }
 
 #[test]
 fn an_undeclared_import_is_rejected_by_both_admission_paths() {
     let wasm = wat::parse_str(app_wat().replace(
-        "\"isoplane\" \"service_call\"",
+        "\"isoplane\" \"http_fetch\"",
         "\"wasi_snapshot_preview1\" \"fd_write\"",
     ))
     .unwrap();

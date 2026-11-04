@@ -20,10 +20,7 @@ impl InitializationBindings for NoImports {
 fn dispatch(instance: &mut Instance) -> Completion {
     let record = isoplane_abi::dispatch::DispatchRecord {
         dispatch_id: 1,
-        kind: isoplane_abi::dispatch::DispatchKind::CronTick {
-            name: "probe".into(),
-            scheduled_ms: 0,
-        },
+        kind: isoplane_abi::dispatch::DispatchKind::Background,
         trace: Default::default(),
         cancel_future: 0,
         occupancy_budget_ms: 1000,

@@ -61,7 +61,7 @@ impl Response {
             Err(e) => Response::text(500, format!("serialize: {e}")),
         }
     }
-    /// Postcard body, for service bindings and DI replies.
+    /// A response body encoded as Postcard.
     pub fn postcard<T: Serialize>(v: &T) -> Response {
         match postcard::to_allocvec(v) {
             Ok(b) => Response::new(200, b).with_header("content-type", "application/x-postcard"),
@@ -90,9 +90,7 @@ impl Response {
     }
 }
 
-/// A streaming response. `write` is an **UNBOUNDED** future: a stream in
-/// flight is not preserved across hibernation, so a write can fail with
-/// `IsoplaneError::Lost` and only the app knows whether resuming is meaningful.
+/// A streaming response whose writes await host-owned futures.
 pub struct ResponseStream {
     handle: u32,
 }

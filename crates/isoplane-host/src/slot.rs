@@ -282,8 +282,7 @@ impl Slot {
                 self.last_used_ms
                     .fetch_max(record.now_ms, Ordering::Relaxed);
             }
-            isoplane_abi::DispatchKind::CronTick { .. }
-            | isoplane_abi::DispatchKind::Background => {}
+            isoplane_abi::DispatchKind::Background => {}
         }
     }
 

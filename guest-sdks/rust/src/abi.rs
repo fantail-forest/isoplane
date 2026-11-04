@@ -131,9 +131,14 @@ isoplane_imports! {
     /// Non-zero => the host has already decided this unit is impure. Skip it;
     /// it runs lazily, per instance, on first touch.
     fn init_unit_deferred(id: i32) -> i32;
-    /// The preparation string-hash seed is separate from entropy requests and can be captured in guest state.
+    /// A fresh string-hash seed, stable within one initialization attempt.
+    /// The host writes exactly 16 bytes at `ptr`; guest copies remain in captured state.
     fn init_hash_seed(ptr: i32, len: i32);
-    /// Copies preparation configuration into the guest buffer and returns its full length.
+    /// Config parsing from *data* supplied as an init-time blob. Host writes
+    /// up to `cap` bytes at `ptr` and returns the blob's **full** length, so
+    /// the idiom is a zero-length probe then a second call.
+    /// Tenant-authored input fixed for the selected preparation and included
+    /// in its input identity. Parsed values remain in the captured guest state.
     fn init_config_get(ptr: i32, cap: i32) -> i32;
 
     // ---- observability ----------------------------------------------------
@@ -146,13 +151,14 @@ isoplane_imports! {
     // ---- clock & entropy --------------------------------------------------
     /// The serving slice's fixed coarse time, in milliseconds since the Unix epoch.
     fn clock_now_coarse() -> i64;
-    /// Creates a host timer future that completes after the requested delay.
+    /// Returns a host timer future; awaiting it returns control to the host.
     fn clock_deadline_in(ms: i64) -> i64;
     /// Requests bytes through the host entropy interface; captured guest values remain captured.
     fn entropy_fill(ptr: i32, len: i32);
 
-    // ---- outbound HTTP ---------------------------------------------------
+    // ---- outbound HTTP ----------------------------------
     fn http_fetch(ptr: i32, len: i32) -> i64;
+    /// Read at most `max` bytes from the response body handle.
     fn http_body_read(handle: i32, max: i32) -> i64;
 
     // ---- inbound response -------------------------------------------------

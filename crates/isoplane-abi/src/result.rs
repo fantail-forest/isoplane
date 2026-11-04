@@ -24,14 +24,13 @@ pub enum ResultRecord {
 pub enum FutureError {
     /// The dispatch's cancellation future completed.
     Cancelled,
-    /// Host capability policy refused the call, such as a denied egress target.
+    /// Capability policy refused the call, such as an egress target outside the allowlist.
     Denied(String),
     NotFound,
     Io(String),
     /// The instance cannot retain this result within its buffered-result byte limit.
     BufferLimit,
 }
-
 
 impl std::fmt::Display for FutureError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
