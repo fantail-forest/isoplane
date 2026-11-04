@@ -35,5 +35,12 @@ async fn delimiter_collisions_cannot_substitute_another_applications_module() {
         );
         assert_eq!(response.body, app);
     }
+    for path in ["/admin/apps", "/v1/deploy", "/admin/clock", "/admin/splits"] {
+        assert_eq!(
+            common::get(rig.admin, "localhost", path).await.status,
+            404,
+            "removed control endpoint {path} must not be exposed"
+        );
+    }
     rig.shutdown().await;
 }

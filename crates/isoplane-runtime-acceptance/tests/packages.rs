@@ -4,6 +4,7 @@
 //! preparation, and executed through the reactor across a park and a
 //! hibernation delta.
 
+use isoplane_harness::logging::GuestLogs;
 use std::io::Read;
 use std::sync::{Arc, OnceLock};
 
@@ -11,7 +12,6 @@ use isoplane_abi::config::{InitSandbox, ValidationLimits};
 use isoplane_abi::filesystem::APPLICATION_PACKAGE_ROOT;
 use isoplane_engine::prepared::PreparedTemplate;
 use isoplane_engine::{CompilationCache, Completion, IsoplaneEngine, PlatformFile, PlatformFiles};
-use isoplane_harness::EmittedGuestLogs as _;
 use isoplane_harness::{engine_configuration, ReturnedGuest};
 use isoplane_prepare::package::PackageLimits;
 use isoplane_prepare::{
@@ -225,13 +225,12 @@ async fn finish_across_a_delta(
     reactor: &isoplane_harness::Reactor,
     path: &str,
 ) -> String {
-    isoplane_harness::LogCapture::global();
     let first = guest.start(path);
     assert_eq!(
         first.completion,
         Completion::Parked,
         "the package's handler must park on its host timer: {first:?}; logs: {:?}",
-        reactor.context.emitted_logs()
+        reactor.context.logs()
     );
     tokio::task::yield_now().await;
     tokio::time::advance(std::time::Duration::from_millis(60)).await;
@@ -338,7 +337,6 @@ async fn an_aspnet_package_serves_its_static_web_assets() {
 /// with its `ConsoleLogging` setting naming the logging calls its builder
 /// makes: the level and text of each record of the route's category.
 async fn logged_with(calls: &str) -> Vec<(u8, String)> {
-    isoplane_harness::LogCapture::global();
     let runtime = isoplane_fixtures::mono_runtime();
     let preparation = LocalPreparation::with_cache(shared_cache()).expect("local preparation");
     let mut request = request(&runtime, package("web"));
@@ -357,11 +355,11 @@ async fn logged_with(calls: &str) -> Vec<(u8, String)> {
         body,
         "logged",
         "the route must answer after logging; logs: {:?}",
-        reactor.context.emitted_logs()
+        reactor.context.logs()
     );
     reactor
         .context
-        .emitted_logs()
+        .logs()
         .into_iter()
         .filter(|record| record.fields.contains("Web.Orders"))
         .map(|record| (record.level, record.fields))
@@ -679,10 +677,9 @@ impl SessionVisitor {
     }
 
     fn logs(&self) -> Vec<String> {
-        isoplane_harness::LogCapture::global();
         self.reactor
             .context
-            .emitted_logs()
+            .logs()
             .into_iter()
             .map(|record| record.fields)
             .collect()
@@ -1027,6 +1024,7 @@ fn prepared_cell(
     config: isoplane_host::CellConfig,
     services: Arc<isoplane_host::cell::Services>,
 ) -> Arc<isoplane_host::cell::Cell> {
+    isoplane_harness::logging::LogCapture::global();
     let engine = Arc::new(
         IsoplaneEngine::new(engine_configuration(PlatformFiles::default()))
             .expect("the serving engine must initialize"),
@@ -1113,7 +1111,6 @@ fn alpha_request(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_request_that_unblocks_another_on_its_instance_leaves_it_to_resume_in_its_own_slice() {
-    isoplane_harness::LogCapture::global();
     let prepared = prepared_package("alpha").await;
     let module = isoplane_host::ModuleId::new("alpha", "v1");
     let cell = serving_cell(&prepared.0, &prepared.1, &module, 300_000);
@@ -1174,7 +1171,7 @@ async fn a_request_that_unblocks_another_on_its_instance_leaves_it_to_resume_in_
         .slot(opened.instance)
         .expect("step 4: the instance stays resident")
         .ctx
-        .emitted_logs()
+        .logs()
         .into_iter()
         .filter(|log| log.fields.contains("resumed after the gate opened"))
         .map(|log| log.dispatch)
@@ -1189,7 +1186,6 @@ async fn a_request_that_unblocks_another_on_its_instance_leaves_it_to_resume_in_
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn idle_timers_run_by_default_without_counting_http_requests_and_stop_after_inactivity() {
-    isoplane_harness::LogCapture::global();
     let (product, request) = alpha_initialized_by("StartHeartbeatAsync").await;
     let module = isoplane_host::ModuleId::new("alpha", "v1");
     let cell = serving_cell(&product, &request, &module, 1_000);
@@ -1200,7 +1196,7 @@ async fn idle_timers_run_by_default_without_counting_http_requests_and_stop_afte
         "step 1: the idle instance must be woken for its timers without a request",
         || {
             cell.slot(first.instance).is_some_and(|slot| {
-                slot.ctx.emitted_logs().iter().any(|log| {
+                slot.ctx.logs().iter().any(|log| {
                     log.fields.contains("heartbeat")
                         && log.dispatch == isoplane_host::futures::INSTANCE_WORK
                 })
@@ -1213,7 +1209,7 @@ async fn idle_timers_run_by_default_without_counting_http_requests_and_stop_afte
         .expect("step 2: the woken instance must still be resident");
     assert!(instance
         .ctx
-        .emitted_logs()
+        .logs()
         .iter()
         .any(|log| log.fields.contains("heartbeat")
             && log.dispatch == isoplane_host::futures::INSTANCE_WORK));
@@ -1389,7 +1385,6 @@ async fn sqlites_generator_is_reseeded_in_each_activation() {
 /// The first dispatch of `path` on the prepared `diagnostics` package, and
 /// what the guest logged.
 async fn diagnose(path: &str) -> (isoplane_engine::DispatchOutcome, Vec<String>) {
-    isoplane_harness::LogCapture::global();
     let prepared = prepared_package("diagnostics").await;
     let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
     reactor.context.begin_slice(1, 1);
@@ -1397,7 +1392,7 @@ async fn diagnose(path: &str) -> (isoplane_engine::DispatchOutcome, Vec<String>)
     let outcome = guest.start(path);
     let logs = reactor
         .context
-        .emitted_logs()
+        .logs()
         .into_iter()
         .map(|record| record.fields)
         .collect();

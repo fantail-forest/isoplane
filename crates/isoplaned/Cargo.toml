@@ -63,6 +63,7 @@ isoplane-engine    = { workspace = true }
 isoplane-runtime = { workspace = true, features = ["local"] }
 
 [dev-dependencies]
+isoplane-harness = { workspace = true }
 base64 = { workspace = true }
 reqwest = { workspace = true }
 opentelemetry-proto = { workspace = true }

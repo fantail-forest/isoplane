@@ -1,6 +1,7 @@
 //! Managed HTTP proxy/authentication and ClientWebSocket through real guest
 //! sockets, with a Store destroyed and restored at every asynchronous wait.
 
+use isoplane_harness::logging::GuestLogs;
 #[macro_use]
 mod common;
 #[path = "common/admitted.rs"]
@@ -16,7 +17,6 @@ pub mod tls_material;
 
 use common::{guest, GuestRuntime};
 use isoplane_engine::Completion;
-use isoplane_harness::EmittedGuestLogs as _;
 use isoplane_harness::Reactor;
 use isoplane_host::InstanceId;
 use protocol_peers::{connect_proxy, protocol_peer, ProtocolPeer};
@@ -45,7 +45,6 @@ async fn exchange(runtime: GuestRuntime, mode: &str) -> (String, ProtocolPeer) {
 }
 
 async fn request(runtime: GuestRuntime, reactor: &Reactor, path: &str) -> String {
-    isoplane_harness::LogCapture::global();
     reactor.context.begin_slice(1_893_456_000_000, 1);
     let mut guest = guest(reactor, runtime);
     let started = guest.start(path);
@@ -53,7 +52,7 @@ async fn request(runtime: GuestRuntime, reactor: &Reactor, path: &str) -> String
         started.completion,
         Completion::Parked,
         "the managed protocol must start real asynchronous socket I/O; logs: {:?}",
-        reactor.context.emitted_logs()
+        reactor.context.logs()
     );
     let answer = guest.finish_through_deltas(reactor, 64).await;
     admitted::released(reactor).await;

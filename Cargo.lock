@@ -1915,6 +1915,7 @@ dependencies = [
  "isoplane-control",
  "isoplane-engine",
  "isoplane-fixtures",
+ "isoplane-harness",
  "isoplane-hibernate",
  "isoplane-host",
  "isoplane-prepare",

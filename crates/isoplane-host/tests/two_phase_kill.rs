@@ -4,6 +4,7 @@
 //! and is killed, and `/gc_pin` pins the unsafe-to-trap bit and is
 //! killed anyway.
 
+use isoplane_harness::logging::GuestLogs;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -76,6 +77,7 @@ fn rig() -> (Arc<Cell>, ModuleId) {
 }
 
 fn cell_with(act: Arc<dyn isoplane_host::Activator>) -> (Arc<Cell>, ModuleId) {
+    isoplane_harness::logging::LogCapture::global();
     let module = act.module().clone();
     let cell = Cell::new(CellConfig::for_test("isoplane-kill"), services()).expect("a cell starts");
     cell.register_module("acme", act, manifest("misbehaver"))
@@ -190,7 +192,6 @@ fn a_budget_exit_is_measured_and_its_instance_serves_the_next_dispatch_warm() {
 
 #[test]
 fn a_guest_that_awaits_between_chunks_unwinds_on_its_cancellation_and_exits() {
-    TestLogCapture::global();
     let (cell, module) = rig();
     let out = get(&cell, &module, "/cooperative");
     assert_eq!(
@@ -203,7 +204,7 @@ fn a_guest_that_awaits_between_chunks_unwinds_on_its_cancellation_and_exits() {
         .slot(out.instance)
         .expect("a budget exit keeps its instance")
         .ctx
-        .emitted_logs()
+        .logs()
         .iter()
         .any(|log| log.fields.contains("finally ran"));
     assert!(finally_ran, "the guest's Drop must run before it exits");
@@ -256,89 +257,5 @@ fn the_hang_breaker_counts_only_budget_kills() {
         assert_eq!(metrics.budget_kills, kills);
         assert_eq!(metrics.breaker_rejections, rejected);
         cell.shutdown();
-    }
-}
-
-#[derive(Clone, Default)]
-struct TestLogCapture(Arc<std::sync::Mutex<Vec<u8>>>);
-
-#[derive(Debug, serde::Deserialize)]
-struct TestGuestLog {
-    fields: String,
-}
-
-impl TestLogCapture {
-    fn global() -> &'static Self {
-        use tracing_subscriber::prelude::*;
-        static CAPTURE: std::sync::OnceLock<TestLogCapture> = std::sync::OnceLock::new();
-        CAPTURE.get_or_init(|| {
-            let capture = Self::default();
-            let subscriber = tracing_subscriber::registry().with(
-                tracing_subscriber::fmt::layer()
-                    .json()
-                    .with_ansi(false)
-                    .with_writer(capture.clone())
-                    .with_filter(tracing_subscriber::filter::filter_fn(|metadata| {
-                        metadata.target().contains("host::bindings")
-                    })),
-            );
-            tracing::subscriber::set_global_default(subscriber)
-                .expect("one guest-event subscriber per test process");
-            capture
-        })
-    }
-
-    fn for_instance(&self, instance: impl std::fmt::Display) -> Vec<TestGuestLog> {
-        let instance = instance.to_string();
-        let bytes = self.0.lock().expect("test writer mutex").clone();
-        String::from_utf8(bytes)
-            .expect("tracing emits UTF-8")
-            .lines()
-            .filter_map(|line| {
-                let event: serde_json::Value =
-                    serde_json::from_str(line).expect("tracing JSON event");
-                if event["fields"]["message"] != "guest log"
-                    || event["fields"]["instance"] != instance
-                {
-                    return None;
-                }
-                Some(
-                    serde_json::from_value(event["fields"].clone())
-                        .expect("the guest logging boundary emits text"),
-                )
-            })
-            .collect()
-    }
-}
-
-impl std::io::Write for TestLogCapture {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0
-            .lock()
-            .expect("test writer mutex")
-            .extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-impl<'writer> tracing_subscriber::fmt::MakeWriter<'writer> for TestLogCapture {
-    type Writer = Self;
-
-    fn make_writer(&'writer self) -> Self::Writer {
-        self.clone()
-    }
-}
-
-trait EmittedGuestLogs {
-    fn emitted_logs(&self) -> Vec<TestGuestLog>;
-}
-
-impl EmittedGuestLogs for isoplane_host::bindings::InstanceCtx {
-    fn emitted_logs(&self) -> Vec<TestGuestLog> {
-        TestLogCapture::global().for_instance(self.instance)
     }
 }

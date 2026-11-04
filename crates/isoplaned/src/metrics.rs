@@ -179,10 +179,10 @@ pub fn render(node: &str, proxy: &ProxyMetrics, snap: NodeSnapshot) -> String {
             )],
         ),
         family(
-            "isoplane_hang_breakers_tripped",
-            "Routes currently failing fast",
-            proto::MetricType::GAUGE,
-            vec![gauge(&node_labels, snap.breaker_trips as f64)],
+            "isoplane_hang_breaker_rejections_total",
+            "Requests refused by the hang breaker",
+            proto::MetricType::COUNTER,
+            vec![counter(&node_labels, snap.breaker_rejections as f64)],
         ),
     ];
     for (name, help, value) in [
@@ -280,7 +280,7 @@ mod tests {
             },
             snapshot_written_bytes: 5 << 20,
             traps_total: 1,
-            breaker_trips: 0,
+            breaker_rejections: 0,
         }
     }
 

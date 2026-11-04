@@ -7,6 +7,7 @@
 //! knowledge while HTTP/3 stays off, and every failure reaches the ordinary
 //! `HttpRequestException` with the socket error that caused it.
 
+use isoplane_harness::logging::GuestLogs;
 #[macro_use]
 mod common;
 #[path = "common/admitted.rs"]
@@ -35,7 +36,6 @@ use http_peers::{
     Certificate, MidstreamPeer,
 };
 use isoplane_engine::Completion;
-use isoplane_harness::EmittedGuestLogs as _;
 use isoplane_harness::{Reactor, ReturnedGuest, WAKE_DEADLINE};
 use refusing::refusing_endpoint;
 use resolvers::{reactor_for_dns, FailingDns, PendingDns};
@@ -105,7 +105,6 @@ async fn restore_at_body_checkpoint(
 }
 
 async fn response_body_survives_delta(runtime: GuestRuntime, owner: u64, http2: bool) {
-    isoplane_harness::LogCapture::global();
     let mut peer = midstream_peer(BODY_PREFIX_BYTES, 300_000).await;
     let reactor = reactor(owner, vec![peer.address]);
     let mut guest = guest(&reactor, runtime);
@@ -135,12 +134,11 @@ async fn response_body_survives_delta(runtime: GuestRuntime, owner: u64, http2: 
         text.starts_with(&format!("status=200{version} content-type=application/octet-stream length=300000 "))
             && text.ends_with(&format!(" sha256={STREAM_DIGEST}")),
         "the partially consumed response and its digest must survive restoration before the remainder arrives: {text}; logs: {:?}",
-        reactor.context.emitted_logs()
+        reactor.context.logs()
     );
 }
 
 async fn request_body_survives_delta(runtime: GuestRuntime, owner: u64, http2: bool) {
-    isoplane_harness::LogCapture::global();
     let mut peer = midstream_peer(BODY_PREFIX_BYTES, 200_000).await;
     let reactor = reactor(owner, vec![peer.address]);
     let mut guest = guest(&reactor, runtime);
@@ -169,7 +167,7 @@ async fn request_body_survives_delta(runtime: GuestRuntime, owner: u64, http2: b
     assert_eq!(text,
         format!("status=200{version} content-type=application/octet-stream sent={POST_DIGEST} echoed={POST_DIGEST}"),
         "the partly produced upload must survive restoration before the producer sends the remainder; logs: {:?}",
-        reactor.context.emitted_logs()
+        reactor.context.logs()
     );
 }
 
@@ -184,13 +182,13 @@ in_mono_runtime! {
             outcome.completion,
             Completion::Parked,
             "HttpClient.GetAsync must park on the connection instead of blocking: {outcome:?}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         let text = guest.finish(&reactor, 16).await;
         assert_eq!(
             text, "status=200 content-type=text/plain body=hello from peer",
             "the response head and body must reach the client; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert_eq!(peer.connections(), 1, "one request, one IPv4 connection to the loopback peer");
     }
@@ -206,7 +204,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("status=200 content-type=application/octet-stream length=300000 "),
             "every byte of a chunked body must reach the client: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert!(text.ends_with(&format!(" sha256={STREAM_DIGEST}")), "the body must arrive intact and in order: {text}");
         assert!(wakes >= 2, "a body larger than one socket read must park for readiness more than once ({wakes} wakes)");
@@ -227,7 +225,7 @@ in_mono_runtime! {
             text,
             format!("status=200 content-type=application/octet-stream sent={POST_DIGEST} echoed={POST_DIGEST}"),
             "the request body must reach the peer intact; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
     }
 
@@ -245,7 +243,7 @@ in_mono_runtime! {
         assert_eq!(
             text, "status=200 content-type=text/plain body=ping x-answer=pong",
             "headers must cross in both directions; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
     }
 
@@ -258,7 +256,7 @@ in_mono_runtime! {
         assert_eq!(
             text, "status=200 content-type=text/plain body=hello from peer",
             "a same-authority redirect is followed by the client; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         let text = guest.answer(&reactor, &format!("/http/redirect/127.0.0.1/{}", peer.address.port()), 16).await;
         assert_eq!(
@@ -273,7 +271,7 @@ in_mono_runtime! {
         let reactor = reactor(8, vec![peer.address]);
         let mut guest = guest(&reactor, runtime);
         let text = guest.answer(&reactor, &format!("/http/hops/127.0.0.1/{}/3", peer.address.port()), 32).await;
-        assert_eq!(text, "status=200 content-type=text/plain body=landed", "three hops within a limit of three land; logs: {:?}", reactor.context.emitted_logs());
+        assert_eq!(text, "status=200 content-type=text/plain body=landed", "three hops within a limit of three land; logs: {:?}", reactor.context.logs());
         let text = guest.answer(&reactor, &format!("/http/hops/127.0.0.1/{}/5", peer.address.port()), 32).await;
         assert_eq!(
             text, "status=302 content-type=text/plain location=/hops/1 body=moved",
@@ -290,7 +288,7 @@ in_mono_runtime! {
         assert_eq!(
             text, "status=200 content-type=application/octet-stream replayed=same",
             "a temporary redirect must resend the method and the whole body; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
     }
 
@@ -304,7 +302,7 @@ in_mono_runtime! {
             assert_eq!(
                 text, "status=200 content-type=application/octet-stream content-encoding= body=decoded",
                 "a {encoding} body must reach the application decoded, with the encoding header consumed; logs: {:?}",
-                reactor.context.emitted_logs()
+                reactor.context.logs()
             );
         }
         let text = guest.answer(&reactor, &format!("/http/accept-encoding/127.0.0.1/{}", peer.address.port()), 16).await;
@@ -317,7 +315,7 @@ in_mono_runtime! {
         let reactor = reactor(11, vec![peer.address]);
         let mut guest = guest(&reactor, runtime);
         let text = guest.answer(&reactor, &format!("/http/reuse/127.0.0.1/{}", peer.address.port()), 32).await;
-        assert_eq!(text, "hello from peer|hello from peer|hello from peer", "every request completes; logs: {:?}", reactor.context.emitted_logs());
+        assert_eq!(text, "hello from peer|hello from peer|hello from peer", "every request completes; logs: {:?}", reactor.context.logs());
         assert_eq!(peer.connections(), 1, "three sequential requests must share one keep-alive connection");
     }
 
@@ -330,7 +328,7 @@ in_mono_runtime! {
         assert_eq!(
             text, "served once|served once",
             "a connection the peer closed while idle must be replaced by the pool, not surfaced as a failure; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert_eq!(peer.connections(), 2, "the second request opens a fresh connection");
     }
@@ -354,7 +352,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("HttpRequestException(ConnectionError): ") && text.ends_with("<- SocketException"),
             "a refused connection must reach the client as HttpRequestException over the socket error: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert_eq!(reactor.runtime().services.egress.instance_connections(reactor.context.instance), 0, "a failed request holds no permit");
     }
@@ -369,7 +367,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("HttpRequestException(ConnectionError): ") && text.ends_with("<- SocketException"),
             "a policy refusal must reach the client as HttpRequestException over the socket error: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert_eq!(peer.connections(), 0, "a denied request must never reach the peer");
         assert_eq!(reactor.runtime().services.egress.instance_connections(reactor.context.instance), 0, "a denied request holds no permit");
@@ -384,7 +382,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("HttpRequestException(NameResolutionError): ") && text.ends_with("<- SocketException"),
             "a resolver failure must reach the client as HttpRequestException over the DNS error: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
     }
 
@@ -438,7 +436,7 @@ in_mono_runtime! {
         assert_eq!(
             text, "TaskCanceledException",
             "HttpClient.Timeout must cancel the request through the host timer; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         released(&reactor).await;
     }
@@ -456,7 +454,7 @@ in_mono_runtime! {
         assert_eq!(
             text, "OperationCanceledException",
             "a cancellation token must end the request; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         released(&reactor).await;
     }
@@ -470,7 +468,7 @@ in_mono_runtime! {
         assert_eq!(
             text, "status=200 content-type=text/plain body=hello from peer",
             "a TLS request must complete against the root the application supplied, with the host holding no anchor; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert_eq!(reactor.runtime().services.egress.instance_connections(reactor.context.instance), 0, "the TLS connection is released with the client");
     }
@@ -484,7 +482,7 @@ in_mono_runtime! {
         assert_eq!(
             text, "status=200 content-type=text/plain body=hello from peer",
             "the intermediate the peer presents must chain its leaf to the application's root; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
     }
 
@@ -497,7 +495,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("HttpRequestException(SecureConnectionError): ") && text.ends_with("<- AuthenticationException"),
             "an untrusted server certificate must fail the request through the TLS authentication error: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         released(&reactor).await;
     }
@@ -513,7 +511,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("HttpRequestException(SecureConnectionError): ") && text.ends_with("<- AuthenticationException"),
             "an issuer that cannot be fetched leaves the chain partial and the request failed: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         released(&reactor).await;
     }
@@ -527,7 +525,7 @@ in_mono_runtime! {
         assert_eq!(
             text, "status=200 content-type=text/plain body=hello from peer",
             "the complete chain validates whatever revocation URLs it carries; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
     }
 
@@ -540,7 +538,7 @@ in_mono_runtime! {
         assert_eq!(
             text, "status=200 version=2.0 content-type=text/plain body=hello from peer",
             "a request pinned to HTTP/2 over TLS must complete on HTTP/2; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert_eq!(
             peer.negotiated_alpn(),
@@ -558,7 +556,7 @@ in_mono_runtime! {
         assert_eq!(
             text, "status=200 version=2.0 content-type=text/plain body=hello from peer",
             "a request pinned to HTTP/2 over plaintext must open the connection with the h2 preface; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert_eq!(peer.connections(), 1, "prior knowledge needs no upgrade round trip");
     }
@@ -572,7 +570,7 @@ in_mono_runtime! {
         assert_eq!(
             text, "status=200 version=1.1 content-type=text/plain body=hello from peer",
             "RequestVersionOrHigher must settle on HTTP/1.1 when the peer offers nothing higher; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert_eq!(
             peer.negotiated_alpn(),
@@ -592,7 +590,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("status=200 version=2.0 content-type=application/octet-stream length=300000 "),
             "every DATA frame of an HTTP/2 body must reach the client: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert!(text.ends_with(&format!(" sha256={STREAM_DIGEST}")), "the body must arrive intact and in order: {text}");
         assert!(wakes >= 2, "a body larger than one socket read must park for readiness more than once ({wakes} wakes)");
@@ -613,7 +611,7 @@ in_mono_runtime! {
             text,
             format!("status=200 version=2.0 content-type=application/octet-stream sent={POST_DIGEST} echoed={POST_DIGEST}"),
             "a request body sent as DATA frames under flow control must reach the peer intact; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
     }
 
@@ -628,7 +626,7 @@ in_mono_runtime! {
         let reactor = reactor(32, vec![peer.address]);
         let mut guest = guest(&reactor, runtime);
         let text = guest.answer(&reactor, &format!("/http/h2/two/127.0.0.1/{}", peer.address.port()), 32).await;
-        assert_eq!(text, "hello from peer+world", "each request must resume its own continuation; logs: {:?}", reactor.context.emitted_logs());
+        assert_eq!(text, "hello from peer+world", "each request must resume its own continuation; logs: {:?}", reactor.context.logs());
         assert_eq!(peer.connections(), 1, "two concurrent HTTP/2 requests are streams of one connection");
     }
 
@@ -641,7 +639,7 @@ in_mono_runtime! {
         assert_eq!(
             text, "hello from peer|hello from peer|hello from peer",
             "every request completes although each connection is told to go away; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert_eq!(peer.connections(), 3, "a connection that received GOAWAY carries no further request");
     }
@@ -660,7 +658,7 @@ in_mono_runtime! {
             text,
             "HttpRequestException(VersionNegotiationError): net_http_requested_version_cannot_establish, 3.0, RequestVersionExact, 3",
             "HTTP/3 is switched off in the SDK, so a request pinned to it fails in the client; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert_eq!(peer.connections(), 0, "a request the client cannot satisfy never reaches the peer");
     }

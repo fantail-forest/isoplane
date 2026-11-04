@@ -1,5 +1,6 @@
 //! Fragmented debugger packets through the runtime's real socket transport.
 
+use isoplane_harness::logging::GuestLogs;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -7,7 +8,6 @@ use std::time::Duration;
 use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest, TraceContext};
 use isoplane_abi::native_io::{ByteCount, Error, Request, Response};
 use isoplane_engine::{HostBindings, ImportCall, OccupancyBudget, PlatformFile, PlatformFiles};
-use isoplane_harness::EmittedGuestLogs as _;
 use isoplane_harness::{Network, Reactor};
 use isoplane_host::bindings::CellBindings;
 use isoplane_host::debug::DebugActivator;
@@ -151,7 +151,6 @@ async fn exchange(listener: &TcpListener) {
 
 #[tokio::test]
 async fn partial_debugger_headers_and_delayed_payloads_preserve_packet_boundaries() {
-    isoplane_harness::LogCapture::global();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let endpoint = listener.local_addr().unwrap();
     let mut files = super::package("alpha");
@@ -221,7 +220,7 @@ async fn partial_debugger_headers_and_delayed_payloads_preserve_packet_boundarie
                     result.completion,
                     isoplane_engine::Completion::Parked,
                     "{fragment:?}: {result:?}; logs: {:?}",
-                    reactor.context.emitted_logs()
+                    reactor.context.logs()
                 );
             });
         })
@@ -230,7 +229,7 @@ async fn partial_debugger_headers_and_delayed_payloads_preserve_packet_boundarie
             completed.is_ok(),
             "the {fragment:?} exchange must finish and the detached guest must reach its host timer; injected: {}; logs: {:?}",
             injected.load(Ordering::SeqCst),
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert!(
             injected.load(Ordering::SeqCst),

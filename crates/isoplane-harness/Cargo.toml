@@ -8,8 +8,8 @@ license-file.workspace = true
 description = "Test support for returned guest execution, host resources and injected networking"
 
 [dependencies]
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
+tracing.workspace = true
+tracing-subscriber.workspace = true
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 postcard = { workspace = true }

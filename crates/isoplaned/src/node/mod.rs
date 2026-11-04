@@ -2,7 +2,7 @@
 
 pub mod deploy;
 
-use crate::admin::{NodeAdmin};
+use crate::admin::NodeAdmin;
 use crate::config::NodeConfig;
 use isoplane_abi::host::{CodeTier, RouteTarget};
 use isoplane_proxy::{LocalRouteTable, Proxy, ProxyConfig, ProxyMetrics, ShedConfig};

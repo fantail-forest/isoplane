@@ -92,8 +92,7 @@ impl fmt::Display for ModuleId {
     }
 }
 
-/// Cell-local identity of a slot. A migrated instance gets a new one, because
-/// instances are portable memory, not portable identities.
+/// Process-local identity allocated for an application instance.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
 )]

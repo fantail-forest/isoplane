@@ -1,5 +1,6 @@
 //! Request future limits and response-completion handover.
 
+use isoplane_harness::logging::GuestLogs;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -9,7 +10,6 @@ use isoplane_abi::dispatch::{DispatchRecord, HttpRequest};
 use isoplane_engine::Completion;
 
 use isoplane_harness::fakes::*;
-use isoplane_harness::EmittedGuestLogs as _;
 use isoplane_host::cell::{Cell, CellConfig, Target};
 use isoplane_host::{Activator, ModuleId};
 
@@ -171,7 +171,6 @@ fn the_pending_futures_cap_refuses_the_extra_operation_and_keeps_the_instance_se
 
 #[test]
 fn response_completion_hands_work_to_background_without_holding_the_request_open() {
-    isoplane_harness::LogCapture::global();
     let r = rig(CellConfig::for_test("handover"));
     let act = Arc::new(FakeActivator::named(
         ModuleId::new("handover", "v1"),
@@ -231,7 +230,7 @@ fn response_completion_hands_work_to_background_without_holding_the_request_open
         .slot(first.instance)
         .expect("the instance remains warm");
     assert_eq!(
-        slot.ctx.emitted_logs()[0].dispatch,
+        slot.ctx.logs()[0].dispatch,
         isoplane_host::futures::INSTANCE_WORK
     );
     assert_eq!(

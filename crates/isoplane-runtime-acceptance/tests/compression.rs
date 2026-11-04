@@ -3,12 +3,12 @@
 //! memory, a codec's native state survives a hibernation delta between its
 //! writes, and the helpers that need a directory fail on the empty disk.
 
+use isoplane_harness::logging::GuestLogs;
 #[macro_use]
 mod common;
 
 use common::{guest, GuestRuntime};
 use isoplane_engine::Completion;
-use isoplane_harness::EmittedGuestLogs as _;
 
 async fn answer(runtime: GuestRuntime, path: &str) -> String {
     let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
@@ -125,7 +125,7 @@ in_mono_runtime! {
         let mut wakes = 0;
         while outcome.completion == Completion::Parked {
             wakes += 1;
-            assert!(wakes <= 9, "nine timer parks need exactly nine wakes; logs: {:?}", reactor.context.emitted_logs());
+            assert!(wakes <= 9, "nine timer parks need exactly nine wakes; logs: {:?}", reactor.context.logs());
             tokio::task::yield_now().await;
             tokio::time::advance(std::time::Duration::from_millis(20)).await;
             reactor.context.begin_slice(1 + 20 * wakes, 1);
@@ -135,7 +135,7 @@ in_mono_runtime! {
             outcome.completion,
             Completion::Done,
             "the dispatch must complete after its parks: {outcome:?}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert_eq!(wakes, 9, "every one of the nine parks must be a real park on a host timer");
         assert_eq!(

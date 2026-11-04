@@ -3,12 +3,12 @@
 //! resume across destroyed Stores, and registrations are held once and
 //! released with their owner.
 
+use isoplane_harness::logging::GuestLogs;
 #[macro_use]
 mod common;
 
 use common::{guest, GuestRuntime};
 use isoplane_engine::Completion;
-use isoplane_harness::EmittedGuestLogs as _;
 
 in_mono_runtime! {
     #[tokio::test(start_paused = true)]
@@ -21,7 +21,7 @@ in_mono_runtime! {
             outcome.completion,
             Completion::Parked,
             "Task.Delay must park the guest instead of blocking: {outcome:?}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert_eq!(
             reactor.futures.pending_total(reactor.context.instance),
@@ -112,7 +112,7 @@ in_mono_runtime! {
             outcome.completion,
             Completion::Done,
             "{outcome:?}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert_eq!(
             reactor.response_text(1),
@@ -252,7 +252,10 @@ in_mono_runtime! {
             let outcome = guest.start(path);
             assert_eq!(outcome.completion, Completion::Parked, "{outcome:?}");
             assert_eq!(
-                reactor.futures.pending_of_dispatch(reactor.context.instance, dispatch, "poll_call").len(),
+                reactor
+                    .futures
+                    .pending_of_dispatch(reactor.context.instance, dispatch, "poll_call")
+                    .len(),
                 1,
                 "each request must have a wake independent of the overdue background timer"
             );
@@ -262,24 +265,42 @@ in_mono_runtime! {
             tokio::time::advance(std::time::Duration::from_millis(advance_ms)).await;
             reactor.context.begin_slice(now_ms, dispatch);
             let outcome = guest.wake(&reactor).await;
-            assert_eq!(outcome.completion, Completion::Done, "request {dispatch}: {outcome:?}");
+            assert_eq!(
+                outcome.completion,
+                Completion::Done,
+                "request {dispatch}: {outcome:?}"
+            );
             assert_eq!(reactor.response_text(dispatch as u32), "resumed");
-            reactor.futures.end_dispatch(reactor.context.instance, dispatch);
+            reactor
+                .futures
+                .end_dispatch(reactor.context.instance, dispatch);
         }
         reactor.context.begin_dispatch(311, 4);
         let outcome = guest.start("/loop/rearm");
         assert_eq!(outcome.completion, Completion::Done, "{outcome:?}");
-        assert_eq!(reactor.response_text(4), "4:0", "requests must not run the retained callback");
+        assert_eq!(
+            reactor.response_text(4),
+            "4:0",
+            "requests must not run the retained callback"
+        );
         reactor.futures.end_dispatch(reactor.context.instance, 4);
 
         tokio::time::advance(std::time::Duration::from_millis(20)).await;
         reactor.context.begin_dispatch(331, INSTANCE_WORK);
         let outcome = guest.poll();
-        assert_eq!(outcome.completion, Completion::Done, "background work must resume: {outcome:?}");
+        assert_eq!(
+            outcome.completion,
+            Completion::Done,
+            "background work must resume: {outcome:?}"
+        );
         reactor.context.begin_dispatch(331, 5);
         let outcome = guest.start("/loop/observe");
         assert_eq!(outcome.completion, Completion::Done, "{outcome:?}");
-        assert_eq!(reactor.response_text(5), "5:2", "handover must preserve both the pending and rearmed callbacks");
+        assert_eq!(
+            reactor.response_text(5),
+            "5:2",
+            "handover must preserve both the pending and rearmed callbacks"
+        );
         assert_eq!(reactor.futures.pending_total(reactor.context.instance), 0);
     }
 }
@@ -397,12 +418,28 @@ in_mono_runtime! {
         reactor.context.begin_slice(1, 1);
         let mut guest = guest(&reactor, runtime);
         let outcome = guest.start("/loop/cancel-only");
-        assert_eq!(outcome.completion, Completion::Done, "cancelling the delay must finish without waiting: {outcome:?}");
-        assert_eq!(reactor.futures.pending_total(reactor.context.instance), 0, "the cancelled delay must leave no timer");
+        assert_eq!(
+            outcome.completion,
+            Completion::Done,
+            "cancelling the delay must finish without waiting: {outcome:?}"
+        );
+        assert_eq!(
+            reactor.futures.pending_total(reactor.context.instance),
+            0,
+            "the cancelled delay must leave no timer"
+        );
         reactor.context.begin_slice(201, 2);
         let outcome = guest.start("/loop/delay/200");
-        assert_eq!(outcome.completion, Completion::Parked, "the new request must await its timer: {outcome:?}");
-        assert_eq!(reactor.futures.pending_total(reactor.context.instance), 1, "an elapsed cancelled deadline must not suppress a new timer");
+        assert_eq!(
+            outcome.completion,
+            Completion::Parked,
+            "the new request must await its timer: {outcome:?}"
+        );
+        assert_eq!(
+            reactor.futures.pending_total(reactor.context.instance),
+            1,
+            "an elapsed cancelled deadline must not suppress a new timer"
+        );
         tokio::task::yield_now().await;
         tokio::time::advance(std::time::Duration::from_millis(201)).await;
         reactor.context.begin_slice(402, 2);
@@ -413,7 +450,6 @@ in_mono_runtime! {
 }
 
 async fn scheduling_survives_delta(runtime: GuestRuntime, scenario: &str) {
-    isoplane_harness::LogCapture::global();
     let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
     reactor.context.begin_slice(1, 1);
     let mut guest = guest(&reactor, runtime);
@@ -422,7 +458,7 @@ async fn scheduling_survives_delta(runtime: GuestRuntime, scenario: &str) {
         outcome.completion,
         Completion::Parked,
         "{scenario} must await its host timer: {outcome:?}; logs: {:?}",
-        reactor.context.emitted_logs()
+        reactor.context.logs()
     );
     tokio::task::yield_now().await;
     tokio::time::advance(std::time::Duration::from_millis(60)).await;

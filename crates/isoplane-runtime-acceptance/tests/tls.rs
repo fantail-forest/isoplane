@@ -5,6 +5,7 @@
 //! (name, validity, chain), and every failure the peer can produce reaches
 //! the ordinary .NET exception.
 
+use isoplane_harness::logging::GuestLogs;
 #[macro_use]
 mod common;
 #[path = "common/admitted.rs"]
@@ -31,7 +32,6 @@ use common::{guest, GuestRuntime};
 use fixed_dns::FixedDns;
 use isoplane_engine::Completion;
 use isoplane_engine::PlatformFiles;
-use isoplane_harness::EmittedGuestLogs as _;
 use isoplane_harness::{Reactor, ReturnedGuest, WAKE_DEADLINE};
 use isoplane_host::InstanceId;
 use material_peer::{Crl, Issuers, MaterialPeer, Ocsp, RetrievalLeaf, Sentinel};
@@ -110,14 +110,14 @@ in_mono_runtime! {
             outcome.completion,
             Completion::Parked,
             "the handshake must park on the socket instead of blocking: {outcome:?}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         let text = guest.finish(&reactor, 32).await;
         assert!(
             text.starts_with("protocol=Tls1")
                 && text.contains(" authenticated=True encrypted=True "),
             "the handshake must complete with a negotiated protocol: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert!(
             text.ends_with(" peer=CN=leaf.acceptance.test"),
@@ -142,7 +142,7 @@ in_mono_runtime! {
             text,
             payload,
             "every byte must cross the TLS stream and come back; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
     }
 
@@ -166,7 +166,7 @@ in_mono_runtime! {
         assert_eq!(
             text, payload,
             "the TLS state and the connection must survive every park being captured and restored; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
     }
 
@@ -209,7 +209,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("protocol=Tls1") && text.ends_with(" peer=CN=chained.acceptance.test"),
             "the intermediate the peer presents must chain the leaf to the trusted root: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
     }
 
@@ -229,7 +229,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("protocol=Tls1") && text.ends_with(" peer=CN=remote.acceptance.test"),
             "a chain the peer completes validates: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert!(
             material.requests().is_empty(),
@@ -255,7 +255,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("protocol=Tls1") && text.ends_with(" peer=CN=remote.acceptance.test"),
             "the issuer at the AIA URL must complete the chain: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert_eq!(
             material.requests(),
@@ -284,7 +284,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("protocol=Tls1") && text.ends_with(" peer=CN=deep.acceptance.test"),
             "each issuer names the next; the chain completes iteratively: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert_eq!(
             material.requests(),
@@ -309,7 +309,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("AuthenticationException: ") && text.contains("PartialChain"),
             "with downloads explicitly disabled the chain stays partial: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert!(
             material.requests().is_empty(),
@@ -334,7 +334,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("protocol=Tls1") && text.ends_with(" peer=CN=remote.acceptance.test"),
             "a CRL that lists nothing passes the online check: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert!(
             material
@@ -361,7 +361,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("AuthenticationException: ") && text.contains("Revoked"),
             "a CRL listing the leaf must fail it as revoked: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
     }
 
@@ -383,7 +383,7 @@ in_mono_runtime! {
                 && text.contains("RevocationStatusUnknown")
                 && text.contains("OfflineRevocation"),
             "an expired CRL and no responder leave the status unknown, never good: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
     }
 
@@ -406,7 +406,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("protocol=Tls1") && text.ends_with(" peer=CN=ocsp.acceptance.test"),
             "a good OCSP response passes the online check with no CRL: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert!(
             material.requests().contains(&"/ocsp".to_owned()),
@@ -431,7 +431,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("AuthenticationException: ") && text.contains("Revoked"),
             "a revoked OCSP answer must fail the leaf as revoked: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
     }
 
@@ -452,7 +452,7 @@ in_mono_runtime! {
             text.starts_with("AuthenticationException: ")
                 && text.contains("RevocationStatusUnknown"),
             "an OCSP answer past its next update is stale, never good: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
     }
 
@@ -477,7 +477,7 @@ in_mono_runtime! {
                 text.starts_with("AuthenticationException: ")
                     && text.contains("RevocationStatusUnknown"),
                 "{what} leaves the status unknown, never good: {text}; logs: {:?}",
-                reactor.context.emitted_logs()
+                reactor.context.logs()
             );
         }
     }
@@ -509,7 +509,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("protocol=Tls1") && text.ends_with(" peer=CN=remote.acceptance.test"),
             "the offline check uses the cached list: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert_eq!(
             material
@@ -550,7 +550,7 @@ in_mono_runtime! {
             outcome.completion,
             Completion::Parked,
             "the retrieval parks: {outcome:?}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         // A timer is due by the guest's clock, which only the test moves: each
         // wake from here (the list's timeout, then the responder's) sees the
@@ -561,7 +561,7 @@ in_mono_runtime! {
             assert!(
                 wakes < 32,
                 "the bounded retrievals must finish within 32 wakes; logs: {:?}",
-                reactor.context.emitted_logs()
+                reactor.context.logs()
             );
             clock_ms += 500 + 1;
             reactor.context.begin_slice(clock_ms, 1);
@@ -572,7 +572,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("AuthenticationException: ") && text.contains("RevocationStatusUnknown"),
             "a responder that never answers is bounded by the policy's timeout and leaves the status unknown: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         released(&reactor).await;
     }
@@ -594,7 +594,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("AuthenticationException: ") && text.contains("PartialChain"),
             "an issuer past the download limit is not taken and the chain stays partial: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
     }
 
@@ -623,7 +623,7 @@ in_mono_runtime! {
             outcome.completion,
             Completion::Parked,
             "the retrieval parks on the held request: {outcome:?}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         reactor.context.begin_slice(CLOCK_2030_MS + 200 + 1, 1);
         let text = guest.finish(&reactor, 32).await;
@@ -631,7 +631,7 @@ in_mono_runtime! {
             text,
             "cancelled",
             "the token cancels the authentication while its retrieval is pending; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         released(&reactor).await;
     }
@@ -656,7 +656,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("protocol=Tls1") && text.ends_with(" peer=CN=remote.acceptance.test"),
             "the half-built chain and its pending retrievals survive every park being captured and restored: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert_eq!(
             material.requests(),
@@ -683,7 +683,7 @@ in_mono_runtime! {
             text,
             "status=200 content-type=text/plain body=hello from peer",
             "HttpClient's TLS completes the chain through the issuer's AIA URL; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert_eq!(
             material.requests(),
@@ -707,7 +707,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("failed: PlatformNotSupportedException: "),
             "the runtime refuses the synchronous handshake outright (it cannot wait on the guest's only thread): {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
     }
 
@@ -726,7 +726,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("read failed: IOException: "),
             "a synchronous read on an established session fails as I/O when the peer sends nothing (the socket refuses to block): {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
     }
 
@@ -750,7 +750,7 @@ in_mono_runtime! {
         assert_eq!(
             text, "built=False elements=1 status=PartialChain",
             "the synchronous build reports the ordinary failure for an issuer it does not have; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert!(
             material.requests().is_empty(),
@@ -779,7 +779,7 @@ in_mono_runtime! {
         assert_eq!(
             text, "built=True elements=3 status=NoError",
             "the issuer the asynchronous authentication fetched is local material for the synchronous build; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert_eq!(
             material.requests(),
@@ -806,7 +806,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("protocol=Tls1") && text.ends_with(" peer=CN=remote.acceptance.test"),
             "a leaf presented alone completes through AIA and validates against the platform bundle: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert_eq!(material.requests(), vec!["/intermediate.der"], "the issuer was fetched once");
     }
@@ -832,7 +832,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("AuthenticationException: ") && text.contains("PartialChain"),
             "an issuer at a destination the policy refuses is not fetched and the chain stays partial: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert_eq!(
             reactor
@@ -871,7 +871,7 @@ in_mono_runtime! {
                 && text.contains("RevocationStatusUnknown")
                 && text.contains("OfflineRevocation"),
             "revocation information that cannot be fetched must fail validation, never pass it: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
     }
 
@@ -894,7 +894,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("AuthenticationException: ") && text.contains("RevocationStatusUnknown"),
             "an offline check with no cached list must report the status unknown: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
     }
 
@@ -917,7 +917,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("protocol=Tls1") && text.ends_with(" peer=CN=remote.acceptance.test"),
             "the complete chain validates with NoCheck regardless of the URLs it carries: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
     }
 
@@ -936,7 +936,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("AuthenticationException: "),
             "an untrusted certificate must fail the handshake as .NET does: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert_eq!(
             reactor
@@ -965,7 +965,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("AuthenticationException: ") && text.contains("UntrustedRoot"),
             "without a platform bundle or application root the chain is untrusted: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
     }
 
@@ -989,7 +989,7 @@ in_mono_runtime! {
             text.starts_with("AuthenticationException: ")
                 && text.contains("RemoteCertificateNameMismatch"),
             "a target host the leaf does not name must be a name mismatch: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
     }
 
@@ -1008,7 +1008,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("AuthenticationException: ") && text.contains("NotTimeValid"),
             "validity is checked against the guest's clock, 1970 here: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
     }
 
@@ -1027,7 +1027,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("AuthenticationException: ") && text.contains("NotTimeValid"),
             "a certificate past notAfter by the guest's clock is expired: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
     }
 
@@ -1046,7 +1046,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("accepted RemoteCertificateNameMismatch, RemoteCertificateChainErrors protocol=Tls1"),
             "the application's callback must see the chain and name errors and decide: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert!(
             text.ends_with(" peer=CN=Stranger Root"),
@@ -1074,7 +1074,7 @@ in_mono_runtime! {
             text,
             format!("mutual=True {payload}"),
             "the guest's certificate and private key must complete a mutually authenticated session; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert!(
             matches!(
@@ -1106,7 +1106,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("read: IOException") || text.starts_with("handshake: "),
             "the peer's certificate_required alert must surface as an error, not as data: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert_eq!(
             reactor
@@ -1142,7 +1142,7 @@ in_mono_runtime! {
             text,
             "alpn=isoplane-acceptance",
             "the negotiated protocol must be the one both offered; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert_eq!(
             observed(&mut events).await,
@@ -1174,7 +1174,7 @@ in_mono_runtime! {
             outcome.completion,
             Completion::Parked,
             "the handshake parks on a peer that never answers: {outcome:?}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         // The token's timer is a host timer; the guest's clock is the
         // dispatch's, advanced past the deadline for the wake that delivers it.
@@ -1184,7 +1184,7 @@ in_mono_runtime! {
             text,
             "cancelled",
             "the cancellation must end the handshake as OperationCanceledException; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         released(&reactor).await;
     }
@@ -1215,7 +1215,7 @@ in_mono_runtime! {
             outcome.completion,
             Completion::Parked,
             "the read parks: {outcome:?}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         reactor.context.begin_slice(CLOCK_2030_MS + 200 + 1, 1);
         let text = guest.finish(&reactor, 8).await;
@@ -1223,7 +1223,7 @@ in_mono_runtime! {
             text,
             "cancelled",
             "the cancellation must end the read as OperationCanceledException; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         released(&reactor).await;
     }
@@ -1243,7 +1243,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("IOException: "),
             "a peer that vanishes mid-handshake must fail the handshake with an I/O error: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert_eq!(
             reactor
@@ -1271,7 +1271,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("IOException: "),
             "half a record followed by a drop must be an I/O error, never a short read or EOF: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
     }
 
@@ -1291,7 +1291,7 @@ in_mono_runtime! {
             text,
             "eof",
             "a clean TLS close must read as end of stream; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
     }
 
@@ -1313,7 +1313,7 @@ in_mono_runtime! {
             text,
             "shut down",
             "the shutdown must complete; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert!(
             matches!(observed(&mut events).await, PeerEvent::Handshake { .. }),
@@ -1392,7 +1392,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("protocol=Tls1") && text.ends_with(" peer=CN=chained.acceptance.test"),
             "a complete chain validates against the platform bundle with no application trust configuration: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
     }
 
@@ -1411,7 +1411,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("AuthenticationException: ") && text.contains("RemoteCertificateChainErrors"),
             "a root the bundle does not hold is untrusted (the stranger's name is not the peer's either, so the chain error comes with the name mismatch): {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         released(&reactor).await;
     }
@@ -1428,7 +1428,7 @@ in_mono_runtime! {
             text.starts_with("AuthenticationException: ")
                 && text.contains("RemoteCertificateNameMismatch"),
             "the bundle trusts the root, the name check still fails: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
     }
 
@@ -1473,7 +1473,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("AuthenticationException: ") && text.contains("RemoteCertificateChainErrors"),
             "custom trust replaces the bundle: a bundle root is untrusted under it: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
     }
 
@@ -1490,7 +1490,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("AuthenticationException: ") && text.contains("UntrustedRoot"),
             "an empty bundle trusts nothing, whatever the host machine trusts: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         let text = guest.answer(&reactor, "/tls/roots", 8).await;
         assert_eq!(
@@ -1585,7 +1585,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("protocol=Tls1"),
             "within the recheck interval a validation still uses the roots the store cached: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
     }
 
@@ -1606,7 +1606,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("AuthenticationException: ") && text.contains("UntrustedRoot"),
             "five seconds of guest time after the last check, the next validation reloads the served file and the removed root is gone: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         let text = guest.answer(&reactor, "/tls/roots", 8).await;
         assert_eq!(
@@ -1642,7 +1642,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("protocol=Tls1"),
             "after the recheck the added root is trusted: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
     }
 
@@ -1676,7 +1676,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("protocol=Tls1"),
             "the rollback restores trust at the next recheck: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
     }
 
@@ -1705,7 +1705,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("AuthenticationException: ") && text.contains("UntrustedRoot"),
             "restored from a delta after the rotation, the guest validates against the served bundle: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
     }
 
@@ -1729,7 +1729,7 @@ in_mono_runtime! {
         assert!(
             text.starts_with("AuthenticationException: ") && text.contains("UntrustedRoot"),
             "the image's cached roots are rechecked against the served file on first use: {text}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
     }
 }

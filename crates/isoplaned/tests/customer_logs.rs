@@ -1,19 +1,16 @@
-//! Managed guest logging through real cells and the node JSON output.
+//! Managed guest logs through real cells and the JSON output writer.
 
 pub mod common;
 
-/// Shared logging boundary test support.
-#[path = "common/otlp.rs"]
-pub mod otlp;
-
 use isoplane_abi::config::InitSandbox;
+use isoplane_harness::logging::LogCapture;
 use isoplane_host::futures::INSTANCE_WORK;
 use std::time::Duration;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn managed_logs_keep_request_and_background_ownership_across_park_wake() {
-    let output = otlp::output::LogOutput::default();
-    let writer = output.clone();
+    let capture = LogCapture::default();
+    let writer = capture.clone();
     let logging = tokio::task::spawn_blocking(move || {
         isoplaned::logs::init(true, writer, "customer-log-test", None, None)
     })
@@ -21,23 +18,19 @@ async fn managed_logs_keep_request_and_background_ownership_across_park_wake() {
     .expect("logging setup task")
     .expect("one test subscriber");
     {
-        let before = otlp::output::guest_logs(&output).len();
         let wasm = tokio::task::spawn_blocking(move || {
             common::preparation::Guest::from("isoplane_guest_dotnet_node")
         })
         .await
         .expect("the prepared managed logging fixture must load");
-        let rig = common::start_with_policy(wasm, InitSandbox::RuntimeBringUp, None, |_| {}).await;
+        let rig = common::start_with(wasm, InitSandbox::RuntimeBringUp).await;
         let left_over = common::get(rig.proxy, "quotes.isoplane.dev", "/logs/after-response").await;
         assert_eq!(left_over.status, 200);
         assert_eq!(left_over.body, "returned");
         tokio::time::timeout(Duration::from_secs(10), async {
             loop {
-                let records: Vec<_> = otlp::output::guest_logs(&output)
-                    .into_iter()
-                    .skip(before)
-                    .collect();
-                if records
+                if capture
+                    .records()
                     .iter()
                     .any(|record| record.fields.contains("left-over-work"))
                 {
@@ -57,10 +50,7 @@ async fn managed_logs_keep_request_and_background_ownership_across_park_wake() {
             response.body, "logged",
             "the Mono handler must return its own response"
         );
-        let records: Vec<_> = otlp::output::guest_logs(&output)
-            .into_iter()
-            .skip(before)
-            .collect();
+        let records = capture.records();
         let find = |text: &str| {
             records
                 .iter()
@@ -75,14 +65,11 @@ async fn managed_logs_keep_request_and_background_ownership_across_park_wake() {
         assert_ne!(first.dispatch, INSTANCE_WORK);
         assert_ne!(original.dispatch, first.dispatch);
         assert_eq!(background.instance, original.instance);
-        assert!(
-            original.emission_index < background.emission_index
-                && background.emission_index < first.emission_index
-        );
+        assert!(original.sequence < background.sequence && background.sequence < first.sequence);
         for record in [original, background] {
             assert_eq!(
-                (&record.tenant, &record.module),
-                (&first.tenant, &first.module),
+                (&record.tenant, &record.app, &record.version, &record.module),
+                (&first.tenant, &first.app, &first.version, &first.module),
                 "handover must preserve the application's host-established ownership"
             );
         }
@@ -101,13 +88,18 @@ async fn managed_logs_keep_request_and_background_ownership_across_park_wake() {
             "Console and framework severities must map to canonical host levels"
         );
         assert!(
-            first.emission_index < wake.emission_index && wake.emission_index < last.emission_index,
+            first.sequence < wake.sequence && wake.sequence < last.sequence,
             "the managed logging request must actually park and resume between its records"
         );
         for record in [first, warning, wake, last, critical] {
             assert_eq!(
-                (&record.tenant, &record.module),
-                (&"acme".to_string(), &"quotes@v1".to_string()),
+                (&record.tenant, &record.app, &record.version, &record.module),
+                (
+                    &"acme".to_string(),
+                    &"quotes".to_string(),
+                    &"v1".to_string(),
+                    &"quotes@v1".to_string()
+                ),
                 "guest records must carry host-established ownership and deployed version"
             );
             assert_eq!(
@@ -117,11 +109,8 @@ async fn managed_logs_keep_request_and_background_ownership_across_park_wake() {
             );
         }
         assert!(
-            output
-                .text()
-                .lines()
-                .any(|line| line.contains("console-before")),
-            "managed output must also remain available to the formatted diagnostic output"
+            capture.output().contains("console-before"),
+            "managed output must also remain visible in ordinary JSON output"
         );
         rig.shutdown().await;
     }

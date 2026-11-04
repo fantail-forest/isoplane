@@ -1,6 +1,7 @@
 //! Managed native I/O across destroyed Stores using Mono and the real host reactor.
 
 use isoplane_engine::Completion;
+use isoplane_harness::logging::GuestLogs;
 use std::sync::Arc;
 use std::time::Duration;
 #[path = "common/connection_factory.rs"]
@@ -11,7 +12,6 @@ mod harness;
 use harness::{GuestRuntime, Reactor, ReturnedGuest, WAKE_DEADLINE};
 use isoplane_host::bindings::CellBindings;
 use isoplane_host::{InstanceId, Resolver};
-use isoplane_harness::EmittedGuestLogs as _;
 
 struct NoDns;
 #[async_trait::async_trait]
@@ -29,17 +29,21 @@ in_mono_runtime! {
     #[tokio::test(start_paused = true)]
     async fn a_managed_timer_wakes_on_another_worker_after_its_store_is_destroyed(runtime: GuestRuntime) {
         let owner = InstanceId::alloc();
-        let reactor = Reactor::with_network(owner, isoplane_harness::Network::with_resolver(Box::new(NoDns)));
+        let reactor = Reactor::with_network(
+            owner,
+            isoplane_harness::Network::with_resolver(Box::new(NoDns)),
+        );
         let context = &reactor.context;
         let futures = &reactor.futures;
         context.begin_slice(1, 1);
-        let mut guest = ReturnedGuest::managed_probe("isoplane_guest_dotnet_native_io", runtime, &reactor);
+        let mut guest =
+            ReturnedGuest::managed_probe("isoplane_guest_dotnet_native_io", runtime, &reactor);
         let outcome = guest.start("/timer");
         assert_eq!(
             outcome.completion,
             Completion::Parked,
             "Task.Delay must park: {outcome:?}; logs: {:?}",
-            context.emitted_logs()
+            context.logs()
         );
         assert_eq!(
             futures.pending_total(owner),
@@ -54,18 +58,22 @@ in_mono_runtime! {
             outcome.completion,
             Completion::Done,
             "the managed timer must finish after Store destruction: {outcome:?}; logs: {:?}",
-            context.emitted_logs()
+            context.logs()
         );
     }
 
     #[tokio::test(start_paused = true)]
     async fn a_managed_timer_left_pending_runs_in_a_background_slice(runtime: GuestRuntime) {
         let owner = InstanceId::alloc();
-        let reactor = Reactor::with_network(owner, isoplane_harness::Network::with_resolver(Box::new(NoDns)));
+        let reactor = Reactor::with_network(
+            owner,
+            isoplane_harness::Network::with_resolver(Box::new(NoDns)),
+        );
         let context = &reactor.context;
         let futures = &reactor.futures;
         context.begin_dispatch(1, 1);
-        let mut guest = ReturnedGuest::managed_probe("isoplane_guest_dotnet_native_io", runtime, &reactor);
+        let mut guest =
+            ReturnedGuest::managed_probe("isoplane_guest_dotnet_native_io", runtime, &reactor);
         let outcome = guest.start("/timer/abandon");
         assert_eq!(
             outcome.completion,
@@ -91,8 +99,11 @@ in_mono_runtime! {
         tokio::task::yield_now().await;
 
         context.begin_dispatch(101, isoplane_host::futures::INSTANCE_WORK);
-        assert_eq!(guest.poll().completion, Completion::Done,
-            "the background slice must run the retained timer");
+        assert_eq!(
+            guest.poll().completion,
+            Completion::Done,
+            "the background slice must run the retained timer"
+        );
 
         // Observe twice: the callback runs once, before the first later dispatch reads its count.
         for dispatch in 2..=3 {
@@ -101,7 +112,7 @@ in_mono_runtime! {
             let isoplane_abi::status::PollStatus::Done { response } = outcome.status else {
                 panic!(
                     "the later dispatch must complete: {outcome:?}; logs: {:?}",
-                    context.emitted_logs()
+                    context.logs()
                 );
             };
             let body = context
@@ -190,7 +201,6 @@ async fn socket_transfer(
     half_close: bool,
     ip: std::net::IpAddr,
 ) {
-    isoplane_harness::LogCapture::global();
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let listener = tokio::net::TcpListener::bind(std::net::SocketAddr::new(ip, 0))
         .await
@@ -216,7 +226,7 @@ async fn socket_transfer(
         Completion::Parked,
         "ConnectAsync must park before the reactor runs: {outcome:?}; pending: {}; logs: {:?}",
         futures.pending_total(owner),
-        context.emitted_logs()
+        context.logs()
     );
     let (mut server, _) = tokio::time::timeout(WAKE_DEADLINE, listener.accept())
         .await
@@ -231,7 +241,7 @@ async fn socket_transfer(
             Completion::Parked
         };
         assert_eq!(outcome.completion, expected,
-            "native I/O phase {phase} must preserve its continuation after Store destruction: {outcome:?}; logs: {:?}", context.emitted_logs());
+            "native I/O phase {phase} must preserve its continuation after Store destruction: {outcome:?}; logs: {:?}", context.logs());
         if phase == 0 {
             if let Some(payload) = payload {
                 if half_close {
@@ -251,7 +261,7 @@ async fn socket_transfer(
                     .expect("the owned peer must deliver the first partial byte");
                 let partial = guest.wake(&reactor).await;
                 assert_eq!(partial.completion, Completion::Parked,
-                    "ReadExactlyAsync must retain partial input across another destroyed Store: {partial:?}; logs: {:?}", context.emitted_logs());
+                    "ReadExactlyAsync must retain partial input across another destroyed Store: {partial:?}; logs: {:?}", context.logs());
                 server
                     .write_all(&payload[1..])
                     .await
@@ -365,13 +375,14 @@ in_mono_runtime! {
         let context = &reactor.context;
         let futures = &reactor.futures;
         context.begin_slice(1, 1);
-        let mut guest = ReturnedGuest::managed_probe("isoplane_guest_dotnet_native_io", runtime, &reactor);
+        let mut guest =
+            ReturnedGuest::managed_probe("isoplane_guest_dotnet_native_io", runtime, &reactor);
         let outcome = guest.start("/dns/owned.test");
         assert_eq!(
             outcome.completion,
             Completion::Parked,
             "Dns.GetHostAddressesAsync must return with pending DNS: {outcome:?}; logs: {:?}",
-            context.emitted_logs()
+            context.logs()
         );
         assert_eq!(
             futures.pending_total(owner),
@@ -383,7 +394,7 @@ in_mono_runtime! {
             outcome.completion,
             Completion::Done,
             "managed DNS must finish after Store destruction: {outcome:?}; logs: {:?}",
-            context.emitted_logs()
+            context.logs()
         );
         assert_eq!(
             context
@@ -432,20 +443,21 @@ in_mono_runtime! {
         let reactor = Reactor::with_network(
             owner,
             isoplane_harness::Network::with_resolver(Box::new(PendingDns {
-                    entered: entered.clone(),
-                    stopped: stopped.clone(),
-                })),
+                entered: entered.clone(),
+                stopped: stopped.clone(),
+            })),
         );
         let context = &reactor.context;
         let futures = &reactor.futures;
         context.begin_slice(1, 1);
-        let mut guest = ReturnedGuest::managed_probe("isoplane_guest_dotnet_native_io", runtime, &reactor);
+        let mut guest =
+            ReturnedGuest::managed_probe("isoplane_guest_dotnet_native_io", runtime, &reactor);
         let outcome = guest.start("/dns/cancel.test");
         assert_eq!(
             outcome.completion,
             Completion::Parked,
             "DNS cancellation must wait on its host-owned timer: {outcome:?}; logs: {:?}",
-            context.emitted_logs()
+            context.logs()
         );
         tokio::time::timeout(WAKE_DEADLINE, entered.notified())
             .await
@@ -462,7 +474,7 @@ in_mono_runtime! {
             outcome.completion,
             Completion::Done,
             "managed DNS cancellation must finish after Store destruction: {outcome:?}; logs: {:?}",
-            context.emitted_logs()
+            context.logs()
         );
         tokio::time::timeout(WAKE_DEADLINE, stopped.notified())
             .await
@@ -477,7 +489,11 @@ in_mono_runtime! {
             "cancelled DNS must leave no late guest wake"
         );
         assert_eq!(
-            reactor.runtime().services.egress.instance_connections(reactor.context.instance),
+            reactor
+                .runtime()
+                .services
+                .egress
+                .instance_connections(reactor.context.instance),
             0,
             "cancelled name resolution must retain no connection quota"
         );
@@ -495,7 +511,6 @@ in_mono_runtime! {
 }
 
 fn managed_network_refusal(runtime: GuestRuntime, path: &str, expected: &[u8]) {
-    isoplane_harness::LogCapture::global();
     let owner = InstanceId::alloc();
     let reactor = Reactor::with_network(
         owner,
@@ -508,7 +523,7 @@ fn managed_network_refusal(runtime: GuestRuntime, path: &str, expected: &[u8]) {
         ReturnedGuest::managed_probe("isoplane_guest_dotnet_native_io", runtime, &reactor);
     let outcome = guest.start(&format!("/refusal{path}"));
     assert_eq!(outcome.completion, Completion::Done,
-        "a forbidden managed listener must return a SocketException instead of trapping: {outcome:?}; logs: {:?}", context.emitted_logs());
+        "a forbidden managed listener must return a SocketException instead of trapping: {outcome:?}; logs: {:?}", context.logs());
     assert_eq!(
         context
             .responses
@@ -568,7 +583,8 @@ in_mono_runtime! {
         let context = &reactor.context;
         let futures = &reactor.futures;
         context.begin_slice(1, 1);
-        let mut guest = ReturnedGuest::managed_probe("isoplane_guest_dotnet_native_io", runtime, &reactor);
+        let mut guest =
+            ReturnedGuest::managed_probe("isoplane_guest_dotnet_native_io", runtime, &reactor);
         let pending = guest.start(&format!("/connect/{}/{}", peer.ip(), peer.port()));
         assert_eq!(
             pending.completion,
@@ -577,7 +593,7 @@ in_mono_runtime! {
         );
         let outcome = guest.wake(&reactor).await;
         assert_eq!(outcome.completion, Completion::Done,
-            "the connection refusal must reach the restored managed continuation: {outcome:?}; logs: {:?}", context.emitted_logs());
+            "the connection refusal must reach the restored managed continuation: {outcome:?}; logs: {:?}", context.logs());
         assert_eq!(
             context
                 .responses
@@ -594,7 +610,11 @@ in_mono_runtime! {
             "a refused connection must retain no wake"
         );
         assert_eq!(
-            reactor.runtime().services.egress.instance_connections(reactor.context.instance),
+            reactor
+                .runtime()
+                .services
+                .egress
+                .instance_connections(reactor.context.instance),
             0,
             "a refused connection must release its reserved quota"
         );
@@ -698,14 +718,13 @@ async fn assert_stream_failure(
     outcome: isoplane_engine::DispatchOutcome,
     expected: &[u8],
 ) {
-    isoplane_harness::LogCapture::global();
     let context = &reactor.context;
     let futures = &reactor.futures;
     assert_eq!(
         outcome.completion,
         Completion::Done,
         "the managed read must receive an exception after restoration: {outcome:?}; logs: {:?}",
-        context.emitted_logs()
+        context.logs()
     );
     assert_eq!(
         context
@@ -775,7 +794,6 @@ async fn managed_dns_error(
     expected: &[u8],
     denials: u64,
 ) {
-    isoplane_harness::LogCapture::global();
     let owner = InstanceId::alloc();
     let reactor = Reactor::with_network(owner, isoplane_harness::Network::with_resolver(resolver));
     let context = &reactor.context;
@@ -794,7 +812,7 @@ async fn managed_dns_error(
         outcome.completion,
         Completion::Done,
         "managed DNS must catch its typed SocketException: {outcome:?}; logs: {:?}",
-        context.emitted_logs()
+        context.logs()
     );
     assert_eq!(
         context

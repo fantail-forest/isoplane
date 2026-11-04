@@ -9,12 +9,12 @@
 //! reads, so "five seconds of guest time since the store was loaded" is
 //! exactly the slice clock the test begins the dispatch at.
 
+use isoplane_harness::logging::GuestLogs;
 use std::path::Path;
 use std::process::Command;
 
 use isoplane_engine::{PlatformFile, PlatformFiles};
 use isoplane_fixtures::GuestRuntime;
-use isoplane_harness::EmittedGuestLogs as _;
 use isoplane_harness::{Reactor, ReturnedGuest};
 use isoplane_host::egress::DnsError;
 use isoplane_host::{InstanceId, Resolver};
@@ -140,7 +140,6 @@ fn node_serving(
 }
 
 async fn the_template_carries_the_store_loaded_at_preparation(runtime: GuestRuntime) {
-    isoplane_harness::LogCapture::global();
     let Rotation { a, b, template } = rotation(runtime);
 
     let (reactor, mut guest) = node_serving(bundle(&[b]), template, PAST_RECHECK_MS);
@@ -150,14 +149,13 @@ async fn the_template_carries_the_store_loaded_at_preparation(runtime: GuestRunt
         listing(&[a]),
         "the application was constructed at preparation, when A was served, and the template \
          carries what its store listed then ({runtime}); logs: {:?}",
-        reactor.context.emitted_logs()
+        reactor.context.logs()
     );
 }
 
 async fn a_removed_root_is_gone_from_the_prepared_templates_store_after_the_recheck(
     runtime: GuestRuntime,
 ) {
-    isoplane_harness::LogCapture::global();
     let Rotation { b, template, .. } = rotation(runtime);
 
     let (reactor, mut guest) = node_serving(bundle(&[b]), template, PAST_RECHECK_MS);
@@ -167,14 +165,13 @@ async fn a_removed_root_is_gone_from_the_prepared_templates_store_after_the_rech
         listing(&[b]),
         "five seconds of guest time after preparation loaded the store, its next use reloads the \
          served bundle: A's root is gone and B's is trusted ({runtime}); logs: {:?}",
-        reactor.context.emitted_logs()
+        reactor.context.logs()
     );
 }
 
 async fn the_prepared_templates_store_keeps_its_roots_within_the_recheck_interval(
     runtime: GuestRuntime,
 ) {
-    isoplane_harness::LogCapture::global();
     let Rotation { a, b, template } = rotation(runtime);
 
     let (reactor, mut guest) = node_serving(bundle(&[b]), template, WITHIN_RECHECK_MS);
@@ -184,7 +181,7 @@ async fn the_prepared_templates_store_keeps_its_roots_within_the_recheck_interva
         listing(&[a]),
         "within five seconds of guest time since preparation loaded the store, the cached roots \
          still serve: the rotation is not seen yet ({runtime}); logs: {:?}",
-        reactor.context.emitted_logs()
+        reactor.context.logs()
     );
 }
 

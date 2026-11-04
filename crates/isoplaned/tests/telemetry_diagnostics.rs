@@ -1,13 +1,15 @@
 use hyper::StatusCode;
+use isoplane_harness::logging::LogCapture;
 use isoplane_test_support::{assert_success, ChildTest};
 use opentelemetry_proto::tonic::collector::logs::v1::{
     ExportLogsPartialSuccess, ExportLogsServiceRequest, ExportLogsServiceResponse,
 };
 use opentelemetry_proto::tonic::common::v1::any_value::Value;
 use prost::Message;
+use tracing_subscriber::fmt::writer::MakeWriterExt;
 
 #[path = "common/otlp.rs"]
-pub mod otlp;
+mod otlp;
 
 const SENTINEL: &str = "collector-echoed-authorization-secret-9c47";
 const CHILD: ChildTest =
@@ -85,9 +87,8 @@ async fn exercise_collector(case: &str) {
         .endpoint
         .parse::<isoplaned::logs::OtlpEndpoint>()
         .unwrap();
-    let output = otlp::output::LogOutput::default();
-    let writer =
-        tracing_subscriber::fmt::writer::MakeWriterExt::and(output.clone(), std::io::stderr);
+    let capture = LogCapture::default();
+    let writer = capture.clone().and(std::io::stderr);
     let logging = tokio::task::spawn_blocking(move || {
         isoplaned::logs::init(true, writer, "diagnostic-test", Some(&endpoint), None).unwrap()
     })
@@ -111,7 +112,8 @@ async fn exercise_collector(case: &str) {
         &Value::StringValue("test-tenant".into()),
         "the real collector must receive the triggering export"
     );
-    let lines: Vec<_> = output.text().lines().map(str::to_owned).collect();
+    let output = capture.output();
+    let lines: Vec<_> = output.lines().collect();
     assert!(
         lines.iter().all(|line| !line.contains(SENTINEL)),
         "collector text must never enter the formatted diagnostic output"
@@ -153,7 +155,10 @@ async fn exercise_collector(case: &str) {
             "SDK export failure must remain visible alongside the safe HTTP status: {lines:?}"
         );
     }
-    println!("formatted_logs={}", serde_json::to_string(&lines).unwrap());
+    println!(
+        "diagnostic_output={}",
+        serde_json::to_string(&lines).unwrap()
+    );
 }
 
 async fn exercise_trace_collector(partial: bool) {
@@ -180,9 +185,8 @@ async fn exercise_trace_collector(partial: bool) {
         .endpoint
         .parse::<isoplaned::logs::OtlpEndpoint>()
         .unwrap();
-    let output = otlp::output::LogOutput::default();
-    let writer =
-        tracing_subscriber::fmt::writer::MakeWriterExt::and(output.clone(), std::io::stderr);
+    let capture = LogCapture::default();
+    let writer = capture.clone().and(std::io::stderr);
     let logging = tokio::task::spawn_blocking(move || {
         isoplaned::logs::init(true, writer, "trace-diagnostic-test", None, Some(&endpoint)).unwrap()
     })
@@ -202,10 +206,11 @@ async fn exercise_trace_collector(partial: bool) {
         exported.resource_spans[0].scope_spans[0].spans[0].name, "guest_slice",
         "the trace collector must receive the triggering span"
     );
-    let lines: Vec<_> = output.text().lines().map(str::to_owned).collect();
+    let output = capture.output();
+    let lines: Vec<_> = output.lines().collect();
     assert!(
         lines.iter().all(|line| !line.contains(SENTINEL)),
-        "trace collector response text must not enter the formatted diagnostic output"
+        "trace collector response text must not enter the diagnostic output"
     );
     if partial {
         assert!(

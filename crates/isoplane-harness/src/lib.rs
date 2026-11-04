@@ -8,6 +8,8 @@
 
 mod compiled_guest;
 pub mod fakes;
+pub mod logging;
+use logging::GuestLogs;
 
 pub use compiled_guest::engine_configuration;
 use compiled_guest::engine_serving;
@@ -127,6 +129,7 @@ impl Reactor {
     /// As [`Self::with_network`], with `files` served read-only through the guest's
     /// PAL filesystem.
     pub fn with_platform_files(owner: InstanceId, network: Network, files: PlatformFiles) -> Self {
+        logging::LogCapture::global();
         let egress = Arc::new(network.0);
         let fetcher = PinnedHttpFetcher::new(
             isoplane_runtime::network::NetworkLimits::default().inline_response_bytes,
@@ -196,7 +199,6 @@ impl Reactor {
 }
 
 fn context(owner: InstanceId, runtime: Arc<CellRuntime>) -> Arc<InstanceCtx> {
-    LogCapture::global();
     Arc::new(InstanceCtx::new(
         owner,
         Tenancy {
@@ -439,7 +441,7 @@ impl ReturnedGuest {
         .unwrap_or_else(|_| {
             panic!(
                 "the reactor must deliver a completion before the test deadline; logs: {:?}",
-                self.context.emitted_logs()
+                self.context.logs()
             )
         })
     }
@@ -547,7 +549,7 @@ impl ReturnedGuest {
             assert!(
                 wakes < max_wakes,
                 "{path} must finish within {max_wakes} wakes; logs: {:?}",
-                self.context.emitted_logs()
+                self.context.logs()
             );
             outcome = self.wake(reactor).await;
             wakes += 1;
@@ -597,7 +599,7 @@ impl ReturnedGuest {
             assert!(
                 wakes < max_wakes,
                 "the dispatch must finish within {max_wakes} wakes; logs: {:?}",
-                self.context.emitted_logs()
+                self.context.logs()
             );
             outcome = self.wake_as(reactor, wake).await;
             wakes += 1;
@@ -633,7 +635,7 @@ impl ReturnedGuest {
         let isoplane_abi::status::PollStatus::Done { response } = outcome.status else {
             panic!(
                 "{what} must complete: {outcome:?}; logs: {:?}",
-                self.context.emitted_logs()
+                self.context.logs()
             );
         };
         self.context
@@ -864,111 +866,3 @@ mod completion_tests {
         );
     }
 }
-
-/// Test writers that observe guest events at the formatted tracing boundary.
-pub mod logging {
-    use std::io::Write;
-    use std::sync::{Arc, Mutex, OnceLock};
-
-    /// Formatted bytes emitted by the guest logging subscriber under test.
-    #[derive(Clone, Default)]
-    pub struct LogCapture(Arc<Mutex<Vec<u8>>>);
-
-    /// A guest event decoded from the host's JSON formatter.
-    #[derive(Clone, Debug, serde::Deserialize)]
-    pub struct GuestLog {
-        /// Host-established instance identifier.
-        pub instance: String,
-        /// ABI severity recorded by the host.
-        pub level: u8,
-        /// Host-established dispatch identifier.
-        pub dispatch: u64,
-        /// Untrusted guest message text.
-        pub fields: String,
-        /// Remaining fields emitted by the host boundary.
-        #[serde(flatten)]
-        pub metadata: serde_json::Map<String, serde_json::Value>,
-    }
-
-    impl LogCapture {
-        /// Installs one guest-event writer before a test starts execution threads.
-        pub fn global() -> &'static Self {
-            use tracing_subscriber::prelude::*;
-            static CAPTURE: OnceLock<LogCapture> = OnceLock::new();
-            CAPTURE.get_or_init(|| {
-                let capture = Self::default();
-                let subscriber = tracing_subscriber::registry().with(
-                    tracing_subscriber::fmt::layer()
-                        .json()
-                        .with_ansi(false)
-                        .with_writer(capture.clone())
-                        .with_filter(tracing_subscriber::filter::filter_fn(|metadata| {
-                            metadata.target().contains("host::bindings")
-                        })),
-                );
-                tracing::subscriber::set_global_default(subscriber)
-                    .expect("one guest-event subscriber per test process");
-                capture
-            })
-        }
-
-        /// Decodes emitted events for `instance` in their publication order.
-        pub fn for_instance(&self, instance: impl std::fmt::Display) -> Vec<GuestLog> {
-            let instance = instance.to_string();
-            let bytes = self.0.lock().expect("test writer mutex").clone();
-            String::from_utf8(bytes)
-                .expect("tracing emits UTF-8")
-                .lines()
-                .filter_map(|line| {
-                    let event: serde_json::Value =
-                        serde_json::from_str(line).expect("tracing JSON event");
-                    if event["fields"]["message"] != "guest log"
-                        || event["fields"]["instance"] != instance
-                    {
-                        return None;
-                    }
-                    Some(
-                        serde_json::from_value(event["fields"].clone())
-                            .expect("the guest logging boundary emits complete records"),
-                    )
-                })
-                .collect()
-        }
-    }
-
-    impl Write for LogCapture {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0
-                .lock()
-                .expect("test writer mutex")
-                .extend_from_slice(bytes);
-            Ok(bytes.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    impl<'writer> tracing_subscriber::fmt::MakeWriter<'writer> for LogCapture {
-        type Writer = Self;
-
-        fn make_writer(&'writer self) -> Self::Writer {
-            self.clone()
-        }
-    }
-
-    /// Guest diagnostics collected outside the production instance's state.
-    pub trait EmittedGuestLogs {
-        /// Returns actual output attributed to this instance by the host.
-        fn emitted_logs(&self) -> Vec<GuestLog>;
-    }
-
-    impl EmittedGuestLogs for isoplane_host::bindings::InstanceCtx {
-        fn emitted_logs(&self) -> Vec<GuestLog> {
-            LogCapture::global().for_instance(self.instance)
-        }
-    }
-}
-
-pub use logging::{EmittedGuestLogs, GuestLog, LogCapture};

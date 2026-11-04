@@ -1,5 +1,6 @@
 //! Real guest continuations through physically reserved local snapshots.
 
+use isoplane_harness::logging::GuestLogs;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -9,7 +10,6 @@ use std::time::Duration;
 use isoplane_abi::config::{AppManifest, Bindings, GuestMemoryBytes};
 use isoplane_engine::{Completion, EngineConfig, IsoplaneEngine};
 use isoplane_fixtures::GuestRuntime;
-use isoplane_harness::EmittedGuestLogs as _;
 use isoplane_harness::fakes::FakeFetcher;
 use isoplane_hibernate::snapshot::{
     LocalSnapshotStorage, SnapshotBytes, SnapshotError, SnapshotReservation, SnapshotStorage,
@@ -369,7 +369,7 @@ fn begin_now(
 }
 
 fn managed_stream_snapshot(runtime: GuestRuntime) {
-    isoplane_harness::LogCapture::global();
+    isoplane_harness::logging::LogCapture::global();
     let GuestRuntime::Mono = runtime;
     let listener =
         TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).expect("owned peer must bind");
@@ -464,7 +464,7 @@ fn managed_stream_snapshot(runtime: GuestRuntime) {
     let result = response.recv_timeout(DEADLINE).unwrap_or_else(|error| {
         panic!(
             "{runtime} continuation must finish after native read completion: {error}; logs: {:?}",
-            rig.cell.slot(instance).map(|slot| slot.ctx.emitted_logs())
+            rig.cell.slot(instance).map(|slot| slot.ctx.logs())
         )
     });
     assert_eq!(

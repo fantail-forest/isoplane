@@ -4,6 +4,7 @@
 //! every connection state the peer can produce reaches the ordinary managed
 //! exception across destroyed Stores.
 
+use isoplane_harness::logging::GuestLogs;
 #[macro_use]
 mod common;
 #[path = "common/admitted.rs"]
@@ -18,7 +19,6 @@ mod peers;
 use admitted::released;
 use common::{guest, GuestRuntime};
 use isoplane_engine::Completion;
-use isoplane_harness::EmittedGuestLogs as _;
 use peers::{
     fnv1a, gated_peer, pattern, peer, peer_with_receive_buffer, reactor_for_peers,
     reactor_for_peers_with_send_buffer, reactor_observing_host_sockets, slow_drain_peer, Peer,
@@ -49,7 +49,7 @@ in_mono_runtime! {
             outcome.completion,
             Completion::Parked,
             "ConnectAsync must park on the socket's own pollable while connecting: {outcome:?}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert_eq!(
             reactor.futures.pending_total(reactor.context.instance),
@@ -61,7 +61,7 @@ in_mono_runtime! {
             outcome.completion,
             Completion::Done,
             "{outcome:?}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         let answer = reactor.response_text(1);
         assert!(
@@ -129,7 +129,7 @@ in_mono_runtime! {
             outcome.completion,
             Completion::Done,
             "{outcome:?}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert_eq!(
             reactor.response_text(1),
@@ -183,7 +183,11 @@ in_mono_runtime! {
             "libc reports a failed connect as immediately ready with no pollable; it must reach SocketException"
         );
         assert_eq!(
-            reactor.runtime().services.egress.instance_connections(reactor.context.instance),
+            reactor
+                .runtime()
+                .services
+                .egress
+                .instance_connections(reactor.context.instance),
             0,
             "a refused connection must release its quota"
         );
@@ -298,7 +302,7 @@ in_mono_runtime! {
             outcome.completion,
             Completion::Done,
             "{outcome:?}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert_eq!(
             reactor.response_text(1),
@@ -417,7 +421,7 @@ in_mono_runtime! {
             outcome.completion,
             Completion::Done,
             "{outcome:?}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         let answer = reactor.response_text(1);
         assert!(
@@ -528,20 +532,20 @@ in_mono_runtime! {
             outcome.completion,
             Completion::Parked,
             "a zero-byte receive with nothing to read parks on socket readiness: {outcome:?}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert_eq!(
             reactor.futures.pending_total(reactor.context.instance),
             1,
             "the parked zero-byte receive holds exactly one host future; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         gate.notify_one();
         let text = guest.finish(&reactor, 8).await;
         assert_eq!(
             text, "zero=0 then 70696E67",
             "the zero-byte receive completes with nothing consumed and the real read gets the bytes; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
     }
 }
@@ -647,7 +651,7 @@ in_mono_runtime! {
                 outcome.completion,
                 Completion::Parked,
                 "the connect parks: {outcome:?}; logs: {:?}",
-                reactor.context.emitted_logs()
+                reactor.context.logs()
             );
             let answer = guest.finish_through_deltas(&reactor, 8).await;
             assert_eq!(
@@ -705,7 +709,7 @@ in_mono_runtime! {
                 outcome.completion,
                 Completion::Parked,
                 "the connect parks: {outcome:?}; logs: {:?}",
-                reactor.context.emitted_logs()
+                reactor.context.logs()
             );
             let answer = guest.finish_through_deltas(&reactor, 8).await;
             assert_eq!(
@@ -770,7 +774,6 @@ const DRAIN_CHUNK_BYTES: usize = 32 * 1024;
 /// fill the buffers before the peer starts draining; its digest proves that
 /// every byte arrives once, in order, across the guest's parks.
 async fn a_large_send_under_backpressure(runtime: GuestRuntime, owner: u64, wake: WakePath) {
-    isoplane_harness::LogCapture::global();
     let (sink, drain, drained) =
         slow_drain_peer(SMALL_SOCKET_BUFFER_BYTES, DRAIN_CHUNK_BYTES).await;
     let reactor = reactor_for_peers_with_send_buffer(owner, vec![sink], SMALL_SOCKET_BUFFER_BYTES);
@@ -791,7 +794,7 @@ async fn a_large_send_under_backpressure(runtime: GuestRuntime, owner: u64, wake
         outcome.completion,
         Completion::Parked,
         "a write larger than the socket buffers must park on writability while the peer is not draining: {outcome:?}; logs: {:?}",
-        reactor.context.emitted_logs()
+        reactor.context.logs()
     );
     assert_eq!(
         reactor.futures.pending_total(reactor.context.instance),
@@ -813,7 +816,7 @@ async fn a_large_send_under_backpressure(runtime: GuestRuntime, owner: u64, wake
         outcome.completion,
         Completion::Done,
         "{outcome:?}; logs: {:?}",
-        reactor.context.emitted_logs()
+        reactor.context.logs()
     );
     assert_eq!(
         reactor.response_text(1),
@@ -895,7 +898,6 @@ async fn a_synchronous_call_fails_fast(
     arguments: &str,
     what: &str,
 ) {
-    isoplane_harness::LogCapture::global();
     let silent = peer_with_receive_buffer(Peer::Silent, SMALL_SOCKET_BUFFER_BYTES).await;
     let reactor =
         reactor_for_peers_with_send_buffer(owner, vec![silent], SMALL_SOCKET_BUFFER_BYTES);
@@ -911,7 +913,7 @@ async fn a_synchronous_call_fails_fast(
         assert_eq!(
             wakes, 0,
             "{what} must fail in the dispatch that made it, never park waiting for the peer: {outcome:?}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         outcome = guest.wake(&reactor).await;
         wakes += 1;
@@ -920,7 +922,7 @@ async fn a_synchronous_call_fails_fast(
         outcome.completion,
         Completion::Done,
         "{outcome:?}; logs: {:?}",
-        reactor.context.emitted_logs()
+        reactor.context.logs()
     );
     assert_eq!(
         reactor.response_text(1),
@@ -968,7 +970,6 @@ in_mono_runtime! {
 }
 
 async fn configured_tcp_client(runtime: GuestRuntime, mode: &str, ipv6: bool) {
-    isoplane_harness::LogCapture::global();
     let (endpoint, guard) = if mode == "mixed" {
         let (endpoint, reservation) = peers::ipv6_peer_with_reserved_ipv4(Peer::Echo);
         (endpoint, Some(reservation))
@@ -1044,7 +1045,7 @@ async fn configured_tcp_client(runtime: GuestRuntime, mode: &str, ipv6: bool) {
     } else {
         "echo; same client; configuration retained"
     };
-    assert_eq!(answer, expected, "TcpClient must retain its public Socket and configured options while connecting through the selected address family; logs: {:?}", reactor.context.emitted_logs());
+    assert_eq!(answer, expected, "TcpClient must retain its public Socket and configured options while connecting through the selected address family; logs: {:?}", reactor.context.logs());
     released(&reactor).await;
 }
 

@@ -1,5 +1,6 @@
 //! Real .NET guest resource cleanup through the production cell's dispatch boundary.
 
+use isoplane_harness::logging::GuestLogs;
 mod common;
 #[path = "common/managed.rs"]
 mod managed;
@@ -12,7 +13,6 @@ use isoplane_host::cell::{Cell, CellConfig, Target};
 use isoplane_host::ModuleId;
 use std::sync::Arc;
 use std::time::Duration;
-use isoplane_harness::EmittedGuestLogs as _;
 
 /// The shared runtime Task compiled, loaded once for every test in this binary on an engine
 /// with room for each test's instances.
@@ -48,6 +48,7 @@ fn cleanup_cell_with(
     work: Arc<PendingWork>,
     operation: &str,
 ) -> (Arc<Cell>, ModuleId) {
+    isoplane_harness::logging::LogCapture::global();
     let GuestRuntime::Mono = runtime;
     let (engine, template) = shared_runtime();
     let module = ModuleId::new("managed-cleanup", "v1");
@@ -131,7 +132,6 @@ async fn wait_until_idle(cell: &Arc<Cell>, module: &ModuleId) {
 }
 
 async fn check_work_after_the_response(runtime: GuestRuntime, operation: &str) {
-    isoplane_harness::LogCapture::global();
     let work = Arc::new(PendingWork::default());
     let (cell, module) = cleanup_cell(runtime, work.clone(), operation);
     let armed = dispatch_request(&cell, &module, operation);
@@ -152,7 +152,7 @@ async fn check_work_after_the_response(runtime: GuestRuntime, operation: &str) {
                 .slot(armed.instance)
                 .expect("retained instance")
                 .ctx
-                .emitted_logs()
+                .logs()
                 .into_iter()
                 .find(|record| record.fields.contains("retained-operation-completed"))
             {
@@ -542,7 +542,6 @@ async fn a_clean_interpreted_guest_drives_its_timer_after_clock_advances() {
 }
 
 async fn check_dormant_promise(runtime: GuestRuntime) {
-    isoplane_harness::LogCapture::global();
     let (cell, module) = cleanup_cell(runtime, Arc::new(PendingWork::default()), "/timer");
     let armed = dispatch_at_idle(&cell, &module, "/promise-arm").await;
     assert_eq!(
@@ -569,7 +568,7 @@ async fn check_dormant_promise(runtime: GuestRuntime) {
                 .slot(armed.instance)
                 .expect("retained instance")
                 .ctx
-                .emitted_logs()
+                .logs()
                 .into_iter()
                 .find(|record| record.fields.contains("retained-promise-completed"))
             {

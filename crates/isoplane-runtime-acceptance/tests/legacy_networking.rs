@@ -1,5 +1,6 @@
 //! Legacy BCL networking through socket-backed asynchronous I/O and guest deltas.
 
+use isoplane_harness::logging::GuestLogs;
 #[macro_use]
 mod common;
 #[path = "common/admitted.rs"]
@@ -22,14 +23,12 @@ use std::sync::Arc;
 
 use common::{guest, GuestRuntime};
 use isoplane_engine::Completion;
-use isoplane_harness::EmittedGuestLogs as _;
 use isoplane_harness::Reactor;
 use isoplane_host::egress::DnsError;
 use isoplane_host::{InstanceId, Resolver};
 use tokio::sync::Notify;
 
 async fn request(runtime: GuestRuntime, reactor: &Reactor, path: &str) -> String {
-    isoplane_harness::LogCapture::global();
     reactor.context.begin_slice(1_893_456_000_000, 1);
     let mut guest = guest(reactor, runtime);
     let started = guest.start(path);
@@ -42,7 +41,7 @@ async fn request(runtime: GuestRuntime, reactor: &Reactor, path: &str) -> String
         } else {
             None
         },
-        reactor.context.emitted_logs()
+        reactor.context.logs()
     );
     guest.finish_through_deltas(reactor, 128).await
 }

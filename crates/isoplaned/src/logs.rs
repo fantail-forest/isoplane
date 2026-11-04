@@ -55,7 +55,7 @@ impl Logging {
     }
 }
 
-/// Installs diagnostic output through `writer` and optional OTLP export.
+/// Installs diagnostic output through `writer` and optional OTLP exporters.
 /// Construction uses a blocking HTTP client; call outside an async reactor.
 pub fn init<W>(
     json: bool,
@@ -203,4 +203,77 @@ where
         filter,
         TraceLimits::default(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build;
+    use isoplane_engine::{HostBindings, ImportCall};
+    use isoplane_harness::logging::LogCapture;
+    use isoplane_host::bindings::{CellBindings, InstanceCtx};
+    use std::sync::Arc;
+
+    #[test]
+    fn text_and_json_output_preserve_host_attribution_and_guest_text() {
+        let payload = r#"{"tenant":"forged","app":"forged","level":0,"dispatch":999}"#;
+        for json in [false, true] {
+            let capture = LogCapture::default();
+            let (logging, dispatch) = build(
+                json,
+                capture.clone(),
+                "output-test",
+                None,
+                None,
+                "info".parse().unwrap(),
+            )
+            .expect("diagnostic subscriber");
+            let context = Arc::new(InstanceCtx::for_test(
+                isoplane_host::InstanceId::alloc(),
+                Default::default(),
+            ));
+            context.begin_dispatch(400, 42);
+            tracing::dispatcher::with_default(&dispatch, || {
+                let mut bindings = CellBindings::new(context.clone());
+                bindings.call_sync(ImportCall {
+                    import: "log_emit",
+                    payload: payload.as_bytes(),
+                    scalars: [3, 0, 0],
+                });
+            });
+            let output = capture.output();
+            assert!(
+                output.contains("guest log"),
+                "the actual host import must emit output: {output}"
+            );
+            if json {
+                let records = capture.records();
+                assert_eq!(records.len(), 1);
+                let record = &records[0];
+                assert_eq!(
+                    (&record.tenant, &record.app, &record.version, &record.module),
+                    (
+                        &context.tenant,
+                        &context.module.app,
+                        &context.module.version,
+                        &context.module.to_string()
+                    )
+                );
+                assert_eq!(record.instance, context.instance.to_string());
+                assert_eq!((record.dispatch, record.at_ms, record.level), (42, 400, 3));
+                assert_eq!(record.fields, payload, "guest JSON remains untrusted text");
+            } else {
+                assert!(
+                    output.contains(payload),
+                    "plain output must preserve guest text: {output}"
+                );
+                assert!(
+                    output.contains(&context.tenant)
+                        && output.contains(&context.module.to_string())
+                        && output.contains(&context.instance.to_string()),
+                    "plain output must attribute the real host owner: {output}"
+                );
+            }
+            logging.shutdown().expect("subscriber shutdown");
+        }
+    }
 }

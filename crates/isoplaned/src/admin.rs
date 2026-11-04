@@ -1,16 +1,12 @@
 //! Read-only local host measurements.
 
-
 use serde::{Deserialize, Serialize};
 
+/// Read-only measurements of the local execution pool.
 pub trait NodeAdmin: Send + Sync + 'static {
-
-
-
-    /// Current node measurements.
+    /// Returns the current counters and latency summaries.
     fn snapshot(&self) -> NodeSnapshot;
 }
-
 
 /// Quantiles and lifetime totals for a latency series.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
@@ -70,5 +66,6 @@ pub struct NodeSnapshot {
     /// Total bytes written by completed local captures.
     pub snapshot_written_bytes: u64,
     pub traps_total: u64,
-    pub breaker_trips: u64,
+    /// Requests refused by the hang breaker, including retained-path capacity refusals.
+    pub breaker_rejections: u64,
 }

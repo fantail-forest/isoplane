@@ -3,6 +3,7 @@
 //! literals never leave the guest, host failures reach the ordinary socket
 //! errors, and the lookups that would have to block fail explicitly.
 
+use isoplane_harness::logging::GuestLogs;
 #[macro_use]
 mod common;
 #[path = "common/fixed_dns.rs"]
@@ -20,7 +21,6 @@ use common::{guest, GuestRuntime};
 use fixed_dns::FixedDns;
 use isoplane_abi::native_io::DnsFailure;
 use isoplane_engine::Completion;
-use isoplane_harness::EmittedGuestLogs as _;
 use isoplane_harness::WAKE_DEADLINE;
 use no_egress::reactor_without_egress;
 use resolvers::{reactor_for_dns, FailingDns, PendingDns};
@@ -45,7 +45,7 @@ in_mono_runtime! {
             outcome.completion,
             Completion::Parked,
             "GetHostAddressesAsync must park on the lookup's pollable: {outcome:?}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert_eq!(
             reactor.futures.pending_total(reactor.context.instance),
@@ -57,7 +57,7 @@ in_mono_runtime! {
             outcome.completion,
             Completion::Done,
             "{outcome:?}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert_eq!(
             reactor.response_text(1),
@@ -87,7 +87,7 @@ in_mono_runtime! {
             outcome.completion,
             Completion::Done,
             "{outcome:?}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert_eq!(
             reactor.response_text(1),
@@ -240,7 +240,7 @@ in_mono_runtime! {
             outcome.completion,
             Completion::Done,
             "{outcome:?}; logs: {:?}",
-            reactor.context.emitted_logs()
+            reactor.context.logs()
         );
         assert_eq!(reactor.response_text(1), "cancelled");
         tokio::time::timeout(WAKE_DEADLINE, stopped.notified())

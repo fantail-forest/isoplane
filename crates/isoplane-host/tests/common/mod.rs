@@ -25,6 +25,7 @@ impl Resolver for Fixed {
     reason = "Suites supplying snapshot storage use services_resolving directly"
 )]
 pub fn rig_resolving(cfg: CellConfig, addr: &str) -> (Arc<Cell>, Arc<FakeFetcher>) {
+    isoplane_harness::logging::LogCapture::global();
     let (svc, fetcher) = services_resolving(addr);
     let cell = Cell::new(cfg, svc).expect("a cell starts");
     (cell, fetcher)

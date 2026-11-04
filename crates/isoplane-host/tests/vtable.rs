@@ -195,9 +195,9 @@ async fn a_host_off_the_allowlist_is_refused() {
 
 #[tokio::test]
 async fn logging_enforces_the_dispatch_byte_limit() {
-    let output = TestLogCapture::default();
-    let subscriber = output.dispatch();
-    let _subscriber = tracing::dispatcher::set_default(&subscriber);
+    let capture = isoplane_harness::logging::LogCapture::default();
+    let dispatch = capture.dispatch();
+    let _subscriber = tracing::dispatcher::set_default(&dispatch);
     let mut v = vtable(
         isoplane_abi::config::Limits::default(),
         "93.184.216.34:80",
@@ -212,8 +212,8 @@ async fn logging_enforces_the_dispatch_byte_limit() {
             scalars: [2, 0, 0],
         });
     }
-    assert_eq!(output.records().len(), 200);
-    let before = output.records().len();
+    assert_eq!(capture.records().len(), 200);
+    let before = capture.records().len();
     let big = vec![b'y'; 256 * 1024];
     for _ in 0..4 {
         v.bindings.call_sync(ImportCall {
@@ -223,7 +223,7 @@ async fn logging_enforces_the_dispatch_byte_limit() {
         });
     }
     assert!(
-        output.records().len() <= before + 1,
+        capture.records().len() <= before + 1,
         "the per-dispatch log byte cap did not bite"
     );
 }
@@ -258,7 +258,7 @@ async fn completions_signal_the_wake_router() {
 }
 
 #[tokio::test]
-async fn entropy_is_never_reused_across_calls_or_instances() {
+async fn live_entropy_draws_differ_across_calls_and_instances() {
     let mut a = vtable(
         isoplane_abi::config::Limits::default(),
         "93.184.216.34:80",
@@ -281,7 +281,7 @@ async fn entropy_is_never_reused_across_calls_or_instances() {
                 },
                 &mut buf,
             );
-            assert_eq!(n, 32, "the whole buffer is filled");
+            assert_eq!(n.expect("live entropy"), 32, "the whole buffer is filled");
             assert!(seen.insert(buf.to_vec()), "entropy repeated");
         }
     }
@@ -404,55 +404,4 @@ async fn aggregate_future_pressure_refuses_allocation_without_trapping_other_req
         "released capacity allows progress"
     );
     v.futures.release_instance(v.ctx.instance);
-}
-
-#[derive(Clone, Default)]
-struct TestLogCapture(Arc<std::sync::Mutex<Vec<u8>>>);
-
-impl TestLogCapture {
-    fn dispatch(&self) -> tracing::Dispatch {
-        tracing::Dispatch::new(
-            tracing_subscriber::fmt()
-                .json()
-                .with_ansi(false)
-                .with_max_level(tracing::Level::TRACE)
-                .with_writer(self.clone())
-                .finish(),
-        )
-    }
-
-    fn records(&self) -> Vec<serde_json::Value> {
-        let bytes = self.0.lock().expect("test writer mutex").clone();
-        String::from_utf8(bytes)
-            .expect("tracing emits UTF-8")
-            .lines()
-            .filter_map(|line| {
-                let event: serde_json::Value =
-                    serde_json::from_str(line).expect("tracing JSON event");
-                (event["fields"]["message"] == "guest log").then_some(event)
-            })
-            .collect()
-    }
-}
-
-impl std::io::Write for TestLogCapture {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0
-            .lock()
-            .expect("test writer mutex")
-            .extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-impl<'writer> tracing_subscriber::fmt::MakeWriter<'writer> for TestLogCapture {
-    type Writer = Self;
-
-    fn make_writer(&'writer self) -> Self::Writer {
-        self.clone()
-    }
 }

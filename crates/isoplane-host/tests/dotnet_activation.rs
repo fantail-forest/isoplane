@@ -1,5 +1,6 @@
 //! Asynchronous managed activation through the production cell and timer reactor.
 
+use isoplane_harness::logging::GuestLogs;
 mod common;
 
 use isoplane_abi::dispatch::HttpRequest;
@@ -10,7 +11,6 @@ use isoplane_host::cell::{Cell, CellConfig, Target};
 use isoplane_host::ModuleId;
 use std::sync::Arc;
 use std::time::Duration;
-use isoplane_harness::EmittedGuestLogs as _;
 
 fn activation_cell(settings: &[u8]) -> (Arc<Cell>, ModuleId) {
     let engine = Arc::new(
@@ -56,7 +56,6 @@ fn activation_cell(settings: &[u8]) -> (Arc<Cell>, ModuleId) {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn interpreted_activation_awaits_its_timer_before_dispatch_and_does_not_repeat() {
-    isoplane_harness::LogCapture::global();
     let (cell, module) = activation_cell(br#"{"activation-timer":"enabled","probe":"unprepared"}"#);
     let mut first_instance = None;
     for _ in 0..2 {
@@ -83,8 +82,7 @@ async fn interpreted_activation_awaits_its_timer_before_dispatch_and_does_not_re
             response.status,
             200,
             "activation must complete successfully: {response:?}; logs: {:?}",
-            cell.slot(response.instance)
-                .map(|slot| slot.ctx.emitted_logs())
+            cell.slot(response.instance).map(|slot| slot.ctx.logs())
         );
         assert_eq!(
             response.body, b"1",

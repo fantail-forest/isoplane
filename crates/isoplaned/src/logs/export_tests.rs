@@ -78,16 +78,16 @@ async fn nested_stages_keep_their_dispatch_parent_across_worker_threads() {
     );
     assert!(
         spans.iter().all(|span| span.events.is_empty()),
-        "the span-only trace exporter must not include guest log events"
+        "guest events must not become host trace events"
     );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dispatch_fields_reach_otlp_when_the_diagnostic_log_filter_is_off() {
+    let capture = isoplane_harness::logging::LogCapture::default();
+    let writer = capture.clone();
     let mut collector = Collector::<ExportLogsServiceRequest>::start(StatusCode::OK).await;
     let endpoint = collector.endpoint.parse::<OtlpEndpoint>().unwrap();
-    let output = std::sync::Arc::new(tempfile::tempfile().unwrap());
-    let writer = output.clone();
     let (logging, dispatch) = tokio::task::spawn_blocking(move || {
         build(
             true,
@@ -108,7 +108,7 @@ async fn dispatch_fields_reach_otlp_when_the_diagnostic_log_filter_is_off() {
         tracing::error!(target: "unrelated", "this diagnostic must not enter the dispatch exporter");
     });
     assert!(
-        output.metadata().unwrap().len() == 0,
+        capture.output().is_empty(),
         "the diagnostic filter must remain independently effective"
     );
     tokio::task::spawn_blocking(move || logging.shutdown())
