@@ -5,7 +5,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license-file.workspace = true
-description = "The isoplane:platform@1 contract: dispatch/result records, poll status and the canonical import table."
+description = "The isoplane:platform@1 contract: dispatch/result records, poll status, the canonical import table, and application resource limits."
 
 [dependencies]
 serde = { workspace = true }
