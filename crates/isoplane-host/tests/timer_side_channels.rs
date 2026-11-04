@@ -26,6 +26,8 @@ fn dispatch(handle: &str, wake: &str) -> DispatchResult {
     let wasm = wat::parse_str(format!(
         r#"(module
         (import "isoplane" "poll_call" (func $poll (param i32 i32 i32) (result i64)))
+        (import "isoplane" "clock_now_coarse" (func $clock (result i64)))
+        (import "isoplane" "clock_deadline_in" (func $deadline (param i64) (result i64)))
         (memory (export "memory") 2 2)
         (func $call (param $operation i32) (param $argument i64) (result i64)
             (i64.store (i32.const 1024) (local.get $argument))
@@ -77,6 +79,23 @@ fn dispatch(handle: &str, wake: &str) -> DispatchResult {
         .expect("the dispatch must finish before its hang deadline");
     cell.shutdown();
     result
+}
+
+#[test]
+fn a_future_import_keeps_the_serving_clock_frozen_until_the_next_slice() {
+    let result = dispatch(
+        r#"(i64.store (i32.const 2056) (call $clock))
+            (drop (call $deadline (i64.const 1)))
+            (if (i64.ne (call $clock) (i64.load (i32.const 2056)))
+                (then unreachable))
+            (i64.const 1)"#,
+        "(i64.const 0)",
+    );
+    assert_eq!(
+        (result.completion, result.status, result.slices),
+        (Completion::Done, 204, 2),
+        "a real serving binding must keep the clock fixed across a future import: {result:?}"
+    );
 }
 
 #[test]

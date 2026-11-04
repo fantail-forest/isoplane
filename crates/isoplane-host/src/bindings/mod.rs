@@ -563,15 +563,15 @@ mod tests {
     }
 
     #[test]
-    fn the_coarse_clock_is_frozen_within_a_slice() {
+    fn the_coarse_clock_reads_the_host_selected_slice_time() {
         let c = ctx();
         c.begin_dispatch(1_000, 1);
         let mut b = CellBindings::new(c.clone());
-        let a = b.call_sync(call("clock_now_coarse", &[], [0; 3]));
-        std::thread::sleep(std::time::Duration::from_millis(5));
-        let z = b.call_sync(call("clock_now_coarse", &[], [0; 3]));
-        assert_eq!(a, z, "the imported coarse clock advanced inside a slice");
-        assert_eq!(a, 1_000, "the guest reads the frozen slice clock");
+        assert_eq!(
+            b.call_sync(call("clock_now_coarse", &[], [0; 3])),
+            1_000,
+            "the guest reads the selected slice clock"
+        );
         assert_eq!(b.slice_clock_ms(), 1_000, "and so do the bindings");
 
         c.begin_slice(1_007, 1);

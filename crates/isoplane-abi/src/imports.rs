@@ -184,7 +184,8 @@ pub const IMPORTS: &[ImportDef] = &[
     // ---- clock & entropy --------------------------------------------------
     // Not init-visible: a static initialiser that reads the clock is impure.
     ImportDef { buf: BufSpec::None, ..imp!("clock_now_coarse", Clock, Sig { params: &[], results: &[I64] }, SYNC,
-        "Reads the host coarse clock; use host deadline futures to wait.") },
+        "millisecond wall clock, monotonic per instance and fixed throughout each serving slice; \
+         the engine samples the binding at slice entry and after future-returning imports") },
     ImportDef { buf: BufSpec::None, ..imp!("clock_deadline_in", Clock, Sig { params: &[I64], results: &[I64] }, FUT,
         "a timer as a host future, so waiting is never a guest loop burning budget") },
     ImportDef { buf: BufSpec::Out(0), ..imp!("entropy_fill", Entropy, BUF_TO_VOID, SYNC,
