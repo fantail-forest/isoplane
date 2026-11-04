@@ -115,6 +115,12 @@ wait; do not fall back to repeated progress polling.
 containers it created. Don't drive Docker directly to work around it, and don't
 leave a container running when you are done.
 
+### Wasmtime fork maintenance
+
+The root manifest pins a full commit of the public `fantail-forest/isoplane-wasmtime` fork. The serialized-module version derives from the pin, so changing it invalidates prepared artifacts and compilation caches. Preserve upstream release history and keep Isoplane patches as separate commits.
+
+For a fork update, run `cargo test -p wasmtime --lib runtime::vm::cow` and `cargo test -p wasmtime --test cow_memory_image` in the fork, then run the affected Isoplane preparation, activation and hibernation suites against the new pin.
+
 ## Dependency Management
 
 - Declare shared dependencies once in `[workspace.dependencies]` and reference them with `workspace = true`. A version string in a crate manifest is a bug.
@@ -259,7 +265,7 @@ Keep the host interface to one definition. Generate every other representation o
 
 - Keep configuration layered: let a value come from more than one source (a file, the environment, a flag), give the sources a defined precedence, and let the daemon print the merged result it is actually running with. Which sources exist and how they rank is the daemon's decision, not a rule here.
 - Never commit secrets. Make anything that holds a development-only key or credential refuse to run anywhere it could be mistaken for production.
-- Treat every template and derived snapshot as potentially secret-bearing. Applications choose initialization-time or activation-time configuration/secret reads; changes to any guest-readable configuration trigger redeployment and regeneration of captured state, even with unchanged code. See the [isolation opinion](docs/opinion-registry/production/isolation.md).
+- Treat every template and derived snapshot as potentially secret-bearing. Applications can read configuration or secrets during initialization or activation. The trusted operator protects these files; the host does not encrypt guest artifacts or snapshots. See the [isolation opinion](docs/opinion-registry/production/isolation.md).
 - Use PostgreSQL and EF Core for managed relational integrations, with EF migrations owning their schemas. Keep persistence and application settings behind consumed interfaces. The standalone host uses protected local files for its selected deployments and application settings; it does not require a database service. Settings protection belongs to the settings store; .NET User Secrets may supply local development configuration but are not encrypted vault storage. See [relational storage](docs/opinion-registry/frameworks/postgresql.md).
 - Expose a port, hostname, limit, or deadline as configuration when there is an operational need to vary it, and validate the supported range. Fixed policy and protocol facts may remain constants. Define a shared concept's value or default once in its owning crate; unrelated policies may have equal values without sharing a definition.
 - Never default identity. Treat a tenant, org, or app that a request did not establish as an error, not as `"unknown"`.

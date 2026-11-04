@@ -12,7 +12,7 @@ Report measurements with their workload, source revision, environment and uncert
 
 ## Measure the path a customer takes
 
-Send load in through the proxy with a stated arrival process and measure at the response. Don't describe a benchmark that calls below the proxy and the lease interface as platform throughput; it measures an internal component.
+Drive the customer entry point with a stated arrival process and measure at the response. A benchmark below that boundary measures an internal component, not end-to-end platform throughput.
 
 **Not this:** A generator that submits directly to a cell's queue and reports the result as requests per second.
 

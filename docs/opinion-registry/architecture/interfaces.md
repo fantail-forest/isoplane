@@ -20,7 +20,7 @@ Isolate infrastructure and external services behind responsibility-focused inter
 
 A module, crate, or trait earns its existence by hiding complexity behind a simple interface. If the interface is nearly as complex as the implementation, the boundary is moving code around, not reducing what callers need to know. Depth is what makes a boundary worth crossing.
 
-**Not this:** A storage trait with one method per database operation, so that every caller reassembles the transaction, the fencing check, and the retry it was supposed to be spared.
+**Not this:** A storage trait with one method per database operation, so that every caller reassembles the transaction and the retry it was supposed to be spared.
 
 **Exception:** Boundaries a framework mandates (the bindings implementation the engine requires) exist even when thin. If many such boundaries are thin wrappers over one thing, deepen the thing.
 
@@ -28,7 +28,7 @@ A module, crate, or trait earns its existence by hiding complexity behind a simp
 
 If consuming a module requires the same lines at every call site (acquire a lock, unwrap a layered result, check an epoch, open a span), the interface is too shallow and is leaking an implementation concern. Push it behind the boundary so the correct call is the short one.
 
-**Not this:** Every caller of the store fencing its own write; every dispatch path emitting its own completion event by hand.
+**Not this:** Every dispatch path emitting its own completion event by hand.
 
 **Exception:** Boilerplate that is genuinely caller-specific, such as different callers needing different failure handling.
 

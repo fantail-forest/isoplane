@@ -36,7 +36,7 @@ Add an enum variant, a dispatch kind, or an import only when code constructs it 
 
 ## Version the wire format
 
-Give records that cross the boundary or land on disk (dispatch records, deltas, manifests) one canonical codec per supported version, a version field, and a round-trip test with a stored golden byte string. Change the version when the format changes and reject unsupported versions explicitly. Keep older decoders only for a concrete supported consumer or explicit data-compatibility requirement, following the [compatibility guidance](../../../AGENTS.md#workflow-develop-validate-replan).
+For durable or independently exchanged records, define how versions are identified and unsupported versions rejected. Use canonical codecs and golden-byte tests where stable encoding matters; their maintenance cost is less useful for ephemeral records whose producers and consumers change together. Keep older decoders only for a concrete supported consumer or explicit data-compatibility requirement, following the [compatibility guidance](../../../AGENTS.md#workflow-develop-validate-replan).
 
 **Not this:** Silently interpreting obsolete bytes as the current format, or maintaining legacy readers for consumers and data the project does not support.
 

@@ -28,11 +28,7 @@ Follow the [reference-documentation guidance](../../../AGENTS.md#comments--docum
 
 ## Snapshot customer docs per release line
 
-Publish one snapshot of the customer docs per release line, where a line begins with a breaking release, and re-snapshot the line from the working docs at every release on it. Keep the working docs unpublished, as the docs of the next release. Mark an item added after a line's first release with a release marker that is resolved and pruned at snapshot time, and derive the reference pages' markers from a record the snapshot keeps, not from prose. `docs/userdocs/README.md` has the mechanics.
-
-**Not this:** A snapshot per patch release; editing a published snapshot by hand; a "since" note written into every list and table as prose.
-
-**Exception:** None.
+Keep customer documentation aligned with supported releases so readers can find the behavior of the version they use. See the [release procedure](../../userdocs/README.md) for snapshot mechanics.
 
 ## Describe supported behavior and its limits
 

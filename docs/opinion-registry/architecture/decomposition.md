@@ -18,52 +18,15 @@ Admit a responsibility to the core when it is necessary to execute a supplied ap
 
 ## Accept prepared applications instead of acquiring or building them
 
-Keep project discovery, dependency acquisition, IL transformation, initialization and artifact retrieval outside the execution core; the caller supplies compatible prepared input. Keep compatibility and trust enforcement at the consuming boundary, including authenticated provenance before unsafe native-code loading, and let preparation and execution consume one versioned contract.
-
-**Not this:** An engine that accepts a registry URL or an abstract registry client, downloads a template, and invokes the compiler on a cache miss.
-
-**Exception:** Holding installed templates and their backing storage while instances reference them is execution bookkeeping. It does not require remote version discovery or a distribution policy.
+Keep project discovery, dependency acquisition and compilation outside the execution core. The caller supplies compatible prepared input; enforce the unsafe loading preconditions at the consuming boundary, including controlled local compiler origin and immutable backing.
 
 ## Keep service operation outside local execution
 
-Put responsibilities that discover, place, distribute, replicate, coordinate, sell or operate workloads in callers, providers or supervisors. Use the following nonexhaustive inventory to review dependencies and public interfaces; it is neither an implementation backlog nor a requirement for a separate service per row.
-
-| Responsibility outside the core | Examples |
-| --- | --- |
-| Fleet coordination | Membership, discovery, heartbeats, consensus, leader election and desired-state reconciliation |
-| Placement and capacity | Region/node selection, affinity, reservations, autoscaling, rebalancing and evacuation |
-| Global ingress | DNS/anycast, regional steering, load balancing, TLS certificate operation, edge authentication and DDoS controls |
-| Application and deployment management | Accounts, versions, authorization, routes, promotion, canaries and rollback |
-| Build operations and artifact supply | Job scheduling, build isolation infrastructure, dependency downloads, registries, signing, distribution, prefetch and retention |
-| Distributed ownership | Instance directories, shard maps, lease issuance, ownership transfer and distributed routing |
-| Storage operation | Database/object-store deployment, replication, quorums, backup, recovery, residency and deletion orchestration |
-| Failure recovery | Failure detection, process supervision, replacement placement, regional failover and disaster recovery |
-| Machine isolation and operation | Namespaces, cgroups, seccomp deployment, privileges, mounts, CPU placement and host patching |
-| Egress infrastructure | Caching DNS services, NAT, routing rules, private tunnels, proxies and connection placement |
-| Operational observability | Exporters, collectors, aggregation, retention, dashboards, alerting, SLO calculation and durable usage delivery |
-| Identity and security operations | User/service authentication, IAM, vault/KMS, credential issuance, key rotation and audit retention |
-| Commercial and abuse policy | Pricing, subscription entitlements, global quotas, billing, fraud detection and account suspension |
-| Management surfaces | Operator APIs, consoles, support tooling, remote diagnostics and configuration distribution |
-
-**Not this:** Making every local test start a node supervisor, telemetry exporter and distributed directory, or implement no-op substitutes for them.
-
-**Exception:** Their local execution consequences remain real: enforce supplied limits and ownership, bound queues, run one slice at a time per instance, mediate capabilities, retain host resources, and emit accurate outcomes.
-
-## Introduce only the infrastructure interfaces execution consumes
-
-Supply infrastructure through [deep, consumed interfaces](interfaces.md#make-a-trait-a-boundary-between-concerns-not-a-mirror-of-one-implementation) that hide deployment machinery. A connection provider exists because the guest opens a connection; fleet management and billing can consume outcomes or supply existing inputs without acquiring corresponding engine traits.
-
-**Not this:** A universal plugin system with unused registry, fleet, billing and telemetry-storage interfaces, or a socket API that exposes network namespace names to the engine.
-
-**Exception:** None. Exclusion from the core does not by itself create an extension point.
+Keep execution independent of deployment and operational machinery it does not consume. Use [deep, consumed interfaces](interfaces.md#make-a-trait-a-boundary-between-concerns-not-a-mirror-of-one-implementation) for actual dependencies rather than speculative extension points.
 
 ## Put simple local defaults in a separate host
 
-Compose the shared core with session-scoped in-memory service implementations and straightforward local networking so an application can run without a production account, registry or infrastructure deployment. Keep service state outside guest memory, preserve the supported capability semantics, and exercise interchangeable implementations through shared conformance tests.
-
-**Not this:** Asking a test author to assemble a vault, directory, spool and resolver, or calling retention of a live guest object a hibernation implementation.
-
-**Exception:** Applications may need external services, including their own databases. The local host mediates those connections; it provides no guest persistence API.
+Compose the shared execution core with local implementations so applications can run without unnecessary infrastructure. Exercise interchangeable implementations through shared conformance tests.
 
 ## Share failure semantics without importing recovery orchestration
 
@@ -75,8 +38,4 @@ Keep capture/restore, resource preservation or loss, cancellation and structured
 
 ## Prove the boundary before moving repositories
 
-Decompose incrementally when an actual consumer needs independence, validating the same supported application through the local host and production integration before extracting their shared implementation. Keep production consuming that implementation after extraction, and make standalone build/test/package independence demonstrable; repository placement, licensing and release work follow the proven boundary.
-
-**Not this:** Moving a large dependency graph into a public repository to discover what it contains, or waiting for every possible fleet feature before supporting local tests.
-
-**Exception:** A small earlier extraction can be justified by the [interface criteria](interfaces.md#make-a-crate-only-where-there-is-a-real-interface). It still needs a real consumer and validation, not speculative contracts for future infrastructure.
+Decompose when an actual consumer needs independence. Validate the supported application through the resulting boundary and demonstrate independent build and test before relying on the split.

@@ -2,7 +2,7 @@
 
 ## Use the PostgreSQL protocol for relational integrations
 
-Connect through the normal PostgreSQL protocol with a maintained driver and certificate verification. Consume storage through a responsibility-focused interface so infrastructure choices do not spread through application logic. Operators choose where their application databases run; the standalone host does not require a database service.
+Connect through the normal PostgreSQL protocol with a maintained driver and certificate verification. Consume storage through a responsibility-focused interface so infrastructure choices do not spread through application logic.
 
 ## Use EF Core and EF migrations
 

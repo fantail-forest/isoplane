@@ -34,7 +34,7 @@ What to do, in one to three sentences.
 
 ## Adding Opinions
 
-Add opinions when they represent a significant pit of success: a practice that, if followed by default, prevents a known class of problems. State the conditions that make the practice useful and its tradeoffs. Reserve unconditional rules for guarantees whose violation would break correctness, security or an explicit product requirement; one failed implementation does not justify banning a technique. Don't add opinions for:
+Add opinions when they represent a significant pit of success: a practice that, if followed by default, prevents a known class of problems. State the conditions that make the practice useful and its tradeoffs. Reserve unconditional rules for practices whose violation would break correctness, security or an explicit product requirement; one failed implementation does not justify banning a technique. Product requirements belong in their maintained contract or design, with links from opinions where useful. Don't add opinions for:
 
 - Repeated requirements from AGENTS.md: link to their definition and add only useful rationale or examples
 - One-off preferences that won't recur

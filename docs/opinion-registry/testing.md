@@ -6,11 +6,11 @@ Give a change the one test that would catch its regression most cheaply, not a t
 
 ## Go deep where failure is costly
 
-Cover critical behaviour thoroughly: the sandbox boundary, budget enforcement, fencing, hibernation and wake, tenant isolation. Don't write tests that are unlikely ever to fail.
+Cover critical behaviour thoroughly: the sandbox boundary, budget enforcement, hibernation and wake, and isolation. Don't write tests that are unlikely ever to fail.
 
 ## Test the real code
 
-Make sure tests exercise the real code, not some bullshit you made up.
+Exercise the real implementation and its relevant boundaries, rather than a substitute that cannot reveal the failure.
 
 ## Any test can run on its own
 

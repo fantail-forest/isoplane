@@ -18,27 +18,12 @@ Use the same engine version for pre-initialisation and execution. A template is 
 
 ## Make a killed instance a state, not a panic
 
-After a trap or a kill, discard the instance: move it to a state in which every further call returns an error, and evict it. The engine does not poison a store after a trap, so the host must, and it must do so without taking the process down.
+Represent terminal instance state explicitly and return an error for invalid subsequent operations instead of panicking.
 
 **Not this:** `panic!` on a call into a discarded instance, in a binary built to abort on panic.
 
 **Exception:** None.
 
-## Pin the private fork and qualify its memory patch
+## Pin the fork and qualify its memory patch
 
-The root manifest pins a full commit from `fantail-forest/isoplane-wasmtime`, based
-on a stable upstream release. Builders need read access to that private repository.
-The engine derives Wasmtime's serialized-module version from this pin, so changing
-the fork revision invalidates prepared artifacts and compilation caches.
-
-Keep memory mapping, allocator reset and failure-path tests in the Wasmtime fork.
-Keep preparation, activation and hibernation integration tests in Isoplane. For a fork
-update, run `cargo test -p wasmtime --lib runtime::vm::cow` and
-`cargo test -p wasmtime --test cow_memory_image` in the fork, then the affected
-Isoplane suites against the new pin. Preserve upstream release history and keep Isoplane
-patches as separate commits.
-
-**Not this:** An untracked patch or path dependency outside the checkout, or a
-fork update that reuses artifacts identified only by the upstream version.
-
-**Exception:** None.
+Pin maintained patches reproducibly and qualify them with tests at both the patched component and its integration boundary. See [fork maintenance](../../../AGENTS.md#wasmtime-fork-maintenance) for the current procedure.

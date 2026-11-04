@@ -18,7 +18,7 @@ Use GitHub Discussions for experiment and research reports, candidate ideas, unr
 
 ## Keep work and durable decisions in their own homes
 
-Issues describe actionable outcomes and acceptance; issue comments hold implementation progress and validation evidence. Link a Discussion when investigation informs an issue. Once a decision is made, update the relevant maintained documentation or opinion and link it from the Discussion. Do not duplicate current-state narratives across all three places.
+Issues describe actionable outcomes and acceptance; issue comments hold implementation progress and validation evidence. Link a Discussion when investigation informs an issue. Once a decision is made, update the relevant maintained documentation and link it from the Discussion. Put recurring engineering preferences in the opinion registry; put product requirements in their maintained design or contract. Do not duplicate current-state narratives across all three places.
 
 **Not this:** Using a Discussion as a second task tracker, or copying an entire investigation into an issue body.
 

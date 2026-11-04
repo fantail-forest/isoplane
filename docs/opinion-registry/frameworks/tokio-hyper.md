@@ -2,7 +2,7 @@
 
 ## Make the accept loop generic over the stream
 
-Have the listener hand each connection to a serving function that takes anything implementing `AsyncRead + AsyncWrite`. Wrap the TCP stream in TLS before serving; routing, upgrades, and the socket hub never see the difference.
+Have the listener hand each connection to a serving function that takes anything implementing `AsyncRead + AsyncWrite`. When a listener uses TLS, wrap the TCP stream before serving so routing and upgrades do not depend on the transport.
 
 **Not this:** Serving on a concrete `TcpStream` so that adding TLS means touching routing.
 

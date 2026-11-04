@@ -15,7 +15,7 @@ where they provide better evidence or an integration has not yet been qualified.
 
 ## Prefer wide events at operation boundaries
 
-A wide event brings the identifiers, operation, outcome, duration, resource use, and relevant failure context together in one structured completion, so an operator can investigate an operation without reconstructing it from scattered log lines. Apply the [dispatch completion contract and its limits](../../../AGENTS.md#observability) to dispatches; use the same approach for deploy, hibernate, wake, and migration operations, with the fields meaningful to each. Enrich context through the operation and finalize it at the owning boundary, using nested spans for stage detail rather than separate completion events for each slice.
+A wide event brings the identifiers, operation, outcome, duration, resource use, and relevant failure context together in one structured completion, so an operator can investigate an operation without reconstructing it from scattered log lines. Apply the [dispatch completion contract and its limits](../../../AGENTS.md#observability) to dispatches; use the same approach for deploy, hibernate, and wake operations, with the fields meaningful to each. Enrich context through the operation and finalize it at the owning boundary, using nested spans for stage detail rather than separate completion events for each slice.
 
 **Not this:** Start and end log lines for every internal function, or only logging on error.
 
@@ -23,23 +23,17 @@ A wide event brings the identifiers, operation, outcome, duration, resource use,
 
 ## Make completion ownership survive handled failures
 
-The execution boundary that catches a host panic owns the dispatch outcome; a completion guard or equivalent ownership mechanism prevents early returns and caught unwinding from dropping or duplicating the record. Exercise success, failure, cancellation, and caught-panic paths through that boundary and observe the completion event. Event emission and durable export are separate concerns: a guard cannot promise delivery after an abort, forced termination, crash, or exporter failure.
+Keep completion ownership at the boundary that decides the outcome, including handled failures and early returns. Emission and durable export are separate: abrupt process loss or exporter failure can leave incomplete evidence. See the [observability contract](../../../AGENTS.md#observability).
 
-**Not this:** Calling a `Drop` guard an exactly-once delivery guarantee, or treating missing telemetry as evidence of zero resource usage.
-
-**Exception:** Abrupt process loss is outside the handled-outcome guarantee; represent incomplete evidence as incomplete.
+**Not this:** Treating missing telemetry as evidence of zero resource usage.
 
 ## Emit lifecycle transitions as events with before and after
 
-When an instance changes tier (hot, parked, hibernated, discarded) or an application is selected for deployment, emit a structured event with the previous state, the new state, the cause, and the identifiers. These are where investigations start.
-
-**Not this:** Inferring a transition from a counter delta.
-
-**Exception:** None.
+When transitions need operational investigation, record their previous state, new state and cause as structured fields.
 
 ## Carry context as span fields, not string prefixes
 
-Put tenant, app, version, instance, and dispatch identifiers on the enclosing span as fields, so code inside the span emits events without repeating them.
+Put relevant identifiers on the enclosing span as fields, so code inside the span emits events without repeating them.
 
 **Not this:** Formatting `[app=quotes v3]` into every message.
 

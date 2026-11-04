@@ -26,7 +26,7 @@ The [observability data restrictions](../../../AGENTS.md#observability) apply to
 
 ## Emit errors as events with the same fields as completions
 
-Use the [terminal-error boundary](../../../AGENTS.md#error-handling) to attach established tenant, app, version, instance, operation, and limit context to the completion event. A standalone error event is useful when there is no operation completion to carry it; propagating layers do not need to repeat the same terminal record.
+Use the [terminal-error boundary](../../../AGENTS.md#error-handling) to attach relevant established operation and limit context to the completion event. A standalone error event is useful when there is no operation completion to carry it; propagating layers do not need to repeat the same terminal record.
 
 **Not this:** `"budget exceeded"`.
 
