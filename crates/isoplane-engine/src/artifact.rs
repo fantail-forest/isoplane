@@ -148,13 +148,15 @@ impl IsoplaneEngine {
         Ok(())
     }
 
-    /// The artifact-cache key for a template on this engine, from the wasm
-    /// alone so the cache can be consulted before paying for a compile.
+    /// The artifact-cache key, including the module, engine, ABI and storage format.
+    /// Computing it does not compile the module.
     pub fn artifact_key(&self, template_wasm: &[u8]) -> String {
         format!(
-            "{}-{}",
+            "{}-{}-abi{}-format{}",
             ModuleHash::of(template_wasm).hex(),
-            self.inner.fingerprint
+            self.inner.fingerprint,
+            isoplane_abi::ABI_REV,
+            template::ARTIFACT_FORMAT
         )
     }
 
@@ -597,6 +599,48 @@ fn check_cache_path(path: &std::path::Path, directory: bool) -> Result<()> {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn an_old_abi_cache_entry_cannot_block_compilation_for_the_current_abi() {
+        let directory = tempfile::tempdir().expect("private compiler cache");
+        let cache_directory = directory.path().join("cache");
+        CompilationCache::create_directory(&cache_directory).expect("private cache directory");
+        let engine = IsoplaneEngine::new(crate::EngineConfig {
+            pooling: false,
+            ..Default::default()
+        })
+        .expect("test engine");
+        let wasm = wat::parse_str("(module (memory (export \"memory\") 1))")
+            .expect("portable test module");
+        let (metadata, native) = engine.precompile(&wasm).expect("local compilation");
+        let mut metadata: template::ArtifactMeta = postcard::from_bytes(&metadata).unwrap();
+        metadata.abi_rev = isoplane_abi::ABI_REV - 1;
+        let previous = postcard::to_allocvec(&metadata).unwrap();
+        let unversioned_key = format!(
+            "{}-{}",
+            ModuleHash::of(&wasm).hex(),
+            engine.inner.fingerprint
+        );
+        let old = ArtifactPaths::new(&cache_directory, &unversioned_key);
+        write_atomic(&old.meta, &previous).expect("old ABI metadata");
+        write_atomic(&old.cwasm, &native).expect("local native bytes");
+        // SAFETY: the fixture's native bytes come only from the local compiler;
+        // only its compatibility metadata is deliberately marked obsolete.
+        let cache = unsafe { CompilationCache::from_trusted_directory(cache_directory) }
+            .expect("owned cache");
+        let (_, compiled) = cache
+            .load(&engine, &wasm)
+            .expect("compile for the current ABI");
+        assert!(compiled, "the obsolete entry must not be selected");
+        assert!(
+            !cache
+                .load(&engine, &wasm)
+                .expect("reuse the current entry")
+                .1,
+            "the replacement compilation must remain reusable"
+        );
+        assert_eq!(std::fs::read(old.meta).unwrap(), previous);
+    }
 
     fn unsupported_exclusive_rename(
         temporary: tempfile::TempPath,
