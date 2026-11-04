@@ -4,7 +4,7 @@
   </PropertyGroup>
   <Target Name="PackConformanceAssembly">
     <MSBuild Projects="$(MSBuildThisFileDirectory)Conformance.csproj" Targets="GetTargetPath"
-             RemoveProperties="RuntimeIdentifier;RuntimeIdentifiers;PublishAot;SelfContained">
+             RemoveProperties="$(_IsoplaneSourceReferencePropertiesToRemove)">
       <Output TaskParameter="TargetOutputs" ItemName="_ConformanceAssembly" />
     </MSBuild>
     <ItemGroup>

@@ -126,6 +126,13 @@ tasks:
   cli:
     run: once
     desc: Prepare the shared managed CLI and platform native support
-    deps: [managed:build, native]
+    cmds:
+      - task: managed:build
+      - task: cli:stage
+
+  cli:stage:
+    internal: true
+    run: once
+    deps: [native]
     cmds:
       - '"{{.DOTNET}}" msbuild taskfiles/StageCli.proj -nologo -p:NativeLibrary="{{.NATIVE_TARGET}}/debug/{{.NATIVE_LIBRARY}}" -p:CliDirectory="{{dir .CLI}}" -p:Platform={{.PLATFORM}}'

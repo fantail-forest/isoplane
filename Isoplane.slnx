@@ -1,21 +1,55 @@
 <Solution>
-  <Project Path="tools/Isoplane.HotReload/Isoplane.HotReload.csproj" />
-  <Project Path="guest-sdks/dotnet/Isoplane.Sdk.csproj" />
-  <Project Path="guest-sdks/dotnet/AspNetCore/Isoplane.AspNetCore.csproj" />
-  <Project Path="guest-sdks/dotnet/AspNetCore.DataProtection.EntityFrameworkCore/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.csproj" />
-  <Project Path="guest-sdks/dotnet/OpenTelemetry/Isoplane.OpenTelemetry.csproj" />
-  <Project Path="guest-sdks/dotnet/Templates/Isoplane.Templates.csproj" />
-  <Project Path="tools/Isoplane.Cli/Isoplane.Cli.csproj" />
-  <Project Path="tools/Isoplane.Native/Isoplane.Native.csproj" />
-  <Project Path="tools/Isoplane.Testing/Isoplane.Testing.csproj" />
-  <Project Path="tools/Isoplane.Debugging.Tests/Isoplane.Debugging.Tests.csproj" />
-  <Project Path="tools/Isoplane.Cli.Tests/Isoplane.Cli.Tests.csproj" />
-  <Project Path="tools/Isoplane.Testing.Tests/Isoplane.Testing.Tests.csproj" />
-  <Project Path="guest-sdks/dotnet/Build.Tests/Build.Tests.csproj" />
-  <Project Path="guest-sdks/dotnet/AspNetCore.Tests/Isoplane.AspNetCore.Tests.csproj" />
-  <Project Path="guest-sdks/dotnet/AspNetCore.DataProtection.EntityFrameworkCore.Tests/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.Tests.csproj" />
-  <Project Path="guest-sdks/dotnet/OpenTelemetry.Tests/Isoplane.OpenTelemetry.Tests.csproj" />
-  <Project Path="guest-sdks/dotnet/Analyzers/Isoplane.Analyzers.csproj" />
+  <Project Path="guest-runtime/tests/guest/src/Acceptance.csproj" />
+  <Project Path="guest-runtime/tests/guest/src/Payload/Payload.csproj" />
+  <Project Path="guest-runtime/tests/packages/alpha/Alpha.csproj" />
+  <Project Path="guest-runtime/tests/packages/beta/Beta.csproj" />
+  <Project Path="guest-runtime/tests/packages/beta/library/Beta.Library.csproj" />
+  <Project Path="guest-runtime/tests/packages/debugger-optimized/DebuggerOptimized.csproj" />
+  <Project Path="guest-runtime/tests/packages/debugger/Debugger.csproj" />
+  <Project Path="guest-runtime/tests/packages/debugger/hotreload/HotReloadFixture.csproj" />
+  <Project Path="guest-runtime/tests/packages/diagnostics/Diagnostics.csproj" />
+  <Project Path="guest-runtime/tests/packages/native/Native.csproj" />
+  <Project Path="guest-runtime/tests/packages/session/Session.csproj" />
+  <Project Path="guest-runtime/tests/packages/sqlite-pclraw3/SqlitePclRaw3.csproj" />
+  <Project Path="guest-runtime/tests/packages/sqlite/Sqlite.csproj" />
+  <Project Path="guest-runtime/tests/packages/web/Web.csproj" />
+  <Project Path="guest-runtime/tests/probes/Activation/Activation.csproj" />
+  <Project Path="guest-runtime/tests/probes/Bcl/Bcl.csproj" />
+  <Project Path="guest-runtime/tests/probes/FailingBoot/FailingBoot.csproj" />
+  <Project Path="guest-runtime/tests/probes/NativeIo/NativeIo.csproj" />
+  <Project Path="guest-runtime/tests/probes/Node/Node.csproj" />
+  <Project Path="guest-runtime/tests/probes/Upload/Upload.csproj" />
   <Project Path="guest-sdks/dotnet/Analyzers.CodeFixes/Isoplane.Analyzers.CodeFixes.csproj" />
   <Project Path="guest-sdks/dotnet/Analyzers.Tests/Isoplane.Analyzers.Tests.csproj" />
+  <Project Path="guest-sdks/dotnet/Analyzers/Isoplane.Analyzers.csproj" />
+  <Project Path="guest-sdks/dotnet/AspNetCore.DataProtection.EntityFrameworkCore.Tests/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.Tests.csproj" />
+  <Project Path="guest-sdks/dotnet/AspNetCore.DataProtection.EntityFrameworkCore/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.csproj" />
+  <Project Path="guest-sdks/dotnet/AspNetCore.Tests/Isoplane.AspNetCore.Tests.csproj" />
+  <Project Path="guest-sdks/dotnet/AspNetCore/Isoplane.AspNetCore.csproj" />
+  <Project Path="guest-sdks/dotnet/Build.Tests/Build.Tests.csproj" />
+  <Project Path="guest-sdks/dotnet/Conformance/Conformance.csproj" />
+  <Project Path="guest-sdks/dotnet/Isoplane.Sdk.csproj" />
+  <Project Path="guest-sdks/dotnet/MonoRuntime/src/Debug/Isoplane.MonoRuntime.Debug.csproj" />
+  <Project Path="guest-sdks/dotnet/MonoRuntime/src/Isoplane.MonoRuntime.csproj" />
+  <Project Path="guest-sdks/dotnet/OpenTelemetry.Tests/Isoplane.OpenTelemetry.Tests.csproj" />
+  <Project Path="guest-sdks/dotnet/OpenTelemetry/Isoplane.OpenTelemetry.csproj" />
+  <Project Path="guest-sdks/dotnet/Templates/Isoplane.Templates.csproj" />
+  <Project Path="guests/aspnet/src/AspNet.csproj" />
+  <Project Path="scenario-tests/developer-experience/fixtures/postgres/PostgresFixture.csproj" />
+  <Project Path="tools/ApiReference/ApiReference.csproj" />
+  <Project Path="tools/Isoplane.Cli.Tests/Isoplane.Cli.Tests.csproj" />
+  <Project Path="tools/Isoplane.Cli.Tests/fixtures/ManagedBundle/Application/Application.csproj">
+    <BuildType Solution="Release|*" Project="Debug" />
+  </Project>
+  <Project Path="tools/Isoplane.Cli.Tests/fixtures/ManagedBundle/Dependency/Dependency.csproj">
+    <BuildType Solution="Release|*" Project="Debug" />
+  </Project>
+  <Project Path="tools/Isoplane.Cli/Isoplane.Cli.csproj" />
+  <Project Path="tools/Isoplane.Debugging.Tests/Isoplane.Debugging.Tests.csproj" />
+  <Project Path="tools/Isoplane.Debugging/Isoplane.Debugging.csproj" />
+  <Project Path="tools/Isoplane.HotReload/Isoplane.HotReload.csproj" />
+  <Project Path="tools/Isoplane.Native/Isoplane.Native.csproj" />
+  <Project Path="tools/Isoplane.Testing.Tests/Isoplane.Testing.Tests.csproj" />
+  <Project Path="tools/Isoplane.Testing.Tests/fixtures/ProcessFixture/ProcessFixture.csproj" />
+  <Project Path="tools/Isoplane.Testing/Isoplane.Testing.csproj" />
 </Solution>

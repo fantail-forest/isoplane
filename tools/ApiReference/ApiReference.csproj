@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
+    <UseAppHost>false</UseAppHost>
     <IsPackable>false</IsPackable>
     <Description>Generates and checks the customer SDK reference: the API from assemblies and XML documentation, and the settings, template, error code and telemetry pages from the build files, launch profile keys, debugger manifest, template definitions, diagnostics and event schema that define them; and the release that added each documented item, recorded when the docs are snapshotted for a release.</Description>
     <TargetFramework>net10.0</TargetFramework>

@@ -1,0 +1,4 @@
+<Project>
+  <Import Project="../Probe.props" />
+  <Import Project="../Probe.targets" />
+</Project>

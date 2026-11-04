@@ -1,0 +1,34 @@
+{
+  "solution": {
+    "path": "Isoplane.slnx",
+    "projects": [
+      "guest-sdks/dotnet/Isoplane.Sdk.csproj",
+      "guest-sdks/dotnet/AspNetCore/Isoplane.AspNetCore.csproj",
+      "guest-sdks/dotnet/AspNetCore.DataProtection.EntityFrameworkCore/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.csproj",
+      "guest-sdks/dotnet/OpenTelemetry/Isoplane.OpenTelemetry.csproj",
+      "guest-sdks/dotnet/Templates/Isoplane.Templates.csproj",
+      "tools/Isoplane.Cli/Isoplane.Cli.csproj",
+      "tools/Isoplane.Native/Isoplane.Native.csproj",
+      "tools/Isoplane.Testing/Isoplane.Testing.csproj",
+      "guest-runtime/tests/probes/NativeIo/NativeIo.csproj",
+      "guest-runtime/tests/probes/Bcl/Bcl.csproj",
+      "guest-runtime/tests/probes/Node/Node.csproj",
+      "guest-runtime/tests/probes/Upload/Upload.csproj",
+      "guest-runtime/tests/probes/Activation/Activation.csproj",
+      "guest-runtime/tests/probes/FailingBoot/FailingBoot.csproj",
+      "guests/aspnet/src/AspNet.csproj",
+      "guest-runtime/tests/guest/src/Acceptance.csproj",
+      "guest-runtime/tests/packages/alpha/Alpha.csproj",
+      "guest-runtime/tests/packages/beta/Beta.csproj",
+      "guest-runtime/tests/packages/debugger-optimized/DebuggerOptimized.csproj",
+      "guest-runtime/tests/packages/debugger/Debugger.csproj",
+      "guest-runtime/tests/packages/diagnostics/Diagnostics.csproj",
+      "guest-runtime/tests/packages/native/Native.csproj",
+      "guest-runtime/tests/packages/session/Session.csproj",
+      "guest-runtime/tests/packages/sqlite-pclraw3/SqlitePclRaw3.csproj",
+      "guest-runtime/tests/packages/sqlite/Sqlite.csproj",
+      "guest-runtime/tests/packages/web/Web.csproj",
+      "tools/ApiReference/ApiReference.csproj"
+    ]
+  }
+}

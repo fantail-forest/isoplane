@@ -1,0 +1,17 @@
+<Project>
+  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
+  <Import Project="../../../guest-sdks/dotnet/Build/Isoplane.SourceReferences.props" />
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>$(MSBuildProjectName)</AssemblyName>
+    <RootNamespace>Probe</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <Import Project="../../../guest-sdks/dotnet/Build/Isoplane.ManagedBundle.props" />
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)../../../guests/dotnet/src/$(MSBuildProjectName)/*.cs;$(MSBuildThisFileDirectory)../../../guests/dotnet/src/Shared/*.cs" />
+    <EmbeddedResource Include="$(MSBuildThisFileDirectory)../../../guests/dotnet/src/$(MSBuildProjectName)/*.txt" LogicalName="%(Filename)" />
+    <ProjectReference Include="$(MSBuildThisFileDirectory)../../../guest-sdks/dotnet/Isoplane.Sdk.csproj" />
+  </ItemGroup>
+</Project>

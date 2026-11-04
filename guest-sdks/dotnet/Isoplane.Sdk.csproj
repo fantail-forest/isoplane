@@ -1,4 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="Build/Isoplane.SourceReferences.props" />
 
   <!--
     The C# Isoplane guest SDK: the ABI, the async runtime, and the bindings.
@@ -34,12 +35,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="Conformance/Conformance.csproj" ReferenceOutputAssembly="false" PrivateAssets="all"
-                      GlobalPropertiesToRemove="RuntimeIdentifier;RuntimeIdentifiers;PublishAot;SelfContained" />
+    <ProjectReference Include="Conformance/Conformance.csproj" ReferenceOutputAssembly="false" PrivateAssets="all" />
     <!-- Built here and packed under analyzers/, where NuGet hands them to the compiler and to editors. -->
     <ProjectReference Include="Analyzers/Isoplane.Analyzers.csproj;Analyzers.CodeFixes/Isoplane.Analyzers.CodeFixes.csproj"
-                      ReferenceOutputAssembly="false" PrivateAssets="all"
-                      GlobalPropertiesToRemove="RuntimeIdentifier;RuntimeIdentifiers;PublishAot;SelfContained" />
+                      ReferenceOutputAssembly="false" PrivateAssets="all" />
     <None Update="PackageReadme.md" Pack="true" PackagePath="/" />
     <None Include="MSBuild/Sdk.targets" Pack="true" PackagePath="Sdk/" />
     <None Include="Build/Isoplane.ManagedBundle.*;Build/Isoplane.Conformance.targets;Build/Isoplane.Run.targets;Build/Isoplane.AgentSkill.targets" Pack="true" PackagePath="tools/Build/" />
@@ -55,7 +54,7 @@
   </ItemGroup>
   <Import Project="Conformance/Build.props" />
   <UsingTask TaskName="Isoplane.Conformance.ValidateRuntimeReceipt"
-             AssemblyFile="$(_IsoplaneConformanceArtifacts)bin/Conformance/$(Configuration.ToLowerInvariant())/Isoplane.Conformance.dll" />
+             AssemblyFile="$(_IsoplaneConformanceAssembly)" />
   <Target Name="IsoplanePackSharedRuntime" BeforeTargets="_GetPackageFiles">
     <PropertyGroup>
       <IsoplaneRuntimeModuleDirectory Condition="'$(IsoplaneRuntimeModuleDirectory)' == ''">$(ISOPLANE_RUNTIME_MODULE_DIRECTORY)</IsoplaneRuntimeModuleDirectory>

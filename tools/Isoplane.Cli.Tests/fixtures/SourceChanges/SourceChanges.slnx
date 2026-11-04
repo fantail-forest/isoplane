@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="Application/Application.csproj" />
+  <Project Path="Dependency/Dependency.csproj" />
+</Solution>

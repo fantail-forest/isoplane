@@ -22,8 +22,10 @@ tasks:
 
   managed:
     desc: Check SDK behavior and build targets without native/installed-tool journeys
-    deps: [':managed:tests', ':runtime:toolchain']
+    deps: [':runtime:toolchain']
     cmds:
+      - task: ':managed:compile'
+        vars: {FILTER: Isoplane.CiTests.slnf}
       - for: [Build.Tests, Isoplane.AspNetCore.Tests, Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.Tests, Isoplane.OpenTelemetry.Tests, Isoplane.Analyzers.Tests]
         cmd: '"{{.DOTNET}}" test "{{.MANAGED}}/bin/{{.ITEM}}/release/{{.ITEM}}.dll" --logger "trx;LogFileName={{.ITEM}}.trx" --results-directory "{{.ROOT_DIR}}/.build/test-results"'
 
@@ -45,12 +47,17 @@ tasks:
   nightly:sdk:
     desc: Exercise managed, installed SDK, editor and PostgreSQL journeys on Linux
     cmds:
-      - task: ':test:managed'
-      - task: ':test:native'
+      - task: ':runtime'
+      - task: ':fixtures:debugger:sources'
+      - task: ':managed:compile'
+        vars: {FILTER: Isoplane.SdkNightly.slnf}
+      - task: ':managed:publish-cli'
+      - task: ':test:managed:prepared'
+      - task: ':test:native:prepared'
         # The release job runs both prepared-release journeys.
         vars: {CLI_ARGS: '--locked -- --skip a_prepared_release_'}
-      - task: ':test:editor'
-      - task: ':scenarios:postgres'
+      - task: ':test:editor:prepared'
+      - task: ':scenarios:postgres:run'
 
   nightly:release:
     desc: Assemble and exercise the Linux SDK release locally, without publishing

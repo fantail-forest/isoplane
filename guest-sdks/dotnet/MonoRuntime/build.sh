@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
-# Build the shared Mono runtime modules the Isoplane.Sdk package carries, the
-# production runtime and the local-debug one, and runtime.json recording
-# the SDK version, source revision and Mono pack they were built from.
-# Usage: guest-sdks/dotnet/MonoRuntime/build.sh --output DIRECTORY [--source-revision REVISION]
-# The revision defaults to the checkout's HEAD, marked +dirty when it has changes.
+# Publish the production and debug Mono runtime modules and their provenance.
+# Usage: build.sh --output DIRECTORY [--source-revision REVISION]
+# Task prepares both managed projects before publishing.
 # ISOPLANE_SQLITE_DIRECTORY names the output of sqlite/build.sh.
 set -euo pipefail
 
@@ -28,10 +26,10 @@ OUTPUT="$(cd "$OUTPUT" && pwd)"
 SQLITE="${ISOPLANE_SQLITE_DIRECTORY:?Run task runtime:modules, which builds SQLite first}"
 SQLITE="$(cd "$SQLITE" && pwd)/"
 # Symbols stay in the interpreter's module so a trap names its frames.
-ISOPLANE_OUT_DIR="$OUTPUT" ISOPLANE_OUT=Isoplane.MonoRuntime "$ROOT/guest-sdks/dotnet/build-guest.sh" "$HERE" \
-  -p:WasmNativeStrip=false "-p:IsoplaneSqliteDirectory=$SQLITE" --artifacts-path "$OUTPUT/intermediates/production"
-ISOPLANE_OUT_DIR="$OUTPUT" ISOPLANE_OUT=Isoplane.MonoRuntime.Debug "$ROOT/guest-sdks/dotnet/build-guest.sh" "$HERE" \
-  -p:WasmNativeStrip=false -p:IsoplaneLocalDebug=true "-p:IsoplaneSqliteDirectory=$SQLITE" --artifacts-path "$OUTPUT/intermediates/debug"
+ISOPLANE_OUT_DIR="$OUTPUT" ISOPLANE_OUT=Isoplane.MonoRuntime "$ROOT/guest-sdks/dotnet/build-guest.sh" "$HERE/src/Isoplane.MonoRuntime.csproj" \
+  --no-build -p:BuildProjectReferences=false -p:WasmNativeStrip=false "-p:IsoplaneSqliteDirectory=$SQLITE"
+ISOPLANE_OUT_DIR="$OUTPUT" ISOPLANE_OUT=Isoplane.MonoRuntime.Debug "$ROOT/guest-sdks/dotnet/build-guest.sh" "$HERE/src/Debug/Isoplane.MonoRuntime.Debug.csproj" \
+  --no-build -p:BuildProjectReferences=false -p:WasmNativeStrip=false "-p:IsoplaneSqliteDirectory=$SQLITE"
 for module in Isoplane.MonoRuntime Isoplane.MonoRuntime.Debug; do
   [ -f "$OUTPUT/$module.wasm.runtime" ] \
     || { echo "FATAL: the $module publish recorded no Mono pack identity" >&2; exit 1; }

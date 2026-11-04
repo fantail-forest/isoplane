@@ -19,7 +19,31 @@ tasks:
   shared:
     run: once
     desc: Prepare platform-independent release inputs on Linux
-    deps: [':managed:packages', ':notices']
+    cmds:
+      - task: 'shared:{{if eq OS "linux"}}build{{else}}available{{end}}'
+
+  shared:build:
+    internal: true
+    cmds:
+      - task: ':managed:packages'
+      - task: ':notices:prepared'
+      - task: shared:validate
+        vars: {MODE: write}
+
+  shared:available:
+    internal: true
+    cmds:
+      - task: shared:validate
+        vars: {MODE: read}
+
+  shared:validate:
+    internal: true
+    label: 'release:shared:validate:{{.MODE}}'
+    deps: [':setup:release-python']
+    requires:
+      vars: [MODE]
+    cmds:
+      - '"{{.RELEASE_PYTHON}}" -B scripts/release-manifest.py shared "{{.ROOT_DIR}}" --packages "{{.PACKAGES}}" --managed "{{.MANAGED}}" --notices "{{.NOTICES}}" --version {{.VERSION}} --revision {{.REVISION}} {{if eq .MODE "write"}}--write{{end}}'
 
   default:
     label: 'release:{{.PLATFORM}}:{{.VERSION}}:{{.RELEASES}}'
@@ -44,7 +68,7 @@ tasks:
   native-packages:
     internal: true
     run: once
-    deps: [':managed:build', ':native:release', ':notices']
+    deps: [shared, ':native:release']
     cmds:
       - task: ':managed:pack-native'
         vars:

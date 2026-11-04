@@ -27,63 +27,54 @@ tasks:
 
   rust:
     desc: Prepare the guest fixtures Rust tests load and run selected Rust tests
-    deps: [':initialize', ':fixtures:rust', ':fixtures:dotnet', ':fixtures:acceptance', ':fixtures:package', ':fixtures:compiled-runtime', ':node:runtimes']
-    env: *test_env
     cmds:
-      - '{{.DEVELOPMENT_COMMAND}}cargo test {{.CLI_ARGS}}'
+      - task: ':managed:guest-fixtures'
+      - task: rust:prepared
+        vars: {CLI_ARGS: '{{.CLI_ARGS}}'}
 
   runtime:
     desc: Run shared runtime acceptance tests
-    deps: [':initialize', ':fixtures:acceptance', ':fixtures:feed', ':fixtures:package', ':fixtures:compiled-runtime']
-    env: *test_env
     cmds:
-      - '{{.DEVELOPMENT_COMMAND}}cargo test -p isoplane-runtime-acceptance {{.CLI_ARGS}}'
+      - task: ':managed:guest-fixtures'
+      - task: runtime:prepared
+        vars: {CLI_ARGS: '{{.CLI_ARGS}}'}
 
   native:
     desc: Run SDK and CLI integration tests using prepared packages
-    deps: [':initialize', ':cli', ':fixtures:feed', ':fixtures:runtime', ':fixtures:projects', ':fixtures:package', ':managed:tests', ':test:debugger:environment', ':test:managed:host']
-    env: *test_env
     cmds:
-      - '{{.DEVELOPMENT_COMMAND}}cargo test -p isoplane-native {{.CLI_ARGS}}'
+      - task: ':managed:guest-fixtures'
+        vars: {FILTER: Isoplane.NativeTests.slnf}
+      - task: native:prepared
+        vars: {CLI_ARGS: '{{.CLI_ARGS}}'}
 
   debugger:
     desc: Run selected native debugger integration tests
-    deps: [':initialize', ':cli', ':managed:tests', ':test:debugger:environment', ':fixtures:feed', ':fixtures:runtime', ':fixtures:projects', ':fixtures:package:debugger', ':fixtures:package:debugger-optimized', ':fixtures:debugger:hotreload:package', ':test:managed:host']
-    env: *test_env
     cmds:
-      - '{{.DEVELOPMENT_COMMAND}}cargo test -p isoplane-native --test installed_dev {{.CLI_ARGS}}'
+      - task: ':managed:guest-fixtures'
+        vars: {FILTER: Isoplane.NativeTests.slnf}
+      - task: debugger:prepared
+        vars: {CLI_ARGS: '{{.CLI_ARGS}}'}
 
   managed:
     desc: Run all managed tests using prepared assemblies
-    deps: [managed:standard, managed:sdk-compatibility]
+    cmds:
+      - task: ':managed:tests'
+      - task: managed:prepared
 
   managed:sdk-compatibility:
     desc: Exercise Hot Reload with the oldest supported .NET 10 SDK and runtime
-    platforms: [linux]
-    deps: [':managed:tests', sdk-compatibility-fixture]
-    vars: &sdk_compatibility_vars
-      DIRECTORY: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/sdk-compatibility'
-      SDK_VERSION: '10.0.100'
     cmds:
-      - |
-        docker run --rm --network none \
-          -v "{{.ROOT_DIR}}:/repo:ro" -v "{{.DIRECTORY}}:/input:ro" \
-          -e DOTNET_NOLOGO=1 -e DOTNET_CLI_TELEMETRY_OPTOUT=1 \
-          mcr.microsoft.com/dotnet/sdk:{{.SDK_VERSION}} bash -euc '
-            mkdir /fixture
-            cp -R /input/. /fixture/
-            cd /fixture
-            test "$(dotnet --version)" = "{{.SDK_VERSION}}"
-            dotnet /repo/.build/clr-anycpu/managed/bin/Isoplane.Debugging.Tests/release/Isoplane.Debugging.Tests.dll \
-              --compiler /fixture/hotreload/HotReloadFixture.csproj /fixture/application.tar /fixture/artifacts
-            test "$(dotnet --version)" = "{{.SDK_VERSION}}"
-          '
+      - task: ':managed:tests'
+      - task: managed:sdk-compatibility:prepared
+        vars: {CLI_ARGS: '{{.CLI_ARGS}}'}
 
   sdk-compatibility-fixture:
     internal: true
     platforms: [linux]
     deps: [':initialize']
-    vars: *sdk_compatibility_vars
+    vars: &sdk_compatibility_vars
+      DIRECTORY: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/sdk-compatibility'
+      SDK_VERSION: '10.0.100'
     sources:
       - tools/Isoplane.Debugging.Tests/fixtures/SdkCompatibility/*
       - guest-runtime/tests/packages/debugger/hotreload/*.cs
@@ -112,23 +103,15 @@ tasks:
             tar -cf application.tar -C package assemblies
           '
 
-  managed:prepare:
-    internal: true
-    run: once
-    deps: [managed:host, ':managed:template-package', ':runtime:toolchain', process-fixture, managed-bundle-fixture, source-changes-fixture]
-
   managed:standard:
     desc: Run managed tests; pass -- --filter <expression> to select tests
-    deps: [managed:prepare]
-    env:
-      ISOPLANE_TEST_SKIP_PUBLICATION_FLUSH: '1'
-      # Packages the tests restore stay in this worktree, not the user's NuGet cache.
-      NUGET_PACKAGES: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/test-nuget-packages'
     cmds:
-      - |
-        "{{.DOTNET}}" test "{{.MANAGED}}"/bin/*/release/*.Tests.dll --parallel {{.CLI_ARGS}}
+      - task: ':managed:tests'
+      - task: managed:standard:prepared
+        vars: {CLI_ARGS: '{{.CLI_ARGS}}'}
 
   managed-bundle-fixture:
+    internal: true
     label: 'managed-bundle-fixture:{{.PLATFORM}}'
     desc: Prepare reusable assembly, symbol and SDK metadata inputs for bundle tests
     deps: [':initialize']
@@ -150,7 +133,7 @@ tasks:
       - '{{.DIRECTORY}}/bin/Dependency/debug/Dependency.pdb'
     cmds:
       - 'mkdir -p "{{.DIRECTORY}}"'
-      - '"{{.DOTNET}}" msbuild tools/Isoplane.Cli.Tests/fixtures/ManagedBundle/Application/Application.csproj -restore -t:IsoplaneManagedBundle -p:UseArtifactsOutput=true -p:ArtifactsPath="{{.DIRECTORY}}" -getProperty:AssemblyName,IsoplaneRuntimeDirectory -getItem:ReferencePath,IsoplaneBundleAssembly,IsoplaneBundleSymbol,IsoplaneBundleAsset,IsoplaneBundlePlatformReference -getResultOutputFile:"{{.DIRECTORY}}/result.json" -nodeReuse:false'
+      - '"{{.DOTNET}}" msbuild tools/Isoplane.Cli.Tests/fixtures/ManagedBundle/Application/Application.csproj -t:IsoplaneManagedBundle -p:NoBuild=true -p:BuildProjectReferences=false -p:UseArtifactsOutput=true -p:ArtifactsPath="{{.DIRECTORY}}" -getProperty:AssemblyName,IsoplaneRuntimeDirectory -getItem:ReferencePath,IsoplaneBundleAssembly,IsoplaneBundleSymbol,IsoplaneBundleAsset,IsoplaneBundlePlatformReference -getResultOutputFile:"{{.DIRECTORY}}/result.json" -nodeReuse:false'
 
   source-changes-fixture:
     desc: Prepare the project graph used by source-watching tests
@@ -166,31 +149,16 @@ tasks:
       - '{{.DIRECTORY}}/artifacts/bin/Dependency/release/Dependency.dll'
     cmds:
       - '"{{.PYTHON}}" -c "import shutil; shutil.copytree(''tools/Isoplane.Cli.Tests/fixtures/SourceChanges'', ''{{.DIRECTORY}}'', dirs_exist_ok=True); shutil.copyfile(''global.json'', ''{{.DIRECTORY}}/global.json'')"'
-      - '"{{.DOTNET}}" build "{{.DIRECTORY}}/Application/Application.csproj" -c Release'
+      - '"{{.DOTNET}}" build "{{.DIRECTORY}}/SourceChanges.slnx" -c Release'
 
   process-fixture:
     internal: true
     label: 'process-fixture:{{.PLATFORM}}'
     deps: [':initialize']
-    sources:
-      - tools/Isoplane.Testing.Tests/fixtures/ProcessFixture/*
-      - Directory.Build.props
-      - global.json
-      - nuget.config
-      - taskfiles/test.yml
-    generates:
-      - '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/managed-fixtures/bin/ProcessFixture/release/ProcessFixture{{if eq OS "windows"}}.exe{{end}}'
-      - '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/managed-fixtures/bin/ProcessFixture/release/ProcessFixture.dll'
-    cmds:
-      - '"{{.DOTNET}}" build tools/Isoplane.Testing.Tests/fixtures/ProcessFixture -c Release --artifacts-path "{{.ROOT_DIR}}/.build/{{.PLATFORM}}/managed-fixtures"'
-
-  managed:host:
-    internal: true
-    run: once
-    deps: [':managed:tests', ':native:release']
-    cmds:
-      - for: [Isoplane.Cli.Tests, Isoplane.Testing.Tests]
-        cmd: '"{{.DOTNET}}" msbuild taskfiles/StageCli.proj -nologo -p:NativeLibrary="{{.NATIVE_TARGET}}/release/{{.NATIVE_LIBRARY}}" -p:CliDirectory="{{.MANAGED}}/bin/{{.ITEM}}/release" -p:Platform={{.PLATFORM}}'
+    preconditions:
+      - sh: 'test -f "{{.ROOT_DIR}}/.build/{{.PLATFORM}}/managed-fixtures/bin/ProcessFixture/release/ProcessFixture{{if eq OS "windows"}}.exe{{end}}"'
+        msg: Build the managed test solution before running its fixtures.
+    cmds: []
 
   debugger:environment:
     vars:
@@ -206,7 +174,13 @@ tasks:
 
   editor:
     desc: Exercise launch and value editing inside VS Code
-    deps: [':fixtures:editor', ':cli', editor:environment, editor:unit]
+    cmds:
+      - task: ':managed:packages'
+      - task: editor:prepared
+
+  editor:prepared:
+    internal: true
+    deps: [':fixtures:editor:prepared', ':cli:stage', editor:environment, editor:unit]
     env:
       ISOPLANE_TEST_PROJECT: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/editor-fixture/app'
       ISOPLANE_TEST_CLI: '{{env "ISOPLANE_TEST_CLI" | default .CLI}}'
@@ -227,3 +201,84 @@ tasks:
       - tools/vscode-isoplane/node_modules/.package-lock.json
     cmds:
       - npm --prefix tools/vscode-isoplane ci
+  rust:prepared:
+    internal: true
+    desc: Prepare the guest fixtures Rust tests load and run selected Rust tests
+    deps: [':initialize', ':fixtures:rust', ':fixtures:dotnet:prepared', ':fixtures:acceptance:prepared', ':fixtures:package:prepared', ':fixtures:compiled-runtime:prepared', ':node:runtimes:prepared']
+    env: *test_env
+    cmds:
+      - '{{.DEVELOPMENT_COMMAND}}cargo test {{.CLI_ARGS}}'
+
+  runtime:prepared:
+    internal: true
+    desc: Run shared runtime acceptance tests
+    deps: [':initialize', ':fixtures:acceptance:prepared', ':fixtures:feed:prepared', ':fixtures:package:prepared', ':fixtures:compiled-runtime:prepared']
+    env: *test_env
+    cmds:
+      - '{{.DEVELOPMENT_COMMAND}}cargo test -p isoplane-runtime-acceptance {{.CLI_ARGS}}'
+
+  native:prepared:
+    internal: true
+    desc: Run SDK and CLI integration tests using prepared packages
+    deps: [':initialize', ':cli:stage', ':fixtures:feed:prepared', ':fixtures:runtime:prepared', ':fixtures:projects:prepared', ':fixtures:package:prepared', ':test:debugger:environment', ':test:managed:host:prepared']
+    env: *test_env
+    cmds:
+      - '{{.DEVELOPMENT_COMMAND}}cargo test -p isoplane-native {{.CLI_ARGS}}'
+
+  debugger:prepared:
+    internal: true
+    desc: Run selected native debugger integration tests
+    deps: [':initialize', ':cli:stage', ':test:debugger:environment', ':fixtures:feed:prepared', ':fixtures:runtime:prepared', ':fixtures:projects:prepared', ':fixtures:package:debugger:prepared', ':fixtures:package:debugger-optimized:prepared', ':fixtures:debugger:hotreload:package:prepared', ':test:managed:host:prepared']
+    env: *test_env
+    cmds:
+      - '{{.DEVELOPMENT_COMMAND}}cargo test -p isoplane-native --test installed_dev {{.CLI_ARGS}}'
+
+  managed:prepared:
+    internal: true
+    deps: [managed:standard:prepared, managed:sdk-compatibility:prepared]
+
+  managed:standard:prepared:
+    internal: true
+    desc: Run managed tests; pass -- --filter <expression> to select tests
+    deps: [managed:inputs]
+    env:
+      ISOPLANE_TEST_SKIP_PUBLICATION_FLUSH: '1'
+      # Packages the tests restore stay in this worktree, not the user's NuGet cache.
+      NUGET_PACKAGES: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/test-nuget-packages'
+    cmds:
+      - |
+        "{{.DOTNET}}" test "{{.MANAGED}}"/bin/*/release/*.Tests.dll --parallel {{.CLI_ARGS}}
+
+  managed:sdk-compatibility:prepared:
+    internal: true
+    desc: Exercise Hot Reload with the oldest supported .NET 10 SDK and runtime
+    platforms: [linux]
+    deps: [sdk-compatibility-fixture]
+    vars: *sdk_compatibility_vars
+    cmds:
+      - |
+        docker run --rm --network none \
+          -v "{{.ROOT_DIR}}:/repo:ro" -v "{{.DIRECTORY}}:/input:ro" \
+          -e DOTNET_NOLOGO=1 -e DOTNET_CLI_TELEMETRY_OPTOUT=1 \
+          mcr.microsoft.com/dotnet/sdk:{{.SDK_VERSION}} bash -euc '
+            mkdir /fixture
+            cp -R /input/. /fixture/
+            cd /fixture
+            test "$(dotnet --version)" = "{{.SDK_VERSION}}"
+            dotnet /repo/.build/clr-anycpu/managed/bin/Isoplane.Debugging.Tests/release/Isoplane.Debugging.Tests.dll \
+              --compiler /fixture/hotreload/HotReloadFixture.csproj /fixture/application.tar /fixture/artifacts
+            test "$(dotnet --version)" = "{{.SDK_VERSION}}"
+          '
+
+  managed:inputs:
+    internal: true
+    run: once
+    deps: [managed:host:prepared, ':managed:template-package:prepared', ':runtime:toolchain', process-fixture, managed-bundle-fixture, source-changes-fixture]
+
+  managed:host:prepared:
+    internal: true
+    run: once
+    deps: [':native:release']
+    cmds:
+      - for: [Isoplane.Cli.Tests, Isoplane.Testing.Tests]
+        cmd: '"{{.DOTNET}}" msbuild taskfiles/StageCli.proj -nologo -p:NativeLibrary="{{.NATIVE_TARGET}}/release/{{.NATIVE_LIBRARY}}" -p:CliDirectory="{{.MANAGED}}/bin/{{.ITEM}}/release" -p:Platform={{.PLATFORM}}'

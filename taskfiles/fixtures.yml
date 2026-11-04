@@ -3,8 +3,9 @@ version: '3'
 tasks:
   default:
     desc: Prepare shared fixtures before running tests
-    deps: [':node:runtimes', ':fixtures:rust', ':fixtures:dotnet', ':fixtures:acceptance', ':fixtures:package', ':cli', ':managed:tests', ':test:debugger:environment', ':fixtures:feed', ':fixtures:runtime', ':fixtures:projects', ':fixtures:compiled-runtime', ':test:managed:host']
-
+    cmds:
+      - task: ':managed:all-tests'
+      - task: default:prepared
   rust:
     desc: Build portable Rust WASM fixtures
     deps: [':initialize']
@@ -30,13 +31,286 @@ tasks:
       - 'bash guests/build.sh --compile'
 
   feed:
-    run: once
-    deps: [':managed:packages', ':managed:native-packages']
-
+    cmds:
+      - task: ':managed:packages'
+      - task: feed:prepared
   runtime:
     desc: Compile the shared runtime once for the sessions the native tests start
+    cmds:
+      - task: ':managed:packages'
+      - task: runtime:prepared
+  projects:
+    desc: Install the CLI and build the .NET projects the native tests copy
+    cmds:
+      - task: ':managed:packages'
+      - task: projects:prepared
+  projects:build:
+    internal: true
+    label: 'projects:build:{{base .PROJECT}}'
+    env:
+      ISOPLANE_CLI: '{{.TEST_DOTNET}}/tool/isoplane{{if eq OS "windows"}}.exe{{end}}'
+    cmds:
+      - cp "{{.TEST_DOTNET}}/global.json" "{{.TEST_DOTNET}}/nuget.config" "{{.PROJECT}}/"
+      - '"{{.DOTNET}}" {{.STEP | default "build"}} "{{.PROJECT}}"{{if not .STEP}} --configuration Debug{{end}} -nologo -p:IsoplaneReleaseVersion={{.VERSION}}'
+      - cp "{{.TEST_DOTNET}}/offline.config" "{{.PROJECT}}/nuget.config"
+
+  compiled-runtime:
+    desc: Compile the shared runtime for the engine tests load it under
+    cmds:
+      - task: ':runtime'
+      - task: compiled-runtime:prepared
+  dotnet:
+    cmds:
+      - task: ':managed:guest-fixtures'
+        vars: {FILTER: Isoplane.Probes.slnf}
+      - task: dotnet:prepared
+  dotnet:isoplane_guest_dotnet_native_io:
+    cmds:
+      - task: ':managed:guest-fixtures'
+        vars: {FILTER: Isoplane.Probes.slnf}
+      - task: dotnet:isoplane_guest_dotnet_native_io:prepared
+  dotnet:isoplane_guest_dotnet_bcl:
+    cmds:
+      - task: ':managed:guest-fixtures'
+        vars: {FILTER: Isoplane.Probes.slnf}
+      - task: dotnet:isoplane_guest_dotnet_bcl:prepared
+  dotnet:isoplane_guest_dotnet_node:
+    cmds:
+      - task: ':managed:guest-fixtures'
+        vars: {FILTER: Isoplane.Probes.slnf}
+      - task: dotnet:isoplane_guest_dotnet_node:prepared
+  dotnet:isoplane_guest_dotnet_upload:
+    cmds:
+      - task: ':managed:guest-fixtures'
+        vars: {FILTER: Isoplane.Probes.slnf}
+      - task: dotnet:isoplane_guest_dotnet_upload:prepared
+  dotnet:isoplane_guest_dotnet_activation:
+    cmds:
+      - task: ':managed:guest-fixtures'
+        vars: {FILTER: Isoplane.Probes.slnf}
+      - task: dotnet:isoplane_guest_dotnet_activation:prepared
+  dotnet:isoplane_guest_dotnet_failing_boot:
+    cmds:
+      - task: ':managed:guest-fixtures'
+        vars: {FILTER: Isoplane.Probes.slnf}
+      - task: dotnet:isoplane_guest_dotnet_failing_boot:prepared
+  dotnet:isoplane_guest_aspnet:
+    cmds:
+      - task: ':managed:guest-fixtures'
+        vars: {FILTER: Isoplane.Probes.slnf}
+      - task: dotnet:isoplane_guest_aspnet:prepared
+  acceptance:
+    cmds:
+      - task: ':managed:guest-fixtures'
+        vars: {FILTER: Isoplane.Acceptance.slnf}
+      - task: acceptance:prepared
+  package:
+    cmds:
+      - task: ':managed:guest-fixtures'
+        vars: {FILTER: Isoplane.PackageFixtures.slnf}
+      - task: package:prepared
+  package:build:
+    run: when_changed
+    # Runs the CLI, which needs its native library beside it.
+    deps: [":cli:stage"]
+    internal: true
+    label: 'package:{{.NAME}}'
+    vars:
+      ASSEMBLY_PROJECT:
+        sh: 'basename "{{.ROOT_DIR}}/guest-runtime/tests/packages/{{.NAME}}"/*.csproj .csproj'
+    env:
+      ISOPLANE_CLI: '{{.CLI}}'
+    sources:
+      - '{{.MANAGED}}/bin/{{.ASSEMBLY_PROJECT}}/**/*'
+      - '{{.MANAGED}}/obj/{{.ASSEMBLY_PROJECT}}/project.assets.json'
+      - '{{.ROOT_DIR}}/guest-runtime/tests/packages/{{.NAME}}/**/*'
+      - '{{.ROOT_DIR}}/guest-runtime/tests/packages/{{.SOURCE_NAME | default .NAME}}/**/*'
+      - '{{.ROOT_DIR}}/guest-runtime/tests/packages/*.props'
+      - '{{.ROOT_DIR}}/guest-runtime/tests/packages/*.targets'
+      - '{{.ROOT_DIR}}/guest-runtime/tests/packages/build.sh'
+      - '{{.ROOT_DIR}}/guest-sdks/dotnet/**/*'
+      - '{{.ROOT_DIR}}/tools/Isoplane.Cli/**/*.cs'
+      - '{{.ROOT_DIR}}/tools/Isoplane.Cli/*.csproj'
+      - '{{.ROOT_DIR}}/tools/BuildProtocol/**/*.cs'
+      - '{{.ROOT_DIR}}/Directory.Build.props'
+      - '{{.ROOT_DIR}}/global.json'
+      - '{{.ROOT_DIR}}/nuget.config'
+      - '{{.MODULES}}/runtime.json'
+      - exclude: 'guest-sdks/**/{obj,bin,out,__pycache__,*.Tests,Tests}/**/*'
+      - exclude: 'guests/**/{obj,bin,out,__pycache__}/**/*'
+      - exclude: 'guest-runtime/tests/packages/**/{obj,bin,.isoplane,__pycache__}/**/*'
+      - exclude: 'tools/**/{obj,bin,out,__pycache__,*.Tests}/**/*'
+    generates:
+      - '{{.ROOT_DIR}}/.build/clr-anycpu/package-fixtures/{{.NAME}}.tar'
+    cmds:
+      - 'bash guest-runtime/tests/packages/build.sh --compile --fixture {{.NAME}}'
+
+  package:alpha:
+    cmds:
+      - task: ':managed:guest-fixtures'
+        vars: {FILTER: Isoplane.PackageFixtures.slnf}
+      - task: package:alpha:prepared
+  package:beta:
+    cmds:
+      - task: ':managed:guest-fixtures'
+        vars: {FILTER: Isoplane.PackageFixtures.slnf}
+      - task: package:beta:prepared
+  package:native:
+    cmds:
+      - task: ':managed:guest-fixtures'
+        vars: {FILTER: Isoplane.PackageFixtures.slnf}
+      - task: package:native:prepared
+  package:web:
+    cmds:
+      - task: ':managed:guest-fixtures'
+        vars: {FILTER: Isoplane.PackageFixtures.slnf}
+      - task: package:web:prepared
+  package:session:
+    cmds:
+      - task: ':managed:guest-fixtures'
+        vars: {FILTER: Isoplane.PackageFixtures.slnf}
+      - task: package:session:prepared
+  package:sqlite:
+    cmds:
+      - task: ':managed:guest-fixtures'
+        vars: {FILTER: Isoplane.PackageFixtures.slnf}
+      - task: package:sqlite:prepared
+  package:sqlite-pclraw3:
+    cmds:
+      - task: ':managed:guest-fixtures'
+        vars: {FILTER: Isoplane.PackageFixtures.slnf}
+      - task: package:sqlite-pclraw3:prepared
+  package:debugger:
+    cmds:
+      - task: ':managed:guest-fixtures'
+        vars: {FILTER: Isoplane.PackageFixtures.slnf}
+      - task: package:debugger:prepared
+  package:debugger-optimized:
+    cmds:
+      - task: ':managed:guest-fixtures'
+        vars: {FILTER: Isoplane.PackageFixtures.slnf}
+      - task: package:debugger-optimized:prepared
+  debugger:sources:
+    sources:
+      - guest-runtime/tests/packages/debugger/async.cs.in
+      - guest-runtime/tests/packages/debugger/awaiter.cs.in
+      - guest-runtime/tests/packages/debugger/tracking.cs.in
+      - guest-runtime/tests/packages/debugger/pool_reuse.cs.in
+      - guest-runtime/tests/packages/debugger/prepare.py
+    generates:
+      - .build/clr-anycpu/debugger-sources/async-stack.cs
+      - .build/clr-anycpu/debugger-sources/async-composed.cs
+      - .build/clr-anycpu/debugger-sources/async-valuetask.cs
+      - .build/clr-anycpu/debugger-sources/async-pooled.cs
+      - .build/clr-anycpu/debugger-sources/async-pooled-composed.cs
+    cmds:
+      - '"{{.PYTHON}}" guest-runtime/tests/packages/debugger/prepare.py'
+
+  package:diagnostics:
+    cmds:
+      - task: ':managed:guest-fixtures'
+        vars: {FILTER: Isoplane.PackageFixtures.slnf}
+      - task: package:diagnostics:prepared
+  probe:build:
+    internal: true
+    vars:
+      PROJECT: '{{.PROJECT | default (printf "guest-runtime/tests/probes/%s" .PROBE)}}'
+      PROBE: '{{.PROBE | default ""}}'
+      ASSEMBLY_PROJECT:
+        sh: 'basename "{{.ROOT_DIR}}/{{.PROJECT}}"/*.csproj .csproj'
+    label: 'probe:{{.NAME}}'
+    deps: [':cli:stage']
+    sources:
+      - '{{.MANAGED}}/bin/{{.ASSEMBLY_PROJECT}}/**/*'
+      - '{{.MANAGED}}/obj/{{.ASSEMBLY_PROJECT}}/project.assets.json'
+      - '{{.ROOT_DIR}}/{{.PROJECT}}/**/*.cs'
+      - '{{.ROOT_DIR}}/{{.PROJECT}}/**/*.csproj'
+      - '{{.ROOT_DIR}}/guest-runtime/tests/probes/Probe.{props,targets}'
+      - '{{.ROOT_DIR}}/taskfiles/fixtures.yml'
+      - '{{.ROOT_DIR}}/guests/dotnet/src/{Shared,{{.PROBE}}}/*'
+      - '{{.ROOT_DIR}}/guest-sdks/dotnet/**/*'
+      - '{{.ROOT_DIR}}/tools/BuildProtocol/**/*'
+      - '{{.ROOT_DIR}}/Directory.Build.props'
+      - '{{.ROOT_DIR}}/global.json'
+      - '{{.ROOT_DIR}}/nuget.config'
+      - '{{.MODULES}}/runtime.json'
+      - exclude: 'guest-sdks/**/{obj,bin,out,__pycache__,*.Tests,Tests}/**/*'
+      - exclude: 'tools/**/{obj,bin,out,__pycache__}/**/*'
+      - exclude: 'guest-runtime/tests/probes/{obj,bin,.isoplane}/**/*'
+    generates:
+      - '{{.ROOT_DIR}}/.build/clr-anycpu/probes/{{.NAME}}.tar'
+    env:
+      ISOPLANE_RUNTIME_DIRECTORY: '{{.MODULES}}'
+    cmds:
+      - mkdir -p "{{.ROOT_DIR}}/.build/clr-anycpu/probes"
+      - 'test "{{OS}}" = linux || { echo "Run task fixtures on Linux first." >&2; exit 1; }'
+      - '"{{.DOTNET}}" "{{.CLI}}" bundle --no-build --project "{{.ROOT_DIR}}/{{.PROJECT}}" --output "{{.ROOT_DIR}}/.build/clr-anycpu/probes/{{.NAME}}.tar"'
+
+  editor:
+    desc: Prepare a customer application for the VS Code launch journey
+    cmds:
+      - task: ':managed:packages'
+      - task: editor:prepared
+
+  editor:prepared:
+    internal: true
+    sources:
+      - tools/vscode-isoplane/test/prepare.py
+      - '{{.PACKAGES}}/*.nupkg'
+    generates:
+      - '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/editor-fixture/app/Program.cs'
+      - '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/editor-fixture/app/nuget.config'
+    cmds:
+      - '"{{.PYTHON}}" tools/vscode-isoplane/test/prepare.py "{{.ROOT_DIR}}/.build/{{.PLATFORM}}/editor-fixture"'
+  default:prepared:
+    internal: true
+    desc: Prepare shared fixtures before running tests
+    deps: [':node:runtimes:prepared', ':fixtures:rust', ':fixtures:dotnet:prepared', ':fixtures:acceptance:prepared', ':fixtures:package:prepared', ':cli:stage', ':test:debugger:environment', ':fixtures:feed:prepared', ':fixtures:runtime:prepared', ':fixtures:projects:prepared', ':fixtures:compiled-runtime:prepared', ':test:managed:host:prepared']
+
+  dotnet:prepared:
+    internal: true
+    deps:
+      - task: dotnet:isoplane_guest_dotnet_native_io:prepared
+      - task: dotnet:isoplane_guest_dotnet_bcl:prepared
+      - task: dotnet:isoplane_guest_dotnet_node:prepared
+      - task: dotnet:isoplane_guest_dotnet_upload:prepared
+      - task: dotnet:isoplane_guest_dotnet_activation:prepared
+      - task: dotnet:isoplane_guest_dotnet_failing_boot:prepared
+      - task: dotnet:isoplane_guest_aspnet:prepared
+
+  acceptance:prepared:
+    internal: true
+    cmds:
+      - task: probe:build
+        vars:
+          NAME: guest_runtime_acceptance
+          PROJECT: guest-runtime/tests/guest/src
+
+  package:prepared:
+    internal: true
+    deps:
+      - task: package:alpha:prepared
+      - task: package:beta:prepared
+      - task: package:native:prepared
+      - task: package:web:prepared
+      - task: package:session:prepared
+      - task: package:sqlite:prepared
+      - task: package:sqlite-pclraw3:prepared
+      - task: package:debugger:prepared
+      - task: package:debugger-optimized:prepared
+      - task: package:diagnostics:prepared
+      - task: debugger:hotreload:package:prepared
+
+  feed:prepared:
+    internal: true
     run: once
-    deps: [':initialize', 'runtime:inputs']
+    deps: [':managed:packages:prepared', ':managed:native-packages:prepared']
+
+  runtime:prepared:
+    internal: true
+    desc: Compile the shared runtime once for the sessions the native tests start
+    run: once
+    deps: [':initialize', 'feed:prepared']
     vars:
       # The packaged CLI's files and release library, so that its runtime cache entries match the installed tool's.
       PACKAGED_CLI: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/test-runtimes/cli'
@@ -49,10 +323,11 @@ tasks:
       - '"{{.DOTNET}}" msbuild taskfiles/StageCli.proj -nologo -p:PublishedCli="{{.MANAGED}}/publish/Isoplane.Cli/release" -p:NativeLibrary="{{.RELEASE_NATIVE_LIBRARY}}" -p:CliDirectory="{{.PACKAGED_CLI}}" -p:Platform={{.PLATFORM}}'
       - '"{{.DOTNET}}" "{{.PACKAGED_CLI}}/Isoplane.Cli.dll" prepare-runtime --runtime "{{.MODULES}}"'
 
-  projects:
+  projects:prepared:
+    internal: true
     desc: Install the CLI and build the .NET projects the native tests copy
     run: once
-    deps: [':initialize', 'runtime:inputs', ':managed:native-packages']
+    deps: [':initialize', 'feed:prepared', ':managed:native-packages:prepared']
     vars:
       VERSION:
         sh: '"{{.DOTNET}}" msbuild Directory.Build.props -nologo -getProperty:Version'
@@ -128,12 +403,11 @@ tasks:
         with open(sys.argv[1], "wb") as payload:
             payload.truncate(8 << 20)
         EOF
-      - for: [handler, gated, testing]
-        task: projects:build
-        vars: { PROJECT: '{{.TEST_DOTNET}}/fixtures/{{.ITEM}}', VERSION: '{{.VERSION}}' }
-      # The handler's build also built the library it references; a copy restores both offline.
-      - cp "{{.TEST_DOTNET}}/global.json" "{{.TEST_DOTNET}}/fixtures/library/"
-      - cp "{{.TEST_DOTNET}}/offline.config" "{{.TEST_DOTNET}}/fixtures/library/nuget.config"
+      - for: [handler, gated, testing, library]
+        cmd: 'cp "{{.TEST_DOTNET}}/global.json" "{{.TEST_DOTNET}}/nuget.config" "{{.TEST_DOTNET}}/fixtures/{{.ITEM}}/"'
+      - '"{{.DOTNET}}" build "{{.TEST_DOTNET}}/fixtures/Fixtures.slnx" -c Debug -p:IsoplaneReleaseVersion={{.VERSION}}'
+      - for: [handler, gated, testing, library]
+        cmd: 'cp "{{.TEST_DOTNET}}/offline.config" "{{.TEST_DOTNET}}/fixtures/{{.ITEM}}/nuget.config"'
       - '"{{.DOTNET}}" new install "{{.PACKAGES}}/Isoplane.Templates.{{.VERSION}}.nupkg" --debug:custom-hive "{{.TEST_DOTNET}}/hive"'
       # Each template is generated as TEMPLATE:NAME. The hyphen makes file names and namespaces
       # differ. In a solution template the first part names a namespace the template declares
@@ -147,21 +421,12 @@ tasks:
         vars: { PROJECT: '{{.TEST_DOTNET}}/templates/{{.ITEM}}', VERSION: '{{.VERSION}}', STEP: restore }
       - echo "{{.VERSION}}" > "{{.TEST_DOTNET}}/prepared"
 
-  projects:build:
+  compiled-runtime:prepared:
     internal: true
-    label: 'projects:build:{{base .PROJECT}}'
-    env:
-      ISOPLANE_CLI: '{{.TEST_DOTNET}}/tool/isoplane{{if eq OS "windows"}}.exe{{end}}'
-    cmds:
-      - cp "{{.TEST_DOTNET}}/global.json" "{{.TEST_DOTNET}}/nuget.config" "{{.PROJECT}}/"
-      - '"{{.DOTNET}}" {{.STEP | default "build"}} "{{.PROJECT}}"{{if not .STEP}} --configuration Debug{{end}} -nologo -p:IsoplaneReleaseVersion={{.VERSION}}'
-      - cp "{{.TEST_DOTNET}}/offline.config" "{{.PROJECT}}/nuget.config"
-
-  compiled-runtime:
     desc: Compile the shared runtime for the engine tests load it under
     label: 'fixtures:compiled-runtime:{{.TEST_COMPILED_RUNTIME}}'
     run: once
-    deps: [':initialize', ':runtime']
+    deps: [':initialize']
     sources:
       - '{{.MODULES}}/Isoplane.MonoRuntime.wasm'
       - '{{.ROOT_DIR}}/crates/{isoplane-engine,isoplane-prepare,isoplane-fixtures}/src/**/*'
@@ -175,325 +440,149 @@ tasks:
       - rm -rf "{{.TEST_COMPILED_RUNTIME}}"
       - '{{.DEVELOPMENT_COMMAND}}cargo run --locked --quiet -p isoplane-prepare --example precompile_test_runtime -- "{{.MODULES}}/Isoplane.MonoRuntime.wasm" "{{.TEST_COMPILED_RUNTIME}}"'
 
-  runtime:inputs:
+  dotnet:isoplane_guest_dotnet_native_io:prepared:
     internal: true
-    run: once
-    cmds:
-      # Other hosts consume the published CLI and runtime modules that task fixtures prepared on Linux.
-      - task: 'runtime:inputs:{{if eq OS "linux"}}shared{{else}}native{{end}}'
-
-  runtime:inputs:shared:
-    internal: true
-    deps: [':fixtures:feed']
-
-  runtime:inputs:native:
-    internal: true
-    deps: [':native:release']
-
-  dotnet:
-    deps:
-      - task: dotnet:isoplane_guest_dotnet_native_io
-      - task: dotnet:isoplane_guest_dotnet_bcl
-      - task: dotnet:isoplane_guest_dotnet_node
-      - task: dotnet:isoplane_guest_dotnet_upload
-      - task: dotnet:isoplane_guest_dotnet_activation
-      - task: dotnet:isoplane_guest_dotnet_failing_boot
-      - task: dotnet:isoplane_guest_aspnet
-
-  dotnet:isoplane_guest_dotnet_native_io:
     cmds:
       - task: probe:build
         vars:
           NAME: isoplane_guest_dotnet_native_io
           PROBE: NativeIo
 
-  dotnet:isoplane_guest_dotnet_bcl:
+  dotnet:isoplane_guest_dotnet_bcl:prepared:
+    internal: true
     cmds:
       - task: probe:build
         vars:
           NAME: isoplane_guest_dotnet_bcl
           PROBE: Bcl
 
-  dotnet:isoplane_guest_dotnet_node:
+  dotnet:isoplane_guest_dotnet_node:prepared:
+    internal: true
     cmds:
       - task: probe:build
         vars:
           NAME: isoplane_guest_dotnet_node
           PROBE: Node
 
-  dotnet:isoplane_guest_dotnet_upload:
+  dotnet:isoplane_guest_dotnet_upload:prepared:
+    internal: true
     cmds:
       - task: probe:build
         vars:
           NAME: isoplane_guest_dotnet_upload
           PROBE: Upload
 
-  dotnet:isoplane_guest_dotnet_activation:
+  dotnet:isoplane_guest_dotnet_activation:prepared:
+    internal: true
     cmds:
       - task: probe:build
         vars:
           NAME: isoplane_guest_dotnet_activation
           PROBE: Activation
 
-  dotnet:isoplane_guest_dotnet_failing_boot:
+  dotnet:isoplane_guest_dotnet_failing_boot:prepared:
+    internal: true
     cmds:
       - task: probe:build
         vars:
           NAME: isoplane_guest_dotnet_failing_boot
           PROBE: FailingBoot
 
-  dotnet:isoplane_guest_aspnet:
+  dotnet:isoplane_guest_aspnet:prepared:
+    internal: true
     cmds:
       - task: probe:build
         vars:
           NAME: isoplane_guest_aspnet
           PROJECT: guests/aspnet/src
 
-  acceptance:
-    cmds:
-      - task: probe:build
-        vars:
-          NAME: guest_runtime_acceptance
-          PROJECT: guest-runtime/tests/guest/src
-
-  package:
-    deps:
-      - task: package:alpha
-      - task: package:beta
-      - task: package:native
-      - task: package:web
-      - task: package:session
-      - task: package:sqlite
-      - task: package:sqlite-pclraw3
-      - task: package:debugger
-      - task: package:debugger-optimized
-      - task: package:diagnostics
-      - task: debugger:hotreload:package
-
-  package:build:
-    run: when_changed
-    # Runs the CLI, which needs its native library beside it.
-    deps: [":cli"]
+  package:alpha:prepared:
     internal: true
-    label: 'package:{{.NAME}}'
-    env:
-      ISOPLANE_CLI: '{{.CLI}}'
-    sources:
-      - '{{.ROOT_DIR}}/guest-runtime/tests/packages/{{.NAME}}/**/*'
-      - '{{.ROOT_DIR}}/guest-runtime/tests/packages/{{.SOURCE_NAME | default .NAME}}/**/*'
-      - '{{.ROOT_DIR}}/guest-runtime/tests/packages/*.props'
-      - '{{.ROOT_DIR}}/guest-runtime/tests/packages/*.targets'
-      - '{{.ROOT_DIR}}/guest-runtime/tests/packages/build.sh'
-      - '{{.ROOT_DIR}}/guest-sdks/dotnet/**/*'
-      - '{{.ROOT_DIR}}/tools/Isoplane.Cli/**/*.cs'
-      - '{{.ROOT_DIR}}/tools/Isoplane.Cli/*.csproj'
-      - '{{.ROOT_DIR}}/tools/BuildProtocol/**/*.cs'
-      - '{{.ROOT_DIR}}/Directory.Build.props'
-      - '{{.ROOT_DIR}}/global.json'
-      - '{{.ROOT_DIR}}/nuget.config'
-      - '{{.MODULES}}/runtime.json'
-      - exclude: 'guest-sdks/**/{obj,bin,out,__pycache__,*.Tests,Tests}/**/*'
-      - exclude: 'guests/**/{obj,bin,out,__pycache__}/**/*'
-      - exclude: 'guest-runtime/tests/packages/**/{obj,bin,.isoplane,__pycache__}/**/*'
-      - exclude: 'tools/**/{obj,bin,out,__pycache__,*.Tests}/**/*'
-    generates:
-      - '{{.ROOT_DIR}}/.build/clr-anycpu/package-fixtures/{{.NAME}}.tar'
-    cmds:
-      - 'bash guest-runtime/tests/packages/build.sh --compile --fixture {{.NAME}}'
-
-  package:alpha:
-    deps: [':runtime']
     cmds:
       - task: package:build
         vars:
           NAME: alpha
 
-  package:beta:
-    deps: [':runtime']
+  package:beta:prepared:
+    internal: true
     cmds:
       - task: package:build
         vars:
           NAME: beta
 
-  package:native:
-    deps: [':runtime']
+  package:native:prepared:
+    internal: true
     cmds:
       - task: package:build
         vars:
           NAME: native
 
-  package:web:
-    deps: [':runtime']
+  package:web:prepared:
+    internal: true
     cmds:
       - task: package:build
         vars:
           NAME: web
 
-  package:session:
-    deps: [':runtime']
+  package:session:prepared:
+    internal: true
     cmds:
       - task: package:build
         vars:
           NAME: session
 
-  package:sqlite:
-    deps: [':runtime']
+  package:sqlite:prepared:
+    internal: true
     cmds:
       - task: package:build
         vars:
           NAME: sqlite
 
-  package:sqlite-pclraw3:
-    deps: [':runtime']
+  package:sqlite-pclraw3:prepared:
+    internal: true
     cmds:
       - task: package:build
         vars:
           NAME: sqlite-pclraw3
           SOURCE_NAME: sqlite
 
-  package:debugger:
-    deps: [':runtime', 'debugger:sources']
+  package:debugger:prepared:
+    internal: true
     cmds:
       - task: package:build
         vars:
           NAME: debugger
 
-  package:debugger-optimized:
-    # Both variants write the shared HotReloadFixture project's build outputs.
-    deps: [':runtime', 'debugger:sources', 'package:debugger']
+  package:debugger-optimized:prepared:
+    internal: true
     cmds:
       - task: package:build
         vars:
           NAME: debugger-optimized
           SOURCE_NAME: debugger
 
-  debugger:sources:
-    sources:
-      - guest-runtime/tests/packages/debugger/async.cs.in
-      - guest-runtime/tests/packages/debugger/awaiter.cs.in
-      - guest-runtime/tests/packages/debugger/tracking.cs.in
-      - guest-runtime/tests/packages/debugger/pool_reuse.cs.in
-      - guest-runtime/tests/packages/debugger/prepare.py
-    generates:
-      - .build/clr-anycpu/debugger-sources/async-stack.cs
-      - .build/clr-anycpu/debugger-sources/async-composed.cs
-      - .build/clr-anycpu/debugger-sources/async-valuetask.cs
-      - .build/clr-anycpu/debugger-sources/async-pooled.cs
-      - .build/clr-anycpu/debugger-sources/async-pooled-composed.cs
-    cmds:
-      - '"{{.PYTHON}}" guest-runtime/tests/packages/debugger/prepare.py'
-
-  debugger:hotreload:
-    desc: Prepare the host-specific Hot Reload baseline and compiler deltas
-    label: 'debugger:hotreload:{{.PLATFORM}}'
-    run: once
-    deps: [':initialize']
-    env:
-      ArtifactsPath: '{{.HOT_RELOAD_ARTIFACTS}}'
-    sources:
-      - guest-runtime/tests/packages/debugger/hotreload/*
-      - guest-runtime/tests/packages/debugger/hotreload.cs
-      - guest-runtime/tests/packages/debugger/hotreload.updated.cs.in
-      - guest-runtime/tests/packages/debugger/hotreload.updated-again.cs.in
-      - Directory.Build.props
-      - global.json
-      - nuget.config
-      - taskfiles/fixtures.yml
-    generates:
-      - '{{.HOT_RELOAD_ARTIFACTS}}/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.dll'
-      - '{{.HOT_RELOAD_ARTIFACTS}}/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.pdb'
-      - '{{.HOT_RELOAD_ARTIFACTS}}/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.dll.1.dmeta'
-      - '{{.HOT_RELOAD_ARTIFACTS}}/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.dll.1.dil'
-      - '{{.HOT_RELOAD_ARTIFACTS}}/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.dll.1.dpdb'
-      - '{{.HOT_RELOAD_ARTIFACTS}}/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.dll.2.dmeta'
-      - '{{.HOT_RELOAD_ARTIFACTS}}/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.dll.2.dil'
-      - '{{.HOT_RELOAD_ARTIFACTS}}/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.dll.2.dpdb'
-    cmds:
-      - '"{{.DOTNET}}" build guest-runtime/tests/packages/debugger/hotreload/HotReloadFixture.csproj -c Release -p:DeltaScript=deltas.json --artifacts-path "{{.HOT_RELOAD_ARTIFACTS}}"'
-
-  debugger:hotreload:package:
-    desc: Prepare the reusable guest whose symbols match this host's compiler paths
-    label: 'debugger:hotreload:package:{{.PLATFORM}}'
-    deps: [':cli', ':runtime', 'debugger:sources', 'debugger:hotreload']
-    env:
-      ArtifactsPath: '{{.HOT_RELOAD_ARTIFACTS}}'
-      ISOPLANE_MANAGED_ARTIFACTS: '{{.HOT_RELOAD_ARTIFACTS}}'
-      ISOPLANE_FIXTURE_ARTIFACTS: '{{.HOT_RELOAD_ARTIFACTS}}'
-      ISOPLANE_RUNTIME_DIRECTORY: '{{.MODULES}}'
-    sources:
-      - guest-runtime/tests/packages/debugger/**/*
-      - guest-runtime/tests/packages/*.props
-      - guest-runtime/tests/packages/*.targets
-      - guest-sdks/dotnet/**/*
-      - tools/Isoplane.Cli/**/*.cs
-      - tools/Isoplane.Cli/*.csproj
-      - tools/BuildProtocol/**/*.cs
-      - Directory.Build.props
-      - global.json
-      - nuget.config
-      - taskfiles/fixtures.yml
-      - '{{.MODULES}}/runtime.json'
-      - '{{.HOT_RELOAD_ARTIFACTS}}/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.dll'
-      - '{{.HOT_RELOAD_ARTIFACTS}}/bin/HotReloadFixture/release/Debugger.HotReload.Fixture.pdb'
-      - exclude: 'guest-sdks/**/{obj,bin,out,__pycache__,*.Tests,Tests}/**/*'
-      - exclude: 'guest-runtime/tests/packages/**/{obj,bin,.isoplane,__pycache__}/**/*'
-      - exclude: 'tools/**/{obj,bin,out,__pycache__,*.Tests}/**/*'
-    generates:
-      - '{{.HOT_RELOAD_ARTIFACTS}}/debugger.tar'
-    cmds:
-      - '"{{.DOTNET}}" "{{.CLI}}" bundle --project "{{.ROOT_DIR}}/guest-runtime/tests/packages/debugger" --output "{{.HOT_RELOAD_ARTIFACTS}}/debugger.tar"'
-
-  package:diagnostics:
-    deps: [':runtime']
+  package:diagnostics:prepared:
+    internal: true
     cmds:
       - task: package:build
         vars:
           NAME: diagnostics
 
-  probe:build:
+  debugger:hotreload:package:prepared:
     internal: true
-    vars:
-      PROJECT: '{{.PROJECT | default "guest-runtime/tests/probes"}}'
-      PROBE: '{{.PROBE | default ""}}'
-    label: 'probe:{{.NAME}}'
-    deps:
-      - ':cli'
-      - ':runtime'
+    deps: [package:debugger:prepared]
     sources:
-      - '{{.ROOT_DIR}}/{{.PROJECT}}/**/*.cs'
-      - '{{.ROOT_DIR}}/{{.PROJECT}}/**/*.csproj'
+      - '{{.ROOT_DIR}}/.build/clr-anycpu/package-fixtures/debugger.tar'
       - '{{.ROOT_DIR}}/taskfiles/fixtures.yml'
-      - '{{.ROOT_DIR}}/guests/dotnet/src/{Shared,{{.PROBE}}}/*'
-      - '{{.ROOT_DIR}}/guest-sdks/dotnet/**/*'
-      - '{{.ROOT_DIR}}/tools/BuildProtocol/**/*'
-      - '{{.ROOT_DIR}}/Directory.Build.props'
-      - '{{.ROOT_DIR}}/global.json'
-      - '{{.ROOT_DIR}}/nuget.config'
-      - '{{.MODULES}}/runtime.json'
-      - exclude: 'guest-sdks/**/{obj,bin,out,__pycache__,*.Tests,Tests}/**/*'
-      - exclude: 'tools/**/{obj,bin,out,__pycache__}/**/*'
-      - exclude: 'guest-runtime/tests/probes/{obj,bin,.isoplane}/**/*'
     generates:
-      - '{{.ROOT_DIR}}/.build/clr-anycpu/probes/{{.NAME}}.tar'
-    env:
-      IsoplaneProbe: '{{.PROBE}}'
-      ISOPLANE_FIXTURE_ARTIFACTS: '{{.ROOT_DIR}}/.build/clr-anycpu/probe-intermediates/{{.NAME}}'
-      ISOPLANE_MANAGED_ARTIFACTS: '{{.MANAGED}}'
-      ArtifactsPath: '{{.MANAGED}}'
-      ISOPLANE_RUNTIME_DIRECTORY: '{{.MODULES}}'
+      - '{{.HOT_RELOAD_ARTIFACTS}}/debugger.tar'
     cmds:
-      - mkdir -p "{{.ROOT_DIR}}/.build/clr-anycpu/probes"
-      - 'test "{{OS}}" = linux || { echo "Run task fixtures on Linux first." >&2; exit 1; }'
-      - '"{{.DOTNET}}" "{{.CLI}}" bundle --project "{{.ROOT_DIR}}/{{.PROJECT}}" --output "{{.ROOT_DIR}}/.build/clr-anycpu/probes/{{.NAME}}.tar"'
+      - 'mkdir -p "{{.HOT_RELOAD_ARTIFACTS}}"'
+      - 'cp "{{.ROOT_DIR}}/.build/clr-anycpu/package-fixtures/debugger.tar" "{{.HOT_RELOAD_ARTIFACTS}}/debugger.tar"'
 
-  editor:
-    desc: Prepare a customer application for the VS Code launch journey
-    deps: [':managed:packages']
-    sources:
-      - tools/vscode-isoplane/test/prepare.py
-      - '{{.PACKAGES}}/*.nupkg'
-    generates:
-      - '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/editor-fixture/app/Program.cs'
-      - '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/editor-fixture/app/nuget.config'
+  debugger:hotreload:package:
+    desc: Prepare the reusable guest whose symbols match this host's compiler paths
     cmds:
-      - '"{{.PYTHON}}" tools/vscode-isoplane/test/prepare.py "{{.ROOT_DIR}}/.build/{{.PLATFORM}}/editor-fixture"'
+      - task: ':managed:guest-fixtures'
+        vars: {FILTER: Isoplane.PackageFixtures.slnf}
+      - task: debugger:hotreload:package:prepared

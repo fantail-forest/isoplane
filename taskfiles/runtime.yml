@@ -20,13 +20,15 @@ tasks:
     env:
       ISOPLANE_GUEST_RUNTIME_FEED: '{{.FEED}}'
       ISOPLANE_SQLITE_DIRECTORY: '{{.SQLITE}}'
-      # The feed's runtime pack keeps its version when rebuilt from the same
-      # inputs, but not its bytes, so in the user's NuGet cache one
-      # worktree's extraction fails another's digest check.
-      NUGET_PACKAGES: '{{.MODULES}}/intermediates/packages'
     sources:
       - '{{.SOURCE_REF}}'
       - '{{.ROOT_DIR}}/tools/BuildProtocol/WasmMemory.props'
+      - '{{.ROOT_DIR}}/Isoplane.Runtime.slnf'
+      - '{{.ROOT_DIR}}/Isoplane.slnx'
+      - '{{.ROOT_DIR}}/taskfiles/managed.yml'
+      - '{{.ROOT_DIR}}/taskfiles/runtime.yml'
+      - '{{.ROOT_DIR}}/Taskfile.yml'
+      - '{{.ROOT_DIR}}/guest-sdks/dotnet/Build/Isoplane.SourceReferences.props'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/MonoRuntime/{src/**/*,sqlite/*,build.sh,manifest.py}'
       - '{{.SQLITE}}/{e_sqlite3.a,SqliteImports.g.cs,native-imports.txt}'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/{Abi,Runtime,Sdk}/**/*.cs'
@@ -54,7 +56,8 @@ tasks:
       - '{{.MODULES}}/native-imports.txt'
     cmds:
       - 'test "{{OS}}" = linux || { echo "Run task runtime:modules on Linux first." >&2; exit 1; }'
-      - task: ':cli'
+      - task: ':managed:compile'
+        vars: {FILTER: Isoplane.Runtime.slnf}
       - '"{{.PYTHON}}" guest-runtime/feed-identity.py verify-artifact "{{.FEED}}"'
       - 'bash guest-sdks/dotnet/MonoRuntime/build.sh --output "{{.MODULES}}"'
 

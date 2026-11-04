@@ -8,6 +8,8 @@ defaults:
     shell: bash
 jobs:
   compiler:
+    outputs:
+      key: ${{ steps.inputs.outputs.key }}
     runs-on: ubuntu-24.04
     timeout-minutes: 330
     steps:
@@ -66,10 +68,13 @@ jobs:
       - run: tar -xzf compiler.tar.gz && rm compiler.tar.gz
       - name: Identify module inputs
         id: inputs
+        env:
+          COMPILER_KEY: ${{ needs.compiler.outputs.key }}
         run: |
-          # Native CLI code participates in preparation; include its transitive source graph.
-          digest=$(git ls-files --stage -- .gitmodules Cargo.toml Cargo.lock crates tools guest-sdks guest-runtime vendor trust licenses global.json nuget.config Directory.Build.props Isoplane.slnx Isoplane.Build.slnf Taskfile.yml taskfiles Dockerfile .cargo .github/actions/toolchain .github/workflows/runtime.yml ':(exclude)tools/vscode-isoplane' | sha256sum | cut -d ' ' -f 1)
-          echo "key=modules-linux-v2-$digest" >> "$GITHUB_OUTPUT"
+          git ls-files --stage -- guest-sdks/dotnet/Abi guest-sdks/dotnet/Runtime guest-sdks/dotnet/Sdk guest-sdks/dotnet/Build guest-sdks/dotnet/Conformance guest-sdks/dotnet/Analyzers guest-sdks/dotnet/Analyzers.CodeFixes guest-sdks/dotnet/AspNetCore guest-sdks/dotnet/native guest-sdks/dotnet/MonoRuntime ':(glob)guest-sdks/dotnet/*.csproj' ':(glob)guest-sdks/dotnet/*.props' ':(glob)guest-sdks/dotnet/*.targets' guest-sdks/dotnet/build-guest.sh tools/BuildProtocol licenses global.json nuget.config 'Directory.Build.*' Isoplane.slnx Isoplane.Runtime.slnf Taskfile.yml taskfiles/setup.yml taskfiles/managed.yml taskfiles/runtime.yml taskfiles/wasi-sdk.yml taskfiles/WasiWorkload Dockerfile .github/actions/toolchain .github/workflows/runtime.yml > "$RUNNER_TEMP/module-inputs"
+          printf '%s\n' "$COMPILER_KEY" >> "$RUNNER_TEMP/module-inputs"
+          digest=$(sha256sum "$RUNNER_TEMP/module-inputs" | cut -d ' ' -f 1)
+          echo "key=modules-linux-v3-$digest" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         id: modules
         with:
@@ -81,19 +86,12 @@ jobs:
             .build/wasm32/runtime-modules/native-imports.txt
       - uses: ./.github/actions/toolchain
         if: steps.modules.outputs.cache-hit != 'true'
-        with: {dotnet: 'true', wasm: 'true'}
-      - uses: Swatinem/rust-cache@e9d7b9f1e587218970671bac74e5511ed9506e6a # v2
-        if: steps.modules.outputs.cache-hit != 'true'
-        with:
-          workspaces: '. -> .build/linux-x64/native'
-          shared-key: push-linux
-          save-if: 'false'
+        with: {rust: 'false', dotnet: 'true', wasm: 'true'}
       - name: Prepare runtime modules on a cache miss
         if: steps.modules.outputs.cache-hit != 'true'
         env:
           ISOPLANE_TEST_RUNTIME_FEED: ${{ github.workspace }}/.build/wasm32/runtime/feed
         run: |
-          git submodule update --init --depth 1 tools/debugger-libs
           task runtime:modules
       - name: Transfer only portable runtime inputs
         run: |

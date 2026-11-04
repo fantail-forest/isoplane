@@ -54,13 +54,17 @@ public sealed class CliCommandLineTests
         Assert.Throws<ArgumentException>(() => DevelopmentOptions.Parse(["--project", project.Path, .. args]));
     }
 
-    [Fact]
-    public void bundle_parsing_preserves_output_and_configuration()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void bundle_parsing_preserves_output_and_build_options(bool noBuild)
     {
-        var options = BundleOptions.Parse(["--project", ".", "--configuration", "Custom", "--output", "application.tar"]);
+        string[] buildOptions = noBuild ? ["--no-build"] : [];
+        var options = BundleOptions.Parse(["--project", ".", "--configuration", "Custom", "--output", "application.tar", .. buildOptions]);
         Assert.Equal(Environment.CurrentDirectory, options.Directory);
         Assert.Equal("Custom", options.Configuration);
         Assert.Equal(Path.GetFullPath("application.tar"), options.Output);
+        Assert.Equal(noBuild, options.NoBuild);
         Assert.Throws<ArgumentException>(() => BundleOptions.Parse([]));
     }
 }

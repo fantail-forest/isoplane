@@ -1,0 +1,4 @@
+<Project>
+  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
+  <Import Project="../../../guest-sdks/dotnet/Build/Isoplane.ManagedBundle.targets" />
+</Project>

@@ -5,12 +5,17 @@ vars:
 
 env:
   ISOPLANE_RUNTIME_DIRECTORY: '{{.MODULES}}'
-  ISOPLANE_MANAGED_ARTIFACTS: '{{.MANAGED}}'
 
 tasks:
   postgres:
     desc: Run PostgreSQL behavior against the prepared fixture application
-    deps: [postgres:build]
+    cmds:
+      - task: postgres:build
+      - task: postgres:run
+
+  postgres:run:
+    internal: true
+    deps: [postgres:prepared, ':cli:stage']
     env:
       ISOPLANE_TEST_CLI_ASSEMBLY: '{{.CLI}}'
       ISOPLANE_TEST_DOTNET: '{{.DOTNET}}'
@@ -21,21 +26,25 @@ tasks:
 
   postgres:build:
     internal: true
-    deps: [':cli', ':runtime']
+    cmds:
+      - task: ':runtime'
+      - task: ':managed:compile'
+        vars: {FILTER: Isoplane.Scenario.slnf}
+      - task: ':managed:publish-cli'
+
+  postgres:prepared:
+    internal: true
+    run: once
     vars:
       DIRECTORY: '{{.SCENARIOS}}/Release/postgres'
     sources:
       - '{{.ROOT_DIR}}/scenario-tests/developer-experience/fixtures/postgres/**/*'
-      - '{{.MANAGED}}/bin/Isoplane.Sdk/release/*.dll'
-      - '{{.ROOT_DIR}}/guest-sdks/dotnet/Build/*'
-      - '{{.CLI}}'
-      - '{{.ROOT_DIR}}/Directory.Build.props'
       - '{{.ROOT_DIR}}/taskfiles/scenarios.yml'
     generates:
-      - '{{.DIRECTORY}}/bin/Release/**/PostgresFixture.dll'
-      - '{{.DIRECTORY}}/obj/project.assets.json'
+      - '{{.DIRECTORY}}/PostgresFixture.csproj'
+      - '{{.DIRECTORY}}/Handler.cs'
+      - '{{.DIRECTORY}}/schema.sql'
     cmds:
       - 'test "{{OS}}" = linux || { echo "Prepare scenario applications on Linux first." >&2; exit 1; }'
       - 'mkdir -p "{{.DIRECTORY}}"'
       - 'rsync -a --delete --exclude bin --exclude obj --exclude .isoplane scenario-tests/developer-experience/fixtures/postgres/ "{{.DIRECTORY}}/"'
-      - '"{{.DOTNET}}" build "{{.DIRECTORY}}" --configuration Release'

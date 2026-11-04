@@ -1,0 +1,9 @@
+{
+  "solution": {
+    "path": "Isoplane.slnx",
+    "projects": [
+      "guest-sdks/dotnet/MonoRuntime/src/Isoplane.MonoRuntime.csproj",
+      "guest-sdks/dotnet/MonoRuntime/src/Debug/Isoplane.MonoRuntime.Debug.csproj"
+    ]
+  }
+}

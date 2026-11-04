@@ -51,7 +51,13 @@ tasks:
 
   runtimes:
     platforms: [linux]
-    deps: [':runtime']
+    cmds:
+      - task: ':runtime'
+      - task: runtimes:prepared
+
+  runtimes:prepared:
+    internal: true
+    platforms: [linux]
     vars:
       DIRECTORY: '{{.ROOT_DIR}}/.build/linux-x64/node-runtimes'
     sources: ['{{.MODULES}}/runtime.json', '{{.ROOT_DIR}}/taskfiles/node.yml']

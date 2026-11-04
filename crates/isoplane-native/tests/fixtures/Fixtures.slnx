@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="handler/HandlerFixture.csproj" />
+  <Project Path="gated/GatedFixture.csproj" />
+  <Project Path="testing/Consumer.csproj" />
+  <Project Path="library/Library.csproj" />
+</Solution>

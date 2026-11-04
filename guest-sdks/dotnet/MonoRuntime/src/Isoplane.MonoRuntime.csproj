@@ -1,5 +1,11 @@
 <Project TreatAsLocalProperty="IsoplaneMemoryMaxBytes">
+  <PropertyGroup>
+    <RestorePackagesPath Condition="'$(RestorePackagesPath)' == ''">$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)', '../../../..', '.build', 'wasm32', 'runtime', 'nuget'))</RestorePackagesPath>
+    <IsoplaneSqliteDirectory Condition="'$(IsoplaneSqliteDirectory)' == '' AND '$(ISOPLANE_SQLITE_DIRECTORY)' != ''">$([MSBuild]::EnsureTrailingSlash('$(ISOPLANE_SQLITE_DIRECTORY)'))</IsoplaneSqliteDirectory>
+    <IsoplaneLocalDebug Condition="'$(IsoplaneLocalDebug)' == ''">false</IsoplaneLocalDebug>
+  </PropertyGroup>
   <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
+  <Import Project="../../Build/Isoplane.SourceReferences.props" />
 
   <!--
     The application-independent Mono runtime: the interpreter, the BCL and the
@@ -14,6 +20,8 @@
     <AssemblyName>Isoplane.MonoRuntime</AssemblyName>
     <RootNamespace>Isoplane.MonoRuntime</RootNamespace>
     <ImplicitUsings>disable</ImplicitUsings>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <WasmBuildOnlyAfterPublish>true</WasmBuildOnlyAfterPublish>
     <EventSourceSupport>true</EventSourceSupport>
     <!-- The shared module serves every application limit; the host bounds each instance. -->
     <IsoplaneMemoryMaxBytes>$(Wasm32MemoryMaxBytes)</IsoplaneMemoryMaxBytes>
@@ -33,7 +41,7 @@
   <ItemGroup>
     <NativeFileReference Include="$(IsoplaneSqliteDirectory)e_sqlite3.a" />
     <IsoplanePInvokeModule Include="e_sqlite3" />
-    <NativeFileReference Include="../sqlite/sqlite_callbacks.c" />
+    <NativeFileReference Include="$(MSBuildThisFileDirectory)../sqlite/sqlite_callbacks.c" />
     <Compile Include="$(IsoplaneSqliteDirectory)SqliteImports.g.cs" />
     <WasiAfterRuntimeLoadedDeclarations Include="void isoplane_install_sqlite_callbacks(void)%3B" />
     <WasiAfterRuntimeLoadedCalls Include="isoplane_install_sqlite_callbacks()%3B" />
@@ -44,9 +52,10 @@
   </Target>
 
   <ItemGroup>
-    <ProjectReference Include="../../Isoplane.Sdk.csproj" />
-    <ProjectReference Include="../../AspNetCore/Isoplane.AspNetCore.csproj" />
-    <Compile Include="../../../../tools/BuildProtocol/ManagedApplication.cs" Link="ManagedApplication.cs" />
+    <ProjectReference Include="$(MSBuildThisFileDirectory)../../Isoplane.Sdk.csproj" />
+    <ProjectReference Include="$(MSBuildThisFileDirectory)../../AspNetCore/Isoplane.AspNetCore.csproj" />
+    <Compile Include="$(MSBuildThisFileDirectory)*.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)../../../../tools/BuildProtocol/ManagedApplication.cs" Link="ManagedApplication.cs" />
   </ItemGroup>
 
   <!-- The managed bundle treats the framework and the SDK as the platform and

@@ -2,70 +2,54 @@ version: '3'
 
 tasks:
   build:
-    run: once
-    desc: Build portable managed tools and SDK assemblies on Linux
-    deps: [":initialize"]
-    sources: &managed_sources
-      - '{{.SOURCE_REF}}'
-      - '{{.ROOT_DIR}}/tools/**/*.cs'
-      - '{{.ROOT_DIR}}/tools/**/*.csproj'
-      - '{{.ROOT_DIR}}/tools/**/*.props'
-      - '{{.ROOT_DIR}}/tools/**/*.targets'
-      - '{{.ROOT_DIR}}/guest-sdks/dotnet/**/*.cs'
-      - '{{.ROOT_DIR}}/guest-sdks/dotnet/**/*.csproj'
-      - '{{.ROOT_DIR}}/guest-sdks/dotnet/**/*.props'
-      - '{{.ROOT_DIR}}/guest-sdks/dotnet/**/*.targets'
-      - '{{.ROOT_DIR}}/Isoplane.slnx'
-      - '{{.ROOT_DIR}}/Isoplane.Build.slnf'
-      - '{{.ROOT_DIR}}/taskfiles/managed.yml'
-      - '{{.ROOT_DIR}}/taskfiles/NativeAssets.props'
-      - '{{.ROOT_DIR}}/Directory.Build.props'
-      - '{{.ROOT_DIR}}/global.json'
-      - '{{.ROOT_DIR}}/nuget.config'
-      - '{{.ROOT_DIR}}/licenses/SdkPackage.props'
-      - exclude: 'tools/**/{obj,bin}/**/*'
-      - exclude: 'guest-sdks/dotnet/**/{obj,bin}/**/*'
-    generates:
-      - '{{.CLI}}'
-      - '{{.MANAGED}}/bin/Isoplane.Sdk/release/Isoplane.Sdk.dll'
-      - '{{.MANAGED}}/bin/Isoplane.AspNetCore/release/Isoplane.AspNetCore.dll'
-      - '{{.MANAGED}}/bin/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore/release/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.dll'
-      - '{{.MANAGED}}/bin/Isoplane.OpenTelemetry/release/Isoplane.OpenTelemetry.dll'
-      - '{{.MANAGED}}/bin/Isoplane.Testing/release/Isoplane.Testing.dll'
-      - '{{.MANAGED}}/publish/Isoplane.Cli/release/Isoplane.Cli.dll'
-      - '{{.MANAGED}}/obj/Isoplane.Cli/release/DotnetToolSettings.xml'
-      - '{{.MANAGED}}/bin/Isoplane.Cli/release/hotreload/Isoplane.HotReload.dll'
-      - '{{.MANAGED}}/bin/Isoplane.Cli/release/hotreload/Isoplane.HotReload.deps.json'
-      - '{{.MANAGED}}/bin/Isoplane.Cli/release/hotreload/Isoplane.HotReload.runtimeconfig.json'
-      - '{{.MANAGED}}/publish/Isoplane.Cli/release/hotreload/Isoplane.HotReload.dll'
-      - '{{.MANAGED}}/publish/Isoplane.Cli/release/hotreload/Isoplane.HotReload.deps.json'
-      - '{{.MANAGED}}/publish/Isoplane.Cli/release/hotreload/Isoplane.HotReload.runtimeconfig.json'
+    desc: Build portable managed tools and SDK assemblies
     cmds:
-      - 'test "{{OS}}" = linux || { echo "Run task managed:build on Linux first." >&2; exit 1; }'
-      - '"{{.DOTNET}}" build Isoplane.Build.slnf -c Release -p:ShouldUnsetParentConfigurationAndPlatform=false -p:SourceRevisionId={{.REVISION}} --artifacts-path "{{.MANAGED}}" -p:IsoplaneManagedOnly=true -p:UseAppHost=false'
-      - '"{{.DOTNET}}" msbuild tools/Isoplane.Cli/Isoplane.Cli.csproj -t:Publish,GenerateToolsSettingsFileFromBuildProperty -p:Configuration=Release -p:NoBuild=true -p:ArtifactsPath="{{.MANAGED}}" -p:IsoplaneManagedOnly=true -p:UseAppHost=false'
-      - task: executable-assemblies
+      - task: compile
+        vars: {FILTER: Isoplane.Build.slnf}
+      - task: publish-cli
 
   tests:
-    run: once
-    desc: Build managed test assemblies on Linux
-    deps: [build]
-    sources: *managed_sources
-    generates:
-      - '{{.MANAGED}}/bin/Isoplane.Cli.Tests/release/Isoplane.Cli.Tests.dll'
-      - '{{.MANAGED}}/bin/Isoplane.Debugging.Tests/release/Isoplane.Debugging.Tests.dll'
-      - '{{.MANAGED}}/bin/Isoplane.Debugging.Tests/release/hotreload/Isoplane.HotReload.dll'
-      - '{{.MANAGED}}/bin/Isoplane.Debugging.Tests/release/hotreload/Isoplane.HotReload.deps.json'
-      - '{{.MANAGED}}/bin/Isoplane.Debugging.Tests/release/hotreload/Isoplane.HotReload.runtimeconfig.json'
-      - '{{.MANAGED}}/bin/Isoplane.Testing.Tests/release/Isoplane.Testing.Tests.dll'
-      - '{{.MANAGED}}/bin/Build.Tests/release/Build.Tests.dll'
-      - '{{.MANAGED}}/bin/Isoplane.AspNetCore.Tests/release/Isoplane.AspNetCore.Tests.dll'
-      - '{{.MANAGED}}/bin/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.Tests/release/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.Tests.dll'
-      - '{{.MANAGED}}/bin/Isoplane.OpenTelemetry.Tests/release/Isoplane.OpenTelemetry.Tests.dll'
-      - '{{.MANAGED}}/bin/Isoplane.Analyzers.Tests/release/Isoplane.Analyzers.Tests.dll'
+    desc: Build managed tools and test assemblies
     cmds:
-      - 'test "{{OS}}" = linux || { echo "Run task managed:tests on Linux first." >&2; exit 1; }'
-      - '"{{.DOTNET}}" build Isoplane.slnx -c Release -p:ShouldUnsetParentConfigurationAndPlatform=false -p:SourceRevisionId={{.REVISION}} --artifacts-path "{{.MANAGED}}" -p:IsoplaneManagedOnly=true -p:UseAppHost=false'
+      - task: compile
+        vars: {FILTER: Isoplane.Tests.slnf}
+      - task: publish-cli
+
+  guest-fixtures:
+    desc: Build the managed applications used by Rust integration tests
+    cmds:
+      - task: ':runtime'
+      - task: ':fixtures:debugger:sources'
+      - task: compile
+        vars: {FILTER: '{{.FILTER | default "Isoplane.Fixtures.slnf"}}'}
+      - task: publish-cli
+
+  all-tests:
+    desc: Build managed tools, tests and guest applications in one graph
+    cmds:
+      - task: ':runtime'
+      - task: ':fixtures:debugger:sources'
+      - task: compile
+        vars: {FILTER: Isoplane.AllTests.slnf}
+      - task: publish-cli
+
+  compile:
+    internal: true
+    label: 'managed:compile:{{.FILTER}}'
+    deps: [':initialize']
+    requires:
+      vars: [FILTER]
+    env:
+      ISOPLANE_GUEST_RUNTIME_FEED: '{{.FEED}}'
+      ISOPLANE_SQLITE_DIRECTORY: '{{.ROOT_DIR}}/.build/wasm32/runtime/sqlite'
+    cmds:
+      - '"{{.DOTNET}}" build "{{.FILTER}}" -c Release -p:ShouldUnsetParentConfigurationAndPlatform=false -p:SourceRevisionId={{.REVISION}} -p:IsoplaneManagedOnly=true {{.MSBUILD_ARGS}}'
+      - task: executable-assemblies
+
+  publish-cli:
+    internal: true
+    cmds:
+      - '"{{.DOTNET}}" msbuild tools/Isoplane.Cli/Isoplane.Cli.csproj -t:Publish,GenerateToolsSettingsFileFromBuildProperty -p:Configuration=Release -p:NoBuild=true -p:BuildProjectReferences=false -p:IsoplaneManagedOnly=true'
       - task: executable-assemblies
 
   executable-assemblies:
@@ -74,39 +58,61 @@ tasks:
       # Windows loads PE images with execute access, including over SMB.
       - 'find "{{.MANAGED}}" -type f -name "*.dll" ! -perm -a=x -exec chmod a+x {} +'
 
+  reference:
+    desc: Generate the customer reference documentation
+    cmds:
+      - task: compile
+        vars: {FILTER: Isoplane.Docs.slnf}
+      - 'cd docs/userdocs && "{{.DOTNET}}" "{{.MANAGED}}/bin/ApiReference/release/ApiReference.dll" docs/reference --since since.json {{.CLI_ARGS}}'
+
   skill:
     run: once
     desc: Lay out the isoplane agent skill the SDK packages carry, from the customer docs
-    deps: [build]
+    cmds:
+      - task: compile
+        vars: {FILTER: Isoplane.Docs.slnf}
+      - task: skill:prepared
+
+  skill:prepared:
+    internal: true
+    run: once
     sources:
       - '{{.ROOT_DIR}}/docs/userdocs/docs/**/*'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/Skill/**/*'
       - '{{.ROOT_DIR}}/tools/ApiReference/**/*.cs'
+      - '{{.MANAGED}}/bin/ApiReference/release/**/*'
       - exclude: 'docs/userdocs/docs/**/{obj,bin}/**/*'
     generates:
       - '{{.SKILL}}/SKILL.md'
     cmds:
-      - '"{{.DOTNET}}" run --project tools/ApiReference -c Release -p:IsoplaneManagedOnly=true --artifacts-path "{{.MANAGED}}" -- skill-references --docs docs/userdocs/docs --skill guest-sdks/dotnet/Skill --out "{{.SKILL}}"'
+      - '"{{.DOTNET}}" "{{.MANAGED}}/bin/ApiReference/release/ApiReference.dll" skill-references --docs docs/userdocs/docs --skill guest-sdks/dotnet/Skill --out "{{.SKILL}}"'
 
   packages:
     run: once
     desc: Pack the prepared managed assemblies and shared runtime
-    deps:
-      - build
-      - skill
-      - template-package
-      - ':runtime'
+    cmds:
+      - task: ':runtime'
+      - task: compile
+        vars: {FILTER: Isoplane.Packages.slnf}
+      - task: publish-cli
+      - task: packages:prepared
+
+  packages:prepared:
+    internal: true
+    run: once
+    deps: [skill:prepared, template-package:prepared]
     sources:
       - '{{.SKILL}}/**/*'
-      - '{{.MANAGED}}/bin/{Isoplane.Sdk,Isoplane.AspNetCore,Isoplane.AspNetCore.DataProtection.EntityFrameworkCore,Isoplane.OpenTelemetry,Isoplane.Templates,Isoplane.Testing,Conformance}/release/*'
+      - '{{.MANAGED}}/bin/{Isoplane.Sdk,Isoplane.AspNetCore,Isoplane.AspNetCore.DataProtection.EntityFrameworkCore,Isoplane.OpenTelemetry,Isoplane.Templates,Isoplane.Testing,Conformance,Isoplane.Analyzers,Isoplane.Analyzers.CodeFixes}/release/*'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/Build/**/*'
+      - '{{.ROOT_DIR}}/guest-sdks/dotnet/{Analyzers,Conformance}/Pack.targets'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/MSBuild/**/*'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/{AspNetCore,OpenTelemetry,AspNetCore.DataProtection.EntityFrameworkCore}/buildTransitive/**/*'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/{buildTransitive,Skill}/**/*'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/AspNetCore/Sdk/**/*'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/{Isoplane.Sdk,AspNetCore/Isoplane.AspNetCore,AspNetCore.DataProtection.EntityFrameworkCore/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore,OpenTelemetry/Isoplane.OpenTelemetry,Templates/Isoplane.Templates}.csproj'
-      - '{{.ROOT_DIR}}/guest-sdks/dotnet/{PackageReadme.md,AspNetCore/README.md,AspNetCore.DataProtection.EntityFrameworkCore/PackageReadme.md,OpenTelemetry/PackageReadme.md}'
-      - '{{.ROOT_DIR}}/tools/Isoplane.Testing/{Isoplane.Testing.csproj,README.md}'
+      - '{{.ROOT_DIR}}/guest-sdks/dotnet/{PackageReadme.md,AspNetCore/PackageReadme.md,AspNetCore.DataProtection.EntityFrameworkCore/PackageReadme.md,OpenTelemetry/PackageReadme.md}'
+      - '{{.ROOT_DIR}}/tools/Isoplane.Testing/{Isoplane.Testing.csproj,PackageReadme.md}'
       - '{{.ROOT_DIR}}/licenses/SdkPackage.props'
       - '{{.ROOT_DIR}}/licenses/Isoplane-SDK-LICENSE.txt'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/Templates/content/**/*'
@@ -115,6 +121,7 @@ tasks:
       - '{{.ROOT_DIR}}/taskfiles/NativeAssets.props'
       - '{{.MODULES}}/*.wasm'
       - '{{.MODULES}}/runtime.json'
+      - '{{.MODULES}}/native-imports.txt'
     generates:
       - '{{.PACKAGES}}/Isoplane.Sdk.*.nupkg'
       - '{{.PACKAGES}}/Isoplane.AspNetCore.*.nupkg'
@@ -142,7 +149,13 @@ tasks:
   template-package:
     run: once
     desc: Pack the prepared application templates without building the guest runtime
-    deps: [build]
+    cmds:
+      - task: build
+      - task: template-package:prepared
+
+  template-package:prepared:
+    internal: true
+    run: once
     sources:
       - '{{.SOURCE_REF}}'
       - '{{.MANAGED}}/bin/Isoplane.Templates/release/*'
@@ -168,7 +181,14 @@ tasks:
   native-packages:
     run: once
     desc: Pack this platform's CLI and native packages for tests, without dependency notices
-    deps: [build, ':native:release']
+    cmds:
+      - task: build
+      - task: native-packages:prepared
+
+  native-packages:prepared:
+    internal: true
+    run: once
+    deps: [':native:release']
     cmds:
       - task: pack-native
         vars:

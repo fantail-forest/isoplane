@@ -1,0 +1,16 @@
+{
+  "solution": {
+    "path": "Isoplane.slnx",
+    "projects": [
+      "guest-sdks/dotnet/Isoplane.Sdk.csproj",
+      "guest-sdks/dotnet/AspNetCore/Isoplane.AspNetCore.csproj",
+      "guest-sdks/dotnet/AspNetCore.DataProtection.EntityFrameworkCore/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.csproj",
+      "guest-sdks/dotnet/OpenTelemetry/Isoplane.OpenTelemetry.csproj",
+      "guest-sdks/dotnet/Templates/Isoplane.Templates.csproj",
+      "tools/Isoplane.Cli/Isoplane.Cli.csproj",
+      "tools/Isoplane.Native/Isoplane.Native.csproj",
+      "tools/Isoplane.Testing/Isoplane.Testing.csproj",
+      "guest-runtime/tests/guest/src/Acceptance.csproj"
+    ]
+  }
+}

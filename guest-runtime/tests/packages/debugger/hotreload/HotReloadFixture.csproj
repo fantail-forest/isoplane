@@ -1,4 +1,10 @@
-<Project Sdk="Microsoft.NET.Sdk">
+<Project>
+  <PropertyGroup>
+    <_IsoplaneFixtureArtifactsName>hotreload-fixture</_IsoplaneFixtureArtifactsName>
+    <DeltaScript>$(MSBuildThisFileDirectory)deltas.json</DeltaScript>
+  </PropertyGroup>
+  <Import Project="../../../../../taskfiles/ManagedFixture.props" />
+  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <AssemblyName>Debugger.HotReload.Fixture</AssemblyName>
@@ -18,4 +24,5 @@
       <Content Remove="@(_HotReloadDeltaGeneratorOutputs)" />
     </ItemGroup>
   </Target>
+  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
 </Project>

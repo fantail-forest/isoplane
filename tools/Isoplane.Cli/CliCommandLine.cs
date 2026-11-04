@@ -55,6 +55,7 @@ internal static class CliCommandLine
         Project(bundle);
         Value(bundle, "--configuration", "Build configuration (default: Release).");
         Value(bundle, "--output", "Output archive file.");
+        Flag(bundle, "--no-build", "Bundle existing build outputs without compiling or restoring.");
         root.Add(bundle);
         var daemon = new Command("daemon", "Run the local multi-application host in the foreground. Requires isoplaned on PATH.");
         Value(daemon, "--config", "Host configuration file.").Required = true;

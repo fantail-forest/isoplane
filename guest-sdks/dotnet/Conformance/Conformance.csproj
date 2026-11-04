@@ -1,10 +1,4 @@
-<Project TreatAsLocalProperty="ArtifactsPath;UseArtifactsOutput">
-  <Import Project="Build.props" />
-  <PropertyGroup>
-    <UseArtifactsOutput>true</UseArtifactsOutput>
-    <ArtifactsPath>$(_IsoplaneConformanceArtifacts)</ArtifactsPath>
-  </PropertyGroup>
-  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <AssemblyName>Isoplane.Conformance</AssemblyName>
@@ -13,6 +7,12 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <Import Project="Build.props" />
+  <PropertyGroup>
+    <OutputPath>$(_IsoplaneConformanceOutputPath)</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="Microsoft.Build.Framework" HintPath="$(MSBuildBinPath)/Microsoft.Build.Framework.dll" Private="false" />
@@ -24,7 +24,6 @@
     <Compile Include="../../../tools/BuildProtocol/ApplicationEntryDiscovery.cs" Link="ApplicationEntryDiscovery.cs" />
     <Compile Include="../../../tools/BuildProtocol/ManagedApplication.cs" Link="ManagedApplication.cs" />
   </ItemGroup>
-  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
   <!-- Windows loads PE images with execute access, including over SMB. -->
   <Target Name="MakeConformanceLoadableFromWindows" AfterTargets="Build"
           Condition="'$(OS)' != 'Windows_NT' AND Exists('$(TargetPath)')">

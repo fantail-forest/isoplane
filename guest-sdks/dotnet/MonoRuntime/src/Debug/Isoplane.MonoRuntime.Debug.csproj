@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <IsoplaneLocalDebug>true</IsoplaneLocalDebug>
+  </PropertyGroup>
+  <Import Project="../Isoplane.MonoRuntime.csproj" />
+</Project>

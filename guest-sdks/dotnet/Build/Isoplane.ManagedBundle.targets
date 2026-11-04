@@ -16,7 +16,7 @@
   </Target>
   <PropertyGroup>
     <IsoplaneBundlePreparation Condition="'$(NoBuild)' != 'true'">Build</IsoplaneBundlePreparation>
-    <IsoplaneBundlePreparation Condition="'$(NoBuild)' == 'true'">ResolveReferences;GetCopyToOutputDirectoryItems</IsoplaneBundlePreparation>
+    <IsoplaneBundlePreparation Condition="'$(NoBuild)' == 'true'">$(_BeforePublishNoBuildTargets);GetCopyToOutputDirectoryItems</IsoplaneBundlePreparation>
   </PropertyGroup>
   <Target Name="IsoplaneManagedBundle" DependsOnTargets="$(IsoplaneBundlePreparation);IsoplaneResolveManagedPlatform;_ComputeResolvedCopyLocalPublishAssets">
     <Error Condition="!Exists('$(TargetPath)')" Text="The application has not been built for $(Configuration). Run dotnet build -c $(Configuration) first." />

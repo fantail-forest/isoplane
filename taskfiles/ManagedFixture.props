@@ -1,0 +1,7 @@
+<Project>
+  <PropertyGroup>
+    <_IsoplaneFixtureRid>$([System.Runtime.InteropServices.RuntimeInformation]::RuntimeIdentifier)</_IsoplaneFixtureRid>
+    <UseArtifactsOutput>true</UseArtifactsOutput>
+    <ArtifactsPath>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)', '..', '.build', '$(_IsoplaneFixtureRid)', '$(_IsoplaneFixtureArtifactsName)'))</ArtifactsPath>
+  </PropertyGroup>
+</Project>

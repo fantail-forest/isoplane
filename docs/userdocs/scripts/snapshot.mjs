@@ -15,8 +15,7 @@ const line = semver.major(version) < 1 ? `0.${semver.minor(version)}` : `${semve
 
 const run = (command, args) => execFileSync(command, args, {cwd: site, stdio: 'inherit'});
 run('task', ['--dir', repository, 'docs:limits']);
-run('dotnet', ['run', '--project', join(repository, 'tools', 'ApiReference'), '-p:IsoplaneManagedOnly=true', '--',
-  'docs/reference', '--since', 'since.json', '--stamp', version, '--line', line]);
+run('task', ['--dir', repository, 'managed:reference', '--', '--stamp', version, '--line', line]);
 
 // Hand-written markers: `next` becomes this release, and one for a release no
 // later than the line's first is dropped, since the line has always had the item.

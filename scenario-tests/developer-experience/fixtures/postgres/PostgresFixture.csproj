@@ -1,8 +1,24 @@
 <!-- A handler application using EF Core over Npgsql, built against this checkout's SDK and runtime. -->
 <Project>
-  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
-  <Import Project="$(ISOPLANE_BUILD_ROOT)/guest-sdks/dotnet/Build/Isoplane.ManagedBundle.props" />
   <PropertyGroup>
+    <UseArtifactsIntermediateOutput>false</UseArtifactsIntermediateOutput>
+    <_IsoplaneBuildRoot Condition="'$(ISOPLANE_BUILD_ROOT)' != ''">$(ISOPLANE_BUILD_ROOT)</_IsoplaneBuildRoot>
+    <_IsoplaneBuildRoot Condition="'$(_IsoplaneBuildRoot)' == ''">$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)', '../../../..'))</_IsoplaneBuildRoot>
+    <_IsoplaneScenarioConfiguration Condition="'$(Configuration)' != ''">$(Configuration)</_IsoplaneScenarioConfiguration>
+    <_IsoplaneScenarioConfiguration Condition="'$(_IsoplaneScenarioConfiguration)' == ''">Debug</_IsoplaneScenarioConfiguration>
+    <_IsoplaneScenarioSource>$([MSBuild]::NormalizeDirectory('$(_IsoplaneBuildRoot)', 'scenario-tests', 'developer-experience', 'fixtures', 'postgres'))</_IsoplaneScenarioSource>
+    <_IsoplaneScenarioPrepared>$([MSBuild]::NormalizeDirectory('$(_IsoplaneBuildRoot)', '.build', 'clr-anycpu', 'scenarios', '$(_IsoplaneScenarioConfiguration)', 'postgres'))</_IsoplaneScenarioPrepared>
+    <_IsoplaneScenarioProjectDirectory>$([MSBuild]::EnsureTrailingSlash('$(MSBuildProjectDirectory)'))</_IsoplaneScenarioProjectDirectory>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(_IsoplaneScenarioProjectDirectory)' == '$(_IsoplaneScenarioSource)'">
+    <BaseOutputPath>$(_IsoplaneScenarioPrepared)bin/</BaseOutputPath>
+    <BaseIntermediateOutputPath>$(_IsoplaneScenarioPrepared)obj/</BaseIntermediateOutputPath>
+  </PropertyGroup>
+  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
+  <Import Project="$(_IsoplaneBuildRoot)/guest-sdks/dotnet/Build/Isoplane.SourceReferences.props" />
+  <Import Project="$(_IsoplaneBuildRoot)/guest-sdks/dotnet/Build/Isoplane.ManagedBundle.props" />
+  <PropertyGroup>
+    <UseArtifactsOutput>false</UseArtifactsOutput>
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -10,11 +26,9 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.0" />
-    <ProjectReference Include="$(ISOPLANE_BUILD_ROOT)/guest-sdks/dotnet/Isoplane.Sdk.csproj"
-                      GlobalPropertiesToRemove="RuntimeIdentifier;SelfContained"
-                      AdditionalProperties="ArtifactsPath=$(ISOPLANE_MANAGED_ARTIFACTS);IsoplaneManagedOnly=true;UseAppHost=false" />
+    <ProjectReference Include="$(_IsoplaneBuildRoot)/guest-sdks/dotnet/Isoplane.Sdk.csproj" />
   </ItemGroup>
   <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
-  <Import Project="$(ISOPLANE_BUILD_ROOT)/guest-sdks/dotnet/Build/Isoplane.ManagedBundle.targets" />
-  <Import Project="$(ISOPLANE_BUILD_ROOT)/guest-sdks/dotnet/Build/Isoplane.Run.targets" />
+  <Import Project="$(_IsoplaneBuildRoot)/guest-sdks/dotnet/Build/Isoplane.ManagedBundle.targets" />
+  <Import Project="$(_IsoplaneBuildRoot)/guest-sdks/dotnet/Build/Isoplane.Run.targets" />
 </Project>

@@ -14,8 +14,8 @@
     "search:start": "search/start-site.sh",
     "search:deploy": "search/deploy.sh",
     "clear": "docusaurus clear",
-    "generate:reference": "dotnet run --project ../../tools/ApiReference -p:IsoplaneManagedOnly=true -- docs/reference --since since.json",
-    "check:reference": "dotnet run --project ../../tools/ApiReference -p:IsoplaneManagedOnly=true -- docs/reference --since since.json --check",
+    "generate:reference": "task --dir ../.. managed:reference",
+    "check:reference": "task --dir ../.. managed:reference -- --check",
     "prestart": "task --dir ../.. docs:limits",
     "prebuild": "task --dir ../.. docs:limits && pnpm run check:reference",
     "snapshot": "node scripts/snapshot.mjs"

@@ -120,7 +120,6 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with: {persist-credentials: false}
-      - run: git submodule update --init --depth 1 tools/debugger-libs
       - uses: ./.github/actions/toolchain
         with: {rust: 'false', dotnet: 'true'}
       - run: task ci:managed

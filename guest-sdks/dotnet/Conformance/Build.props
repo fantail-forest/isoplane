@@ -1,8 +1,9 @@
 <Project>
   <PropertyGroup>
-    <_IsoplaneConformanceRoot Condition="'$(ISOPLANE_BUILD_ROOT)' != ''">$(ISOPLANE_BUILD_ROOT)</_IsoplaneConformanceRoot>
-    <_IsoplaneConformanceRoot Condition="'$(_IsoplaneConformanceRoot)' == ''">$(MSBuildThisFileDirectory)../../..</_IsoplaneConformanceRoot>
-    <_IsoplaneConformanceArtifacts Condition="'$(ISOPLANE_MANAGED_ARTIFACTS)' != ''">$([MSBuild]::NormalizeDirectory('$(ISOPLANE_MANAGED_ARTIFACTS)', 'conformance'))</_IsoplaneConformanceArtifacts>
-    <_IsoplaneConformanceArtifacts Condition="'$(_IsoplaneConformanceArtifacts)' == ''">$([MSBuild]::NormalizeDirectory('$(_IsoplaneConformanceRoot)', '.build', 'clr-anycpu', 'conformance'))</_IsoplaneConformanceArtifacts>
+    <_IsoplaneConformanceConfiguration Condition="'$(Configuration)' != ''">$(Configuration)</_IsoplaneConformanceConfiguration>
+    <_IsoplaneConformanceConfiguration Condition="'$(_IsoplaneConformanceConfiguration)' == ''">Debug</_IsoplaneConformanceConfiguration>
+    <_IsoplaneConformanceOutputPath Condition="'$(ArtifactsPath)' != ''">$([MSBuild]::NormalizeDirectory('$(ArtifactsPath)', 'bin', 'Conformance', '$(_IsoplaneConformanceConfiguration.ToLowerInvariant())'))</_IsoplaneConformanceOutputPath>
+    <_IsoplaneConformanceOutputPath Condition="'$(ArtifactsPath)' == ''">$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)', 'bin', '$(_IsoplaneConformanceConfiguration)', 'net10.0'))</_IsoplaneConformanceOutputPath>
+    <_IsoplaneConformanceAssembly>$(_IsoplaneConformanceOutputPath)Isoplane.Conformance.dll</_IsoplaneConformanceAssembly>
   </PropertyGroup>
 </Project>

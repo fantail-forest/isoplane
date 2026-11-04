@@ -1,0 +1,10 @@
+<Project>
+  <PropertyGroup>
+    <_IsoplaneSourceReferencePropertiesToRemove>RuntimeIdentifier;RuntimeIdentifiers;PublishAot;SelfContained;OutputPath;BaseOutputPath;BaseIntermediateOutputPath;IntermediateOutputPath;ArtifactsProjectName;ArtifactsPivots;PublishDir;TargetFramework;TargetFrameworks;UseAppHost;RestorePackagesPath;IsoplaneProbe;IsoplaneLocalDebug;IsoplaneDebuggerOptimized;IsoplaneManagedBundleBuild;IsoplaneSqliteDirectory;DeltaScript</_IsoplaneSourceReferencePropertiesToRemove>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ProjectReference>
+      <GlobalPropertiesToRemove>$(_IsoplaneSourceReferencePropertiesToRemove)</GlobalPropertiesToRemove>
+    </ProjectReference>
+  </ItemDefinitionGroup>
+</Project>

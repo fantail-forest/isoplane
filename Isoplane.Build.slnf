@@ -9,7 +9,12 @@
       "guest-sdks/dotnet/Templates/Isoplane.Templates.csproj",
       "tools/Isoplane.Cli/Isoplane.Cli.csproj",
       "tools/Isoplane.Native/Isoplane.Native.csproj",
-      "tools/Isoplane.Testing/Isoplane.Testing.csproj"
+      "tools/Isoplane.Testing/Isoplane.Testing.csproj",
+      "guest-sdks/dotnet/Conformance/Conformance.csproj",
+      "guest-sdks/dotnet/Analyzers/Isoplane.Analyzers.csproj",
+      "guest-sdks/dotnet/Analyzers.CodeFixes/Isoplane.Analyzers.CodeFixes.csproj",
+      "tools/Isoplane.Debugging/Isoplane.Debugging.csproj",
+      "tools/Isoplane.HotReload/Isoplane.HotReload.csproj"
     ]
   }
 }

@@ -34,4 +34,4 @@ export ISOPLANE_RUNTIME_DIRECTORY="$RUNTIME_OUTPUT"
 OUT="$PACKAGE_OUTPUT/$FIXTURE"
 [ "$(uname -s)" = Linux ] || { echo "Build shared fixtures on Linux first." >&2; exit 1; }
 mkdir -p "$PACKAGE_OUTPUT"
-dotnet "${ISOPLANE_CLI:?Task must supply the staged CLI}" bundle --project "$HERE/$FIXTURE" --output "$OUT.tar"
+dotnet "${ISOPLANE_CLI:?Task must supply the staged CLI}" bundle --no-build --project "$HERE/$FIXTURE" --output "$OUT.tar"

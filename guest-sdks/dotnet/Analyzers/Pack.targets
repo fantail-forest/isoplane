@@ -4,7 +4,7 @@
   </PropertyGroup>
   <Target Name="PackAnalyzerAssemblies">
     <MSBuild Projects="$(MSBuildThisFileDirectory)Isoplane.Analyzers.csproj;$(MSBuildThisFileDirectory)../Analyzers.CodeFixes/Isoplane.Analyzers.CodeFixes.csproj"
-             Targets="GetTargetPath" RemoveProperties="RuntimeIdentifier;RuntimeIdentifiers;PublishAot;SelfContained;TargetFramework">
+             Targets="GetTargetPath" RemoveProperties="$(_IsoplaneSourceReferencePropertiesToRemove)">
       <Output TaskParameter="TargetOutputs" ItemName="_AnalyzerAssembly" />
     </MSBuild>
     <ItemGroup>

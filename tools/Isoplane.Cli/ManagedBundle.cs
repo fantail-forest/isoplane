@@ -14,7 +14,8 @@ internal sealed record BundleOptions(string Directory, string Configuration, str
         var configuration = parsed.GetValue<string>("--configuration") ?? "Release";
         var output = parsed.GetValue<string>("--output") is { } path ? Path.GetFullPath(path) : null;
         if (string.IsNullOrWhiteSpace(configuration)) throw new ArgumentException("The build configuration must not be empty.");
-        return new(directory, configuration, output ?? throw new ArgumentException("bundle requires --output FILE."));
+        return new(directory, configuration, output ?? throw new ArgumentException("bundle requires --output FILE."),
+            parsed.GetValue<bool>("--no-build"));
     }
 }
 
