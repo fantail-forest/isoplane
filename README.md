@@ -1,17 +1,31 @@
 # Isoplane
 
-Isoplane hosts customer-written .NET applications as WebAssembly guests. The
-isolation boundary is the WASM sandbox, not the CLR and not a hypervisor.
-Guests are pre-initialised at deploy time into a memory template, activate
-copy-on-write from it, park with an empty stack while waiting on host I/O, and
-can be hibernated as a delta against the template and woken later. The host is
-Rust; the guest SDK is C#.
+Isoplane builds and runs your .NET applications inside WebAssembly sandboxes.
+This repository contains the SDK and tools for local development, testing and
+debugging, plus a single-machine host for deploying your own applications.
+The host is Rust; the guest SDK is C#.
 
 [`AGENTS.md`](AGENTS.md) is the engineering handbook: architecture, tooling,
 the rules code is held to, and the four invariants every host mechanism
 derives from. [Customer guides](docs/userdocs/) cover local development, testing,
 debugging and [self-hosted deployment](docs/userdocs/docs/how-to/deploy-an-application.md).
 One host serves multiple applications by their configured Host names.
+
+## Using Isoplane
+
+The [Quickstart](https://isoplane.dev/docs/quickstart) walks through installing
+the `Isoplane.Cli` .NET tool, setting up the SDK and running your first application.
+The [documentation](https://isoplane.dev/docs/) includes tutorials, how-to guides
+and API references. SDK packages are published as `Isoplane.*` on NuGet.
+
+## Support and feedback
+
+- [Report a bug](https://github.com/fantail-forest/isoplane/issues/new?template=bug_report.yml)
+  in the SDK, CLI, templates or self-hosted daemon. Include your version, operating
+  system and reproduction steps.
+- [Request a feature](https://github.com/fantail-forest/isoplane/issues/new?template=feature_request.yml).
+- [Ask a question or share what you built](https://github.com/fantail-forest/isoplane/discussions).
+- [Report a security issue privately](SECURITY.md).
 
 ## Building and testing
 
