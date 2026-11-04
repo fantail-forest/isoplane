@@ -100,6 +100,7 @@ pub(super) struct Usage {
     capture_hints: u32,
     hint_incomplete: bool,
     hint_running: bool,
+    hint_trapped: bool,
     trap_kind: Option<isoplane_engine::TrapKind>,
 }
 
@@ -463,6 +464,10 @@ impl DispatchCompletion {
         };
         let donation = state.donation.take().and_then(|pool| pool.upgrade());
         drop(state);
+        self.entry.meters.record_completion(
+            matches!(reason, TerminalReason::GuestTrap)
+                || (matches!(reason, TerminalReason::CaptureFailed) && usage.hint_trapped),
+        );
         if !usage.incomplete && !usage.in_slice {
             if let Some(pool) = donation {
                 pool.donate(Duration::from_nanos(
@@ -543,6 +548,7 @@ impl crate::hibernate_policy::CaptureObserver for DispatchCompletion {
         let mut state = self.state.lock();
         let usage = &mut state.usage;
         usage.hint_running = false;
+        usage.hint_trapped |= outcome.completion == Completion::Trapped;
         usage.capture_hint_occupancy_ns = usage
             .capture_hint_occupancy_ns
             .saturating_add(outcome.occupancy_ns);

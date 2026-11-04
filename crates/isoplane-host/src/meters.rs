@@ -2,6 +2,7 @@
 //! work. Parked time is recorded separately from occupied-worker time.
 
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use isoplane_engine::DispatchOutcome;
 
@@ -10,9 +11,10 @@ pub use crate::occupancy_clock::{
     OccupancyInterval,
 };
 
-/// All counters are monotonic; the control plane reads deltas.
+/// Cumulative execution counters used for limit enforcement and diagnostics.
 #[derive(Debug, Default)]
 pub struct Meters {
+    tenant: Option<Arc<crate::metrics::TenantMetrics>>,
     /// The sole compute meter.
     occupancy_ns: AtomicU64,
     /// Telemetry only; excluded from occupied-worker time.
@@ -48,9 +50,28 @@ impl Meters {
         Self::default()
     }
 
+    pub(crate) fn for_tenant(tenant: Arc<crate::metrics::TenantMetrics>) -> Self {
+        Self {
+            tenant: Some(tenant),
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn record_completion(&self, trapped: bool) {
+        if let Some(tenant) = &self.tenant {
+            tenant.record_completion(trapped);
+        }
+    }
+
+    fn record_measured_occupancy(&self, ns: u64) {
+        self.occupancy_ns.fetch_add(ns, Ordering::Relaxed);
+        if let Some(tenant) = &self.tenant {
+            tenant.record_occupancy(ns);
+        }
+    }
+
     pub fn record_occupancy(&self, out: &DispatchOutcome) {
-        self.occupancy_ns
-            .fetch_add(out.occupancy_ns, Ordering::Relaxed);
+        self.record_measured_occupancy(out.occupancy_ns);
         if out.occupancy_measurement == isoplane_engine::OccupancyMeasurement::Incomplete {
             self.incomplete_intervals.fetch_add(1, Ordering::Relaxed);
         }
@@ -61,7 +82,7 @@ impl Meters {
     pub fn record_interval(&self, ns: Option<u64>) {
         match ns {
             Some(ns) => {
-                self.occupancy_ns.fetch_add(ns, Ordering::Relaxed);
+                self.record_measured_occupancy(ns);
             }
             None => {
                 self.incomplete_intervals.fetch_add(1, Ordering::Relaxed);

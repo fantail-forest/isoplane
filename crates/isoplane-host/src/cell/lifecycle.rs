@@ -499,12 +499,6 @@ impl Cell {
         }
         self.arm_grace(slot, did);
         self.metrics.slice_us.record(out.wall_ns / 1_000);
-        self.metrics.record_tenant(
-            &entry.tenant,
-            out.occupancy_ns,
-            !matches!(out.completion, Completion::Done | Completion::Parked),
-        );
-
         // A latched trap becomes a trap here, before the guest proceeds as
         // though the import had succeeded. An exit is left alone: its
         // latched code is almost always a poisoned import the guest ignored
@@ -581,7 +575,7 @@ impl Cell {
                     Some(reason.into()),
                 );
                 self.respond(slot, did, result);
-                self.finish_unless_working(slot, entry, did, warm())
+                self.finish_with_instance_work_handover(slot, entry, did, warm())
             }
             Completion::Done => {
                 // Open response handles retain the active dispatch. A streaming
@@ -625,7 +619,7 @@ impl Cell {
                     }
                     DispatchEnd::Disposed(d) => {
                         self.breaker.record_success(&breaker_key);
-                        self.finish_unless_working(slot, entry, did, d)
+                        self.finish_with_instance_work_handover(slot, entry, did, d)
                     }
                     DispatchEnd::Parked => self.park_after_slice(slot),
                 }
@@ -662,7 +656,9 @@ impl Cell {
                 );
                 self.respond(slot, did, result);
                 match decide(completion, false) {
-                    DispatchEnd::Disposed(d) => self.finish_unless_working(slot, entry, did, d),
+                    DispatchEnd::Disposed(d) => {
+                        self.finish_with_instance_work_handover(slot, entry, did, d)
+                    }
                     DispatchEnd::Parked | DispatchEnd::RetainedForStreaming => {
                         self.park_after_slice(slot)
                     }
@@ -745,10 +741,9 @@ impl Cell {
             .record(waited.as_micros() as u64);
     }
 
-    /// Ends a dispatch whose guest has returned, unless it still waits on a
-    /// future of its own, such as an outbound call: then it is not finished,
-    /// and stays open, governed by its budget, until that work completes.
-    fn finish_unless_working(
+    /// Ends the dispatch and, when retaining its instance, hands remaining
+    /// futures to the separately budgeted instance work.
+    fn finish_with_instance_work_handover(
         self: &Arc<Self>,
         slot: &Arc<Slot>,
         entry: &Arc<ModuleEntry>,
@@ -916,7 +911,7 @@ impl Cell {
         drop(dispatch);
         match completion {
             Some(Completion::Done | Completion::Cancelled | Completion::Failed) => {
-                self.finish_unless_working(slot, entry, did, warm())
+                self.finish_with_instance_work_handover(slot, entry, did, warm())
             }
             Some(Completion::Parked) | None => {
                 self.arm_grace(slot, did);

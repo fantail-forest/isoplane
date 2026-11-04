@@ -125,6 +125,10 @@ fn a_hard_kill_is_not_counted_as_a_trap() {
         .unwrap();
     assert_eq!(out.status, 503, "a hard budget kill is a 503");
 
+    assert!(
+        wait_for(|| r.cell.metrics().tenants["acme"].dispatches == 2, T,),
+        "both dispatches must finalize their diagnostic counters"
+    );
     let m = r.cell.metrics();
     assert_eq!(m.budget_kills, 1, "the spin was killed");
     assert_eq!(
@@ -132,7 +136,10 @@ fn a_hard_kill_is_not_counted_as_a_trap() {
         "the budget kill was counted as a trap as well as a kill"
     );
 
-    assert_eq!(m.tenants["acme"].traps, 2, "both are faults for the tenant");
+    assert_eq!(
+        m.tenants["acme"].traps, 1,
+        "the tenant trap count also excludes the budget kill"
+    );
     r.cell.shutdown();
 }
 

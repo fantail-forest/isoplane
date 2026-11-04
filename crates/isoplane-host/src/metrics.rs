@@ -4,6 +4,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use parking_lot::Mutex;
 use prometheus::{proto, TextEncoder};
@@ -188,13 +189,44 @@ pub struct Metrics {
     pub served_hibernation_wake: AtomicU64,
     pub served_activated: AtomicU64,
 
-    by_tenant: Mutex<BTreeMap<String, TenantCounters>>,
+    by_tenant: Mutex<BTreeMap<String, Arc<TenantMetrics>>>,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct TenantMetrics {
+    dispatches: AtomicU64,
+    occupancy_ns: AtomicU64,
+    traps: AtomicU64,
+}
+
+impl TenantMetrics {
+    pub(crate) fn record_occupancy(&self, ns: u64) {
+        self.occupancy_ns.fetch_add(ns, Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_completion(&self, trapped: bool) {
+        self.dispatches.fetch_add(1, Ordering::Relaxed);
+        if trapped {
+            self.traps.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    fn snapshot(&self) -> TenantCounters {
+        TenantCounters {
+            dispatches: self.dispatches.load(Ordering::Relaxed),
+            occupancy_ns: self.occupancy_ns.load(Ordering::Relaxed),
+            traps: self.traps.load(Ordering::Relaxed),
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct TenantCounters {
+    /// Completed dispatches, across all their slices and attributed reactor polls.
     pub dispatches: u64,
+    /// Measured slice and reactor occupancy, including work after a dispatch ends.
     pub occupancy_ns: u64,
+    /// Completed dispatches that ended in a guest trap, excluding budget kills.
     pub traps: u64,
 }
 
@@ -203,21 +235,19 @@ impl Metrics {
         Self::default()
     }
 
-    pub fn record_tenant(&self, tenant: &str, occupancy_ns: u64, trapped: bool) {
-        let mut g = self.by_tenant.lock();
-        let e = g.entry(tenant.to_string()).or_default();
-        e.dispatches += 1;
-        e.occupancy_ns += occupancy_ns;
-        if trapped {
-            e.traps += 1;
-        }
+    pub(crate) fn tenant_accounting(&self, tenant: &str) -> Arc<TenantMetrics> {
+        self.by_tenant
+            .lock()
+            .entry(tenant.to_owned())
+            .or_default()
+            .clone()
     }
 
     pub fn tenant(&self, tenant: &str) -> TenantCounters {
         self.by_tenant
             .lock()
             .get(tenant)
-            .copied()
+            .map(|counters| counters.snapshot())
             .unwrap_or_default()
     }
 
@@ -298,7 +328,12 @@ impl Metrics {
                     l(&self.traps) as f64 / d as f64
                 }
             },
-            tenants: self.by_tenant.lock().clone(),
+            tenants: self
+                .by_tenant
+                .lock()
+                .iter()
+                .map(|(tenant, counters)| (tenant.clone(), counters.snapshot()))
+                .collect(),
         }
     }
 
@@ -632,7 +667,9 @@ mod tests {
             "é\",tier=\"hot\\\"} 0\ninjected 1\n#",
         ] {
             let metrics = Metrics::new();
-            metrics.record_tenant(tenant, 1_250_000, true);
+            let accounting = metrics.tenant_accounting(tenant);
+            accounting.record_occupancy(1_250_000);
+            accounting.record_completion(true);
             let text = metrics.to_text();
             let samples: Vec<_> = text.lines().filter(|line| !line.starts_with('#')).collect();
             let tenant_samples: Vec<_> = samples
@@ -802,7 +839,9 @@ mod tests {
         m.wake_us.record(40);
         m.dirty_pages.record(512);
         m.delta_bytes.fetch_add(4096, Ordering::Relaxed);
-        m.record_tenant("acme", 2_000_000, false);
+        let accounting = m.tenant_accounting("acme");
+        accounting.record_occupancy(2_000_000);
+        accounting.record_completion(false);
 
         let text = m.to_text();
         for needle in [

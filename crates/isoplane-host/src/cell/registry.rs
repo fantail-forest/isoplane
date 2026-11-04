@@ -409,7 +409,7 @@ impl Cell {
                 },
             ),
             activator,
-            meters: Arc::new(Meters::new()),
+            meters: Arc::new(Meters::for_tenant(self.metrics.tenant_accounting(tenant))),
             endpoint_exceptions,
         };
         entry

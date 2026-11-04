@@ -166,17 +166,6 @@ impl Cell {
             self.metrics
                 .grace_deferrals
                 .fetch_add(outcome.grace_deferrals, Ordering::Relaxed);
-            self.metrics.record_tenant(
-                &entry.tenant,
-                outcome.occupancy_ns,
-                matches!(
-                    outcome.completion,
-                    Completion::Trapped
-                        | Completion::BudgetKill
-                        | Completion::Failed
-                        | Completion::Cancelled
-                ),
-            );
             if outcome.completion == Completion::BudgetExit {
                 entry
                     .meters
@@ -286,6 +275,15 @@ mod tests {
             assert_eq!(records[1]["dispatch_kind"], "background");
             assert_eq!(records[1]["outcome"], reason);
             assert_eq!(records[1]["status"], status);
+            let tenant = cell.metrics().tenants["acme"];
+            assert_eq!(
+                tenant.dispatches, 2,
+                "one request and one background dispatch"
+            );
+            assert_eq!(
+                tenant.traps, 0,
+                "background failure and cancellation are not guest traps"
+            );
             assert_eq!(slot.state(), LifecycleTier::Parked);
             drop(_execution);
             cell.shutdown();
