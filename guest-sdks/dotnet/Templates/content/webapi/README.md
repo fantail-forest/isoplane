@@ -145,8 +145,8 @@ Set `Notifications:WebhookUrl` to have completed todos posted to a URL.
   `Notifications/CompletionNotifier.cs` does, and await it in the request.
 - **Depend on another local service.** Declare it in `compose.yaml` and give
   the application its address in `appsettings.Development.json`.
-- **Try tighter limits.** A local session uses default resource limits.
-  To see how the application behaves with less memory or time,
+- **Try tighter limits.** A local session uses default resource limits. To see how the
+  application behaves with less memory or time,
   add `isoplaneLimitsOverride` to the launch profile in `launchSettings.json`,
   beside `environmentVariables`:
 

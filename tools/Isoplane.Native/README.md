@@ -8,6 +8,6 @@ C# declarations with `ISOPLANE_GENERATE_BINDINGS=1 scripts/dev cargo build -p is
 the Rust test suite checks for drift. csbindgen 1.9.8 generates the C ABI types
 and calls; managed wrappers own buffers, callbacks, and session lifetimes.
 
-Process ownership currently supports Linux. Handled shutdown and cancellation
-clean up owned process groups; abrupt termination of the owning process does
+Process ownership supports Linux, macOS and Windows. Handled shutdown and cancellation
+clean up owned subprocesses; abrupt termination of the owning process does
 not guarantee cleanup.

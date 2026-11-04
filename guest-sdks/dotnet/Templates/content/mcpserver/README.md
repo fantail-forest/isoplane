@@ -144,8 +144,8 @@ settings in `tests/Sample-McpServer.Tests/SandboxFixture.cs`.
 - **Protect the endpoint.** It is open to anyone who can reach it. Set up
   ASP.NET Core authentication and add `.RequireAuthorization()` to `MapMcp` in
   `Program.cs`.
-- **Try tighter limits.** A local session uses default resource limits.
-  To see how the application behaves with less memory or time,
+- **Try tighter limits.** A local session uses default resource limits. To see how the
+  application behaves with less memory or time,
   add `isoplaneLimitsOverride` to the launch profile in `launchSettings.json`,
   beside `environmentVariables`:
 

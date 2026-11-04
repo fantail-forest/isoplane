@@ -94,7 +94,7 @@ public static class Handler
         var name = request.Query.FirstOrDefault(pair => pair.Key == "name").Value;
 
         // Console output is the application's log: it appears in the terminal
-        // running the session and, once deployed, in `isoplane logs`.
+        // running the session and, once deployed, in the daemon output or service-manager logs.
         Console.WriteLine($"Greeting {name ?? "the default"}");
         return Json(greeter.Greet(name), HandlerJson.Default.Greeting);
     }

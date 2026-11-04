@@ -74,12 +74,12 @@ public class RequestHead
     /// Pass it to the asynchronous calls the handler makes, so that work nobody is waiting for stops.
     /// </para>
     /// <para>
-    /// Running time is the time the request's code spends executing, plus the CPU time Isoplane spends
-    /// handling system operations on its behalf, as
+    /// Running time measures occupied worker intervals for the request's code and host operations
+    /// on its behalf, as
     /// <see href="https://isoplane.dev/docs/concepts/dotnet-runtime-differences#running-time">Running time</see>
     /// describes. Time spent waiting for something the handler awaits, such as a database or another
     /// service, does not count. Once the token is cancelled, for either reason, the request has 5 seconds
-    /// in which to finish; after that Isoplane stops the instance. A local session allows the most the platform offers.
+    /// in which to finish; after that Isoplane stops the instance. A local session uses default resource limits.
     /// To see how the application behaves with less, set <c>occupancyMsPerDispatch</c> as
     /// <see href="https://isoplane.dev/docs/how-to/local-settings#try-the-application-under-tighter-limits">Try the application under tighter limits</see>
     /// describes.

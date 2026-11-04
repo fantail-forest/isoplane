@@ -84,9 +84,9 @@ no thread, and we can evict it at any time.
 
 ### Running time {#running-time}
 
-*Running time* is the time an instance's slices spend executing, plus the CPU
-time we spend handling system operations on its behalf. Waiting is
-free. Each request has a
+*Running time* measures occupied worker intervals for an instance's slices and
+host operations on its behalf, including time a worker is descheduled. Parked
+asynchronous waits do not count. Each request has a
 [running-time allowance](resource-limits.md#running-time), and background
 work has a [separate one](resource-limits.md#background-allowance), topped up
 over time and with whatever requests leave unused.
@@ -239,10 +239,7 @@ What this means in practice:
   in the middle of a computation.
 
 :::note
-`Stopwatch` can't time computation inside the application, so a benchmark run
-there measures nothing. We intend to add a way for an application to ask the
-host to collect and export timing spans on its behalf, which will give precise
-measurements without weakening the security model.
+`Stopwatch` can't time computation within a slice because the clock is frozen.
 :::
 
 ## Background work {#background-work}
@@ -306,7 +303,6 @@ new.
 :::important[Instance memory is a cache]
 Static fields, `IMemoryCache` and in-memory session state can vanish at any
 time. Keep anything that must last in a database or another external service.
-Durable Instances will give such state a home on the platform.
 :::
 
 ### Initialization state snapshots {#initialization}
@@ -351,17 +347,15 @@ when the instance starts.
 
 ### Incoming requests {#incoming-requests}
 
-Your application receives HTTP requests and nothing else. We handle TLS and
-HTTP for you and route each request to a free instance, so there is no Kestrel
-to configure, and an application can't listen on a port itself.
+Your application receives HTTP requests routed to a free instance, so there is
+no Kestrel to configure, and an application can't listen on a port itself.
+The host serves plaintext HTTP; configure a reverse proxy to terminate TLS.
 
 Requests arrive as HTTP/1.1, without upgrades or trailers. That rules out gRPC
 over HTTP/2, which needs both, although gRPC-Web works. WebSockets are
-currently unavailable, and will arrive with Durable Instances. SignalR, and
-Blazor Server interactivity with it, needs sticky sessions and in-memory
-connection state, so it is
-[currently unsupported](library-compatibility.md#signalr). We expect Durable
-Instances will likely make both possible.
+unavailable. SignalR, and Blazor Server interactivity with it, needs sticky
+sessions and in-memory connection state, so it is
+[currently unsupported](library-compatibility.md#signalr).
 
 Streamed responses work, so server-sent events from your own endpoint do too,
 as do statically rendered Blazor pages. See

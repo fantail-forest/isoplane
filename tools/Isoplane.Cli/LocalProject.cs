@@ -64,7 +64,7 @@ internal sealed class LocalProject(string directory, string? targetDirectory)
 
     /// <summary>
     /// The manifest a development session runs an application under. A session uses the default resource budgets unless <paramref name="overrides"/>
-    /// narrow them. The compiled runtime depends on these limits, so <c>isoplane prepare-runtime</c>
+    /// replace them. The compiled runtime depends on these limits, so <c>isoplane prepare-runtime</c>
     /// uses them too.
     /// </summary>
     internal static Dictionary<string, object?> Manifest(string name, LimitOverrides overrides)

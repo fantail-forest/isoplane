@@ -115,3 +115,4 @@ with tests. Install the [.NET CLI](../../../tools/Isoplane.Cli/README.md)
 and put its tool directory on your PATH. `isoplane dev` builds an application
 package and serves it on the SDK's shared Mono runtime; source edits trigger a
 rebuild. Local state is private to the project directory.
+Local deployment uses the owner configured for the host. See the [deployment guide](../../../docs/userdocs/docs/how-to/deploy-an-application.md).

@@ -74,8 +74,8 @@ read by the `/greeting` route that `Program.cs` shows commented out.
 - **Add an endpoint or a service.** `Program.cs` marks where each goes.
 - **Serve static files.** Put them in a `wwwroot` folder and add
   `app.MapStaticAssets();` to `Program.cs`.
-- **Try tighter limits.** A local session uses default resource limits.
-  To see how the application behaves with less memory or time,
+- **Try tighter limits.** A local session uses default resource limits. To see how the
+  application behaves with less memory or time,
   add `isoplaneLimitsOverride` to the launch profile in `launchSettings.json`,
   beside `environmentVariables`:
 

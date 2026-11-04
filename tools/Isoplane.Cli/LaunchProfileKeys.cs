@@ -27,7 +27,7 @@ internal static class LaunchProfileKeys
         "is the setting `Greeting:Default`. `ASPNETCORE_ENVIRONMENT`, or `DOTNET_ENVIRONMENT`, names the environment of an ASP.NET application.");
 
     internal static readonly LaunchProfileKey Limits = new("isoplaneLimitsOverride",
-        "An object that lowers the limits a local session runs with. Its keys are listed below.");
+        "An object that overrides the default limits a local session runs with. Its keys are listed below.");
 
     internal static readonly LaunchProfileKey[] Profile = [Command, Url, Environment, Limits];
 

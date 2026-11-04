@@ -141,8 +141,8 @@ settings in `tests/Sample-WebApp.Tests/SandboxFixture.cs`.
   callback in `Program.cs`. The page must answer a GET with a success status.
 - **Depend on another local service.** Declare it in `compose.yaml` and give
   the application its address in `appsettings.Development.json`.
-- **Try tighter limits.** A local session uses default resource limits.
-  To see how the application behaves with less memory or time,
+- **Try tighter limits.** A local session uses default resource limits. To see how the
+  application behaves with less memory or time,
   add `isoplaneLimitsOverride` to the launch profile in `launchSettings.json`,
   beside `environmentVariables`:
 

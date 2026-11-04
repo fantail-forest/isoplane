@@ -21,7 +21,7 @@ A local session uses the first profile whose `commandName` is `Project`. Select 
 | `commandName` | Must be `Project` for Isoplane to use the profile. Profiles with another value, such as `IISExpress`, are passed over. |
 | `applicationUrl` | Sets the port a local session listens on: the port of the first `http` address. Separate several addresses with `;`. A local session serves plain HTTP on loopback, so the host name is not used and `https` addresses are passed over. |
 | `environmentVariables` | An object whose entries become application settings. Two underscores in a name stand for a colon, so `Greeting__Default` is the setting `Greeting:Default`. `ASPNETCORE_ENVIRONMENT`, or `DOTNET_ENVIRONMENT`, names the environment of an ASP.NET application. |
-| `isoplaneLimitsOverride` | An object that lowers the limits a local session runs with. Its keys are listed below. |
+| `isoplaneLimitsOverride` | An object that overrides the default limits a local session runs with. Its keys are listed below. |
 
 ## Keys of `isoplaneLimitsOverride`
 

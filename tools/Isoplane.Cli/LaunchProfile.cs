@@ -2,7 +2,7 @@ using System.Text.Json;
 
 namespace Isoplane.Cli;
 
-/// <summary>Limits a launch profile narrows below a development session's defaults.</summary>
+/// <summary>Limits a launch profile overrides for a development session.</summary>
 internal sealed record LimitOverrides(ulong? MemoryBytes, Dictionary<string, ulong> ResourceLimits)
 {
     internal static LimitOverrides None { get; } = new(null, []);

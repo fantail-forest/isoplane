@@ -43,7 +43,7 @@ before relying on it, [check it yourself](#check-a-package).
 | ASP.NET Core                                                      | [Rate limiters that count in memory, including the built-in ones](#rate-limiting)                                                                                        | Needs a change | Moderate change: use a limiter that counts in a shared store. Or limit requests in front of the application      |
 | ASP.NET Core                                                      | [Validation attributes, localizers, token callbacks and service factories that do I/O](#synchronous-extension-points)                                                    | Needs a change | Moderate change: move the I/O elsewhere                                                                          |
 | ASP.NET Core                                                      | [WebSockets](#connections-and-background-work)                                                                                                                           | Not supported  | No workaround                                                                                                    |
-| ASP.NET Core                                                      | [SignalR and Blazor Server interactivity](#signalr)                                                                                                                      | Not supported  | No workaround yet: SignalR needs sticky sessions, which Isoplane does not keep. We expect Durable Instances to change this |
+| ASP.NET Core                                                      | [SignalR and Blazor Server interactivity](#signalr)                                                                                                                      | Not supported  | No workaround: SignalR needs sticky sessions, which Isoplane does not keep |
 | ASP.NET Core                                                      | [gRPC over HTTP/2](#connections-and-background-work)                                                                                                                     | Needs a change | Moderate change: use gRPC-Web                                                                                    |
 | ASP.NET Core                                                      | [Continuously running `BackgroundService`, jobs and queue consumers](#connections-and-background-work)                                                                   | Needs a change | Large change: do the work during a request                                                                       |
 | Microsoft.AspNetCore.Identity.EntityFrameworkCore                 | Creating users, password sign-in and the sign-in cookie                                                                                                                  | Works          | Nothing                                                                                                          |
@@ -652,8 +652,7 @@ free and keeps no sticky sessions, so a connection's requests can reach
 different instances. A Redis backplane does not change that. It forwards
 messages between servers, and each connection still lives on one.
 
-We expect Durable Instances to change this once they are released. Statically
-rendered Blazor pages work today.
+Statically rendered Blazor pages work.
 
 Typically used for live updates, chat, notifications and interactive Blazor
 components.

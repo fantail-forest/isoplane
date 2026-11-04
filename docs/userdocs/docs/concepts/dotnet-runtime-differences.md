@@ -352,8 +352,8 @@ The host serves plaintext HTTP; configure a reverse proxy to terminate TLS.
 
 Requests arrive as HTTP/1.1, without upgrades or trailers. That rules out gRPC
 over HTTP/2, which needs both, although gRPC-Web works. WebSockets are
-currently unavailable. SignalR and Blazor Server interactivity need sticky
-sessions and in-memory connection state, so they are
+unavailable. SignalR, and Blazor Server interactivity with it, needs sticky
+sessions and in-memory connection state, so it is
 [currently unsupported](library-compatibility.md#signalr).
 
 Streamed responses work, so server-sent events from your own endpoint do too,

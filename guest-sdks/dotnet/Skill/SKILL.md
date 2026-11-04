@@ -41,10 +41,9 @@ for the packages this project uses, as of the SDK version that wrote them.
    variables are not.
 6. **The file system is read-only and memory is bounded.** Stream large
    uploads and generated files instead of buffering them.
-7. **Connections are not pooled in the application.** Isoplane decides how
-   many instances run. Open a connection per request with the driver's
-   pooling off (`Pooling=false` for Npgsql) and use the database provider's
-   pooler to share connections.
+7. **Pool PostgreSQL connections outside the application.** Isoplane decides how
+   many instances run. Open a connection per request with Npgsql pooling off
+   (`Pooling=false`) and use the database provider's pooler to share connections.
 
 ## Commands
 

@@ -16,7 +16,7 @@ public CancellationToken Aborted { get; }
 
 Pass it to the asynchronous calls the handler makes, so that work nobody is waiting for stops.
 
-Running time is the time the request's code spends executing, plus the CPU time Isoplane spends handling system operations on its behalf, as [Running time](../../../../../concepts/dotnet-runtime-differences.md#running-time) describes. Time spent waiting for something the handler awaits, such as a database or another service, does not count. Once the token is cancelled, for either reason, the request has 5 seconds in which to finish; after that Isoplane stops the instance. A local session allows the most the platform offers. To see how the application behaves with less, set `occupancyMsPerDispatch` as [Try the application under tighter limits](../../../../../how-to/local-settings.md#try-the-application-under-tighter-limits) describes.
+Running time measures occupied worker intervals for the request's code and host operations on its behalf, as [Running time](../../../../../concepts/dotnet-runtime-differences.md#running-time) describes. Time spent waiting for something the handler awaits, such as a database or another service, does not count. Once the token is cancelled, for either reason, the request has 5 seconds in which to finish; after that Isoplane stops the instance. A local session uses default resource limits. To see how the application behaves with less, set `occupancyMsPerDispatch` as [Try the application under tighter limits](../../../../../how-to/local-settings.md#try-the-application-under-tighter-limits) describes.
 
 ## See Also
 

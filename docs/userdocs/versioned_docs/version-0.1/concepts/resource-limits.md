@@ -71,8 +71,8 @@ shows how.
 [Running time](dotnet-runtime-differences.md#running-time), is the amount of
 time that an instance of your application occupies a worker thread, plus any
 time that the host spends in I/O threads handling I/O on behalf of the
-instance. This does not include IOWait time. This is essentially the CPU time
-that an instance of your application consumes.
+instance. This includes time a worker is descheduled, but excludes parked
+asynchronous waits.
 
 There is no wall-clock request deadline while the client stays connected, so a
 slow downstream call or a long streamed response is fine.

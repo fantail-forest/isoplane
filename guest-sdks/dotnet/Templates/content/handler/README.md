@@ -99,8 +99,8 @@ settings in `tests/Sample-Handler.Tests/SandboxFixture.cs`.
   `SandboxFixture`.
 - **Accept large uploads.** Change the handler's parameter to `StreamingRequest`
   and read `request.Body` as a stream.
-- **Try tighter limits.** A local session uses default resource limits.
-  To see how the application behaves with less memory or time,
+- **Try tighter limits.** A local session uses default resource limits. To see how the
+  application behaves with less memory or time,
   add `isoplaneLimitsOverride` to the launch profile in `launchSettings.json`,
   beside `environmentVariables`:
 
