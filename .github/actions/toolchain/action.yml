@@ -1,0 +1,58 @@
+name: Isoplane toolchain
+description: Install only the toolchains needed by this job, using the repository pins.
+inputs:
+  rust:
+    description: Install Rust and its lint/guest targets
+    default: 'true'
+  dotnet:
+    description: Install the pinned .NET SDK
+    default: 'false'
+  wasm:
+    description: Install wasm-tools for managed runtime preparation
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    - name: Install Task and configure bounded build parallelism
+      shell: bash
+      run: |
+        curl --fail --location --retry 3 https://taskfile.dev/install.sh -o "$RUNNER_TEMP/install-task.sh"
+        sh "$RUNNER_TEMP/install-task.sh" -b "$RUNNER_TEMP/isoplane-tools" v3.53.1
+        echo "$RUNNER_TEMP/isoplane-tools" >> "$GITHUB_PATH"
+        {
+          echo CARGO_INCREMENTAL=0
+          echo CARGO_BUILD_JOBS=2
+          echo CARGO_PROFILE_DEV_DEBUG=0
+          echo CARGO_PROFILE_TEST_DEBUG=0
+          echo RUST_TEST_THREADS=2
+          echo DOTNET_CLI_TELEMETRY_OPTOUT=1
+          echo DOTNET_NOLOGO=1
+        } >> "$GITHUB_ENV"
+    - name: Install Rust from the Dockerfile pin
+      if: inputs.rust == 'true'
+      shell: bash
+      run: |
+        version=$(sed -n 's/^ARG RUST_VERSION=//p' Dockerfile)
+        test -n "$version"
+        if ! command -v rustup >/dev/null; then
+          curl --fail --location --retry 3 https://sh.rustup.rs -o "$RUNNER_TEMP/rustup.sh"
+          sh "$RUNNER_TEMP/rustup.sh" -y --profile minimal --default-toolchain none
+          export PATH="$HOME/.cargo/bin:$PATH"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+        fi
+        rustup toolchain install "$version" --profile minimal --component rustfmt,clippy --target wasm32-unknown-unknown,wasm32-wasip1
+        echo "RUSTUP_TOOLCHAIN=$version" >> "$GITHUB_ENV"
+    - name: Install .NET
+      if: inputs.dotnet == 'true'
+      uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+      with:
+        global-json-file: global.json
+    - name: Install wasm-tools
+      if: inputs.wasm == 'true'
+      shell: bash
+      run: |
+        # Runtime modules are produced on Linux; other platforms consume them.
+        test "$RUNNER_OS" = Linux
+        version=$(sed -n 's/^RUN cargo install --locked wasm-tools@//p' Dockerfile)
+        curl --fail --location --retry 3 "https://github.com/bytecodealliance/wasm-tools/releases/download/v${version}/wasm-tools-${version}-x86_64-linux.tar.gz" -o "$RUNNER_TEMP/wasm-tools.tar.gz"
+        tar -xzf "$RUNNER_TEMP/wasm-tools.tar.gz" --strip-components=1 -C "$RUNNER_TEMP/isoplane-tools" "wasm-tools-${version}-x86_64-linux/wasm-tools"

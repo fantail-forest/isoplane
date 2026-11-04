@@ -5,7 +5,7 @@
 target-dir = ".run-cargo-through-scripts-dev"
 
 [net]
-# Use the developer's Git/SSH authentication for private source dependencies.
+# Use Git for fetching pinned source dependencies.
 git-fetch-with-cli = true
 
 [env]

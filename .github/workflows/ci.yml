@@ -1,0 +1,183 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      tooling: ${{ steps.paths.outputs.tooling }}
+      abi: ${{ steps.paths.outputs.abi }}
+      rust: ${{ steps.paths.outputs.rust }}
+      managed: ${{ steps.paths.outputs.managed }}
+      docs: ${{ steps.paths.outputs.docs }}
+      editor: ${{ steps.paths.outputs.editor }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dorny/paths-filter@15192bc058cc28a13dbf6cde61f19e18988b7af6 # v3
+        id: paths
+        if: github.event_name != 'workflow_dispatch'
+        with:
+          # Use local Git on PRs too: no API token or PR write/read permission needed.
+          token: ''
+          base: ${{ github.event.pull_request.base.sha || (github.event.before != '0000000000000000000000000000000000000000' && github.event.before) || github.event.repository.default_branch }}
+          ref: ${{ github.event.before == '0000000000000000000000000000000000000000' && github.ref || github.sha }}
+          filters: .github/changes.yml
+
+  tooling:
+    needs: changes
+    if: needs.changes.outputs.tooling == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: {persist-credentials: false}
+      - uses: ./.github/actions/toolchain
+        with: {rust: 'false'}
+      - name: Check workflow syntax
+        run: |
+          curl --fail --location --retry 3 https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz -o "$RUNNER_TEMP/actionlint.tar.gz"
+          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" -color
+
+  rust:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: {persist-credentials: false}
+      - uses: ./.github/actions/toolchain
+        with: {wasm: 'true'}
+      - uses: Swatinem/rust-cache@e9d7b9f1e587218970671bac74e5511ed9506e6a # v2
+        with:
+          workspaces: '. -> .build/linux-x64/native'
+          shared-key: push-linux
+          cache-on-failure: false
+          save-if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+      - run: task ci:rust
+      - name: Record disk consumption
+        if: always()
+        run: df -h .; du -sh .build || true
+
+  native:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: windows-2022, platform: win-x64}
+          - {os: macos-15, platform: osx-arm64}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: {persist-credentials: false}
+      - uses: ./.github/actions/toolchain
+      - uses: Swatinem/rust-cache@e9d7b9f1e587218970671bac74e5511ed9506e6a # v2
+        with:
+          workspaces: '. -> .build/${{ matrix.platform }}/native'
+          shared-key: push-${{ matrix.platform }}
+          save-if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+      - run: task ci:native
+
+  abi:
+    needs: changes
+    if: needs.changes.outputs.abi == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: {persist-credentials: false}
+      - uses: ./.github/actions/toolchain
+      - run: git submodule update --init --depth 1 vendor/dotnet-runtime
+      - run: task ci:abi
+
+  managed:
+    needs: changes
+    if: needs.changes.outputs.managed == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: {persist-credentials: false}
+      - run: git submodule update --init --depth 1 tools/debugger-libs
+      - uses: ./.github/actions/toolchain
+        with: {rust: 'false', dotnet: 'true'}
+      - run: task ci:managed
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: managed-test-results
+          path: .build/test-results
+          retention-days: 7
+
+  docs:
+    needs: changes
+    if: needs.changes.outputs.docs == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: {persist-credentials: false}
+      - uses: ./.github/actions/toolchain
+        with: {dotnet: 'true'}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with: {node-version: '24'}
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+        with: {package_json_file: docs/userdocs/package.json}
+      - run: pnpm --dir docs/userdocs install --frozen-lockfile
+      - run: pnpm --dir docs/userdocs test
+      - run: pnpm --dir docs/userdocs build
+
+  editor:
+    needs: changes
+    if: needs.changes.outputs.editor == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with: {node-version: '24'}
+      - run: node --test tools/vscode-isoplane/test/*.test.js
+      - run: npm --prefix tools/vscode-isoplane ci
+      - run: npm --prefix tools/vscode-isoplane run package
+
+  required:
+    name: CI passed
+    needs: [changes, tooling, rust, native, abi, managed, docs, editor]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Reject failed or cancelled checks, allowing unchanged components
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          results = json.loads(os.environ['RESULTS'])
+          failed = [name for name, job in results.items() if job['result'] not in ('success', 'skipped')]
+          if failed:
+              raise SystemExit('Failed or cancelled checks: ' + ', '.join(failed))
+          PY

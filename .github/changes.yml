@@ -1,0 +1,62 @@
+# These are build dependency boundaries, not just directories owning tests.
+# Cargo/MSBuild handle incremental compilation within each selected job.
+rust:
+  - &build '{.github,taskfiles}/**'
+  - &root '{Taskfile.yml,Dockerfile,global.json,Directory.Build.*,nuget.config,.gitmodules,Isoplane.*}'
+  - &cargo '{Cargo.*,rustfmt.toml,.cargo/**}'
+  - &rust '{crates,guests,guest-sdks/rust,trust}/**'
+  - 'guest-sdks/dotnet/{Abi,native}/**'
+  - 'scripts/windows-build-components.json'
+  - 'tools/Isoplane.Native/**'
+abi:
+  - *build
+  - *root
+  - *cargo
+  - 'crates/{isoplane-abi,isoplane-test-support}/**'
+  - 'guest-sdks/dotnet/**'
+  - 'vendor/dotnet-runtime'
+managed:
+  - *build
+  - *root
+  - 'guest-sdks/dotnet/**'
+  - 'tools/!(vscode-isoplane)/**'
+  - 'licenses/**'
+docs:
+  - *build
+  - *root
+  - *cargo
+  - 'docs/userdocs/**'
+  - 'crates/isoplane-abi/**'
+  - 'crates/isoplane-test-support/**'
+  - 'guest-sdks/dotnet/**'
+  - 'tools/ApiReference/**'
+  - 'tools/BuildProtocol/**'
+  - 'tools/{Isoplane.Cli,Isoplane.Testing,Isoplane.Native,TelemetryProtocol}/**'
+  - 'tools/vscode-isoplane/package.json'
+editor:
+  - *build
+  - *root
+  - 'tools/vscode-isoplane/**'
+  - 'licenses/Isoplane-SDK-LICENSE.txt'
+tooling:
+  - '.github/**'
+  - 'scripts/**'
+  - 'taskfiles/{setup,test,release,ci}.yml'
+  - 'Taskfile.yml'
+integration:
+  - *build
+  - *root
+  - *cargo
+  - *rust
+  - 'guest-runtime/**'
+  - 'guest-sdks/dotnet/**'
+  - 'tools/**'
+  - 'vendor/**'
+  - 'licenses/**'
+  - 'LICENSE.txt'
+  - 'about.toml'
+  - 'deploy/local/**'
+  - 'scenario-tests/**'
+  - 'scripts/**'
+  # These guides are included in SDK packages as agent skill references.
+  - 'docs/userdocs/docs/**'

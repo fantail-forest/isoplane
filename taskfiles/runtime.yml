@@ -48,6 +48,8 @@ tasks:
     generates:
       - '{{.ROOT_DIR}}/.build/wasm32/runtime-modules/Isoplane.MonoRuntime.wasm'
       - '{{.ROOT_DIR}}/.build/wasm32/runtime-modules/Isoplane.MonoRuntime.Debug.wasm'
+      - '{{.MODULES}}/Isoplane.MonoRuntime.wasm.runtime'
+      - '{{.MODULES}}/Isoplane.MonoRuntime.Debug.wasm.runtime'
       - '{{.MODULES}}/runtime.json'
       - '{{.MODULES}}/native-imports.txt'
     cmds:
@@ -59,7 +61,7 @@ tasks:
   sqlite:
     desc: Build SQLite and its runtime bindings for the shared runtime on Linux
     run: once
-    deps: [compiler:selected]
+    deps: [compiler:selected, toolchain]
     sources:
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/MonoRuntime/sqlite/*'
     generates:

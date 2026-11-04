@@ -61,6 +61,7 @@ env:
   ISOPLANE_TEST_PROCESS_FIXTURE: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/managed-fixtures/bin/ProcessFixture/release/ProcessFixture{{if eq OS "windows"}}.exe{{end}}'
 
 includes:
+  ci: taskfiles/ci.yml
   notices: taskfiles/notices.yml
   node: taskfiles/node.yml
   release: taskfiles/release.yml

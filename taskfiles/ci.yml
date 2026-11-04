@@ -1,0 +1,67 @@
+version: '3'
+
+tasks:
+  rust:
+    desc: Check Rust libraries and hostile guests without managed-runtime builds
+    deps: [':fixtures:rust']
+    cmds:
+      - task: ':format:check'
+      - task: ':lint'
+        vars: {CLI_ARGS: '--locked --workspace'}
+      - task: ':test:unit'
+        vars: {CLI_ARGS: '--locked --workspace'}
+      - task: ':test:guests'
+      - '{{.DEVELOPMENT_COMMAND}}cargo test --locked -p isoplane-control --test validator_corpus --test validator_wasi_pal --test real_guests'
+      - '{{.DEVELOPMENT_COMMAND}}cargo test --locked -p isoplane-engine --test engine_validation --test engine_init_sandbox --test engine_budget --test engine_memory_limit'
+
+  abi:
+    desc: Check SDK and runtime-fork bindings against the host interface
+    deps: [':initialize']
+    cmds:
+      - '{{.DEVELOPMENT_COMMAND}}cargo test --locked -p isoplane-abi --test dotnet_sdk_drift'
+
+  managed:
+    desc: Check SDK behavior and build targets without native/installed-tool journeys
+    deps: [':managed:tests', ':runtime:toolchain']
+    cmds:
+      - for: [Build.Tests, Isoplane.AspNetCore.Tests, Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.Tests, Isoplane.OpenTelemetry.Tests, Isoplane.Analyzers.Tests]
+        cmd: '"{{.DOTNET}}" test "{{.MANAGED}}/bin/{{.ITEM}}/release/{{.ITEM}}.dll" --logger "trx;LogFileName={{.ITEM}}.trx" --results-directory "{{.ROOT_DIR}}/.build/test-results"'
+
+  native:
+    desc: Compile and test native SDK support on the current operating system
+    deps: [':native']
+    cmds:
+      - task: ':test:unit'
+        vars: {CLI_ARGS: '--locked -p isoplane-native'}
+      - task: ':lint'
+        vars: {CLI_ARGS: '--locked -p isoplane-native'}
+
+  nightly:host:
+    desc: Run host and runtime acceptance tests with managed fixtures
+    cmds:
+      - task: ':test:rust'
+        vars: {CLI_ARGS: '--locked --workspace --exclude isoplane-native'}
+
+  nightly:sdk:
+    desc: Exercise managed, installed SDK, editor and PostgreSQL journeys on Linux
+    cmds:
+      - task: ':test:managed'
+      - task: ':test:native'
+        # The release job runs both prepared-release journeys.
+        vars: {CLI_ARGS: '--locked -- --skip a_prepared_release_'}
+      - task: ':test:editor'
+      - task: ':scenarios:postgres'
+
+  nightly:release:
+    desc: Assemble and exercise the Linux SDK release locally, without publishing
+    cmds:
+      - task: ':setup:licenses'
+      - task: ':release'
+      - task: ':test:native'
+        vars: {CLI_ARGS: '--locked --test release_journey'}
+      - task: ':release:editor'
+      - '{{.DEVELOPMENT_COMMAND}}cargo build --locked --release -p isoplaned'
+      - task: ':node:package'
+        vars:
+          BINARIES: '{{.NATIVE_TARGET}}/release'
+          RUNTIMES: '{{.MODULES}}'
