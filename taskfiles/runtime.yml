@@ -7,6 +7,14 @@ vars:
   SQLITE: '{{.ROOT_DIR}}/.build/wasm32/runtime/sqlite'
 
 tasks:
+  fetch:
+    desc: Download the published compiler feed for the committed dependency pins
+    run: once
+    env:
+      ISOPLANE_PYTHON: '{{.PYTHON}}'
+    cmds:
+      - 'bash guest-runtime/fetch.sh "{{.ROOT_DIR}}/.build/wasm32/runtime"'
+
   default:
     desc: Prepare the shared runtime, or use explicitly selected modules
     run: once
@@ -176,6 +184,7 @@ tasks:
     deps: [toolchain]
     sources:
       - '{{.ROOT_DIR}}/vendor/icu/**/*'
+      - '{{.ROOT_DIR}}/vendor/dotnet-runtime/eng/isoplane/{build-icu.sh,manifest.env}'
       - '{{.ROOT_DIR}}/guest-runtime/build.sh'
       - '{{.ROOT_DIR}}/guest-runtime/manifest.env'
       - exclude: 'vendor/icu/.git'
