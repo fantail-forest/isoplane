@@ -66,11 +66,24 @@ PostgreSQL and release installation. They assemble unsigned SDK, VSIX and node
 artifacts without publishing. Windows/macOS installed-tool journeys are not part
 of this initial nightly configuration.
 
-The compiler feed and portable runtime modules have exact-input caches; native
-preparations remain local to each job. Jobs exchange compressed artifacts instead
-of sharing mounts or invoking remote machines. Rust dependency caches are separate
-per platform. Cache eviction causes rebuilding, never a skipped check. The pinned
-source forks must be publicly readable for anonymous CI checkouts.
+The OpenSSL fork publishes WASI libraries in immutable releases named for their
+source revision. The .NET runtime fork consumes its pinned OpenSSL release and
+publishes a portable compiler feed. Isoplane downloads the feed for its committed
+runtime submodule revision and checks its OpenSSL, ICU and WASI SDK identities.
+Publish each dependency's release before updating the consuming repository's pin;
+a missing release fails the consuming build with its expected download URL.
+These public downloads require no credentials, including for contributor PRs.
+
+Portable runtime modules include Isoplane SDK sources and have an exact-input
+cache. Jobs exchange compressed artifacts instead of sharing mounts or invoking
+remote machines. Wasmtime builds through Cargo with the consuming project's
+features and toolchain; Rust dependency caches are separate per platform.
+Native preparations remain local to each job.
+
+Local builds can download the same compiler feed with `task runtime:fetch`, then
+select it with `ISOPLANE_TEST_RUNTIME_FEED="$PWD/.build/wasm32/runtime/feed" task build`.
+`task runtime:compiler` builds from the checked-out fork sources on Linux using
+the same packaging recipe as the runtime fork's CI.
 
 The workflows use standard hosted runners. They bound compilation parallelism,
 omit Rust test debug information and report disk consumption; fitting a cold full
