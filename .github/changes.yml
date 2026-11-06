@@ -2,7 +2,7 @@
 # Cargo/MSBuild handle incremental compilation within each selected job.
 rust:
   - &build '{.github,taskfiles}/**'
-  - &root '{Taskfile.yml,Dockerfile,global.json,Directory.Build.*,nuget.config,.gitmodules,Isoplane.*}'
+  - &root '{Taskfile.yml,Dockerfile,global.json,Directory.Build.*,nuget.config,.gitattributes,.gitmodules,Isoplane.*}'
   - &cargo '{Cargo.*,rustfmt.toml,.cargo/**}'
   - &rust '{crates,guests,guest-sdks/rust,trust}/**'
   - 'guest-sdks/dotnet/{Abi,native}/**'
