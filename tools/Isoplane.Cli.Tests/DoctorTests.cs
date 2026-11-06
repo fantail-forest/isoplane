@@ -24,6 +24,7 @@ public sealed class DoctorTests
             start.ArgumentList.Add(typeof(CliPaths).Assembly.Location);
             start.ArgumentList.Add("doctor");
             start.Environment["ISOPLANE_HOME"] = home;
+            start.Environment["ISOPLANE_TELEMETRY_OPTOUT"] = "1";
             start.Environment["DOTNET_CLI_HOME"] = dotnetHome;
             start.Environment["DOTNET_GENERATE_ASPNET_CERTIFICATE"] = "false";
             using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start doctor.");

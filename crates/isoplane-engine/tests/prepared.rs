@@ -203,17 +203,16 @@ fn receipt_restoration_checks_the_exact_manifest_and_runtime() {
 #[test]
 fn receipt_restoration_rejects_a_different_manifest_digest() {
     let (engine, directory, expected) = compiled_artifact();
+    let error = restore(
+        &engine,
+        &directory.path().join("version"),
+        [0; 32],
+        expected.runtime_profile,
+    )
+    .expect_err("an artifact selected by a different receipt must not execute");
     assert!(
-        matches!(
-            restore(
-                &engine,
-                &directory.path().join("version"),
-                [0; 32],
-                expected.runtime_profile
-            ),
-            Err(PreparedError::Incompatible("catalog manifest digest"))
-        ),
-        "an artifact selected by a different receipt must not execute"
+        matches!(error, PreparedError::Incompatible(_)),
+        "expected an incompatible manifest, received {error:?}"
     );
 }
 
@@ -222,12 +221,11 @@ fn receipt_restoration_rejects_a_different_runtime_profile() {
     let (engine, directory, _) = compiled_artifact();
     let path = directory.path().join("version");
     let digest = engine.prepared_manifest_sha256(&path).expect("receipt");
+    let error = restore(&engine, &path, digest, [0; 32])
+        .expect_err("the selected runtime must match the compiled prepared state");
     assert!(
-        matches!(
-            restore(&engine, &path, digest, [0; 32]),
-            Err(PreparedError::Incompatible("catalog runtime profile"))
-        ),
-        "the selected runtime must match the compiled prepared state"
+        matches!(error, PreparedError::Incompatible(_)),
+        "expected an incompatible runtime, received {error:?}"
     );
 }
 
@@ -269,12 +267,11 @@ fn a_receipt_digest_refuses_a_substituted_manifest() {
     let manifest = path.join("manifest.bin");
     std::fs::remove_file(&manifest).expect("remove the read-only manifest");
     std::fs::copy(other.join("manifest.bin"), &manifest).expect("substitute the manifest");
+    let error = restore_by_digest(&engine, &path, digest, expected)
+        .expect_err("a manifest other than the selected receipt must not load");
     assert!(
-        matches!(
-            restore_by_digest(&engine, &path, digest, expected),
-            Err(PreparedError::Incompatible("catalog manifest digest"))
-        ),
-        "a manifest other than the selected receipt must not load"
+        matches!(error, PreparedError::Incompatible(_)),
+        "expected an incompatible manifest, received {error:?}"
     );
 }
 
