@@ -31,10 +31,10 @@ pub fn debugger_python() -> PathBuf {
     )
 }
 
-/// Cargo output selected by Task through `CARGO_TARGET_DIR`.
-pub fn target_directory() -> &'static Path {
-    static TARGET: OnceLock<PathBuf> = OnceLock::new();
-    TARGET.get_or_init(|| repo_root().join(prepared_path("CARGO_TARGET_DIR", "task test")))
+/// Test-owned compilation storage, separate from Cargo's managed outputs.
+pub fn cache_directory() -> &'static Path {
+    static CACHE: OnceLock<PathBuf> = OnceLock::new();
+    CACHE.get_or_init(|| prepared_path("ISOPLANE_TEST_FIXTURE_CACHE", "task test"))
 }
 
 fn read(path: &Path) -> Vec<u8> {

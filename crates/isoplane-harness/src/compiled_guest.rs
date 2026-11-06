@@ -87,7 +87,7 @@ pub(super) fn engine_serving(module: &[u8], files: PlatformFiles) -> (IsoplaneEn
         .expect("the returned-guest engine must initialize");
     static COMPILED: OnceLock<CompiledGuests> = OnceLock::new();
     let cache = COMPILED.get_or_init(|| {
-        CompiledGuests::new(isoplane_fixtures::target_directory().join("compiled-tests"))
+        CompiledGuests::new(isoplane_fixtures::cache_directory().join("compiled-tests"))
     });
     let template = cache.load(&engine, module).0;
     (engine, template)

@@ -47,12 +47,12 @@ pub fn instrumented_runtime() -> Vec<u8> {
 
 /// A cache holding the compiled shared runtime for preparation, which also
 /// keeps working files beside the artifacts it loads. It is a writable
-/// directory in the target directory whose entries link to Task's.
+/// test-cache directory whose entries link to Task's.
 pub fn compiled_runtime_cache() -> Arc<CompilationCache> {
     static CACHE: OnceLock<Arc<CompilationCache>> = OnceLock::new();
     CACHE
         .get_or_init(|| {
-            let cache = crate::target_directory().join("test-preparation-cache");
+            let cache = crate::cache_directory().join("test-preparation-cache");
             CompilationCache::create_directory(&cache).expect("create the test preparation cache");
             unlink_replaced_artifacts(&directory(), &cache);
             link_compiled_runtime(&cache);
