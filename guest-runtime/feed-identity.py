@@ -3,6 +3,7 @@ import argparse
 import base64
 import hashlib
 from pathlib import Path
+import subprocess
 import xml.etree.ElementTree as ET
 
 
@@ -13,7 +14,7 @@ def file_digest(stream, algorithm):
     return digest.digest()
 
 
-def verify_feed(feed):
+def verify_feed(feed, expected_sources=None):
     feed = Path(feed)
     props = ET.parse(feed / 'Isoplane.GuestRuntime.props').getroot()
 
@@ -25,6 +26,11 @@ def verify_feed(feed):
         if not value or not value.strip():
             raise ValueError(f'{feed} has no {name}; rebuild the runtime feed')
         return value.strip()
+
+    for name, expected in (expected_sources or {}).items():
+        actual = field(name)
+        if actual != expected:
+            raise ValueError(f'{name}: expected {expected}, received {actual}')
 
     packages = (
         ('Microsoft.NETCore.App.Runtime.Mono.wasi-wasm', 'IsoplaneGuestRuntimePack'),
@@ -48,15 +54,37 @@ def verify_feed(feed):
     return field('IsoplaneGuestRuntimePackVersion') + '@sha512:' + field('IsoplaneGuestRuntimePackSha512')
 
 
+def release_sources(wasi_sdk_version):
+    repository = Path(__file__).resolve().parent.parent
+
+    def revision(path):
+        return subprocess.check_output(
+            ['git', '-C', str(repository), 'rev-parse', f'HEAD:vendor/{path}'],
+            text=True).strip()
+
+    runtime = revision('dotnet-runtime')
+    return {
+        'IsoplaneGuestRuntimeSourceRevision': runtime,
+        'IsoplaneGuestRuntimeBuildInputs': runtime,
+        'IsoplaneGuestOpenSslSourceRevision': revision('openssl'),
+        'IsoplaneGuestIcuSourceRevision': revision('icu'),
+        'IsoplaneGuestWasiSdkVersion': wasi_sdk_version,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='action', required=True)
     artifact = commands.add_parser('verify-artifact')
     artifact.add_argument('feed', type=Path)
+    release = commands.add_parser('verify-release', help='Check the feed against committed dependency pins')
+    release.add_argument('feed', type=Path)
+    release.add_argument('wasi_sdk_version')
     args = parser.parse_args()
     try:
-        print(verify_feed(args.feed))
-    except (OSError, ValueError, ET.ParseError) as error:
+        expected = release_sources(args.wasi_sdk_version) if args.action == 'verify-release' else None
+        print(verify_feed(args.feed, expected))
+    except (OSError, ValueError, ET.ParseError, subprocess.CalledProcessError) as error:
         parser.exit(1, f'{error}\n')
 
 

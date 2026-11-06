@@ -11,34 +11,17 @@ jobs:
     outputs:
       key: ${{ steps.inputs.outputs.key }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 330
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with: {persist-credentials: false}
-      - name: Identify compiler inputs, including submodule commits
+      - name: Identify the pinned runtime release
         id: inputs
         run: |
-          digest=$(git ls-files --stage -- .gitmodules vendor ':(glob)guest-runtime/*.sh' ':(glob)guest-runtime/*.py' guest-runtime/manifest.env Taskfile.yml global.json nuget.config Directory.Build.props taskfiles/setup.yml taskfiles/runtime.yml taskfiles/WasiWorkload Dockerfile .github/actions/toolchain .github/workflows/runtime.yml | sha256sum | cut -d ' ' -f 1)
-          echo "key=compiler-linux-v1-$digest" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        id: compiler
-        with:
-          key: ${{ steps.inputs.outputs.key }}
-          # Only portable outputs; no source, absolute-path build state or native caches.
-          path: |
-            .build/wasm32/runtime/feed
-            .build/wasm32/runtime/packs
-      - uses: ./.github/actions/toolchain
-        if: steps.compiler.outputs.cache-hit != 'true'
-        with: {rust: 'false', dotnet: 'true'}
-      - name: Build compiler feed on a cache miss
-        if: steps.compiler.outputs.cache-hit != 'true'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang cmake ninja-build libkrb5-dev libssl-dev zlib1g-dev
-          git submodule update --init --depth 1 vendor/dotnet-runtime vendor/openssl vendor/icu
-          task runtime:compiler
-      - run: python3 guest-runtime/feed-identity.py verify-artifact .build/wasm32/runtime/feed
+          revision=$(git rev-parse HEAD:vendor/dotnet-runtime)
+          echo "key=compiler-$revision" >> "$GITHUB_OUTPUT"
+      - name: Download and verify the fork's compiler feed
+        run: bash guest-runtime/fetch.sh .build/wasm32/runtime
       - run: tar -czf compiler.tar.gz .build/wasm32/runtime/feed .build/wasm32/runtime/packs
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -49,12 +32,6 @@ jobs:
       - name: Record disk consumption
         if: always()
         run: df -h .; du -sh .build || true
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: failure()
-        with:
-          name: compiler-logs
-          path: .build/linux-x64/development/runtime-work/logs
-          retention-days: 7
 
   modules:
     needs: compiler
