@@ -65,9 +65,11 @@ tasks:
     deps: [license-rust, license-managed]
 
   license-rust:
+    deps: [':initialize']
     status: ['cargo about --version | grep -q "0.9.2"']
     cmds: ['cargo install --locked --features cli cargo-about --version 0.9.2']
 
   license-managed:
+    deps: [dotnet]
     status: ['"{{.USER_HOME}}/.dotnet/tools/nuget-license" --version | grep -q "4.0.18"']
     cmds: ['"{{.DOTNET}}" tool install --global nuget-license --version 4.0.18']
