@@ -86,7 +86,7 @@ thread and cannot start another, so the call throws
 
 Use asynchronous APIs in place of a thread: start the operations and
 `await Task.WhenAll(...)`. `Task.Run` compiles and runs, but it does not add a
-thread either. See [a single-threaded instance](../concepts/dotnet-runtime-differences.md#single-threaded).
+thread either. See [One thread per instance](../concepts/dotnet-runtime-differences.md#one-thread-per-instance).
 
 If the call is in a NuGet package, look for an option that turns the threaded
 behaviour off, or an asynchronous alternative in the same package.
@@ -118,7 +118,7 @@ A wait that can be satisfied at once behaves as it does anywhere else, such as
 `task.Wait()` on a task that has finished or `semaphore.Wait()` on a semaphore
 with a free slot. If you know that is the case at a particular call, suppress
 the warning there.
-[Use async, not blocking waits](../concepts/dotnet-runtime-differences.md#blocking-waits)
+[Blocking waits and synchronous I/O](../concepts/dotnet-runtime-differences.md#blocking-waits)
 lists what each call does.
 
 ### Where these warnings are reported

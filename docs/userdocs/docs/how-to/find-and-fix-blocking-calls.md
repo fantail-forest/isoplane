@@ -5,7 +5,7 @@ title: Find and fix blocking calls
 A synchronous wait that would block throws `PlatformNotSupportedException` in
 the sandbox, because an instance has one thread and nothing else on it could
 ever satisfy the wait.
-[Use async, not blocking waits](../concepts/dotnet-runtime-differences.md#blocking-waits)
+[Blocking waits and synchronous I/O](../concepts/dotnet-runtime-differences.md#blocking-waits)
 explains the rule. This guide finds the blocking calls in an existing
 application and replaces them.
 
@@ -33,7 +33,7 @@ the call itself, with a quick fix that awaits instead.
 Some blocking calls don't look like waits at all, such as reading
 `Request.Form` before the form has been read, or disposing a data reader that
 still has unread rows.
-[Use async, not blocking waits](../concepts/dotnet-runtime-differences.md#blocking-waits)
+[Calls that block without looking like waits](../concepts/library-compatibility.md#hidden-blocking-calls)
 lists the ones we know of, with their async forms.
 
 ## Replace each call
