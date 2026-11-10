@@ -109,3 +109,50 @@ open" and "before a collection happens".
 
 **Exception:** A pronoun whose antecedent is the subject of the same
 sentence.
+
+## Say what a thing is without a closing contrast
+
+State what a thing is and stop. The construction "X is a Y, not a Z", above
+all as a disclaimer that closes a paragraph, is one readers now associate with
+machine-written text. If the reader could really mistake X for Z, give the
+caveat a sentence of its own, in a personable voice, after the content it
+qualifies.
+
+**Not this:** "That figure is a target the project engineers toward and will
+track, not a benchmark result or a performance commitment." Write "Please
+understand that we use this target as a north star to inform our engineering
+decisions, and that it's not intended as a performance guarantee", and place
+it after the section the target introduces.
+
+**Exception:** A contrast the reader needs in order to act, such as which of
+two similar calls works.
+
+## Keep distinct things in distinct words
+
+When two things are related but different, give each its own word and state
+the relation between them once. Do not use one word as a stand-in for the
+other, and do not list them side by side as though they were the same kind of
+thing.
+
+**Not this:** "A dispatch is a unit of work, such as a request", where a
+request starts a dispatch and is not one. "The thread moves on to another
+request or another instance", which puts a unit of work and the thing that
+runs it in one category.
+
+**Exception:** A summary may use the reader's everyday word before the precise
+term has been introduced, provided it never equates the two.
+
+## Let the prose sound like a person
+
+Use contractions, and the first person plural where the project is speaking
+for itself. Both make the text warmer and neither makes it less precise. A
+phrase that asks for the reader's attention, such as "it's important to note
+that", earns its place when it marks something that looks like an exception
+to a rule just stated.
+
+**Not this:** Removing every "it's" and "won't" from a page for the sake of
+consistency. Cutting "it's important to note that" as filler when the
+sentence it opens qualifies the rule before it.
+
+**Exception:** Reference pages generated from code. An attention phrase on a
+sentence that qualifies nothing.
