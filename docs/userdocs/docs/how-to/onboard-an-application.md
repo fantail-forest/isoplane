@@ -77,7 +77,7 @@ through it too: the first build writes the agent a skill with these pages, as
   it.
 - **Threads.** Starting a thread throws, and the analyzer reports it as
   `ISOPLANE1002`. Rewrite the work as async code that the request awaits. See
-  [threads and the thread pool](../concepts/dotnet-runtime-differences.md#thread-pool).
+  [one thread per instance](../concepts/dotnet-runtime-differences.md#one-thread-per-instance).
 - **Long computations.** A method that computes for a long time without
   awaiting stalls its instance and can't be cancelled. Split it up as
   [running time](../concepts/resource-limits.md#running-time) describes.

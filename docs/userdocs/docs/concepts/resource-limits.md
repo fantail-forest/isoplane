@@ -141,6 +141,20 @@ Set `concurrentConnectionsPerInstance` in
 lower limit.
 :::
 
+## Socket options {#socket-options}
+
+Socket options are clamped to these ranges, and reading an option back
+returns the value in force:
+
+| Option                        | Range                                                      |
+| ----------------------------- | ---------------------------------------------------------- |
+| Receive and send buffer sizes | 4,096 to 212,992 bytes. An unset size reads back as 65,536 |
+| Keep-alive idle time          | 10 to 32,767 seconds                                       |
+| Keep-alive interval           | 1 to 32,767 seconds                                        |
+| Keep-alive probe count        | 1 to 127                                                   |
+
+`Socket.Ttl` throws `SocketException` with `OperationNotSupported`.
+
 ## Pending operations
 
 Each request has a cap on the host operations it can have in flight at once,

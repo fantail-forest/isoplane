@@ -20,7 +20,10 @@ asynchronous counterpart, such as Entity Framework Core's
 [`SaveChangesAsync`][DbContext.SaveChangesAsync], or a task read with
 [`Task.Result`][Task.Result], which is awaited instead. Most packages have
 some, and one rule covers them all:
-[Use async, not blocking waits](dotnet-runtime-differences.md#blocking-waits).
+[Blocking waits and synchronous I/O](dotnet-runtime-differences.md#blocking-waits).
+The exception is
+[a few calls that block without looking like waits](#hidden-blocking-calls),
+which this page does list.
 
 For each one that fails, the entry says what fails and how to work around it
 today, with the size of that change. Where there is more than one way through,
@@ -103,7 +106,7 @@ call failed.
 
 | What you see                                                                                                                                                                                                                                                                   | What it means                                                                                                                                                                                                           |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PlatformNotSupportedException: Arg_PlatformNotSupported`, with `Task.InternalWait` (internal to [`Task`][Task]), [`SemaphoreSlim.Wait`][SemaphoreSlim.Wait], [`Thread.Sleep`][Thread.Sleep], [`Socket`][Socket] or [`NetworkStream`][NetworkStream] near the top of the stack | Something waited synchronously. If the call is in your own code, see [Use async, not blocking waits](dotnet-runtime-differences.md#blocking-waits). If it is inside a library, find the library in the table above.                   |
+| `PlatformNotSupportedException: Arg_PlatformNotSupported`, with `Task.InternalWait` (internal to [`Task`][Task]), [`SemaphoreSlim.Wait`][SemaphoreSlim.Wait], [`Thread.Sleep`][Thread.Sleep], [`Socket`][Socket] or [`NetworkStream`][NetworkStream] near the top of the stack | Something waited synchronously. If the call is in your own code, see [Blocking waits and synchronous I/O](dotnet-runtime-differences.md#blocking-waits). If it is inside a library, find the library in the table above.                   |
 | `PlatformNotSupportedException: net_wasi_sync_name_resolution`                                                                                                                                                                                                                 | The same, for a connection that was opened synchronously.                                                                                                                                                               |
 | `PlatformNotSupportedException: Arg_PlatformNotSupported`, with [`Thread.Start`][Thread.Start] near the top of the stack                                                                                                                                                       | A library started a thread. See [MongoDB](#mongodb), [Redis](#redis) and [the console logger](#console-logging).                                                                                                        |
 | `DirectoryNotFoundException: /tmp/`                                                                                                                                                                                                                                            | ASP.NET Core tried to move a large request or response to a temporary file. See [uploads](#uploads), [request buffering](#enable-buffering), [Newtonsoft.Json](#newtonsoft-json) and [XML formatters](#xml-formatters). |
@@ -113,6 +116,21 @@ call failed.
 | An MCP server answers some requests with 404 and `Session not found`                                                                                                                                                                                                           | The server tracks sessions, and the request reached an instance that does not hold its session. See [MCP sessions](#mcp-sessions).                                                                                      |
 | A minimal API endpoint answers 200 with an empty body, or the build fails with `CS9144: Cannot intercept method`                                                                                                                                                               | A handler names code that another source generator produces. See [generated code in handlers](#generated-code-in-handlers).                                                                                             |
 | `InvalidOperationException: The session could not be loaded from its cache`                                                                                                                                                                                                    | The session was used before it was loaded. See [session](#session).                                                                                                                                                     |
+
+## Calls that block without looking like waits {#hidden-blocking-calls}
+
+These framework calls wait on I/O or on a task inside the call, so they
+throw `PlatformNotSupportedException` as
+[a blocking wait](dotnet-runtime-differences.md#blocking-waits) does, with
+no `Wait` or `Result` in sight. Each has an asynchronous form.
+
+| Call                                                                       | Why it blocks                                                                                                                | Use instead                                                 |
+| -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| ASP.NET Core's `Request.Form`, before the form has been read               | It reads the request body                                                                                                    | `await Request.ReadFormAsync()`                             |
+| `Read` on `Request.Body` and `Write` on `Response.Body`                    | They read and write the connection                                                                                           | `ReadAsync` and `WriteAsync`                                |
+| Razor's `Html.Partial` and `Html.RenderPartial`                            | They wait for the partial view, which fails if the partial awaits anything                                                   | `<partial name="..." />`, or `await Html.PartialAsync(...)` |
+| Entity Framework Core's `Add`, on an entity whose keys come from `UseHiLo` | It fetches a block of keys from the database, on the first call and whenever a block runs out, so it fails only occasionally | `await AddAsync(...)`                                       |
+| `using` on a data reader that still has unread rows                        | Disposing it reads the remaining rows                                                                                        | `await using`                                               |
 
 ## ASP.NET Core
 

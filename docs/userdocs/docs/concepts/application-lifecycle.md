@@ -176,7 +176,7 @@ occupying a worker thread.
 - Disposes what it opens. Do not leave cleanup to a finalizer.
 - Can use `IHttpClientFactory` with normal connection pooling and handler
   lifetimes; see
-  [HTTP clients and connection reuse](dotnet-runtime-differences.md#http-clients).
+  [Outgoing connections](dotnet-runtime-differences.md#outgoing-connections).
 - Saves anything that must last to a database or another external service
   before it responds.
 
