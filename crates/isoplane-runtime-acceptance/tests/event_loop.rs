@@ -233,6 +233,48 @@ in_mono_runtime! {
     }
 }
 
+/// How many wakes `path` needs to finish after its first slice parks.
+async fn wakes_to_finish(runtime: GuestRuntime, path: &str, answer: &str) -> usize {
+    let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
+    reactor.context.begin_slice(1, 1);
+    let mut guest = guest(&reactor, runtime);
+    let outcome = guest.start(path);
+    assert_eq!(
+        outcome.completion,
+        Completion::Parked,
+        "{path} must return control to the host at its first yield: {outcome:?}"
+    );
+    let (answered, wakes) = guest.finish_counting(&reactor, 16).await;
+    assert_eq!(answered, answer, "{path} must run to its end");
+    wakes
+}
+
+in_mono_runtime! {
+    #[tokio::test]
+    async fn each_yield_ends_the_slice_that_awaited_it(runtime: GuestRuntime) {
+        let one = wakes_to_finish(runtime, "/loop/yields/1", "yielded 1").await;
+        let four = wakes_to_finish(runtime, "/loop/yields/4", "yielded 4").await;
+        assert_eq!(
+            four - one,
+            3,
+            "each further yield must take exactly one further slice"
+        );
+    }
+}
+
+in_mono_runtime! {
+    #[tokio::test]
+    async fn each_yield_in_thread_pool_work_ends_the_slice_that_awaited_it(runtime: GuestRuntime) {
+        let one = wakes_to_finish(runtime, "/loop/pool-yields/1", "yielded 1").await;
+        let four = wakes_to_finish(runtime, "/loop/pool-yields/4", "yielded 4").await;
+        assert_eq!(
+            four - one,
+            3,
+            "each further yield must take exactly one further slice"
+        );
+    }
+}
+
 in_mono_runtime! {
     #[tokio::test(start_paused = true)]
     async fn request_timers_progress_while_retained_timer_work_is_withheld(runtime: GuestRuntime) {

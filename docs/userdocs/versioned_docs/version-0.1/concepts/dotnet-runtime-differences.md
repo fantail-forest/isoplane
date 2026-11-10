@@ -297,8 +297,10 @@ grace period, see [Resource limits](resource-limits.md#running-time).
 Cancellation reaches your code only at an `await`. While a method computes
 without awaiting, nothing else on the instance runs: not the token's
 callbacks, and not the other requests. Split a long computation into parts,
-and between them await an operation that suspends the dispatch, such as
-`await Task.Delay(1, cancellationToken)`.
+and `await Task.Yield()` between them. A yield ends the slice, which gives the
+instance's other requests a turn and lets a cancellation reach the token.
+Check the token after each yield, for example with
+`cancellationToken.ThrowIfCancellationRequested()`.
 
 ### Background work {#background-work}
 

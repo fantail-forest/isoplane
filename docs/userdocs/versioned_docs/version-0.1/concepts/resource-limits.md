@@ -96,8 +96,8 @@ never sees it change.
 :::tip
 Pass the token to everything you await, give any wait on an asynchronous lock
 a timeout or the token, and let `OperationCanceledException` end the request.
-Split a long computation into parts and await something that suspends
-between them, such as `await Task.Delay(1, cancellationToken)`.
+Split a long computation into parts, `await Task.Yield()` between them, and
+check the token after each yield.
 :::
 
 ## Background running time {#background-allowance}

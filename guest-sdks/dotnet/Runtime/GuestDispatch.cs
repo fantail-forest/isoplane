@@ -69,6 +69,7 @@ internal sealed class GuestDispatch
     {
         Current = null;
         _backgroundSliceRequested = false;
+        IsoplaneSynchronizationContext.BeginSlice();
         DispatchPartition.EnterInstance();
         if (OperatingSystem.IsWasi())
             SynchronizationContext.SetSynchronizationContext(IsoplaneSynchronizationContext.Instance);
@@ -78,6 +79,7 @@ internal sealed class GuestDispatch
     {
         Current = this;
         _sliceRequested = false;
+        IsoplaneSynchronizationContext.BeginSlice();
         DispatchPartition.Enter(Id);
         // Only a guest drains these queues; tooling and tests run the SDK on a
         // desktop runtime, where nothing would run a continuation posted here.
