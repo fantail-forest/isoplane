@@ -4,7 +4,7 @@
   "description": "Build and debug your Isoplane .NET APIs without leaving VS Code.",
   "version": "0.1.0",
   "publisher": "Isoplane",
-  "license": "SEE LICENSE IN LICENSE.txt",
+  "license": "Apache-2.0",
   "engines": {
     "vscode": "^1.95.0"
   },

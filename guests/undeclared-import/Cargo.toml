@@ -3,7 +3,7 @@ name = "undeclared-import"
 description = "Fixture guest that is well-formed except for one undeclared import, for the validator's V1 corpus"
 version.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 
 [lib]
 crate-type = ["cdylib"]

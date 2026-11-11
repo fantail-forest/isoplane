@@ -4,7 +4,7 @@ name = "isoplane-runtime-acceptance"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license-file.workspace = true
+license.workspace = true
 description = "Acceptance tests for the source-built guest runtime: its scheduling, socket, name-resolution, cryptography and HTTP integrations, and application packages on the shared interpreter runtime, driven through the real host reactor"
 
 [dev-dependencies]

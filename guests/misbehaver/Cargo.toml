@@ -3,7 +3,7 @@ name = "misbehaver"
 description = "Fixture guest with hostile routes (spin, cooperative spin, pinned spin, sync-over-async, allocation bomb, trap) for the budget-kill and eviction tests"
 version.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 
 [lib]
 crate-type = ["cdylib"]

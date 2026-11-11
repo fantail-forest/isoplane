@@ -1,6 +1,6 @@
 <Project>
   <PropertyGroup>
-    <PackageLicenseFile>Isoplane-SDK-LICENSE.txt</PackageLicenseFile>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
   </PropertyGroup>
   <ItemGroup>
     <None Include="$(MSBuildThisFileDirectory)Isoplane-SDK-LICENSE.txt" Pack="true" PackagePath="/" />

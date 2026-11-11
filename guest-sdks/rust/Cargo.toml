@@ -19,7 +19,7 @@ name = "isoplane-guest"
 workspace = "../../guests"
 version.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 description = "The Isoplane Rust guest SDK: the isoplane scheduler (a single-threaded, never-blocking executor), typed capability bindings, the snapshot-friendly arena allocator, and the pre-init unit registry."
 
 [lib]

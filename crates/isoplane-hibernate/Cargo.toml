@@ -4,7 +4,7 @@ name = "isoplane-hibernate"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license-file.workspace = true
+license.workspace = true
 description = "Local pressure snapshots: reserved backing, template-relative memory capture, and verified restore"
 
 [dependencies]

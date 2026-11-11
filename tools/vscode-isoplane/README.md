@@ -69,5 +69,5 @@ It accepts an executable or a CLI `.dll` assembly; assemblies run through `dotne
 
 ## License
 
-This extension is supplied under the Elastic License 2.0. See `LICENSE.txt`
+This extension is supplied under the Apache License 2.0. See `LICENSE.txt`
 in the extension package.

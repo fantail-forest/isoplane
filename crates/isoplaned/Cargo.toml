@@ -4,7 +4,7 @@ name = "isoplaned"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license-file.workspace = true
+license.workspace = true
 description = "The cell daemon: wires engine + host + control + proxy into a runnable node"
 
 [lib]
