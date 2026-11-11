@@ -89,30 +89,42 @@ built and checked on Linux, Windows x64 and macOS ARM64. Managed SDK tests, docs
 builds and extension unit tests/packaging run in separate jobs when affected.
 The workflow aggregates its results in **CI passed**.
 
+A change to the engine, the SDK, the runtime build or a pinned dependency also
+runs the host suite, which is the Rust test suite with .NET guests running in
+the sandbox. A change to the SDK, its tools, the runtime build, a pinned
+dependency or the scenario tests adds the SDK suite of managed, installed-tool,
+debugging, VS Code and PostgreSQL journeys.
+
 [Nightly](.github/workflows/nightly.yml) runs at 03:23 UTC. It compares inputs
 against the last successful nightly run, retrying failed changes and skipping
-unchanged inputs. Manual dispatch forces a run. Linux jobs cover host/runtime
-acceptance, managed and installed-tool tests, debugging, VS Code integration,
-PostgreSQL and release installation. They assemble unsigned SDK, VSIX and node
-artifacts without publishing. Windows/macOS installed-tool journeys are not part
-of this initial nightly configuration.
+unchanged inputs. Manual dispatch forces a run. It runs the host and SDK suites
+and adds the release suite, which assembles the unsigned SDK, VSIX and node
+artifacts and runs the installation journey against them. Windows/macOS
+installed-tool journeys are not part of this initial nightly configuration.
 
-The OpenSSL fork publishes WASI libraries in immutable releases named for their
-source revision. The .NET runtime fork consumes its pinned OpenSSL release and
-publishes a portable compiler feed. Isoplane downloads the feed for its committed
-runtime submodule revision and checks its OpenSSL, ICU and WASI SDK identities.
-Publish each dependency's release before updating the consuming repository's pin;
-a missing release fails the consuming build with its expected download URL.
-These public downloads require no credentials, including for contributor PRs.
+A pull request can pin a fork commit that has not landed. The .NET runtime and
+OpenSSL forks build every push to `isoplane-revisions` or an `isoplane/**`
+branch and keep the result as a workflow artifact for 90 days. The runtime
+fork's build consumes the OpenSSL build for its pinned revision and produces a
+portable compiler feed. Isoplane downloads the feed for its committed runtime
+submodule revision, waiting for a fork build that is still running, and checks
+the feed's OpenSSL, ICU and WASI SDK identities. A fork revision can also have
+a release, which keeps its build with no expiry. A download uses the release
+when the revision has one and the workflow artifact otherwise.
+
+**Fork pins have landed** fails until every pinned fork commit is on its fork's
+`isoplane-revisions` branch, so the suites run against unlanded commits and the
+merge waits for them. A fork's pull request merges with a merge commit, which
+keeps the commits the Isoplane pull request tested.
 
 Portable runtime modules include Isoplane SDK sources and have an exact-input
-cache. Jobs exchange compressed artifacts instead of sharing mounts or invoking
-remote machines. Wasmtime builds through Cargo with the consuming project's
-features and toolchain; Rust dependency caches are separate per platform.
-Native preparations remain local to each job.
+cache. Jobs exchange compressed artifacts. Wasmtime builds through Cargo with
+the consuming project's features and toolchain; Rust dependency caches are
+separate per platform. Native preparations remain local to each job.
 
 Local builds can download the same compiler feed with `task runtime:fetch`, then
 select it with `ISOPLANE_TEST_RUNTIME_FEED="$PWD/.build/wasm32/runtime/feed" task build`.
+A feed that comes from a workflow artifact needs a signed-in GitHub CLI.
 `task runtime:compiler` builds from the checked-out fork sources on Linux using
 the same packaging recipe as the runtime fork's CI.
 

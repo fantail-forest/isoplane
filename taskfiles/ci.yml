@@ -29,6 +29,11 @@ tasks:
       - for: [Build.Tests, Isoplane.AspNetCore.Tests, Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.Tests, Isoplane.OpenTelemetry.Tests, Isoplane.Analyzers.Tests]
         cmd: '"{{.DOTNET}}" test "{{.MANAGED}}/bin/{{.ITEM}}/release/{{.ITEM}}.dll" --logger "trx;LogFileName={{.ITEM}}.trx" --results-directory "{{.ROOT_DIR}}/.build/test-results"'
 
+  pins:
+    desc: Check that every pinned fork commit is on its fork's isoplane-revisions branch
+    cmds:
+      - bash scripts/check-fork-pins
+
   native:
     desc: Compile and test native SDK support on the current operating system
     deps: [':native']
@@ -38,13 +43,13 @@ tasks:
       - task: ':lint'
         vars: {CLI_ARGS: '--locked -p isoplane-native'}
 
-  nightly:host:
+  integration:host:
     desc: Run host and runtime acceptance tests with managed fixtures
     cmds:
       - task: ':test:rust'
         vars: {CLI_ARGS: '--locked --workspace --exclude isoplane-native'}
 
-  nightly:sdk:
+  integration:sdk:
     desc: Exercise managed, installed SDK, editor and PostgreSQL journeys on Linux
     cmds:
       - task: ':runtime'
@@ -59,7 +64,7 @@ tasks:
       - task: ':test:editor:prepared'
       - task: ':scenarios:postgres:run'
 
-  nightly:release:
+  integration:release:
     desc: Assemble and exercise the Linux SDK release locally, without publishing
     cmds:
       - task: ':setup:licenses'
