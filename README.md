@@ -117,6 +117,11 @@ when the revision has one and the workflow artifact otherwise.
 merge waits for them. A fork's pull request merges with a merge commit, which
 keeps the commits the Isoplane pull request tested.
 
+Publication needs more than a workflow artifact. `task release:publication`
+fails unless the pinned runtime and OpenSSL fork commits each have a release
+holding their build outputs. Each fork's **Isoplane build release** workflow
+creates that release from the build of a landed commit.
+
 Portable runtime modules include Isoplane SDK sources and have an exact-input
 cache. Jobs exchange compressed artifacts. Wasmtime builds through Cargo with
 the consuming project's features and toolchain; Rust dependency caches are
