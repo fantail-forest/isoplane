@@ -64,7 +64,7 @@ download_build() {
       exit 1 ;;
   esac
   echo "Downloading the runtime feed built by $url"
-  if ! gh run download "$run" --repo "$fork" --name runtime-feed --dir .; then
+  if ! gh run download "$run" --repo "$fork" --name runtime-feed --dir "$download"; then
     echo "The artifact of $url could not be downloaded. The fork keeps artifacts for 90 days; push a branch at $revision to rebuild an expired one." >&2
     exit 1
   fi
