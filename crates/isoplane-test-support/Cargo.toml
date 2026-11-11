@@ -4,7 +4,7 @@ name = "isoplane-test-support"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license-file.workspace = true
+license.workspace = true
 description = "Test support light enough for any crate's tests: permission and environment changes that revert when dropped, storage-fault injection, disposable published files, polling waits, child processes under test, prepared paths, file trees and WAT byte escaping"
 
 [dependencies]

@@ -4,7 +4,7 @@ name = "isoplane-runtime"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license-file.workspace = true
+license.workspace = true
 description = "Shared guest admission and host bindings, without deployment or node administration"
 
 [dependencies]

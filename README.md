@@ -151,5 +151,5 @@ cargo metadata --no-deps --format-version 1 \
 
 ## License
 
-First-party code is available under the [Elastic License 2.0](LICENSE.txt).
+First-party code is available under the [Apache License 2.0](LICENSE.txt).
 Third-party dependencies and forks retain their original licenses and notices.
