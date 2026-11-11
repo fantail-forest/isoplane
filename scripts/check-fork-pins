@@ -24,8 +24,14 @@ for pin in "${pins[@]}"; do
   fi
   case "$status" in
     identical|behind) echo "$fork: $revision is on isoplane-revisions." ;;
+    ahead)
+      echo "$fork: $revision is not on isoplane-revisions. Once it passes the fork's checks, land it by fast-forward: git push git@github.com:fantail-forest/$fork.git $revision:isoplane-revisions" >&2
+      unlanded=1 ;;
+    diverged)
+      echo "$fork: $revision has diverged from isoplane-revisions. Rebase its branch onto the fork's isoplane-revisions and pin the rebased commit." >&2
+      unlanded=1 ;;
     *)
-      echo "$fork: $revision is not on isoplane-revisions ($status). Merge its pull request on the fork with a merge commit first." >&2
+      echo "$fork: unexpected comparison of $revision with isoplane-revisions: $status" >&2
       unlanded=1 ;;
   esac
 done
