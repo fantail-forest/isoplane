@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Fail unless each fork commit whose build outputs go into a release has a
+# release of its own holding them: scripts/check-fork-releases
+# Needs a signed-in GitHub CLI.
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+# fork, tag prefix, pinned revision, then the assets its release has to hold.
+releases=(
+  "isoplane-dotnet-runtime isoplane-runtime $(git rev-parse HEAD:vendor/dotnet-runtime) runtime-feed.tar.gz SHA256SUMS"
+  "isoplane-openssl isoplane-wasi $(git rev-parse HEAD:vendor/openssl) openssl-wasi.tar.gz SHA256SUMS"
+)
+
+missing=0
+for release in "${releases[@]}"; do
+  read -r fork prefix revision assets <<<"$release"
+  repository="fantail-forest/$fork"
+  tag="$prefix-$revision"
+  if ! tagged=$(gh api "repos/$repository/commits/$tag" --jq .sha 2>/dev/null); then
+    echo "$fork: no tag $tag. Run the fork's release workflow for $revision." >&2
+    missing=1
+    continue
+  fi
+  if [ "$tagged" != "$revision" ]; then
+    echo "$fork: tag $tag is at $tagged, not at the pinned revision." >&2
+    missing=1
+    continue
+  fi
+  if ! published=$(gh release view "$tag" --repo "$repository" --json isDraft,assets \
+      --jq 'select(.isDraft == false) | [.assets[].name] | join(" ")') || [ -z "$published" ]; then
+    echo "$fork: tag $tag has no published release." >&2
+    missing=1
+    continue
+  fi
+  complete=1
+  for asset in $assets; do
+    case " $published " in
+      *" $asset "*) ;;
+      *)
+        echo "$fork: release $tag lacks $asset." >&2
+        complete=0 ;;
+    esac
+  done
+  if [ "$complete" = 1 ]; then
+    echo "$fork: release $tag holds $assets."
+  else
+    missing=1
+  fi
+done
+exit "$missing"

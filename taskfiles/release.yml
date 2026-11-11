@@ -83,9 +83,14 @@ tasks:
           -e 's|@SDK_PREREQUISITES@|Install the .NET 10 SDK. On Ubuntu 24.04:\n\nsudo apt-get install -y dotnet-sdk-10.0|' \
           scripts/developer-preview-readme.md > "{{.RELEASE}}/README.md"
 
+  forks:
+    desc: Check that each pinned fork commit has a release holding its build outputs
+    cmds:
+      - bash scripts/check-fork-releases
+
   publication:
     desc: Pack the publication feed with native libraries from all three platforms
-    deps: [shared]
+    deps: [forks, shared]
     vars:
       PUBLICATION: '{{.RELEASES}}/publication-{{.VERSION}}'
     sources:
