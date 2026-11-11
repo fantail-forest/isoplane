@@ -114,8 +114,10 @@ when the revision has one and the workflow artifact otherwise.
 
 **Fork pins have landed** fails until every pinned fork commit is on its fork's
 `isoplane-revisions` branch, so the suites run against unlanded commits and the
-merge waits for them. A fork's pull request merges with a merge commit, which
-keeps the commits the Isoplane pull request tested.
+merge waits for them. A fork lands commits by fast-forward, which keeps the
+commits the Isoplane pull request tested. Its branch rules accept a push to
+`isoplane-revisions` once the pushed commit has passed the fork's checks, and
+they refuse merge commits.
 
 Publication needs more than a workflow artifact. `task release:publication`
 fails unless the pinned runtime and OpenSSL fork commits each have a release
