@@ -43,6 +43,11 @@ tooling:
   - 'scripts/**'
   - 'taskfiles/{setup,test,release,ci}.yml'
   - 'Taskfile.yml'
+# Inputs of the SDK suite that the managed and editor filters leave out.
+journeys:
+  - 'guest-runtime/**'
+  - 'vendor/**'
+  - 'scenario-tests/**'
 integration:
   - *build
   - *root

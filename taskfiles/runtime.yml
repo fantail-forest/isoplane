@@ -8,7 +8,7 @@ vars:
 
 tasks:
   fetch:
-    desc: Download the published compiler feed for the committed dependency pins
+    desc: Download the compiler feed the runtime fork built for the committed pins
     run: once
     env:
       ISOPLANE_PYTHON: '{{.PYTHON}}'

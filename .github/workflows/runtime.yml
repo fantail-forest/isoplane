@@ -11,16 +11,20 @@ jobs:
     outputs:
       key: ${{ steps.inputs.outputs.key }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    # Covers the runtime fork's own 240-minute build limit, for a pin whose
+    # build is still running when this job starts.
+    timeout-minutes: 270
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with: {persist-credentials: false}
-      - name: Identify the pinned runtime release
+      - name: Identify the pinned runtime revision
         id: inputs
         run: |
           revision=$(git rev-parse HEAD:vendor/dotnet-runtime)
           echo "key=compiler-$revision" >> "$GITHUB_OUTPUT"
       - name: Download and verify the fork's compiler feed
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: bash guest-runtime/fetch.sh .build/wasm32/runtime
       - run: tar -czf compiler.tar.gz .build/wasm32/runtime/feed .build/wasm32/runtime/packs
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

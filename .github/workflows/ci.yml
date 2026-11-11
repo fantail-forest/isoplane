@@ -23,6 +23,8 @@ jobs:
       managed: ${{ steps.paths.outputs.managed }}
       docs: ${{ steps.paths.outputs.docs }}
       editor: ${{ steps.paths.outputs.editor }}
+      integration: ${{ steps.paths.outputs.integration }}
+      journeys: ${{ steps.paths.outputs.journeys }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -162,9 +164,29 @@ jobs:
       - run: npm --prefix tools/vscode-isoplane ci
       - run: npm --prefix tools/vscode-isoplane run package
 
+  integration:
+    needs: changes
+    if: needs.changes.outputs.integration == 'true' || github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/integration.yml
+    with:
+      suites: ${{ (needs.changes.outputs.managed == 'true' || needs.changes.outputs.editor == 'true' || needs.changes.outputs.journeys == 'true' || github.event_name == 'workflow_dispatch') && '["host", "sdk"]' || '["host"]' }}
+
+  pins:
+    name: Fork pins have landed
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: {persist-credentials: false}
+      - uses: ./.github/actions/toolchain
+        with: {rust: 'false'}
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: task ci:pins
+
   required:
     name: CI passed
-    needs: [changes, tooling, rust, native, abi, managed, docs, editor]
+    needs: [changes, tooling, rust, native, abi, managed, docs, editor, integration, pins]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5

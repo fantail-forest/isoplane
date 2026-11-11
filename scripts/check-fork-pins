@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Fail unless every fork commit this checkout pins is on that fork's
+# isoplane-revisions branch: scripts/check-fork-pins
+# Needs a signed-in GitHub CLI.
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+pins=(
+  "isoplane-dotnet-runtime $(git rev-parse HEAD:vendor/dotnet-runtime)"
+  "isoplane-openssl $(git rev-parse HEAD:vendor/openssl)"
+)
+while read -r revision; do
+  pins+=("isoplane-wasmtime $revision")
+done < <(sed -n 's/.*isoplane-wasmtime?rev=\([0-9a-f]\{40\}\).*/\1/p' Cargo.lock | sort -u)
+
+unlanded=0
+for pin in "${pins[@]}"; do
+  read -r fork revision <<<"$pin"
+  # The comparison reports where the revision stands relative to the branch.
+  if ! status=$(gh api "repos/fantail-forest/$fork/compare/isoplane-revisions...$revision" --jq .status); then
+    echo "$fork: could not compare $revision with isoplane-revisions; the fork may not have that commit." >&2
+    unlanded=1
+    continue
+  fi
+  case "$status" in
+    identical|behind) echo "$fork: $revision is on isoplane-revisions." ;;
+    *)
+      echo "$fork: $revision is not on isoplane-revisions ($status). Merge its pull request on the fork with a merge commit first." >&2
+      unlanded=1 ;;
+  esac
+done
+exit "$unlanded"

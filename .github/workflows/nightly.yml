@@ -47,62 +47,9 @@ jobs:
           ref: ${{ github.sha }}
           filters: .github/changes.yml
 
-  runtime:
+  integration:
     needs: changes
     if: needs.changes.outputs.run == 'true'
-    uses: ./.github/workflows/runtime.yml
-
-  integration:
-    needs: runtime
-    strategy:
-      fail-fast: false
-      matrix:
-        suite: [host, sdk, release]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 330
-    env:
-      ISOPLANE_TEST_RUNTIME_FEED: ${{ github.workspace }}/.build/wasm32/runtime/feed
-      ISOPLANE_TEST_RUNTIME_MODULES: ${{ github.workspace }}/.build/wasm32/runtime-modules
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with: {persist-credentials: false}
-      - uses: ./.github/actions/toolchain
-        with: {dotnet: 'true', wasm: 'true'}
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with: {node-version: '24'}
-      - uses: Swatinem/rust-cache@e9d7b9f1e587218970671bac74e5511ed9506e6a # v2
-        with:
-          workspaces: '. -> .build/linux-x64/native'
-          shared-key: push-linux
-          save-if: 'false'
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with: {name: runtime}
-      - run: tar -xzf runtime.tar.gz && rm runtime.tar.gz
-      - name: Prepare source dependencies and test tools
-        run: |
-          git submodule update --init --depth 1 tools/debugger-libs
-          sudo apt-get update
-          sudo apt-get install -y xvfb libnss3 libatk-bridge2.0-0 libgbm1 libasound2t64 rsync
-      - name: Prepare runtime source drift inputs
-        if: matrix.suite == 'host'
-        run: git submodule update --init --depth 1 vendor/dotnet-runtime
-      - name: Prepare release notices sources
-        if: matrix.suite == 'release'
-        run: git submodule update --init --depth 1 vendor/dotnet-runtime vendor/openssl vendor/icu
-      - name: Prepare SDK compatibility container
-        if: matrix.suite == 'sdk'
-        run: docker pull mcr.microsoft.com/dotnet/sdk:10.0.100
-      - run: task ci:nightly:${{ matrix.suite }}
-      - name: Record disk consumption
-        if: always()
-        run: df -h .; du -sh .build || true
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: always()
-        with:
-          name: nightly-${{ matrix.suite }}-results
-          path: |
-            .build/test-results
-            .build/releases
-            tools/vscode-isoplane/out/*.vsix
-          if-no-files-found: ignore
-          retention-days: 3
+    uses: ./.github/workflows/integration.yml
+    with:
+      suites: '["host", "sdk", "release"]'
