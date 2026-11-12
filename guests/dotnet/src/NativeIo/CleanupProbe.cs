@@ -63,7 +63,13 @@ public static class CleanupProbe
             Task completion = AfterSignalAsync();
             _signal.SetResult();
             await completion.ConfigureAwait(false);
-            for (int callback = 0; callback < 160; callback++) await Task.Yield();
+            // Thread pool work items, and not yields, so the chain is cut only by the batch bound.
+            for (int callback = 0; callback < 160; callback++)
+            {
+                var queued = new TaskCompletionSource();
+                ThreadPool.UnsafeQueueUserWorkItem(static source => ((TaskCompletionSource)source!).SetResult(), queued);
+                await queued.Task.ConfigureAwait(false);
+            }
             return Response.Text($"{_requests}:{_callbacks}");
         }
         if (path == "/drive-timer")

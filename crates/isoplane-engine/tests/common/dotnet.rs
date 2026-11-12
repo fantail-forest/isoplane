@@ -199,14 +199,37 @@ impl Request {
         instance.dispatch(&self.record(), budget())
     }
 
-    /// Dispatches a request the probe must answer synchronously with 200 and
-    /// returns the body it wrote.
+    /// Dispatches a request the probe must answer with 200 without waiting on
+    /// a host operation, running the slices it asks for, and returns the body
+    /// it wrote. A probe asks for a slice when it yields.
     pub fn answer(&self, instance: &mut Instance, recorder: &Recorder) -> Vec<u8> {
-        let outcome = self.dispatch(instance);
+        let record = self.record();
+        let mut outcome = instance.dispatch(&record, budget());
+        for _ in 0..8 {
+            if outcome.completion != Completion::Parked {
+                break;
+            }
+            let requested = {
+                let mut slices = recorder.ready_slices.lock();
+                slices
+                    .iter()
+                    .position(|(dispatch, _)| *dispatch == record.dispatch_id)
+                    .and_then(|index| slices.remove(index))
+            };
+            let Some((dispatch, future)) = requested else {
+                break;
+            };
+            outcome = instance.wake(
+                dispatch,
+                future,
+                &isoplane_abi::result::ResultRecord::Ok(Vec::new()),
+                budget(),
+            );
+        }
         assert_eq!(
             outcome.completion,
             Completion::Done,
-            "the probe must finish {} synchronously: {outcome:?}; imports: {:?}",
+            "the probe must finish {} without waiting on the host: {outcome:?}; imports: {:?}",
             self.path,
             recorder.calls.lock()
         );

@@ -279,9 +279,11 @@ public static unsafe class Exports<TRouter>
     {
         Task initialization = _initialization!;
         // Preparation has no background scheduler. Drain ready startup work under
-        // the initialization budget before returning to wait for host I/O.
+        // the initialization budget before returning to wait for host I/O. Each
+        // pass begins a slice of instance work, so a yield resumes in the next pass.
         do
         {
+            GuestDispatch.EnterFinished();
             ManagedWork.Drain();
         }
         while (!initialization.IsCompleted &&

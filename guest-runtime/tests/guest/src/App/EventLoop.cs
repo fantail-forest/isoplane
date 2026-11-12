@@ -101,9 +101,25 @@ internal sealed class EventLoop
             }
             case "yield":
             {
-                // A yield is ready work, not a wake source: it completes without parking.
+                // A yield needs no host operation: the slice it requests is its only wake.
                 await Task.Yield();
                 return "yielded";
+            }
+            case "yields":
+            {
+                int count = int.Parse(path[1], CultureInfo.InvariantCulture);
+                for (int index = 0; index < count; index++) await Task.Yield();
+                return "yielded " + count.ToString(CultureInfo.InvariantCulture);
+            }
+            case "pool-yields":
+            {
+                // Thread pool work has no synchronization context, so these yields queue to the pool.
+                int count = int.Parse(path[1], CultureInfo.InvariantCulture);
+                await Task.Run(async () =>
+                {
+                    for (int index = 0; index < count; index++) await Task.Yield();
+                }).ConfigureAwait(false);
+                return "yielded " + count.ToString(CultureInfo.InvariantCulture);
             }
             case "abandon":
                 _inactiveTimer = new Timer(_ => _abandonedCallbacks++, null, Timeout.Infinite, Timeout.Infinite);
