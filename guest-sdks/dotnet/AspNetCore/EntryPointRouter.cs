@@ -23,10 +23,14 @@ internal sealed class EntryPointRouter : IStreamingHttpRouter
     // Initialization waits for the host, so hooks the entry point subscribes can use the started application.
     public void Boot()
     {
-        running = startup.Invoke(entryPoint);
+        Start();
         Initialization.Starting += () => Started();
         Initialization.Completing += async () => await (await Started()).LoadDataProtectionKeysAsync();
     }
+
+    // Separate from Boot because initialization is process-wide and keeps its subscribers:
+    // a router that is not the process's application runs its entry point without joining it.
+    internal void Start() => running = startup.Invoke(entryPoint);
 
     public bool StreamsRequest(RequestHead request) => true;
 
