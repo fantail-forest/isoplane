@@ -62,7 +62,7 @@ public sealed class HostingTests
             application.MapGet("/", () => { events.Add("request"); return "ready"; });
             await application.RunAsync();
         }, "Application");
-        router.Boot();
+        router.Start();
         try
         {
             var first = router.Route(Dispatch());
@@ -84,7 +84,7 @@ public sealed class HostingTests
     public async Task an_entry_point_that_returns_without_running_an_application_is_refused()
     {
         var router = new EntryPointRouter(() => Task.CompletedTask, "Application");
-        router.Boot();
+        router.Start();
         var error = await Record.ExceptionAsync(() => router.Route(Dispatch()));
         Assert.True(error is InvalidOperationException && error.Message.Contains("RunAsync", StringComparison.Ordinal),
             "an entry point that starts no application must be refused with the missing call named: " + error);
@@ -105,7 +105,7 @@ public sealed class HostingTests
             await using var application = builder.Build();
             await application.RunAsync();
         }, "Application");
-        router.Boot();
+        router.Start();
         var failure = await Record.ExceptionAsync(() => router.Route(Dispatch()));
         var repeated = await Record.ExceptionAsync(() => router.Route(Dispatch()));
         Assert.True(failure is InvalidOperationException { Message: "startup failed" } && ReferenceEquals(failure, repeated) && starts == 1,
