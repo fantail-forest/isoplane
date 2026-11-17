@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using Isoplane.Debugging;
 using Isoplane.Native;
 
 namespace Isoplane.Cli;
@@ -12,7 +13,10 @@ internal sealed record SetupOptions(string? Source, bool AssumeYes)
     }
 }
 
-/// <summary>The machine-facing pieces of setup that tests replace: what the loader and the certificate store can find, who answers prompts, how privileged commands run.</summary>
+/// <summary>
+/// The machine-facing pieces of setup that tests replace: what the loader and the certificate store can find, who answers prompts,
+/// how privileged commands run, who agrees to a third party's license terms and which package those terms cover.
+/// </summary>
 internal sealed record SetupMachine(
     Func<string, bool> CanLoad,
     Func<bool> HasTrustedRoots,
@@ -20,7 +24,9 @@ internal sealed record SetupMachine(
     Func<string, Task<bool>> Confirm,
     Func<string, CancellationToken, Task<int>> RunPrivileged,
     Func<string, ISdkRegistrations> Registrations,
-    Func<CancellationToken, Task> ProveReady)
+    Func<CancellationToken, Task> ProveReady,
+    Func<string, Task<bool>> AgreeToLicense,
+    DebugProtocolPackage DebugProtocol)
 {
     internal static SetupMachine Production() => new(
         Prerequisites.CanLoad,
@@ -29,7 +35,9 @@ internal sealed record SetupMachine(
         ConfirmOnTerminal,
         (command, cancellation) => Processes.RunAsync("/bin/sh", ["-c", command], Environment.CurrentDirectory, cancellation),
         dotnet => new DotnetRegistrations(dotnet, CliPaths.Home),
-        Readiness.ProveAsync);
+        Readiness.ProveAsync,
+        ConfirmOnTerminal,
+        DebugProtocolPackage.Pinned());
 
     internal static Task<bool> ConfirmOnTerminal(string question)
     {
@@ -43,6 +51,7 @@ internal sealed record SetupMachine(
 /// <summary>
 /// Checks host prerequisites and registers templates for the running CLI.
 /// An explicit release source also registers its verified packages for offline development.
+/// With the user's agreement to Microsoft's license terms, downloads Microsoft's Debug Adapter Protocol library, which debugging needs.
 /// </summary>
 internal static class Setup
 {
@@ -61,6 +70,7 @@ internal static class Setup
         Directory.CreateDirectory(home);
         using var held = new FileStream(Path.Combine(home, "setup.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         var installation = Installation.Begin(home, cli);
+        var debugging = await EnsureDebugProtocolLibraryAsync(options, installation, home, machine, client, cancellation);
         var registrations = machine.Registrations(DotnetRegistrations.BootstrapDotnet());
         var templateSource = $"Isoplane.Templates::{cli.Version}";
         if (options.Source is not null)
@@ -82,7 +92,56 @@ internal static class Setup
         }
         await RegisterTemplatesAsync(installation, registrations, templateSource, cli.Version, cancellation);
         Console.WriteLine($"Isoplane {cli.Version} is ready. Create an application with: dotnet new isoplane-web --name MyApp");
+        if (!debugging)
+            Console.WriteLine($"Debugging is not enabled, because it needs {machine.DebugProtocol.Describe()} and setup did not download it. Microsoft licenses that library under its own terms: {DebugProtocolLibrary.LicenseUrl}. To enable debugging, run isoplane setup again and agree to those terms, or run isoplane setup --yes.");
         return 0;
+    }
+
+    /// <summary>
+    /// Leaves Microsoft's Debug Adapter Protocol library in the installation when it is already there or the user agrees to
+    /// Microsoft's terms for it, and returns whether it is there. <c>--yes</c> gives that agreement.
+    /// </summary>
+    private static async Task<bool> EnsureDebugProtocolLibraryAsync(SetupOptions options, Installation installation, string home, SetupMachine machine, HttpClient client, CancellationToken cancellation)
+    {
+        var package = machine.DebugProtocol;
+        var path = DebugProtocolLibrary.PathIn(home);
+        var directory = Path.GetDirectoryName(path)!;
+        byte[]? assembly = null;
+        if (!package.IsInstalledIn(home))
+        {
+            if (options.AssumeYes)
+                Console.Error.WriteLine($"The debugger needs {package.Describe()}, which Microsoft licenses under its own terms: {DebugProtocolLibrary.LicenseUrl}. --yes agrees to them.");
+            else if (!await AgreeAsync(machine, package, directory))
+                return false;
+            Console.Error.WriteLine($"Downloading {package.Describe()} from {package.Download}");
+            assembly = await package.FetchAssemblyAsync(client, cancellation);
+        }
+        RecordDirectory(installation, directory);
+        RecordFile(installation, path, package.AssemblySha256);
+        if (assembly is not null)
+        {
+            Directory.CreateDirectory(directory);
+            var temporary = path + ".part";
+            try
+            {
+                await File.WriteAllBytesAsync(temporary, assembly, cancellation);
+                File.Move(temporary, path, overwrite: true);
+            }
+            finally
+            {
+                if (File.Exists(temporary))
+                    File.Delete(temporary);
+            }
+            Console.Error.WriteLine($"Installed {package.Describe()} at {path}.");
+        }
+        return true;
+    }
+
+    private static Task<bool> AgreeAsync(SetupMachine machine, DebugProtocolPackage package, string directory)
+    {
+        Console.Error.WriteLine($"The debugger needs {package.Describe()}, which this tool does not include. Microsoft licenses it under its own terms: {DebugProtocolLibrary.LicenseUrl}");
+        Console.Error.WriteLine($"Setup can download it from nuget.org into {directory}. Without it, everything except debugging works.");
+        return machine.AgreeToLicense("Do you agree to Microsoft's license terms for this library?");
     }
 
     private static async Task RegisterTemplatesAsync(Installation installation, ISdkRegistrations registrations, string source, string version, CancellationToken cancellation)

@@ -8,6 +8,10 @@ breakpoints, inspect variables, and rebuild source edits for the next request.
 This extension supports local development. It requires VS Code
 1.95 or later, the .NET 10 SDK, and the Isoplane CLI and SDK installed separately.
 The CLI must be available on VS Code's PATH, or selected with `cliPath`.
+Debugging also needs Microsoft's Debug Adapter Protocol library, which
+Microsoft publishes under its own license terms. `isoplane setup` downloads it
+once you agree to those terms. Without it, starting a debug session shows the
+CLI's message saying so.
 See [isoplane.dev](https://isoplane.dev) for the platform.
 
 ## Debug your application

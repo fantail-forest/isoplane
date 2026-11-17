@@ -2,6 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const vscode = require('vscode');
+const { adapterCommand, adapterProblem } = require('./adapterCheck');
 
 const isoplaneSdk = /<Project\s[^>]*\bSdk\s*=\s*"Isoplane\.(Sdk|AspNetCore)[/"]/;
 
@@ -52,7 +53,12 @@ function activate(context) {
         vscode.debug.registerDebugConfigurationProvider('dotnet', csharpLaunch),
         vscode.debug.registerDebugConfigurationProvider('coreclr', csharpLaunch),
         vscode.debug.registerDebugConfigurationProvider('isoplane', {
-            resolveDebugConfigurationWithSubstitutedVariables(folder, configuration) {
+            async resolveDebugConfigurationWithSubstitutedVariables(folder, configuration) {
+                const problem = await adapterProblem(adapterCommand(configuration.cliPath));
+                if (problem) {
+                    vscode.window.showErrorMessage(problem);
+                    return undefined;
+                }
                 if (configuration.request === 'launch') {
                     const project = configuration.project || folder?.uri.fsPath;
                     if (!project) throw new Error('Open an Isoplane project folder or set project in your launch configuration.');
@@ -67,10 +73,7 @@ function activate(context) {
         }),
         vscode.debug.registerDebugAdapterDescriptorFactory('isoplane', {
             createDebugAdapterDescriptor(session) {
-                const cli = session.configuration.cliPath || 'isoplane';
-                return cli.toLowerCase().endsWith('.dll')
-                    ? new vscode.DebugAdapterExecutable('dotnet', [cli, 'debug-adapter'])
-                    : new vscode.DebugAdapterExecutable(cli, ['debug-adapter']);
+                return new vscode.DebugAdapterExecutable(...adapterCommand(session.configuration.cliPath));
             }
         }),
         vscode.commands.registerCommand('isoplane.detach', async () => {

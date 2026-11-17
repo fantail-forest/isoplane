@@ -55,6 +55,8 @@ EOF
 dotnet tool install Isoplane.Cli --tool-path "$workspace/tools" --configfile "$workspace/nuget.config" --version "$version"
 "$cli" setup --source "$release" --yes
 "$cli" setup --source "$release" --yes
+debug_protocol_library=$ISOPLANE_HOME/debugger/Microsoft.VisualStudio.Shared.VSCodeDebugProtocol.dll
+[[ -e $debug_protocol_library ]] || fail 'Setup did not install the debug protocol library after its license was accepted.'
 dotnet new isoplane-web --name Sample
 mkdir Consumer
 cat > Consumer/Consumer.csproj <<EOF
@@ -95,6 +97,7 @@ rm "$template_package"
 echo 'Customer content' > "$customer_file"
 "$cli" uninstall-sdk
 [[ ! -e $template_package ]] || fail 'Removal left the owned package installed.'
+[[ ! -e $debug_protocol_library ]] || fail 'Removal left the debug protocol library installed.'
 [[ -e $customer_file ]] || fail 'Removal deleted customer-owned content.'
 rm "$customer_file"
 "$cli" setup --source "$release" --yes

@@ -5,6 +5,7 @@ namespace Isoplane.Cli;
 /// <summary>The command definitions shared by argument parsing, help and shell completion.</summary>
 internal static class CliCommandLine
 {
+
     internal static Command Create()
     {
         var root = new Command("isoplane", "Build and run Isoplane applications.")
@@ -27,9 +28,9 @@ internal static class CliCommandLine
         Json(dev);
         root.Add(dev);
         root.Add(new Command("debug-adapter", "Serve the Debug Adapter Protocol on standard input/output."));
-        var setup = new Command("setup", "Check prerequisites and install matching project templates.");
+        var setup = new Command("setup", "Sets up Isoplane's tooling on this machine.");
         Value(setup, "--source", "Release directory or URL.");
-        Flag(setup, "--yes", "Install missing native prerequisites without prompting.", "-y");
+        Flag(setup, "--yes", "Install missing native prerequisites and agree to Microsoft's license terms for its Debug Adapter Protocol library, without prompting.", "-y");
         root.Add(setup);
         root.Add(new Command("uninstall-sdk", "Remove everything setup installed, keeping the CLI."));
         root.Add(new Command("cache", "Manage compiled runtimes shared by local sessions.")
@@ -40,7 +41,7 @@ internal static class CliCommandLine
         var prepare = new Command("prepare-runtime", "Compile a shared runtime into the local cache.");
         Value(prepare, "--runtime", "SDK tools/runtime directory.").Required = true;
         root.Add(prepare);
-        root.Add(new Command("doctor", "Check this machine's .NET SDK, native library and templates."));
+        root.Add(new Command("doctor", "Scans for and reports common install and configuration issues."));
         var init = new Command("init", "Register the Isoplane MCP server in a coding agent's project configuration.");
         var harness = new Option<string[]>("--harness") { Description = $"The coding agent to configure; repeat for several: {string.Join(", ", AgentHarness.Names)}.", Required = true, AllowMultipleArgumentsPerToken = true };
         harness.AcceptOnlyFromAmong(AgentHarness.Names);

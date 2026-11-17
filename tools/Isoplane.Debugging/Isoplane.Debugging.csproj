@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <Import Project="../Mono.Debugging.overrides" />
+  <Import Project="DebugProtocolPackage.props" />
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -14,18 +15,47 @@
     <Compile Remove="Backend/**/*.cs" />
     <Compile Include="../BuildProtocol/AsyncDebugSymbols.cs" Link="AsyncDebugSymbols.cs" />
     <ProjectReference Include="../debugger-libs/Mono.Debugging.Soft/Mono.Debugging.Soft.csproj" />
-    <PackageReference Include="Microsoft.VisualStudio.Shared.VSCodeDebugProtocol" Version="18.0.10427.1" />
+    <!-- Compiled against, never copied: the tool package leaves this library out and isoplane setup fetches it. -->
+    <PackageReference Include="$(DebugProtocolPackageId)" Version="$(DebugProtocolPackageVersion)" ExcludeAssets="runtime" />
+    <AssemblyMetadata Include="DebugProtocolPackageId" Value="$(DebugProtocolPackageId)" />
+    <AssemblyMetadata Include="DebugProtocolPackageVersion" Value="$(DebugProtocolPackageVersion)" />
+    <AssemblyMetadata Include="DebugProtocolPackageSha256" Value="$(DebugProtocolPackageSha256)" />
+    <AssemblyMetadata Include="DebugProtocolAssemblyEntry" Value="$(DebugProtocolAssemblyEntry)" />
+    <AssemblyMetadata Include="DebugProtocolAssemblySha256" Value="$(DebugProtocolAssemblySha256)" />
+    <AssemblyMetadata Include="DebugProtocolLicenseUrl" Value="$(DebugProtocolLicenseUrl)" />
+    <AssemblyMetadata Include="DebugProtocolInstallDirectory" Value="$(DebugProtocolInstallDirectory)" />
     <PackageReference Include="Mono.Cecil" Version="$(NuGetVersionCecil)" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="$(NuGetVersionRoslyn)" />
     <PackageReference Include="Microsoft.CodeAnalysis.VisualBasic.Workspaces" Version="$(NuGetVersionRoslyn)" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <None Include="../debugger-libs/LICENSE" Link="licenses/debugger-libs.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-    <None Include="../../licenses/third-party/packages/Microsoft.VisualStudio.Shared.VSCodeDebugProtocol.txt" Link="licenses/VSCodeDebugProtocol.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <InternalsVisibleTo Include="Isoplane.Debugging.Tests" />
   </ItemGroup>
   <Target Name="CollectHotReloadCompiler" BeforeTargets="GetCopyToOutputDirectoryItems;GetCopyToPublishDirectoryItems" DependsOnTargets="ResolveProjectReferences">
     <MSBuild Projects="../Isoplane.HotReload/Isoplane.HotReload.csproj" Targets="GetCompilerFiles" Properties="Configuration=$(Configuration)">
       <Output TaskParameter="TargetOutputs" ItemName="ContentWithTargetPath" />
     </MSBuild>
+  </Target>
+  <!-- Setup trusts the digests in DebugProtocolPackage.props, so a build fails when they stop describing the restored package. -->
+  <Target Name="VerifyDebugProtocolPackage" BeforeTargets="CoreCompile">
+    <PropertyGroup>
+      <_DebugProtocolPackageRoot>$(NuGetPackageRoot)$(DebugProtocolPackageId.ToLowerInvariant())/$(DebugProtocolPackageVersion)</_DebugProtocolPackageRoot>
+      <_DebugProtocolPackageFile>$(_DebugProtocolPackageRoot)/$(DebugProtocolPackageId.ToLowerInvariant()).$(DebugProtocolPackageVersion).nupkg</_DebugProtocolPackageFile>
+    </PropertyGroup>
+    <Error Condition="!Exists('$(_DebugProtocolPackageFile)')" Text="Restore $(MSBuildProjectName) first: $(_DebugProtocolPackageFile) is missing." />
+    <GetFileHash Files="$(_DebugProtocolPackageFile)" Algorithm="SHA256" HashEncoding="hex">
+      <Output TaskParameter="Hash" PropertyName="_DebugProtocolPackageHash" />
+    </GetFileHash>
+    <GetFileHash Files="$(_DebugProtocolPackageRoot)/$(DebugProtocolAssemblyEntry)" Algorithm="SHA256" HashEncoding="hex">
+      <Output TaskParameter="Hash" PropertyName="_DebugProtocolAssemblyHash" />
+    </GetFileHash>
+    <Error Condition="'$(_DebugProtocolPackageHash)' != '$(DebugProtocolPackageSha256)'" Text="DebugProtocolPackageSha256 in DebugProtocolPackage.props is $(DebugProtocolPackageSha256), but $(_DebugProtocolPackageFile) has SHA-256 $(_DebugProtocolPackageHash)." />
+    <Error Condition="'$(_DebugProtocolAssemblyHash)' != '$(DebugProtocolAssemblySha256)'" Text="DebugProtocolAssemblySha256 in DebugProtocolPackage.props is $(DebugProtocolAssemblySha256), but $(DebugProtocolAssemblyEntry) in the restored package has SHA-256 $(_DebugProtocolAssemblyHash)." />
+  </Target>
+  <!-- Places the restored assembly where a CLI loads it, for an ISOPLANE_HOME that isoplane setup did not prepare:
+       Task prepares the one debugger tests run against. -->
+  <Target Name="InstallDebugProtocolLibrary" DependsOnTargets="VerifyDebugProtocolPackage">
+    <Error Condition="'$(IsoplaneHome)' == ''" Text="Name the ISOPLANE_HOME directory with -p:IsoplaneHome." />
+    <Copy SourceFiles="$(_DebugProtocolPackageRoot)/$(DebugProtocolAssemblyEntry)" DestinationFolder="$(IsoplaneHome)/$(DebugProtocolInstallDirectory)" SkipUnchangedFiles="true" />
   </Target>
 </Project>

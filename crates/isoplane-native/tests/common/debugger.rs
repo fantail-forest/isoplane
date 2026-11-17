@@ -200,6 +200,7 @@ pub fn prepared_acceptance(mode: &str) {
     driver
         .arg(root.join("crates/isoplane-native/tests/common/debug_driver.py"))
         .arg(prepared_path("ISOPLANE_TEST_CLI_ASSEMBLY", "task cli"))
+        .env("ISOPLANE_HOME", isoplane_fixtures::debugger_home())
         .arg(metadata["endpoint"].as_str().unwrap())
         .arg(format!("{}/{route}", dev.url.trim_end_matches('/')))
         .arg(source)

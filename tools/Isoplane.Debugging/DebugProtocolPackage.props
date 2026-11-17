@@ -1,0 +1,16 @@
+<Project>
+  <!-- The one declaration of Microsoft's Debug Adapter Protocol package. The debugger compiles against it,
+       isoplane setup downloads it and both read these values, so a version change is made here with both digests. -->
+  <PropertyGroup>
+    <DebugProtocolPackageId>Microsoft.VisualStudio.Shared.VSCodeDebugProtocol</DebugProtocolPackageId>
+    <DebugProtocolPackageVersion>18.0.10427.1</DebugProtocolPackageVersion>
+    <!-- SHA-256 of the package file nuget.org serves for this version. -->
+    <DebugProtocolPackageSha256>a7b0a2490b00d62e5c52be35bf77e8c3a0065c8b5d1621dd62b727a02b34eb41</DebugProtocolPackageSha256>
+    <!-- The assembly NuGet selects for net10.0, the only file setup extracts. -->
+    <DebugProtocolAssemblyEntry>lib/netstandard2.0/$(DebugProtocolPackageId).dll</DebugProtocolAssemblyEntry>
+    <DebugProtocolAssemblySha256>651dbd8dae647b483f55478e1585b91e3c0840ff2a1cc9296e7dc8b0e63d9d83</DebugProtocolAssemblySha256>
+    <DebugProtocolLicenseUrl>https://go.microsoft.com/fwlink/?linkid=832965</DebugProtocolLicenseUrl>
+    <!-- The directory under ISOPLANE_HOME that holds the assembly. -->
+    <DebugProtocolInstallDirectory>debugger</DebugProtocolInstallDirectory>
+  </PropertyGroup>
+</Project>

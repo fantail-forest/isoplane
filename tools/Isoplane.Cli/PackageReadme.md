@@ -12,6 +12,10 @@ dotnet run
 ```
 
 `isoplane setup` checks prerequisites and installs the project templates.
+Debugging needs Microsoft's `Microsoft.VisualStudio.Shared.VSCodeDebugProtocol`
+library, which this package does not contain. Setup asks whether you agree to
+[Microsoft's license terms](https://go.microsoft.com/fwlink/?linkid=832965) for it
+and downloads it from nuget.org if you do.
 Building and running an application needs the .NET 10 SDK and this tool; it needs
 no workload, native compiler or Docker. Windows also needs the Microsoft Visual
 C++ x64 Redistributable.
@@ -20,7 +24,7 @@ C++ x64 Redistributable.
 | --- | --- |
 | `isoplane dev` | Runs the application in the current directory and rebuilds it on every save |
 | `isoplane dev --debug` | Runs it for a debugger to attach |
-| `isoplane doctor` | Checks this machine's .NET SDK, native library and templates |
+| `isoplane doctor` | Checks this machine's .NET SDK, native library and templates, and reports whether debugging is available |
 | `isoplane setup` | Installs the templates that match this tool; `isoplane uninstall-sdk` removes them |
 
 `dotnet run` in an Isoplane project starts the same local session.

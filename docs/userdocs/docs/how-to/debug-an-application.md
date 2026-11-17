@@ -8,6 +8,11 @@ You can also find the extension in VS Code's Extensions view by searching for
 `@id:Isoplane.isoplane`. Choose **Install Pre-Release Version** to use the
 preview extension.
 
+Debugging also needs Microsoft's Debug Adapter Protocol library, which
+Microsoft publishes under its own license terms. `isoplane setup` downloads it
+once you agree to those terms, as [Run setup](install.md#run-setup) describes.
+`isoplane doctor` says whether it is installed.
+
 ## Launch or attach
 
 With the extension installed, open your application

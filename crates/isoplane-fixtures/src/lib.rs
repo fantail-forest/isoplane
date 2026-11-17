@@ -31,6 +31,18 @@ pub fn debugger_python() -> PathBuf {
     )
 }
 
+/// The `ISOPLANE_HOME` Task prepared with the library `isoplane setup`
+/// downloads for the debugger, for the debug adapters tests start.
+pub fn debugger_home() -> PathBuf {
+    let path = prepared_path("ISOPLANE_TEST_HOME", "task test:debugger:environment");
+    assert!(
+        path.is_dir(),
+        "the prepared debugger installation is missing at {}; run task test:debugger:environment",
+        path.display()
+    );
+    path
+}
+
 /// Test-owned compilation storage, separate from Cargo's managed outputs.
 pub fn cache_directory() -> &'static Path {
     static CACHE: OnceLock<PathBuf> = OnceLock::new();

@@ -55,6 +55,8 @@ try {
     Invoke-Dotnet tool install Isoplane.Cli --tool-path $toolDirectory --configfile (Join-Path $workspace 'nuget.config') --version $manifest.packageVersion
     Invoke-Cli setup --source $Release --yes
     Invoke-Cli setup --source $Release --yes
+    $debugProtocolLibrary = Join-Path $env:ISOPLANE_HOME 'debugger/Microsoft.VisualStudio.Shared.VSCodeDebugProtocol.dll'
+    if (!(Test-Path $debugProtocolLibrary)) { throw 'Setup did not install the debug protocol library after its license was accepted.' }
     Invoke-Dotnet new isoplane-web --name Sample
     $consumer = Join-Path $workspace 'Consumer'
     New-Item -ItemType Directory $consumer | Out-Null
@@ -97,6 +99,7 @@ throw new Exception("Disposal left the application listener running.");
     Set-Content $customerFile 'Customer content'
     Invoke-Cli uninstall-sdk
     if (Test-Path $templatePackage) { throw 'Removal left the owned package installed.' }
+    if (Test-Path $debugProtocolLibrary) { throw 'Removal left the debug protocol library installed.' }
     if (!(Test-Path $customerFile)) { throw 'Removal deleted customer-owned content.' }
     Remove-Item $customerFile
     Invoke-Cli setup --source $Release --yes

@@ -27,7 +27,9 @@ isoplane setup
 ```
 
 Setup checks that your machine has what Isoplane needs and installs the project
-templates. If something is missing it names it and stops. It ends by reporting
+templates. If something is missing it names it and stops. It also asks whether
+you agree to Microsoft's license terms for a library the debugger uses, which
+[Run setup](how-to/install.md#run-setup) explains. It ends by reporting
 that Isoplane `0.1.0-preview.5` is ready.
 
 ## 3. Create an application

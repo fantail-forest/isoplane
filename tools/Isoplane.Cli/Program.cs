@@ -49,7 +49,7 @@ async Task<int> RunAsync()
     if (args[0] == "prepare-runtime") return RuntimePreparationCommand.Run(args, CliPaths.RuntimeCache, Console.Out);
     using var cancellation = new CommandCancellation();
     if (args[0] is "daemon" or "deploy") return await HostCommands.RunAsync(parsed, cancellation.Token);
-    if (args is ["debug-adapter"]) return await Isoplane.Debugging.AdapterCommand.RunAsync(cancellation.Token, new LocalDebugLauncher());
+    if (args is ["debug-adapter"]) return await Isoplane.Debugging.AdapterCommand.RunAsync(CliPaths.Home, cancellation.Token, new LocalDebugLauncher());
     if (args[0] == "setup")
     {
         using var client = new HttpClient(CertificateTrust.CreateHandler(allowAutoRedirect: true)) { Timeout = Timeout.InfiniteTimeSpan };

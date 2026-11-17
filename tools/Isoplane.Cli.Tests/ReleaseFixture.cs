@@ -1,5 +1,7 @@
+using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
+using Isoplane.Debugging;
 
 namespace Isoplane.Cli.Tests;
 
@@ -18,6 +20,10 @@ internal sealed class ReleaseFixture : IDisposable
     internal string Home => Path.Combine(Root, "home");
     internal string UserHome => Path.Combine(Root, "user");
     internal ReleaseIdentity Cli { get; }
+    /// <summary>A stand-in for Microsoft's debug protocol package, which the fixture's origin serves.</summary>
+    internal DebugProtocolPackage DebugProtocol { get; }
+    internal const string DebugProtocolRequest = "nuget/debug-protocol.nupkg";
+    internal static readonly byte[] DebugProtocolAssembly = "a stand-in for the protocol assembly"u8.ToArray();
 
     internal ReleaseFixture()
     {
@@ -26,6 +32,15 @@ internal sealed class ReleaseFixture : IDisposable
         Directory.CreateDirectory(UserHome);
         File.WriteAllText(Path.Combine(UserHome, ".profile"), "# user profile\n");
         DescribeRelease(Version, Revision);
+        var package = Path.Combine(Root, DebugProtocolRequest);
+        Directory.CreateDirectory(Path.GetDirectoryName(package)!);
+        using (var archive = ZipFile.Open(package, ZipArchiveMode.Create))
+        {
+            using var entry = archive.CreateEntry(DebugProtocolLibrary.AssemblyEntry).Open();
+            entry.Write(DebugProtocolAssembly);
+        }
+        DebugProtocol = new("1.2.3", new Uri($"http://origin.test/{DebugProtocolRequest}"),
+            Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(package))), Convert.ToHexStringLower(SHA256.HashData(DebugProtocolAssembly)));
     }
 
     internal ReleaseManifest DescribeRelease(string version, string revision)
@@ -91,14 +106,18 @@ internal sealed class FakeRegistrations : ISdkRegistrations
     }
 }
 
-/// <summary>A machine on which every prerequisite is present, nobody is asked anything, and the installed tools are taken to run.</summary>
+/// <summary>
+/// A machine on which every prerequisite is present, no prerequisite question is asked, the installed tools are taken to run,
+/// and the user declines Microsoft's license terms for the debug protocol library.
+/// </summary>
 internal static class Machines
 {
     internal static SetupMachine Ready(ReleaseFixture bundle, FakeRegistrations registrations) => new(
         _ => true, () => true, new OperatingSystemRelease("ubuntu", "24.04"),
         _ => throw new InvalidOperationException("nothing should be asked on a ready machine"),
         (_, _) => throw new InvalidOperationException("nothing privileged should run on a ready machine"),
-        _ => registrations, _ => Task.CompletedTask);
+        _ => registrations, _ => Task.CompletedTask,
+        _ => Task.FromResult(false), bundle.DebugProtocol);
 }
 
 /// <summary>An HTTP origin serving a directory tree, with files that can be withheld or cut short.</summary>
