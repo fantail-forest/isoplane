@@ -14,7 +14,7 @@ public sealed class EntryMethodTests
         { Handler, [] },
         { "[HttpHandler] public static async Task<Response> HandleAsync(StreamingRequest request) { await Task.Yield(); return Response.Text(\"ok\"); }", [] },
         { "[HttpHandler] internal static Task<Response> HandleAsync(Request request) => Task.FromResult(Response.Text(\"ok\"));", [] },
-        { Handler + "\n[Initializer] public static Task InitializeAsync() => Task.CompletedTask;\n[Activated] private static Task ActivatedAsync() => Task.CompletedTask;", [] },
+        { Handler + "\n[TemplateInitializer] public static Task InitializeAsync() => Task.CompletedTask;\n[InstanceStart] private static Task ActivatedAsync() => Task.CompletedTask;", [] },
 
         { "[HttpHandler] public static Response Handle(Request request) => Response.Text(\"ok\");", ["ISOPLANE1011"] },
         { "[HttpHandler] public static ValueTask<Response> HandleAsync(Request request) => new(Response.Text(\"ok\"));", ["ISOPLANE1011"] },
@@ -26,13 +26,13 @@ public sealed class EntryMethodTests
         { Handler + "\npublic static Task<Response> HandleAsync(StreamingRequest request) => Task.FromResult(Response.Text(\"ok\"));", ["ISOPLANE1016"] },
         { Handler + "\n[HttpHandler] public static Task<Response> OtherAsync(Request request) => Task.FromResult(Response.Text(\"ok\"));", ["ISOPLANE1017", "ISOPLANE1017"] },
 
-        { Handler + "\n[Initializer] public static void Initialize() { }", ["ISOPLANE1013"] },
-        { Handler + "\n[Initializer] public static async void Initialize() { await Task.Yield(); }", ["ISOPLANE1013"] },
-        { Handler + "\n[Activated] public static ValueTask ActivatedAsync() => default;", ["ISOPLANE1013"] },
-        { Handler + "\n[Activated] public static Task<int> ActivatedAsync() => Task.FromResult(1);", ["ISOPLANE1013"] },
-        { Handler + "\n[Initializer] public static Task InitializeAsync(int count) => Task.CompletedTask;", ["ISOPLANE1014"] },
-        { Handler + "\n[Initializer] public static void Initialize(int count) { }", ["ISOPLANE1013", "ISOPLANE1014"] },
-        { Handler + "\n[Activated] public static Task A() => Task.CompletedTask;\n[Activated] public static Task B() => Task.CompletedTask;", ["ISOPLANE1017", "ISOPLANE1017"] },
+        { Handler + "\n[TemplateInitializer] public static void Initialize() { }", ["ISOPLANE1013"] },
+        { Handler + "\n[TemplateInitializer] public static async void Initialize() { await Task.Yield(); }", ["ISOPLANE1013"] },
+        { Handler + "\n[InstanceStart] public static ValueTask ActivatedAsync() => default;", ["ISOPLANE1013"] },
+        { Handler + "\n[InstanceStart] public static Task<int> ActivatedAsync() => Task.FromResult(1);", ["ISOPLANE1013"] },
+        { Handler + "\n[TemplateInitializer] public static Task InitializeAsync(int count) => Task.CompletedTask;", ["ISOPLANE1014"] },
+        { Handler + "\n[TemplateInitializer] public static void Initialize(int count) { }", ["ISOPLANE1013", "ISOPLANE1014"] },
+        { Handler + "\n[InstanceStart] public static Task A() => Task.CompletedTask;\n[InstanceStart] public static Task B() => Task.CompletedTask;", ["ISOPLANE1017", "ISOPLANE1017"] },
     };
 
     [Theory]
@@ -88,7 +88,7 @@ public sealed class EntryMethodTests
             {
                 public static async Task Main() => await Task.Yield();
 
-                [Initializer] public static Task InitializeAsync() => Task.CompletedTask;
+                [TemplateInitializer] public static Task InitializeAsync() => Task.CompletedTask;
             }
 
             """;

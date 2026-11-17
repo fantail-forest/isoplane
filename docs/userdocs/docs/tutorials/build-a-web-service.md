@@ -102,10 +102,10 @@ attributes.
 - **`[HttpHandler]`** marks `HandleAsync`, which receives every request. It
   takes a `Request` and returns a `Task<Response>`. Its body is a `switch` on
   the method and path, with one line for each route.
-- **`[Initializer]`** marks a method that runs during template preparation.
+- **`[TemplateInitializer]`** marks a method that runs during template preparation.
   Isoplane saves what it leaves in memory, and every instance of the service
   starts from that copy. Here it reads a setting and creates the `Greeter`.
-- **`[Activated]`** marks a method that runs in each instance before its first
+- **`[InstanceStart]`** marks a method that runs in each instance before its first
   request. Here it gives the instance an identifier, which would be the same in
   every instance if the initializer had created it.
 
@@ -257,8 +257,8 @@ Where to go next:
 
 - [Handle requests without ASP.NET](../how-to/handle-requests-without-aspnet.md) covers
   request bodies, streaming, settings and the rules for the three methods.
-- [The application lifecycle](../concepts/application-lifecycle.md) explains initialization
-  and activation, and who is responsible for what at each stage.
+- [The application lifecycle](../concepts/application-lifecycle.md) explains template initialization
+  and instance start, and who is responsible for what at each stage.
 - [How .NET differs on Isoplane](../concepts/dotnet-runtime-differences.md) lists what to
   keep in mind as the service grows.
 - [Build a small API with ASP.NET Core and EF Core](build-an-api.md) builds an

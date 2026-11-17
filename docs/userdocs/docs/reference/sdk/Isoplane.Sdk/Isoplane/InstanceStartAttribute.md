@@ -1,23 +1,23 @@
 ---
-title: "ActivatedAttribute class"
+title: "InstanceStartAttribute class"
 mdx:
   format: md
 ---
 
-# ActivatedAttribute class
+# InstanceStartAttribute class :since[next]
 
 Marks the method that runs in each instance before its first request, in an application written without ASP.NET.
 
 ```csharp
 [AttributeUsage(AttributeTargets.Method)]
-public sealed class ActivatedAttribute : Attribute
+public sealed class InstanceStartAttribute : Attribute
 ```
 
 ## Public Members
 
 | name | description |
 | --- | --- |
-| [ActivatedAttribute](ActivatedAttribute/-ctor.md)() | The default constructor. |
+| [InstanceStartAttribute](InstanceStartAttribute/-ctor.md)() :since[next] | The default constructor. |
 
 ## Remarks
 
@@ -25,15 +25,15 @@ Every instance starts as a copy of the same template, so anything created before
 
 The method is static, returns `Task` and takes no parameters. It can have any name, and an application has at most one. An exception fails the request the instance was started for.
 
-An application with a `Program.cs` subscribes to [`Activated`](./Activation/Activated.md) instead; there the attribute is a build error. [`Activation`](./Activation.md) lists what Isoplane already reseeds for you, and [The application lifecycle](../../../../concepts/application-lifecycle.md) explains templates and instances in full.
+An application with a `Program.cs` subscribes to [`Starting`](./Instance/Starting.md) instead; there the attribute is a build error. [`Instance`](./Instance.md) lists what Isoplane already reseeds for you, and [The application lifecycle](../../../../concepts/application-lifecycle.md) explains templates and instances in full.
 
 ## Examples
 
 ```csharp
 private static Guid instance;
 
-[Activated]
-public static Task ActivatedAsync()
+[InstanceStart]
+public static Task StartAsync()
 {
     instance = Guid.NewGuid();
     return Task.CompletedTask;

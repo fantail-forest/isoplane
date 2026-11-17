@@ -10,7 +10,7 @@ namespace Isoplane.App;
 /// </summary>
 public static class NodeProbe
 {
-    [Initializer]
+    [TemplateInitializer]
     public static Task InitializeAsync() => FilesystemProbe.InitializeAsync();
 
     [HttpHandler]

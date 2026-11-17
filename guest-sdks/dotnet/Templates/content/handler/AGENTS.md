@@ -22,8 +22,8 @@ the project.
 ## The sandbox
 
 - `Handler.cs` holds the entry methods: the static `[HttpHandler]` method
-  receives each request, `[Initializer]` prepares shared state before Isoplane captures the
-  template every instance starts from, and `[Activated]` runs in each instance.
+  receives each request, `[TemplateInitializer]` prepares shared state before Isoplane captures the
+  template every instance starts from, and `[InstanceStart]` runs in each instance.
   Each attribute marks exactly one method, and the build checks their shapes.
 - Await everything. Starting a thread or waiting synchronously, with `.Result`,
   `.Wait()`, `Thread.Sleep` or a synchronous database call, fails in the

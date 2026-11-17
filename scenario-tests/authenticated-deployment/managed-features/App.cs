@@ -39,7 +39,7 @@ public static class App
             Console.WriteLine("source-free-console");
             return "source free";
         });
-        Isoplane.Initialization.Initializing += () => app.WarmupAsync("/");
+        Isoplane.Template.Initializing += () => app.WarmupAsync("/");
         await app.RunAsync();
     }
 

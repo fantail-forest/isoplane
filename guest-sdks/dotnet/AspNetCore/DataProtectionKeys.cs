@@ -74,7 +74,7 @@ public static class DataProtectionKeys
     /// <param name="store">Adds one key element, with the name Data Protection gives it, to the store. It shares <paramref name="load"/>'s scope.</param>
     /// <returns><paramref name="builder"/>.</returns>
     /// <remarks>
-    /// Loading happens after every <c>Initialization.Initializing</c> callback has finished, so a
+    /// Loading happens after every <c>Template.Initializing</c> callback has finished, so a
     /// callback that creates the store's tables runs first. A callback that itself protects or
     /// unprotects data, for instance by warming up a page with a form, awaits
     /// <see cref="LoadDataProtectionKeysAsync"/> before it does. Each prepared template keeps its
@@ -102,7 +102,7 @@ public static class DataProtectionKeys
 
     /// <summary>
     /// Loads the keys of a store registered with <see cref="UseKeysFrom"/> now, instead of when
-    /// initialization finishes. Await it in an <c>Initialization.Initializing</c> callback before
+    /// initialization finishes. Await it in a <c>Template.Initializing</c> callback before
     /// anything there protects or unprotects data, and after whatever creates the store's tables.
     /// </summary>
     /// <param name="application">The built application.</param>
@@ -201,7 +201,7 @@ internal sealed class LoadedKeyStore(
 
     public IReadOnlyCollection<XElement> GetAllElements() =>
         (elements ?? throw new InvalidOperationException(
-            "The Data Protection keys are not loaded yet. They load when initialization finishes; to protect or unprotect data in an Initialization.Initializing callback, await app.LoadDataProtectionKeysAsync() first."))
+            "The Data Protection keys are not loaded yet. They load when initialization finishes; to protect or unprotect data in a Template.Initializing callback, await app.LoadDataProtectionKeysAsync() first."))
         .Select(element => new XElement(element)).ToList();
 
     public void StoreElement(XElement element, string friendlyName)

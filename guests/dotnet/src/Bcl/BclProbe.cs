@@ -7,7 +7,7 @@ namespace Isoplane.App;
 /// <summary>Base class library behaviour backed by the platform, one probe per first path segment.</summary>
 public static class BclProbe
 {
-    [Initializer]
+    [TemplateInitializer]
     public static async Task InitializeAsync()
     {
         await RandomnessProbe.InitializeAsync();

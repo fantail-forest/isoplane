@@ -52,7 +52,7 @@ dotnet test
 | `compose.yaml` | The development database |
 | `.config/dotnet-tools.json` | The version of `dotnet ef` this project uses; `dotnet tool restore` installs it. The file cannot hold comments |
 | `src/Sample-WebApp/Sample-WebApp.csproj` | The Isoplane SDK reference, the packages, the User Secrets identifier and the build's optional checks |
-| `src/Sample-WebApp/Program.cs` | Where configuration comes from, services, the Data Protection keys, middleware, and the initialization and activation hooks |
+| `src/Sample-WebApp/Program.cs` | Where configuration comes from, services, the Data Protection keys, middleware, and the template initialization and instance start hooks |
 | `src/Sample-WebApp/appsettings.json`, `appsettings.Development.json` | Settings for every environment, and for development |
 | `src/Sample-WebApp/Properties/launchSettings.json` | The local port and the settings a local session supplies |
 | `src/Sample-WebApp/Pages/` | The pages: each `.cshtml` file is a page's markup, and the `.cshtml.cs` beside it handles its requests |
@@ -71,7 +71,7 @@ dotnet test
 - **`Program.cs` ends with `await app.RunAsync()`.** The synchronous `app.Run()`
   would block, which a sandboxed application cannot do; the build rejects it.
 - **Instances start from a template.** Isoplane runs the application up to
-  `RunAsync` and through its `Initialization.Initializing` callbacks, and captures
+  `RunAsync` and through its `Template.Initializing` callbacks, and captures
   the result. Every instance starts as a copy of that template. The callback here
   serves a request to the home page, so the page, its tag helpers and its query
   are already warm in every instance.

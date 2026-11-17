@@ -36,7 +36,7 @@ attach to.
   Isoplane delivers requests to the application, so it opens no listener.
 - `Program.cs` ends with `await app.RunAsync()`. The synchronous `app.Run()`
   would block, which a sandboxed application cannot do; the build rejects it.
-- `Initialization.Initializing` callbacks run during preparation, before Isoplane captures the
+- `Template.Initializing` callbacks run during preparation, before Isoplane captures the
   template that every instance starts from. Whatever they leave in memory is
   already there when an instance serves its first request.
 - Await work the response depends on. Remaining work uses a bounded background

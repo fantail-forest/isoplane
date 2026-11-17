@@ -111,24 +111,24 @@ public sealed class InitializationTests
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         int activations = 0;
         Func<Task> callback = async () => { activations++; await release.Task; };
-        Activation.Activated += callback;
+        Instance.Starting += callback;
         try
         {
             var router = new RecordingRouter();
             var record = new DispatchRecord { Kind = DispatchKind.Background };
             Task<Response> dispatch = RequestDispatch.RouteAsync(router, record);
-            Assert.False(dispatch.IsCompleted || router.Called || Activation.IsActivated,
+            Assert.False(dispatch.IsCompleted || router.Called || Instance.HasStarted,
                 "an unfinished activation must prevent dispatch and remain inactive");
             release.SetResult();
             await dispatch;
-            Assert.True(router.Called && Activation.IsActivated,
+            Assert.True(router.Called && Instance.HasStarted,
                 "dispatch must run once every activation callback has completed");
             await RequestDispatch.RouteAsync(router, record);
             Assert.True(activations == 1, "a later dispatch must not repeat activation");
         }
         finally
         {
-            Activation.Activated -= callback;
+            Instance.Starting -= callback;
         }
     }
 

@@ -18,7 +18,7 @@ The settings by name. Names use ASP.NET's form, `Section:Key`, and are matched i
 
 ## Remarks
 
-It can be called while the application starts and while it handles a request. A value read in an [`InitializerAttribute`](../InitializerAttribute.md) method and kept in a static field is saved in the template and shared by every instance.
+It can be called while the application starts and while it handles a request. A value read in a [`TemplateInitializerAttribute`](../TemplateInitializerAttribute.md) method and kept in a static field is saved in the template and shared by every instance.
 
 ## Examples
 

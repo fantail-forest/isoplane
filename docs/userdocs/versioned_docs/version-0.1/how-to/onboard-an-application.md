@@ -53,7 +53,7 @@ Every instance starts from the captured result. Settings, including
 connection strings, are available while it runs. Two things do not carry over
 into an instance: an open connection, so close any that start-up opens, and
 uniqueness, so create a value that must differ between instances when an instance
-activates. See [the application lifecycle](../concepts/application-lifecycle.md).
+starts. See [the application lifecycle](../concepts/application-lifecycle.md).
 
 ## Configuration
 

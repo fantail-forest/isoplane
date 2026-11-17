@@ -58,7 +58,7 @@ dotnet test
 | `compose.yaml` | The development database |
 | `.config/dotnet-tools.json` | The version of `dotnet ef` this project uses; `dotnet tool restore` installs it. The file cannot hold comments |
 | `src/Sample-Api/Sample-Api.csproj` | The Isoplane SDK reference, the User Secrets identifier and the build's optional checks |
-| `src/Sample-Api/Program.cs` | Where configuration comes from, services, endpoints, and the initialization and activation hooks |
+| `src/Sample-Api/Program.cs` | Where configuration comes from, services, endpoints, and the template initialization and instance start hooks |
 | `src/Sample-Api/appsettings.json`, `appsettings.Development.json` | Settings for every environment, and for development |
 | `src/Sample-Api/Properties/launchSettings.json` | The local port and the settings a local session supplies |
 | `src/Sample-Api/Todos/` | The todo entity, its `DbContext`, and its endpoints |
@@ -75,11 +75,11 @@ dotnet test
 - **`Program.cs` ends with `await app.RunAsync()`.** The synchronous `app.Run()`
   would block, which a sandboxed application cannot do; the build rejects it.
 - **Instances start from a template.** Isoplane runs the application up to
-  `RunAsync` and through its `Initialization.Initializing` callbacks, and captures
+  `RunAsync` and through its `Template.Initializing` callbacks, and captures
   the result. Every instance starts as a copy of that template. The callback here
   serves a request to `/todos`, so the route, serializers and query plans are
   already warm in every instance.
-- **`Activation.Activated` runs in each instance.** State that must differ between
+- **`Instance.Starting` runs in each instance.** State that must differ between
   instances, such as `InstanceInfo.Id`, is set there and not during initialization.
 - **Await work the response depends on.** Background work has a bounded allowance
   and may be lost when the instance is discarded, so

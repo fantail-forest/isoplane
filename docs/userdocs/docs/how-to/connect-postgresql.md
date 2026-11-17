@@ -214,7 +214,7 @@ Two choices in this code are particular to Isoplane:
   [Outgoing connections](../concepts/dotnet-runtime-differences.md#outgoing-connections)
   explains what to use instead.
 - **The connection string is read during the request.** Settings are also
-  available in the `[Initializer]` method, but what it keeps in memory is saved
+  available in the `[TemplateInitializer]` method, but what it keeps in memory is saved
   in the template that every instance starts from.
   [The application lifecycle](../concepts/application-lifecycle.md) describes the template.
 

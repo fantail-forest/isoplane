@@ -52,7 +52,7 @@ discarded, so continuous execution is unavailable.
 To warm a read endpoint through middleware, binding and serialization before capture:
 
 ```csharp
-Isoplane.Initialization.Initializing += () => app.WarmupAsync("/todos");
+Isoplane.Template.Initializing += () => app.WarmupAsync("/todos");
 ```
 
 The warmup consumes the response locally and fails for unsuccessful HTTP statuses.

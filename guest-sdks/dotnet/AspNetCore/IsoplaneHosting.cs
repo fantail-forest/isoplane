@@ -175,7 +175,7 @@ public static class IsoplaneHosting
     /// </para>
     /// <para>
     /// Call it from a callback subscribed to the
-    /// <see href="https://isoplane.dev/docs/reference/sdk/Isoplane.Sdk/Isoplane/Initialization/Initializing">Initialization.Initializing</see>
+    /// <see href="https://isoplane.dev/docs/reference/sdk/Isoplane.Sdk/Isoplane/Template/Initializing">Template.Initializing</see>
     /// event, which is raised when the application has started and the template has not yet been
     /// saved. Call it once for each route worth warming.
     /// </para>
@@ -196,7 +196,7 @@ public static class IsoplaneHosting
     /// var app = builder.Build();
     /// app.MapGet("/todos", (TodoStore store) => store.All());
     ///
-    /// Initialization.Initializing += async () =>
+    /// Template.Initializing += async () =>
     /// {
     ///     await app.WarmupAsync("/todos");
     /// };
@@ -227,8 +227,8 @@ public static class IsoplaneHosting
     /// <para>
     /// Use it for a route that <see cref="WarmupAsync(WebApplication, string)"/> cannot reach with a
     /// plain <c>GET</c>: a search or a query sent by <c>POST</c>, or an endpoint that answers only
-    /// when a header is present. Everything that method's remarks say applies here: call it from an
-    /// <c>Initialization.Initializing</c> callback, the endpoint must answer with a success status,
+    /// when a header is present. Everything that method's remarks say applies here: call it from a
+    /// <c>Template.Initializing</c> callback, the endpoint must answer with a success status,
     /// and the response body is discarded.
     /// </para>
     /// <para>
@@ -245,7 +245,7 @@ public static class IsoplaneHosting
     /// <code>
     /// app.MapPost("/search", (SearchQuery query, Catalog catalog) => catalog.Search(query));
     ///
-    /// Initialization.Initializing += async () =>
+    /// Template.Initializing += async () =>
     /// {
     ///     using var search = new HttpRequestMessage(HttpMethod.Post, "/search")
     ///     {
@@ -281,7 +281,7 @@ public static class IsoplaneHosting
         var server = application.Services.GetRequiredService<IServer>() as IsoplaneServer
             ?? throw new InvalidOperationException("Create the application with IsoplaneHosting.CreateBuilder.");
         if (!server.Started)
-            throw new InvalidOperationException("WarmupAsync needs the started application. Call it from an Isoplane.Initialization.Initializing callback, which runs once RunAsync has started the host.");
+            throw new InvalidOperationException("WarmupAsync needs the started application. Call it from an Isoplane.Template.Initializing callback, which runs once RunAsync has started the host.");
         if (string.IsNullOrEmpty(path) || !path.StartsWith('/') || path.StartsWith("//", StringComparison.Ordinal))
             throw new ArgumentException("Use an application-relative path beginning with a slash.", parameter);
         var query = path.IndexOf('?');

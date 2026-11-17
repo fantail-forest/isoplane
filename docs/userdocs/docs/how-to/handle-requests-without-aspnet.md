@@ -58,18 +58,18 @@ Two optional attributes mark static methods that return `Task` and take no
 parameters. An application has at most one of each.
 
 ```csharp
-[Initializer]
+[TemplateInitializer]
 public static Task InitializeAsync() { ... }
 
-[Activated]
-public static Task ActivatedAsync() { ... }
+[InstanceStart]
+public static Task StartAsync() { ... }
 ```
 
 The same checks and quick fixes apply to these methods.
 
-`[Initializer]` runs during preparation, before Isoplane captures the template that every
+`[TemplateInitializer]` runs during preparation, before Isoplane captures the template that every
 instance starts from. Use it to load data and to run the code a request will run,
-so no instance pays for its first use. `[Activated]` runs in each instance before
+so no instance pays for its first use. `[InstanceStart]` runs in each instance before
 its first request. Use it for state that must differ between instances. See
 [the application lifecycle](../concepts/application-lifecycle.md).
 

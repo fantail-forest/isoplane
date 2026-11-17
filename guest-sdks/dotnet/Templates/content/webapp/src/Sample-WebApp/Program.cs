@@ -85,7 +85,7 @@ app.MapRazorPages().WithStaticAssets();
 // instance starts from. Whatever it leaves in memory is copied into each instance.
 // Await any I/O and dispose its connections before the callback returns: an open
 // connection cannot be captured.
-Initialization.Initializing += async () =>
+Template.Initializing += async () =>
 {
     if (app.Environment.IsDevelopment())
     {
@@ -107,10 +107,10 @@ Initialization.Initializing += async () =>
     await app.WarmupAsync("/");
 };
 
-// Activation runs in each instance, before its first request. Set state that
+// Instance start runs in each instance, before its first request. Set state that
 // must differ between instances here, because initialization state is shared:
 //
-//   Activation.Activated += () =>
+//   Instance.Starting += () =>
 //   {
 //       instanceId = Guid.NewGuid();
 //       return Task.CompletedTask;

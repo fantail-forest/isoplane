@@ -375,7 +375,7 @@ Size of the change: small.
 Set `<EnableRequestDelegateGenerator>false</EnableRequestDelegateGenerator>`
 in the project file. ASP.NET Core then works out each endpoint's code when the
 application starts, which on Isoplane happens once, during
-[initialization](application-lifecycle.md#initialization).
+[template initialization](application-lifecycle.md#template-initialization).
 
 Size of the change: small.
 
@@ -646,8 +646,8 @@ Each of the four has its own way out:
   an asynchronous form. FluentValidation's
   [`MustAsync`][fluentvalidation-async] rules run with
   [`ValidateAsync`][fluentvalidation-async].
-- **Localized strings and other lookup data.** Load them asynchronously in an
-  [`Initialization.Initializing`](../reference/sdk/Isoplane.Sdk/Isoplane/Initialization/Initializing.md)
+- **Localized strings and other lookup data.** Load them asynchronously in a
+  [`Template.Initializing`](../reference/sdk/Isoplane.Sdk/Isoplane/Template/Initializing.md)
   callback and serve them from memory. What initialization leaves in memory is
   copied into every instance.
 - **Signing keys.** Set
@@ -741,7 +741,7 @@ builder.Configuration.AddInMemoryCollection(settings);
 var app = builder.Build();
 ```
 
-This runs during [initialization](application-lifecycle.md#initialization),
+This runs during [initialization](application-lifecycle.md#template-initialization),
 once for each deployment, and every instance starts with the values it
 fetched. Two things follow:
 
@@ -930,14 +930,14 @@ one instance. Each instance has its own, which ends when Isoplane
   that names it, and lasts while at least one of them is open.
 
 To load reference data, do it when an instance starts, in
-[`Activation.Activated`][Activation.Activated], and keep one connection open.
+[`Instance.Starting`][Instance.Starting], and keep one connection open.
 Create that connection there too, not while the application starts:
 
 ```csharp
 const string Reference = "Data Source=reference;Mode=Memory;Cache=Shared";
 SqliteConnection? keepAlive = null;
 
-Activation.Activated += async () =>
+Instance.Starting += async () =>
 {
     keepAlive = new SqliteConnection(Reference);
     await keepAlive.OpenAsync();
@@ -948,7 +948,7 @@ Activation.Activated += async () =>
 builder.Services.AddDbContext<CatalogContext>(options => options.UseSqlite(Reference));
 ```
 
-`Activated` runs once for each instance, so each instance loads the data once.
+`Starting` runs once for each instance, so each instance loads the data once.
 `Microsoft.Data.Sqlite` keeps a timer that tidies its connection pool, and
 like any timer it [stays with the instance](dotnet-runtime-differences.md#background-work)
 between requests.
@@ -1223,7 +1223,7 @@ that includes Npgsql and Entity Framework Core, whose asynchronous paths work.
 [RateLimiter.AcquireAsync]: https://learn.microsoft.com/dotnet/api/system.threading.ratelimiting.ratelimiter.acquireasync
 [nuget-redis-rate-limiting]: https://www.nuget.org/packages/RedisRateLimiting
 [signalr-sticky-sessions]: https://learn.microsoft.com/aspnet/core/signalr/scale#sticky-sessions
-[Activation.Activated]: ../reference/sdk/Isoplane.Sdk/Isoplane/Activation/Activated.md
+[Instance.Starting]: ../reference/sdk/Isoplane.Sdk/Isoplane/Instance/Starting.md
 [AddAzureAppConfiguration]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.configuration.azureappconfigurationextensions.addazureappconfiguration
 [AddAzureKeyVault]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.configuration.azurekeyvaultconfigurationextensions.addazurekeyvault
 [AddConsole]: https://learn.microsoft.com/dotnet/api/microsoft.extensions.logging.consoleloggerextensions.addconsole

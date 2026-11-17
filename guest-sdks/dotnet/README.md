@@ -15,18 +15,18 @@ The [ASP.NET adapter](AspNetCore/README.md) constructs application routes and
 services during preparation without opening a guest listener. Host-owned I/O
 wakes the application after it returns with an empty stack.
 
-## Randomness after activation
+## Randomness after instance start
 
-An activation inherits captured guest memory. The BCL's
+An instance inherits captured guest memory. The BCL's
 `RandomNumberGenerator` requests host entropy when generating bytes. Values
 already stored in guest memory remain captured. A generator that seeds itself
 once and then advances private state (`new Random(seed)` or a library DRBG)
 can therefore repeat across copies if initialization created it before capture.
-Create that generator after activation, or recreate it on
-`Isoplane.Activation.Activated`, raised on the first dispatch of each activation:
+Create that generator after instance start, or recreate it on
+`Isoplane.Instance.Starting`, raised on the first dispatch of each instance:
 
 ```csharp
-Isoplane.Activation.Activated += () =>
+Isoplane.Instance.Starting += () =>
 {
     _random = new Random(RandomNumberGenerator.GetInt32(int.MaxValue));
     return Task.CompletedTask;

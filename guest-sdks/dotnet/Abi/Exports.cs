@@ -191,7 +191,7 @@ public static unsafe class Exports<TRouter>
             warm.Varint(1);
             warm.Str("isoplane");
             GC.KeepAlive(warm.Span.Length);
-            _initialization ??= Isoplane.Initialization.EnterAsync();
+            _initialization ??= Isoplane.Template.EnterAsync();
 #if ISOPLANE_ENTROPY_PROBE
             Isoplane.App.EntropyProbe.WarmLikePreInit();
 #endif
@@ -248,7 +248,7 @@ public static unsafe class Exports<TRouter>
         dispatch.End();
         GuestDispatch.RequestSlices();
 
-        if (!Activation.IsActivated)
+        if (!Instance.HasStarted)
             return Panic("instance startup", root.Exception?.GetBaseException() ?? new TaskCanceledException(root));
 
         if (root.IsCanceled) return PollStatus.Cancelled();

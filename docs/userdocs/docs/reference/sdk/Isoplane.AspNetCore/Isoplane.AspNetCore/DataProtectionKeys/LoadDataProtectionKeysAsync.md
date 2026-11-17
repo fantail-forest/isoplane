@@ -6,7 +6,7 @@ mdx:
 
 # DataProtectionKeys.LoadDataProtectionKeysAsync method
 
-Loads the keys of a store registered with [`UseKeysFrom`](./UseKeysFrom.md) now, instead of when initialization finishes. Await it in an `Initialization.Initializing` callback before anything there protects or unprotects data, and after whatever creates the store's tables.
+Loads the keys of a store registered with [`UseKeysFrom`](./UseKeysFrom.md) now, instead of when initialization finishes. Await it in a `Template.Initializing` callback before anything there protects or unprotects data, and after whatever creates the store's tables.
 
 ```csharp
 public static Task LoadDataProtectionKeysAsync(this WebApplication application)

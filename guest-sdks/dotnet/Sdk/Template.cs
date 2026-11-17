@@ -16,13 +16,13 @@ namespace Isoplane;
 /// </para>
 /// <para>
 /// An application written without ASP.NET has no start-up code to subscribe from, and marks one
-/// method with <see cref="InitializerAttribute"/> instead. For state that must differ between
-/// instances, use <see cref="Activation"/>.
+/// method with <see cref="TemplateInitializerAttribute"/> instead. For state that must differ between
+/// instances, use <see cref="Instance"/>.
 /// <see href="https://isoplane.dev/docs/concepts/application-lifecycle">The application lifecycle</see>
 /// explains templates and instances in full.
 /// </para>
 /// </remarks>
-public static class Initialization
+public static class Template
 {
     private static readonly LifecycleHook Hook = new();
 
@@ -40,13 +40,13 @@ public static class Initialization
     /// A callback may make network calls, for example to load data or apply database migrations.
     /// Await network work and dispose connections and streams before the callback returns: an open
     /// connection cannot be saved in the template. Timers may remain registered; their countdown
-    /// starts at activation. Do not retain request-scoped services. An exception stops the
+    /// starts at instance start. Do not retain request-scoped services. An exception stops the
     /// application from being prepared, so it does not start.
     /// </para>
     /// <para>
     /// Everything the callbacks leave in memory is identical in every instance. Create what must
-    /// differ between instances, such as a random identifier, in an <see cref="Activation.Activated"/>
-    /// callback.
+    /// differ between instances, such as a random identifier, in a callback subscribed to
+    /// <see cref="Instance.Starting"/>.
     /// </para>
     /// </remarks>
     /// <example>
@@ -58,7 +58,7 @@ public static class Initialization
     /// var app = builder.Build();
     /// app.MapGet("/todos", (TodoStore store) => store.All());
     ///
-    /// Initialization.Initializing += async () =>
+    /// Template.Initializing += async () =>
     /// {
     ///     await app.WarmupAsync("/todos");
     /// };

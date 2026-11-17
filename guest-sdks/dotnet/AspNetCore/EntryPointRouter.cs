@@ -24,8 +24,8 @@ internal sealed class EntryPointRouter : IStreamingHttpRouter
     public void Boot()
     {
         Start();
-        Initialization.Starting += () => Started();
-        Initialization.Completing += async () => await (await Started()).LoadDataProtectionKeysAsync();
+        Template.Starting += () => Started();
+        Template.Completing += async () => await (await Started()).LoadDataProtectionKeysAsync();
     }
 
     // Separate from Boot because initialization is process-wide and keeps its subscribers:

@@ -30,7 +30,7 @@ public static class RuntimeConfiguration
     /// </returns>
     /// <remarks>
     /// It can be called while the application starts and while it handles a request. A value read in
-    /// an <see cref="InitializerAttribute"/> method and kept in a static field is saved in the
+    /// a <see cref="TemplateInitializerAttribute"/> method and kept in a static field is saved in the
     /// template and shared by every instance.
     /// </remarks>
     /// <example>

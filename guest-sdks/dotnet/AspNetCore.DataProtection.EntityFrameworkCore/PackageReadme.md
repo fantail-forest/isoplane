@@ -37,8 +37,8 @@ builder.Services.AddDataProtection().UseKeysFromDbContext<AppDbContext>();
 ```
 
 Initialization loads the stored keys and can create and store a key if none is usable. The keys are
-read when initialization finishes, so the table must exist by then. An
-`Initialization.Initializing` callback that protects data itself, for instance
+read when initialization finishes, so the table must exist by then. A
+`Template.Initializing` callback that protects data itself, for instance
 by warming up a page with a form, calls `await app.LoadDataProtectionKeysAsync()`
 first.
 

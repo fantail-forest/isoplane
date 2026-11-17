@@ -27,7 +27,7 @@ public static class Handler
     /// Resolves the accumulator through dependency injection and warms the
     /// response path before template capture.
     /// </summary>
-    [Initializer]
+    [TemplateInitializer]
     public static Task InitializeAsync()
     {
         accumulator = new ServiceCollection()

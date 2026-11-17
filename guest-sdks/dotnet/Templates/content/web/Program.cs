@@ -55,12 +55,12 @@ app.MapGet("/", () => "Hello from Isoplane!");
 // first use. Warm the routes that matter most; each must answer with a success
 // status. Await any I/O and dispose its connections before the callback
 // returns: an open connection cannot be captured.
-Initialization.Initializing += () => app.WarmupAsync("/");
+Template.Initializing += () => app.WarmupAsync("/");
 
-// Activation runs in each instance, before its first request. Set state that
+// Instance start runs in each instance, before its first request. Set state that
 // must differ between instances here, because initialization state is shared:
 //
-//   Activation.Activated += () =>
+//   Instance.Starting += () =>
 //   {
 //       instanceId = Guid.NewGuid();
 //       return Task.CompletedTask;

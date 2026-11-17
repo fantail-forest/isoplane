@@ -55,11 +55,11 @@ public sealed class HandlerTests(SandboxFixture sandbox)
     }
 
     [Fact]
-    public async Task An_activated_instance_reports_its_own_identity()
+    public async Task A_started_instance_reports_its_own_identity()
     {
         var service = await sandbox.Client.GetFromJsonAsync<ServiceInfo>("/");
 
-        // The identity is assigned on activation; the template's own value is empty.
+        // The identity is assigned at instance start; the template's own value is empty.
         Assert.NotEqual(Guid.Empty, service!.Instance);
     }
 

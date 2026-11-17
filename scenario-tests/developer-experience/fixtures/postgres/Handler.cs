@@ -13,7 +13,7 @@ public static class Handler
     /// Reads the table once, so the model is built before capture and a database the application
     /// cannot reach, or whose certificate it does not trust, stops it from starting.
     /// </summary>
-    [Initializer]
+    [TemplateInitializer]
     public static async Task InitializeAsync()
     {
         await using var db = TodoDb.Open();
