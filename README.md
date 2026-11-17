@@ -99,8 +99,15 @@ debugging, VS Code and PostgreSQL journeys.
 against the last successful nightly run, retrying failed changes and skipping
 unchanged inputs. Manual dispatch forces a run. It runs the host and SDK suites
 and adds the release suite, which assembles the unsigned SDK, VSIX and node
-artifacts and runs the installation journey against them. Windows/macOS
-installed-tool journeys are not part of this initial nightly configuration.
+artifacts and runs the installation journey against them.
+
+The nightly also runs the [release build](.github/workflows/release-build.yml),
+which assembles the unsigned SDK release on all three platforms. Linux builds
+the packages every platform shares and its own release. Windows and macOS pack
+theirs from a copy of those shared inputs, and Windows then installs its release
+and builds an application with it. A last job packs one feed holding all three
+native libraries. The jobs exchange their outputs as workflow artifacts. macOS
+has no installed-tool journey yet.
 
 A pull request can pin a fork commit that has not landed. The .NET runtime and
 OpenSSL forks build every push to `isoplane-revisions` or an `isoplane/**`
