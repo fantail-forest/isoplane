@@ -21,9 +21,9 @@ jobs:
     outputs:
       run: ${{ github.event_name == 'workflow_dispatch' || steps.previous.outputs.sha == '' || steps.paths.outputs.integration == 'true' }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with: {fetch-depth: 0, persist-credentials: false}
-      - uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         id: previous
         if: github.event_name == 'schedule'
         with:
@@ -38,7 +38,7 @@ jobs:
               const result = await exec.getExecOutput('git', ['cat-file', '-e', `${previous}^{commit}`], {ignoreReturnCode: true});
               if (result.exitCode === 0) core.setOutput('sha', previous);
             }
-      - uses: dorny/paths-filter@15192bc058cc28a13dbf6cde61f19e18988b7af6 # v3
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4
         id: paths
         if: steps.previous.outputs.sha != ''
         with:
