@@ -92,6 +92,9 @@ jobs:
         run: |
           $release = Get-ChildItem .build/releases -Directory -Filter 'isoplane-win-x64-*' | Select-Object -First 1
           ./scripts/test-windows-install.ps1 -Release $release.FullName
+      - name: Install from the release and build an application
+        if: matrix.platform == 'osx-arm64'
+        run: scripts/test-macos-install.sh .build/releases/isoplane-osx-arm64-*
       - name: Collect this platform's release
         run: tar -czf release-${{ matrix.platform }}.tar.gz .build/releases/isoplane-${{ matrix.platform }}-* .build/${{ matrix.platform }}/native/release/${{ matrix.library }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
