@@ -68,12 +68,29 @@ tasks:
   native-packages:
     internal: true
     run: once
-    deps: [shared, ':native:release']
+    deps: [shared, native-library]
     cmds:
       - task: ':managed:pack-native'
         vars:
           OUTPUT: '{{.NATIVE_PACKAGES}}'
           PACKAGE_NOTICES: '{{.NOTICES}}'
+
+  native-library:
+    internal: true
+    run: once
+    cmds:
+      - task: 'native-library:{{if .ISOPLANE_RELEASE_NATIVE_ROOT}}available{{else}}build{{end}}'
+
+  native-library:build:
+    internal: true
+    cmds:
+      - task: ':native:release'
+
+  native-library:available:
+    internal: true
+    preconditions:
+      - sh: test -f "{{.RELEASE_NATIVE_LIBRARY}}"
+        msg: 'ISOPLANE_RELEASE_NATIVE_ROOT is set, so the native library is packed as provided and not built, but {{.RELEASE_NATIVE_LIBRARY}} does not exist.'
 
   readme:
     internal: true

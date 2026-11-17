@@ -1,0 +1,179 @@
+name: Release
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the packages and the extension and tag the commit. Without it the run stops after the signed build.
+        type: boolean
+        default: false
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+concurrency:
+  group: release
+  cancel-in-progress: false
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Refuse to publish from any ref but main
+        if: inputs.publish && github.ref != 'refs/heads/main'
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          echo "A release is published from refs/heads/main, not from $REF." >&2
+          exit 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with: {persist-credentials: false}
+      - uses: ./.github/actions/toolchain
+        with: {rust: 'false'}
+      - name: Read the declared version
+        id: version
+        run: |
+          task setup:release-python
+          version=$(.build/linux-x64/release-python/bin/python -B scripts/release-version.py show)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Require the extension to carry the declared version
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          extension=$(jq -r .version tools/vscode-isoplane/package.json)
+          if [ "$extension" != "$VERSION" ]; then
+            echo "The extension declares $extension and the release is $VERSION." >&2
+            exit 1
+          fi
+      - name: Refuse a version that is already tagged or published
+        if: inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          tagged=$(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/v$VERSION" \
+            --jq "map(select(.ref == \"refs/tags/v$VERSION\")) | length")
+          if [ "$tagged" != 0 ]; then
+            echo "Tag v$VERSION already exists." >&2
+            exit 1
+          fi
+          # nuget.org lists versions in lower case.
+          curl --fail --silent --show-error --location --retry 3 --output "$RUNNER_TEMP/published.json" \
+            https://api.nuget.org/v3-flatcontainer/isoplane.cli/index.json
+          published=$(jq --arg version "$VERSION" '.versions | index($version | ascii_downcase) != null' "$RUNNER_TEMP/published.json")
+          if [ "$published" != false ]; then
+            echo "Isoplane.Cli $VERSION is already on nuget.org." >&2
+            exit 1
+          fi
+      - name: Require a release for each pinned fork commit
+        if: inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: task release:forks
+
+  runtime:
+    needs: preflight
+    uses: ./.github/workflows/runtime.yml
+
+  build:
+    needs: runtime
+    uses: ./.github/workflows/release-build.yml
+    with:
+      sign: true
+    # The signing jobs name their environments, and an environment's secrets
+    # reach a called workflow only when the caller passes its secrets on.
+    secrets: inherit
+
+  editor:
+    needs: preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with: {persist-credentials: false}
+      - uses: ./.github/actions/toolchain
+        with: {rust: 'false'}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with: {node-version: '24'}
+      - run: task release:editor
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: vsix
+          path: tools/vscode-isoplane/out/*.vsix
+          if-no-files-found: error
+          retention-days: 3
+
+  nuget:
+    needs: [preflight, build, editor]
+    if: inputs.publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: nuget
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with: {name: release-feed, path: feed}
+      - uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1
+        id: login
+        with:
+          user: ${{ vars.NUGET_USER }}
+      - name: Push the packages, the CLI last
+        env:
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          # --skip-duplicate lets a re-run after a partial push reach the packages still missing.
+          push() { dotnet nuget push "$1" --source https://api.nuget.org/v3/index.json --api-key "$NUGET_API_KEY" --skip-duplicate; }
+          packages=feed/publication-$VERSION/nuget/$VERSION
+          cli=$packages/Isoplane.Cli.$VERSION.nupkg
+          test -f "$cli"
+          # The CLI installs the other packages, so it becomes installable only once they are up.
+          for package in "$packages"/*.nupkg; do
+            if [ "$package" != "$cli" ]; then
+              push "$package"
+            fi
+          done
+          push "$cli"
+
+  marketplace:
+    needs: [build, editor]
+    if: inputs.publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: marketplace
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      # The checkout supplies the lockfile that pins vsce and everything it loads.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with: {persist-credentials: false}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with: {node-version: '24'}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with: {name: vsix, path: vsix}
+      - run: npm --prefix tools/vscode-isoplane ci
+      - name: Publish the extension
+        working-directory: tools/vscode-isoplane
+        run: npx --no-install vsce publish --oidc --packagePath "$GITHUB_WORKSPACE"/vsix/*.vsix
+
+  tag:
+    needs: [preflight, nuget, marketplace]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Tag the released commit and publish its release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          tag=$(gh api "repos/$GITHUB_REPOSITORY/git/tags" -f tag="v$VERSION" -f message="Isoplane $VERSION" \
+            -f object="$GITHUB_SHA" -f type=commit --jq .sha)
+          gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/v$VERSION" -f sha="$tag" --silent
+          gh release create "v$VERSION" --repo "$GITHUB_REPOSITORY" --verify-tag --title "Isoplane $VERSION" --generate-notes
