@@ -47,9 +47,17 @@ jobs:
           ref: ${{ github.sha }}
           filters: .github/changes.yml
 
-  integration:
+  runtime:
     needs: changes
     if: needs.changes.outputs.run == 'true'
+    uses: ./.github/workflows/runtime.yml
+
+  integration:
+    needs: runtime
     uses: ./.github/workflows/integration.yml
     with:
       suites: '["host", "sdk", "release"]'
+
+  release-build:
+    needs: runtime
+    uses: ./.github/workflows/release-build.yml

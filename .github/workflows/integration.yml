@@ -12,12 +12,9 @@ defaults:
   run:
     shell: bash
 jobs:
-  runtime:
-    uses: ./.github/workflows/runtime.yml
-
+  # The caller runs runtime.yml first; its artifact is shared by every job of the run.
   suite:
     name: ${{ matrix.suite }}
-    needs: runtime
     strategy:
       fail-fast: false
       matrix:
