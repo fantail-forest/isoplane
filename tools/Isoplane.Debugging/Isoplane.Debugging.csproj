@@ -20,7 +20,7 @@
     <PackageReference Include="Microsoft.CodeAnalysis.VisualBasic.Workspaces" Version="$(NuGetVersionRoslyn)" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <None Include="../debugger-libs/LICENSE" Link="licenses/debugger-libs.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-    <None Update="licenses/VSCodeDebugProtocol.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="../../licenses/third-party/packages/Microsoft.VisualStudio.Shared.VSCodeDebugProtocol.txt" Link="licenses/VSCodeDebugProtocol.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <InternalsVisibleTo Include="Isoplane.Debugging.Tests" />
   </ItemGroup>
   <Target Name="CollectHotReloadCompiler" BeforeTargets="GetCopyToOutputDirectoryItems;GetCopyToPublishDirectoryItems" DependsOnTargets="ResolveProjectReferences">

@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Collect the license texts for the managed dependency inventory, without the network:
+# managed-license-texts INVENTORY_JSON OUTPUT_DIR
+# A package that names its license only by URL supplies the files inside its
+# restored package, or a text kept in licenses/third-party/packages.
+set -euo pipefail
+if [ "$#" != 2 ]; then
+  echo "Usage: $0 INVENTORY_JSON OUTPUT_DIR" >&2
+  exit 2
+fi
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+texts="$here/../licenses/third-party"
+inventory=$1
+output=$2
+packages=$(dotnet nuget locals global-packages --list | sed 's/^global-packages: //')
+rm -rf "$output"
+mkdir -p "$output"
+cp "$texts/MIT.txt" "$output/MIT.txt"
+cp "$here/../LICENSE.txt" "$output/Apache-2.0.txt"
+jq -r '.[] | select(.LicenseInformationOrigin == 1) | "\(.PackageId) \(.PackageVersion)"' "$inventory" |
+while read -r id version; do
+  restored="$packages/$(printf %s "$id" | tr '[:upper:]' '[:lower:]')/$version"
+  target="$output/${id}__$version"
+  mkdir -p "$target"
+  find "$restored" -maxdepth 1 -type f \( -iname 'LICENSE*' -o -iname 'THIRD-PARTY-NOTICES*' -o -iname 'ThirdPartyNotices*' -o -iname '*_license.txt' \) -exec cp {} "$target/" \;
+  if [ -f "$texts/packages/$id.txt" ]; then
+    cp "$texts/packages/$id.txt" "$target/LICENSE.txt"
+  fi
+  if [ -z "$(ls -A "$target")" ]; then
+    echo "$id $version names its license only by URL and carries no license file. Add its text as licenses/third-party/packages/$id.txt." >&2
+    exit 1
+  fi
+done
