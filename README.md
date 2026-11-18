@@ -119,6 +119,10 @@ the feed's OpenSSL, ICU and WASI SDK identities. A fork revision can also have
 a release, which keeps its build with no expiry. A download uses the release
 when the revision has one and the workflow artifact otherwise.
 
+The debugger builds on a fork of Mono's `debugger-libs`, pinned by the
+`tools/debugger-libs` submodule. The managed build compiles it from source, so
+that fork has no build or release of its own.
+
 **Fork pins have landed** fails until every pinned fork commit is on its fork's
 `isoplane-revisions` branch, so the suites run against unlanded commits and the
 merge waits for them. A fork pull request is squash merged, which gives its

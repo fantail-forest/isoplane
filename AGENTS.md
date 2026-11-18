@@ -121,6 +121,12 @@ The root manifest pins a full commit of the public `fantail-forest/isoplane-wasm
 
 For a fork update, run `cargo test -p wasmtime --lib runtime::vm::cow` and `cargo test -p wasmtime --test cow_memory_image` in the fork, then run the affected Isoplane preparation, activation and hibernation suites against the new pin.
 
+### Debugger fork maintenance
+
+`tools/debugger-libs` pins a commit of the public `fantail-forest/isoplane-debugger-libs` fork of Mono's `debugger-libs`. Change that code with commits in the fork, one per change with its reason in the message; the build does not rewrite its sources. `tools/Isoplane.Debugging/Backend/BackendSources.targets` adds Isoplane's own source files to the fork's projects, and some fork commits call members those files define, so the fork builds only as part of Isoplane's managed build.
+
+For a fork update, run `task test:debugger` and the `Isoplane.Debugging` managed tests against the new pin.
+
 ## Dependency Management
 
 - Declare shared dependencies once in `[workspace.dependencies]` and reference them with `workspace = true`. A version string in a crate manifest is a bug.
