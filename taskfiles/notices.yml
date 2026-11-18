@@ -33,6 +33,9 @@ tasks:
       - '{{.ROOT_DIR}}/taskfiles/notices.yml'
       - '{{.ROOT_DIR}}/Isoplane.Build.slnf'
       - '{{.ROOT_DIR}}/Isoplane.slnx'
+      - '{{.ROOT_DIR}}/licenses/third-party/**/*'
+      - '{{.ROOT_DIR}}/scripts/managed-license-texts'
+      - '{{.ROOT_DIR}}/LICENSE.txt'
       - '{{.ROOT_DIR}}/trust/NOTICE'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/MonoRuntime/sqlite/NOTICE'
       - '{{.ROOT_DIR}}/vendor/{dotnet-runtime,icu,openssl}/{LICENSE*,NOTICE*,COPYING*}'
@@ -43,7 +46,9 @@ tasks:
       - 'mkdir -p "{{.NOTICES}}"'
       - 'cargo about generate --locked --fail --manifest-path crates/isoplane-native/Cargo.toml --target x86_64-unknown-linux-gnu --target aarch64-apple-darwin --target x86_64-pc-windows-msvc --format json --output-file "{{.NOTICES}}/rust-dependencies.json"'
       - 'jq ".solution.projects" Isoplane.Build.slnf > "{{.NOTICES}}/managed-projects.json"'
-      - cmd: '"{{.USER_HOME}}/.dotnet/tools/nuget-license" -ji "{{.NOTICES}}/managed-projects.json" -t -d "{{.NOTICES}}/managed" -o JsonPretty -fo "{{.NOTICES}}/managed-dependencies.json"'
+      # The allowed list makes a dependency under a license with no text here fail the build.
+      - cmd: '"{{.USER_HOME}}/.dotnet/tools/nuget-license" -ji "{{.NOTICES}}/managed-projects.json" -t -mapping licenses/third-party/license-urls.json -a "MIT;Apache-2.0;Microsoft-NET-Library;Microsoft-VSCodeDebugProtocol" -o JsonPretty -fo "{{.NOTICES}}/managed-dependencies.json"'
+      - 'bash scripts/managed-license-texts "{{.NOTICES}}/managed-dependencies.json" "{{.NOTICES}}/managed"'
       - |
         for component in dotnet-runtime icu openssl; do
           mkdir -p "{{.NOTICES}}/$component"
