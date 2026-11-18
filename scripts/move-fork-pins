@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# Move each fork pin that was the head of a merged fork pull request to the
+# commit that pull request landed as: scripts/move-fork-pins [--commit]
+# Run it in the Isoplane checkout to change. It stages the moved pins, and
+# --commit commits them. Needs a signed-in GitHub CLI.
+set -euo pipefail
+# shellcheck source-path=SCRIPTDIR
+source "$(dirname "${BASH_SOURCE[0]}")/fork-pins.sh"
+
+commit=false
+case "$#:${1:-}" in
+  0:) ;;
+  1:--commit) commit=true ;;
+  *)
+    echo "Usage: $0 [--commit]" >&2
+    exit 2 ;;
+esac
+cd "$(git rev-parse --show-toplevel)"
+if $commit && ! { git diff --cached --quiet && git diff --quiet -- Cargo.toml Cargo.lock; }; then
+  echo "--commit needs nothing staged and no changes to Cargo.toml or Cargo.lock, so that the commit holds only the moved pins." >&2
+  exit 1
+fi
+
+# move_wasmtime OLD NEW replaces the pinned revision in the manifest and the lockfile.
+move_wasmtime() {
+  local file
+  for file in Cargo.toml Cargo.lock; do
+    if ! grep --quiet --fixed-strings "$1" "$file"; then
+      echo "isoplane-wasmtime: $file does not name $1, so the pin cannot be moved in it." >&2
+      return 1
+    fi
+    # A suffix makes --in-place mean the same to GNU and BSD sed.
+    sed -i.unmoved "s/$1/$2/g" "$file"
+    rm "$file.unmoved"
+    if grep --quiet --fixed-strings "$1" "$file"; then
+      echo "isoplane-wasmtime: $file still names $1 after moving the pin." >&2
+      return 1
+    fi
+  done
+  git add Cargo.toml Cargo.lock
+}
+
+pins=$(fork_pins)
+moves=()
+while read -r fork location revision; do
+  if ! status=$(trunk_status "$fork" "$revision"); then
+    echo "$fork: could not compare $revision with $trunk; the fork may not have that commit." >&2
+    exit 1
+  fi
+  case "$status" in
+    identical|behind)
+      echo "$fork: $revision is on $trunk; nothing to move."
+      continue ;;
+    ahead|diverged) ;;
+    *)
+      echo "$fork: unexpected comparison of $revision with $trunk: $status" >&2
+      exit 1 ;;
+  esac
+  landed=$(landed_pull_request "$fork" "$revision")
+  if [ -z "$landed" ]; then
+    echo "$fork: $revision is not on $trunk and is not the head of a merged pull request; left where it is."
+    continue
+  fi
+  read -r number replacement <<<"$landed"
+  replacement_status=$(trunk_status "$fork" "$replacement")
+  case "$replacement_status" in
+    identical|behind) ;;
+    *)
+      echo "$fork: pull request #$number landed $revision as $replacement, which is not on $trunk ($replacement_status)." >&2
+      exit 1 ;;
+  esac
+  case "$location" in
+    Cargo.lock) move_wasmtime "$revision" "$replacement" ;;
+    # Changing the index entry needs no checkout of the submodule.
+    *) git update-index --cacheinfo "160000,$replacement,$location" ;;
+  esac
+  echo "$fork: moved from $revision to $replacement, which pull request #$number landed it as."
+  moves+=("$fork_owner/$fork#$number: $revision to $replacement")
+  if [ "$fork" = isoplane-openssl ]; then
+    echo "isoplane-openssl: the runtime fork names the OpenSSL revision it builds against as OPENSSL_REVISION in eng/isoplane/manifest.env, and the feed check requires that to equal this pin. Commit OPENSSL_REVISION=$replacement in $fork_owner/isoplane-dotnet-runtime, land it, and pin that runtime commit."
+  fi
+done <<<"$pins"
+
+if $commit && [ "${#moves[@]}" -gt 0 ]; then
+  git commit --quiet -m "build(deps): move fork pins to their landed commits" -m "$(printf '%s\n' "${moves[@]}")"
+  echo "Committed the moved pins as $(git rev-parse HEAD)."
+fi
