@@ -77,7 +77,12 @@
   </Target>
   <Target Name="IsoplanePrepareDebuggerSessionSource" BeforeTargets="CoreCompile" Condition="'$(MSBuildProjectName)' == 'Mono.Debugging.Soft'">
     <IsoplanePrepareDebuggerSource Source="SoftDebuggerSession.cs" Destination="$(IntermediateOutputPath)Isoplane/SoftDebuggerSession.partial.cs" Match="class SoftDebuggerSession : DebuggerSession" Replacement="partial class SoftDebuggerSession : DebuggerSession" />
-    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/SoftDebuggerSession.partial.cs" Destination="$(IntermediateOutputPath)Isoplane/SoftDebuggerSession.cs"
+    <!-- Removes the engine's own binding of pending breakpoints from its method-update handler. That handler runs on
+         the event thread, where a bind made during a Hot Reload does not return. The adapter binds them from its own
+         thread, in RefreshSourceBreakpointsAfterHotReload. -->
+    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/SoftDebuggerSession.partial.cs" Destination="$(IntermediateOutputPath)Isoplane/SoftDebuggerSession.updates.cs"
+      Match="&#9;&#9;&#9;TryResolvePendingBreakpoints ();&#10;" Replacement="" />
+    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/SoftDebuggerSession.updates.cs" Destination="$(IntermediateOutputPath)Isoplane/SoftDebuggerSession.cs"
       Match="TargetEventType etype = TargetEventType.TargetStopped;"
       Replacement="if (ResumeInternalUserBreak(es) || ResumeRedirectedBreakpoint(es)) return;&#10;            TargetEventType etype = TargetEventType.TargetStopped;" />
     <ItemGroup>
