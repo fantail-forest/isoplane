@@ -1,6 +1,6 @@
 {
   "line": "0.1",
-  "first": "0.1.0-preview.4",
+  "first": "0.1.0",
   "added": {
     "cli#cache": "0.1.0-preview.4",
     "cli#cache clean": "0.1.0-preview.4",
