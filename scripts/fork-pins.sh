@@ -5,14 +5,16 @@
 fork_owner=fantail-forest
 trunk=isoplane-revisions
 
-# Prints "FORK LOCATION REVISION" for each pin of the checkout in the current
-# directory. LOCATION is a submodule path, or Cargo.lock for the Wasmtime pin.
+# fork_pins [COMMIT] prints "FORK LOCATION REVISION" for each pin of the checkout
+# in the current directory, or of that commit in it. LOCATION is a submodule
+# path, or Cargo.lock for the Wasmtime pin.
 fork_pins() {
-  local runtime openssl debugger wasmtime
-  runtime=$(git rev-parse HEAD:vendor/dotnet-runtime)
-  openssl=$(git rev-parse HEAD:vendor/openssl)
-  debugger=$(git rev-parse HEAD:tools/debugger-libs)
-  wasmtime=$(sed -n 's/.*isoplane-wasmtime?rev=\([0-9a-f]\{40\}\).*/isoplane-wasmtime Cargo.lock \1/p' Cargo.lock | sort -u)
+  local commit=${1:-HEAD} runtime openssl debugger lockfile wasmtime
+  runtime=$(git rev-parse "$commit:vendor/dotnet-runtime")
+  openssl=$(git rev-parse "$commit:vendor/openssl")
+  debugger=$(git rev-parse "$commit:tools/debugger-libs")
+  if [ "$#" = 0 ]; then lockfile=$(cat Cargo.lock); else lockfile=$(git show "$commit:Cargo.lock"); fi
+  wasmtime=$(sed -n 's/.*isoplane-wasmtime?rev=\([0-9a-f]\{40\}\).*/isoplane-wasmtime Cargo.lock \1/p' <<<"$lockfile" | sort -u)
   echo "isoplane-dotnet-runtime vendor/dotnet-runtime $runtime"
   echo "isoplane-openssl vendor/openssl $openssl"
   echo "isoplane-debugger-libs tools/debugger-libs $debugger"
@@ -23,6 +25,11 @@ fork_pins() {
 # trunk. It is on the trunk when that is identical or behind.
 trunk_status() {
   gh api "repos/$fork_owner/$1/compare/$trunk...$2" --jq .status
+}
+
+# trunk_head FORK prints the commit the fork's trunk is at.
+trunk_head() {
+  gh api "repos/$fork_owner/$1/git/ref/heads/$trunk" --jq .object.sha
 }
 
 # landed_pull_request FORK REVISION prints "NUMBER COMMIT" when the revision is
