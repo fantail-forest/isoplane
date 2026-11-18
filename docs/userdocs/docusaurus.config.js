@@ -30,8 +30,10 @@ const searchFields = ['hierarchy.lvl0', 'hierarchy.lvl1', 'hierarchy.lvl2', 'hie
 // scripts/snapshot.mjs maintains them. The newest is the site's default.
 const releaseLines = JSON.parse(readFileSync(new URL('versions.json', import.meta.url), 'utf8'));
 // `docs/` describes the next release. A local server shows it as "Next"; the
-// published site shows only the snapshots.
-const includeNext = process.env.NODE_ENV !== 'production';
+// published site shows only the snapshots. Before the first release there is
+// no snapshot, and `docs/` is the one version any build has.
+const unreleased = releaseLines.length === 0;
+const includeNext = unreleased || process.env.NODE_ENV !== 'production';
 
 // A page beside a directory of the same name is that directory's landing page.
 // Docusaurus lists the two as siblings, so link the directory's category to the
@@ -94,7 +96,7 @@ export default {
       includeCurrentVersion: includeNext,
       lastVersion: releaseLines[0],
       versions: {
-        ...(includeNext && {current: {label: 'Next', path: 'next', banner: 'unreleased'}}),
+        ...(includeNext && !unreleased && {current: {label: 'Next', path: 'next', banner: 'unreleased'}}),
         ...Object.fromEntries(releaseLines.map((line) => [line, {label: `${line}.x`}])),
       },
       beforeDefaultRemarkPlugins: [since],

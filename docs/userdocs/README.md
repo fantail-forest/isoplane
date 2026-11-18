@@ -64,7 +64,8 @@ Cargo. Building also checks the retained SDK reference against the .NET assembli
 
 `docs/` describes the next release and is never published: a local server shows
 it as "Next", and the built site leaves it out. What is published are the
-snapshots under `versioned_docs/`, one per release line. A line begins with a
+snapshots under `versioned_docs/`, one per release line. Before the first
+release there is no snapshot, and a build contains `docs/` alone. A line begins with a
 breaking release (`0.1`, `0.2`, then `1`, `2`); the newest line is served at
 `/docs/` and the others at `/docs/<line>/`, with a version menu in the navbar.
 `pnpm run build` clears the Docusaurus cache first: a build made after a local
