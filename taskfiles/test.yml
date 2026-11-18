@@ -160,7 +160,21 @@ tasks:
         msg: Build the managed test solution before running its fixtures.
     cmds: []
 
+  debugger:library:
+    internal: true
+    run: once
+    desc: Prepare the ISOPLANE_HOME debugger tests run against, holding the library isoplane setup would download
+    sources:
+      - tools/Isoplane.Debugging/DebugProtocolPackage.props
+      - tools/Isoplane.Debugging/Isoplane.Debugging.csproj
+      - taskfiles/test.yml
+    generates:
+      - '{{.TEST_HOME}}/debugger/*.dll'
+    cmds:
+      - '"{{.DOTNET}}" msbuild tools/Isoplane.Debugging/Isoplane.Debugging.csproj -nologo -t:InstallDebugProtocolLibrary -p:Configuration=Release -p:IsoplaneHome="{{.TEST_HOME}}"'
+
   debugger:environment:
+    deps: [debugger:library]
     vars:
       DIRECTORY: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/dap-python'
       EXECUTABLE: '{{.DIRECTORY}}/{{if eq OS "windows"}}Scripts/python.exe{{else}}bin/python{{end}}'
@@ -180,8 +194,10 @@ tasks:
 
   editor:prepared:
     internal: true
-    deps: [':fixtures:editor:prepared', ':cli:stage', editor:environment, editor:unit]
+    deps: [':fixtures:editor:prepared', ':cli:stage', editor:environment, editor:unit, debugger:library]
     env:
+      # The debug adapter the editor starts loads the debug protocol library from here.
+      ISOPLANE_HOME: '{{.TEST_HOME}}'
       ISOPLANE_TEST_PROJECT: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/editor-fixture/app'
       ISOPLANE_TEST_CLI: '{{env "ISOPLANE_TEST_CLI" | default .CLI}}'
       ISOPLANE_TEST_SKIP_PUBLICATION_FLUSH: '1'

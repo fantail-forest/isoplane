@@ -319,6 +319,7 @@ fn installed_debug_acceptance(mode: &str) {
         .arg(driver)
         .arg(&cli)
         .env("ISOPLANE_CACHE_DIR", isoplane_fixtures::runtime_cache())
+        .env("ISOPLANE_HOME", isoplane_fixtures::debugger_home())
         .env("ISOPLANE_DEBUG_ROUTE", route);
     if let Some(dev) = &dev {
         let metadata = dev

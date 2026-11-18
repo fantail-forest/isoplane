@@ -6,7 +6,7 @@ mdx:
 
 # isoplane doctor
 
-Check this machine's .NET SDK, native library and templates.
+Scans for and reports common install and configuration issues.
 
 ```bash
 isoplane doctor

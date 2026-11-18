@@ -28,8 +28,13 @@ internal static class EnvironmentDoctor
         var registrations = new DotnetRegistrations(DotnetRegistrations.BootstrapDotnet(), Environment.CurrentDirectory);
         var version = ReleaseIdentity.OfRunningCli().Version;
         RequireTemplates(await registrations.TemplateVersionAsync("Isoplane.Templates", cancellation), version);
-        return $"Your Isoplane SDK {version} is ready.";
+        return $"Your Isoplane SDK {version} is ready.{Environment.NewLine}{DescribeDebugging(CliPaths.Home, DebugProtocolPackage.Pinned())}";
     }
+
+    /// <summary>Says whether the installation at <paramref name="home"/> holds Microsoft's Debug Adapter Protocol library, which debugging needs. Its absence is not a failed check.</summary>
+    internal static string DescribeDebugging(string home, DebugProtocolPackage package) => package.IsInstalledIn(home)
+        ? $"Debugging is available: {package.Describe()} is installed."
+        : $"Debugging is not available: {package.Describe()} is not installed. Run isoplane setup and agree to Microsoft's license terms to download it.";
 
     internal static void RequireTemplates(string? installed, string expected)
     {

@@ -14,11 +14,11 @@ The commands of the `isoplane` CLI, with the arguments and options of each. They
 | --- | --- |
 | [`isoplane dev`](cli/dev.md) | Run a local application. Launch settings supply the port and environment; --port overrides the port. |
 | [`isoplane debug-adapter`](cli/debug-adapter.md) | Serve the Debug Adapter Protocol on standard input/output. |
-| [`isoplane setup`](cli/setup.md) | Check prerequisites and install matching project templates. |
+| [`isoplane setup`](cli/setup.md) | Sets up Isoplane's tooling on this machine. |
 | [`isoplane uninstall-sdk`](cli/uninstall-sdk.md) | Remove everything setup installed, keeping the CLI. |
 | [`isoplane cache`](cli/cache.md) | Manage compiled runtimes shared by local sessions. |
 | [`isoplane prepare-runtime`](cli/prepare-runtime.md) | Compile a shared runtime into the local cache. |
-| [`isoplane doctor`](cli/doctor.md) | Check this machine's .NET SDK, native library and templates. |
+| [`isoplane doctor`](cli/doctor.md) | Scans for and reports common install and configuration issues. |
 | [`isoplane agent`](cli/agent.md) :since[next] | Connect a coding agent to this machine's Isoplane tools. |
 | [`isoplane bundle`](cli/bundle.md) :since[next] | Build a managed application archive. |
 | [`isoplane daemon`](cli/daemon.md) :since[next] | Run the local multi-application host in the foreground. Requires isoplaned on PATH. |

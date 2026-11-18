@@ -128,7 +128,9 @@ isoplane telemetry status | grep -q '^Telemetry is enabled\.'
 isoplane telemetry disable
 isoplane telemetry status | grep -q '^Telemetry is disabled\.'
 isoplane setup --source /release --yes
-isoplane doctor
+isoplane doctor | grep -q '^Debugging is available'
+# With the library setup downloaded, the adapter serves until its input ends.
+isoplane debug-adapter </dev/null
 dotnet new isoplane-web --name JourneyApp --output JourneyApp
 cd JourneyApp
 for configuration in Debug Release; do
@@ -138,6 +140,7 @@ for configuration in Debug Release; do
 done
 isoplane uninstall-sdk
 test ! -e "$HOME/.isoplane/current.json"
+test ! -e "$HOME/.isoplane/debugger"
 test -f JourneyApp.csproj
 if dotnet new list | grep -q isoplane-web; then
     echo 'Uninstall left the Isoplane template registered' >&2

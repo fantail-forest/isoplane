@@ -41,4 +41,8 @@
     <None Include="@(IsoplaneNativeAsset)" Pack="true" PackagePath="tools/$(TargetFramework)/any/runtime/" />
   </ItemGroup>
   <Import Project="../../licenses/SdkPackage.props" />
+  <Import Project="../Isoplane.Debugging/DebugProtocolPackage.props" />
+  <Target Name="RejectPublishedDebugProtocolLibrary" AfterTargets="ComputeResolvedFilesToPublishList">
+    <Error Condition="'%(ResolvedFileToPublish.Filename)%(ResolvedFileToPublish.Extension)' == '$(DebugProtocolPackageId).dll'" Text="The published CLI must not contain $(DebugProtocolPackageId).dll (%(ResolvedFileToPublish.Identity)); isoplane setup fetches it. Keep ExcludeAssets=&quot;runtime&quot; on every reference to that package the CLI reaches." />
+  </Target>
 </Project>

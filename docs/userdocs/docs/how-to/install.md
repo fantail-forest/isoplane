@@ -195,6 +195,12 @@ project templates, the `Isoplane.Templates` package that matches your CLI. It
 ends by reporting that Isoplane is ready. It uses the `dotnet` you already
 have and leaves your .NET installation and shell configuration alone.
 
+Setup also asks whether to download Microsoft's Debug Adapter Protocol library.
+Debugging needs it, and Microsoft licenses it under
+[its own terms](https://go.microsoft.com/fwlink/?linkid=832965).
+If you decline, everything except debugging works. In a script,
+`isoplane setup --yes` agrees to those terms without asking.
+
 <OnlyOn platforms="linux">
 
 If a system library is missing, setup names it and stops before installing
@@ -220,8 +226,10 @@ dotnet new list isoplane
 ```
 
 Doctor checks the .NET SDK, Isoplane's native library and the templates. It
-reports problems and does not repair them. The template list shows the
-[project templates](../reference/project-templates.md).
+detects and reports common problems with your environment. It also says
+whether Microsoft's Debug Adapter Protocol library is installed, which Isoplane
+needs for debugging support. A missing library does not fail the check. The
+template list shows the [project templates](../reference/project-templates.md).
 
 Now [create your first application](../quickstart.md#3-create-an-application).
 
@@ -236,7 +244,8 @@ isoplane doctor
 ```
 
 Setup replaces the templates with the ones for the new CLI, so new projects
-use the new SDK. Existing applications keep the SDK version they name. To move
+use the new SDK. When the new CLI uses another version of the debugger's
+library, setup asks about that version. Existing applications keep the SDK version they name. To move
 one, change the version in its project file, in `<Project Sdk="Isoplane.AspNetCore/VERSION">`
 or `Isoplane.Sdk/VERSION` for an application without ASP.NET, and in any
 explicit Isoplane package references, such as `Isoplane.Testing` in test
@@ -260,7 +269,8 @@ isoplane uninstall-sdk
 dotnet tool uninstall --global Isoplane.Cli
 ```
 
-The first command removes what setup installed and the second removes the CLI.
+The first command removes what setup installed, Microsoft's Debug Adapter
+Protocol library included, and the second removes the CLI.
 Your projects and local CLI preferences stay.
 
 <OnlyOn platforms="mac linux">
@@ -298,3 +308,5 @@ installation record, and registers that directory as a NuGet source. Running
 the same `isoplane setup --source` again restores missing or damaged packages,
 and `isoplane uninstall-sdk` removes the packages and the source. Builds still
 fetch their other dependencies from NuGet, so this does not make them offline.
+Setup downloads Microsoft's Debug Adapter Protocol library from nuget.org, not
+from the release directory.

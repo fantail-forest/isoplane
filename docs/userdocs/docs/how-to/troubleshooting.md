@@ -88,6 +88,22 @@ kind, for example `initialization retains a TCP socket`, and the fix is to
 dispose it before the callback returns. See
 [template initialization](../concepts/application-lifecycle.md#template-initialization).
 
+## Debugging needs Microsoft's library
+
+Starting a debug session shows this error, with the library's version and
+the path of your Isoplane installation.
+
+```text
+Debugging needs Microsoft's Microsoft.VisualStudio.Shared.VSCodeDebugProtocol <version> library, and it is not installed at <path>. Run isoplane setup and agree to Microsoft's license terms to download it.
+```
+
+Microsoft's Debug Adapter Protocol library is not installed. Run
+`isoplane setup` and agree to Microsoft's license terms, as
+[Run setup](install.md#run-setup) describes, then start the session again.
+
+After a CLI upgrade the error can say `<path> is another version of it`
+in place of `it is not installed at <path>`. The fix is the same.
+
 ## Breakpoints stay grey
 
 A grey breakpoint in a running debug session has not been matched to code. Read

@@ -28,7 +28,8 @@ package checksums, copies the packages into `ISOPLANE_HOME/packages` (default
 `~/.isoplane/packages`), and registers that local NuGet feed. Setup records ownership
 in `installation.json`. `isoplane uninstall-sdk` removes owned templates and
 optional feed resources, keeping the CLI. `isoplane doctor` checks the SDK,
-bundled native library and templates.
+bundled native library and templates, and reports whether the debugger's
+library is installed.
 
 `task release` assembles NuGet packages with dependency notices. No Rust compiler,
 WASI compiler or host Mono is required to build managed application packages.
@@ -82,8 +83,22 @@ send nothing unless that property is set. Pending events live under
 reference page, generated from the same definitions, covers opting out and what
 is collected.
 
-The debugger includes Mono's MIT-licensed `debugger-libs` and Microsoft's
-`Microsoft.VisualStudio.Shared.VSCodeDebugProtocol` library. Their license files
-are included under `licenses/` in the tool package. The latter is governed by
-[Microsoft's redistribution terms](https://go.microsoft.com/fwlink/?linkid=832965),
-including requirements for distributor and end-user agreements.
+The debugger includes Mono's MIT-licensed `debugger-libs`, whose license file
+is included under `licenses/` in the tool package. It also needs Microsoft's
+`Microsoft.VisualStudio.Shared.VSCodeDebugProtocol` library, which the tool
+package does not contain and Microsoft licenses under
+[its own terms](https://go.microsoft.com/fwlink/?linkid=832965). `isoplane setup`
+names the library, shows that address and asks for agreement to the terms;
+`--yes` gives that agreement without a prompt. With agreement, setup downloads the pinned package version from
+nuget.org, checks the package and the assembly against the SHA-256 digests in
+`tools/Isoplane.Debugging/DebugProtocolPackage.props`, stores the assembly in
+`ISOPLANE_HOME/debugger` and records it in `installation.json`. Without
+agreement, setup completes and debugging stays unavailable.
+`isoplane debug-adapter` loads the assembly from that directory and exits with
+an instruction to run setup when it is missing or another version. A build fails
+when the published CLI contains the assembly.
+
+A CLI built from this checkout gets the assembly without setup from the
+restored package:
+`dotnet msbuild tools/Isoplane.Debugging/Isoplane.Debugging.csproj -t:InstallDebugProtocolLibrary -p:IsoplaneHome=DIRECTORY`.
+Task prepares `.build/PLATFORM/test-home` that way for the debugger tests.
