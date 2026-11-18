@@ -9,6 +9,11 @@ def result_line(source):
     return next(index + 1 for index, line in enumerate(Path(source).read_text().splitlines()) if "RUNNING_RESULT" in line)
 
 
+def handler_failure(item):
+    output = item.get("body", {}).get("output", "") if item.get("event") == "output" else ""
+    return "Debugger.HotReload.ReloadNotifications.UpdateApplication" in output and "notification-fixture-warning" in output
+
+
 def configure(source, send, response):
     response(send("setBreakpoints", {"source": {"path": source}, "breakpoints": [{"line": result_line(source), "condition": "value == 42"}]}))
 
@@ -24,7 +29,7 @@ def exercise(source, send, response, until):
     edited = edited.replace("public int Value => 1; // NOTIFICATION_PROPERTY", "public int Value => 1; public int Added => 2; // NOTIFICATION_PROPERTY")
     applied = response(send("isoplane/hotReload", {"sources": [{"path": source, "text": edited}]}))["body"]
     assert applied["appliedModules"] == 1 and not applied["diagnostics"] and not applied["restartRequired"], applied
-    until(lambda item: item.get("event") == "output" and "notification-fixture-warning" in item.get("body", {}).get("output", ""))
+    until(handler_failure)
     stopped = until(stop_event)
     assert stopped["body"]["reason"] == "breakpoint", stopped
     thread = stopped["body"]["threadId"]
@@ -36,7 +41,7 @@ def exercise(source, send, response, until):
     edited = edited.replace("Revision() => 42;", "Revision() => 43;").replace("public int Added => 2;", "public int Added => 3;")
     applied = response(send("isoplane/hotReload", {"sources": [{"path": source, "text": edited}]}))["body"]
     assert applied["appliedModules"] == 1 and not applied["diagnostics"] and not applied["restartRequired"], applied
-    until(lambda item: item.get("event") == "output" and "notification-fixture-warning" in item.get("body", {}).get("output", ""))
+    until(handler_failure)
     refreshed = until(stop_event)
     assert refreshed["body"]["reason"] == "pause", refreshed
     response(send("continue", {"threadId": thread}))
