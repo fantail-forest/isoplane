@@ -42,8 +42,8 @@ namespace Isoplane;
 /// }
 /// </code>
 /// </example>
-/// <seealso cref="InitializerAttribute"/>
-/// <seealso cref="ActivatedAttribute"/>
+/// <seealso cref="TemplateInitializerAttribute"/>
+/// <seealso cref="InstanceStartAttribute"/>
 [AttributeUsage(AttributeTargets.Method)]
 public sealed class HttpHandlerAttribute : Attribute;
 
@@ -62,14 +62,14 @@ public sealed class HttpHandlerAttribute : Attribute;
 /// The method is static, returns <c>Task</c> and takes no parameters. It can have any name, and an
 /// application has at most one. Await all I/O, and dispose connections and streams before returning:
 /// an open connection cannot be saved in the template. Timers may remain; their remaining delay
-/// counts from activation. An exception stops the application from being prepared, so it does not start.
+/// counts from instance start. An exception stops the application from being prepared, so it does not start.
 /// </para>
 /// <para>
 /// Everything this method creates is identical in every instance. Create what must differ between
-/// instances, such as a random identifier, in an <see cref="ActivatedAttribute"/> method.
+/// instances, such as a random identifier, in an <see cref="InstanceStartAttribute"/> method.
 /// </para>
 /// <para>
-/// An application with a <c>Program.cs</c> subscribes to <see cref="Initialization.Initializing"/>
+/// An application with a <c>Program.cs</c> subscribes to <see cref="Template.Initializing"/>
 /// instead; there the attribute is a build error.
 /// <see href="https://isoplane.dev/docs/concepts/application-lifecycle">The application lifecycle</see>
 /// explains templates and instances in full.
@@ -79,7 +79,7 @@ public sealed class HttpHandlerAttribute : Attribute;
 /// <code>
 /// private static IReadOnlyDictionary&lt;string, string&gt; settings = new Dictionary&lt;string, string&gt;();
 ///
-/// [Initializer]
+/// [TemplateInitializer]
 /// public static Task InitializeAsync()
 /// {
 ///     settings = RuntimeConfiguration.ReadValues();
@@ -88,7 +88,7 @@ public sealed class HttpHandlerAttribute : Attribute;
 /// </code>
 /// </example>
 [AttributeUsage(AttributeTargets.Method)]
-public sealed class InitializerAttribute : Attribute;
+public sealed class TemplateInitializerAttribute : Attribute;
 
 /// <summary>
 /// Marks the method that runs in each instance before its first request, in an application written
@@ -105,8 +105,8 @@ public sealed class InitializerAttribute : Attribute;
 /// application has at most one. An exception fails the request the instance was started for.
 /// </para>
 /// <para>
-/// An application with a <c>Program.cs</c> subscribes to <see cref="Activation.Activated"/> instead;
-/// there the attribute is a build error. <see cref="Activation"/> lists what Isoplane already reseeds
+/// An application with a <c>Program.cs</c> subscribes to <see cref="Instance.Starting"/> instead;
+/// there the attribute is a build error. <see cref="Instance"/> lists what Isoplane already reseeds
 /// for you, and <see href="https://isoplane.dev/docs/concepts/application-lifecycle">The application lifecycle</see>
 /// explains templates and instances in full.
 /// </para>
@@ -115,8 +115,8 @@ public sealed class InitializerAttribute : Attribute;
 /// <code>
 /// private static Guid instance;
 ///
-/// [Activated]
-/// public static Task ActivatedAsync()
+/// [InstanceStart]
+/// public static Task StartAsync()
 /// {
 ///     instance = Guid.NewGuid();
 ///     return Task.CompletedTask;
@@ -124,4 +124,4 @@ public sealed class InitializerAttribute : Attribute;
 /// </code>
 /// </example>
 [AttributeUsage(AttributeTargets.Method)]
-public sealed class ActivatedAttribute : Attribute;
+public sealed class InstanceStartAttribute : Attribute;

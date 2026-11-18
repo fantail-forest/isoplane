@@ -24,11 +24,11 @@ for the packages this project uses, as of the SDK version that wrote them.
    state in a database. Background work after a response has a bounded
    allowance and may be lost, and a `BackgroundService` stops when its
    instance is discarded.
-3. **Initialization prepares shared state; activation runs in every instance.**
-   `Initialization.Initializing` or an `[Initializer]` method runs before the
+3. **Template initialization prepares shared state; instance start runs in every instance.**
+   `Template.Initializing` or a `[TemplateInitializer]` method runs before the
    template is captured, so what it leaves in memory is in every instance.
    Preparation may retry initialization; reusing a prepared template skips it.
-   `Activation.Activated` or an `[Activated]` method runs as each instance
+   `Instance.Starting` or an `[InstanceStart]` method runs as each instance
    starts: an open connection or a value that must differ between instances
    belongs there.
 4. **The application opens no listener.** An ASP.NET application calls

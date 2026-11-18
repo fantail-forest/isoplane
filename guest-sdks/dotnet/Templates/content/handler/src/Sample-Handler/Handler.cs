@@ -13,7 +13,7 @@ namespace Sample_Handler;
 public static class Handler
 {
     // Static fields are the application's state. What the initializer assigns is
-    // captured in the template and copied into every instance; what the activation
+    // captured in the template and copied into every instance; what the instance start
     // hook assigns belongs to one instance. Isoplane may discard an instance
     // between requests, so anything that must last belongs in a database.
     private static Greeter greeter = new("world");
@@ -23,7 +23,7 @@ public static class Handler
     /// Runs while Isoplane prepares the template that every instance starts
     /// from. Whatever it leaves in memory is copied into each instance.
     /// </summary>
-    [Initializer]
+    [TemplateInitializer]
     public static Task InitializeAsync()
     {
         // Settings are name/value pairs, named as in ASP.NET configuration
@@ -59,8 +59,8 @@ public static class Handler
     /// Runs in each instance, before its first request. State that must differ
     /// between instances is set here, because initialization state is shared.
     /// </summary>
-    [Activated]
-    public static Task ActivatedAsync()
+    [InstanceStart]
+    public static Task StartAsync()
     {
         // Anything random or unique belongs here or in a request. An identifier
         // generated in the initializer would be the same in every instance.

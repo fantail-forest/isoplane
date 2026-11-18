@@ -24,7 +24,7 @@ public static class Handler
     /// Advances SQLite's generator before the template is captured, through SQLitePCLRaw: the
     /// first <see cref="SqliteConnection"/> starts a timer that initialization refuses.
     /// </summary>
-    [Initializer]
+    [TemplateInitializer]
     public static Task InitializeAsync()
     {
         Batteries_V2.Init();
@@ -45,7 +45,7 @@ public static class Handler
     }
 
     /// <summary>Loads reference data in each instance, which starts from the captured template.</summary>
-    [Activated]
+    [InstanceStart]
     public static async Task ActivateAsync()
     {
         reference = new SqliteConnection(Reference);

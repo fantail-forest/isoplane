@@ -76,7 +76,7 @@ app.MapTodos();
 // instance starts from. Whatever it leaves in memory is copied into each instance.
 // Await any I/O and dispose its connections before the callback returns: an open
 // connection cannot be captured.
-Initialization.Initializing += async () =>
+Template.Initializing += async () =>
 {
     if (app.Environment.IsDevelopment())
     {
@@ -93,12 +93,12 @@ Initialization.Initializing += async () =>
     await app.WarmupAsync("/todos");
 };
 
-// Activation runs in each instance, before its first request. State that must
+// Instance start runs in each instance, before its first request. State that must
 // differ between instances is set here, because initialization state is shared:
 // an identifier generated above would be the same in every instance.
-Activation.Activated += () =>
+Instance.Starting += () =>
 {
-    app.Services.GetRequiredService<InstanceInfo>().Activate();
+    app.Services.GetRequiredService<InstanceInfo>().Start();
     return Task.CompletedTask;
 };
 

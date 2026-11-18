@@ -24,8 +24,8 @@ internal sealed class EntryTypes
     /// <summary>The types as <paramref name="compilation"/> sees them, or null when it does not reference the Isoplane SDK.</summary>
     internal static EntryTypes? Find(Compilation compilation) =>
         compilation.GetTypeByMetadataName("Isoplane.HttpHandlerAttribute") is { } handler
-        && compilation.GetTypeByMetadataName("Isoplane.InitializerAttribute") is { } initializer
-        && compilation.GetTypeByMetadataName("Isoplane.ActivatedAttribute") is { } activated
+        && compilation.GetTypeByMetadataName("Isoplane.TemplateInitializerAttribute") is { } initializer
+        && compilation.GetTypeByMetadataName("Isoplane.InstanceStartAttribute") is { } activated
             ? new(compilation, handler, initializer, activated) : null;
 
     internal bool IsEntry(INamedTypeSymbol attribute) => IsHandler(attribute) || Same(attribute, initializer) || Same(attribute, activated);

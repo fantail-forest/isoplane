@@ -21,10 +21,10 @@ changing the project.
 - Await everything. Starting a thread or waiting synchronously, with `.Result`,
   `.Wait()`, `Thread.Sleep` or a synchronous database call, fails in the
   sandbox; the build reports these as `ISOPLANE1002` and `ISOPLANE1003`.
-- `Initialization.Initializing` runs during preparation, before Isoplane captures the template
-  every instance starts from. `Activation.Activated` runs in each instance. An
+- `Template.Initializing` runs during preparation, before Isoplane captures the template
+  every instance starts from. `Instance.Starting` runs in each instance. An
   open connection or a value that must differ between instances belongs in
-  `Activated`.
+  `Starting`.
 - Await work the response depends on. An instance can be discarded between
   requests, so background work after a response is not reliable and a
   `BackgroundService` does not keep running.

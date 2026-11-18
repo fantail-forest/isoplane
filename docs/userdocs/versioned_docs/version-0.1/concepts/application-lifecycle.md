@@ -8,8 +8,8 @@ what is left to your application.
 
 | Stage | When | Isoplane | Your application |
 | --- | --- | --- | --- |
-| [Initialization](#initialization) | When creating a template, before requests | Runs `Program.cs` and saves the application's memory as a template | Prepares shared state, and closes every connection it opened |
-| [Activation](#activation) | Each time an instance starts | Copies the template and reseeds random generators | Replaces copied state that has to be unique to each instance, such as an identifier |
+| [Template initialization](#template-initialization) | When creating a template, before requests | Runs `Program.cs` and saves the application's memory as a template | Prepares shared state, and closes every connection it opened |
+| [Instance start](#instance-start) | Each time an instance starts | Copies the template and reseeds random generators | Replaces copied state that has to be unique to each instance, such as an identifier |
 | [Handling a request](#handling-a-request) | Each request | Delivers the request, suspends the instance while it waits, enforces limits | Awaits its work, and forwards the request's cancellation token to the asynchronous calls it makes |
 | [Between requests](#between-requests) | Whenever an instance has no request | Keeps the instance and its pending timers for later, or discards it | Expects nothing to run on time and nothing to survive |
 | [A new build or changed settings](#a-new-build-or-changed-settings) | When you change the application or its settings | Prepares a new template when needed; matching captured state may be reused | Keeps what must outlive a build somewhere else |
@@ -18,11 +18,11 @@ An *instance* is one running copy of the application. Isoplane runs as many as
 the traffic needs, up to the application’s instance limit. The *template* is the
 memory every instance starts from.
 
-## Initialization
+## Template initialization
 
 Isoplane runs initialization while creating a template, ahead of requests. In an ASP.NET
 application it runs `Program.cs` up to `RunAsync`, then raises
-[`Initialization.Initializing`](../reference/sdk/Isoplane.Sdk/Isoplane/Initialization/Initializing.md).
+[`Template.Initializing`](../reference/sdk/Isoplane.Sdk/Isoplane/Template/Initializing.md).
 When the callbacks have finished it saves the application's memory as the
 template. Preparation can retry initialization to defer a forbidden capability;
 earlier network effects are not rolled back. Make callbacks safe to repeat. An
@@ -34,7 +34,7 @@ var app = builder.Build();
 app.MapGet("/todos", (TodoStore store) => store.All());
 
 // Runs during template preparation; retries can run it again.
-Initialization.Initializing += async () =>
+Template.Initializing += async () =>
 {
     await app.WarmupAsync("/todos");
 };
@@ -95,19 +95,19 @@ A setting read during initialization is saved in the template with everything el
 every instance has the same settings.
 
 An application [without ASP.NET](../how-to/handle-requests-without-aspnet.md#lifecycle-methods)
-has no `Program.cs`, and marks one method `[Initializer]` instead.
+has no `Program.cs`, and marks one method `[TemplateInitializer]` instead.
 
-## Activation
+## Instance start
 
 An instance starts as a copy of the template. Before it handles its first
 request, Isoplane raises
-[`Activation.Activated`](../reference/sdk/Isoplane.Sdk/Isoplane/Activation/Activated.md).
+[`Instance.Starting`](../reference/sdk/Isoplane.Sdk/Isoplane/Instance/Starting.md).
 
 ```csharp
 var instance = Guid.Empty;
 
 // Runs in each instance, before its first request.
-Activation.Activated += () =>
+Instance.Starting += () =>
 {
     instance = Guid.NewGuid();
     return Task.CompletedTask;
@@ -121,7 +121,7 @@ Activation.Activated += () =>
   generator behind `Activity` trace and span identifiers, and the one behind
   SQLite's `random()` and `randomblob()`. Cryptographic randomness needs no
   reseeding: every call draws fresh bytes.
-- Awaits the `Activated` callbacks one at a time, in the order they subscribed.
+- Awaits the `Starting` callbacks one at a time, in the order they subscribed.
   An exception from one fails the request the instance was started for.
 
 **Your application**
@@ -138,10 +138,10 @@ Activation.Activated += () =>
 
 | Condition | What happens |
 | --- | --- |
-| An `Activated` callback throws | The request the instance was started for fails, and the instance is not used again. The next request starts another instance, which runs the callbacks again. |
+| A `Starting` callback throws | The request the instance was started for fails, and the instance is not used again. The next request starts another instance, which runs the callbacks again. |
 | Initialization left more in memory than an instance is allowed | No instance can start. Reduce what initialization keeps. |
 
-An application without ASP.NET marks one method `[Activated]` instead.
+An application without ASP.NET marks one method `[InstanceStart]` instead.
 
 ## Handling a request
 
@@ -260,5 +260,5 @@ without rerunning initialization callbacks.
 | Condition | What happens |
 | --- | --- |
 | The rebuild fails under `isoplane dev` | The terminal says why, and the last working application stays available |
-| Initialization fails for the new build | The same as under [Initialization](#initialization) |
+| Initialization fails for the new build | The same as under [Template initialization](#template-initialization) |
 | A cookie or token was protected with a key absent from the new template | It cannot be unprotected unless that key is retained |

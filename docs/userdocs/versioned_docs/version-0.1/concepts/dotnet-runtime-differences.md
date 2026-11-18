@@ -46,7 +46,7 @@ because it begins where template initialization left off. Expensive setup,
 such as building caches or warming up code paths, therefore belongs in
 template initialization, not in the first request. For what initialization
 may and may not do, see
-[the application lifecycle](application-lifecycle.md#initialization).
+[the application lifecycle](application-lifecycle.md#template-initialization).
 
 Every instance starts with identical memory, down to any random values
 initialization generated. Changing a setting makes the engine run
@@ -60,11 +60,11 @@ save a template while a connection is open.
 
 Because the template is identical in every instance, anything that has to
 differ between instances, such as an instance identifier or a nonce, has to
-be written in an *instance activation* callback, which runs in each instance
+be written in an *instance start* callback, which runs in each instance
 before its first request. A value initialization already generated can be
 overwritten there. The engine reseeds the framework's random number
 generators at the same point. For which generators, and an example callback,
-see [instance activation](application-lifecycle.md#activation).
+see [instance start](application-lifecycle.md#instance-start).
 
 ### Instances come and go {#ephemeral-instances}
 

@@ -17,7 +17,7 @@ public static class DataProtectionKeys
 | name | description |
 | --- | --- |
 | const [DefaultSection](DataProtectionKeys/DefaultSection.md) | The configuration section [`UseConfiguredKeys`](./DataProtectionKeys/UseConfiguredKeys.md) reads when none is named. |
-| static [LoadDataProtectionKeysAsync](DataProtectionKeys/LoadDataProtectionKeysAsync.md)(…) | Loads the keys of a store registered with [`UseKeysFrom`](./DataProtectionKeys/UseKeysFrom.md) now, instead of when initialization finishes. Await it in an `Initialization.Initializing` callback before anything there protects or unprotects data, and after whatever creates the store's tables. |
+| static [LoadDataProtectionKeysAsync](DataProtectionKeys/LoadDataProtectionKeysAsync.md)(…) | Loads the keys of a store registered with [`UseKeysFrom`](./DataProtectionKeys/UseKeysFrom.md) now, instead of when initialization finishes. Await it in a `Template.Initializing` callback before anything there protects or unprotects data, and after whatever creates the store's tables. |
 | static [UseConfiguredKeys](DataProtectionKeys/UseConfiguredKeys.md)(…) | Derives the keys from secrets in the application's settings, so every build given the same settings protects and unprotects with the same keys. |
 | static [UseKeysFrom](DataProtectionKeys/UseKeysFrom.md)(…) | Keeps the keys in a store the application reaches asynchronously, such as its database. The keys are loaded during initialization, and a new one is created and stored if none is usable. Instances use the keys captured in their template. |
 

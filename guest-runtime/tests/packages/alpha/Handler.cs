@@ -18,7 +18,7 @@ public static class Handler
     private static byte[] initializedRandomness = Array.Empty<byte>();
 
     /// <summary>Warms the response path before template capture.</summary>
-    [Initializer]
+    [TemplateInitializer]
     public static Task InitializeAsync()
     {
         libraryLoadedDuringInitialization = AppDomain.CurrentDomain.GetAssemblies()

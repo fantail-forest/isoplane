@@ -77,7 +77,7 @@ public static class Application
             if (release[0] == 0) throw new InvalidOperationException("The streaming fixture failed after publishing its first chunk.");
             await context.Response.Body.WriteAsync("B"u8.ToArray());
         });
-        Isoplane.Initialization.Initializing += async () =>
+        Isoplane.Template.Initializing += async () =>
         {
             await app.WarmupAsync("/");
             await app.WarmupAsync("/scope");

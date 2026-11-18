@@ -69,13 +69,13 @@ builder.Services.AddDataProtection().UseKeysFromDbContext<AppDbContext>();
 ```
 
 Initialization loads the stored keys and can create a key if none is usable. Keys load when
-initialization finishes, so the table must exist by then. A migration in an
-`Initialization.Initializing` callback is fine. If that callback itself
+initialization finishes, so the table must exist by then. A migration in a
+`Template.Initializing` callback is fine. If that callback itself
 protects data, for instance by warming up a page with a form, load the keys
 first:
 
 ```csharp
-Initialization.Initializing += async () =>
+Template.Initializing += async () =>
 {
     await database.MigrateAsync();
     await app.LoadDataProtectionKeysAsync();

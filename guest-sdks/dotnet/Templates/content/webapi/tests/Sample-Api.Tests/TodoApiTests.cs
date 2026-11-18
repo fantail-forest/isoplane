@@ -7,7 +7,7 @@ namespace Sample_Api.Tests;
 
 /// <summary>
 /// Sandbox tests: HTTP requests to the application running in the real Isoplane
-/// sandbox, which is where platform behavior such as initialization, activation
+/// sandbox, which is where platform behavior such as template initialization, instance start
 /// and outbound connections can be observed.
 /// </summary>
 /// <remarks>
@@ -80,12 +80,12 @@ public sealed class TodoApiTests(SandboxFixture sandbox)
     }
 
     [Fact]
-    public async Task An_activated_instance_reports_its_own_identity()
+    public async Task A_started_instance_reports_its_own_identity()
     {
         var service = await sandbox.Client.GetFromJsonAsync<ServiceInfo>("/");
 
         Assert.Equal("Sample-Api", service!.Application);
-        // The identity is assigned on activation; the template's own value is empty.
+        // The identity is assigned at instance start; the template's own value is empty.
         Assert.NotEqual(Guid.Empty, service.Instance);
     }
 }

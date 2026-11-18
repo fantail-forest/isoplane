@@ -8,7 +8,7 @@ namespace Isoplane.App;
 public static class FailingBoot
 {
     /// <summary>Refuses to initialize the application.</summary>
-    [Initializer]
+    [TemplateInitializer]
     public static Task InitializeAsync() => throw new InvalidOperationException("fixture application initialization failed");
 
     /// <summary>Cannot be reached when initialization failed.</summary>

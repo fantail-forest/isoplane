@@ -5,7 +5,7 @@ using Isoplane;
 public static class Handler
 {
     /// <summary>Refuses to prepare without a debugger while the RequireDebugger setting is true.</summary>
-    [Initializer]
+    [TemplateInitializer]
     public static Task InitializeAsync()
     {
         if (RuntimeConfiguration.ReadValues().TryGetValue("RequireDebugger", out var required)

@@ -36,7 +36,7 @@ public static class Application
         FrameworkCallers.Application.Map(app);
         Protocol.Application.Map(app);
         app.MapGet("/warmup", () => "warm");
-        Isoplane.Initialization.Initializing += () => app.WarmupAsync("/warmup");
+        Isoplane.Template.Initializing += () => app.WarmupAsync("/warmup");
         await app.RunAsync();
     }
 }

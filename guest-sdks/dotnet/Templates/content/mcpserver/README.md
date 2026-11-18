@@ -84,8 +84,8 @@ dotnet test
   to `RunAsync`, before Isoplane captures the template that every instance
   starts from. The articles it reads are already in memory when an instance
   serves its first request.
-- **The endpoint is warm before the first call.** An
-  `Initialization.Initializing` callback posts one search to `/mcp` before the
+- **The endpoint is warm before the first call.** A
+  `Template.Initializing` callback posts one search to `/mcp` before the
   template is captured, so the work of a first call is in the template too.
 - **A tool is a method.** `[McpServerTool]` marks it, `[Description]` tells the
   model when and how to call it, and its parameters are the tool's inputs.

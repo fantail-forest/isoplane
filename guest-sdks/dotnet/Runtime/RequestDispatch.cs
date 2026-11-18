@@ -9,8 +9,8 @@ internal static class RequestDispatch
     {
         // A guest the host did not pre-initialize initializes before its first dispatch,
         // so an application's initializer has always run by the time it handles a request.
-        await Initialization.EnterAsync();
-        await Activation.EnterAsync();
+        await Template.EnterAsync();
+        await Instance.EnterAsync();
         if (record.Kind != DispatchKind.Http) return await router.Route(record);
         bool hostCanHaveBody = H.ReqBodyCanHaveBody() != 0;
         bool canHaveBody = hostCanHaveBody || record.Body.Length != 0;

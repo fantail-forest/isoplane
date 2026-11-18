@@ -2,7 +2,7 @@ namespace Sample_App.Tests;
 
 /// <summary>
 /// Sandbox tests: HTTP requests to the application running in the real Isoplane
-/// sandbox, which is where platform behavior such as initialization, activation
+/// sandbox, which is where platform behavior such as template initialization, instance start
 /// and outbound connections can be observed. The tests themselves run on your
 /// machine, as a client of the application.
 /// </summary>

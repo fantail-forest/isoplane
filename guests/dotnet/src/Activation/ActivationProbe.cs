@@ -25,7 +25,7 @@ internal static class ActivationProbe
     private static int _initializations;
     private static string _preparedSetting = "";
 
-    [Initializer]
+    [TemplateInitializer]
     public static async Task InitializeAsync()
     {
         await Task.Yield();
@@ -38,7 +38,7 @@ internal static class ActivationProbe
         _ = FixedSeed.Next();
     }
 
-    [Activated]
+    [InstanceStart]
     public static async Task ActivatedAsync()
     {
         await Task.Yield();

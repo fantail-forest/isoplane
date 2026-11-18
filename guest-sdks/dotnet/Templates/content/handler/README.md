@@ -54,9 +54,9 @@ dotnet test
 - **`[HttpHandler]`** receives every HTTP request and returns its response. An
   application has exactly one; the build fails otherwise. Take a
   `StreamingRequest` in place of the `Request` to read a large body as it arrives.
-- **`[Initializer]`** runs while Isoplane prepares the template that every
+- **`[TemplateInitializer]`** runs while Isoplane prepares the template that every
   instance starts from. Whatever it leaves in memory is copied into each instance.
-- **`[Activated]`** runs in each instance, before its first request. State that
+- **`[InstanceStart]`** runs in each instance, before its first request. State that
   must differ between instances is set there.
 
 Both lifecycle methods are optional.

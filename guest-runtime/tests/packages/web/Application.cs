@@ -80,7 +80,7 @@ public static class Application
             string second = await client.GetStringAsync("/hello");
             return first + "|" + second + "; calls=" + (++calls).ToString(CultureInfo.InvariantCulture);
         });
-        Initialization.Initializing += async () =>
+        Template.Initializing += async () =>
         {
             await app.WarmupAsync("/warm");
             await app.WarmupAsync("/hello/warmup");

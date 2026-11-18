@@ -86,7 +86,7 @@ a warm-up request to a database that is not running, fails preparation. So does
 initialization that leaves a connection or stream open: the message names the
 kind, for example `initialization retains a TCP socket`, and the fix is to
 dispose it before the callback returns. See
-[initialization](../concepts/application-lifecycle.md#initialization).
+[template initialization](../concepts/application-lifecycle.md#template-initialization).
 
 ## Breakpoints stay grey
 

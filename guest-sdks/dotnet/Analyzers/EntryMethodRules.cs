@@ -5,7 +5,7 @@ using Microsoft.CodeAnalysis;
 namespace Isoplane.Analyzers;
 
 /// <summary>
-/// What <c>[HttpHandler]</c>, <c>[Initializer]</c> and <c>[Activated]</c> require of the method they
+/// What <c>[HttpHandler]</c>, <c>[TemplateInitializer]</c> and <c>[InstanceStart]</c> require of the method they
 /// mark, one diagnostic for each way a method can fall short. The build checks the same
 /// requirements again on the compiled assembly, as <c>ISOPLANE1005</c>.
 /// </summary>
@@ -39,7 +39,7 @@ internal static class EntryMethodRules
 
     internal static readonly DiagnosticDescriptor NeverCalled = Rule("ISOPLANE1018", "An entry attribute has no effect in an application with an entry point",
         "This project has an entry point, so the [{1}] method '{0}' would never be called. " +
-        "Remove the attribute, or subscribe to Isoplane.Initialization.Initializing and Isoplane.Activation.Activated before awaiting RunAsync.");
+        "Remove the attribute, or subscribe to Isoplane.Template.Initializing and Isoplane.Instance.Starting before awaiting RunAsync.");
 
     internal static readonly ImmutableArray<DiagnosticDescriptor> All = ImmutableArray.Create(
         MustBeStatic, HandlerReturn, HandlerParameters, LifecycleReturn, LifecycleParameters, Generic, Overloaded, Duplicate, NeverCalled);

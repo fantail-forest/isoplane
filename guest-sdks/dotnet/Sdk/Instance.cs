@@ -12,7 +12,7 @@ namespace Isoplane;
 /// Isoplane initializes the application ahead of requests and saves its memory as a template. It then
 /// scales copies of the application with traffic, up to the application’s instance limit. Each copy is
 /// an instance and starts from the template. Whatever existed when the template was saved is
-/// therefore identical in every instance, including a random value drawn at start-up. Subscribe to <see cref="Activated"/>
+/// therefore identical in every instance, including a random value drawn at start-up. Subscribe to <see cref="Starting"/>
 /// to replace such state when an instance starts.
 /// </para>
 /// <para>
@@ -26,8 +26,8 @@ namespace Isoplane;
 /// </para>
 /// <para>
 /// An application written without ASP.NET has no start-up code to subscribe from, and marks one
-/// method with <see cref="ActivatedAttribute"/> instead. For state that every instance can share, use
-/// <see cref="Initialization"/>.
+/// method with <see cref="InstanceStartAttribute"/> instead. For state that every instance can share, use
+/// <see cref="Template"/>.
 /// <see href="https://isoplane.dev/docs/concepts/application-lifecycle">The application lifecycle</see>
 /// explains templates and instances in full.
 /// </para>
@@ -37,30 +37,30 @@ namespace Isoplane;
 /// <code>
 /// var instance = Guid.Empty;
 ///
-/// Activation.Activated += () =>
+/// Instance.Starting += () =>
 /// {
 ///     instance = Guid.NewGuid();
 ///     return Task.CompletedTask;
 /// };
 /// </code>
 /// </example>
-public static class Activation
+public static class Instance
 {
     private static readonly LifecycleHook Hook = new();
 
     /// <summary>Raised once in each instance, before the instance handles its first request.</summary>
     /// <remarks>
     /// Subscribe while the application starts: in <c>Program.cs</c> before <c>await app.RunAsync()</c>,
-    /// or in an <see cref="Initialization.Initializing"/> callback. Subscriptions are saved in the
+    /// or in a callback subscribed to <see cref="Template.Initializing"/>. Subscriptions are saved in the
     /// template, so every instance runs them. Callbacks are awaited one at a time, in the order they
     /// subscribed. An exception from a callback fails the request the instance was started for. The
     /// event is not raised again in an instance Isoplane suspends and later resumes, because such an
     /// instance keeps its own memory.
     /// </remarks>
-    public static event Func<Task>? Activated;
+    public static event Func<Task>? Starting;
 
     /// <summary>
-    /// Whether this instance has finished starting: true once every <see cref="Activated"/> callback has
+    /// Whether this instance has finished starting: true once every <see cref="Starting"/> callback has
     /// completed.
     /// </summary>
     /// <remarks>
@@ -68,13 +68,13 @@ public static class Activation
     /// phases, such as a library's lazy initialization, can read it to tell whether the state it is
     /// about to create will be shared by every instance or belongs to this one.
     /// </remarks>
-    public static bool IsActivated => Hook.IsCompleted;
+    public static bool HasStarted => Hook.IsCompleted;
 
     internal static Task EnterAsync() => Hook.EnterAsync(ActivateAsync);
 
     private static Task ActivateAsync()
     {
         RuntimeGenerators.Reseed();
-        return LifecycleHook.InvokeCallbacksAsync(Activated);
+        return LifecycleHook.InvokeCallbacksAsync(Starting);
     }
 }

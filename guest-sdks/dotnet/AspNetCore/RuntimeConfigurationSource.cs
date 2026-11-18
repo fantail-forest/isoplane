@@ -11,8 +11,8 @@ internal sealed class RuntimeConfigurationSource : IConfigurationSource
         public override void Load()
         {
             LoadSettings();
-            if (!Activation.IsActivated)
-                Activation.Activated += ReloadAsync;
+            if (!Instance.HasStarted)
+                Instance.Starting += ReloadAsync;
         }
 
         private Task ReloadAsync()
@@ -23,7 +23,7 @@ internal sealed class RuntimeConfigurationSource : IConfigurationSource
 
         private void LoadSettings()
         {
-            Activation.Activated -= ReloadAsync;
+            Instance.Starting -= ReloadAsync;
             Data = RuntimeConfiguration.ReadValues().ToDictionary(pair => pair.Key, pair => (string?)pair.Value,
                 StringComparer.OrdinalIgnoreCase);
             OnReload();

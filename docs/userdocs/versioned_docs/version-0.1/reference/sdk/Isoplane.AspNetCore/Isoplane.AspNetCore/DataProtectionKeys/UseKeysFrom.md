@@ -26,7 +26,7 @@ public static IDataProtectionBuilder UseKeysFrom(this IDataProtectionBuilder bui
 
 ## Remarks
 
-Loading happens after every `Initialization.Initializing` callback has finished, so a callback that creates the store's tables runs first. A callback that itself protects or unprotects data, for instance by warming up a page with a form, awaits [`LoadDataProtectionKeysAsync`](./LoadDataProtectionKeysAsync.md) before it does. Each prepared template keeps its captured keys, even after they expire. Preparing a new template may load newer keys; reusing a template reloads none.
+Loading happens after every `Template.Initializing` callback has finished, so a callback that creates the store's tables runs first. A callback that itself protects or unprotects data, for instance by warming up a page with a form, awaits [`LoadDataProtectionKeysAsync`](./LoadDataProtectionKeysAsync.md) before it does. Each prepared template keeps its captured keys, even after they expire. Preparing a new template may load newer keys; reusing a template reloads none.
 
 ## See Also
 

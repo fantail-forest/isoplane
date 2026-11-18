@@ -34,7 +34,7 @@ touches; the project's `README.md` describes the rest.
 | Path | What it holds |
 | --- | --- |
 | `compose.yaml` | The development database |
-| `src/TodoApi/Program.cs` | Services, endpoints, and the initialization and activation hooks |
+| `src/TodoApi/Program.cs` | Services, endpoints, and the template initialization and instance start hooks |
 | `src/TodoApi/Todos/` | The todo entity, its `DbContext` and its endpoints |
 | `src/TodoApi/Migrations/` | Entity Framework Core migrations |
 | `tests/TodoApi.Tests/` | Unit tests, and tests that run the application in the sandbox |
@@ -249,7 +249,7 @@ isoplane: reload failed; keeping the last working app: local preparation failed:
 ```
 
 This is initialization at work. During template preparation, Isoplane runs
-`Program.cs` and its `Initialization.Initializing` callback. In this application the
+`Program.cs` and its `Template.Initializing` callback. In this application the
 callback applies database migrations, and Entity Framework refused: the `Todo`
 class now has a column the migrations do not. Because initialization failed,
 Isoplane did not start the new version, and the previous one is still serving
@@ -332,7 +332,7 @@ The first request to a route does work that later requests do not: ASP.NET
 builds the handler, and Entity Framework compiles the query. Initialization can
 capture that work for instances to reuse.
 
-Open `src/TodoApi/Program.cs` and find the `Initialization.Initializing`
+Open `src/TodoApi/Program.cs` and find the `Template.Initializing`
 callback. It already warms `/todos`. Add a line below that one:
 
 ```csharp

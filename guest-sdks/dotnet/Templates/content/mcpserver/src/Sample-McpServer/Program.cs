@@ -91,7 +91,7 @@ app.MapGet("/", () => $"Sample-McpServer is an MCP server with {handbook.Count} 
 // that are harmless to repeat, and each must answer with a success status.
 // Await any I/O and dispose its connections before the callback returns: an
 // open connection cannot be captured.
-Initialization.Initializing += async () =>
+Template.Initializing += async () =>
 {
     using var search = new HttpRequestMessage(HttpMethod.Post, "/mcp")
     {
@@ -104,10 +104,10 @@ Initialization.Initializing += async () =>
     await app.WarmupAsync(search);
 };
 
-// Activation runs in each instance, before its first request. Set state that
+// Instance start runs in each instance, before its first request. Set state that
 // must differ between instances here, because initialization state is shared:
 //
-//   Activation.Activated += () =>
+//   Instance.Starting += () =>
 //   {
 //       instanceId = Guid.NewGuid();
 //       return Task.CompletedTask;

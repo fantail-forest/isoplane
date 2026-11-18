@@ -30,8 +30,8 @@ internal sealed class AttributedHandlerRouter : IStreamingHttpRouter
 
     public void Boot()
     {
-        if (initializer is not null) Initialization.Initializing += initializer;
-        if (activated is not null) Activation.Activated += activated;
+        if (initializer is not null) Template.Initializing += initializer;
+        if (activated is not null) Instance.Starting += activated;
     }
 
     public bool StreamsRequest(RequestHead request) => streaming is not null;

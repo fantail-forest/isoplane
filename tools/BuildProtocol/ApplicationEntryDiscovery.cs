@@ -20,8 +20,8 @@ internal sealed class ApplicationEntryException(string message) : InvalidOperati
 internal static class ApplicationEntryDiscovery
 {
     private const string HttpHandler = "Isoplane.HttpHandlerAttribute";
-    private const string Initializer = "Isoplane.InitializerAttribute";
-    private const string Activated = "Isoplane.ActivatedAttribute";
+    private const string Initializer = "Isoplane.TemplateInitializerAttribute";
+    private const string Activated = "Isoplane.InstanceStartAttribute";
     private const string Task = "System.Threading.Tasks.Task";
     private const string ResponseTask = "System.Threading.Tasks.Task`1<Isoplane.Response>";
 
@@ -41,7 +41,7 @@ internal static class ApplicationEntryDiscovery
         if (attributed.Count != 0)
             throw new ApplicationEntryException($"'{name}' has an entry point, so its {Describe(attributed[0].Attribute)} method " +
                 $"'{Reference(metadata, attributed[0].Method)}' would never be called. Remove the attribute, or subscribe to " +
-                "Isoplane.Initialization.Initializing and Isoplane.Activation.Activated before awaiting RunAsync.");
+                "Isoplane.Template.Initializing and Isoplane.Instance.Starting before awaiting RunAsync.");
         return new EntryPointApplication(AsynchronousMain(metadata, (MethodDefinitionHandle)main));
     }
 

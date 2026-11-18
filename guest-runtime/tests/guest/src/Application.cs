@@ -9,7 +9,7 @@ public static class Application
     private static AcceptanceHandler handler = null!;
 
     /// <summary>Constructs the behaviour families during initialization, so the template carries them.</summary>
-    [Initializer]
+    [TemplateInitializer]
     public static Task InitializeAsync()
     {
         handler = new AcceptanceHandler();

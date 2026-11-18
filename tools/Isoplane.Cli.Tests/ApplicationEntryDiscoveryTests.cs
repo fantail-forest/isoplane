@@ -13,8 +13,8 @@ public sealed class ApplicationEntryDiscoveryTests : IDisposable
     public ApplicationEntryDiscoveryTests() => sdk = Compile("Isoplane.Sdk", OutputKind.DynamicallyLinkedLibrary, """
         namespace Isoplane;
         public sealed class HttpHandlerAttribute : System.Attribute;
-        public sealed class InitializerAttribute : System.Attribute;
-        public sealed class ActivatedAttribute : System.Attribute;
+        public sealed class TemplateInitializerAttribute : System.Attribute;
+        public sealed class InstanceStartAttribute : System.Attribute;
         public sealed class Request;
         public sealed class StreamingRequest;
         public sealed class Response;
@@ -51,8 +51,8 @@ public sealed class ApplicationEntryDiscoveryTests : IDisposable
                 [HttpHandler] static Task<Response> HandleAsync(Request request) => throw null!;
                 static class Lifecycle
                 {
-                    [Initializer] internal static Task InitializeAsync() => Task.CompletedTask;
-                    [Activated] internal static Task ActivatedAsync() => Task.CompletedTask;
+                    [TemplateInitializer] internal static Task InitializeAsync() => Task.CompletedTask;
+                    [InstanceStart] internal static Task ActivatedAsync() => Task.CompletedTask;
                 }
             }
             """)));
@@ -81,9 +81,9 @@ public sealed class ApplicationEntryDiscoveryTests : IDisposable
     [InlineData("[HttpHandler] public static Task<Response> HandleAsync(string path) => throw null!;", "must return Task<Response>")]
     [InlineData("[HttpHandler] public static Task<Response> HandleAsync(Request request, int more) => throw null!;", "must return Task<Response>")]
     [InlineData("[HttpHandler] public static Task<Response> HandleAsync(Request request) => throw null!; static Task<Response> HandleAsync(Request request, int more) => throw null!;", "must not be overloaded")]
-    [InlineData("[HttpHandler] public static Task<Response> HandleAsync(Request request) => throw null!; [Initializer] public static void Initialize() { }", "[Initializer] method 'Api.Initialize' must return Task")]
-    [InlineData("[HttpHandler] public static Task<Response> HandleAsync(Request request) => throw null!; [Activated] public static Task Activated(int instance) => Task.CompletedTask;", "[Activated] method 'Api.Activated' must return Task")]
-    [InlineData("[HttpHandler] public static Task<Response> HandleAsync(Request request) => throw null!; [Initializer] public static Task One() => Task.CompletedTask; [Initializer] public static Task Two() => Task.CompletedTask;", "one [Initializer] method")]
+    [InlineData("[HttpHandler] public static Task<Response> HandleAsync(Request request) => throw null!; [TemplateInitializer] public static void Initialize() { }", "[TemplateInitializer] method 'Api.Initialize' must return Task")]
+    [InlineData("[HttpHandler] public static Task<Response> HandleAsync(Request request) => throw null!; [InstanceStart] public static Task Activated(int instance) => Task.CompletedTask;", "[InstanceStart] method 'Api.Activated' must return Task")]
+    [InlineData("[HttpHandler] public static Task<Response> HandleAsync(Request request) => throw null!; [TemplateInitializer] public static Task One() => Task.CompletedTask; [TemplateInitializer] public static Task Two() => Task.CompletedTask;", "one [TemplateInitializer] method")]
     public void a_library_without_exactly_one_usable_entry_is_refused_by_cause(string members, string cause)
     {
         var failure = Assert.Throws<ApplicationEntryException>(() => ApplicationEntryDiscovery.Discover(Library(members)));
@@ -95,9 +95,9 @@ public sealed class ApplicationEntryDiscoveryTests : IDisposable
     {
         var failure = Assert.Throws<ApplicationEntryException>(() => ApplicationEntryDiscovery.Discover(Compile("App", OutputKind.ConsoleApplication, """
             await System.Threading.Tasks.Task.Yield();
-            static class Api { [Isoplane.Initializer] static System.Threading.Tasks.Task InitializeAsync() => System.Threading.Tasks.Task.CompletedTask; }
+            static class Api { [Isoplane.TemplateInitializer] static System.Threading.Tasks.Task InitializeAsync() => System.Threading.Tasks.Task.CompletedTask; }
             """)));
-        Assert.Contains("has an entry point, so its [Initializer] method 'Api.InitializeAsync' would never be called", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("has an entry point, so its [TemplateInitializer] method 'Api.InitializeAsync' would never be called", failure.Message, StringComparison.Ordinal);
     }
 
     private string Library(string members) => Compile("App", OutputKind.DynamicallyLinkedLibrary,

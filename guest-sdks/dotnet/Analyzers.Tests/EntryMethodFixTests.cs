@@ -49,7 +49,7 @@ public sealed class EntryMethodFixTests
         {
             Handler + """
 
-            [Initializer]
+            [TemplateInitializer]
             public static void Initialize()
             {
                 if (Environment.ProcessorCount == 0) return;
@@ -59,7 +59,7 @@ public sealed class EntryMethodFixTests
             "ISOPLANE1013",
             Handler + """
 
-            [Initializer]
+            [TemplateInitializer]
             public static Task Initialize()
             {
                 if (Environment.ProcessorCount == 0) return Task.CompletedTask;
@@ -69,11 +69,11 @@ public sealed class EntryMethodFixTests
             """
         },
         {
-            Handler + "\n[Initializer] public static void Initialize() => Console.WriteLine(\"ready\");",
+            Handler + "\n[TemplateInitializer] public static void Initialize() => Console.WriteLine(\"ready\");",
             "ISOPLANE1013",
             Handler + """
 
-            [Initializer] public static Task Initialize()
+            [TemplateInitializer] public static Task Initialize()
             {
                 Console.WriteLine("ready");
                 return Task.CompletedTask;
@@ -81,14 +81,14 @@ public sealed class EntryMethodFixTests
             """
         },
         {
-            Handler + "\n[Activated] public static async void Activate() { await Task.Yield(); }",
+            Handler + "\n[InstanceStart] public static async void Activate() { await Task.Yield(); }",
             "ISOPLANE1013",
-            Handler + "\n[Activated] public static async Task Activate() { await Task.Yield(); }"
+            Handler + "\n[InstanceStart] public static async Task Activate() { await Task.Yield(); }"
         },
         {
-            Handler + "\n[Initializer] public static Task InitializeAsync(int count, string name) => Task.CompletedTask;",
+            Handler + "\n[TemplateInitializer] public static Task InitializeAsync(int count, string name) => Task.CompletedTask;",
             "ISOPLANE1014",
-            Handler + "\n[Initializer] public static Task InitializeAsync() => Task.CompletedTask;"
+            Handler + "\n[TemplateInitializer] public static Task InitializeAsync() => Task.CompletedTask;"
         },
         {
             Handler + "\n[HttpHandler] public static Task<Response> OtherAsync(Request request) => Task.FromResult(Response.Text(\"other\"));",
@@ -118,9 +118,9 @@ public sealed class EntryMethodFixTests
     [Fact]
     public async Task an_attribute_that_cannot_apply_is_removed()
     {
-        const string before = "using System.Threading.Tasks;\nusing Isoplane;\npublic static class Program\n{\n    public static async Task Main() => await Task.Yield();\n\n    [Initializer]\n    public static Task InitializeAsync() => Task.CompletedTask;\n}\n";
+        const string before = "using System.Threading.Tasks;\nusing Isoplane;\npublic static class Program\n{\n    public static async Task Main() => await Task.Yield();\n\n    [TemplateInitializer]\n    public static Task InitializeAsync() => Task.CompletedTask;\n}\n";
         var changed = await Application.FixAsync(before, "ISOPLANE1018", OutputKind.ConsoleApplication);
-        Assert.Equal(before.Replace("    [Initializer]\n", ""), changed);
+        Assert.Equal(before.Replace("    [TemplateInitializer]\n", ""), changed);
         Assert.Empty(await Application.AnalyzeAsync(changed!, OutputKind.ConsoleApplication));
     }
 
@@ -128,8 +128,8 @@ public sealed class EntryMethodFixTests
     [Theory]
     [InlineData("[HttpHandler] public static ValueTask<Response> HandleAsync(Request request) => new(Response.Text(\"ok\"));", "ISOPLANE1011")]
     [InlineData("[HttpHandler] public static Task<Response> HandleAsync(Request request, string extra) => Task.FromResult(Response.Text(\"ok\"));", "ISOPLANE1012")]
-    [InlineData(Handler + "\n[Activated] public static ValueTask ActivatedAsync() => default;", "ISOPLANE1013")]
-    [InlineData(Handler + "\n[Initializer] public static Task InitializeAsync(int count) => Task.Delay(count);", "ISOPLANE1014")]
+    [InlineData(Handler + "\n[InstanceStart] public static ValueTask ActivatedAsync() => default;", "ISOPLANE1013")]
+    [InlineData(Handler + "\n[TemplateInitializer] public static Task InitializeAsync(int count) => Task.Delay(count);", "ISOPLANE1014")]
     public async Task a_diagnostic_without_one_clear_repair_offers_none(string members, string id)
     {
         Assert.Null(await Application.FixAsync(Application.Library(members), id));

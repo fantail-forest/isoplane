@@ -51,7 +51,7 @@ call as an error in your editor and offer the fix.
 ## What to know
 
 - **Instances start from a template.** Isoplane runs `Program.cs` up to
-  `RunAsync`, then the `Isoplane.Initialization.Initializing` callbacks, and
+  `RunAsync`, then the `Isoplane.Template.Initializing` callbacks, and
   captures the result. `app.WarmupAsync("/path")` in such a callback serves a
   request before the capture, so no instance pays for that route's first use.
 - **Await work the response depends on.** Remaining work uses a bounded instance

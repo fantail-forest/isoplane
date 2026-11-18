@@ -27,7 +27,7 @@ public static Task WarmupAsync(this WebApplication application, HttpRequestMessa
 
 ## Remarks
 
-Use it for a route that [`WarmupAsync`](./WarmupAsync.md) cannot reach with a plain `GET`: a search or a query sent by `POST`, or an endpoint that answers only when a header is present. Everything that method's remarks say applies here: call it from an `Initialization.Initializing` callback, the endpoint must answer with a success status, and the response body is discarded.
+Use it for a route that [`WarmupAsync`](./WarmupAsync.md) cannot reach with a plain `GET`: a search or a query sent by `POST`, or an endpoint that answers only when a header is present. Everything that method's remarks say applies here: call it from a `Template.Initializing` callback, the endpoint must answer with a success status, and the response body is discarded.
 
 The request is real and can repeat if preparation retries initialization. Reusing an existing prepared template sends no request. Send one that changes nothing, or that is harmless to repeat: retries do not undo a `POST` that already created a row.
 
@@ -38,7 +38,7 @@ The request carries the headers of the message and of its content. A `Host` head
 ```csharp
 app.MapPost("/search", (SearchQuery query, Catalog catalog) => catalog.Search(query));
 
-Initialization.Initializing += async () =>
+Template.Initializing += async () =>
 {
     using var search = new HttpRequestMessage(HttpMethod.Post, "/search")
     {
@@ -80,7 +80,7 @@ public static Task WarmupAsync(this WebApplication application, string path)
 
 The first request to a route is slower than those that follow: ASP.NET builds the route's handler, serializers are created, a database model is compiled. Isoplane saves the application's memory as a template after it has started, and every instance starts from that template. A request served before the template is saved leaves all of that work in it, so no instance repeats it.
 
-Call it from a callback subscribed to the [Initialization.Initializing](../../../../../reference/sdk/Isoplane.Sdk/Isoplane/Initialization/Initializing.md) event, which is raised when the application has started and the template has not yet been saved. Call it once for each route worth warming.
+Call it from a callback subscribed to the [Template.Initializing](../../../../../reference/sdk/Isoplane.Sdk/Isoplane/Template/Initializing.md) event, which is raised when the application has started and the template has not yet been saved. Call it once for each route worth warming.
 
 The request is a real one. It passes through the application's middleware and runs the endpoint, including any database query the endpoint makes, so choose routes that only read. Its `Host` header is `localhost`, and its response body is discarded. The endpoint must answer with a success status; any other status throws, which stops the application from starting.
 
@@ -92,7 +92,7 @@ To warm a route that takes another method, a body or particular headers, pass an
 var app = builder.Build();
 app.MapGet("/todos", (TodoStore store) => store.All());
 
-Initialization.Initializing += async () =>
+Template.Initializing += async () =>
 {
     await app.WarmupAsync("/todos");
 };
