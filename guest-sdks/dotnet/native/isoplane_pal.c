@@ -10,7 +10,6 @@
  */
 
 #include <stdint.h>
-#include <fcntl.h>
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
@@ -112,21 +111,6 @@ void __wasm_import_streams_method_input_stream_blocking_read(int32_t a, int64_t 
 /* (param i32 i64 i64 i32) */
 
 #include "isoplane_filesystem.h"
-
-/* The managed WASI shim fails without setting errno. The empty disk denies
- * creation before reserving a name; open routes that request through the host
- * adapter and preserves its error for the managed IOException. */
-intptr_t __wrap_SystemNative_MksTemps(char *path_template, int32_t suffix_length)
-{
-    size_t length = strlen(path_template);
-    if (suffix_length < 0 || (size_t)suffix_length > length ||
-        length - (size_t)suffix_length < 6 ||
-        memcmp(path_template + length - (size_t)suffix_length - 6, "XXXXXX", 6) != 0) {
-        errno = EINVAL;
-        return -1;
-    }
-    return open(path_template, O_RDWR | O_CREAT | O_EXCL, 0600);
-}
 
 #include "isoplane_socket_poll.h"
 static void isoplane_capture_socket(const uint8_t *result);
