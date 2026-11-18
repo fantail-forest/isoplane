@@ -186,6 +186,7 @@ public static unsafe class Exports<TRouter>
     {
         try
         {
+            OpenConnections.Record();
             Boot();
             var warm = new PostcardWriter(64);
             warm.Varint(1);
@@ -292,6 +293,9 @@ public static unsafe class Exports<TRouter>
         if (initialization.IsFaulted || initialization.IsCanceled)
             return initialization.Exception is { } error ? Panic("pre-initialization", error.GetBaseException()) : PollStatus.Trapped(TrapCode.Panic);
         _initialization = null;
+        // The host refuses the capture and reports warnings with its reason.
+        foreach (string connection in OpenConnections.Take())
+            Log(3, "initialization left open " + connection);
         RuntimeTimers.MarkInitialized();
         CollectorTarget.Aim();
         return PollStatus.Done(0);

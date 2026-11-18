@@ -32,8 +32,10 @@ pub enum PrepareError {
     #[error("invalid preparation request: {0}")]
     InvalidRequest(&'static str),
     /// The input or captured state could not be represented safely.
-    #[error("preparation state: {0}")]
-    State(#[source] anyhow::Error),
+    // The cause is part of the message and not also a source: a report that
+    // prints an error with its sources would otherwise repeat it.
+    #[error("preparation state: {0:#}")]
+    State(anyhow::Error),
     /// Initialization did not return a successful empty-stack boundary.
     #[error("initializer ended with {completion:?}: {detail}")]
     Initialization {

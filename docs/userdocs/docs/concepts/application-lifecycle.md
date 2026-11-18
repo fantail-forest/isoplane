@@ -86,7 +86,7 @@ In each case the application does not start, and the terminal shows the reason.
 | Condition | What you see |
 | --- | --- |
 | `Program.cs` or an `Initializing` callback throws | The exception that was thrown |
-| A connection, stream or DNS result is still open when the callbacks finish | A message that names the kind, such as `initialization retains a TCP socket; dispose it before capture` |
+| A connection, stream or DNS result is still open when the callbacks finish | A message that names the kind, such as `initialization retains a TCP socket; dispose it before capture`. For a socket or a DNS lookup, it also gives the stack trace of the code that opened it. For a connection in an `HttpClient` pool, the trace is of the code that created the client's handler |
 | Code waits synchronously or starts a thread | `PlatformNotSupportedException`, which fails initialization unless the code catches it |
 | Initialization runs longer than Isoplane allows | Initialization is stopped |
 | The entry point calls `Run`, or does not await `RunAsync` | A build error, [`ISOPLANE1020`](../reference/error-codes.md#isoplane1020) or [`ISOPLANE1021`](../reference/error-codes.md#isoplane1021), before anything runs |

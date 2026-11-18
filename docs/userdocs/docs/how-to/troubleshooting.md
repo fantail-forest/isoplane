@@ -85,7 +85,9 @@ Two causes are particular to Isoplane. An initialization callback that throws, s
 a warm-up request to a database that is not running, fails preparation. So does
 initialization that leaves a connection or stream open: the message names the
 kind, for example `initialization retains a TCP socket`, and the fix is to
-dispose it before the callback returns. See
+dispose it before the callback returns. For a socket or a DNS lookup, the message
+also gives the stack trace of the code that opened it. For a connection in an
+`HttpClient` pool, the trace is of the code that created the client's handler. See
 [template initialization](../concepts/application-lifecycle.md#template-initialization).
 
 ## Debugging needs Microsoft's library
