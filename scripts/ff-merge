@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Land a pull request by fast-forwarding its base branch to its head commit,
+# which keeps the commits GitHub's merge buttons would rewrite:
+#   ff-merge [--check] PR_NUMBER
+# --check reports whether the pull request can land and changes nothing.
+# Run it in a checkout of the pull request's repository. As a GitHub CLI command:
+#   gh alias set 'pr ff-merge' '!/path/to/scripts/ff-merge "$@"'
+set -euo pipefail
+check=false
+if [ "${1:-}" = --check ]; then
+  check=true
+  shift
+fi
+if [ "$#" != 1 ] || ! [[ $1 =~ ^[0-9]+$ ]]; then
+  echo "Usage: $0 [--check] PR_NUMBER" >&2
+  exit 2
+fi
+number=$1
+refuse() { echo "#$number cannot be fast-forwarded: $1" >&2; exit 1; }
+
+read -r state draft base head < <(gh api "repos/{owner}/{repo}/pulls/$number" \
+  --jq '[.state, .draft, .base.ref, .head.sha] | @tsv')
+[ "$state" = open ] || refuse "it is $state."
+[ "$draft" = false ] || refuse "it is a draft."
+
+read -r status behind < <(gh api "repos/{owner}/{repo}/compare/$base...$head" --jq '[.status, .behind_by] | @tsv')
+case "$status" in
+  ahead) ;;
+  identical) refuse "$base already holds its commits." ;;
+  *) refuse "its branch is $behind commits behind $base. Rebase it onto $base and let its checks run." ;;
+esac
+
+# The push is refused without the checks the branch rules require. Saying which one is missing is clearer than that refusal.
+runs=$(gh api "repos/{owner}/{repo}/commits/$head/check-runs?per_page=100" --paginate \
+  --jq '.check_runs[] | select(.conclusion == "success") | .name')
+while read -r required; do
+  [ -z "$required" ] || grep --quiet --line-regexp --fixed-strings "$required" <<<"$runs" ||
+    refuse "the required check \"$required\" has not passed on $head."
+done < <(gh api "repos/{owner}/{repo}/rules/branches/$base" \
+  --jq '.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context')
+
+if $check; then
+  echo "#$number can be fast-forwarded: $base would move to $head."
+  exit 0
+fi
+
+url=$(gh api "repos/{owner}/{repo}" --jq .ssh_url)
+git fetch --quiet "$url" "refs/pull/$number/head"
+[ "$(git rev-parse FETCH_HEAD)" = "$head" ] || refuse "its head moved while this ran. Run it again."
+git push "$url" "$head:refs/heads/$base"
+echo "#$number landed: $base is at $head."
+if [ "$(git symbolic-ref --quiet --short HEAD || true)" = "$base" ]; then
+  git merge --ff-only "$head"
+fi
