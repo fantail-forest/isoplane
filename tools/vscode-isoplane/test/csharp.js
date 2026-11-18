@@ -24,12 +24,15 @@ async function run() {
     let reportExit;
     const adapterExit = new Promise(resolve => { reportExit = resolve; });
     const transcript = [];
+    const started = Date.now();
+    // The elapsed time shows which step a run that reaches its deadline was waiting on.
+    const record = text => transcript.push(`[${Date.now() - started} ms] ${text}`);
     const tracker = vscode.debug.registerDebugAdapterTrackerFactory('isoplane', {
         createDebugAdapterTracker() {
             return {
-                onWillReceiveMessage(message) { transcript.push("DAP request: " + message.command); },
+                onWillReceiveMessage(message) { record("DAP request: " + message.command); },
                 onDidSendMessage(message) {
-                    if (message.type !== 'event' || message.event !== 'output') transcript.push("DAP: " + JSON.stringify(message));
+                    if (message.type !== 'event' || message.event !== 'output') record("DAP: " + JSON.stringify(message));
                     if (message.type === 'event' && message.event === 'output') console.log(message.body.output);
                     if (message.type === 'response' && message.command === 'setBreakpoints' && message.success)
                         for (const reported of message.body.breakpoints) events.emit('breakpoint', reported);
@@ -42,7 +45,7 @@ async function run() {
                 },
                 // VS Code also reports the adapter's closed output here once the session is stopped.
                 onError(error) { console.error(error); if (!ending) events.emit('error', error); },
-                onExit(code, signal) { transcript.push('Adapter exit: ' + JSON.stringify({ code, signal })); reportExit(); }
+                onExit(code, signal) { record('Adapter exit: ' + JSON.stringify({ code, signal })); reportExit(); }
             };
         }
     });
@@ -116,6 +119,10 @@ async function run() {
         const shiftedStop = once(events, 'stopped', { signal });
         const shiftedApply = once(events, 'applied', { signal });
         const shiftedBreakpoint = verified(line + 3);
+        // VS Code sends the breakpoint's new line about when the extension asks for Hot Reload, sometimes before
+        // and sometimes after. Sent first, it names a line the running code has no statement on, and Hot Reload
+        // has to bind it. Sending it here makes every run take that order.
+        await session.customRequest('setBreakpoints', { source: { path: source }, breakpoints: [{ line: line + 3 }], sourceModified: true });
         const shift = new vscode.WorkspaceEdit();
         shift.insert(document.uri, new vscode.Position(0, 0), '\n\n');
         assert.equal(await vscode.workspace.applyEdit(shift), true);
