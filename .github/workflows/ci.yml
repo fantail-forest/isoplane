@@ -164,9 +164,13 @@ jobs:
       - run: npm --prefix tools/vscode-isoplane ci
       - run: npm --prefix tools/vscode-isoplane run package
 
-  integration:
+  runtime:
     needs: changes
     if: needs.changes.outputs.integration == 'true' || github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/runtime.yml
+
+  integration:
+    needs: [changes, runtime]
     uses: ./.github/workflows/integration.yml
     with:
       suites: ${{ (needs.changes.outputs.managed == 'true' || needs.changes.outputs.editor == 'true' || needs.changes.outputs.journeys == 'true' || github.event_name == 'workflow_dispatch') && '["host", "sdk"]' || '["host"]' }}
@@ -186,7 +190,7 @@ jobs:
 
   required:
     name: CI passed
-    needs: [changes, tooling, rust, native, abi, managed, docs, editor, integration, pins]
+    needs: [changes, tooling, rust, native, abi, managed, docs, editor, runtime, integration, pins]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5

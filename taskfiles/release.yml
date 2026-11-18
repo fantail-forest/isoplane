@@ -18,9 +18,9 @@ tasks:
 
   shared:
     run: once
-    desc: Prepare platform-independent release inputs on Linux
+    desc: Prepare platform-independent release inputs on Linux, or check a copied set with ISOPLANE_RELEASE_SHARED=copied
     cmds:
-      - task: 'shared:{{if eq OS "linux"}}build{{else}}available{{end}}'
+      - task: 'shared:{{if and (eq OS "linux") (ne (.ISOPLANE_RELEASE_SHARED | default "") "copied")}}build{{else}}available{{end}}'
 
   shared:build:
     internal: true
@@ -89,8 +89,14 @@ tasks:
       - bash scripts/check-fork-releases
 
   publication:
-    desc: Pack the publication feed with native libraries from all three platforms
-    deps: [forks, shared]
+    desc: Pack the publication feed once each pinned fork commit has a release
+    deps: [forks]
+    cmds:
+      - task: feed
+
+  feed:
+    desc: Pack one package feed with native libraries from all three platforms
+    deps: [shared]
     vars:
       PUBLICATION: '{{.RELEASES}}/publication-{{.VERSION}}'
     sources:

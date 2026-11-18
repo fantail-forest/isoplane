@@ -22,6 +22,7 @@ def shared_files(packages, managed, notices, package_ids, version):
         'hotreload/Isoplane.HotReload.dll', 'hotreload/Isoplane.HotReload.deps.json',
         'hotreload/Isoplane.HotReload.runtimeconfig.json')]
     required += [managed / 'bin/Isoplane.Native/release/Isoplane.Native.dll',
+                 managed / 'bin/Isoplane.Cli/release/Isoplane.Cli.dll',
                  managed / 'obj/Isoplane.Cli/release/DotnetToolSettings.xml']
     required += [notices / name for name in (
         'rust-dependencies.json', 'managed-dependencies.json',
