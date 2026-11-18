@@ -15,12 +15,11 @@
     <RestoreAdditionalProjectSources>$(RestoreAdditionalProjectSources);$(IsoplaneGuestRuntimeFeed)</RestoreAdditionalProjectSources>
   </PropertyGroup>
   <ItemGroup>
-    <!-- The libc and System.Native symbols the link wraps: the PAL objects
-         answer the socket and file calls through the host interface, and the
-         runtime pack's System.Native observes a socket's pollables through
-         libc's poll and recovers the network error code libc drops from a
-         failed stream operation. -->
-    <IsoplaneWrappedSymbol Include="SystemNative_MksTemps;SystemNative_SetLingerOption;socket;close;connect;getsockopt;setsockopt;send;sendmsg" />
+    <!-- The libc symbols the link wraps. libc calls them from inside its own
+         socket functions, where the runtime fork cannot change the caller:
+         the runtime pack's System.Native observes a socket's pollables
+         through libc's poll and recovers the network error code libc drops
+         from a failed stream operation. -->
     <IsoplaneWrappedSymbol Include="poll_poll;streams_method_input_stream_read;streams_method_output_stream_check_write;streams_method_output_stream_write" />
   </ItemGroup>
   <ItemGroup>

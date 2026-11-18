@@ -19,21 +19,18 @@ static void isoplane_capture_socket(const uint8_t *result) {
     if (result[0] == 0) memcpy(&isoplane_created_socket, result + 4, sizeof(uint32_t));
 }
 
-int __real_socket(int domain, int type, int protocol);
-int __real_close(int fd);
-int __real_connect(int fd, const struct sockaddr *address, socklen_t length);
-int __real_getsockopt(int fd, int level, int option, void *value, socklen_t *length);
-int __real_setsockopt(int fd, int level, int option, const void *value, socklen_t length);
+/* The runtime fork's System.Native and debugger agent call the isoplane_socket_
+ * functions by name where another platform calls libc's socket functions. */
 
 /* Construction returns before managed code runs, so the canonical result can
  * be paired with libc's public fd without inspecting its private descriptor. */
-int __wrap_socket(int domain, int type, int protocol) {
+int isoplane_socket_open(int domain, int type, int protocol) {
     isoplane_created_socket = 0;
-    int fd = __real_socket(domain, type, protocol);
+    int fd = socket(domain, type, protocol);
     if (fd < 0 || isoplane_created_socket == 0) return fd;
     struct isoplane_socket_descriptor *entry = malloc(sizeof(*entry));
     if (entry == NULL) {
-        if (__real_close(fd) < 0) return -1;
+        if (close(fd) < 0) return -1;
         errno = ENOMEM;
         return -1;
     }
@@ -49,8 +46,8 @@ int __wrap_socket(int domain, int type, int protocol) {
     return fd;
 }
 
-int __wrap_close(int fd) {
-    int result = __real_close(fd);
+int isoplane_socket_close(int fd) {
+    int result = close(fd);
     if (result != 0) return result;
     struct isoplane_socket_descriptor **entry = &isoplane_socket_descriptors;
     while (*entry != NULL) {
@@ -83,7 +80,7 @@ static int isoplane_no_delay(int fd, int enabled) {
     return result;
 }
 
-int __wrap_connect(int fd, const struct sockaddr *address, socklen_t length) {
+int isoplane_socket_connect(int fd, const struct sockaddr *address, socklen_t length) {
     struct isoplane_socket_descriptor *entry = isoplane_socket_descriptor_for(fd);
     if (entry != NULL && entry->domain == AF_INET6 && entry->ipv6_only &&
         address != NULL && length >= sizeof(struct sockaddr_in6) && address->sa_family == AF_INET6) {
@@ -93,18 +90,18 @@ int __wrap_connect(int fd, const struct sockaddr *address, socklen_t length) {
             return -1;
         }
     }
-    int result = __real_connect(fd, address, length);
+    int result = connect(fd, address, length);
     if (entry != NULL && (result == 0 || errno == EINPROGRESS || errno == EALREADY))
         entry->connect_started = 1;
     return result;
 }
 
-int __wrap_getsockopt(int fd, int level, int option, void *value, socklen_t *length) {
+int isoplane_socket_get_option(int fd, int level, int option, void *value, socklen_t *length) {
     int is_no_delay = level == IPPROTO_TCP && option == TCP_NODELAY;
     struct isoplane_socket_descriptor *entry = isoplane_socket_descriptor_for(fd);
     int is_ipv6_only = level == IPPROTO_IPV6 && option == IPV6_V6ONLY && entry != NULL && entry->domain == AF_INET6;
     if (!is_no_delay && !is_ipv6_only)
-        return __real_getsockopt(fd, level, option, value, length);
+        return getsockopt(fd, level, option, value, length);
     if (value == NULL || length == NULL || *length < sizeof(int)) {
         errno = EINVAL;
         return -1;
@@ -116,12 +113,12 @@ int __wrap_getsockopt(int fd, int level, int option, void *value, socklen_t *len
     return 0;
 }
 
-int __wrap_setsockopt(int fd, int level, int option, const void *value, socklen_t length) {
+int isoplane_socket_set_option(int fd, int level, int option, const void *value, socklen_t length) {
     int is_no_delay = level == IPPROTO_TCP && option == TCP_NODELAY;
     struct isoplane_socket_descriptor *entry = isoplane_socket_descriptor_for(fd);
     int is_ipv6_only = level == IPPROTO_IPV6 && option == IPV6_V6ONLY && entry != NULL && entry->domain == AF_INET6;
     if (!is_no_delay && !is_ipv6_only)
-        return __real_setsockopt(fd, level, option, value, length);
+        return setsockopt(fd, level, option, value, length);
     if (value == NULL || length < sizeof(int)) {
         errno = EINVAL;
         return -1;
@@ -137,22 +134,4 @@ int __wrap_setsockopt(int fd, int level, int option, const void *value, socklen_
         return 0;
     }
     return isoplane_no_delay(fd, enabled != 0) < 0 ? -1 : 0;
-}
-
-/* The PAL's LingerOption: non-zero OnOff enables lingering for Seconds. */
-struct isoplane_pal_linger_option {
-    int32_t on_off;
-    int32_t seconds;
-};
-
-int32_t __real_SystemNative_SetLingerOption(intptr_t socket, struct isoplane_pal_linger_option *option);
-
-/* The host closes a socket without lingering and never with a reset, so
- * disabled linger is the only state a socket can be in. The PAL, built
- * against a libc with no SO_LINGER, reports every linger setting
- * unsupported; setting the state the socket is already in succeeds here as
- * the no-op it is, and enabling keeps the PAL's refusal. */
-int32_t __wrap_SystemNative_SetLingerOption(intptr_t socket, struct isoplane_pal_linger_option *option) {
-    if (option != NULL && option->on_off == 0) return 0;
-    return __real_SystemNative_SetLingerOption(socket, option);
 }

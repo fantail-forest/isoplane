@@ -1,8 +1,16 @@
 <Project>
   <Import Project="Isoplane.NativeExports.targets" />
-  <Import Project="Isoplane.Mono.Bundle.targets" />
-  <Import Project="Isoplane.Mono.ManagedToNative.targets" />
-  <Target Name="IsoplaneMonoNativeExports" BeforeTargets="IsoplaneMonoManagedToNativeInputs"
+  <ItemGroup>
+    <!-- The runtime fork's build generates P/Invoke entries for these modules
+         beside the runtime's own. -->
+    <WasmPInvokeModule Include="@(IsoplanePInvokeModule)" />
+    <!-- The SDK's calls into the runtime itself, such as setting the collector's soft heap limit. -->
+    <WasmPInvokeModule Include="isoplane_runtime" />
+    <!-- NuGet keeps one extraction per pack version, so a republished pack
+         changes no path the fork's incremental steps track. -->
+    <WasmGenerationKey Include="$(IsoplaneGuestRuntimePackVersion);$(IsoplaneGuestRuntimePackSha512)" />
+  </ItemGroup>
+  <Target Name="IsoplaneMonoNativeExports" BeforeTargets="_WasmManagedToNativeInputs"
           DependsOnTargets="_WasiSelectNativeArchives;IsoplaneMonoPaths">
     <PropertyGroup>
       <WasmPInvokeSymbolInventoryFile>$(_IsoplaneMonoDir)native-exports.txt</WasmPInvokeSymbolInventoryFile>
