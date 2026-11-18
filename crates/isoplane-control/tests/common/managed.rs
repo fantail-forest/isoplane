@@ -33,6 +33,17 @@ impl Prepared {
 }
 
 pub fn prepare(name: &str, platform_files: PlatformFiles) -> Result<Prepared, WorkerFailure> {
+    prepare_configured(name, platform_files, b"{}", None)
+}
+
+/// Prepares the probe with `runtime_config` as the JSON object of settings its
+/// initialization reads, and `network` as what that initialization may reach.
+pub fn prepare_configured(
+    name: &str,
+    platform_files: PlatformFiles,
+    runtime_config: &[u8],
+    network: Option<isoplane_prepare::InitializationNetwork>,
+) -> Result<Prepared, WorkerFailure> {
     let wasm = isoplane_fixtures::mono_runtime();
     let request = BuildRequest {
         engine: EngineConfig {
@@ -51,10 +62,9 @@ pub fn prepare(name: &str, platform_files: PlatformFiles) -> Result<Prepared, Wo
         validation_limits: Default::default(),
         input_hash: *blake3::hash(&wasm).as_bytes(),
         initialization: Initialization {
-            network: None,
-
+            network,
             config: Vec::new(),
-            runtime_config: b"{}".to_vec(),
+            runtime_config: runtime_config.to_vec(),
             sandbox: InitSandbox::RuntimeBringUp,
             occupancy_ms: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_OCCUPANCY_MS,
             wall_ms: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_WALL_MS,
