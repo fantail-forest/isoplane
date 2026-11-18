@@ -4,35 +4,37 @@
 # Needs a signed-in GitHub CLI.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+# shellcheck source=scripts/fork-pins.sh
+source scripts/fork-pins.sh
 
-pins=(
-  "isoplane-dotnet-runtime $(git rev-parse HEAD:vendor/dotnet-runtime)"
-  "isoplane-openssl $(git rev-parse HEAD:vendor/openssl)"
-)
-while read -r revision; do
-  pins+=("isoplane-wasmtime $revision")
-done < <(sed -n 's/.*isoplane-wasmtime?rev=\([0-9a-f]\{40\}\).*/\1/p' Cargo.lock | sort -u)
-
+pins=$(fork_pins)
 unlanded=0
-for pin in "${pins[@]}"; do
-  read -r fork revision <<<"$pin"
-  # The comparison reports where the revision stands relative to the branch.
-  if ! status=$(gh api "repos/fantail-forest/$fork/compare/isoplane-revisions...$revision" --jq .status); then
-    echo "$fork: could not compare $revision with isoplane-revisions; the fork may not have that commit." >&2
+while read -r fork _ revision; do
+  if ! status=$(trunk_status "$fork" "$revision"); then
+    echo "$fork: could not compare $revision with $trunk; the fork may not have that commit." >&2
     unlanded=1
     continue
   fi
   case "$status" in
-    identical|behind) echo "$fork: $revision is on isoplane-revisions." ;;
-    ahead)
-      echo "$fork: $revision is not on isoplane-revisions. Once it passes the fork's checks, land it by fast-forward: git push git@github.com:fantail-forest/$fork.git $revision:isoplane-revisions" >&2
-      unlanded=1 ;;
-    diverged)
-      echo "$fork: $revision has diverged from isoplane-revisions. Rebase its branch onto the fork's isoplane-revisions and pin the rebased commit." >&2
-      unlanded=1 ;;
+    identical|behind)
+      echo "$fork: $revision is on $trunk."
+      continue ;;
+    ahead|diverged) ;;
     *)
-      echo "$fork: unexpected comparison of $revision with isoplane-revisions: $status" >&2
-      unlanded=1 ;;
+      echo "$fork: unexpected comparison of $revision with $trunk: $status" >&2
+      unlanded=1
+      continue ;;
   esac
-done
+  unlanded=1
+  # A failed lookup has already printed why, and the pin is reported as unlanded either way.
+  landed=$(landed_pull_request "$fork" "$revision") || landed=""
+  if [ -n "$landed" ]; then
+    read -r number commit <<<"$landed"
+    echo "$fork: $revision is not on $trunk, but pull request #$number, whose head it is, landed there as $commit. Move the pin to that commit: scripts/move-fork-pins --commit" >&2
+  elif [ "$status" = ahead ]; then
+    echo "$fork: $revision is not on $trunk. Merge its fork pull request; the pin then moves to the merged commit." >&2
+  else
+    echo "$fork: $revision has diverged from $trunk. Rebase its branch onto the fork's $trunk and pin the rebased commit." >&2
+  fi
+done <<<"$pins"
 exit "$unlanded"

@@ -114,10 +114,13 @@ when the revision has one and the workflow artifact otherwise.
 
 **Fork pins have landed** fails until every pinned fork commit is on its fork's
 `isoplane-revisions` branch, so the suites run against unlanded commits and the
-merge waits for them. A fork lands commits by fast-forward, which keeps the
-commits the Isoplane pull request tested. Its branch rules accept a push to
-`isoplane-revisions` once the pushed commit has passed the fork's checks, and
-they refuse merge commits.
+merge waits for them. A fork pull request is squash merged, which gives its
+change a new commit on `isoplane-revisions`. The fork then notifies Isoplane.
+[Move fork pins](.github/workflows/move-fork-pins.yml) runs
+`scripts/move-fork-pins` on every open Isoplane pull request. It commits a move
+to the new commit wherever a pin is the head commit of a merged fork pull
+request. An OpenSSL move also needs the runtime fork to record the new commit
+as its `OPENSSL_REVISION`, which the script reports and does not do.
 
 Publication needs more than a workflow artifact. `task release:publication`
 fails unless the pinned runtime and OpenSSL fork commits each have a release
