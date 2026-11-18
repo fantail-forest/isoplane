@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Move each fork pin that was the head of a merged fork pull request to the
-# commit that pull request landed as: scripts/move-fork-pins [--commit]
+# commit that pull request landed as: scripts/move-fork-pins [--commit] [--since COMMIT]
+# With --since, a pin that differs from COMMIT's and is behind its fork's
+# trunk also moves, to the trunk's head; COMMIT is where the branch started.
 # Run it in the Isoplane checkout to change. It stages the moved pins, and
 # --commit commits them. Needs a signed-in GitHub CLI.
 set -euo pipefail
@@ -8,13 +10,17 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/fork-pins.sh"
 
 commit=false
-case "$#:${1:-}" in
-  0:) ;;
-  1:--commit) commit=true ;;
-  *)
-    echo "Usage: $0 [--commit]" >&2
-    exit 2 ;;
-esac
+since=""
+while [ "$#" -gt 0 ]; do
+  case "$1:$#" in
+    --commit:*) commit=true; shift ;;
+    --since:1) echo "--since needs a commit." >&2; exit 2 ;;
+    --since:*) since=$2; shift 2 ;;
+    *)
+      echo "Usage: $0 [--commit] [--since COMMIT]" >&2
+      exit 2 ;;
+  esac
+done
 cd "$(git rev-parse --show-toplevel)"
 if $commit && ! { git diff --cached --quiet && git diff --quiet -- Cargo.toml Cargo.lock; }; then
   echo "--commit needs nothing staged and no changes to Cargo.toml or Cargo.lock, so that the commit holds only the moved pins." >&2
@@ -40,7 +46,25 @@ move_wasmtime() {
   git add Cargo.toml Cargo.lock
 }
 
+# move_pin LOCATION OLD NEW stages the pin at its new revision.
+move_pin() {
+  case "$1" in
+    Cargo.lock) move_wasmtime "$2" "$3" ;;
+    # Changing the index entry needs no checkout of the submodule.
+    *) git update-index --cacheinfo "160000,$3,$1" ;;
+  esac
+}
+
+# The runtime fork builds against one OpenSSL revision, so moving this pin alone leaves the two disagreeing.
+openssl_follow_up() {
+  echo "isoplane-openssl: the runtime fork names the OpenSSL revision it builds against as OPENSSL_REVISION in eng/isoplane/manifest.env, and the feed check requires that to equal this pin. Commit OPENSSL_REVISION=$1 in $fork_owner/isoplane-dotnet-runtime, land it, and pin that runtime commit."
+}
+
 pins=$(fork_pins)
+started_with=""
+if [ -n "$since" ]; then
+  started_with=$(fork_pins "$since")
+fi
 moves=()
 while read -r fork location revision; do
   if ! status=$(trunk_status "$fork" "$revision"); then
@@ -48,8 +72,22 @@ while read -r fork location revision; do
     exit 1
   fi
   case "$status" in
-    identical|behind)
-      echo "$fork: $revision is on $trunk; nothing to move."
+    identical)
+      echo "$fork: $revision is the head of $trunk; nothing to move."
+      continue ;;
+    behind)
+      # A pin this branch did not move is its base's to move.
+      if [ -z "$since" ] || grep --quiet --fixed-strings --line-regexp "$fork $location $revision" <<<"$started_with"; then
+        echo "$fork: $revision is on $trunk; nothing to move."
+        continue
+      fi
+      head=$(trunk_head "$fork")
+      move_pin "$location" "$revision" "$head"
+      echo "$fork: moved from $revision to $head, the head of $trunk, which this branch's pin had fallen behind."
+      moves+=("$fork_owner/$fork: $revision to $head, the head of $trunk")
+      if [ "$fork" = isoplane-openssl ]; then
+        openssl_follow_up "$head"
+      fi
       continue ;;
     ahead|diverged) ;;
     *)
@@ -69,19 +107,15 @@ while read -r fork location revision; do
       echo "$fork: pull request #$number landed $revision as $replacement, which is not on $trunk ($replacement_status)." >&2
       exit 1 ;;
   esac
-  case "$location" in
-    Cargo.lock) move_wasmtime "$revision" "$replacement" ;;
-    # Changing the index entry needs no checkout of the submodule.
-    *) git update-index --cacheinfo "160000,$replacement,$location" ;;
-  esac
+  move_pin "$location" "$revision" "$replacement"
   echo "$fork: moved from $revision to $replacement, which pull request #$number landed it as."
   moves+=("$fork_owner/$fork#$number: $revision to $replacement")
   if [ "$fork" = isoplane-openssl ]; then
-    echo "isoplane-openssl: the runtime fork names the OpenSSL revision it builds against as OPENSSL_REVISION in eng/isoplane/manifest.env, and the feed check requires that to equal this pin. Commit OPENSSL_REVISION=$replacement in $fork_owner/isoplane-dotnet-runtime, land it, and pin that runtime commit."
+    openssl_follow_up "$replacement"
   fi
 done <<<"$pins"
 
 if $commit && [ "${#moves[@]}" -gt 0 ]; then
-  git commit --quiet -m "build(deps): move fork pins to their landed commits" -m "$(printf '%s\n' "${moves[@]}")"
+  git commit --quiet -m "build(deps): move fork pins to their forks' trunks" -m "$(printf '%s\n' "${moves[@]}")"
   echo "Committed the moved pins as $(git rev-parse HEAD)."
 fi

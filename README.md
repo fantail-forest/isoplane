@@ -134,7 +134,10 @@ change a new commit on `isoplane-revisions`. The fork then notifies Isoplane.
 [Move fork pins](.github/workflows/move-fork-pins.yml) runs
 `scripts/move-fork-pins` on every open Isoplane pull request. It commits a move
 to the new commit wherever a pin is the head commit of a merged fork pull
-request. An OpenSSL move also needs the runtime fork to record the new commit
+request. A pin that the pull request moved onto `isoplane-revisions` then
+follows that branch's head as later fork changes land, so the pull request can
+be carried onto a fork commit that needs Isoplane changes it lacks; its checks
+show that. A pin the pull request did not move stays. An OpenSSL move also needs the runtime fork to record the new commit
 as its `OPENSSL_REVISION`, which the script reports and does not do.
 
 Publication needs more than a workflow artifact. `task release:publication`
