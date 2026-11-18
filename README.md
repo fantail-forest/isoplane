@@ -108,6 +108,11 @@ theirs from a copy of those shared inputs, and each then installs its release
 and builds an application with it. A last job packs one feed holding all three
 native libraries. The jobs exchange their outputs as workflow artifacts.
 
+[Release](.github/workflows/release.yml) runs by manual dispatch. It runs the
+same build with the Windows and macOS native libraries signed. Dispatched from
+`main` with `publish` set, it then publishes the packages and the VS Code
+extension and tags the commit.
+
 A pull request can pin a fork commit that has not landed. The .NET runtime and
 OpenSSL forks build every push to `isoplane-revisions` or an `isoplane/**`
 branch and keep the result as a workflow artifact for 90 days. The runtime

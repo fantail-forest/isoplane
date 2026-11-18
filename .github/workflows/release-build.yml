@@ -1,6 +1,11 @@
 name: Release build
 on:
   workflow_call:
+    inputs:
+      sign:
+        description: Sign the Windows and macOS native libraries. The caller has to inherit secrets.
+        type: boolean
+        default: false
 permissions:
   contents: read
 defaults:
@@ -59,9 +64,168 @@ jobs:
           path: release-linux-x64.tar.gz
           retention-days: 3
 
+  native:
+    name: Native ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: windows-2022, platform: win-x64, library: isoplane_native.dll}
+          - {os: macos-15, platform: osx-arm64, library: libisoplane_native.dylib}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with: {persist-credentials: false}
+      - uses: ./.github/actions/toolchain
+      - uses: Swatinem/rust-cache@e9d7b9f1e587218970671bac74e5511ed9506e6a # v2
+        with:
+          workspaces: '. -> .build/${{ matrix.platform }}/native'
+          shared-key: release-${{ matrix.platform }}
+          save-if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+      - run: task native:release
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: native-${{ matrix.platform }}
+          path: .build/${{ matrix.platform }}/native/release/${{ matrix.library }}
+          if-no-files-found: error
+          retention-days: 3
+
+  # The signing jobs check out no repository code: each runs only the pinned
+  # actions and the commands below beside its credentials.
+  sign-windows:
+    name: Sign win-x64
+    needs: native
+    if: inputs.sign
+    runs-on: windows-2022
+    timeout-minutes: 30
+    environment: release-signing-windows
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with: {name: native-win-x64, path: native}
+      - uses: Azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2
+        with:
+          azure-tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          azure-client-id: ${{ vars.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
+          files: ${{ github.workspace }}\native\isoplane_native.dll
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          # Only the app registration named above may authenticate.
+          exclude-environment-credential: false
+          exclude-workload-identity-credential: true
+          exclude-managed-identity-credential: true
+          exclude-shared-token-cache-credential: true
+          exclude-visual-studio-credential: true
+          exclude-visual-studio-code-credential: true
+          exclude-azure-cli-credential: true
+          exclude-azure-powershell-credential: true
+          exclude-azure-developer-cli-credential: true
+          exclude-interactive-browser-credential: true
+          # A cache any workflow on the branch can write would supply the signing tools.
+          cache-dependencies: false
+      - name: Reject a library Windows does not accept as signed
+        shell: pwsh
+        run: |
+          $signature = Get-AuthenticodeSignature native/isoplane_native.dll
+          if ($signature.Status -ne 'Valid') {
+            throw "isoplane_native.dll has signature status $($signature.Status): $($signature.StatusMessage)"
+          }
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: signed-native-win-x64
+          path: native/isoplane_native.dll
+          if-no-files-found: error
+          retention-days: 3
+
+  sign-macos:
+    name: Sign osx-arm64
+    needs: native
+    if: inputs.sign
+    runs-on: macos-15
+    timeout-minutes: 60
+    environment: release-signing-macos
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with: {name: native-osx-arm64, path: native}
+      - name: Import the Developer ID certificate into a keychain of this job
+        env:
+          P12: ${{ secrets.APPLE_DEVELOPER_ID_P12 }}
+          P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+        run: |
+          keychain=$RUNNER_TEMP/signing.keychain-db
+          certificate=$RUNNER_TEMP/developer-id.p12
+          keychain_password=$(openssl rand -hex 24)
+          printf '%s' "$P12" | base64 --decode -o "$certificate"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$certificate" -f pkcs12 -P "$P12_PASSWORD" -k "$keychain" -T /usr/bin/codesign
+          # Without this codesign asks, in a dialog nobody can answer, for permission to use the key.
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain"
+      - name: Sign the library
+        run: |
+          keychain=$RUNNER_TEMP/signing.keychain-db
+          identity=$(security find-identity -v -p codesigning "$keychain" | awk '/"Developer ID Application: / && !found {print $2; found = 1}')
+          if [ -z "$identity" ]; then
+            echo "The imported certificate is not a valid Developer ID Application identity." >&2
+            exit 1
+          fi
+          codesign --force --options runtime --timestamp --keychain "$keychain" --sign "$identity" native/libisoplane_native.dylib
+      - name: Notarize the library
+        env:
+          NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY_P8 }}
+          NOTARY_KEY_ID: ${{ vars.APPLE_NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ vars.APPLE_NOTARY_ISSUER_ID }}
+        run: |
+          key=$RUNNER_TEMP/notary-key.p8
+          submission=$RUNNER_TEMP/notary-submission.json
+          (umask 077 && printf '%s\n' "$NOTARY_KEY" > "$key")
+          credentials=(--key "$key" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID")
+          zip --junk-paths "$RUNNER_TEMP/notarize.zip" native/libisoplane_native.dylib
+          # The status decides the outcome, so a rejected submission still reaches the log below.
+          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" "${credentials[@]}" --wait --output-format json > "$submission" \
+            || echo "notarytool submit exited with status $?" >&2
+          id=$(jq -r '.id // empty' "$submission")
+          status=$(jq -r '.status // empty' "$submission")
+          if [ "$status" != Accepted ]; then
+            if [ -n "$id" ]; then
+              xcrun notarytool log "$id" "${credentials[@]}"
+            fi
+            echo "Notarization ended with status '${status:-unknown}', not Accepted." >&2
+            exit 1
+          fi
+      # A bare library has nowhere to hold a stapled ticket; Gatekeeper fetches it online.
+      - name: Reject a library macOS does not accept as signed
+        run: codesign --verify --strict --verbose=2 native/libisoplane_native.dylib
+      - name: Delete the keychain and the key files
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/developer-id.p12" "$RUNNER_TEMP/notary-key.p8"
+          if [ -e "$RUNNER_TEMP/signing.keychain-db" ]; then
+            security delete-keychain "$RUNNER_TEMP/signing.keychain-db"
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: signed-native-osx-arm64
+          path: native/libisoplane_native.dylib
+          if-no-files-found: error
+          retention-days: 3
+
   platform:
     name: ${{ matrix.platform }}
-    needs: linux
+    needs: [linux, native, sign-windows, sign-macos]
+    # A status function is needed to run after the signing jobs were skipped; the
+    # results then stand in for the default check that every needed job succeeded.
+    if: >-
+      ${{ !cancelled() && needs.linux.result == 'success' && needs.native.result == 'success'
+      && (inputs.sign && needs.sign-windows.result == 'success' && needs.sign-macos.result == 'success'
+      || !inputs.sign && needs.sign-windows.result == 'skipped' && needs.sign-macos.result == 'skipped') }}
     strategy:
       fail-fast: false
       matrix:
@@ -72,19 +236,20 @@ jobs:
     timeout-minutes: 180
     env:
       ISOPLANE_RELEASE_SHARED: copied
+      # Packs the downloaded library instead of building one.
+      ISOPLANE_RELEASE_NATIVE_ROOT: ${{ github.workspace }}/.build
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with: {persist-credentials: false}
       - uses: ./.github/actions/toolchain
-        with: {dotnet: 'true'}
-      - uses: Swatinem/rust-cache@e9d7b9f1e587218970671bac74e5511ed9506e6a # v2
-        with:
-          workspaces: '. -> .build/${{ matrix.platform }}/native'
-          shared-key: release-${{ matrix.platform }}
-          save-if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+        with: {rust: 'false', dotnet: 'true'}
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with: {name: release-shared}
       - run: tar -xzf release-shared.tar.gz && rm release-shared.tar.gz
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: ${{ inputs.sign && 'signed-native' || 'native' }}-${{ matrix.platform }}
+          path: .build/${{ matrix.platform }}/native/release
       - run: task release
       - name: Install from the release and build an application
         if: matrix.platform == 'win-x64'
@@ -105,6 +270,8 @@ jobs:
 
   feed:
     needs: [linux, platform]
+    # The default check also fails on the skipped signing jobs behind the platform job.
+    if: ${{ !cancelled() && needs.linux.result == 'success' && needs.platform.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:

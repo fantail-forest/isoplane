@@ -25,7 +25,8 @@ vars:
   SKILL: '{{.ROOT_DIR}}/.build/clr-anycpu/skill'
   CLI: '{{.MANAGED}}/bin/Isoplane.Cli/release/Isoplane.Cli.dll'
   NATIVE_TARGET: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/native'
-  RELEASE_NATIVE_ROOT: '{{.ISOPLANE_RELEASE_NATIVE_ROOT | default (printf "%s/.build" .ROOT_DIR)}}'
+  # A workflow passes the Windows checkout path with backslashes, which a source glob reads as escapes.
+  RELEASE_NATIVE_ROOT: '{{.ISOPLANE_RELEASE_NATIVE_ROOT | default (printf "%s/.build" .ROOT_DIR) | toSlash}}'
   RELEASE_NATIVE_LIBRARY: '{{.RELEASE_NATIVE_ROOT}}/{{.PLATFORM}}/native/release/{{.NATIVE_LIBRARY}}'
   SCRATCH: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/tmp'
   TEST_RUNTIME_CACHE: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/test-runtimes/cache'
