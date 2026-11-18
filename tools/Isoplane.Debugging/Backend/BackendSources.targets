@@ -3,106 +3,17 @@
     <Compile Include="$(MSBuildThisFileDirectory)FrameValues.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)ExecutionPosition.cs" />
   </ItemGroup>
-  <UsingTask TaskName="IsoplanePrepareDebuggerSource" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
-    <ParameterGroup>
-      <Source ParameterType="System.String" Required="true" />
-      <Destination ParameterType="System.String" Required="true" />
-      <Match ParameterType="System.String" Required="true" />
-      <Replacement ParameterType="System.String" />
-    </ParameterGroup>
-    <Task>
-      <Using Namespace="System.IO" />
-      <Code Type="Fragment" Language="cs"><![CDATA[
-        var source = File.ReadAllText(Source).Replace("\r\n", "\n");
-        var declaration = Match;
-        if (source.IndexOf(declaration, StringComparison.Ordinal) < 0
-            || source.IndexOf(declaration, StringComparison.Ordinal) != source.LastIndexOf(declaration, StringComparison.Ordinal))
-        {
-            Log.LogError("The pinned debugger source no longer has exactly one match for " + Match);
-            return false;
-        }
-        Directory.CreateDirectory(Path.GetDirectoryName(Destination));
-        var generated = source.Replace(declaration, Replacement ?? string.Empty);
-        if (!File.Exists(Destination) || File.ReadAllText(Destination) != generated)
-            File.WriteAllText(Destination, generated);
-      ]]></Code>
-    </Task>
-  </UsingTask>
-  <Target Name="IsoplanePrepareDebuggerSources" BeforeTargets="CoreCompile" Condition="'$(MSBuildProjectName)' == 'Mono.Debugger.Soft'">
-    <IsoplanePrepareDebuggerSource Source="Mono.Debugger.Soft/Connection.cs" Destination="$(IntermediateOutputPath)Isoplane/Connection.partial.cs" Match="class Connection" Replacement="partial class Connection" />
-    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/Connection.partial.cs" Destination="$(IntermediateOutputPath)Isoplane/Connection.callback.cs" Match="Action&lt;FrameInfo[]&gt; resultCallaback)" Replacement="Action&lt;FrameInfo[]&gt; resultCallaback, Action&lt;Exception&gt; errorCallback)" />
-    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/Connection.callback.cs" Destination="$(IntermediateOutputPath)Isoplane/Connection.cs" Match="resultCallaback (frames);&#10;&#9;&#9;&#9;}, 1);" Replacement="resultCallaback (frames);&#10;&#9;&#9;&#9;}, 1, errorCallback);" />
-    <IsoplanePrepareDebuggerSource Source="Mono.Debugger.Soft/VirtualMachine.cs" Destination="$(IntermediateOutputPath)Isoplane/VirtualMachine.cs" Match="class VirtualMachine : Mirror" Replacement="partial class VirtualMachine : Mirror" />
-    <IsoplanePrepareDebuggerSource Source="Mono.Debugger.Soft/ModuleMirror.cs" Destination="$(IntermediateOutputPath)Isoplane/ModuleMirror.cs" Match="class ModuleMirror : Mirror" Replacement="partial class ModuleMirror : Mirror" />
-    <IsoplanePrepareDebuggerSource Source="Mono.Debugger.Soft/ThreadMirror.cs" Destination="$(IntermediateOutputPath)Isoplane/ThreadMirror.errors.cs"
-      Match="throw new ArgumentException (&quot;loc doesn't refer to a location in the current method of this thread.&quot;, &quot;loc&quot;);"
-      Replacement="throw new ArgumentException (string.IsNullOrEmpty (ex.ErrorMessage) ? &quot;loc doesn't refer to a location in the current method of this thread.&quot; : ex.ErrorMessage, &quot;loc&quot;, ex);" />
-    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/ThreadMirror.errors.cs" Destination="$(IntermediateOutputPath)Isoplane/ThreadMirror.partial.cs" Match="class ThreadMirror : ObjectMirror" Replacement="partial class ThreadMirror : ObjectMirror" />
-    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/ThreadMirror.partial.cs" Destination="$(IntermediateOutputPath)Isoplane/ThreadMirror.fetch.cs" Match="vm.conn.Thread_GetFrameInfo (id, 0, -1, (frame_info) =&gt;" Replacement="FetchFrameInfo ((frame_info) =&gt;" />
-    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/ThreadMirror.fetch.cs" Destination="$(IntermediateOutputPath)Isoplane/ThreadMirror.reset.cs" Match="fetchingEvent.Reset ();" Replacement="fetchingEvent.Reset (); frameFetchFailure = null;" />
-    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/ThreadMirror.reset.cs" Destination="$(IntermediateOutputPath)Isoplane/ThreadMirror.result.cs" Match="return frames;" Replacement="frameFetchFailure?.Throw (); return frames;" />
-    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/ThreadMirror.result.cs" Destination="$(IntermediateOutputPath)Isoplane/ThreadMirror.cs" Match="InvalidateFrames();&#10;&#9;&#9;&#9;&#9;&#9;FetchFrames(true);" Replacement="InvalidateFrames();" />
-    <IsoplanePrepareDebuggerSource Source="Mono.Debugger.Soft/StackFrame.cs" Destination="$(IntermediateOutputPath)Isoplane/StackFrame.partial.cs" Match="class StackFrame : Mirror" Replacement="partial class StackFrame : Mirror" />
-    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/StackFrame.partial.cs" Destination="$(IntermediateOutputPath)Isoplane/StackFrame.offset.cs" Match="method.il_offset_to_line_number (il_offset," Replacement="MapFrameOffset (il_offset," />
-    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/StackFrame.offset.cs" Destination="$(IntermediateOutputPath)Isoplane/StackFrame.location.cs" Match="src_file != null ? src_file : method.SourceFile" Replacement="src_file ?? FrameSource" />
-    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/StackFrame.location.cs" Destination="$(IntermediateOutputPath)Isoplane/StackFrame.locals.cs"
-      Match="Method.GetLocals ().Where (l =&gt; l.LiveRangeStart &lt;= location.ILOffset &amp;&amp; l.LiveRangeEnd &gt;= location.ILOffset).ToList ();"
-      Replacement="GetLocals ().Where (l =&gt; l.LiveRangeStart &lt;= location.ILOffset &amp;&amp; l.LiveRangeEnd &gt;= location.ILOffset).ToList ();" />
-    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/StackFrame.locals.cs" Destination="$(IntermediateOutputPath)Isoplane/StackFrame.cs"
-      Match="Method.GetLocals ().Where (l =&gt; l.LiveRangeStart &lt;= location.ILOffset &amp;&amp; l.LiveRangeEnd &gt;= location.ILOffset &amp;&amp; l.Name == name).FirstOrDefault ();"
-      Replacement="GetLocals ().Where (l =&gt; l.LiveRangeStart &lt;= location.ILOffset &amp;&amp; l.LiveRangeEnd &gt;= location.ILOffset &amp;&amp; l.Name == name).FirstOrDefault ();" />
-    <ItemGroup>
-      <_IsoplaneDebuggerOriginal Include="Mono.Debugger.Soft/Connection.cs;Mono.Debugger.Soft/VirtualMachine.cs;Mono.Debugger.Soft/ThreadMirror.cs;Mono.Debugger.Soft/ModuleMirror.cs;Mono.Debugger.Soft/StackFrame.cs" />
-      <Compile Remove="@(_IsoplaneDebuggerOriginal)" MatchOnMetadata="FullPath" MatchOnMetadataOptions="PathLike" />
-      <Compile Include="$(IntermediateOutputPath)Isoplane/Connection.cs;$(IntermediateOutputPath)Isoplane/VirtualMachine.cs;$(IntermediateOutputPath)Isoplane/ThreadMirror.cs;$(IntermediateOutputPath)Isoplane/ModuleMirror.cs;$(MSBuildThisFileDirectory)ManagedDataBreakpoint.cs;$(MSBuildThisFileDirectory)MetadataUpdates.cs;$(MSBuildThisFileDirectory)FrameRequests.cs;$(MSBuildThisFileDirectory)FrameVersions.cs;$(IntermediateOutputPath)Isoplane/StackFrame.cs" />
-    </ItemGroup>
-  </Target>
-  <Target Name="IsoplaneRefreshDebuggerAttributeSources" BeforeTargets="CoreCompile" Condition="'$(MSBuildProjectName)' == 'Mono.Debugger.Soft'">
-    <ItemGroup>
-      <_IsoplaneAttributeSource Include="Mono.Debugger.Soft/FieldInfoMirror.cs;Mono.Debugger.Soft/PropertyInfoMirror.cs;Mono.Debugger.Soft/MethodMirror.cs;Mono.Debugger.Soft/TypeMirror.cs" />
-    </ItemGroup>
-    <!-- Attribute arguments can contain guest objects collected after resume; only empty results are safe to cache. -->
-    <IsoplanePrepareDebuggerSource Source="%(_IsoplaneAttributeSource.Identity)" Destination="$(IntermediateOutputPath)Isoplane/%(_IsoplaneAttributeSource.Filename).cs" Match="if (cattrs == null) {" Replacement="if (cattrs == null || cattrs.Length != 0) {" />
-    <ItemGroup>
-      <Compile Remove="@(_IsoplaneAttributeSource)" MatchOnMetadata="FullPath" MatchOnMetadataOptions="PathLike" />
-      <Compile Include="@(_IsoplaneAttributeSource->'$(IntermediateOutputPath)Isoplane/%(Filename).cs')" />
-    </ItemGroup>
-    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/MethodMirror.cs" Destination="$(IntermediateOutputPath)Isoplane/MethodMirror.partial.cs" Match="class MethodMirror : Mirror" Replacement="partial class MethodMirror : Mirror" />
-    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/TypeMirror.cs" Destination="$(IntermediateOutputPath)Isoplane/TypeMirror.partial.cs" Match="class TypeMirror : Mirror" Replacement="partial class TypeMirror : Mirror" />
-    <ItemGroup>
-      <_IsoplaneMetadataOriginal Include="$(IntermediateOutputPath)Isoplane/MethodMirror.cs;$(IntermediateOutputPath)Isoplane/TypeMirror.cs" />
-      <Compile Remove="@(_IsoplaneMetadataOriginal)" MatchOnMetadata="FullPath" MatchOnMetadataOptions="PathLike" />
-      <Compile Include="$(IntermediateOutputPath)Isoplane/MethodMirror.partial.cs;$(IntermediateOutputPath)Isoplane/TypeMirror.partial.cs" />
-    </ItemGroup>
-  </Target>
-  <Target Name="IsoplanePrepareDebuggerSessionSource" BeforeTargets="CoreCompile" Condition="'$(MSBuildProjectName)' == 'Mono.Debugging.Soft'">
-    <IsoplanePrepareDebuggerSource Source="SoftDebuggerSession.cs" Destination="$(IntermediateOutputPath)Isoplane/SoftDebuggerSession.partial.cs" Match="class SoftDebuggerSession : DebuggerSession" Replacement="partial class SoftDebuggerSession : DebuggerSession" />
-    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/SoftDebuggerSession.partial.cs" Destination="$(IntermediateOutputPath)Isoplane/SoftDebuggerSession.cs"
-      Match="TargetEventType etype = TargetEventType.TargetStopped;"
-      Replacement="if (ResumeInternalUserBreak(es) || ResumeRedirectedBreakpoint(es)) return;&#10;            TargetEventType etype = TargetEventType.TargetStopped;" />
-    <ItemGroup>
-      <_IsoplaneSessionOriginal Include="SoftDebuggerSession.cs" />
-      <Compile Remove="@(_IsoplaneSessionOriginal)" MatchOnMetadata="FullPath" MatchOnMetadataOptions="PathLike" />
-      <Compile Include="$(IntermediateOutputPath)Isoplane/SoftDebuggerSession.cs;$(MSBuildThisFileDirectory)InternalDebuggerStops.cs;$(MSBuildThisFileDirectory)ExecutionStepping.cs" />
-    </ItemGroup>
-  </Target>
-  <Target Name="IsoplanePrepareDebuggerFieldSource" BeforeTargets="CoreCompile" Condition="'$(MSBuildProjectName)' == 'Mono.Debugging.Soft'">
-    <IsoplanePrepareDebuggerSource Source="VariableValueReference.cs" Destination="$(IntermediateOutputPath)Isoplane/VariableValueReference.cs" Match="class VariableValueReference" Replacement="partial class VariableValueReference" />
-    <IsoplanePrepareDebuggerSource Source="FieldValueReference.cs" Destination="$(IntermediateOutputPath)Isoplane/FieldValueReference.cs" Match="class FieldValueReference" Replacement="partial class FieldValueReference" />
-    <IsoplanePrepareDebuggerSource Source="SoftDebuggerAdaptor.cs" Destination="$(IntermediateOutputPath)Isoplane/SoftDebuggerAdaptor.fields.cs"
-      Match="var field = FindByName (type.GetFields (), f =&gt; MapTupleName(f.Name, tupleNames), name, ctx.CaseSensitive);"
-      Replacement="var field = FindByName (type.GetFields (), f =&gt; MapTupleName(f.Name, tupleNames), name, ctx.CaseSensitive) ?? FindByName (type.GetFields (), f =&gt; f.Name, name, ctx.CaseSensitive);" />
-    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/SoftDebuggerAdaptor.fields.cs" Destination="$(IntermediateOutputPath)Isoplane/SoftDebuggerAdaptor.closures.cs"
-      Match="cx.Frame.Method.GetLocals ().FirstOrDefault (loc =&gt; loc.Index == idx)" Replacement="cx.Frame.GetLocals ().FirstOrDefault (loc =&gt; loc.Index == idx)" />
-    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/SoftDebuggerAdaptor.closures.cs" Destination="$(IntermediateOutputPath)Isoplane/SoftDebuggerAdaptor.locals.cs"
-      Match="foreach (var local in cx.Frame.Method.GetLocals ())" Replacement="foreach (var local in cx.Frame.GetLocals ())" />
-    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/SoftDebuggerAdaptor.locals.cs" Destination="$(IntermediateOutputPath)Isoplane/SoftDebuggerAdaptor.cs"
-      Match="soft.Frame.Method.GetLocals ().Where (x =&gt; x.IsArg &amp;&amp; !IsClosureReferenceLocal (x)).ToArray ();" Replacement="soft.Frame.GetLocals ().Where (x =&gt; x.IsArg &amp;&amp; !IsClosureReferenceLocal (x)).ToArray ();" />
-    <ItemGroup>
-      <_IsoplaneFieldOriginal Include="FieldValueReference.cs;VariableValueReference.cs;SoftDebuggerAdaptor.cs" />
-      <Compile Remove="@(_IsoplaneFieldOriginal)" MatchOnMetadata="FullPath" MatchOnMetadataOptions="PathLike" />
-      <Compile Include="$(IntermediateOutputPath)Isoplane/FieldValueReference.cs;$(IntermediateOutputPath)Isoplane/SoftDebuggerAdaptor.cs;$(MSBuildThisFileDirectory)ManagedFieldLocation.cs;$(MSBuildThisFileDirectory)ManagedLocalLocation.cs;$(IntermediateOutputPath)Isoplane/VariableValueReference.cs" />
-    </ItemGroup>
-  </Target>
-  <Import Project="BackendMaintenance.targets" />
+  <ItemGroup Condition="'$(MSBuildProjectName)' == 'Mono.Debugger.Soft'">
+    <Compile Include="$(MSBuildThisFileDirectory)ManagedDataBreakpoint.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)MetadataUpdates.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)FrameRequests.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)FrameVersions.cs" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(MSBuildProjectName)' == 'Mono.Debugging.Soft'">
+    <Compile Include="$(MSBuildThisFileDirectory)InternalDebuggerStops.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)ExecutionStepping.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)AssemblySymbolLoading.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)ManagedFieldLocation.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)ManagedLocalLocation.cs" />
+  </ItemGroup>
 </Project>

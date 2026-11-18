@@ -8,12 +8,14 @@ trunk=isoplane-revisions
 # Prints "FORK LOCATION REVISION" for each pin of the checkout in the current
 # directory. LOCATION is a submodule path, or Cargo.lock for the Wasmtime pin.
 fork_pins() {
-  local runtime openssl wasmtime
+  local runtime openssl debugger wasmtime
   runtime=$(git rev-parse HEAD:vendor/dotnet-runtime)
   openssl=$(git rev-parse HEAD:vendor/openssl)
+  debugger=$(git rev-parse HEAD:tools/debugger-libs)
   wasmtime=$(sed -n 's/.*isoplane-wasmtime?rev=\([0-9a-f]\{40\}\).*/isoplane-wasmtime Cargo.lock \1/p' Cargo.lock | sort -u)
   echo "isoplane-dotnet-runtime vendor/dotnet-runtime $runtime"
   echo "isoplane-openssl vendor/openssl $openssl"
+  echo "isoplane-debugger-libs tools/debugger-libs $debugger"
   echo "$wasmtime"
 }
 
