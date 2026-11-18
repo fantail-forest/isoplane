@@ -13,12 +13,10 @@ internal sealed class HotReloadCompiler : IAsyncDisposable
     private bool disposed;
 
     internal string[] Documents { get; private set; } = [];
-    internal string SdkDirectory { get; }
 
-    private HotReloadCompiler(Process process, string sdkDirectory)
+    private HotReloadCompiler(Process process)
     {
         this.process = process;
-        SdkDirectory = sdkDirectory;
         diagnostics = process.StandardError.ReadToEndAsync();
     }
 
@@ -63,7 +61,7 @@ internal sealed class HotReloadCompiler : IAsyncDisposable
         };
         options.ArgumentList.Add(path);
         var process = Process.Start(options) ?? throw new IOException("The Hot Reload compiler could not be started.");
-        var compiler = new HotReloadCompiler(process, start.SdkDirectory);
+        var compiler = new HotReloadCompiler(process);
         try
         {
             using var cancelled = cancellation.Register(compiler.Kill);

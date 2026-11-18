@@ -9,15 +9,13 @@ internal sealed class HotReloadSession : IAsyncDisposable
 {
     private readonly HotReloadBaseline baseline;
     private readonly HotReloadCompiler compiler;
-    private readonly HotReloadNotifications notifications;
 
     internal string[] Documents => compiler.Documents;
 
-    private HotReloadSession(HotReloadBaseline baseline, HotReloadCompiler compiler, HotReloadNotifications notifications)
+    private HotReloadSession(HotReloadBaseline baseline, HotReloadCompiler compiler)
     {
         this.baseline = baseline;
         this.compiler = compiler;
-        this.notifications = notifications;
     }
 
     internal static async Task<HotReloadSession> StartAsync(DebugProject project, string package, CancellationToken cancellation)
@@ -25,13 +23,7 @@ internal sealed class HotReloadSession : IAsyncDisposable
         var baseline = HotReloadBaseline.Read(package);
         try
         {
-            var compiler = await HotReloadCompiler.StartAsync(project.Path, project.Properties, baseline.Assemblies, [], cancellation);
-            try { return new(baseline, compiler, HotReloadNotifications.Read(compiler.SdkDirectory)); }
-            catch
-            {
-                await compiler.DisposeAsync();
-                throw;
-            }
+            return new(baseline, await HotReloadCompiler.StartAsync(project.Path, project.Properties, baseline.Assemblies, [], cancellation));
         }
         catch
         {
@@ -98,9 +90,9 @@ internal sealed class HotReloadSession : IAsyncDisposable
         return reply;
     }
 
-    internal async Task<string[]> NotifyAsync(VirtualMachine machine, ModuleUpdate[] updates, CancellationToken cancellation)
+    internal static async Task<string[]> NotifyAsync(VirtualMachine machine, ModuleUpdate[] updates, CancellationToken cancellation)
     {
-        try { return await notifications.ApplyAsync(machine, updates, cancellation); }
+        try { return await HotReloadNotifications.ApplyAsync(machine, updates, cancellation); }
         catch (Exception error)
         {
             throw new HotReloadApplicationException("The guest could not notify its Hot Reload handlers. Restart debugging to restore consistent application caches.", error);
