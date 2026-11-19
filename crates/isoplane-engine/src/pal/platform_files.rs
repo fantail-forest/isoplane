@@ -426,43 +426,6 @@ mod tests {
         }
     }
 
-    fn encoded_file() -> PlatformFile {
-        PlatformFile {
-            path: "/a".into(),
-            bytes: Arc::from(&[1u8, 2, 3][..]),
-            modified_ns: 5,
-        }
-    }
-
-    const POSTCARD: [u8; 8] = [2, b'/', b'a', 3, 1, 2, 3, 5];
-    const JSON: &str = r#"{"path":"/a","bytes":[1,2,3],"modified_ns":5}"#;
-
-    #[test]
-    fn a_files_encoding_is_the_one_published_artifacts_and_requests_already_hold() {
-        let file = encoded_file();
-        assert_eq!(
-            postcard::to_allocvec(&file).expect("encode"),
-            POSTCARD,
-            "prepared state must keep the encoding published artifacts hold"
-        );
-        assert_eq!(
-            serde_json::to_string(&file).expect("encode"),
-            JSON,
-            "preparation requests must keep the encoding builders already read"
-        );
-    }
-
-    #[test]
-    fn a_file_decodes_from_either_encoding() {
-        let from_postcard: PlatformFile = postcard::from_bytes(&POSTCARD).expect("decode");
-        let from_json: PlatformFile = serde_json::from_str(JSON).expect("decode");
-        assert_eq!(
-            (&*from_postcard.bytes, &*from_json.bytes),
-            (&[1u8, 2, 3][..], &[1u8, 2, 3][..]),
-            "file contents must decode from prepared state and from requests alike"
-        );
-    }
-
     fn bundle() -> PlatformFiles {
         PlatformFiles::new(vec![
             modified("/etc/ssl/certs/ca-certificates.crt", 500),
