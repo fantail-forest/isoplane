@@ -41,8 +41,14 @@ public sealed class PrerequisitesTests
         try
         {
             File.WriteAllText(path, "PRETTY_NAME=\"Ubuntu 24.04.2 LTS\"\nNAME=\"Ubuntu\"\nVERSION_ID=\"24.04\"\nID=ubuntu\nID_LIKE=debian\n");
-            Assert.Equal(new OperatingSystemRelease("ubuntu", "24.04"), Prerequisites.Detect(path));
-            Assert.Equal(new OperatingSystemRelease("unknown", ""), Prerequisites.Detect(path + ".missing"));
+            Assert.Equal(new OperatingSystemRelease("ubuntu", "24.04"), Prerequisites.Detect([path]));
+            Assert.Equal(new OperatingSystemRelease("ubuntu", "24.04"), Prerequisites.Detect([path + ".missing", path]));
+            Assert.Equal(new OperatingSystemRelease("unknown", ""), Prerequisites.Detect([path + ".missing"]));
+            // A shell would take the last assignment of a name and either kind of quote.
+            File.WriteAllText(path, "ID=debian\nID='ubuntu'\nVERSION_ID='24.04'\n");
+            Assert.Equal(new OperatingSystemRelease("ubuntu", "24.04"), Prerequisites.Detect([path]));
+            File.WriteAllText(path, "NAME=Custom\n");
+            Assert.Equal(new OperatingSystemRelease("unknown", ""), Prerequisites.Detect([path]));
         }
         finally
         {

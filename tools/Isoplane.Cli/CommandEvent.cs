@@ -120,31 +120,15 @@ internal static class EventSchema
 /// <summary>A Linux distribution's identity, as its os-release file states it.</summary>
 internal sealed record LinuxDistribution(string? Id, string? Version)
 {
-    // The os-release specification's order: the second is read only when the first is missing.
-    private static readonly string[] Files = ["/etc/os-release", "/usr/lib/os-release"];
+    internal static LinuxDistribution OfThisMachine() => OperatingSystem.IsLinux() ? Read(OsRelease.Files) : new(null, null);
 
-    internal static LinuxDistribution OfThisMachine() => OperatingSystem.IsLinux() ? Read(Files) : new(null, null);
+    internal static LinuxDistribution Read(IEnumerable<string> files) => OsRelease.Read(files) is { } fields ? Of(fields) : new(null, null);
 
-    internal static LinuxDistribution Read(IEnumerable<string> files)
-    {
-        foreach (var file in files)
-        {
-            try { return Parse(File.ReadLines(file)); }
-            catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException) { }
-            // A file that is there and cannot be read leaves the distribution unknown.
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return new(null, null); }
-        }
-        return new(null, null);
-    }
-
-    internal static LinuxDistribution Parse(IEnumerable<string> lines)
-    {
-        var values = lines.Select(line => line.Split('=', 2)).Where(parts => parts.Length == 2)
-            .GroupBy(parts => parts[0].Trim()).ToDictionary(group => group.Key, group => group.Last()[1].Trim().Trim('"', '\''));
+    /// <summary>What may leave the machine: the two fields, and each only when it fits the event schema.</summary>
+    internal static LinuxDistribution Of(IReadOnlyDictionary<string, string> fields) =>
         // The specification's default for a file that names no distribution.
-        return new(EventSchema.Fitting("distribution", values.GetValueOrDefault("ID", "linux")),
-            EventSchema.Fitting("distributionVersion", values.GetValueOrDefault("VERSION_ID")));
-    }
+        new(EventSchema.Fitting("distribution", fields.GetValueOrDefault("ID", "linux")),
+            EventSchema.Fitting("distributionVersion", fields.GetValueOrDefault("VERSION_ID")));
 }
 
 /// <summary>What a command event says about the machine and the caller.</summary>
