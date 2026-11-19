@@ -454,13 +454,13 @@ fn generated_mono_runtime_entrypoints_match_the_host_export_contract() {
 
 #[test]
 fn local_debug_artifact_marker_matches_the_sdk_emitter() {
-    let source = sdk_file("../Build/DebugManifest.cs");
-    let prefix = "private const string LocalDebugSection = \"";
+    let source = sdk_file("../native/mono_entry.c");
+    let prefix = "#define ISOPLANE_LOCAL_DEBUG_SECTION \"";
     let marker = source
         .lines()
         .find_map(|line| line.trim().strip_prefix(prefix))
-        .and_then(|value| value.strip_suffix("\";"))
-        .expect("the SDK emitter must declare its local debug section name");
+        .and_then(|value| value.strip_suffix('"'))
+        .expect("the Mono entry must declare its local debug section name");
     assert_eq!(
         marker,
         isoplane_abi::LOCAL_DEBUG_SECTION,

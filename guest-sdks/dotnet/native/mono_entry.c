@@ -73,6 +73,13 @@ static void on_print(const char *text, int32_t is_stdout)
 
 #ifdef ISOPLANE_LOCAL_DEBUG
 #define ISOPLANE_DEBUG_AGENT_PATH "/.isoplane/debug-agent"
+#define ISOPLANE_LOCAL_DEBUG_SECTION "isoplane.local-debug"
+
+// The custom section by which the host tells a local debug module from one it
+// may deploy. It holds a byte because the linker drops a section with none,
+// and is written in assembly because a C section attribute names a data
+// segment.
+__asm__(".section \".custom_section." ISOPLANE_LOCAL_DEBUG_SECTION "\",\"\",@\n.byte 0\n.text\n");
 
 // The session's debugger endpoint, which the host serves only to a local
 // debug session. Only a loopback port is taken from it, so the file cannot
