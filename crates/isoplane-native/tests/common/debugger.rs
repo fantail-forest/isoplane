@@ -145,11 +145,7 @@ pub fn prepared_acceptance(mode: &str) {
             "debugger"
         })
     };
-    let sources = if mode.starts_with("async-") {
-        root.join(".build/clr-anycpu/debugger-sources")
-    } else {
-        root.join("guest-runtime/tests/packages/debugger")
-    };
+    let sources = root.join("guest-runtime/tests/packages/debugger");
     let source = sources.join(format!("{fixture}.cs"));
     let route = if mode == "edit-and-continue-running" {
         "hotreload-running"

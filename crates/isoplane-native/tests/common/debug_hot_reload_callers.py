@@ -15,10 +15,7 @@ def exercise(source, send, response, until):
         return event["body"]["threadId"]
 
     thread = stop()
-    original = Path(source).read_text()
-    edited = original.replace("result += 10; // OUTER_EDIT", "int added = 1000; result += added; // OUTER_EDIT")
-    edited = edited.replace("result += 10; // INNER_EDIT", "int added = 100; result += added; // INNER_EDIT")
-    for text in [edited, edited.replace("int added = 100;", "int added = 200;")]:
+    for text in [Path(source).with_suffix(suffix).read_text() for suffix in (".edited.cs.in", ".edited-again.cs.in")]:
         result = response(send("isoplane/hotReload", {"sources": [{"path": source, "text": text}]}))["body"]
         assert result["appliedModules"] == 1 and not result["diagnostics"] and not result["restartRequired"], result
         thread = stop()

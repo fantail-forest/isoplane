@@ -190,22 +190,6 @@ tasks:
       - task: ':managed:guest-fixtures'
         vars: {FILTER: Isoplane.PackageFixtures.slnf}
       - task: package:debugger-optimized:prepared
-  debugger:sources:
-    sources:
-      - guest-runtime/tests/packages/debugger/async.cs.in
-      - guest-runtime/tests/packages/debugger/awaiter.cs.in
-      - guest-runtime/tests/packages/debugger/tracking.cs.in
-      - guest-runtime/tests/packages/debugger/pool_reuse.cs.in
-      - guest-runtime/tests/packages/debugger/prepare.py
-    generates:
-      - .build/clr-anycpu/debugger-sources/async-stack.cs
-      - .build/clr-anycpu/debugger-sources/async-composed.cs
-      - .build/clr-anycpu/debugger-sources/async-valuetask.cs
-      - .build/clr-anycpu/debugger-sources/async-pooled.cs
-      - .build/clr-anycpu/debugger-sources/async-pooled-composed.cs
-    cmds:
-      - '"{{.PYTHON}}" guest-runtime/tests/packages/debugger/prepare.py'
-
   package:diagnostics:
     cmds:
       - task: ':managed:guest-fixtures'
@@ -256,6 +240,7 @@ tasks:
     internal: true
     sources:
       - tools/vscode-isoplane/test/prepare.py
+      - tools/vscode-isoplane/test/fixture/Program.cs
       - '{{.PACKAGES}}/*.nupkg'
     generates:
       - '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/editor-fixture/app/Program.cs'

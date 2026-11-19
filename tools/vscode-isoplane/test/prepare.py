@@ -1,4 +1,4 @@
-"""Prepare the editor's application from the packaged customer template."""
+"""Create the editor tests' project from the packaged customer template and give it the tests' own Program.cs."""
 import os
 from pathlib import Path
 import subprocess
@@ -31,37 +31,4 @@ for name, pattern in [('local', 'Isoplane.*'), ('nuget', '*')]:
     ET.SubElement(ET.SubElement(mapping, 'packageSource', key=name), 'package', pattern=pattern)
 ET.indent(config)
 ET.ElementTree(config).write(app / 'nuget.config', encoding='utf-8', xml_declaration=True)
-source = app / 'Program.cs'
-code = source.read_text().replace('app.MapGet("/", () => "Hello from Isoplane!");',
-    'app.MapGet("/", EditorDebug.Application.Handle);\napp.MapGet("/count", EditorDebug.Application.Count);\napp.MapGet("/hotreload", EditorDebug.Application.Running);\napp.MapGet("/warmup", () => "warm");').replace('WarmupAsync("/")', 'WarmupAsync("/warmup")')
-# Type declarations follow a program's top-level statements.
-source.write_text(code + '''
-namespace EditorDebug
-{
-    internal static class Application
-    {
-        internal static string Handle()
-        {
-            int answer = 42;
-            return answer.ToString();
-        }
-
-        internal static string Running()
-        {
-            System.Diagnostics.Debugger.Break();
-            int revision;
-            do { revision = Revision(); } while (revision == 0);
-            return revision.ToString();
-        }
-
-        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-        private static int Revision() => 0;
-
-        internal static string Count()
-        {
-            int[] values = [1, 2, 3];
-            return values.Count(value => value > 2).ToString();
-        }
-    }
-}
-''')
+shutil.copyfile(Path(__file__).resolve().parent / 'fixture' / 'Program.cs', app / 'Program.cs')
