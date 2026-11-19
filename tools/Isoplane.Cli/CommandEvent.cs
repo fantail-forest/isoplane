@@ -117,40 +117,27 @@ internal static class EventSchema
     }
 }
 
-/// <summary>A Linux distribution's identity, as its os-release file states it.</summary>
-internal sealed record LinuxDistribution(string? Id, string? Version)
+/// <summary>
+/// What a command event says about the machine's Linux distribution: its identifier and version, each
+/// only when it fits the event schema. Only <see cref="Of"/> makes one, so no other value can be sent.
+/// </summary>
+internal sealed record ReportedDistribution
 {
-    // The os-release specification's order: the second is read only when the first is missing.
-    private static readonly string[] Files = ["/etc/os-release", "/usr/lib/os-release"];
+    private ReportedDistribution(string? id, string? version) => (Id, Version) = (id, version);
 
-    internal static LinuxDistribution OfThisMachine() => OperatingSystem.IsLinux() ? Read(Files) : new(null, null);
+    internal string? Id { get; }
 
-    internal static LinuxDistribution Read(IEnumerable<string> files)
-    {
-        foreach (var file in files)
-        {
-            try { return Parse(File.ReadLines(file)); }
-            catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException) { }
-            // A file that is there and cannot be read leaves the distribution unknown.
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return new(null, null); }
-        }
-        return new(null, null);
-    }
+    internal string? Version { get; }
 
-    internal static LinuxDistribution Parse(IEnumerable<string> lines)
-    {
-        var values = lines.Select(line => line.Split('=', 2)).Where(parts => parts.Length == 2)
-            .GroupBy(parts => parts[0].Trim()).ToDictionary(group => group.Key, group => group.Last()[1].Trim().Trim('"', '\''));
-        // The specification's default for a file that names no distribution.
-        return new(EventSchema.Fitting("distribution", values.GetValueOrDefault("ID", "linux")),
-            EventSchema.Fitting("distributionVersion", values.GetValueOrDefault("VERSION_ID")));
-    }
+    /// <summary>The fields of <paramref name="distribution"/> that may leave the machine; none of a machine that does not run Linux.</summary>
+    internal static ReportedDistribution Of(LinuxDistribution? distribution) =>
+        new(EventSchema.Fitting("distribution", distribution?.Id), EventSchema.Fitting("distributionVersion", distribution?.VersionId));
 }
 
 /// <summary>What a command event says about the machine and the caller.</summary>
 internal sealed record TelemetryContext(
     string? CiProvider, CodingAgent Agent, string CliVersion, string Platform, string OsArchitecture, string OsVersion,
-    LinuxDistribution Distribution, string RuntimeVersion, string? Locale)
+    ReportedDistribution Distribution, string RuntimeVersion, string? Locale)
 {
     internal bool Ci => CiProvider is not null;
 
@@ -161,7 +148,7 @@ internal sealed record TelemetryContext(
         CliPaths.PlatformIdentifier(),
         RuntimeInformation.OSArchitecture.ToString().ToLowerInvariant(),
         Environment.OSVersion.Version.ToString(),
-        LinuxDistribution.OfThisMachine(),
+        ReportedDistribution.Of(OperatingSystem.LinuxDistribution()),
         Environment.Version.ToString(),
         EventSchema.Fitting("locale", CultureInfo.CurrentUICulture.Name));
 }

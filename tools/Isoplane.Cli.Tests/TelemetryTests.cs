@@ -349,28 +349,26 @@ public sealed class TelemetryTests : IDisposable
     public void A_run_is_named_by_its_command_alone(string? expected, params string[] args) =>
         Assert.Equal(expected, CommandNames.Classify(args) is { } command ? CommandNames.Name(command) : null);
 
-    [Fact]
-    public void A_distribution_is_reported_as_os_release_states_it_when_it_fits_the_schema()
+    [Theory]
+    [InlineData("ubuntu", "24.04", "ubuntu", "24.04")]
+    [InlineData("arch", null, "arch", null)]
+    [InlineData("debian", "13~rc1", "debian", "13~rc1")]
+    [InlineData("Some Company's Linux", "1 (internal build)", null, null)]
+    [InlineData("ubuntu", "1 (internal build)", "ubuntu", null)]
+    [InlineData(null, null, null, null)]
+    public void A_distribution_is_reported_as_os_release_states_it_when_it_fits_the_schema(string? id, string? versionId, string? reportedId, string? reportedVersion)
     {
-        Assert.Equal(new LinuxDistribution("ubuntu", "24.04"),
-            LinuxDistribution.Parse(["PRETTY_NAME=\"Ubuntu 24.04.1 LTS\"", "ID=ubuntu", "VERSION_ID=\"24.04\"", "HOME_URL=https://ubuntu.com/"]));
-        Assert.Equal(new LinuxDistribution("arch", null), LinuxDistribution.Parse(["ID=arch", "BUILD_ID=rolling"]));
-        Assert.Equal(new LinuxDistribution("debian", "13~rc1"), LinuxDistribution.Parse(["ID=debian", "VERSION_ID=13~rc1"]));
-        Assert.Equal(new LinuxDistribution("linux", null), LinuxDistribution.Parse(["NAME=Custom"]));
-        Assert.Equal(new LinuxDistribution(null, null), LinuxDistribution.Parse(["ID=\"Some Company's Linux\"", "VERSION_ID=1 (internal build)"]));
+        var reported = ReportedDistribution.Of(new LinuxDistribution(id, versionId));
+        Assert.Equal(reportedId, reported.Id);
+        Assert.Equal(reportedVersion, reported.Version);
     }
 
     [Fact]
-    public void A_distribution_comes_from_the_second_os_release_file_only_when_the_first_is_missing()
+    public void No_distribution_is_reported_for_a_machine_that_does_not_run_linux()
     {
-        var usr = Path.Combine(home.Path, "usr-os-release");
-        File.WriteAllLines(usr, ["ID=fedora", "VERSION_ID=42"]);
-        var missing = Path.Combine(home.Path, "missing-os-release");
-        Assert.Equal(new LinuxDistribution("fedora", "42"), LinuxDistribution.Read([missing, usr]));
-        var etc = Path.Combine(home.Path, "etc-os-release");
-        File.WriteAllLines(etc, ["ID=alpine", "VERSION_ID=3.22.1"]);
-        Assert.Equal(new LinuxDistribution("alpine", "3.22.1"), LinuxDistribution.Read([etc, usr]));
-        Assert.Equal(new LinuxDistribution(null, null), LinuxDistribution.Read([missing]));
+        var reported = ReportedDistribution.Of(null);
+        Assert.Null(reported.Id);
+        Assert.Null(reported.Version);
     }
 
     [Theory]

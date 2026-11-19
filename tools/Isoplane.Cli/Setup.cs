@@ -20,7 +20,7 @@ internal sealed record SetupOptions(string? Source, bool AssumeYes)
 internal sealed record SetupMachine(
     Func<string, bool> CanLoad,
     Func<bool> HasTrustedRoots,
-    OperatingSystemRelease? LinuxDistribution,
+    LinuxDistribution? LinuxDistribution,
     Func<string, Task<bool>> Confirm,
     Func<string, CancellationToken, Task<int>> RunPrivileged,
     Func<string, ISdkRegistrations> Registrations,
@@ -31,7 +31,7 @@ internal sealed record SetupMachine(
     internal static SetupMachine Production() => new(
         Prerequisites.CanLoad,
         Prerequisites.HasTrustedRoots,
-        OperatingSystem.IsLinux() ? Prerequisites.Detect() : null,
+        OperatingSystem.LinuxDistribution(),
         ConfirmOnTerminal,
         (command, cancellation) => Processes.RunAsync("/bin/sh", ["-c", command], Environment.CurrentDirectory, cancellation),
         dotnet => new DotnetRegistrations(dotnet, CliPaths.Home),
@@ -185,7 +185,7 @@ internal static class Setup
         return Convert.ToHexStringLower(SHA256.HashData(stream)) == digest;
     }
 
-    private static async Task EnsurePrerequisitesAsync(SetupOptions options, SetupMachine machine, OperatingSystemRelease distribution, CancellationToken cancellation)
+    private static async Task EnsurePrerequisitesAsync(SetupOptions options, SetupMachine machine, LinuxDistribution distribution, CancellationToken cancellation)
     {
         var missing = Prerequisites.Missing(machine.CanLoad, machine.HasTrustedRoots);
         if (missing.Count == 0)
