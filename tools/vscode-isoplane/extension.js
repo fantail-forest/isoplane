@@ -1,15 +1,8 @@
 'use strict';
-const fs = require('node:fs');
 const path = require('node:path');
 const vscode = require('vscode');
 const { adapterCommand, adapterProblem } = require('./adapterCheck');
-
-const isoplaneSdk = /<Project\s[^>]*\bSdk\s*=\s*"Isoplane\.(Sdk|AspNetCore)[/"]/;
-
-function isoplaneProjectFile(file) {
-    try { return file.toLowerCase().endsWith('.csproj') && isoplaneSdk.test(fs.readFileSync(file, 'utf8')); }
-    catch { return false; }
-}
+const { isIsoplaneProject } = require('./projectSdk');
 
 function words(value) {
     if (Array.isArray(value)) return value.map(String);
@@ -22,7 +15,7 @@ function words(value) {
  * hosts the application: its code runs in the sandbox, where this extension's adapter reaches it.
  * A C# launch names the project (`dotnet`) or the project's run command (`coreclr`).
  */
-function isoplaneLaunch(folder, configuration) {
+async function isoplaneLaunch(folder, configuration) {
     if (configuration.request !== 'launch' || configuration.noDebug) return undefined;
     const expand = value => folder ? value.replaceAll('${workspaceFolder}', folder.uri.fsPath) : value;
     // C# Dev Kit's own buttons name the launch after the project file's path.
@@ -30,7 +23,7 @@ function isoplaneLaunch(folder, configuration) {
     const launch = { type: 'isoplane', request: 'launch', name: named ? configuration.name : 'Debug local Isoplane' };
     if (configuration.type === 'dotnet' && typeof configuration.projectPath === 'string') {
         const file = expand(configuration.projectPath);
-        return isoplaneProjectFile(file) ? { ...launch, project: path.dirname(file), configuration: 'Debug' } : undefined;
+        return await isIsoplaneProject(file) ? { ...launch, project: path.dirname(file), configuration: 'Debug' } : undefined;
     }
     if (configuration.type !== 'coreclr' || typeof configuration.program !== 'string') return undefined;
     const command = [path.basename(configuration.program).toLowerCase(), ...words(configuration.args)];
@@ -43,8 +36,8 @@ function isoplaneLaunch(folder, configuration) {
 }
 
 const csharpLaunch = {
-    resolveDebugConfiguration(folder, configuration) { return isoplaneLaunch(folder, configuration) || configuration; },
-    resolveDebugConfigurationWithSubstitutedVariables(folder, configuration) { return isoplaneLaunch(folder, configuration) || configuration; }
+    async resolveDebugConfiguration(folder, configuration) { return await isoplaneLaunch(folder, configuration) || configuration; },
+    async resolveDebugConfigurationWithSubstitutedVariables(folder, configuration) { return await isoplaneLaunch(folder, configuration) || configuration; }
 };
 
 function activate(context) {
