@@ -12,12 +12,15 @@
         <a asp-page="/Index">Sample-WebApp</a>
     </header>
     <main>
-        @* A page handler sets TempData["Flash"] before it redirects, and the page redirected
-           to shows it once. TempData keeps it in a cookie that Data Protection encrypts
-           (see Program.cs). *@
-        @if (TempData["Flash"] is string flash)
+        @* A page handler calls TempData.Confirm before it redirects (see Confirmation.cs), and
+           the page redirected to shows the confirmation once. TempData keeps it in a cookie that
+           Data Protection encrypts (see Program.cs). The wording is in ConfirmationWording, to
+           change as you like, and a confirmation with no wording is not shown. data-confirmation
+           names the outcome, so a script or a test can tell one confirmation from another without
+           reading the wording. *@
+        @if (TempData.TakeConfirmation() is { } confirmation && ConfirmationWording.For(confirmation) is { } wording)
         {
-            <p class="flash" role="status">@flash</p>
+            <p id="confirmation" class="flash" role="status" data-confirmation="@confirmation">@wording</p>
         }
         @RenderBody()
     </main>

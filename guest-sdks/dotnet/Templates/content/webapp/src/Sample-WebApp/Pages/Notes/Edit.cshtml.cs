@@ -27,7 +27,7 @@ public sealed class EditModel(AppDbContext db, TimeProvider clock) : PageModel
         if (note.Edit(Input.Title, Input.Body, clock.GetUtcNow()))
         {
             await db.SaveChangesAsync(cancellation);
-            TempData["Flash"] = "Note saved.";
+            TempData.Confirm(Confirmation.NoteSaved);
         }
         return RedirectToPage("/Index");
     }
@@ -35,7 +35,7 @@ public sealed class EditModel(AppDbContext db, TimeProvider clock) : PageModel
     public async Task<IActionResult> OnPostDeleteAsync(int id, CancellationToken cancellation)
     {
         await db.Notes.Where(note => note.Id == id).ExecuteDeleteAsync(cancellation);
-        TempData["Flash"] = "Note deleted.";
+        TempData.Confirm(Confirmation.NoteDeleted);
         return RedirectToPage("/Index");
     }
 }

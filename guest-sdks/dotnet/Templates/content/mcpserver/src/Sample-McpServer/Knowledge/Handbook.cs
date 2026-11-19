@@ -8,7 +8,10 @@ public sealed record Article(string Slug, string Title, string Text)
 {
     private const int ExcerptLength = 160;
 
-    /// <summary>Reads an article's title from its first line when that line is a heading; the slug stands in otherwise.</summary>
+    /// <summary>
+    /// Reads an article's title from its first line that is not blank, when that
+    /// line is a heading that starts with "# "; the slug stands in otherwise.
+    /// </summary>
     public static Article Parse(string slug, string text)
     {
         var firstLine = text.AsSpan().TrimStart();
@@ -62,7 +65,9 @@ public sealed class Handbook(IEnumerable<Article> articles)
 
     /// <summary>
     /// The articles that mention any of the query's words, best match first. A
-    /// word in the title counts for three in the text.
+    /// word matches wherever it appears in an article's title or text, inside a
+    /// longer word too, whatever its case. A word in the title counts for three
+    /// in the text.
     /// </summary>
     public IReadOnlyList<ArticleSummary> Search(string query, int limit)
     {

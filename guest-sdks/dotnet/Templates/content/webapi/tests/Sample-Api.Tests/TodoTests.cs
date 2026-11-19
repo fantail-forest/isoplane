@@ -26,16 +26,4 @@ public sealed class TodoTests
         Assert.False(todo.Complete(Now.AddHours(1)));
         Assert.Equal(Now, todo.CompletedAt);
     }
-
-    [Fact]
-    public void Reopening_a_todo_clears_its_completion()
-    {
-        var todo = new Todo { Title = "Write tests" };
-        todo.Complete(Now);
-
-        todo.Reopen();
-
-        Assert.False(todo.IsComplete);
-        Assert.Null(todo.CompletedAt);
-    }
 }

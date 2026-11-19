@@ -57,6 +57,7 @@ dotnet test
 | `src/Sample-WebApp/Properties/launchSettings.json` | The local port and the settings a local session supplies |
 | `src/Sample-WebApp/Pages/` | The pages: each `.cshtml` file is a page's markup, and the `.cshtml.cs` beside it handles its requests |
 | `src/Sample-WebApp/Pages/Shared/_Layout.cshtml` | The markup around every page |
+| `src/Sample-WebApp/Pages/Confirmation.cs` | Telling the page after a redirect what a handler did, for it to confirm |
 | `src/Sample-WebApp/Notes/Note.cs` | The note entity and the form input that creates and edits one |
 | `src/Sample-WebApp/Data/` | The `DbContext` and its registration |
 | `src/Sample-WebApp/Migrations/` | Entity Framework Core migrations |

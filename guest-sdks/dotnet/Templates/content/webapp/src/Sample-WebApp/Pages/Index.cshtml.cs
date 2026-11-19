@@ -32,8 +32,8 @@ public sealed class IndexModel(AppDbContext db, TimeProvider clock) : PageModel
 
         db.Notes.Add(Note.Create(Input.Title, Input.Body, clock.GetUtcNow()));
         await db.SaveChangesAsync(cancellation);
-        // A message for the next page to show once; the layout renders it.
-        TempData["Flash"] = "Note added.";
+        // For the next page to show once; the layout renders it. See Confirmation.cs.
+        TempData.Confirm(Confirmation.NoteAdded);
         // Redirecting after a post means reloading the page does not post again.
         return RedirectToPage();
     }

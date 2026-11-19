@@ -134,7 +134,9 @@ settings in `tests/Sample-McpServer.Tests/SandboxFixture.cs`.
   `Program.cs`, as the search is sent. Choose calls that change nothing: every
   build of the application serves them again.
 - **Add an article.** Put a Markdown file in `Knowledge/Articles/`. Its file
-  name is its slug and its first heading is its title.
+  name is its slug and its first heading is its title. `McpServerTests` read
+  the same directory, so they follow the handbook as you edit, add and remove
+  articles.
 - **Call another service from a tool.** Register a typed client with
   `AddHttpClient` in `Program.cs`, take it as a parameter of the tool, and await
   it, passing on the tool's `CancellationToken`. `HandbookTools.cs` has an
