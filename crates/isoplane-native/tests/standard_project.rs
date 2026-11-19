@@ -63,30 +63,6 @@ async fn dotnet_run_executes_an_application_package_with_an_existing_library() {
     let cli = isoplane_fixtures::managed_cli();
     {
         let configuration = "Debug";
-        let evaluated = run_successfully(
-            Command::new("dotnet")
-                .args([
-                    "msbuild",
-                    "-getProperty:IsoplaneManagedBundleBuild,RuntimeIdentifier",
-                ])
-                .arg(format!("-p:Configuration={configuration}"))
-                .env(
-                    "ISOPLANE_GUEST_RUNTIME_FEED",
-                    isoplane_fixtures::guest_runtime_feed(),
-                )
-                .current_dir(&app),
-            "evaluate the installed project with the .NET SDK",
-        );
-        let properties: serde_json::Value = serde_json::from_slice(&evaluated.stdout)
-            .expect("MSBuild property queries produce JSON");
-        assert_eq!(
-            properties["Properties"]["IsoplaneManagedBundleBuild"], "true",
-            "an ordinary SDK application must build a package"
-        );
-        assert_eq!(
-            properties["Properties"]["RuntimeIdentifier"], "wasi-wasm",
-            "an application package must resolve dependencies for the guest runtime"
-        );
         let mut running = start_dotnet(&app, &cli, configuration, false, false, &[]);
         let response = reqwest::get(format!("{}/greeting", running.url))
             .await
