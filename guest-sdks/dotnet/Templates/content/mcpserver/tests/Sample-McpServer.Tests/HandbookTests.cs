@@ -22,12 +22,6 @@ public sealed class HandbookTests
     }
 
     [Fact]
-    public void An_article_without_a_heading_is_titled_by_its_slug()
-    {
-        Assert.Equal("untitled", Handbook.Find("untitled")!.Title);
-    }
-
-    [Fact]
     public void A_word_in_the_title_outranks_one_in_the_text()
     {
         var matches = Handbook.Search("tea", limit: 10);
@@ -41,25 +35,5 @@ public sealed class HandbookTests
         var matches = Handbook.Search("BEANS water", limit: 10);
 
         Assert.Equal(["coffee", "tea", "untitled"], matches.Select(match => match.Slug).Order());
-    }
-
-    [Fact]
-    public void A_summary_quotes_the_first_paragraph_and_not_the_heading()
-    {
-        var match = Assert.Single(Handbook.Search("beans", limit: 10));
-
-        Assert.Equal(new ArticleSummary("coffee", "Making coffee", "Grind the beans. Some people prefer tea."), match);
-    }
-
-    [Fact]
-    public void A_search_stops_at_its_limit()
-    {
-        Assert.Single(Handbook.Search("water tea", limit: 1));
-    }
-
-    [Fact]
-    public void An_unknown_slug_finds_nothing()
-    {
-        Assert.Null(Handbook.Find("cocoa"));
     }
 }

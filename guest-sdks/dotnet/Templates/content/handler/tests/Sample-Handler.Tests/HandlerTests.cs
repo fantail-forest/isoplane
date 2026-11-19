@@ -49,7 +49,7 @@ public sealed class HandlerTests(SandboxFixture sandbox)
     }
 
     [Fact]
-    public async Task The_countdown_streams_every_line()
+    public async Task The_countdown_sends_every_line()
     {
         Assert.Equal("3\n2\n1\nLiftoff!\n", await sandbox.Client.GetStringAsync("/countdown"));
     }

@@ -71,12 +71,13 @@ public sealed class TodoApiTests(SandboxFixture sandbox)
     [Fact]
     public async Task The_export_lists_every_todo()
     {
-        using var created = await sandbox.Client.PostAsJsonAsync("/todos", new CreateTodo("Appear in the export"));
-        var todo = (await created.Content.ReadFromJsonAsync<TodoResponse>())!;
+        using var first = await sandbox.Client.PostAsJsonAsync("/todos", new CreateTodo("Appear in the export"));
+        using var second = await sandbox.Client.PostAsJsonAsync("/todos", new CreateTodo("Appear there too"));
+        var todos = new[] { (await first.Content.ReadFromJsonAsync<TodoResponse>())!, (await second.Content.ReadFromJsonAsync<TodoResponse>())! };
 
         var exported = await sandbox.Client.GetFromJsonAsync<List<TodoResponse>>("/todos/export");
 
-        Assert.Contains(exported!, item => item.Id == todo.Id && item.Title == "Appear in the export");
+        Assert.All(todos, todo => Assert.Contains(exported!, item => item.Id == todo.Id && item.Title == todo.Title));
     }
 
     [Fact]
