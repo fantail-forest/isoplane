@@ -1,9 +1,3 @@
-//! The peer that serves the material's issuers, CRLs and OCSP responses at
-//! the fixed loopback port the certificates name, and the leaves that point
-//! at it. One test at a time owns the port; every request it answers is
-//! recorded, so a test can assert what a chain build fetched and in what
-//! order.
-
 use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
@@ -50,75 +44,61 @@ impl RetrievalLeaf {
     }
 }
 
-/// The ports the certificates name are fixed, so the tests that need one
-/// take turns at it: within this process through a mutex, across the
-/// processes of this host (another test binary, another checkout) through
-/// a lock file named for the port. A turn lasts as long as the listener: it
-/// travels with the accept task, and dropping it closes the listener
-/// before either lock is released, so the next test binds only once the
-/// port is free, whether the previous test passed, failed, or was still
-/// shutting its runtime down. The close goes through the std listener
-/// because tokio's own drop hands the socket to its driver and the driver
-/// closes it later, after these locks would already be gone.
-struct Turn {
-    listener: Option<tokio::net::TcpListener>,
-    _host: std::fs::File,
-    _port: tokio::sync::MutexGuard<'static, ()>,
-}
-
-impl Turn {
-    async fn take(port: &'static tokio::sync::Mutex<()>, number: u16) -> Self {
-        let _port = port.lock().await;
-        let host = std::fs::File::create(
-            std::env::temp_dir().join(format!("isoplane-acceptance-port-{number}.lock")),
-        )
-        .expect("the port's lock file is creatable in the temporary directory");
-        // Blocking the test's thread is the point: nothing of this test runs
-        // until the port is its own.
-        lock_exclusively(&host);
-        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, number))
-            .await
-            .unwrap_or_else(|error| {
-                let holders = std::process::Command::new("ss")
-                    .args(["-tlnp", &format!("sport = :{number}")])
-                    .output()
-                    .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
-                    .unwrap_or_else(|error| format!("(ss unavailable: {error})"));
-                panic!(
-                    "a fixed port is free once its turn is taken: {error}; listeners:\n{holders}"
-                )
-            });
-        Self {
-            listener: Some(listener),
-            _host: host,
-            _port,
-        }
+mod turn {
+    /// Exclusive use of a port the certificates embed. The listener is
+    /// declared before the locks so that it closes before either is released,
+    /// or the next test's bind of the same port fails with the address in use.
+    pub(super) struct Turn {
+        listener: tokio::net::TcpListener,
+        _host: std::fs::File,
+        _port: tokio::sync::MutexGuard<'static, ()>,
     }
 
-    fn listener(&self) -> &tokio::net::TcpListener {
-        self.listener
-            .as_ref()
-            .expect("the listener is taken only by the turn's drop")
-    }
-}
-
-/// An exclusive advisory lock on `file`, released when the file closes.
-fn lock_exclusively(file: &std::fs::File) {
-    if let Err(error) = fs4::FileExt::lock(file) {
-        panic!("the port's lock file is lockable: {error}");
-    }
-}
-
-impl Drop for Turn {
-    fn drop(&mut self) {
-        if let Some(listener) = self.listener.take() {
-            match listener.into_std() {
-                Ok(closing) => drop(closing),
-                Err(error) => panic!("the fixed port's listener must close with its turn: {error}"),
+    impl Turn {
+        pub(super) async fn take(port: &'static tokio::sync::Mutex<()>, number: u16) -> Self {
+            let _port = port.lock().await;
+            let host = std::fs::File::create(
+                std::env::temp_dir().join(format!("isoplane-acceptance-port-{number}.lock")),
+            )
+            .expect("the port's lock file is creatable in the temporary directory");
+            // Blocking the test's thread is the point: nothing of this test runs
+            // until the port is its own.
+            lock_exclusively(&host);
+            let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, number))
+                .await
+                .unwrap_or_else(|error| {
+                    let holders = std::process::Command::new("ss")
+                        .args(["-tlnp", &format!("sport = :{number}")])
+                        .output()
+                        .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+                        .unwrap_or_else(|error| format!("(ss unavailable: {error})"));
+                    panic!(
+                        "a fixed port is free once its turn is taken: {error}; listeners:\n{holders}"
+                    )
+                });
+            Self {
+                listener,
+                _host: host,
+                _port,
             }
         }
+
+        /// The next connection to the port.
+        pub(super) async fn accept(&self) -> std::io::Result<tokio::net::TcpStream> {
+            let (stream, _) = self.listener.accept().await?;
+            Ok(stream)
+        }
+    }
+
+    /// An exclusive advisory lock on `file`, released when the file closes.
+    fn lock_exclusively(file: &std::fs::File) {
+        if let Err(error) = fs4::FileExt::lock(file) {
+            panic!("the port's lock file is lockable: {error}");
+        }
     }
 }
+
+use turn::Turn;
 
 static MATERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static DENIED: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -136,7 +116,7 @@ impl Sentinel {
         let reached = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let counter = reached.clone();
         let task = tokio::spawn(async move {
-            while turn.listener().accept().await.is_ok() {
+            while turn.accept().await.is_ok() {
                 counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             }
         });
@@ -162,8 +142,6 @@ pub enum Issuers {
     Served,
     /// Accepts the request and never answers.
     Hold,
-    /// A body far past any download limit a test sets.
-    Oversized,
 }
 
 /// How the peer answers a request for the intermediate's CRL.
@@ -217,7 +195,7 @@ impl MaterialPeer {
         let log = requests.clone();
         let task = tokio::spawn(async move {
             loop {
-                let Ok((stream, _)) = turn.listener().accept().await else {
+                let Ok(stream) = turn.accept().await else {
                     return;
                 };
                 let log = log.clone();
@@ -304,7 +282,6 @@ async fn answer(
                 }),
             ),
             Issuers::Hold => hold().await,
-            Issuers::Oversized => bytes("application/pkix-cert", vec![0; 4 << 20]),
         },
         "/intermediate.crl" => match crl {
             Crl::Good => bytes("application/pkix-crl", hex(CRL_GOOD)),

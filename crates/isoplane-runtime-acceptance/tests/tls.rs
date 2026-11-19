@@ -1,10 +1,3 @@
-//! TLS over the delegated sockets with the guest's own OpenSSL: an
-//! `SslStream` handshake and its reads park on socket readiness like any
-//! other socket I/O and survive hibernation deltas, bytes flow both ways,
-//! the server certificate is validated against a root the guest trusts
-//! (name, validity, chain), and every failure the peer can produce reaches
-//! the ordinary .NET exception.
-
 use isoplane_harness::logging::GuestLogs;
 #[macro_use]
 mod common;
@@ -579,8 +572,11 @@ in_mono_runtime! {
 
     #[tokio::test]
     async fn a_retrieval_is_bounded_by_the_download_limit(runtime: GuestRuntime) {
+        // The issuer that completes this chain in
+        // a_missing_intermediate_is_retrieved_from_its_aia_url, so the limit
+        // is all that keeps it out here.
         let material =
-            MaterialPeer::start(Issuers::Oversized, Crl::Unavailable, Ocsp::Unavailable).await;
+            MaterialPeer::start(Issuers::Served, Crl::Unavailable, Ocsp::Unavailable).await;
         let peer = tls_peer(Certificate::RemoteAlone, Behaviour::Echo).await;
         let reactor = reactor_for_peers(vec![peer, material.address()]);
         let mut guest = guest(&reactor, runtime);
@@ -595,6 +591,11 @@ in_mono_runtime! {
             text.starts_with("AuthenticationException: ") && text.contains("PartialChain"),
             "an issuer past the download limit is not taken and the chain stays partial: {text}; logs: {:?}",
             reactor.context.logs()
+        );
+        assert_eq!(
+            material.requests(),
+            vec!["/intermediate.der"],
+            "the issuer must have been asked for, and refused for its size"
         );
     }
 
@@ -790,9 +791,6 @@ in_mono_runtime! {
 
     #[tokio::test]
     async fn default_trust_and_retrieval_together_complete_a_presented_leaf(runtime: GuestRuntime) {
-        // The platform bundle holds the root, the peer presents its leaf
-        // alone: the issuer is fetched and the chain validates with no
-        // application trust configuration.
         let material = MaterialPeer::start(Issuers::Served, Crl::Unavailable, Ocsp::Unavailable).await;
         let peer = tls_peer(Certificate::RemoteAlone, Behaviour::Echo).await;
         let reactor = Reactor::with_platform_files(
@@ -949,7 +947,6 @@ in_mono_runtime! {
         );
     }
 
-    /// This fixture serves no platform trust bundle and supplies no application roots.
     #[tokio::test]
     async fn with_no_bundle_served_default_trust_holds_no_roots(runtime: GuestRuntime) {
         let peer = tls_peer(Certificate::Leaf, Behaviour::Echo).await;
@@ -1327,15 +1324,6 @@ in_mono_runtime! {
     }
 }
 
-// The platform's default trust: the root bundle the host serves at
-// `/etc/ssl/certs/ca-certificates.crt`, read by the guest's own TLS stack
-// with no application trust configuration, independent of anything on the
-// host, and replaced by explicit custom trust. Rotation is what a guest sees
-// when the served file changes: its store provider rechecks the file when
-// it is next used and at least five seconds of guest time have passed since
-// the last check, so these tests move the clock and say exactly when the
-// old and the new roots are observed.
-
 /// Past the store provider's five-second recheck interval.
 const RECHECK_MS: u64 = 6_000;
 
@@ -1434,9 +1422,6 @@ in_mono_runtime! {
 
     #[tokio::test]
     async fn explicit_custom_trust_replaces_the_bundle_rather_than_adding_to_it(runtime: GuestRuntime) {
-        // Custom trust of the material's root, under a bundle holding only the
-        // stranger: the leaf validates (custom trust decides) and the stranger
-        // does not (the bundle is not consulted).
         let leaf = tls_peer(Certificate::Leaf, Behaviour::Echo).await;
         let stranger = tls_peer(Certificate::Stranger, Behaviour::Echo).await;
         let reactor = reactor_serving(
@@ -1479,8 +1464,6 @@ in_mono_runtime! {
 
     #[tokio::test]
     async fn trust_is_the_served_bundle_and_nothing_ambient(runtime: GuestRuntime) {
-        // The host running these tests has its own CAs; the guest sees
-        // exactly the served file: nothing when it is empty.
         let peer = tls_peer(Certificate::Leaf, Behaviour::Echo).await;
         let reactor = reactor_serving(vec![peer], bundle(&[]));
         let mut guest = guest(&reactor, runtime);
@@ -1682,9 +1665,6 @@ in_mono_runtime! {
 
     #[tokio::test]
     async fn a_removed_root_is_untrusted_by_a_hibernated_guest_once_restored(runtime: GuestRuntime) {
-        // Start with cached roots, rotate the served bundle, then connect
-        // after the recheck interval. Every parked wake crosses a local
-        // snapshot round trip before this handshake reports its result.
         let peer = tls_peer(Certificate::Leaf, Behaviour::Echo).await;
         let (reactor, mut guest) = validated_then_rotated(
             runtime,
@@ -1711,8 +1691,6 @@ in_mono_runtime! {
 
     #[tokio::test]
     async fn a_guest_activated_from_an_image_holding_old_roots_reloads_after_the_recheck(runtime: GuestRuntime) {
-        // A memory image that already holds the cached store (as a template
-        // warmed at preparation would) activates under a rotated bundle.
         let peer = tls_peer(Certificate::Leaf, Behaviour::Echo).await;
         let (reactor, warmed) = validated_then_rotated(
             runtime,
