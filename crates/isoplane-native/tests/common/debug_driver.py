@@ -273,7 +273,7 @@ try:
                     until(lambda item: item.get("event") == "output" and "reload failed; keeping" in item["body"]["output"])
                     saved = response(send("evaluate", {"expression": "answer", "frameId": frame["id"], "context": "watch"}))
                     assert saved["body"]["result"] == "42", "a failed rebuild must leave the paused invocation inspectable"
-                    Path(source).write_text(original.replace("int answer = 42;", "int answer = 84;"))
+                    Path(source).write_text(Path(source).with_suffix(".reloaded.cs.in").read_text())
                     rebuilt = until(lambda item: item.get("seq", 0) > saved["seq"] and item.get("event") == "output"
                                     and "rebuilt application;" in item["body"]["output"])
                     saved = response(send("evaluate", {"expression": "answer", "frameId": frame["id"], "context": "watch"}))
@@ -283,7 +283,7 @@ try:
                     Path(source).write_text(original + "\n#error detach rebuild ordering\n")
                     print('request-owner-event:reload_failed', flush=True)
                     assert sys.stdin.readline() == 'owner-event:reload_failed\n'
-                    Path(source).write_text(original.replace("int answer = 42;", "int answer = 84;"))
+                    Path(source).write_text(Path(source).with_suffix(".reloaded.cs.in").read_text())
                     print('request-owner-event:reload_pending', flush=True)
                     assert sys.stdin.readline() == 'owner-event:reload_pending\n'
                     for command, arguments in [("disconnect", {"terminateDebuggee": False}), ("isoplane/prepareDetach", {})]:
@@ -306,7 +306,7 @@ try:
                         with socket.socket() as check:
                             assert check.connect_ex((address, int(port))) != 0, "detach must release the debugger control listener"
                     original = Path(source).read_text()
-                    Path(source).write_text(original.replace("int answer = 42;", "int answer = 84;"))
+                    Path(source).write_text(Path(source).with_suffix(".reloaded.cs.in").read_text())
                     owner_event("reloaded")
                     with urllib.request.urlopen(url) as reply:
                         assert (reply.status, reply.read()) == (200, b"84"), "source reload must keep using the ordinary runtime after detach"

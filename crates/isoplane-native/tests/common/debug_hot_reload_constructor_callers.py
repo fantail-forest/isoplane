@@ -13,10 +13,9 @@ def exercise(source, send, response, until):
     def stop():
         return until(stop_event)["body"]["threadId"]
 
-    text = Path(source).read_text()
-    for marker, value in [("CLASS_CONSTRUCTION_EDIT", 1000), ("VALUE_CONSTRUCTION_EDIT", 2000)]:
+    for suffix in (".class-construction.cs.in", ".value-construction.cs.in"):
         thread = stop()
-        text = text.replace(f"result += 10; // {marker}", f"int added{value} = {value}; result += added{value}; // {marker}")
+        text = Path(source).with_suffix(suffix).read_text()
         result = response(send("isoplane/hotReload", {"sources": [{"path": source, "text": text}]}))["body"]
         assert result["appliedModules"] == 1 and not result["diagnostics"] and not result["restartRequired"], result
         thread = stop()

@@ -53,7 +53,6 @@ tasks:
     desc: Exercise managed, installed SDK, editor and PostgreSQL journeys on Linux
     cmds:
       - task: ':runtime'
-      - task: ':fixtures:debugger:sources'
       - task: ':managed:compile'
         vars: {FILTER: Isoplane.SdkNightly.slnf}
       - task: ':managed:publish-cli'

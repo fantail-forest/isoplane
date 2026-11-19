@@ -24,12 +24,11 @@ def exercise(source, send, response, until):
         return response(send("evaluate", {"expression": name, "frameId": frame["id"]}))["body"]["result"]
 
     for name, marker in [("syncItem", "SYNC"), ("asyncItem", "ASYNC")]:
-        for phase, before, after, change in [("EDIT", "1", "101", (10, 100)), ("RESUME", "101", "1101", (100, 1000))]:
+        for phase, before, after in [("EDIT", "1", "101"), ("RESUME", "101", "1101")]:
             thread, frame = stop()
             line = next(index + 1 for index, text in enumerate(edited.splitlines()) if f"// {marker}_{phase}" in text)
             assert frame["line"] == line and value(frame, name) == before, frame
-            old, new = change
-            edited = edited.replace(f"{name} += {old}; // {marker}_{phase}", f"{name} += {new}; // {marker}_{phase}")
+            edited = Path(source).with_suffix(f".{marker.lower()}-{phase.lower()}.cs.in").read_text()
             result = response(send("isoplane/hotReload", {"sources": [{"path": source, "text": edited}]}))["body"]
             assert result["appliedModules"] == 1 and not result["diagnostics"] and not result["restartRequired"], result
             thread, frame = stop()

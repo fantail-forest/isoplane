@@ -28,21 +28,21 @@ def exercise(source, send, response, until):
     thread, frame = stop()
     assert value(frame) == "1"
     original_line = frame["line"]
-    edited = "\n\n" + Path(source).read_text().replace("value += 10; // HOT_RELOAD_BODY", "value += 100; // HOT_RELOAD_BODY")
+    # Two leading blank lines move the paused statement, so each edit is also a line change.
+    edited = "\n\n" + Path(source).with_suffix(".increment.cs.in").read_text()
     thread, frame = apply(edited)
     assert frame["line"] == original_line + 2 and value(frame) == "1", frame
     response(send("setBreakpoints", {"source": {"path": source}, "breakpoints": []}))
     response(send("next", {"threadId": thread}))
     thread, frame = stop()
     assert frame["line"] == original_line + 3 and value(frame) == "101", frame
-    start, end = edited.index("public static string Handle()"), edited.index("public static string HandleTry()")
-    edited = edited[:start] + edited[start:end].replace("return value.ToString();", "return (value + 10).ToString();") + edited[end:]
+    edited = "\n\n" + Path(source).with_suffix(".resumed.cs.in").read_text()
     thread, frame = apply(edited)
     assert value(frame) == "101", "remapping must not repeat the preceding increment"
     response(send("continue", {"threadId": thread}))
     thread, frame = stop()
     assert value(frame) == "101", "Debugger.Break must execute once after continuing from its statement"
-    edited = edited.replace("return (value + 10).ToString();", "return (value + 1000).ToString();")
+    edited = "\n\n" + Path(source).with_suffix(".resumed-again.cs.in").read_text()
     thread, frame = apply(edited)
     assert value(frame) == "101"
     response(send("next", {"threadId": thread}))

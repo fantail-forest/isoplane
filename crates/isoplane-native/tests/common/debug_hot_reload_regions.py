@@ -23,15 +23,7 @@ def exercise(source, send, response, until):
 
     thread, frame = stop()
     assert value(frame) == "11"
-    original = Path(source).read_text()
-    if ASYNC:
-        marker = "await Task.Delay(1); // HOT_RELOAD_AWAIT"
-        edited = original.replace(marker, 'string added = new string(\'x\', 2); // HOT_RELOAD_ADDED\n        ' + marker)
-        start = edited.index("public static async Task<string> HandleAsync()")
-        edited = edited[:start] + edited[start:].replace("value += 10;", "value += 10 + added.Length;")
-    else:
-        marker = "value += 10; // HOT_RELOAD_TRY"
-        edited = original.replace(marker, 'string added = new string(\'x\', 2); // HOT_RELOAD_ADDED\n            value += 10 + added.Length; // HOT_RELOAD_TRY')
+    edited = Path(source).with_suffix(".added-async.cs.in" if ASYNC else ".added-try.cs.in").read_text()
     changed = response(send("isoplane/hotReload", {"sources": [{"path": source, "text": edited}]}))["body"]
     assert changed["appliedModules"] == 1 and not changed["diagnostics"] and not changed["restartRequired"], changed
     thread, frame = stop()
