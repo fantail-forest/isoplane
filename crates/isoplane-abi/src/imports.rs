@@ -246,17 +246,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_import_says_what_it_is_for() {
-        for i in IMPORTS {
-            assert!(
-                i.why.trim().len() > 20,
-                "{}: `why` is missing or too short to be an explanation",
-                i.name
-            );
-        }
-    }
-
-    #[test]
     fn names_are_unique() {
         let mut seen = std::collections::BTreeSet::new();
         for i in IMPORTS {

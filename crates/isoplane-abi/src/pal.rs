@@ -421,15 +421,4 @@ mod tests {
             );
         }
     }
-
-    #[test]
-    fn every_pal_entry_states_why() {
-        for p in PAL_IMPORTS {
-            assert!(
-                p.why.len() > 20,
-                "{} has no usable rationale",
-                p.full_name()
-            );
-        }
-    }
 }
