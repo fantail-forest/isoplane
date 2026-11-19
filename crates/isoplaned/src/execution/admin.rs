@@ -1,18 +1,18 @@
-//! `NodeAdmin` over real cells.
+//! `NodeAdmin` over the node's execution cells.
 
 use std::sync::Arc;
 
-use super::RealCells;
+use super::NodeCells;
 
 /// Read-only measurements from the execution cells.
-pub struct RealNodeAdmin {
-    cells: Arc<RealCells>,
+pub struct CellMetrics {
+    cells: Arc<NodeCells>,
 }
 
-impl RealNodeAdmin {
+impl CellMetrics {
     /// Reads measurements from the supplied execution pool.
-    pub fn new(cells: Arc<RealCells>) -> Self {
-        RealNodeAdmin { cells }
+    pub fn new(cells: Arc<NodeCells>) -> Self {
+        CellMetrics { cells }
     }
 
     /// Counters summed across cells, quantiles at their maximum, tenants
@@ -52,7 +52,7 @@ impl RealNodeAdmin {
     }
 }
 
-impl crate::admin::NodeAdmin for RealNodeAdmin {
+impl crate::admin::NodeAdmin for CellMetrics {
     fn snapshot(&self) -> crate::admin::NodeSnapshot {
         let Some(m) = self.merged() else {
             return crate::admin::NodeSnapshot::default();
@@ -120,7 +120,7 @@ mod tests {
     use isoplane_host::{Activator, ModuleId};
     use std::time::Duration;
 
-    fn node() -> (tempfile::TempDir, Arc<RealCells>) {
+    fn node() -> (tempfile::TempDir, Arc<NodeCells>) {
         let mut builder = tempfile::Builder::new();
         #[cfg(unix)]
         {
@@ -134,9 +134,9 @@ mod tests {
         config.data_dir = directory.path().to_owned();
         config.host = isoplane_harness::fakes::cell_config("metrics");
         config.host.breaker.kill_threshold = 1;
-        let cells = RealCells::build_with_destinations(
+        let cells = NodeCells::build_with_destinations(
             &config,
-            &super::super::RealPaths::under(directory.path()),
+            &super::super::NodeStoragePaths::under(directory.path()),
             Arc::new(isoplane_host::egress::PublicDestinations),
             &config.trust_bundle().expect("the bundled roots must load"),
         )
@@ -188,8 +188,8 @@ mod tests {
         .expect("dispatch result")
     }
 
-    fn scrape(cells: Arc<RealCells>) -> String {
-        let admin = RealNodeAdmin::new(cells);
+    fn scrape(cells: Arc<NodeCells>) -> String {
+        let admin = CellMetrics::new(cells);
         crate::metrics::render(
             "node",
             &isoplane_proxy::ProxyMetrics::new(),

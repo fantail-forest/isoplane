@@ -114,7 +114,7 @@ fn configured_engine_resource_limits_reach_the_execution_engine() {
     );
 }
 
-impl super::RealCells {
+impl super::NodeCells {
     /// Prepares raw `wasm` through this node's deployer and installs the
     /// publication as a restored selection is installed.
     pub(crate) async fn install_prepared(
@@ -124,7 +124,7 @@ impl super::RealCells {
         manifest: &isoplane_abi::config::AppManifest,
         wasm: &[u8],
     ) -> anyhow::Result<isoplane_host::ModuleId> {
-        let artifacts = super::RealPaths::under(&config.data_dir).artifacts;
+        let artifacts = super::NodeStoragePaths::under(&config.data_dir).artifacts;
         // SAFETY: the node owns this cache and writes it only through the compiler's atomic path.
         let cache =
             unsafe { isoplane_engine::CompilationCache::from_trusted_directory(artifacts) }?;

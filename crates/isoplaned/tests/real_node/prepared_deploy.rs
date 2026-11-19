@@ -61,7 +61,7 @@ async fn prepared_deployment_serves_initialized_state_without_repeating_initiali
         })
         .expect("preparation selection");
     let node = Node::build(cfg).expect("real node");
-    let real = node.real.clone();
+    let cells = node.execution.clone();
     let wasm = guest_with_functions(
         &ResponseHead {
             status: 200,
@@ -86,7 +86,7 @@ async fn prepared_deployment_serves_initialized_state_without_repeating_initiali
         ),
     );
     let provider = crate::common::preparation::provider(&node.cfg);
-    let engine = node.real.engine();
+    let engine = node.execution.engine();
     let cancellation = tokio_util::sync::CancellationToken::new();
     let context = PreparationContext {
         network: crate::common::preparation::network("acme", &manifest("quotes")),
@@ -103,7 +103,7 @@ async fn prepared_deployment_serves_initialized_state_without_repeating_initiali
     };
     std::fs::write(settings_file.path(), br#"{"key":"private-second"}"#)
         .expect("source changes before registration");
-    let deployed = real
+    let deployed = cells
         .deployer
         .prepare_application(
             &manifest("quotes"),
@@ -124,11 +124,12 @@ async fn prepared_deployment_serves_initialized_state_without_repeating_initiali
         .any(|stage| stage.name == "prepared_encoding"));
     let (installed, _, _) = deployed.into_application();
     let receipt = installed.receipt.clone();
-    real.install_application("acme", installed)
+    cells
+        .install_application("acme", installed)
         .await
         .expect("actual registration");
     crate::common::preparation::route(&node, "quotes", &receipt.version);
-    let duplicate = real
+    let duplicate = cells
         .deployer
         .prepare_application(
             &manifest("quotes"),
@@ -143,7 +144,8 @@ async fn prepared_deployment_serves_initialized_state_without_repeating_initiali
         .await
         .expect("duplicate candidate");
     assert!(
-        real.install_application("acme", duplicate.into_application().0)
+        cells
+            .install_application("acme", duplicate.into_application().0)
             .await
             .is_err(),
         "existing captured state refuses replacement under the same deployment identity"
@@ -159,7 +161,7 @@ async fn prepared_deployment_serves_initialized_state_without_repeating_initiali
         response.body, "prepared deployment",
         "the installed artifact must retain the guest response"
     );
-    drop(real);
+    drop(cells);
     rig.shutdown().await;
 }
 
@@ -167,9 +169,9 @@ async fn prepared_deployment_serves_initialized_state_without_repeating_initiali
 async fn a_preparation_refusal_reaches_the_caller_without_publishing_artifacts() {
     let directory = crate::common::private_directory().expect("owned node files");
     let node = Node::build(config(directory.path())).expect("real node");
-    let real = node.real.clone();
+    let cells = node.execution.clone();
     let cancellation = tokio_util::sync::CancellationToken::new();
-    let engine = node.real.engine();
+    let engine = node.execution.engine();
     let context = PreparationContext {
         network: crate::common::preparation::network("acme", &manifest("quotes")),
         runtime_configuration: Default::default(),
@@ -189,7 +191,7 @@ async fn a_preparation_refusal_reaches_the_caller_without_publishing_artifacts()
         body: b"must not deploy".to_vec(),
         streaming: false,
     });
-    let error = real
+    let error = cells
         .deployer
         .prepare_application(
             &manifest("quotes"),
@@ -215,7 +217,7 @@ async fn a_preparation_refusal_reaches_the_caller_without_publishing_artifacts()
         &directory.path().join("registry"),
         "refused preparation must not publish artifacts",
     );
-    drop(real);
+    drop(cells);
     tokio::task::spawn_blocking(move || drop(node))
         .await
         .expect("node shutdown");

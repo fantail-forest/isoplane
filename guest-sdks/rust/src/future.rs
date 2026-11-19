@@ -80,10 +80,6 @@ impl<T> Future for HostFuture<T> {
                     rt::register(me.id);
                     me.registered = true;
                 }
-                // THE PARK. Nothing below this line waits; every caller's
-                // `.await` turns this into its own `return Poll::Pending`,
-                // and `rt::run` returns `PollStatus::Pending` to the host with
-                // an empty wasm stack.
                 Poll::Pending
             }
         }
