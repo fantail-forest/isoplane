@@ -77,10 +77,12 @@ SDK version this project uses.
 
 The Isoplane SDK writes this directory when the project builds, from the
 packages the project references, so that it matches the SDK version in use.
-Edits are overwritten on the next build, and a package added to or removed
-from the project adds or removes its references. Put guidance of your own in a
-skill beside this one. Commit the directory so that an agent working from a
-clone sees it.
+Edits to the files it wrote are overwritten on the next build, and a package
+added to or removed from the project adds or removes its references.
+`.isoplane-generated` lists the reference files the SDK wrote, and the build
+replaces or deletes only those and `SKILL.md`. Put guidance of your own in a
+skill beside this one. Commit the directory, with that list, so that an agent
+working from a clone sees it.
 
 Three MSBuild properties in the project file control the writing:
 
