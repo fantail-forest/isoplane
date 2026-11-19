@@ -54,7 +54,9 @@ public sealed class McpServerTests(SandboxFixture sandbox)
     {
         var result = await sandbox.Mcp.CallToolAsync("read_article", Arguments(("slug", "code-review")));
 
-        Assert.StartsWith("# Code review", Text(result));
+        var article = Text(result);
+        Assert.StartsWith("# Code review", article);
+        Assert.EndsWith("once the checks pass and the reviewer has approved.", article.TrimEnd());
     }
 
     [Fact]
