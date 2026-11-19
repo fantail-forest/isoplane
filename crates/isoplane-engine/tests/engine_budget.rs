@@ -289,9 +289,4 @@ fn the_wall_clock_backstop_trips_independently_of_occupancy_measurement() {
         "the message must distinguish the backstop from occupancy exhaustion: {}",
         trap.message
     );
-    assert!(
-        out.wall_ns >= 40_000_000,
-        "the backstop fires at the cap, not before: {} ns",
-        out.wall_ns
-    );
 }

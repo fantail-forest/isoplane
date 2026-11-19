@@ -610,25 +610,31 @@ mod tests {
     #[test]
     fn least_recently_used_artifacts_are_evicted_first() {
         let root = tempfile::tempdir().unwrap();
-        let cache = Cache::new(root.path().into(), CacheBytes(8)).unwrap();
-        let old = cache
-            .lease_at(CacheKey([1; 32]), UNIX_EPOCH + Duration::from_secs(1))
+        let roomy = Cache::new(root.path().into(), CacheBytes(u64::MAX)).unwrap();
+        // Neither artifact is leased when the cache is pruned, so only when
+        // each was last used can decide between them. The older use has the
+        // later key and was written second.
+        let [newer, older] = [(1, 2), (2, 1)].map(|(key, seconds)| {
+            let lease = roomy
+                .lease_at(
+                    CacheKey([key; 32]),
+                    UNIX_EPOCH + Duration::from_secs(seconds),
+                )
+                .unwrap();
+            fs::write(lease.directory().join("module"), b"1234").unwrap();
+            lease.directory().to_path_buf()
+        });
+        Cache::new(root.path().into(), CacheBytes(4))
+            .unwrap()
+            .prune()
             .unwrap();
-        let path = old.directory().to_path_buf();
-        fs::write(path.join("module"), b"1234").unwrap();
-        drop(old);
-        let new = cache
-            .lease_at(CacheKey([2; 32]), UNIX_EPOCH + Duration::from_secs(2))
-            .unwrap();
-        fs::write(new.directory().join("module"), b"12345").unwrap();
-        cache.prune().unwrap();
         assert!(
-            !path.exists(),
-            "the least recently used inactive artifact must make room for the new one"
+            !older.exists(),
+            "the least recently used artifact must make room"
         );
         assert!(
-            new.directory().exists(),
-            "retention must preserve the new live artifact"
+            newer.exists(),
+            "the more recently used artifact fits and must stay"
         );
     }
 

@@ -402,12 +402,8 @@ mod tests {
         )
         .expect("save changed pages");
         assert_eq!(
-            saved,
-            Saved {
-                changed_pages: 4,
-                zero_pages: 1,
-                bytes: saved.bytes,
-            },
+            (saved.changed_pages, saved.zero_pages),
+            (4, 1),
             "two neighbouring written pages, one zeroed page and one grown page changed"
         );
         assert_eq!(
@@ -451,6 +447,16 @@ mod tests {
         assert_eq!(
             saved.changed_pages, 1,
             "a page outside the changed ranges is taken to equal the template"
+        );
+        let snapshot = Snapshot::open(&mut storage, binding()).expect("open the snapshot");
+        let mut restored = base.clone();
+        snapshot
+            .apply(&mut storage, &mut restored)
+            .expect("apply the snapshot");
+        assert_eq!(
+            (restored[PAGE], restored[3 * PAGE]),
+            (base[PAGE], 0xbb),
+            "the saved page must be the one inside the reported range"
         );
     }
 
