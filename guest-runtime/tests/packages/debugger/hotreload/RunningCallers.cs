@@ -1,0 +1,27 @@
+using System;
+using System.Text.Json;
+
+namespace Debugger.HotReload;
+
+public static partial class Callers
+{
+    /// <summary>Observes a source edit without requiring a debugger pause.</summary>
+    public static string Running()
+    {
+        ReloadNotifications.Enabled = true;
+        var sample = new NotificationSample();
+        if (JsonSerializer.Serialize(sample) != "{\"Value\":1}") throw new InvalidOperationException("The initial JSON contract was not cached.");
+        System.Diagnostics.Debugger.Break();
+        int value;
+        do { value = Revision(); } while (value == 0);
+        return $"{value}:{ReloadNotifications.Clears}:{ReloadNotifications.Updates}:{ReloadNotifications.TypesMatched}:{JsonSerializer.Serialize(sample)}"; // RUNNING_RESULT
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static int Revision() => 0; // RUNNING_EDIT
+
+    private sealed class NotificationSample
+    {
+        public int Value => 1; // NOTIFICATION_PROPERTY
+    }
+}

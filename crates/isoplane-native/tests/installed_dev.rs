@@ -299,7 +299,7 @@ fn installed_debug_acceptance(mode: &str) {
     let debug_source = if mode == "library" {
         directory.path().join("library/Calculator.cs")
     } else {
-        app.join("Handler.cs")
+        app.join("DebugFixture.cs")
     };
     let route = match mode {
         "library" => "/library",

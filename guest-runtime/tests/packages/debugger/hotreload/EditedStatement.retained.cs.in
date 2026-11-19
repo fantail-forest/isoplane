@@ -1,0 +1,31 @@
+using System;
+
+namespace Debugger.HotReload;
+
+/// <summary>A statement edited in source while the invocation that ran it is paused.</summary>
+public static class EditedStatement
+{
+    public static string Handle()
+    {
+        int value = 1;
+        string held = new string('x', 3);
+        ref int alias = ref value;
+
+        value += Added(); // HOT_RELOAD_BODY
+        System.Diagnostics.Debugger.Break();
+        GC.Collect(); // HOT_RELOAD_GROWTH_GC
+        string more = held + "!";
+        GC.Collect();
+        return (alias + more.Length).ToString();
+    }
+
+    /// <summary>A method introduced by the edit.</summary>
+    public static int Added() => 200;
+}
+
+/// <summary>Receives a field through a source edit.</summary>
+public static class EditedStatementStorage
+{
+    /// <summary>The field introduced by the edit.</summary>
+    public static int Added;
+}

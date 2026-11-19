@@ -139,6 +139,8 @@ tasks:
       - exclude: 'guest-sdks/**/{obj,bin,out,__pycache__,*.Tests,Tests}/**/*'
       - exclude: 'guests/**/{obj,bin,out,__pycache__}/**/*'
       - exclude: 'guest-runtime/tests/packages/**/{obj,bin,.isoplane,__pycache__}/**/*'
+      # Revisions the debugger drivers send; the build reads only the ones deltas.json names, which sit beside hotreload.cs.
+      - exclude: 'guest-runtime/tests/packages/debugger/hotreload/*.cs.in'
       - exclude: 'tools/**/{obj,bin,out,__pycache__,*.Tests}/**/*'
     generates:
       - '{{.ROOT_DIR}}/.build/clr-anycpu/package-fixtures/{{.NAME}}.tar'
@@ -190,22 +192,6 @@ tasks:
       - task: ':managed:guest-fixtures'
         vars: {FILTER: Isoplane.PackageFixtures.slnf}
       - task: package:debugger-optimized:prepared
-  debugger:sources:
-    sources:
-      - guest-runtime/tests/packages/debugger/async.cs.in
-      - guest-runtime/tests/packages/debugger/awaiter.cs.in
-      - guest-runtime/tests/packages/debugger/tracking.cs.in
-      - guest-runtime/tests/packages/debugger/pool_reuse.cs.in
-      - guest-runtime/tests/packages/debugger/prepare.py
-    generates:
-      - .build/clr-anycpu/debugger-sources/async-stack.cs
-      - .build/clr-anycpu/debugger-sources/async-composed.cs
-      - .build/clr-anycpu/debugger-sources/async-valuetask.cs
-      - .build/clr-anycpu/debugger-sources/async-pooled.cs
-      - .build/clr-anycpu/debugger-sources/async-pooled-composed.cs
-    cmds:
-      - '"{{.PYTHON}}" guest-runtime/tests/packages/debugger/prepare.py'
-
   package:diagnostics:
     cmds:
       - task: ':managed:guest-fixtures'
@@ -254,14 +240,32 @@ tasks:
 
   editor:prepared:
     internal: true
+    cmds:
+      - task: editor:project
+      - task: editor:source
+
+  editor:project:
+    internal: true
+    desc: Create the editor tests' project from the packaged customer template
     sources:
       - tools/vscode-isoplane/test/prepare.py
       - '{{.PACKAGES}}/*.nupkg'
     generates:
-      - '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/editor-fixture/app/Program.cs'
+      - '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/editor-fixture/app/EditorDebug.csproj'
       - '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/editor-fixture/app/nuget.config'
     cmds:
       - '"{{.PYTHON}}" tools/vscode-isoplane/test/prepare.py "{{.ROOT_DIR}}/.build/{{.PLATFORM}}/editor-fixture"'
+
+  editor:source:
+    internal: true
+    desc: Give the editor tests' project the tests' own Program.cs
+    sources:
+      - tools/vscode-isoplane/test/fixture/Program.cs
+    generates:
+      - '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/editor-fixture/app/Program.cs'
+    cmds:
+      - cp tools/vscode-isoplane/test/fixture/Program.cs "{{.ROOT_DIR}}/.build/{{.PLATFORM}}/editor-fixture/app/Program.cs"
+
   default:prepared:
     internal: true
     desc: Prepare shared fixtures before running tests
@@ -342,6 +346,8 @@ tasks:
       - '{{.ROOT_DIR}}/Directory.Build.props'
       - '{{.ROOT_DIR}}/taskfiles/fixtures.yml'
       - exclude: 'crates/isoplane-native/tests/fixtures/**/{obj,bin,.isoplane}/**/*'
+      # Revisions the debugger driver reads from the repository, not from the prepared copy.
+      - exclude: 'crates/isoplane-native/tests/fixtures/**/*.cs.in'
     generates:
       - '{{.TEST_DOTNET}}/prepared'
     cmds:

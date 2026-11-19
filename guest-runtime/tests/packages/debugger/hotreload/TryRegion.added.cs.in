@@ -1,0 +1,18 @@
+namespace Debugger.HotReload;
+
+/// <summary>A protected body edited in source while its invocation is paused inside it.</summary>
+public static class TryRegion
+{
+    public static string Handle()
+    {
+        int value = 1;
+        try
+        {
+            string added = new string('x', 2); // HOT_RELOAD_ADDED
+            value += 10 + added.Length; // HOT_RELOAD_TRY
+            System.Diagnostics.Debugger.Break();
+        }
+        finally { value += 1000; }
+        return value.ToString();
+    }
+}

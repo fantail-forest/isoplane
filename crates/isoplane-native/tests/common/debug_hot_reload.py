@@ -47,8 +47,7 @@ def exercise(source, send, response, until):
         response(send("continue", {"threadId": thread}))
         thread, frame = stop()
         assert value(frame) == after, "jumping back must execute the edited statement with the existing local"
-    start, end = edited.index("public static string Handle()"), edited.index("public static string HandleTry()")
-    expanded = edited[:start] + edited[start:end].replace("return value.ToString();", "return (value + 1).ToString();") + edited[end:]
+    expanded = Path(source).with_suffix(".expanded.cs.in").read_text()
     changed = response(send("isoplane/hotReload", {"sources": [{"path": source, "text": expanded}]}))["body"]
     assert changed["appliedModules"] == 1 and not changed["diagnostics"], changed
     thread, frame = stop()
@@ -60,8 +59,7 @@ def exercise(source, send, response, until):
     response(send("continue", {"threadId": thread}))
     thread, frame = stop()
     assert value(frame) == "511", "the expanded invocation must execute its updated body"
-    start, end = expanded.index("public static string Handle()"), expanded.index("public static string HandleTry()")
-    captured = expanded[:start] + expanded[start:end].replace("int value = 1;", "int value = 1;\n        string held = new string('x', 3);\n        ref int alias = ref value;") + expanded[end:]
+    captured = Path(source).with_suffix(".captured.cs.in").read_text()
     changed = response(send("isoplane/hotReload", {"sources": [{"path": source, "text": captured}]}))["body"]
     assert changed["appliedModules"] == 1 and not changed["diagnostics"], changed
     thread, frame = stop()
@@ -74,7 +72,7 @@ def exercise(source, send, response, until):
     response(send("continue", {"threadId": thread}))
     thread, frame = stop()
     assert value(frame) == "711"
-    retained = captured.replace("return (value + 1).ToString();", 'GC.Collect(); // HOT_RELOAD_GROWTH_GC\n        string more = held + "!";\n        GC.Collect();\n        return (alias + more.Length).ToString();')
+    retained = Path(source).with_suffix(".retained.cs.in").read_text()
     changed = response(send("isoplane/hotReload", {"sources": [{"path": source, "text": retained}]}))["body"]
     assert changed["appliedModules"] == 1 and not changed["diagnostics"], changed
     thread, frame = stop()

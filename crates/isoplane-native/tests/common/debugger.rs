@@ -111,16 +111,16 @@ pub fn compiler_acceptance() {
 pub fn prepared_acceptance(mode: &str) {
     let fixture = match mode {
         "watchpoint-steps" => "watchpoints",
-        "edit-and-continue-callers"
-        | "edit-and-continue-constructor-callers"
-        | "edit-and-continue-running" => "hotreload/Callers",
+        "edit-and-continue-callers" => "hotreload/Callers",
+        "edit-and-continue-constructor-callers" => "hotreload/ConstructorCallers",
+        "edit-and-continue-running" => "hotreload/RunningCallers",
         "edit-and-continue-iterators" => "hotreload/Iterators",
-        "edit-and-continue"
-        | "edit-and-continue-async"
-        | "edit-and-continue-try"
-        | "edit-and-continue-handler"
-        | "edit-and-continue-resume"
-        | "edit-and-continue-lines" => "hotreload",
+        "edit-and-continue" | "edit-and-continue-resume" | "edit-and-continue-lines" => {
+            "hotreload/EditedStatement"
+        }
+        "edit-and-continue-async" => "hotreload/AsyncRegion",
+        "edit-and-continue-try" => "hotreload/TryRegion",
+        "edit-and-continue-handler" => "hotreload/UnchangedHandler",
         "hotreload-try"
         | "hotreload-async"
         | "hotreload-unchanged-handler"
@@ -145,32 +145,22 @@ pub fn prepared_acceptance(mode: &str) {
             "debugger"
         })
     };
-    let sources = if mode.starts_with("async-") {
-        root.join(".build/clr-anycpu/debugger-sources")
-    } else {
-        root.join("guest-runtime/tests/packages/debugger")
-    };
+    let sources = root.join("guest-runtime/tests/packages/debugger");
     let source = sources.join(format!("{fixture}.cs"));
-    let route = if mode == "edit-and-continue-running" {
-        "hotreload-running"
-    } else if mode == "edit-and-continue-constructor-callers" {
-        "hotreload-constructor-callers"
-    } else if mode == "edit-and-continue-callers" {
-        "hotreload-callers"
-    } else if mode == "edit-and-continue-iterators" {
-        "hotreload-iterators"
-    } else if mode == "edit-and-continue-async" {
-        "hotreload-async"
-    } else if mode == "edit-and-continue-try" {
-        "hotreload-try"
-    } else if mode == "edit-and-continue-handler" {
-        "hotreload-unchanged-handler"
-    } else if mode == "hotreload-without-symbols" {
-        "hotreload"
-    } else if mode.starts_with("hotreload-") {
-        mode
-    } else {
-        fixture
+    let route = match mode {
+        "edit-and-continue-running" => "hotreload-running",
+        "edit-and-continue-constructor-callers" => "hotreload-constructor-callers",
+        "edit-and-continue-callers" => "hotreload-callers",
+        "edit-and-continue-iterators" => "hotreload-iterators",
+        "edit-and-continue" | "edit-and-continue-resume" | "edit-and-continue-lines" => {
+            "hotreload-statement"
+        }
+        "edit-and-continue-async" => "hotreload-async-region",
+        "edit-and-continue-try" => "hotreload-try-region",
+        "edit-and-continue-handler" => "hotreload-unchanged-handler",
+        "hotreload-without-symbols" => "hotreload",
+        precompiled if precompiled.starts_with("hotreload-") => precompiled,
+        _ => fixture,
     };
     let host = root
         .join(".build/clr-anycpu/managed/bin/Isoplane.Cli.Tests/release/Isoplane.Cli.Tests.dll");

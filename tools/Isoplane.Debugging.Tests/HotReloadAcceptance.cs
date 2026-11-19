@@ -63,6 +63,10 @@ internal static class HotReloadAcceptance
             "/hotreload-unchanged-handler" => new Scenario("HandleUnchanged", "HOT_RELOAD_UNCHANGED", 21, "21"),
             _ => throw new ArgumentException("Unknown Hot Reload fixture route.", nameof(url))
         };
+        // The unchanged handler is declared in a document of its own, which no update edits.
+        string MarkedDocument(string? update) => scenario.Method == "HandleUnchanged"
+            ? Path.Combine(Path.GetDirectoryName(source)!, "hotreload", "UnchangedHandler.cs")
+            : update is null ? source : Path.ChangeExtension(source, update);
         using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(3));
         using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp)
             { LingerState = new LingerOption(true, 0) };
@@ -88,7 +92,7 @@ internal static class HotReloadAcceptance
         Assert.True(frame.CanRemap, "A completed debugger break is a supported remapping boundary.");
         Assert.All(stopped.Thread.GetFrames().Skip(1), caller => Assert.False(caller.CanRemap));
         Assert.Equal(11, Value(frame));
-        int statement = SourceLine(source, scenario.Marker);
+        int statement = SourceLine(MarkedDocument(null), scenario.Marker);
         Assert.Contains(frame.Method.Locations, location => location.LineNumber == statement);
         Assert.Equal(1, frame.MethodVersion);
         int originalLine = frame.Location.LineNumber;
@@ -149,7 +153,7 @@ internal static class HotReloadAcceptance
         string currentBody = Convert.ToHexString(frame.Method.GetMethodBody().GetILAsByteArray());
         if (scenario.Method == "HandleUnchanged") Assert.Equal(Convert.ToHexString(originalBody), currentBody);
         else Assert.NotEqual(Convert.ToHexString(originalBody), currentBody);
-        int updatedLine = SourceLine(Path.ChangeExtension(source, "updated.cs.in"), scenario.Marker);
+        int updatedLine = SourceLine(MarkedDocument("updated.cs.in"), scenario.Marker);
         var destination = frame.Method.Locations.Single(location => location.LineNumber == updatedLine);
         var updatedFlow = StatementFlow.Capture(frame.Method.GetMethodBody());
         Assert.Contains(destination.ILOffset, StatementFlow.ReachableTargets(activeFlow, updatedFlow, activeOffset));
@@ -219,7 +223,7 @@ internal static class HotReloadAcceptance
             : await CompileAsync(compiler, frame, source, "updated-again.cs.in", deadline.Token);
         assembly.ManifestModule.ApplyChanges(second.Metadata, second.Il, second.Symbols);
         if (compiler is not null) await compiler.SendAsync(new("commit"), deadline.Token);
-        updatedLine = SourceLine(Path.ChangeExtension(source, "updated-again.cs.in"), scenario.Marker);
+        updatedLine = SourceLine(MarkedDocument("updated-again.cs.in"), scenario.Marker);
         destination = frame.Method.Locations.Single(location => location.LineNumber == updatedLine);
         updatedFlow = StatementFlow.Capture(frame.Method.GetMethodBody());
         Assert.Contains(destination.ILOffset, StatementFlow.ReachableTargets(activeFlow, updatedFlow, activeOffset));
