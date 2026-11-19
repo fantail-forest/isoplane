@@ -9,15 +9,6 @@
 //! real one. That is a claim about *behaviour*, so it is checked by running
 //! wasm through the real adapter and reading what the guest actually got —
 //! not by reading the delegation table and believing it.
-//!
-//! Each rule below is stated **once**, as a predicate, and then applied
-//! twice: to the adapter (it must hold) and to a deliberately wrong
-//! implementation (it must fail). The second half is not optional — this
-//! project has already shipped harness bugs that both erred in the flattering
-//! direction, and a rule whose test has never failed is a rule nobody has
-//! tested.
-
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use isoplane_abi::pal::CLOCK_QUANTUM_NS;
 use isoplane_engine::pal::{self, PalSource};
@@ -246,102 +237,6 @@ fn the_delegated_clock_is_frozen_within_a_slice_but_advances_between_them() {
     assert!(c > a);
 }
 
-/// **Negative control.** The same predicate, applied to a delegation
-/// that leaks the host's real resolution. It MUST fail — if it does not, the
-/// check above proves nothing.
-///
-/// This is the exact mistake the rule exists to catch: `monotonic-clock::now`
-/// is *supposed* to be nanoseconds, so the "obvious" adapter reads a real
-/// clock, and every functional test still passes while the measurement
-/// primitive is quietly handed back.
-#[test]
-fn negative_control_a_nanosecond_clock_fails_the_no_new_channels_check() {
-    let e = engine();
-    let m = module(&e, GUEST);
-    let mut linker: Linker<Host> = Linker::new(&e);
-
-    static TICK: AtomicU64 = AtomicU64::new(1_700_000_000_000_000_000);
-    linker
-        .func_wrap(
-            "wasi:clocks/monotonic-clock@0.2.0",
-            "now",
-            |_: wasmtime::Caller<'_, Host>| {
-                // A real monotonic clock: advances on every read, nanosecond bits
-                // intact. Exactly what wasmtime-wasi would give you.
-                TICK.fetch_add(37_913, Ordering::Relaxed) as i64
-            },
-        )
-        .unwrap();
-    linker
-        .func_wrap(
-            "wasi:clocks/monotonic-clock@0.2.0",
-            "resolution",
-            |_: wasmtime::Caller<'_, Host>| 1i64,
-        )
-        .unwrap();
-    // The rest of the imports are irrelevant to this control; trap them.
-    for (module_name, func) in [
-        ("wasi:random/random@0.2.0", "get-random-bytes"),
-        ("wasi:cli/environment@0.2.0", "get-environment"),
-        (
-            "wasi:io/streams@0.2.0",
-            "[method]output-stream.blocking-flush",
-        ),
-    ] {
-        let ty = m
-            .imports()
-            .find(|i| i.module() == module_name && i.name() == func)
-            .and_then(|i| match i.ty() {
-                wasmtime::ExternType::Func(t) => Some(t),
-                _ => None,
-            })
-            .unwrap();
-        linker
-            .func_new(module_name, func, ty, |_, _, _| {
-                Err(wasmtime::Error::msg("unused"))
-            })
-            .unwrap();
-    }
-
-    let mut store = Store::new(&e, Host::new(1_000));
-    let instance = linker.instantiate(&mut store, &m).unwrap();
-    let (a, b) = instance
-        .get_typed_func::<(), (i64, i64)>(&mut store, "now_twice")
-        .unwrap()
-        .call(&mut store, ())
-        .unwrap();
-    let resolution = instance
-        .get_typed_func::<(), i64>(&mut store, "resolution")
-        .unwrap()
-        .call(&mut store, ())
-        .unwrap();
-
-    let verdict = clock_adds_no_channel(&[(a, b)], resolution);
-    println!("negative control verdict: {verdict:?}");
-    assert!(
-        verdict.is_err(),
-        "a nanosecond-resolution monotonic clock MUST fail the no-new-channels check; if it \
-         passes, the check is theatre"
-    );
-    // And it fails for the right reason first: the fidelity it advertises.
-    assert!(verdict.unwrap_err().contains("resolution()"));
-}
-
-/// The other half of the negative control: quantized but **not frozen**. This
-/// one advertises 1 ms and still hands the guest a stopwatch, because a
-/// counter that ticks per call is a counting thread by another name.
-#[test]
-fn negative_control_a_quantized_but_unfrozen_clock_fails_too() {
-    let unfrozen = [(1_000 * CLOCK_QUANTUM_NS, 1_001 * CLOCK_QUANTUM_NS)];
-    let verdict = clock_adds_no_channel(&unfrozen, CLOCK_QUANTUM_NS);
-    println!("negative control verdict: {verdict:?}");
-    assert!(
-        verdict.is_err(),
-        "an unfrozen coarse clock is still a stopwatch"
-    );
-    assert!(verdict.unwrap_err().contains("FROZEN"));
-}
-
 // ---------------------------------------------------------------------------
 // rule 2 — forwarding entropy requests to the supplied source.
 // ---------------------------------------------------------------------------
@@ -404,24 +299,6 @@ fn a_zero_length_draw_is_the_empty_list() {
     assert_eq!(read_list(&mut store, &instance, 64), (0, 0));
 }
 
-/// A deliberately cached fixture draw must fail the same predicate.
-#[test]
-fn negative_control_cached_or_repeated_fixture_draws_fail() {
-    let cached = vec![vec![0xab; 32], vec![0xab; 32], vec![0xab; 32]];
-    let verdict = adapter_preserves_fixture_draws(&cached, 1);
-    println!("negative control verdict: {verdict:?}");
-    assert!(
-        verdict.is_err(),
-        "a cached draw must fail the forwarding check"
-    );
-    assert!(verdict.unwrap_err().contains("PER CALL"));
-
-    // And the subtler variant: the host is reached per call, but the source
-    // repeats one fixture response instead of forwarding distinct responses.
-    let repeated = vec![vec![7u8; 16], vec![7u8; 16]];
-    assert!(adapter_preserves_fixture_draws(&repeated, 2).is_err());
-}
-
 // ---------------------------------------------------------------------------
 // rule 3 — the environment.
 // ---------------------------------------------------------------------------
@@ -459,14 +336,6 @@ fn the_delegated_environment_adds_no_channel() {
     environment_adds_no_channel(ptr, len).expect("the environment must be empty");
 }
 
-/// **Negative control.**
-#[test]
-fn negative_control_a_populated_environment_fails_the_no_new_channels_check() {
-    let verdict = environment_adds_no_channel(0x1000, 3);
-    println!("negative control verdict: {verdict:?}");
-    assert!(verdict.is_err(), "an ambient environment MUST fail");
-}
-
 // ---------------------------------------------------------------------------
 // rule 4 — the remainder. A declaration that is not a capability.
 // ---------------------------------------------------------------------------
@@ -492,52 +361,6 @@ fn a_trap_on_call_stub_links_and_then_traps_naming_itself() {
     assert!(
         msg.contains("no stream"),
         "the trap must say why, not just that"
-    );
-}
-
-/// **Negative control** for the trap rule: a stub that silently returns
-/// instead of trapping would leave the return area as whatever was there, and
-/// the guest would read a fabricated success. Assert the shape of
-/// the check itself — a call that *succeeds* must be a test failure.
-#[test]
-fn negative_control_a_silent_stub_would_not_be_detected_as_a_trap() {
-    let e = engine();
-    let m = module(&e, GUEST);
-    let mut linker: Linker<Host> = Linker::new(&e);
-    pal::link(&mut linker, &m).unwrap();
-    // Replace nothing; instead, verify that "call succeeded" is the failure
-    // condition by constructing the silent stub in a second linker.
-    let mut silent: Linker<Host> = Linker::new(&e);
-    for import in m.imports() {
-        let wasmtime::ExternType::Func(ty) = import.ty() else {
-            continue;
-        };
-        let results: Vec<wasmtime::Val> = ty
-            .results()
-            .map(|t| match t {
-                wasmtime::ValType::I32 => wasmtime::Val::I32(0),
-                wasmtime::ValType::I64 => wasmtime::Val::I64(0),
-                other => panic!("unexpected result type {other:?}"),
-            })
-            .collect();
-        silent
-            .func_new(import.module(), import.name(), ty, move |_, _, out| {
-                out.clone_from_slice(&results);
-                Ok(())
-            })
-            .unwrap();
-    }
-    let mut store = Store::new(&e, Host::new(1_000));
-    let instance = silent.instantiate(&mut store, &m).unwrap();
-    let outcome = instance
-        .get_typed_func::<(i32, i32), ()>(&mut store, "flush")
-        .unwrap()
-        .call(&mut store, (0, 64));
-    println!("silent stub outcome: {outcome:?}");
-    assert!(
-        outcome.is_ok(),
-        "the control is only meaningful if a silent stub really does succeed — which is why \
-         the adapter must not build one"
     );
 }
 

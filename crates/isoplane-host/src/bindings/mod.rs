@@ -3,8 +3,7 @@
 //! host CSPRNG per call. `http_fetch` enforces egress policy host-side.
 //!
 //! `ImportCall::scalars` carries the non-buffer scalar arguments in
-//! declaration order, the `(ptr, len)` pair stripped; [`SCALARS`] names them
-//! and a test checks it against the contract crate.
+//! declaration order, the `(ptr, len)` pair stripped.
 //!
 //! `call_future` and `call_sync` are routers: each import's arms live in a
 //! module named for the capability it belongs to (`http`,
@@ -42,30 +41,6 @@ use isoplane_abi::status::TrapCode;
 use isoplane_engine::{HostBindings, ImportCall};
 
 use crate::futures::INVALID_FUTURE;
-
-/// What each import's `scalars` entries mean; the contract crate's `BufSpec`
-/// is the authority on where the buffer pair sits.
-pub const SCALARS: &[(&str, &[&str])] = &[
-    ("socket_call", &["operation", "arguments", "count"]),
-    ("poll_call", &["operation", "arguments", "count"]),
-    ("log_emit", &["level"]),
-    ("trace_span_end", &["span"]),
-    ("clock_deadline_in", &["ms"]),
-    ("dispatch_ready", &["dispatch"]),
-    ("resp_write", &["response_handle"]),
-    ("resp_finish", &["response_handle"]),
-    ("http_body_read", &["body_handle", "max_len"]),
-    ("future_cancel", &["future"]),
-    ("req_body_read", &["max_bytes"]),
-    ("init_unit_begin", &["unit"]),
-    ("init_unit_deferred", &["unit"]),
-    // Answered by the engine and never reaching this vtable, but declared.
-    ("unsafe_to_trap", &["on"]),
-    (
-        isoplane_abi::filesystem::IMPORT,
-        &["operation", "arguments_ptr", "argument_count"],
-    ),
-];
 
 /// One per instance, moved into the engine at activation.
 pub struct CellBindings {
@@ -485,16 +460,6 @@ mod tests {
 
     use isoplane_abi::imports::IMPORTS;
 
-    /// Scalars an import carries, per the contract crate's `BufSpec`.
-    fn scalar_count(def: &imports::ImportDef) -> usize {
-        match def.buf {
-            imports::BufSpec::None => def.sig.params.len(),
-            imports::BufSpec::In(_) | imports::BufSpec::Out(_) => {
-                def.sig.params.len().saturating_sub(2)
-            }
-        }
-    }
-
     pub(super) fn ctx() -> Arc<InstanceCtx> {
         Arc::new(InstanceCtx::for_test(
             InstanceId(1),
@@ -511,35 +476,6 @@ mod tests {
             import,
             payload,
             scalars,
-        }
-    }
-
-    #[test]
-    fn scalar_layout_matches_the_abi() {
-        for (name, _) in SCALARS {
-            assert!(
-                imports::lookup(name).is_some(),
-                "SCALARS names unknown import {name}"
-            );
-        }
-        for def in IMPORTS {
-            let n = scalar_count(def);
-            let documented = SCALARS
-                .iter()
-                .find(|(m, _)| *m == def.name)
-                .map(|(_, s)| s.len());
-            match documented {
-                Some(named) => assert_eq!(
-                    named, n,
-                    "{} carries {n} scalar(s) per BufSpec but SCALARS names {named}",
-                    def.name
-                ),
-                None => assert_eq!(
-                    n, 0,
-                    "{} carries {n} scalar(s) that SCALARS does not name",
-                    def.name
-                ),
-            }
         }
     }
 
