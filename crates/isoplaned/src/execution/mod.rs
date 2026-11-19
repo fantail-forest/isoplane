@@ -15,7 +15,7 @@ use isoplane_host::ModuleId;
 use isoplane_host::{Cell, CellConfig, EngineActivator};
 use parking_lot::RwLock;
 
-pub use admin::RealNodeAdmin;
+pub use admin::CellMetrics;
 
 /// The read-only files every guest sees, at pre-initialisation and at
 /// dispatch alike: today the trust bundle alone.
@@ -53,7 +53,7 @@ pub fn engine_config(
 }
 
 /// The node's cells on one engine, and the cell hosting each registered version.
-pub struct RealCells {
+pub struct NodeCells {
     engine: Arc<isoplane_engine::IsoplaneEngine>,
     preparation: Option<crate::preparation::PreparationConfig>,
     /// The shared runtimes application packages are prepared on.
@@ -74,7 +74,7 @@ pub struct RealCells {
 }
 
 /// What a real node keeps on disk.
-pub struct RealPaths {
+pub struct NodeStoragePaths {
     /// Local pressure snapshot reservations.
     pub snapshots: std::path::PathBuf,
     /// The private artifact store populated by this host's compiler.
@@ -85,9 +85,9 @@ pub struct RealPaths {
     pub artifacts: std::path::PathBuf,
 }
 
-impl RealPaths {
+impl NodeStoragePaths {
     pub fn under(root: &Path) -> Self {
-        RealPaths {
+        NodeStoragePaths {
             snapshots: root.join("snapshots"),
             registry: root.join("registry"),
             artifacts: root.join("artifacts"),
@@ -95,7 +95,7 @@ impl RealPaths {
     }
 }
 
-impl RealCells {
+impl NodeCells {
     /// Returns the deployment currently registered for this owner's application.
     pub fn registered_deployment(&self, app: &str, owner: &str) -> Option<String> {
         if self.tenants.read().get(app).map(String::as_str) != Some(owner) {
@@ -109,7 +109,10 @@ impl RealCells {
     }
 
     /// Builds one shared execution pool with per-application sandbox and resource bounds.
-    pub fn build(cfg: &crate::config::NodeConfig, paths: &RealPaths) -> anyhow::Result<Arc<Self>> {
+    pub fn build(
+        cfg: &crate::config::NodeConfig,
+        paths: &NodeStoragePaths,
+    ) -> anyhow::Result<Arc<Self>> {
         Self::build_with_destinations(
             cfg,
             paths,
@@ -122,7 +125,7 @@ impl RealCells {
     /// transports, serving `trust` to every guest as its root store.
     pub fn build_with_destinations(
         cfg: &crate::config::NodeConfig,
-        paths: &RealPaths,
+        paths: &NodeStoragePaths,
         destinations: Arc<dyn isoplane_host::egress::DestinationPolicy>,
         trust: &crate::trust::TrustBundle,
     ) -> anyhow::Result<Arc<Self>> {
@@ -190,7 +193,7 @@ impl RealCells {
         );
 
         isoplane_engine::CompilationCache::create_directory(&paths.artifacts)?;
-        let me = Arc::new(RealCells {
+        let me = Arc::new(NodeCells {
             engine,
             preparation: cfg.preparation.clone(),
             runtimes,
@@ -367,7 +370,7 @@ impl RealCells {
 
 /// Exact registered deployment dispatch through the shared execution pool.
 #[async_trait::async_trait]
-impl Dispatcher for RealCells {
+impl Dispatcher for NodeCells {
     async fn dispatch_http(
         &self,
         target: &isoplane_abi::host::RouteTarget,

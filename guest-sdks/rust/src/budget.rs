@@ -1,18 +1,14 @@
-//! Cooperating with the two-phase kill.
-//!
-//! At its CPU budget **B** a dispatch enters a **grace** window of
-//! `G = max(2 ms, 10% of B)`, and at B+G it is killed:
-//!
-//! | the guest… | outcome | its instance |
-//! |---|---|---|
-//! | returns inside G | **exit** | consistent, `Drop` ran, **kept warm** |
-//! | is still executing at B+G | **kill** | trapped mid-frame, **discarded** |
+//! Cooperating with the budget.
 //!
 //! A guest learns that its budget ran out only at its next slice: every host
 //! future it awaits from then on resolves to `Cancelled`, as does
-//! [`crate::Ctx::cancelled`]. Guest-visible cancellation stays fixed within a
-//! slice, so a guest that wants to exit does long work in chunks and awaits between
-//! them. SECURITY: there is deliberately no way to read the remaining budget.
+//! [`crate::Ctx::cancelled`]. Cancellation stays fixed within a slice, so a
+//! guest that wants to finish does long work in chunks and awaits between
+//! them. A guest that returns after cancellation has run its `Drop`s and its
+//! instance can be used again; one still executing when its grace ends is
+//! trapped where it stands and its instance is discarded.
+//!
+//! SECURITY: there is deliberately no way to read the remaining budget.
 //! A value that falls while the guest runs is a clock, and a clock finer than
 //! the frozen slice clock is what Spectre-class side channels need.
 //!
@@ -29,11 +25,8 @@ use crate::abi;
 /// into half-mutated state would produce exactly the internal inconsistency
 /// a kill exists to contain. While it is held, grace *entry* defers.
 ///
-/// What it does **not** do, and must not be mistaken for: it does not defer
-/// the hard deadline. The engine checks B+G first and ignores the bit there,
-/// so a pinned bit buys exactly G and nothing more. A guest that holds one
-/// forever is killed at B+G exactly like one that never heard of it, and
-/// has spent its whole grace window buying nothing.
+/// It does not defer the end of the grace. A guest that holds one forever is
+/// trapped there exactly like one that never pinned the bit.
 ///
 /// ```ignore
 /// {

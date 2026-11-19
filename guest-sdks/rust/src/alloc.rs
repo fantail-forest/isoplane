@@ -1,33 +1,17 @@
-//! The guest heap: a first-fit, address-ordered, coalescing arena that knows
-//! how to make itself cheap to snapshot.
+//! The guest heap: a first-fit, address-ordered, coalescing arena.
 //!
-//! ## What this is, honestly
+//! The host saves an idle instance as the pages that differ from its
+//! template, so on `isoplane_gc_hint(snapshot)` this allocator makes the
+//! memory it is not using zero:
 //!
-//! This is not a GC. A Rust guest has no precise root set, so **moving** live
-//! objects is not possible. What is possible is the part that makes a
-//! hibernation delta small: the host captures a page diff of linear memory
-//! against the template and zstd-compresses it, so pages that are runs of
-//! zeros nearly vanish.
+//! 1. it rolls the bump pointer back over any free run that reaches the top
+//!    of the heap;
+//! 2. it zeroes every free block's body and the tail between the bump pointer
+//!    and the heap's high-water mark;
+//! 3. it remembers which blocks it already zeroed (a bit stolen from the size
+//!    word), so a second hint with no intervening allocation writes nothing.
 //!
-//! So on `isoplane_gc_hint(snapshot)` this allocator:
-//!
-//! 1. **rolls the bump pointer back** over any free run that reaches the top
-//!    of the heap -- compaction toward low addresses in the only sense a
-//!    non-moving allocator can offer;
-//! 2. **zeroes every free block's body** and the tail between the bump pointer
-//!    and the heap's high-water mark, so those pages are runs of zeros in the
-//!    hibernation delta and zstd removes them;
-//! 3. **remembers which blocks it already zeroed** (a bit stolen from the
-//!    size word), so a second `gc_hint` with no intervening allocation writes
-//!    nothing. Re-zeroing an already-zero page spends dispatch CPU, and where
-//!    the host narrows its page diff with the kernel's soft-dirty bit it also
-//!    re-marks that page as a diff candidate, so "zero everything, always" is
-//!    strictly worse than tracking what is already clean.
-//!
-//! Nothing here shrinks linear memory: wasm has `memory.grow` and no
-//! counterpart that gives pages back. *Compaction through rebirth* (hibernate,
-//! then wake onto a fresh CoW template) is the platform's defragmenter, and
-//! this allocator's job is only to make the delta small.
+//! It does not move live blocks or shrink linear memory.
 
 use core::alloc::{GlobalAlloc, Layout};
 use core::cell::UnsafeCell;

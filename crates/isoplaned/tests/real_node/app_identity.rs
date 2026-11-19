@@ -11,7 +11,7 @@ async fn delimiter_collisions_cannot_substitute_another_applications_module() {
     config.apps.push(second);
     let node = isoplaned::Node::build(config).unwrap();
     for (app, version, status) in [("quotes", "team@v1", 201), ("quotes@team", "v1", 202)] {
-        node.real
+        node.execution
             .deploy_locally(
                 app,
                 version,

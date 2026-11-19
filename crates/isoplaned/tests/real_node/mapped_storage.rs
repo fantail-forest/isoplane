@@ -38,19 +38,20 @@ fn baseline(data: &Path, deployed: &crate::common::preparation::Deployed) -> Pat
 
 /// Deploys `name` as `acme`'s prepared application answering its own name.
 async fn deploy(
-    real: &isoplaned::real::RealCells,
+    cells: &isoplaned::execution::NodeCells,
     name: &str,
 ) -> crate::common::preparation::Deployed {
-    real.deploy_locally(
-        name,
-        "v1",
-        "acme",
-        manifest(name),
-        &initialized(name.as_bytes()),
-        Default::default(),
-    )
-    .await
-    .expect("deploy a prepared application")
+    cells
+        .deploy_locally(
+            name,
+            "v1",
+            "acme",
+            manifest(name),
+            &initialized(name.as_bytes()),
+            Default::default(),
+        )
+        .await
+        .expect("deploy a prepared application")
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -62,10 +63,10 @@ async fn failed_storage_beneath_one_application_fails_only_its_requests() {
     ledger.hosts = vec!["ledger.isoplane.dev".into()];
     cfg.apps.push(ledger);
     let node = Node::build(cfg).expect("real node");
-    let real = node.real.clone();
-    let failed = baseline(directory.path(), &deploy(&real, "quotes").await);
-    deploy(&real, "ledger").await;
-    drop(real);
+    let cells = node.execution.clone();
+    let failed = baseline(directory.path(), &deploy(&cells, "quotes").await);
+    deploy(&cells, "ledger").await;
+    drop(cells);
     let rig = serve(node, directory).await;
     assert_eq!(
         get(rig.proxy, "quotes.isoplane.dev", "/").await.body,
@@ -92,9 +93,9 @@ async fn failed_storage_beneath_one_application_fails_only_its_requests() {
 async fn an_application_serves_again_once_its_failed_storage_reads_back() {
     let directory = crate::common::private_directory().expect("owned node files");
     let node = Node::build(config(directory.path())).expect("real node");
-    let real = node.real.clone();
-    let failed = baseline(directory.path(), &deploy(&real, "quotes").await);
-    drop(real);
+    let cells = node.execution.clone();
+    let failed = baseline(directory.path(), &deploy(&cells, "quotes").await);
+    drop(cells);
     let original = std::fs::read(&failed).expect("read the published baseline");
     let rig = serve(node, directory).await;
     assert_eq!(

@@ -1,5 +1,5 @@
 use isoplane_abi::config::{AppManifest, InitSandbox};
-use isoplaned::real::RealCells;
+use isoplaned::execution::NodeCells;
 
 #[allow(
     dead_code,
@@ -76,7 +76,7 @@ pub(crate) trait LocalDeployment {
     ) -> anyhow::Result<Deployed>;
 }
 
-impl LocalDeployment for RealCells {
+impl LocalDeployment for NodeCells {
     async fn deploy_locally(
         &self,
         app: &str,

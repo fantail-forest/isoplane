@@ -51,7 +51,7 @@ pub fn bare_config(dir: &std::path::Path) -> NodeConfig {
 /// deploying a managed guest prepares it without compiling the runtime again. Links are
 /// safe because the compilation cache replaces entries by renaming, never in place.
 fn seed_compiled_runtime(dir: &std::path::Path) {
-    let artifacts = isoplaned::real::RealPaths::under(dir).artifacts;
+    let artifacts = isoplaned::execution::NodeStoragePaths::under(dir).artifacts;
     isoplane_engine::CompilationCache::create_directory(&artifacts)
         .expect("create the node's private artifact store");
     isoplane_fixtures::link_compiled_runtime(&artifacts);
@@ -117,8 +117,9 @@ pub async fn start_with_policy(
         None => Node::build(cfg),
     }
     .expect("a real node must assemble");
-    let real = node.real.clone();
-    real.deploy_locally("quotes", "v1", "acme", manifest("quotes"), wasm, sandbox)
+    let cells = node.execution.clone();
+    cells
+        .deploy_locally("quotes", "v1", "acme", manifest("quotes"), wasm, sandbox)
         .await
         .expect("deploying the module");
     serve(node, dir).await
@@ -128,7 +129,7 @@ pub async fn start_with_policy(
 pub async fn serve(node: Arc<Node>, dir: tempfile::TempDir) -> Rig {
     for app in &node.cfg.apps {
         let version = node
-            .real
+            .execution
             .registered_deployment(&app.manifest.name, &node.cfg.owner);
         let version = version.expect("a fixture must register its application before serving");
         node.routes
