@@ -1,14 +1,3 @@
-//! Same-process snapshots: the pages an instance changed, stored raw after a
-//! small header in the instance's own reservation and read straight back into
-//! its memory. Host resources stay in this process, so the header carries only
-//! the binding, globals, tables and where each run of pages goes.
-//!
-//! The reservation holds the postcard header's length and CRC-32 as
-//! little-endian `u32`s, the header, then the bytes of every run that is not
-//! all zero, in run order. Nothing is flushed to storage: if the kernel fails
-//! to write a page back and later evicts it, a read returns stale bytes without
-//! an error, so the header carries a CRC-32 of the payload as well.
-
 use std::io::{IoSlice, IoSliceMut};
 use std::ops::Range;
 
@@ -243,6 +232,8 @@ struct Header {
     image: InstanceImage,
     /// Ascending and disjoint.
     runs: Vec<Run>,
+    /// Nothing is flushed to storage: if the kernel fails to write a page back
+    /// and later evicts it, a read returns stale bytes without an error.
     payload_crc: u32,
 }
 
@@ -440,6 +431,16 @@ mod tests {
         assert_eq!(
             saved.changed_pages, 1,
             "a page outside the changed ranges is taken to equal the template"
+        );
+        let snapshot = Snapshot::open(&mut storage, binding()).expect("open the snapshot");
+        let mut restored = base.clone();
+        snapshot
+            .apply(&mut storage, &mut restored)
+            .expect("apply the snapshot");
+        assert_eq!(
+            (restored[PAGE], restored[3 * PAGE]),
+            (base[PAGE], 0xbb),
+            "the saved page must be the one inside the reported range"
         );
     }
 

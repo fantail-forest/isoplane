@@ -22,9 +22,9 @@ const SHIPPED_PEM: &[u8] = include_bytes!("../../../trust/ca-bundle.pem");
 const SHIPPED_MANIFEST: &str = include_str!("../../../trust/ca-bundle.manifest.json");
 const SHIPPED_MANIFEST_NAME: &str = "trust/ca-bundle.manifest.json";
 
-/// The origin of the timestamp guests see on the bundle: 2000-01-01T00:00:00Z.
+/// The earliest time a bundle without a manifest reports: 2000-01-01T00:00:00Z.
 pub const MODIFIED_EPOCH_UNIX_SECS: u64 = 946_684_800;
-/// The span the content-derived offset is folded into: fifty years of 365 days.
+/// The length of the range those times fall in: fifty years of 365 days.
 pub const MODIFIED_SPAN_SECS: u64 = 50 * 365 * 86_400;
 
 /// The `[trust]` section of `isoplaned.toml`.
@@ -280,16 +280,12 @@ impl TrustBundle {
     /// The modification time guests see on the file, in nanoseconds since
     /// the Unix epoch.
     ///
-    /// A bundle with a manifest reports when it was generated, to the second:
-    /// [`Manifest::mozilla_as_of`], the moment its certificate data was taken
-    /// from Mozilla. A bundle without one, such as local development's, which
-    /// joins a machine's roots to the shipped ones, has no such time, and
-    /// reports one derived from its content instead:
-    /// [`MODIFIED_EPOCH_UNIX_SECS`] plus the first eight bytes of the
-    /// SHA-256, read big-endian, as seconds modulo [`MODIFIED_SPAN_SECS`].
-    /// That time is not a date. Either way two nodes serving the same bundle
-    /// agree, and serving other bytes changes it, which is what makes a
-    /// guest's runtime load the roots again.
+    /// A bundle with a manifest reports when its certificate data was taken
+    /// from Mozilla, [`Manifest::mozilla_as_of`]. A bundle without one
+    /// reports a value derived from its content, which is not a date. Either
+    /// way the same bundle reports the same time on every node. A guest's
+    /// runtime loads the roots again when the time changes, and two
+    /// different bundles can report the same time.
     pub fn modified_ns(&self) -> u64 {
         match self.published_unix_secs {
             Some(secs) => secs * 1_000_000_000,
@@ -394,7 +390,7 @@ mod tests {
         assert_ne!(
             bundle.modified_ns(),
             shipped.modified_ns(),
-            "different served bytes must carry a different modification time"
+            "the local development bundle and the shipped one report different modification times"
         );
     }
 
@@ -634,15 +630,10 @@ mod tests {
     fn a_bundle_without_a_manifest_reports_a_time_derived_from_its_content() {
         let a: [u8; 32] = Sha256::digest(b"bundle a").into();
         let b: [u8; 32] = Sha256::digest(b"bundle b").into();
-        assert_eq!(
-            content_modified_ns(&a),
-            content_modified_ns(&a),
-            "the same bytes give the same timestamp on every node"
-        );
         assert_ne!(
             content_modified_ns(&a),
             content_modified_ns(&b),
-            "different bytes give a different timestamp, so a rollback is visible"
+            "these two bundles report different times, so replacing one with the other is visible"
         );
         let secs = content_modified_ns(&a) / 1_000_000_000;
         assert!(

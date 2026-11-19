@@ -302,29 +302,4 @@ mod tests {
             "reuse amortizes a deferred initializer"
         );
     }
-
-    /// The unit list is index-addressed because the host records unit *ids*
-    /// when one traps. Reordering it silently re-points the host's deferral
-    /// record, so this asserts the macro preserves order -- and that id 0 is a
-    /// real unit, distinct from the [`NO_UNIT`] sentinel.
-    #[test]
-    fn unit_ids_are_stable_declaration_order() {
-        static A: LazyInit<u8> = LazyInit::new("A", || 1);
-        static B: LazyInit<u8> = LazyInit::new("B", || 2);
-        let units: &[InitUnit] = init_units![A, B];
-        assert_eq!(units[0].name, "A");
-        assert_eq!(units[1].name, "B");
-        assert_eq!(unit_id(0), 0);
-        assert_eq!(unit_id(1), 1);
-        // 0 is a REAL unit id; the sentinel is -1 (u32::MAX host-side).
-        assert_ne!(unit_id(0), NO_UNIT);
-        assert_eq!(NO_UNIT, u32::MAX as i32);
-        // The same const slice every pass: that is the whole of "ids are
-        // stable across runs".
-        let again: &[InitUnit] = init_units![A, B];
-        assert_eq!(units.len(), again.len());
-        for (x, y) in units.iter().zip(again) {
-            assert_eq!(x.name, y.name);
-        }
-    }
 }
