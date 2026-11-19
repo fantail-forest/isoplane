@@ -1,4 +1,5 @@
 using System;
+using System.Reflection;
 using System.Reflection.Emit;
 using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
@@ -7,8 +8,9 @@ using Isoplane;
 namespace Diagnostics;
 
 /// <summary>
-/// Each path makes the Mono runtime report through its own logger, or asks it
-/// for more memory than a limited instance may have.
+/// Each path makes the Mono runtime report through its own logger, writes to
+/// its native console, or asks it for more memory than a limited instance may
+/// have.
 /// </summary>
 public static class Handler
 {
@@ -23,6 +25,9 @@ public static class Handler
                 break;
             case "/invalid-il":
                 RunInvalidIl();
+                break;
+            case "/native-console":
+                WriteToNativeConsole();
                 break;
             case "/allocate":
                 return Task.FromResult(Response.Text(Allocate()));
@@ -52,6 +57,29 @@ public static class Handler
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static void FailFast() => Environment.FailFast("the diagnostics package gave up");
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void WriteToNativeConsole()
+    {
+        // The runtime library's own console writer, which its reference
+        // assembly leaves out.
+        Type console = typeof(object).Assembly.GetType("Internal.Console", throwOnError: true)!;
+        Action<string> output = WriterOf(console);
+        Action<string> error = WriterOf(console.GetNestedType("Error")
+            ?? throw new MissingMemberException("Internal.Console", "Error"));
+        output("standard\0output\n");
+        error("standard\0error\n\n");
+        output("");
+        output("\n");
+        output("end");
+    }
+
+    private static Action<string> WriterOf(Type console)
+    {
+        MethodInfo write = console.GetMethod("Write", [typeof(string)])
+            ?? throw new MissingMethodException(console.FullName, "Write");
+        return write.CreateDelegate<Action<string>>();
+    }
 
     /// <summary>
     /// Stores a double into an int local, IL the interpreter reports as a

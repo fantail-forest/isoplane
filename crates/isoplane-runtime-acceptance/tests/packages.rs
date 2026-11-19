@@ -23,6 +23,8 @@ use tokio_util::sync::CancellationToken;
 
 #[path = "common/admitted.rs"]
 pub mod admitted;
+#[path = "common/debug_console.rs"]
+mod debug_console;
 #[path = "common/debugger_transport.rs"]
 mod debugger_transport;
 #[path = "common/fixed_dns.rs"]

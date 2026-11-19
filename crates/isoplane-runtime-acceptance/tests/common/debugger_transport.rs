@@ -1,6 +1,7 @@
 //! Fragmented debugger packets through the runtime's real socket transport.
 
 use isoplane_harness::logging::GuestLogs;
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -78,7 +79,7 @@ impl HostBindings for FragmentedReads {
     }
 }
 
-struct StopOnDrop(Arc<DebugActivator>);
+pub(super) struct StopOnDrop(pub(super) Arc<DebugActivator>);
 
 impl Drop for StopOnDrop {
     fn drop(&mut self) {
@@ -126,7 +127,9 @@ async fn command(stream: &mut TcpStream, id: u32, command: u8, payload: &[u8]) -
     response
 }
 
-async fn exchange(listener: &TcpListener) {
+/// Accepts the guest's debugger connection, releases its initial stop and
+/// closes the connection.
+pub(super) async fn exchange(listener: &TcpListener) {
     let (mut stream, _) = listener.accept().await.expect("guest debugger connects");
     println!("The guest connected to the debugger peer.");
     let mut handshake = [0; 13];
@@ -153,11 +156,10 @@ async fn exchange(listener: &TcpListener) {
     // Closing at a suspended command boundary must release the guest too.
 }
 
-#[tokio::test]
-async fn partial_debugger_headers_and_delayed_payloads_preserve_packet_boundaries() {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let endpoint = listener.local_addr().unwrap();
-    let mut files = super::package("alpha");
+/// The debug runtime serving the `package` fixture under a debug session
+/// whose debugger listens at `endpoint`.
+pub(super) fn debug_activator(package: &str, endpoint: SocketAddr) -> Arc<DebugActivator> {
+    let mut files = super::package(package);
     files.push(PlatformFile {
         path: isoplane_abi::filesystem::DEBUG_AGENT_PATH.into(),
         bytes: endpoint.to_string().into_bytes().into(),
@@ -172,17 +174,56 @@ async fn partial_debugger_headers_and_delayed_payloads_preserve_packet_boundarie
     let template = engine
         .load_template(&isoplane_fixtures::mono_debug_runtime())
         .unwrap();
-    let activator = Arc::new(
-        DebugActivator::new(engine, ModuleId::new("debug-transport", "v1"), template).unwrap(),
-    );
+    Arc::new(DebugActivator::new(engine, ModuleId::new("debug-transport", "v1"), template).unwrap())
+}
+
+/// A reactor whose guest may connect to the debugger at `endpoint`, with its
+/// first dispatch begun.
+pub(super) fn debug_reactor(endpoint: SocketAddr) -> Reactor {
+    let network = Network::default().with_destinations(Arc::new(AdditionalDestinations {
+        endpoints: vec![endpoint],
+        baseline: Arc::new(PublicDestinations),
+    }));
+    let reactor = Reactor::with_network(InstanceId::alloc(), network);
+    reactor.context.begin_dispatch(1, 1);
+    reactor
+}
+
+/// The first dispatch of `GET path`, with three minutes of occupancy.
+pub(super) fn first_dispatch(path: &str) -> (DispatchRecord, OccupancyBudget) {
+    (
+        DispatchRecord {
+            dispatch_id: 1,
+            kind: DispatchKind::Http(HttpRequest {
+                method: "GET".into(),
+                url: format!("http://guest.test{path}"),
+                path: path.into(),
+                query: vec![],
+                headers: vec![],
+                body: vec![],
+            }),
+            trace: TraceContext::default(),
+            cancel_future: 0,
+            occupancy_budget_ms: 180_000,
+            pending_futures_limit: 64,
+            now_ms: 1,
+        },
+        OccupancyBudget {
+            occupancy_ms: 180_000,
+            slice_wall_ms_cap: 180_000,
+            spent_ns: 0,
+        },
+    )
+}
+
+#[tokio::test]
+async fn partial_debugger_headers_and_delayed_payloads_preserve_packet_boundaries() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = listener.local_addr().unwrap();
+    let activator = debug_activator("alpha", endpoint);
     let _stop = StopOnDrop(activator.clone());
     for fragment in [Fragment::Header, Fragment::Payload] {
-        let network = Network::default().with_destinations(Arc::new(AdditionalDestinations {
-            endpoints: vec![endpoint],
-            baseline: Arc::new(PublicDestinations),
-        }));
-        let reactor = Reactor::with_network(InstanceId::alloc(), network);
-        reactor.context.begin_dispatch(1, 1);
+        let reactor = debug_reactor(endpoint);
         let injected = Arc::new(AtomicBool::new(false));
         let bindings = FragmentedReads {
             inner: CellBindings::new(reactor.context.clone()),
@@ -192,29 +233,8 @@ async fn partial_debugger_headers_and_delayed_payloads_preserve_packet_boundarie
         };
         let mut instance = activator.activate(Box::new(bindings)).unwrap();
         let guest = tokio::task::spawn_blocking(move || {
-            instance.dispatch(
-                &DispatchRecord {
-                    dispatch_id: 1,
-                    kind: DispatchKind::Http(HttpRequest {
-                        method: "GET".into(),
-                        url: "http://guest.test/greeting".into(),
-                        path: "/greeting".into(),
-                        query: vec![],
-                        headers: vec![],
-                        body: vec![],
-                    }),
-                    trace: TraceContext::default(),
-                    cancel_future: 0,
-                    occupancy_budget_ms: 180_000,
-                    pending_futures_limit: 64,
-                    now_ms: 1,
-                },
-                OccupancyBudget {
-                    occupancy_ms: 180_000,
-                    slice_wall_ms_cap: 180_000,
-                    spent_ns: 0,
-                },
-            )
+            let (record, budget) = first_dispatch("/greeting");
+            instance.dispatch(&record, budget)
         });
         let completed = tokio::time::timeout(Duration::from_secs(180), async {
             tokio::join!(exchange(&listener), async {

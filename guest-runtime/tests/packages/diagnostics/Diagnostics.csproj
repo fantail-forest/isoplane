@@ -1,7 +1,7 @@
 <Project>
   <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
   <!-- A package whose requests make the Mono runtime itself report: a
-       fail-fast and a fatal interpreter error. -->
+       fail-fast, a fatal interpreter error and writes to its native console. -->
   <Import Project="../Package.props" />
   <PropertyGroup>
     <AssemblyName>Diagnostics</AssemblyName>
