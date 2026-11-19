@@ -51,9 +51,16 @@ them.
 
 ## Keep guidance of your own
 
-The build overwrites the `isoplane` skill, so put instructions for your own
-application in `AGENTS.md` or in a skill of your own beside it, such as
-`.agents/skills/my-app/SKILL.md`. Both survive every build.
+The build overwrites the files it wrote in the `isoplane` skill, so put
+instructions for your own application in `AGENTS.md` or in a skill of your own
+beside it, such as `.agents/skills/my-app/SKILL.md`. Both survive every build.
+
+The skill's `.isoplane-generated` file lists the reference files the build
+wrote. The build replaces and deletes only those files and the skill's
+`SKILL.md`, so a file you add inside the skill stays as you wrote it. A skill
+named `isoplane` that the build did not write is also left as it is. The build
+then warns that it wrote no skill, until you rename yours or choose other
+directories.
 
 ## Change where the skill is written, or stop writing it
 

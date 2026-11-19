@@ -38,10 +38,53 @@ public sealed class AgentSkillTests : MsbuildTests
     {
         var repository = Repository(git: true);
         Assert.Equal(0, (await Run(Msbuild(Project(repository, parts: ["sdk", "aspnetcore"]), "-t:Build"))).Exit);
+        Assert.True(File.Exists(Path.Combine(repository, ".agents/skills/isoplane/references/aspnetcore/concepts/page.md")));
+        Assert.Contains("### Isoplane.AspNetCore", File.ReadAllText(Path.Combine(repository, ".agents/skills/isoplane/SKILL.md")));
         var result = await Run(Msbuild(Project(repository, parts: ["sdk"]), "-t:Build"));
         Assert.True(result.Exit == 0, result.Output);
         Assert.False(Directory.Exists(Path.Combine(repository, ".agents/skills/isoplane/references/aspnetcore")));
         Assert.DoesNotContain("### Isoplane.AspNetCore", File.ReadAllText(Path.Combine(repository, ".agents/skills/isoplane/SKILL.md")));
+    }
+
+    [Fact]
+    public async Task files_a_developer_added_inside_the_skill_are_neither_deleted_nor_replaced_nor_read_as_parts()
+    {
+        var repository = Repository(git: true);
+        var skill = Path.Combine(repository, ".agents/skills/isoplane");
+        var atGeneratedPath = Path.Combine(skill, "references/sdk/concepts/page.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(atGeneratedPath)!);
+        File.WriteAllText(atGeneratedPath, "Mine, written before the SDK's.\n");
+        var first = await Run(Msbuild(Project(repository, parts: ["sdk", "aspnetcore"]), "-t:Build"));
+        Assert.True(first.Exit == 0, first.Output);
+        Assert.Contains("was not written by the SDK", first.Output);
+        var besideGenerated = Path.Combine(skill, "references/aspnetcore/mine.md");
+        File.WriteAllText(besideGenerated, "Mine, beside the SDK's.\n");
+        var ownPart = Path.Combine(skill, "references/mine/README.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(ownPart)!);
+        File.WriteAllText(ownPart, "### Mine\n");
+
+        var result = await Run(Msbuild(Project(repository, parts: ["sdk"]), "-t:Build"));
+
+        Assert.True(result.Exit == 0, result.Output);
+        Assert.Equal("Mine, written before the SDK's.\n", File.ReadAllText(atGeneratedPath));
+        Assert.Equal("Mine, beside the SDK's.\n", File.ReadAllText(besideGenerated));
+        Assert.Equal("### Mine\n", File.ReadAllText(ownPart));
+        Assert.False(File.Exists(Path.Combine(skill, "references/aspnetcore/README.md")), "the SDK's own file of the removed part must go");
+        Assert.DoesNotContain("### Mine", File.ReadAllText(Path.Combine(skill, "SKILL.md")));
+    }
+
+    [Fact]
+    public async Task a_skill_of_the_same_name_that_the_sdk_did_not_write_is_left_as_it_is()
+    {
+        var repository = Repository(git: true);
+        var own = Path.Combine(repository, ".agents/skills/isoplane/SKILL.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(own)!);
+        File.WriteAllText(own, "---\nname: isoplane\n---\nMine.\n");
+        var result = await Run(Msbuild(Project(repository, parts: ["sdk"]), "-t:Build"));
+        Assert.True(result.Exit == 0, result.Output);
+        Assert.Contains("holds a skill the SDK did not write", result.Output);
+        Assert.Equal("---\nname: isoplane\n---\nMine.\n", File.ReadAllText(own));
+        Assert.False(Directory.Exists(Path.Combine(repository, ".agents/skills/isoplane/references")));
     }
 
     [Fact]
