@@ -6,7 +6,7 @@
     <Task><Code Type="Class" Language="cs" Source="$(MSBuildThisFileDirectory)DebugManifest.cs" /></Task>
   </UsingTask>
   <ItemGroup>
-    <LinkerArg Include="-Wl,--wrap=printf,--wrap=fprintf,--wrap=vprintf,--wrap=vfprintf,--wrap=puts,--wrap=fputs" />
+    <LinkerArg Include="-Wl,--wrap=printf,--wrap=fprintf,--wrap=vprintf,--wrap=vfprintf,--wrap=puts,--wrap=fputs,--wrap=fwrite" />
   </ItemGroup>
   <Target Name="IsoplaneMonoDebugNative" AfterTargets="IsoplaneMonoNativeEntry">
     <ItemGroup>
