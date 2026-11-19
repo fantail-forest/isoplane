@@ -453,22 +453,6 @@ fn generated_mono_runtime_entrypoints_match_the_host_export_contract() {
 }
 
 #[test]
-fn local_debug_artifact_marker_matches_the_sdk_emitter() {
-    let source = sdk_file("../Build/DebugManifest.cs");
-    let prefix = "private const string LocalDebugSection = \"";
-    let marker = source
-        .lines()
-        .find_map(|line| line.trim().strip_prefix(prefix))
-        .and_then(|value| value.strip_suffix("\";"))
-        .expect("the SDK emitter must declare its local debug section name");
-    assert_eq!(
-        marker,
-        isoplane_abi::LOCAL_DEBUG_SECTION,
-        "the SDK debug artifact marker must match the host contract"
-    );
-}
-
-#[test]
 fn the_mono_runtime_loader_reads_packages_where_the_host_serves_them() {
     let source = sdk_file("../MonoRuntime/src/PackageLoader.cs");
     let prefix = "public const string Root = \"";
@@ -481,22 +465,6 @@ fn the_mono_runtime_loader_reads_packages_where_the_host_serves_them() {
         root,
         isoplane_abi::filesystem::APPLICATION_PACKAGE_ROOT,
         "the shared runtime must look for the package where the host serves it"
-    );
-}
-
-#[test]
-fn the_mono_debug_runtime_reads_its_debugger_where_the_host_serves_it() {
-    let source = sdk_file("../native/mono_entry.c");
-    let prefix = "#define ISOPLANE_DEBUG_AGENT_PATH \"";
-    let path = source
-        .lines()
-        .find_map(|line| line.trim().strip_prefix(prefix))
-        .and_then(|value| value.strip_suffix('"'))
-        .expect("the Mono entry must declare where it reads the debug session");
-    assert_eq!(
-        path,
-        isoplane_abi::filesystem::DEBUG_AGENT_PATH,
-        "a debug runtime must look for its debugger where a local debug session serves it"
     );
 }
 

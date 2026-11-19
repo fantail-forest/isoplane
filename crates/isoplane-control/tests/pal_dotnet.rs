@@ -68,6 +68,35 @@ fn platform_imports(wasm: &[u8]) -> Vec<String> {
     names
 }
 
+#[test]
+fn only_the_debug_mono_module_carries_the_local_debug_marker() {
+    assert_eq!(
+        local_debug_markers(&isoplane_fixtures::mono_debug_runtime()),
+        1,
+        "the debug runtime must be linked with one {} section, which restricts it to a local debugger session",
+        isoplane_abi::LOCAL_DEBUG_SECTION
+    );
+    assert_eq!(
+        local_debug_markers(&isoplane_fixtures::mono_runtime()),
+        0,
+        "the production runtime must carry no {} section, which would keep it from being deployed",
+        isoplane_abi::LOCAL_DEBUG_SECTION
+    );
+}
+
+fn local_debug_markers(wasm: &[u8]) -> usize {
+    wasmparser::Parser::new(0)
+        .parse_all(wasm)
+        .filter(|payload| {
+            matches!(
+                payload.as_ref().expect("the runtime module must parse"),
+                wasmparser::Payload::CustomSection(section)
+                    if section.name() == isoplane_abi::LOCAL_DEBUG_SECTION
+            )
+        })
+        .count()
+}
+
 fn rename_import(wasm: &[u8], from: &str, to: &str) -> Vec<u8> {
     assert_eq!(
         from.len(),

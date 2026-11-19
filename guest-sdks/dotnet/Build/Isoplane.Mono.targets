@@ -30,6 +30,9 @@
     </Isoplane.Conformance.NativeExports>
     <ItemGroup><FileWrites Include="$(WasmPInvokeSymbolInventoryFile)" /></ItemGroup>
   </Target>
+  <PropertyGroup>
+    <WasiNativeSourceCompileFlags>-O2</WasiNativeSourceCompileFlags>
+  </PropertyGroup>
   <ItemGroup>
     <LinkerArg Include="-nostartfiles" />
     <LinkerArg Include="-Wl,--skip-wit-component,--no-entry,--export=isoplane_alloc,--export=isoplane_handle,--export=isoplane_wake,--export=isoplane_initialize,--export=isoplane_initialize_runtime,--export=isoplane_gc_hint,--export=__stack_pointer,--max-memory=$(IsoplaneMemoryMaxBytes)" />
@@ -41,22 +44,21 @@
     </PropertyGroup>
     <MakeDir Directories="$(_IsoplaneMonoDir)" />
   </Target>
-  <!-- The source-built runtime pack integrates scheduling, sockets, DNS and
-       cryptography with the host in source, so no assembly is adapted; the
-       pack's prebuilt runtime module gives way to the native link below. -->
-  <Target Name="IsoplaneMonoDropPrebuiltRuntime" AfterTargets="ComputeFilesToPublish">
-    <ItemGroup>
-      <_IsoplaneMonoPrebuilt Include="@(ResolvedFileToPublish)" Condition="'%(Filename)' == 'dotnet' AND '%(Extension)' == '.wasm'" />
-      <ResolvedFileToPublish Remove="@(_IsoplaneMonoPrebuilt)" />
-    </ItemGroup>
-  </Target>
   <Target Name="IsoplaneMonoNativeEntry" BeforeTargets="_PrepareForWasiBuildNative" DependsOnTargets="IsoplaneMonoPaths">
-    <WriteLinesToFile File="$(_IsoplaneMonoDir)mono_assembly.h" Lines="#define ISOPLANE_MONO_ASSEMBLY &quot;$(AssemblyName)&quot;" Overwrite="true" WriteOnlyWhenDifferent="true" />
-    <Copy SourceFiles="$(_IsoplaneSdkDirectory)native/mono_entry.c" DestinationFiles="$(_IsoplaneMonoDir)mono_entry.c" SkipUnchangedFiles="true" />
     <ItemGroup>
-      <NativeFileReference Include="$(_IsoplaneMonoDir)mono_entry.c;$(_IsoplaneSdkDirectory)native/isoplane_clock.c" />
-      <NativeFileReference Include="$(_IsoplaneSdkDirectory)native/isoplane_pal.c" Condition="'$(IsoplaneLocalDebug)' != 'true'" />
-      <FileWrites Include="$(_IsoplaneMonoDir)mono_entry.c;$(_IsoplaneMonoDir)mono_assembly.h" />
+      <_IsoplaneMonoAssemblyDefine Include="#define ISOPLANE_MONO_ASSEMBLY &quot;$(AssemblyName)&quot;" />
+      <_IsoplaneMonoAssemblyDefine Include="#define ISOPLANE_LOCAL_DEBUG 1" Condition="'$(IsoplaneLocalDebug)' == 'true'" />
+    </ItemGroup>
+    <WriteLinesToFile File="$(_IsoplaneMonoDir)mono_assembly.h" Lines="@(_IsoplaneMonoAssemblyDefine)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <PropertyGroup>
+      <WasiNativeSourceCompileFlags>$(WasiNativeSourceCompileFlags) &quot;-I$(_IsoplaneMonoDir)&quot;</WasiNativeSourceCompileFlags>
+    </PropertyGroup>
+    <ItemGroup>
+      <_IsoplaneNativeInclude Include="$(_IsoplaneMonoDir)mono_assembly.h;$(_IsoplaneSdkDirectory)native/*.h" />
+      <_IsoplaneNativeSource Include="$(_IsoplaneSdkDirectory)native/mono_entry.c;$(_IsoplaneSdkDirectory)native/isoplane_clock.c" />
+      <_IsoplaneNativeSource Include="$(_IsoplaneSdkDirectory)native/isoplane_pal.c" Condition="'$(IsoplaneLocalDebug)' != 'true'" />
+      <WasiNativeSource Include="@(_IsoplaneNativeSource)" Dependencies="@(_IsoplaneNativeInclude)" />
+      <FileWrites Include="$(_IsoplaneMonoDir)mono_assembly.h" />
     </ItemGroup>
   </Target>
   <!-- The pack the link draws on must be the pack the feed offers: NuGet

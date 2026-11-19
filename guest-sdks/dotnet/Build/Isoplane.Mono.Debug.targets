@@ -2,29 +2,17 @@
   <UsingTask TaskName="IsoplaneMonoDebugSymbols" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
     <Task><Code Type="Class" Language="cs" Source="$(MSBuildThisFileDirectory)MonoDebugSymbols.cs" /></Task>
   </UsingTask>
-  <UsingTask TaskName="IsoplaneDebugManifest" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
-    <Task><Code Type="Class" Language="cs" Source="$(MSBuildThisFileDirectory)DebugManifest.cs" /></Task>
-  </UsingTask>
-  <Target Name="IsoplaneMonoDebugNative" AfterTargets="IsoplaneMonoNativeEntry">
+  <Target Name="IsoplaneMonoDebugNative" BeforeTargets="IsoplaneMonoNativeEntry" DependsOnTargets="IsoplaneMonoPaths">
     <ItemGroup>
       <_IsoplaneDebugSymbols Include="@(ResolvedFileToPublish)" Condition="'%(Filename)%(Extension)' == '$(AssemblyName).pdb'" />
       <_IsoplaneDependencyDebugSymbols Include="@(ResolvedFileToPublish)" Condition="'%(Extension)' == '.pdb' AND '%(Filename)' != '$(AssemblyName)'" />
     </ItemGroup>
     <Error Condition="'@(_IsoplaneDebugSymbols->Count())' != '1'" Text="isoplane: local debugging requires exactly one application portable PDB selected for publication." />
     <IsoplaneMonoDebugSymbols Symbols="@(_IsoplaneDebugSymbols)" DependencySymbols="@(_IsoplaneDependencyDebugSymbols)" Output="$(_IsoplaneMonoDir)mono_debug.h" />
-    <WriteLinesToFile File="$(_IsoplaneMonoDir)mono_assembly.h" Lines="#define ISOPLANE_LOCAL_DEBUG 1" Overwrite="false" />
     <ItemGroup>
-      <NativeFileReference Include="$(_IsoplaneSdkDirectory)native/isoplane_debug_pal.c" />
+      <_IsoplaneNativeInclude Include="$(_IsoplaneMonoDir)mono_debug.h;$(_IsoplaneSdkDirectory)native/isoplane_pal.c" />
+      <_IsoplaneNativeSource Include="$(_IsoplaneSdkDirectory)native/isoplane_debug_pal.c" />
       <FileWrites Include="$(_IsoplaneMonoDir)mono_debug.h" />
     </ItemGroup>
-  </Target>
-  <Target Name="IsoplaneMonoDebugPublish" AfterTargets="IsoplaneMonoPublishCore">
-    <PropertyGroup>
-      <_IsoplanePublishedSymbols>$([System.IO.Path]::ChangeExtension('$(NativeBinary)', '.pdb'))</_IsoplanePublishedSymbols>
-      <_IsoplanePublishedDebugManifest>$([System.IO.Path]::ChangeExtension('$(NativeBinary)', '.debug.xml'))</_IsoplanePublishedDebugManifest>
-    </PropertyGroup>
-    <Copy SourceFiles="@(_IsoplaneDebugSymbols)" DestinationFiles="$(_IsoplanePublishedSymbols)" />
-    <IsoplaneDebugManifest Module="$(NativeBinary)" Symbols="$(_IsoplanePublishedSymbols)" Output="$(_IsoplanePublishedDebugManifest)" />
-    <ItemGroup><FileWrites Include="$(_IsoplanePublishedSymbols);$(_IsoplanePublishedDebugManifest)" /></ItemGroup>
   </Target>
 </Project>
