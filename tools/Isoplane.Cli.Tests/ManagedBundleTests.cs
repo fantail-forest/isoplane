@@ -277,8 +277,15 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
         await ManagedBundle.WriteAsync(fixture.Metadata(), output, null, default);
         using var stream = File.OpenRead(output);
         using var archive = new TarReader(stream);
-        while (archive.GetNextEntry() is PosixTarEntry entry)
-            Assert.Equal((entry.Name, 0, 0, "", ""), (entry.Name, entry.Uid, entry.Gid, entry.UserName, entry.GroupName));
+        var names = new List<string>();
+        while (archive.GetNextEntry() is { } entry)
+        {
+            var owned = Assert.IsAssignableFrom<PosixTarEntry>(entry);
+            Assert.Equal((entry.Name, 0, 0, "", ""), (entry.Name, owned.Uid, owned.Gid, owned.UserName, owned.GroupName));
+            names.Add(entry.Name);
+        }
+        Assert.Contains("application.json", names);
+        Assert.Contains("assemblies/Application.dll", names);
     }
 
     [Fact]
