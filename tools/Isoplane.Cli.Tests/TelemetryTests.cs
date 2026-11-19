@@ -353,11 +353,11 @@ public sealed class TelemetryTests : IDisposable
     public void A_distribution_is_reported_as_os_release_states_it_when_it_fits_the_schema()
     {
         Assert.Equal(new LinuxDistribution("ubuntu", "24.04"),
-            LinuxDistribution.Parse(["PRETTY_NAME=\"Ubuntu 24.04.1 LTS\"", "ID=ubuntu", "VERSION_ID=\"24.04\"", "HOME_URL=https://ubuntu.com/"]));
-        Assert.Equal(new LinuxDistribution("arch", null), LinuxDistribution.Parse(["ID=arch", "BUILD_ID=rolling"]));
-        Assert.Equal(new LinuxDistribution("debian", "13~rc1"), LinuxDistribution.Parse(["ID=debian", "VERSION_ID=13~rc1"]));
-        Assert.Equal(new LinuxDistribution("linux", null), LinuxDistribution.Parse(["NAME=Custom"]));
-        Assert.Equal(new LinuxDistribution(null, null), LinuxDistribution.Parse(["ID=\"Some Company's Linux\"", "VERSION_ID=1 (internal build)"]));
+            LinuxDistribution.Of(OsRelease.Parse(["PRETTY_NAME=\"Ubuntu 24.04.1 LTS\"", "ID=ubuntu", "VERSION_ID=\"24.04\"", "HOME_URL=https://ubuntu.com/"])));
+        Assert.Equal(new LinuxDistribution("arch", null), LinuxDistribution.Of(OsRelease.Parse(["ID=arch", "BUILD_ID=rolling"])));
+        Assert.Equal(new LinuxDistribution("debian", "13~rc1"), LinuxDistribution.Of(OsRelease.Parse(["ID=debian", "VERSION_ID=13~rc1"])));
+        Assert.Equal(new LinuxDistribution("linux", null), LinuxDistribution.Of(OsRelease.Parse(["NAME=Custom"])));
+        Assert.Equal(new LinuxDistribution(null, null), LinuxDistribution.Of(OsRelease.Parse(["ID=\"Some Company's Linux\"", "VERSION_ID=1 (internal build)"])));
     }
 
     [Fact]

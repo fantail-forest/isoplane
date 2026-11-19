@@ -52,16 +52,13 @@ internal static class Prerequisites
         return true;
     }
 
-    /// <summary>Reads <c>/etc/os-release</c>; an unreadable file is an unknown distribution.</summary>
-    internal static OperatingSystemRelease Detect(string path = "/etc/os-release")
+    /// <summary>The distribution the machine's os-release file names; a missing or unreadable file is an unknown distribution.</summary>
+    internal static OperatingSystemRelease Detect() => Detect(OsRelease.Files);
+
+    internal static OperatingSystemRelease Detect(IEnumerable<string> files)
     {
-        if (!File.Exists(path))
-            return new("unknown", "");
-        var fields = File.ReadLines(path)
-            .Select(line => line.Split('=', 2))
-            .Where(parts => parts.Length == 2)
-            .ToDictionary(parts => parts[0].Trim(), parts => parts[1].Trim().Trim('"'), StringComparer.Ordinal);
-        return new(fields.GetValueOrDefault("ID", "unknown"), fields.GetValueOrDefault("VERSION_ID", ""));
+        var fields = OsRelease.Read(files);
+        return new(fields?.GetValueOrDefault("ID") ?? "unknown", fields?.GetValueOrDefault("VERSION_ID") ?? "");
     }
 
     /// <summary>The one command that installs the missing prerequisites, when this distribution is supported.</summary>
