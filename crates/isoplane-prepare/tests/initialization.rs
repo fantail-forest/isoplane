@@ -477,18 +477,25 @@ fn preparation_captures_its_settings_and_changes_identity_when_they_change() {
 #[test]
 fn invalid_preparation_settings_are_refused_without_exposing_values() {
     let wasm = guest("", "");
-    for settings in [
-        b"private-value".to_vec(),
-        vec![b' '; isoplane_abi::imports::MAX_RUNTIME_CONFIGURATION_BYTES + 1],
-    ] {
+    let mut oversized = b"private-value".to_vec();
+    oversized.resize(
+        isoplane_abi::imports::MAX_RUNTIME_CONFIGURATION_BYTES + 1,
+        b' ',
+    );
+    for settings in [b"private-value".to_vec(), oversized] {
         let mut inputs = request();
         inputs.runtime_config = settings;
+        let Err(error) = initialize(&engine(), &wasm, &inputs) else {
+            panic!("invalid or oversized settings must fail before guest execution");
+        };
         assert!(
-            matches!(
-                initialize(&engine(), &wasm, &inputs),
-                Err(PrepareError::InvalidRequest(_))
-            ),
-            "invalid or oversized settings must fail before guest execution"
+            matches!(error, PrepareError::InvalidRequest(_)),
+            "invalid or oversized settings are an invalid request: {error:?}"
+        );
+        let reported = format!("{error} {error:?}");
+        assert!(
+            !reported.contains("private-value"),
+            "the refusal must not repeat the settings: {reported}"
         );
     }
 }

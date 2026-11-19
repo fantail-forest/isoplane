@@ -579,8 +579,11 @@ in_mono_runtime! {
 
     #[tokio::test]
     async fn a_retrieval_is_bounded_by_the_download_limit(runtime: GuestRuntime) {
+        // The issuer that completes this chain in
+        // a_missing_intermediate_is_retrieved_from_its_aia_url, so the limit
+        // is all that keeps it out here.
         let material =
-            MaterialPeer::start(Issuers::Oversized, Crl::Unavailable, Ocsp::Unavailable).await;
+            MaterialPeer::start(Issuers::Served, Crl::Unavailable, Ocsp::Unavailable).await;
         let peer = tls_peer(Certificate::RemoteAlone, Behaviour::Echo).await;
         let reactor = reactor_for_peers(vec![peer, material.address()]);
         let mut guest = guest(&reactor, runtime);
@@ -595,6 +598,11 @@ in_mono_runtime! {
             text.starts_with("AuthenticationException: ") && text.contains("PartialChain"),
             "an issuer past the download limit is not taken and the chain stays partial: {text}; logs: {:?}",
             reactor.context.logs()
+        );
+        assert_eq!(
+            material.requests(),
+            vec!["/intermediate.der"],
+            "the issuer must have been asked for, and refused for its size"
         );
     }
 

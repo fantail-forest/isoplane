@@ -162,8 +162,6 @@ pub enum Issuers {
     Served,
     /// Accepts the request and never answers.
     Hold,
-    /// A body far past any download limit a test sets.
-    Oversized,
 }
 
 /// How the peer answers a request for the intermediate's CRL.
@@ -304,7 +302,6 @@ async fn answer(
                 }),
             ),
             Issuers::Hold => hold().await,
-            Issuers::Oversized => bytes("application/pkix-cert", vec![0; 4 << 20]),
         },
         "/intermediate.crl" => match crl {
             Crl::Good => bytes("application/pkix-crl", hex(CRL_GOOD)),

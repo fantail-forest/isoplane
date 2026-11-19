@@ -329,12 +329,16 @@ public sealed class TelemetryTests : IDisposable
     }
 
     [Fact]
-    public void A_full_queue_stops_recording()
+    public async Task A_full_queue_stops_recording()
     {
         Seen();
         for (var index = 0; index < TelemetryOutbox.Capacity; index++) Queue(Guid.NewGuid());
-        CommandTelemetry.Begin(["dev"], Host()).Ended(0);
-        Assert.Equal(TelemetryOutbox.Capacity, Pending().Length);
+        var queued = Pending().Order().ToArray();
+        var run = CommandTelemetry.Begin(["dev"], Host());
+        // The service is unavailable, so the upload takes nothing out of the queue.
+        await run.Upload;
+        run.Ended(0);
+        Assert.Equal(queued, Pending().Order());
     }
 
     [Theory]

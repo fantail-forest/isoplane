@@ -348,8 +348,8 @@ internal sealed class Tls
                 policy.UrlRetrievalTimeout = TimeSpan.FromMilliseconds(500);
                 break;
             case ChainVariant.Limit:
-                // Read once, at the download client's first use.
-                AppContext.SetData("System.Security.Cryptography.AiaDownloadLimit", 1024L);
+                // Read once, at the download client's first use. Smaller than the fixtures' intermediates.
+                AppContext.SetData("System.Security.Cryptography.AiaDownloadLimit", 512L);
                 break;
             case ChainVariant.Default:
                 break;
