@@ -136,7 +136,7 @@ pub fn call<T: PalSource>(
         },
         Action::ErrorMessage => Request::ErrorMessage(handle(0)?),
         Action::ErrorCode => Request::ErrorCode(handle(0)?),
-        Action::TrySend | Action::TrySendWithErrorCode => {
+        Action::TrySendWithErrorCode => {
             let count = usize::try_from(scalar(1)?)?;
             ensure!(
                 count <= isoplane_abi::imports::MAX_OUT_BUFFER_BYTES / 4,
@@ -360,14 +360,9 @@ pub fn call<T: PalSource>(
             if matches!(definition.action, Action::NoDelay) {
                 return Ok(u64::MAX);
             }
-            if matches!(
-                definition.action,
-                Action::TrySend | Action::TrySendWithErrorCode
-            ) {
+            if matches!(definition.action, Action::TrySendWithErrorCode) {
                 return Ok(if matches!(error, Error::WouldBlock) {
                     isoplane_abi::native_io::canonical::SEND_PENDING
-                } else if matches!(definition.action, Action::TrySend) {
-                    isoplane_abi::native_io::canonical::SEND_FAILED
                 } else {
                     isoplane_abi::native_io::canonical::send_failure(error.network_error_code())
                 });
@@ -388,7 +383,6 @@ pub fn call<T: PalSource>(
                 | Action::NoDelay
                 | Action::Subscribe
                 | Action::Read
-                | Action::TrySend
                 | Action::TrySendWithErrorCode
                 | Action::ErrorMessage
                 | Action::ErrorCode

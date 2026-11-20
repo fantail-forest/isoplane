@@ -6,9 +6,7 @@
 //! **returns** `pending` with an empty stack, and the response only appears
 //! after a wake.
 
-use isoplane_guest::isoplane_abi::dispatch::{
-    DispatchKind, DispatchRecord, HttpRequest, TraceContext,
-};
+use isoplane_guest::isoplane_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest};
 use isoplane_guest::isoplane_abi::result::{ResultRecord, WakeRecord};
 use isoplane_guest::isoplane_abi::status::PollStatus;
 use isoplane_guest::testing::{with_stub_host, RESP_HANDLE};
@@ -49,7 +47,6 @@ fn record(path: &str) -> DispatchRecord {
             headers: vec![],
             body: vec![],
         }),
-        trace: TraceContext::default(),
         cancel_future: 999,
         occupancy_budget_ms: 30_000,
         pending_futures_limit: 64,

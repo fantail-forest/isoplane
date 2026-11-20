@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 
-use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest, TraceContext};
+use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest};
 use isoplane_abi::imports::{self, Ty};
 use isoplane_abi::result::FutureError;
 use isoplane_abi::status::{PollStatus, TrapCode};
@@ -193,33 +193,23 @@ impl Reader<'_> {
         }
     }
 
-    fn apply(&mut self, operation: &str) -> Option<u64> {
+    fn apply(&mut self, operation: &str) -> u64 {
         match operation {
-            "U64" | "U32" | "Varint" => Some(self.varint()),
-            "SkipBytes" => {
-                let length = self.varint() as usize;
-                self.bytes = &self.bytes[length..];
-                None
-            }
-            "Bool" => {
-                let (_, rest) = self.bytes.split_first().expect("a bool byte");
-                self.bytes = rest;
-                None
-            }
+            "U64" | "U32" | "Varint" => self.varint(),
             other => panic!("Records.cs reads a dispatch record with an operation this test does not replay: {other}"),
         }
     }
 }
 
 /// `(field, operation)` for every read `DispatchRecord.Decode` performs after
-/// the dispatch kind; a read into nothing has an empty field.
+/// the dispatch kind.
 fn csharp_dispatch_reads(src: &str) -> Vec<(String, String)> {
     let body = &src[src
         .find("static DispatchRecord Decode")
         .expect("the decoder")..];
     let body = &body[body
-        .find("// TraceContext")
-        .expect("the reads after the kind")..];
+        .find("default:")
+        .expect("the end of the switch on the kind")..];
     let body = &body[..body.find("return d;").expect("the end of the decoder")];
     body.lines()
         .map(str::trim)
@@ -245,11 +235,6 @@ fn the_managed_dispatch_record_reads_the_rust_records_fields_in_order() {
     let record = DispatchRecord {
         dispatch_id: 9,
         kind: DispatchKind::Background,
-        trace: TraceContext {
-            trace_id: "trace".into(),
-            span_id: "span".into(),
-            sampled: true,
-        },
         cancel_future: 1_000_001,
         occupancy_budget_ms: 30_000,
         pending_futures_limit: 64,
@@ -264,9 +249,7 @@ fn the_managed_dispatch_record_reads_the_rust_records_fields_in_order() {
     );
     let mut read = BTreeMap::new();
     for (field, operation) in csharp_dispatch_reads(&sdk_file("Records.cs")) {
-        if let Some(value) = reader.apply(&operation) {
-            read.insert(field, value);
-        }
+        read.insert(field, reader.apply(&operation));
     }
     assert!(
         reader.bytes.is_empty(),

@@ -318,7 +318,6 @@ mod queue_tests {
                 headers: vec![],
                 body: vec![],
             }),
-            trace: Default::default(),
             cancel_future: 0,
             occupancy_budget_ms: 30_000,
             pending_futures_limit: 64,
