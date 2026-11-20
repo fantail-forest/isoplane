@@ -8,14 +8,14 @@ use std::time::Duration;
 use common::fake::FakeCell;
 use common::*;
 use isoplane_abi::host::CodeTier;
-use isoplane_proxy::ProxyConfig;
+use isoplane_proxy::ShedConfig;
 
 #[tokio::test]
 async fn http_request_resolves_to_a_version_and_reaches_the_cell() {
     let rig = start(
         Arc::new(FakeCell::new()),
         standard_routes(),
-        ProxyConfig::default(),
+        ShedConfig::default(),
     )
     .await;
     let r = get(rig.addr, "quotes.isoplane.dev", "/api/quote", &[]).await;
@@ -47,7 +47,7 @@ async fn an_unrouted_host_is_a_404_and_never_reaches_a_cell() {
     let rig = start(
         Arc::new(FakeCell::new()),
         standard_routes(),
-        ProxyConfig::default(),
+        ShedConfig::default(),
     )
     .await;
     let r = get(rig.addr, "nobody.isoplane.dev", "/", &[]).await;
@@ -60,7 +60,7 @@ async fn malformed_hosts_never_dispatch_or_fall_back_to_an_installed_application
     let rig = start(
         Arc::new(FakeCell::new()),
         standard_routes(),
-        ProxyConfig::default(),
+        ShedConfig::default(),
     )
     .await;
     for host in [
@@ -90,7 +90,7 @@ async fn only_absent_hosts_use_the_absolute_request_authority() {
     let rig = start(
         Arc::new(FakeCell::new()),
         standard_routes(),
-        ProxyConfig::default(),
+        ShedConfig::default(),
     )
     .await;
     for (host, expected) in [
@@ -136,7 +136,7 @@ async fn one_ingress_port_routes_independent_applications_by_their_expected_host
             &["orders.isoplane.dev".into()],
         )
         .expect("install sibling application");
-    let rig = start(Arc::new(FakeCell::new()), routes, ProxyConfig::default()).await;
+    let rig = start(Arc::new(FakeCell::new()), routes, ShedConfig::default()).await;
     let quotes = get(rig.addr, "QUOTES.isoplane.dev:8080", "/anything", &[]).await;
     let orders = get(rig.addr, "orders.isoplane.dev", "/anything", &[]).await;
     assert_eq!(quotes.json()["app"], "quotes");
@@ -148,7 +148,7 @@ async fn one_ingress_port_routes_independent_applications_by_their_expected_host
 #[tokio::test]
 async fn a_cell_s_503_reaches_the_client_with_its_headers() {
     let cell = Arc::new(FakeCell::new());
-    let rig = start(cell.clone(), standard_routes(), ProxyConfig::default()).await;
+    let rig = start(cell.clone(), standard_routes(), ShedConfig::default()).await;
     assert_eq!(
         get(rig.addr, "quotes.isoplane.dev", "/spin", &[])
             .await
@@ -190,7 +190,7 @@ async fn a_cell_s_503_reaches_the_client_with_its_headers() {
 #[tokio::test]
 async fn a_guest_cannot_forge_platform_headers() {
     let cell = Arc::new(FakeCell::new());
-    let rig = start(cell.clone(), standard_routes(), ProxyConfig::default()).await;
+    let rig = start(cell.clone(), standard_routes(), ShedConfig::default()).await;
     rig.routes
         .insert(
             quotes_target("v2", CodeTier::Fast),
@@ -221,7 +221,7 @@ async fn tier_is_reported_per_dispatch() {
     let rig = start(
         Arc::new(FakeCell::new()),
         standard_routes(),
-        ProxyConfig::default(),
+        ShedConfig::default(),
     )
     .await;
     rig.routes
@@ -269,7 +269,7 @@ async fn connection_headers_stop_at_the_proxy_while_application_headers_reach_th
     let rig = start(
         Arc::new(FakeCell::new()),
         standard_routes(),
-        ProxyConfig::default(),
+        ShedConfig::default(),
     )
     .await;
     let response = request(
@@ -362,7 +362,7 @@ async fn proxy_shutdown_closes_keepalives_and_prevents_new_http_admission() {
     let mut rig = start(
         Arc::new(FakeCell::new()),
         standard_routes(),
-        ProxyConfig::default(),
+        ShedConfig::default(),
     )
     .await;
     let (mut sender, client) = http_connection(rig.addr).await;
@@ -410,7 +410,7 @@ async fn proxy_shutdown_cancels_an_incomplete_upload_without_waiting_for_more_by
     let mut rig = start(
         Arc::new(FakeCell::new()),
         standard_routes(),
-        ProxyConfig::default(),
+        ShedConfig::default(),
     )
     .await;
     let mut client = TcpStream::connect(rig.addr).await.unwrap();
@@ -452,12 +452,9 @@ async fn proxy_shutdown_drops_a_blocked_response_body_before_returning() {
     let mut rig = start_with_dispatcher(
         cell,
         standard_routes(),
-        ProxyConfig {
-            shed: isoplane_proxy::shed::ShedConfig {
-                max_in_flight: 1,
-                max_queued: 0,
-            },
-            ..ProxyConfig::default()
+        ShedConfig {
+            max_in_flight: 1,
+            max_queued: 0,
         },
         dispatcher.clone(),
     )
@@ -496,8 +493,12 @@ async fn proxy_shutdown_drops_a_blocked_response_body_before_returning() {
     );
     assert_eq!(
         rig.metrics
-            .route_resolutions_total
-            .load(std::sync::atomic::Ordering::Relaxed),
+            .dispatches_tier_fast
+            .load(std::sync::atomic::Ordering::Relaxed)
+            + rig
+                .metrics
+                .dispatches_tier_optimized
+                .load(std::sync::atomic::Ordering::Relaxed),
         1,
         "the refused request never reaches route selection"
     );

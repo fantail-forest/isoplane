@@ -240,10 +240,6 @@ impl PlatformFiles {
         })))
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.0.files.is_empty()
-    }
-
     /// The declared files in path order.
     pub fn files(&self) -> &[PlatformFile] {
         &self.0.files
@@ -569,7 +565,7 @@ mod tests {
     #[test]
     fn the_empty_set_has_only_the_root() {
         let files = PlatformFiles::default();
-        assert!(files.is_empty(), "the default set declares nothing");
+        assert!(files.files().is_empty(), "the default set declares nothing");
         assert_eq!(
             files.children(Node::ROOT).map(<[Child]>::len),
             Some(0),

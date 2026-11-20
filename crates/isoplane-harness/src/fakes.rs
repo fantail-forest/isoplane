@@ -346,7 +346,6 @@ impl FakeInstance {
                         trap: None,
                         grace_end: Some(isoplane_engine::GraceEnd::Exited),
                         overage_ns,
-                        grace_deferrals: 0,
                     };
                 }
                 self.survived_last_call = false;
@@ -367,7 +366,6 @@ impl FakeInstance {
                     }),
                     grace_end: Some(isoplane_engine::GraceEnd::Killed),
                     overage_ns,
-                    grace_deferrals: 0,
                 };
             }
         };
@@ -395,7 +393,6 @@ impl FakeInstance {
             },
             grace_end: None,
             overage_ns: 0,
-            grace_deferrals: 0,
         }
     }
 
@@ -465,7 +462,6 @@ impl InstanceOps for FakeInstance {
             trap: None,
             grace_end: None,
             overage_ns: 0,
-            grace_deferrals: 0,
         }
     }
     fn is_parked(&self) -> bool {
@@ -486,7 +482,6 @@ impl InstanceOps for FakeInstance {
     fn capture_mutable_state(&mut self) -> anyhow::Result<InstanceImage> {
         Ok(InstanceImage {
             globals: self.image.globals.clone(),
-            table_mutations: self.image.table_mutations.clone(),
             memory_pages: (self.memory.len() / isoplane_abi::WASM_PAGE_SIZE) as u32,
         })
     }

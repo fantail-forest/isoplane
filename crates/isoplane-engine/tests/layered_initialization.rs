@@ -41,7 +41,7 @@ fn capture(
     instance: &mut Instance,
 ) -> PreparedTemplate {
     engine
-        .prepare_initialized_template(source, instance, identity(), Default::default(), vec![])
+        .prepare_initialized_template(source, instance, identity(), Default::default())
         .expect("capture completed initializer")
 }
 
@@ -139,7 +139,9 @@ fn a_pre_mapped_guest_still_enforces_its_activation_memory_limit() {
     let mut instance = initialize(&engine, &source);
     let product = capture(&engine, &source, &mut instance);
     drop(instance);
-    let template = engine.load_prepared_product(&product).expect("load layer");
+    let template = engine
+        .load_prepared_product_in(&product, &std::env::temp_dir())
+        .expect("load layer");
     let mapped = engine
         .map_activation(
             &template,
@@ -166,7 +168,9 @@ fn layer_private_writes_do_not_survive_pool_slot_reuse() {
     let mut instance = initialize(&engine, &source);
     let product = capture(&engine, &source, &mut instance);
     drop(instance);
-    let restored = engine.load_prepared_product(&product).expect("load layer");
+    let restored = engine
+        .load_prepared_product_in(&product, &std::env::temp_dir())
+        .expect("load layer");
     for _ in 0..3 {
         let mut fresh = activate(&engine, &restored);
         assert_eq!(
@@ -191,13 +195,7 @@ fn layer_capture_refuses_unfinished_or_unrelated_instances() {
     let mut instance = activate(&engine, &source);
     assert!(
         engine
-            .prepare_initialized_template(
-                &source,
-                &mut instance,
-                identity(),
-                Default::default(),
-                vec![]
-            )
+            .prepare_initialized_template(&source, &mut instance, identity(), Default::default())
             .is_err(),
         "an instance that never completed initialization must not be captured"
     );
@@ -213,13 +211,7 @@ fn layer_capture_refuses_unfinished_or_unrelated_instances() {
         .expect("other source");
     assert!(
         engine
-            .prepare_initialized_template(
-                &other,
-                &mut instance,
-                identity(),
-                Default::default(),
-                vec![]
-            )
+            .prepare_initialized_template(&other, &mut instance, identity(), Default::default())
             .is_err(),
         "captured state must belong to the supplied compiled source"
     );
@@ -245,7 +237,9 @@ fn activation_restores_memory_grown_by_initialization() {
     let source = engine.load_layer_source(&wasm).expect("source");
     let mut instance = initialize(&engine, &source);
     let product = capture(&engine, &source, &mut instance);
-    let restored = engine.load_prepared_product(&product).expect("load layer");
+    let restored = engine
+        .load_prepared_product_in(&product, &std::env::temp_dir())
+        .expect("load layer");
     let mut fresh = activate(&engine, &restored);
     assert_eq!(
         fresh.memory().len(),
@@ -285,13 +279,7 @@ fn capture_refuses_an_initializer_that_changed_a_function_table() {
     let mut instance = initialize(&engine, &source);
     assert!(
         engine
-            .prepare_initialized_template(
-                &source,
-                &mut instance,
-                identity(),
-                Default::default(),
-                vec![]
-            )
+            .prepare_initialized_template(&source, &mut instance, identity(), Default::default())
             .is_err(),
         "function-table changes cannot be silently lost when capturing a layer"
     );
@@ -304,7 +292,9 @@ fn simultaneous_layer_instances_keep_private_writes_isolated() {
     let mut initialized = initialize(&engine, &source);
     let product = capture(&engine, &source, &mut initialized);
     drop(initialized);
-    let template = engine.load_prepared_product(&product).expect("layer");
+    let template = engine
+        .load_prepared_product_in(&product, &std::env::temp_dir())
+        .expect("layer");
     let mut first = activate(&engine, &template);
     let mut second = activate(&engine, &template);
     first.memory()[100] = 77;
@@ -352,7 +342,7 @@ fn preparing_growth_preserves_the_guest_heap_and_captured_state() {
     let product = capture(&engine, &source, &mut initialized);
     drop(initialized);
     let template = engine
-        .load_prepared_product(&product)
+        .load_prepared_product_in(&product, &std::env::temp_dir())
         .expect("captured template");
     for ceiling_bytes in [128 << 20, 512 << 20] {
         let mapped = engine

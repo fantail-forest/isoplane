@@ -2,18 +2,8 @@
 //! Parked intervals are outside the meter; OS preemption and synchronous host
 //! work remain inside the occupied worker interval.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 use std::time::Instant;
-
-/// Failed clock reads, process-wide, kept distinct from a measured zero.
-static CLOCK_READ_FAILURES: AtomicU64 = AtomicU64::new(0);
-
-/// How many worker-occupancy clock reads have failed in this process. Non-zero means
-/// some measured interval is a floor rather than a measurement.
-pub fn clock_read_failures() -> u64 {
-    CLOCK_READ_FAILURES.load(Ordering::Relaxed)
-}
 
 #[cfg(test)]
 thread_local! {
@@ -35,18 +25,12 @@ fn clock_failure_forced() -> bool {
     })
 }
 
-#[cfg(not(test))]
-#[inline(always)]
-fn clock_failure_forced() -> bool {
-    false
-}
-
 /// Monotonic nanoseconds from a process-local origin, or `None` on overflow.
 /// Differences measure worker occupancy only when taken around active work.
 #[inline]
 pub fn try_occupancy_nanos() -> Option<u64> {
+    #[cfg(test)]
     if clock_failure_forced() {
-        CLOCK_READ_FAILURES.fetch_add(1, Ordering::Relaxed);
         return None;
     }
     #[cfg(test)]
@@ -54,11 +38,7 @@ pub fn try_occupancy_nanos() -> Option<u64> {
         return Some(now);
     }
     static ORIGIN: OnceLock<Instant> = OnceLock::new();
-    let measured = u64::try_from(ORIGIN.get_or_init(Instant::now).elapsed().as_nanos()).ok();
-    if measured.is_none() {
-        CLOCK_READ_FAILURES.fetch_add(1, Ordering::Relaxed);
-    }
-    measured
+    u64::try_from(ORIGIN.get_or_init(Instant::now).elapsed().as_nanos()).ok()
 }
 
 /// End-point reading for a returned slice; an unavailable or regressing clock is incomplete.
@@ -66,7 +46,6 @@ pub fn try_occupancy_nanos() -> Option<u64> {
 pub(crate) fn interval_occupancy_ns(start: u64) -> Option<u64> {
     #[cfg(test)]
     if FAIL_INTERVAL_END.get() {
-        CLOCK_READ_FAILURES.fetch_add(1, Ordering::Relaxed);
         return None;
     }
     try_occupancy_nanos().and_then(|end| end.checked_sub(start))
@@ -88,6 +67,7 @@ mod tests {
     use crate::{
         EngineConfig, HostBindings, ImportCall, InstanceOps, IsoplaneEngine, OccupancyBudget,
     };
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     struct ClockFault;
 
@@ -232,7 +212,7 @@ mod tests {
                 1,
             ),
             (
-                budget.hard_ns() + 1,
+                budget.budget_ns() + budget.grace_ns() + 1,
                 Completion::BudgetKill,
                 GraceEnd::Killed,
                 0,
@@ -272,33 +252,6 @@ mod tests {
                 assert!(guest.discarded.is_some(), "a kill discards the instance");
             }
         }
-    }
-
-    #[test]
-    fn an_unreadable_clock_is_counted_rather_than_read_as_zero() {
-        let before = clock_read_failures();
-        let fault = ClockFault::after(0);
-        assert_eq!(
-            try_occupancy_nanos(),
-            None,
-            "an unreadable clock must report failure"
-        );
-        assert!(
-            clock_read_failures() > before,
-            "the failed read must be counted"
-        );
-        let elsewhere = std::thread::spawn(try_occupancy_nanos)
-            .join()
-            .expect("the probe thread must not panic");
-        assert!(
-            elsewhere.is_some(),
-            "the injected fault must not affect another thread"
-        );
-        drop(fault);
-        assert!(
-            try_occupancy_nanos().is_some(),
-            "clock reads must recover after the fault"
-        );
     }
 
     #[test]

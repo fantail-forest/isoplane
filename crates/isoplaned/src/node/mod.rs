@@ -5,7 +5,7 @@ pub mod deploy;
 use crate::admin::NodeAdmin;
 use crate::config::NodeConfig;
 use isoplane_abi::host::{CodeTier, RouteTarget};
-use isoplane_proxy::{LocalRouteTable, Proxy, ProxyConfig, ProxyMetrics, ShedConfig};
+use isoplane_proxy::{LocalRouteTable, Proxy, ProxyMetrics, ShedConfig};
 use std::sync::Arc;
 
 /// One measured preparation stage.
@@ -63,12 +63,9 @@ impl Node {
             routes.clone(),
             real.clone(),
             metrics.clone(),
-            ProxyConfig {
-                listen: cfg.proxy.listen,
-                shed: ShedConfig {
-                    max_in_flight: cfg.proxy.max_in_flight,
-                    max_queued: cfg.proxy.max_queued,
-                },
+            ShedConfig {
+                max_in_flight: cfg.proxy.max_in_flight,
+                max_queued: cfg.proxy.max_queued,
             },
         );
         let admin = Arc::new(crate::real::RealNodeAdmin::new(real.clone()));

@@ -10,6 +10,9 @@ use std::time::Duration;
 use anyhow::Context;
 use parking_lot::{Condvar, Mutex};
 
+/// Period of the epoch tick while a dispatch is hot.
+pub(crate) const EPOCH_TICK_US: u64 = 200;
+
 pub(crate) struct Watchdog {
     shared: Arc<Shared>,
     join: Option<std::thread::JoinHandle<()>>,
@@ -21,7 +24,6 @@ pub(crate) struct Shared {
     hot: Mutex<u64>,
     wake: Condvar,
     stop: AtomicBool,
-    tick: Duration,
 }
 
 impl Shared {
@@ -55,13 +57,11 @@ impl Shared {
 }
 
 impl Watchdog {
-    pub(crate) fn start(engine: wasmtime::Engine, tick_us: u64) -> crate::Result<Self> {
-        let tick = Duration::from_micros(tick_us.max(1));
+    pub(crate) fn start(engine: wasmtime::Engine) -> crate::Result<Self> {
         let shared = Arc::new(Shared {
             hot: Mutex::new(0),
             wake: Condvar::new(),
             stop: AtomicBool::new(false),
-            tick,
         });
 
         let s = shared.clone();
@@ -107,7 +107,7 @@ fn run(engine: wasmtime::Engine, shared: Arc<Shared>) {
         while *shared.hot.lock() > 0 && !shared.stop.load(Ordering::Acquire) {
             // Epochs request a check; the guest's monotonic meter determines
             // exhaustion even when the scheduler delivers this tick late.
-            std::thread::sleep(shared.tick);
+            std::thread::sleep(Duration::from_micros(EPOCH_TICK_US));
             engine.increment_epoch();
         }
     }
@@ -120,7 +120,7 @@ mod tests {
     #[test]
     fn stopping_an_idle_watchdog_releases_its_waiter() {
         let watchdog =
-            Watchdog::start(wasmtime::Engine::default(), 200).expect("the watchdog must start");
+            Watchdog::start(wasmtime::Engine::default()).expect("the watchdog must start");
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         let join = std::thread::spawn(move || {
             drop(watchdog);

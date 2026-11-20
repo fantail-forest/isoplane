@@ -74,11 +74,12 @@ fn a_hibernated_guest_restores_its_delta_into_the_same_mapping() {
                 initialization_hash: [3; 32],
             },
             Default::default(),
-            vec![],
         )
         .expect("capture");
     drop(initialization);
-    let template = engine.load_prepared_product(&product).expect("template");
+    let template = engine
+        .load_prepared_product_in(&product, &std::env::temp_dir())
+        .expect("template");
     let module = ModuleId::new("retained", "v1");
     let (cell, _) = common::rig_resolving(CellConfig::for_test("retained"), "93.184.216.34:80");
     cell.register_module(

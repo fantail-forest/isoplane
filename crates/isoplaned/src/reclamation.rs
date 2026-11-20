@@ -374,7 +374,8 @@ mod tests {
         let directory = directory_builder
             .tempdir()
             .expect("create owned node snapshot directory");
-        let mut config = crate::NodeConfig::new("acme");
+        let mut config = crate::NodeConfig::from_toml(r#"owner = "acme""#)
+            .expect("a configuration naming only its owner");
         let app = "app".to_owned();
         let version = "v1".to_owned();
         let tenant = config.owner.clone();
@@ -427,11 +428,7 @@ mod tests {
                 (if (i32.ne (i32.load (i32.const 8192)) (i32.const 123456)) (then unreachable))
                 (i64.shl (i64.extend_i32_u (call $response (i32.const 1024) (i32.const {}))) (i64.const 32))))"#, response.len()))
             .expect("assemble the returned-stack continuation fixture");
-        let template = real
-            .engine()
-            .load_template(&wasm)
-            .expect("load real guest template");
-        real.install_prepared(&app, &version, &tenant, manifest, template)
+        real.install_prepared(&node.cfg, &version, &manifest, &wasm)
             .await
             .expect("register the real guest for local snapshot capture");
         node.routes

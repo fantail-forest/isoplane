@@ -29,7 +29,6 @@ pub(crate) fn capture_mutable_state(inst: &mut Instance) -> Result<InstanceImage
 
     Ok(InstanceImage {
         globals,
-        table_mutations: Vec::new(),
         memory_pages: live.memory.size(&live.store) as u32,
     })
 }
@@ -37,9 +36,6 @@ pub(crate) fn capture_mutable_state(inst: &mut Instance) -> Result<InstanceImage
 pub(crate) fn restore_mutable_state(inst: &mut Instance, img: &InstanceImage) -> Result<()> {
     if inst.discarded.is_some() {
         bail!("refusing to restore into a discarded instance");
-    }
-    if !img.table_mutations.is_empty() {
-        bail!("table mutations cannot be applied: wasmtime exposes no function-index to funcref mapping");
     }
     let live = &mut inst.live;
 

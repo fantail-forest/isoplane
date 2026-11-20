@@ -14,5 +14,5 @@ pub mod shed;
 
 pub use metrics::{Histogram, ProxyMetrics};
 pub use routes::{LocalRouteTable, RouteError, RouteResolver};
-pub use server::{Proxy, ProxyConfig};
+pub use server::Proxy;
 pub use shed::{AdmissionControl, ShedConfig};

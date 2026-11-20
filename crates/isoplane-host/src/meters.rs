@@ -117,7 +117,6 @@ mod tests {
             trap: None,
             grace_end: None,
             overage_ns: 0,
-            grace_deferrals: 0,
         }
     }
 
@@ -134,7 +133,6 @@ mod tests {
             trap: None,
             grace_end: Some(isoplane_engine::GraceEnd::Exited),
             overage_ns: 3_000_000,
-            grace_deferrals: 0,
         };
         m.record_occupancy(&out);
         m.record_grace_end(isoplane_engine::GraceEnd::Exited, out.overage_ns);
@@ -160,7 +158,6 @@ mod tests {
                 trap: None,
                 grace_end: Some(isoplane_engine::GraceEnd::Exited),
                 overage_ns: over,
-                grace_deferrals: 0,
             };
             m.record_occupancy(&out);
             m.record_grace_end(isoplane_engine::GraceEnd::Exited, out.overage_ns);

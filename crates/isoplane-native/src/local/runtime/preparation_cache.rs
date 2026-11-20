@@ -194,7 +194,7 @@ mod tests {
                 }])
                 .unwrap(),
                 application_files: PlatformFiles::default(),
-                runtime_profile: isoplane_prepare::RuntimeProfile::raw_wasm(),
+                runtime_profile: isoplane_prepare::RuntimeProfile::RawWasm,
             };
             let executable = directory.path().join("runtime");
             std::fs::write(&executable, b"runtime version one").unwrap();

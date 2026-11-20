@@ -9,7 +9,7 @@ fn engine() -> IsoplaneEngine {
 }
 
 #[test]
-fn the_mono_module_links_exactly_the_platform_imports_admitted_by_the_validator() {
+fn the_mono_module_the_validator_admits_links_through_the_platform_adapter() {
     let wasm = isoplane_fixtures::mono_runtime();
     validator::validate_with_limits(
         &wasm,
@@ -18,23 +18,12 @@ fn the_mono_module_links_exactly_the_platform_imports_admitted_by_the_validator(
         &Default::default(),
     )
     .expect("the Mono fixture must satisfy admission");
-    let template = isoplane_fixtures::load_compiled_runtime(&engine());
-    let mut admitted = platform_imports(&wasm);
-    let mut linked: Vec<_> = template
-        .pal_composed()
-        .iter()
-        .map(|import| import.full_name())
-        .collect();
-    admitted.sort();
-    linked.sort();
     assert!(
-        !admitted.is_empty(),
+        !platform_imports(&wasm).is_empty(),
         "Mono must exercise the platform adapter"
     );
-    assert_eq!(
-        linked, admitted,
-        "execution must compose every admitted platform import"
-    );
+    // Loading panics unless execution composes every platform import the module declares.
+    isoplane_fixtures::load_compiled_runtime(&engine());
 }
 
 #[test]

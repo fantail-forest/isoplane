@@ -193,7 +193,6 @@ mod tests {
                 trap: None,
                 grace_end: None,
                 overage_ns: 0,
-                grace_deferrals: 0,
             }
         }
     }

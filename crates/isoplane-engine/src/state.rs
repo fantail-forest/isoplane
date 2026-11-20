@@ -76,8 +76,8 @@ pub(crate) struct Limits {
     /// Whether the guest is initializing, which grows only to the limit: the
     /// room past it is for dispatches to finish in, and what initialization
     /// leaves is every instance's starting point. Set from the bindings when
-    /// the store is made and at every slice, since an instance can be made
-    /// before initialization and run dispatches after it.
+    /// the store is made: an instance bound for initialization never serves
+    /// dispatches.
     pub initializing: bool,
     pub max_tables: usize,
     pub max_table_elements: usize,
@@ -164,7 +164,6 @@ pub(crate) struct StoreState {
     /// The runtime layer's unsafe-to-trap bit. Grace entry defers while it is
     /// set; the hard deadline ignores it.
     pub unsafe_to_trap: bool,
-    pub grace_deferrals: u64,
     /// The import that violated capability policy.
     pub violation: Option<&'static str>,
     pub abort_msg: Option<String>,
@@ -210,7 +209,6 @@ impl StoreState {
             kill: None,
             grace_at_ns: None,
             unsafe_to_trap: false,
-            grace_deferrals: 0,
             violation: None,
             abort_msg: None,
             limits,
@@ -229,10 +227,10 @@ impl StoreState {
                 grace_ns: self.meter.grace_ns,
             });
         }
-        if occupancy_ns >= self.meter.occupancy_budget_ns && self.grace_at_ns.is_none() {
-            if self.unsafe_to_trap {
-                self.grace_deferrals += 1;
-            } else if let Some(bindings) = self.bindings.as_mut() {
+        let grace_is_due =
+            occupancy_ns >= self.meter.occupancy_budget_ns && self.grace_at_ns.is_none();
+        if grace_is_due && !self.unsafe_to_trap {
+            if let Some(bindings) = self.bindings.as_mut() {
                 bindings.enter_grace();
                 self.grace_at_ns = Some(occupancy_ns);
             }
@@ -241,9 +239,6 @@ impl StoreState {
     }
 
     pub(crate) fn begin_slice(&mut self, clock_ms: u64, meter: Meter) {
-        if let Some(bindings) = &self.bindings {
-            self.limits.initializing = bindings.is_init_sandbox();
-        }
         self.clock_ms = clock_ms;
         self.meter = meter;
         self.kill = None;
@@ -251,7 +246,6 @@ impl StoreState {
         // The bit describes the runtime layer's current critical section; a
         // slice that ended inside one ended by trapping.
         self.unsafe_to_trap = false;
-        self.grace_deferrals = 0;
         self.violation = None;
         self.abort_msg = None;
         self.limits.oom = false;
@@ -434,7 +428,6 @@ mod occupancy_tests {
         let (mut state, calls) = state();
         state.unsafe_to_trap = true;
         state.check_occupancy(1_070).expect("grace defers");
-        assert_eq!(state.grace_deferrals, 1);
         assert_eq!(state.grace_at_ns, None);
         state
             .check_occupancy(1_090)

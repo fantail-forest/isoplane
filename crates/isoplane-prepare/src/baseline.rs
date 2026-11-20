@@ -71,16 +71,6 @@ impl PublishedBaseline {
         }
     }
 
-    /// Where the baseline is published.
-    pub fn directory(&self) -> &std::path::Path {
-        &self.directory
-    }
-
-    /// The digest the baseline's manifest must have.
-    pub fn manifest_sha256(&self) -> [u8; 32] {
-        self.manifest_sha256
-    }
-
     /// Loads the baseline for preparing `request`'s application over it.
     /// Fails unless its manifest has the recorded digest and names the
     /// baseline `request` derives, for this engine.

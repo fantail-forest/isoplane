@@ -68,7 +68,7 @@ fn memory_init_keeps_original_segment_indices_before_and_after_baking() {
     let input_hash = *blake3::hash(&wasm).as_bytes();
     let identity = isoplane_engine::prepared::PreparedIdentity {
         input_hash,
-        runtime_profile: isoplane_prepare::RuntimeProfile::raw_wasm()
+        runtime_profile: isoplane_prepare::RuntimeProfile::RawWasm
             .digest()
             .expect("raw profile"),
         initialization_hash: common::request()
@@ -78,7 +78,11 @@ fn memory_init_keeps_original_segment_indices_before_and_after_baking() {
     let directory = tempfile::tempdir().expect("owned publication");
     let path = directory.path().join("prepared");
     engine
-        .prepare_template(&output.wasm, identity)
+        .prepare_template_with_files(
+            &output.wasm,
+            identity,
+            isoplane_engine::PlatformFiles::default(),
+        )
         .expect("native preparation")
         .publish(&path)
         .expect("local publication");

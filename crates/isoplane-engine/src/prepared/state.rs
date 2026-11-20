@@ -13,12 +13,10 @@ pub(super) struct State {
     pub(super) prefetch: Vec<super::ReadAhead>,
     pub(super) application_files: crate::PlatformFiles,
     pub(super) memory_pages: u32,
-    pub(super) deferred: Vec<u32>,
     pub(super) prepared_resources: isoplane_abi::native_io::PreparedResources,
     pub(super) mut_globals: Vec<(String, GlobalValue)>,
     pub(super) tables: Vec<(String, u64)>,
     pub(super) table_nullness: Vec<Vec<bool>>,
-    pub(super) has_gc_hint: bool,
     pub(super) has_initialize: bool,
 }
 
@@ -29,12 +27,10 @@ impl State {
             prefetch: Vec::new(),
             application_files: inner.application_files.clone(),
             memory_pages: inner.memory_pages,
-            deferred: inner.deferred.clone(),
             prepared_resources: inner.prepared_resources.clone(),
             mut_globals: inner.mut_globals.clone(),
             tables: inner.tables.clone(),
             table_nullness: inner.table_nullness.clone(),
-            has_gc_hint: inner.has_gc_hint,
             has_initialize: inner.has_initialize,
         }
     }
@@ -89,7 +85,7 @@ impl IsoplaneEngine {
         image: MemoryImage,
     ) -> Result<Template> {
         let filesystem_files = state.filesystem(&self.inner.cfg.platform_files)?;
-        let (pal_linker, pal_composed) = self
+        let pal_linker = self
             .template_linker(&native.module)
             .map_err(PreparedError::Engine)?;
         Ok(Template {
@@ -104,15 +100,12 @@ impl IsoplaneEngine {
                 filesystem_files,
                 native,
                 pal_linker,
-                pal_composed,
                 image: Arc::new(image),
                 memory_pages: state.memory_pages,
-                deferred: state.deferred,
                 prepared_resources: state.prepared_resources,
                 mut_globals: state.mut_globals,
                 tables: state.tables,
                 table_nullness: state.table_nullness,
-                has_gc_hint: state.has_gc_hint,
                 has_initialize: state.has_initialize,
                 failed_storage: Default::default(),
                 prepared_hash: None,

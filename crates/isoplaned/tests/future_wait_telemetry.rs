@@ -14,8 +14,15 @@ async fn host_future_waits_export_one_terminal_outcome() {
     let mut collector = otlp::Collector::<ExportTraceServiceRequest>::start(StatusCode::OK).await;
     let endpoint = collector.endpoint.parse().expect("collector endpoint");
     let logging = tokio::task::spawn_blocking(move || {
-        isoplaned::logs::init(true, std::io::sink, "future-waits", None, Some(&endpoint))
-            .expect("trace exporter")
+        isoplaned::logs::init_with_limits(
+            true,
+            std::io::sink,
+            "future-waits",
+            None,
+            Some(&endpoint),
+            Default::default(),
+        )
+        .expect("trace exporter")
     })
     .await
     .expect("logging task");

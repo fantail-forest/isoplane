@@ -72,16 +72,6 @@ impl Histogram {
         self.state.lock().sum_us
     }
 
-    /// Returns the lifetime arithmetic mean in microseconds, or zero if empty.
-    pub fn mean_us(&self) -> f64 {
-        let state = self.state.lock();
-        if state.count == 0 {
-            0.0
-        } else {
-            state.sum_us as f64 / state.count as f64
-        }
-    }
-
     fn quantile_us(&self, quantile: f64) -> f64 {
         match self.state.lock().distribution.quantile_bucket(quantile) {
             Ok(Some(bucket)) => bucket.end() as f64,
@@ -115,7 +105,6 @@ pub struct ProxyMetrics {
     pub dispatches_tier_fast: AtomicU64,
     pub dispatches_tier_optimized: AtomicU64,
 
-    pub route_resolutions_total: AtomicU64,
     pub route_generation: AtomicU64,
 
     /// End to end, as the proxy sees it.
@@ -165,7 +154,7 @@ mod tests {
             histogram.record_us(u64::MAX);
         }
         assert_eq!(histogram.count(), 1000);
-        assert_eq!(histogram.mean_us(), u64::MAX as f64);
+        assert_eq!(histogram.sum_us(), 1000 * u128::from(u64::MAX));
         assert_eq!(histogram.p99_us(), u64::MAX as f64);
         assert_eq!(
             histogram.state.lock().distribution.config().total_buckets(),
@@ -179,12 +168,12 @@ mod tests {
         let histogram = Histogram::new();
         histogram.record(std::time::Duration::MAX);
         assert_eq!(histogram.count(), 1);
-        assert_eq!(histogram.mean_us(), u64::MAX as f64);
+        assert_eq!(histogram.sum_us(), u128::from(u64::MAX));
         assert_eq!(histogram.p99_us(), u64::MAX as f64);
     }
 
     #[test]
-    fn concurrent_observations_preserve_their_counts_and_mean() {
+    fn concurrent_observations_preserve_their_count_and_sum() {
         let metrics = ProxyMetrics::new();
         let ready = std::sync::Barrier::new(5);
         std::thread::scope(|scope| {
@@ -201,7 +190,7 @@ mod tests {
             ready.wait();
         });
         assert_eq!(metrics.request_latency.count(), 4000);
-        assert_eq!(metrics.request_latency.mean_us(), 101.5);
+        assert_eq!(metrics.request_latency.sum_us(), 406_000);
         assert!(metrics.request_latency.p99_us() >= 103.0);
     }
 
@@ -217,7 +206,10 @@ mod tests {
         histogram.record_us(u64::MAX);
         histogram.record_us(0);
         assert_eq!(histogram.count(), u64::MAX);
-        assert_eq!(histogram.mean_us(), u64::MAX as f64);
+        assert_eq!(
+            histogram.sum_us(),
+            u128::from(u64::MAX) * u128::from(u64::MAX)
+        );
         assert_eq!(histogram.p99_us(), u64::MAX as f64);
     }
 
@@ -253,6 +245,5 @@ mod tests {
     fn an_empty_histogram_reports_zero_not_nan() {
         let h = Histogram::new();
         assert_eq!(h.p50_us(), 0.0, "no samples is a zero quantile");
-        assert_eq!(h.mean_us(), 0.0, "no samples is a zero mean");
     }
 }

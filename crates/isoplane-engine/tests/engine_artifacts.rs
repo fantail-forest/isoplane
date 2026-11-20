@@ -114,10 +114,6 @@ fn activation_seals_globals_and_tables_from_the_template() {
         t.memory_image_arc().to_dense(),
         "a fresh activation must see the template's memory"
     );
-    assert!(
-        fresh.table_mutations.is_empty(),
-        "a fresh activation's table must match the template baseline"
-    );
 }
 
 #[test]
@@ -146,8 +142,8 @@ fn a_mapped_artifact_is_equivalent_to_the_compiled_template() {
             "the mapped template has the same ABI rev"
         );
         assert_eq!(
-            *m.memory_image_arc(),
-            *t.memory_image_arc(),
+            m.memory_image_arc().to_dense(),
+            t.memory_image_arc().to_dense(),
             "the mapped template has the same memory image"
         );
         assert_eq!(
@@ -166,7 +162,7 @@ fn a_mapped_artifact_is_equivalent_to_the_compiled_template() {
     );
 
     let other = IsoplaneEngine::new(EngineConfig {
-        spectre_mitigations: false,
+        guard_size_bytes: 4 << 20,
         ..small_engine_config()
     })
     .expect("engine");
@@ -176,7 +172,8 @@ fn a_mapped_artifact_is_equivalent_to_the_compiled_template() {
     let meta = std::fs::read(&paths.meta).expect("read meta");
     // SAFETY: the metadata was written by `e` just above.
     let err = unsafe { other.deserialize_file(&meta, &paths.cwasm) }
-        .expect_err("a differently configured engine must refuse the artifact");
+        .err()
+        .expect("a differently configured engine must refuse the artifact");
     assert!(
         format!("{err:#}").contains("engine"),
         "the refusal must say the engine does not match: {err:#}"
@@ -200,59 +197,12 @@ fn a_tampered_artifact_is_refused_before_it_is_mapped() {
     // SAFETY: the directory is this test's own; the point is that the tamper
     // is caught before wasmtime sees the file.
     let err = unsafe { e.load_mapped(&wasm, dir.path()) }
-        .expect_err("a .cwasm that does not match its metadata must be refused");
+        .err()
+        .expect("a .cwasm that does not match its metadata must be refused");
     assert!(
         format!("{err:#}").contains("does not match the hash"),
         "the refusal must say the hash failed: {err:#}"
     );
-}
-
-#[test]
-fn deferred_init_units_travel_in_the_template() {
-    let e = test_engine();
-    let mut wasm = echo_guest();
-    let mut payload = 3u32.to_le_bytes().to_vec();
-    for id in [7u32, 11, 13] {
-        payload.extend_from_slice(&id.to_le_bytes());
-    }
-    append_custom_section(&mut wasm, isoplane_engine::DEFERRED_INIT_SECTION, &payload);
-
-    let t = e.load_template(&wasm).expect("template");
-    assert_eq!(
-        t.deferred_init_units(),
-        &[7, 11, 13],
-        "the section names the deferred units"
-    );
-
-    let dir = tempfile::tempdir().expect("tempdir");
-    // SAFETY: a fresh directory this test owns.
-    let (back, _) = unsafe { e.load_mapped(&wasm, dir.path()) }.expect("mapped load");
-    assert_eq!(
-        back.deferred_init_units(),
-        &[7, 11, 13],
-        "the deferred units survive the artifact cache"
-    );
-}
-
-fn append_custom_section(wasm: &mut Vec<u8>, name: &str, data: &[u8]) {
-    fn leb(mut v: u32, out: &mut Vec<u8>) {
-        loop {
-            let b = (v & 0x7f) as u8;
-            v >>= 7;
-            if v == 0 {
-                out.push(b);
-                return;
-            }
-            out.push(b | 0x80);
-        }
-    }
-    let mut body = Vec::new();
-    leb(name.len() as u32, &mut body);
-    body.extend_from_slice(name.as_bytes());
-    body.extend_from_slice(data);
-    wasm.push(0);
-    leb(body.len() as u32, wasm);
-    wasm.extend_from_slice(&body);
 }
 
 fn table_guest(change: &str) -> Vec<u8> {

@@ -42,8 +42,22 @@ impl Host {
 impl PalSource for Host {
     fn record_initialization_call(&mut self, _module: &'static str) {}
 
+    fn check_capability(&mut self, _import: &'static str) -> wasmtime::Result<()> {
+        Ok(())
+    }
+    fn native_io(
+        &mut self,
+        _request: isoplane_abi::native_io::Request,
+    ) -> Result<isoplane_abi::native_io::Response, isoplane_abi::native_io::Error> {
+        Err(isoplane_abi::native_io::Error::Denied(
+            "the PAL channel fixture has no native I/O".into(),
+        ))
+    }
     fn slice_clock_ms(&mut self) -> u64 {
         self.slice_ms
+    }
+    fn platform_files(&self) -> isoplane_engine::PlatformFiles {
+        isoplane_engine::PlatformFiles::default()
     }
     fn entropy_fill(&mut self, out: &mut [u8]) -> wasmtime::Result<()> {
         self.entropy_calls += 1;

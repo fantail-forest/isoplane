@@ -32,7 +32,7 @@ fn request(wasm: &[u8]) -> BuildRequest {
         validation_limits: Default::default(),
         application_files: isoplane_engine::PlatformFiles::default(),
         engine: common::engine().configuration(),
-        runtime: RuntimeProfile::raw_wasm(),
+        runtime: RuntimeProfile::RawWasm,
         memory_limit: isoplane_abi::config::GuestMemoryBytes::default(),
         initialization: common::request(),
         input_hash: *blake3::hash(wasm).as_bytes(),
@@ -92,7 +92,9 @@ async fn compiled_input_is_reused_while_each_initialization_draws_a_fresh_seed_a
             engine.decode_builder_output(product.prepared_bytes(), expected.identity().unwrap())
         }
         .unwrap();
-        let template = engine.load_prepared_product(&prepared).unwrap();
+        let template = engine
+            .load_prepared_product_in(&prepared, &std::env::temp_dir())
+            .unwrap();
         let memory = template.memory_image_arc().to_dense();
         seeds.push(memory[64..80].to_vec());
         assert_eq!(
@@ -236,8 +238,8 @@ async fn preparation_rejects_memory_authorization_above_worker_capacity() {
     input.engine.max_memory_bytes = 128 << 20;
     input.guest_memory_bytes =
         Some(isoplane_abi::config::GuestMemoryBytes::new(512 << 20).expect("valid budget"));
-    let result = LocalPreparation::new()
-        .unwrap()
+    let (_directory, provider) = setup();
+    let result = provider
         .prepare(&wasm, &input, &CancellationToken::new())
         .await;
     assert!(
@@ -257,8 +259,8 @@ async fn structural_admission_policy_binds_preparation_identity_and_is_enforced(
         input.identity().expect("restricted identity"),
         "changing structural admission policy must invalidate prepared cache identity"
     );
-    let result = LocalPreparation::new()
-        .unwrap()
+    let (_directory, provider) = setup();
+    let result = provider
         .prepare(&wasm, &input, &CancellationToken::new())
         .await;
     assert!(matches!(result, Err(isoplane_prepare::PrepareError::Rejected(ref failure)) if failure.stage == isoplane_prepare::BuildStage::Input),
@@ -282,8 +284,9 @@ async fn initialization_without_a_memory_maximum_obeys_the_application_budget() 
     let mut input = request(&wasm);
     input.engine.max_memory_bytes = 2 * budget_bytes;
     input.memory_limit = isoplane_abi::config::GuestMemoryBytes::default();
+    let (_directory, provider) = setup();
     assert!(
-        LocalPreparation::new().unwrap().prepare(&wasm, &input, &CancellationToken::new()).await.is_ok(),
+        provider.prepare(&wasm, &input, &CancellationToken::new()).await.is_ok(),
         "initialization must refuse growth past the ceiling of the application's {budget_bytes}-byte budget on an engine allowing twice that"
     );
 }
@@ -316,8 +319,8 @@ async fn cancellation_before_preparation_refuses_to_enter_the_initializer() {
     let wasm = common::guest("", "unreachable");
     let cancellation = CancellationToken::new();
     cancellation.cancel();
-    let result = LocalPreparation::new()
-        .unwrap()
+    let (_directory, provider) = setup();
+    let result = provider
         .prepare(&wasm, &request(&wasm), &cancellation)
         .await;
     assert!(matches!(
@@ -331,8 +334,8 @@ async fn a_mismatched_source_digest_is_refused_before_initialization() {
     let wasm = common::guest("", "unreachable");
     let mut input = request(&wasm);
     input.input_hash = [0; 32];
-    let result = LocalPreparation::new()
-        .unwrap()
+    let (_directory, provider) = setup();
+    let result = provider
         .prepare(&wasm, &input, &CancellationToken::new())
         .await;
     assert!(matches!(

@@ -233,7 +233,11 @@ mod tests {
         let directory = tempfile::tempdir().expect("artifact directory");
         let path = directory.path().join("version");
         engine
-            .prepare_template(&guest(1), identity)
+            .prepare_template_with_files(
+                &guest(1),
+                identity,
+                isoplane_engine::PlatformFiles::default(),
+            )
             .expect("prepare")
             .publish(&path)
             .expect("publish");

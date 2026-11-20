@@ -1029,7 +1029,7 @@ fn prepared_cell(
             .expect("the serving engine must initialize"),
     );
     let template = engine
-        .load_prepared_product(&decode(product, request))
+        .load_prepared_product_in(&decode(product, request), &std::env::temp_dir())
         .expect("the prepared template must load");
     let cell = isoplane_host::cell::Cell::new(config, services).expect("the cell must start");
     cell.register_module(
@@ -1558,7 +1558,7 @@ mod over_the_runtime_baseline {
         }
         .expect("the baseline must decode");
         let loaded = engine
-            .load_prepared_product(&base)
+            .load_prepared_product_in(&base, &std::env::temp_dir())
             .expect("the baseline must load");
         let identity = request.identity().expect("the layer's identity");
         // SAFETY: LocalPreparation in this process produced these bytes.
@@ -1666,7 +1666,7 @@ async fn initialization_crypto_draws_are_fresh_while_activations_copy_captured_v
         let engine = IsoplaneEngine::new(request.engine.clone()).expect("captured-state engine");
         let prepared = decode(&product, &request);
         let captured_memory = engine
-            .load_prepared_product(&prepared)
+            .load_prepared_product_in(&prepared, &std::env::temp_dir())
             .expect("restore the captured application without initialization")
             .memory_image_arc()
             .to_dense();

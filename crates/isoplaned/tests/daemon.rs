@@ -4,7 +4,8 @@ use isoplaned::config::NodeConfig;
 fn telemetry_configuration_uses_flag_then_environment_then_file() {
     for traces in [false, true] {
         let directory = tempfile::tempdir().expect("unique config directory");
-        let mut cfg = NodeConfig::new("operator");
+        let mut cfg = NodeConfig::from_toml(r#"owner = "operator""#)
+            .expect("a configuration naming only its owner");
         let endpoint = Some("http://127.0.0.1:4318/from-file".parse().unwrap());
         let (environment_name, flag_name) = if traces {
             cfg.otlp_traces_endpoint = endpoint;

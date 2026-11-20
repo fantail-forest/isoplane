@@ -318,9 +318,9 @@ impl Session {
                         events.emit(serde_json::json!({"event":if detached { "debugger_detached" } else { "reloaded" }, "app":options.manifest.name, "url":format!("http://{address}")}));
                     }
                     connection = listener.accept() => {
-                        let (stream, peer) = connection?;
+                        let (stream, _peer) = connection?;
                         let debug = self.admission.lock().debug;
-                        connections.spawn(connection_task(stream, peer, current_proxy.clone(), debug, self.admission.clone()));
+                        connections.spawn(connection_task(stream, current_proxy.clone(), debug, self.admission.clone()));
                     }
                     completed = connections.join_next(), if !connections.is_empty() => {
                         if let Some(completed) = completed {
@@ -405,7 +405,6 @@ async fn stop_connections(connections: &mut JoinSet<()>) {
 
 async fn connection_task(
     stream: tokio::net::TcpStream,
-    peer: SocketAddr,
     current_proxy: Arc<RwLock<Arc<isoplane_proxy::Proxy>>>,
     debug: bool,
     admission: Arc<Mutex<Admission>>,
@@ -428,7 +427,7 @@ async fn connection_task(
         };
         async move {
             match proxy {
-                Some(proxy) => proxy.handle(request, peer).await,
+                Some(proxy) => proxy.handle(request).await,
                 None => {
                     let mut response =
                         hyper::Response::new(isoplane_proxy::server::Body::default());

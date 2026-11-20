@@ -134,8 +134,13 @@ mod tests {
         config.data_dir = directory.path().to_owned();
         config.host = isoplane_host::CellConfig::for_test("metrics");
         config.host.breaker.kill_threshold = 1;
-        let cells = RealCells::build(&config, &super::super::RealPaths::under(directory.path()))
-            .expect("node accounting");
+        let cells = RealCells::build_with_destinations(
+            &config,
+            &super::super::RealPaths::under(directory.path()),
+            Arc::new(isoplane_host::egress::PublicDestinations),
+            &config.trust_bundle().expect("the bundled roots must load"),
+        )
+        .expect("node accounting");
         (directory, cells)
     }
 

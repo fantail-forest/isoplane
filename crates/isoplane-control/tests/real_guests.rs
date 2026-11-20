@@ -110,29 +110,26 @@ fn the_impure_cctor_guest_defers_and_converges() {
         .run(&wasm, &req)
         .expect("pre-init must converge");
 
-    assert_ne!(
-        out.template_wasm, wasm,
-        "the template must not be the input module"
-    );
+    assert_ne!(out.wasm, wasm, "the template must not be the input module");
     assert!(
-        !exports_init(&out.template_wasm),
+        !exports_init(&out.wasm),
         "isoplane_initialize must be stripped from the template"
     );
     assert!(
-        out.passes >= 2,
+        out.initialized.passes >= 2,
         "an impure initializer must cost at least one replay"
     );
     assert_eq!(
-        out.deferred_units.len(),
+        out.initialized.deferred.len(),
         1,
         "exactly one unit is impure in this fixture"
     );
     assert_eq!(
-        out.deferred_reasons[0].1, "clock_now_coarse",
+        out.initialized.deferred_reasons[0].1, "clock_now_coarse",
         "the deferral reason must name the capability that caused it"
     );
     assert_eq!(
-        out.capability_refusals, 1,
+        out.initialized.capability_refusals, 1,
         "the impure unit is refused once, on the pass that discovers it"
     );
 }

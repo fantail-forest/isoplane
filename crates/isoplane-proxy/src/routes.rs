@@ -119,20 +119,6 @@ impl LocalRouteTable {
         self.generation.fetch_add(1, Ordering::Release);
         Ok(())
     }
-
-    /// Current application identities, sorted for operator diagnostics.
-    pub fn apps(&self) -> Vec<String> {
-        let mut names: Vec<_> = self
-            .table
-            .read()
-            .hosts
-            .values()
-            .map(|target| target.app.clone())
-            .collect();
-        names.sort();
-        names.dedup();
-        names
-    }
 }
 
 impl RouteResolver for LocalRouteTable {

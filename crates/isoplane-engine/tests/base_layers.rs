@@ -53,13 +53,7 @@ fn baseline(engine: &IsoplaneEngine, wasm: &[u8], directory: &Path) -> Template 
         "the runtime stage must complete before capture"
     );
     engine
-        .prepare_runtime_baseline(
-            &source,
-            &mut instance,
-            identity(3),
-            Default::default(),
-            vec![],
-        )
+        .prepare_runtime_baseline(&source, &mut instance, identity(3), Default::default())
         .expect("capture the runtime baseline")
         .publish(directory)
         .expect("publish the baseline");
@@ -79,13 +73,7 @@ fn layer(engine: &IsoplaneEngine, base: &Template, directory: &Path) -> Vec<u8> 
         outcome.trap
     );
     engine
-        .prepare_initialized_template_over(
-            base,
-            &mut instance,
-            identity(4),
-            Default::default(),
-            vec![],
-        )
+        .prepare_initialized_template_over(base, &mut instance, identity(4), Default::default())
         .expect("capture the application as a layer")
         .publish(directory)
         .expect("publish the layer");
@@ -140,7 +128,6 @@ fn distinct_layers_keep_their_mappings_and_release_private_pages_across_eviction
                 &mut instance,
                 identity(marker),
                 Default::default(),
-                vec![],
             )
             .expect("distinct layer capture");
         let path = directory.path().join(marker.to_string());

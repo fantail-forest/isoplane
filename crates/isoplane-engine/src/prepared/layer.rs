@@ -20,7 +20,6 @@ impl IsoplaneEngine {
         self.finish_template(
             module,
             source.hash,
-            source.inner.deferred.clone(),
             source.inner.prepared_resources.clone(),
             source
                 .inner
@@ -46,14 +45,12 @@ impl IsoplaneEngine {
         instance: &mut Instance,
         identity: PreparedIdentity,
         resources: isoplane_abi::native_io::PreparedResources,
-        deferred: Vec<u32>,
     ) -> Result<PreparedTemplate> {
         self.capture_layer(
             template,
             instance,
             identity,
             resources,
-            deferred,
             Capture::Application,
         )
     }
@@ -67,14 +64,12 @@ impl IsoplaneEngine {
         instance: &mut Instance,
         identity: PreparedIdentity,
         resources: isoplane_abi::native_io::PreparedResources,
-        deferred: Vec<u32>,
     ) -> Result<PreparedTemplate> {
         self.capture_layer(
             template,
             instance,
             identity,
             resources,
-            deferred,
             Capture::RuntimeBaseline,
         )
     }
@@ -89,9 +84,8 @@ impl IsoplaneEngine {
         instance: &mut Instance,
         identity: PreparedIdentity,
         resources: isoplane_abi::native_io::PreparedResources,
-        deferred: Vec<u32>,
     ) -> Result<PreparedTemplate> {
-        self.capture_layer(base, instance, identity, resources, deferred, Capture::Over)
+        self.capture_layer(base, instance, identity, resources, Capture::Over)
     }
 
     fn capture_layer(
@@ -100,7 +94,6 @@ impl IsoplaneEngine {
         instance: &mut Instance,
         identity: PreparedIdentity,
         resources: isoplane_abi::native_io::PreparedResources,
-        deferred: Vec<u32>,
         capture: Capture,
     ) -> Result<PreparedTemplate> {
         if !Arc::ptr_eq(&template.inner, &instance.template)
@@ -139,7 +132,6 @@ impl IsoplaneEngine {
             .map_err(PreparedError::Engine)?;
         let mut state = State::capture(template);
         state.memory_pages = captured.memory_pages;
-        state.deferred = deferred;
         state.prepared_resources = resources;
         state.has_initialize = capture == Capture::RuntimeBaseline;
         for ((_, value), captured_value) in state.mut_globals.iter_mut().zip(captured.globals) {
@@ -203,15 +195,6 @@ impl IsoplaneEngine {
                 payloads,
             },
         })
-    }
-
-    /// As [`IsoplaneEngine::load_prepared_product`], for a template captured as a layer over `base`.
-    pub fn load_prepared_product_over(
-        &self,
-        base: &Template,
-        product: &PreparedTemplate,
-    ) -> Result<Template> {
-        self.load_prepared_product_over_in(base, product, &std::env::temp_dir())
     }
 
     /// As [`IsoplaneEngine::load_prepared_product_in`], for a template captured as a layer over `base`.
