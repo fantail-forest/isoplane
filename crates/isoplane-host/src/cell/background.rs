@@ -89,7 +89,6 @@ impl Cell {
         let record = DispatchRecord {
             dispatch_id: INSTANCE_WORK,
             kind: DispatchKind::Background,
-            trace: TraceContext::default(),
             cancel_future: 0,
             occupancy_budget_ms: budget_ms,
             pending_futures_limit: slot.ctx.pending_futures_limit(INSTANCE_WORK),

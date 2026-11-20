@@ -2,7 +2,8 @@
 
 macro_rules! errors {
     ($($name:ident = $value:literal, $doc:literal;)*) => {
-        /// Error discriminants in wasi:sockets/network@0.2.0.
+        /// The wasi:sockets/network@0.2.0 error codes the host reports, with that
+        /// interface's discriminants.
         #[derive(Debug, Clone, Copy, PartialEq, Eq)]
         #[repr(u8)]
         pub enum NetworkErrorCode {
@@ -24,10 +25,7 @@ errors! {
     AccessDenied = 1, "The operation was denied.";
     NotSupported = 2, "The operation is unsupported.";
     InvalidArgument = 3, "An argument is invalid.";
-    OutOfMemory = 4, "Memory is exhausted.";
     Timeout = 5, "The operation timed out.";
-    ConcurrencyConflict = 6, "Another operation conflicts with this one.";
-    NotInProgress = 7, "No operation is in progress.";
     WouldBlock = 8, "The operation is pending.";
     InvalidState = 9, "The resource state does not permit this operation.";
     NewSocketLimit = 10, "The socket limit is reached.";
@@ -37,7 +35,6 @@ errors! {
     ConnectionRefused = 14, "The remote endpoint refused the connection.";
     ConnectionReset = 15, "The peer reset the connection.";
     ConnectionAborted = 16, "The connection was aborted.";
-    DatagramTooLarge = 17, "The datagram exceeds its size limit.";
     NameUnresolvable = 18, "The name has no address.";
     TemporaryResolverFailure = 19, "The resolver failed temporarily.";
     PermanentResolverFailure = 20, "The resolver failed permanently.";

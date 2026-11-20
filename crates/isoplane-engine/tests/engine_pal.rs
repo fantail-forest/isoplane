@@ -23,7 +23,6 @@ fn http_dispatch(id: u64) -> isoplane_abi::dispatch::DispatchRecord {
             headers: vec![("host".into(), "example.test".into())],
             body: vec![],
         }),
-        trace: TraceContext::default(),
         cancel_future: 0,
         occupancy_budget_ms: 30_000,
         pending_futures_limit: 64,
@@ -243,7 +242,7 @@ fn the_pal_environment_delegation_answers_empty() {
 
 mod native_readiness {
     use super::common::{guest, test_engine, DONE};
-    use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest, TraceContext};
+    use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest};
     use isoplane_abi::native_io::{Request, ResourceHandle, Response};
     use isoplane_engine::{Completion, HostBindings, ImportCall, InstanceOps, OccupancyBudget};
 
@@ -314,7 +313,6 @@ mod native_readiness {
                         headers: vec![],
                         body: vec![],
                     }),
-                    trace: TraceContext::default(),
                     cancel_future: 0,
                     occupancy_budget_ms: 30_000,
                     pending_futures_limit: 64,
@@ -329,28 +327,12 @@ mod native_readiness {
             .completion
     }
 
-    fn send_bridge(
-        import: &str,
-        answer: Result<u64, isoplane_abi::native_io::Error>,
-        legacy_wrapper: bool,
-    ) -> i64 {
+    fn send_bridge(answer: Result<u64, isoplane_abi::native_io::Error>) -> i64 {
         let engine = test_engine();
-        // The v1 C wrapper recognizes only -1 (pending) and -2 (failed),
-        // returning -1 for either; any other value becomes ssize_t directly.
-        let decode = if legacy_wrapper {
-            "(if (result i64) (i32.or (i64.eq (local.get $result) (i64.const -1)) \
-                (i64.eq (local.get $result) (i64.const -2))) \
-                (then (i64.const -1)) (else (local.get $result)))"
-        } else {
-            "(local.get $result)"
-        };
         let wasm = guest(2,
-            &format!(r#"(import "isoplane:native-sockets" "{import}" (func $send (param i32 i32 i32 i32) (result i64)))"#),
-            &format!(r#"(data (i32.const 2000) "abc")
-                (func $wrapper (result i64) (local $result i64)
-                    (local.set $result (call $send (i32.const 3000) (i32.const 1) (i32.const 2000) (i32.const 3)))
-                    {decode})"#),
-            &format!("(i32.store (i32.const 3000) (i32.const 7)) (i64.store (i32.const 1000) (call $wrapper)) {DONE}"), DONE);
+            r#"(import "isoplane:native-sockets" "try-send-with-error-code" (func $send (param i32 i32 i32 i32) (result i64)))"#,
+            r#"(data (i32.const 2000) "abc")"#,
+            &format!("(i32.store (i32.const 3000) (i32.const 7)) (i64.store (i32.const 1000) (call $send (i32.const 3000) (i32.const 1) (i32.const 2000) (i32.const 3))) {DONE}"), DONE);
         let template = engine
             .load_template(&wasm)
             .expect("the socket bridge must remain admitted");
@@ -372,19 +354,7 @@ mod native_readiness {
     }
 
     #[test]
-    fn legacy_send_errors_still_reach_the_original_wrappers_failure_branch() {
-        for kind in [
-            std::io::ErrorKind::ConnectionReset,
-            std::io::ErrorKind::PermissionDenied,
-        ] {
-            let error = isoplane_abi::native_io::Error::from(std::io::Error::from(kind));
-            assert_eq!(send_bridge("try-send", Err(error), true), -1,
-                "an existing guest must not receive an unrecognized negative byte count for {kind:?}");
-        }
-    }
-
-    #[test]
-    fn the_versioned_send_bridge_preserves_distinct_network_failures() {
+    fn the_send_bridge_preserves_distinct_network_failures() {
         use isoplane_abi::native_io::network_error::NetworkErrorCode;
         for (kind, code) in [
             (
@@ -401,33 +371,27 @@ mod native_readiness {
             ),
         ] {
             let error = isoplane_abi::native_io::Error::from(std::io::Error::from(kind));
-            let encoded = send_bridge("try-send-with-error-code", Err(error), false) as u64;
+            let encoded = send_bridge(Err(error)) as u64;
             assert_eq!(
                 isoplane_abi::native_io::canonical::SEND_FAILED.checked_sub(encoded),
                 Some(code as u64),
-                "the new bridge must carry the actual network error for {kind:?}"
+                "the send bridge must carry the actual network error for {kind:?}"
             );
         }
     }
 
     #[test]
-    fn both_send_bridges_distinguish_pending_from_partial_success() {
-        for import in ["try-send", "try-send-with-error-code"] {
-            assert_eq!(
-                send_bridge(
-                    import,
-                    Err(isoplane_abi::native_io::Error::WouldBlock),
-                    false
-                ),
-                -1,
-                "{import} must retain the pending sentinel"
-            );
-            assert_eq!(
-                send_bridge(import, Ok(2), false),
-                2,
-                "{import} must report the number of bytes actually accepted"
-            );
-        }
+    fn the_send_bridge_distinguishes_pending_from_partial_success() {
+        assert_eq!(
+            send_bridge(Err(isoplane_abi::native_io::Error::WouldBlock)),
+            -1,
+            "a send the socket cannot take yet must return the pending sentinel"
+        );
+        assert_eq!(
+            send_bridge(Ok(2)),
+            2,
+            "a partial send must report the number of bytes actually accepted"
+        );
     }
 
     #[test]
@@ -496,7 +460,7 @@ mod native_readiness {
         let count = isoplane_abi::imports::MAX_OUT_BUFFER_BYTES / 4 + 1;
         let setup = format!("(i64.store (i32.const 1008) (i64.const {count}))");
         assert_eq!(
-            capability_packet("socket_call", 69, 1000, 4, &setup),
+            capability_packet("socket_call", 76, 1000, 4, &setup),
             Completion::Trapped,
             "an oversized native send list must trap before host allocation"
         );

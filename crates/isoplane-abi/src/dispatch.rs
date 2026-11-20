@@ -7,8 +7,6 @@ use serde::{Deserialize, Serialize};
 pub struct DispatchRecord {
     pub dispatch_id: u64,
     pub kind: DispatchKind,
-    /// W3C trace context.
-    pub trace: TraceContext,
     /// The future the host completes to cancel this dispatch. A guest observes
     /// it at its next await; one that never awaits is killed at its occupancy budget.
     pub cancel_future: u64,
@@ -38,13 +36,6 @@ pub struct HttpRequest {
     pub headers: Vec<(String, String)>,
     #[serde(with = "serde_bytes")]
     pub body: Vec<u8>,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TraceContext {
-    pub trace_id: String,
-    pub span_id: String,
-    pub sampled: bool,
 }
 
 /// The response head a guest hands back via `resp_new`.

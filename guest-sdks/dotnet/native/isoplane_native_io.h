@@ -74,7 +74,6 @@ void __wasm_import_streams_method_output_stream_write(int32_t a0, int32_t a1, in
 void __wasm_import_streams_method_output_stream_flush(int32_t a0, int32_t a1) { const uint64_t args[] = { (uint32_t)a0, (uint32_t)a1 }; isoplane_socket_call(66, args, 2); }
 void __wasm_import_io_error_error_drop(int32_t a0) { const uint64_t args[] = { (uint32_t)a0 }; isoplane_socket_call(67, args, 1); }
 void __wasm_import_io_error_method_error_to_debug_string(int32_t a0, int32_t a1) { const uint64_t args[] = { (uint32_t)a0, (uint32_t)a1 }; isoplane_socket_call(68, args, 2); }
-int64_t __wasm_import_isoplane_socket_try_send(int32_t a0, int32_t a1, int32_t a2, int32_t a3) { const uint64_t args[] = { (uint32_t)a0, (uint32_t)a1, (uint32_t)a2, (uint32_t)a3 }; return (int64_t)isoplane_socket_call(69, args, 4); }
 void __wasm_import_ip_name_lookup_resolve_addresses(int32_t a0, int32_t a1, int32_t a2, int32_t a3) { const uint64_t args[] = { (uint32_t)a0, (uint32_t)a1, (uint32_t)a2, (uint32_t)a3 }; isoplane_socket_call(70, args, 4); }
 void __wasm_import_ip_name_lookup_method_resolve_address_stream_resolve_next_address(int32_t a0, int32_t a1) { const uint64_t args[] = { (uint32_t)a0, (uint32_t)a1 }; isoplane_socket_call(71, args, 2); }
 int32_t __wasm_import_ip_name_lookup_method_resolve_address_stream_subscribe(int32_t a0) { const uint64_t args[] = { (uint32_t)a0 }; return (int32_t)isoplane_socket_call(72, args, 1); }

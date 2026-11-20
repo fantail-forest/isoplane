@@ -16,7 +16,7 @@ use compiled_guest::engine_serving;
 use std::sync::Arc;
 use std::time::Duration;
 
-use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest, TraceContext};
+use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest};
 use isoplane_abi::result::ResultRecord;
 use isoplane_engine::prepared::PreparedTemplate;
 use isoplane_engine::{
@@ -429,7 +429,6 @@ impl ReturnedGuest {
             &DispatchRecord {
                 dispatch_id: self.context.dispatch_id(),
                 kind: DispatchKind::Http(request),
-                trace: TraceContext::default(),
                 cancel_future: 0,
                 occupancy_budget_ms: self.context.limits.occupancy_ms_per_dispatch,
                 pending_futures_limit: self.context.limits.pending_futures_per_dispatch,

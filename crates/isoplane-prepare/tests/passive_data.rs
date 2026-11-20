@@ -21,7 +21,6 @@ fn dispatch(instance: &mut Instance) -> Completion {
     let record = isoplane_abi::dispatch::DispatchRecord {
         dispatch_id: 1,
         kind: isoplane_abi::dispatch::DispatchKind::Background,
-        trace: Default::default(),
         cancel_future: 0,
         occupancy_budget_ms: 1000,
         pending_futures_limit: 64,

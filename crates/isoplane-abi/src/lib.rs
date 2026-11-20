@@ -26,7 +26,7 @@ pub use dispatch::{DispatchKind, DispatchRecord, HttpRequest, ResponseHead};
 pub const LOCAL_DEBUG_SECTION: &str = "isoplane.local-debug";
 
 /// The version of the guest host-interface contract.
-pub const ABI_REV: u32 = 6;
+pub const ABI_REV: u32 = 7;
 
 /// The unit of copy-on-write sharing and of the hibernation page diff.
 pub const PAGE_SIZE: usize = 4096;
