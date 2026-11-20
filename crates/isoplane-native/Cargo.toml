@@ -12,7 +12,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 isoplane-cache.workspace = true
-isoplane-runtime = { workspace = true, features = ["local"] }
+isoplane-runtime = { workspace = true }
 isoplane-abi = { workspace = true, features = ["host"] }
 serde.workspace = true
 serde_json.workspace = true
@@ -28,10 +28,8 @@ isoplane-trust.workspace = true
 parking_lot.workspace = true
 blake3.workspace = true
 sha2.workspace = true
-rand.workspace = true
 zstd.workspace = true
 tempfile.workspace = true
-async-trait.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 hyper.workspace = true

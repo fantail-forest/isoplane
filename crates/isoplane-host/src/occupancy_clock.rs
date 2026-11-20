@@ -135,13 +135,6 @@ fn ticks_to_ns(ticks: i64, frequency: i64) -> Option<u64> {
     u64::try_from(ticks.checked_mul(1_000_000_000)?.checked_div(frequency)?).ok()
 }
 
-/// [`try_read_occupancy_ns`] with the unreadable case flattened to `0`, a
-/// floor rather than a measurement; the failure is still counted in
-/// [`clock_read_failures`].
-pub fn read_occupancy_ns() -> u64 {
-    try_read_occupancy_ns().unwrap_or(0)
-}
-
 /// A worker-occupancy measurement over one slice or reactor poll, the only
 /// interval measured. Time between them is inside no `OccupancyInterval`, which is why a
 /// parked instance costs zero occupancy.
@@ -185,12 +178,6 @@ mod tests {
         );
         let failures = clock_read_failures();
         assert!(failures > before, "the failed read was not counted");
-
-        assert_eq!(read_occupancy_ns(), 0, "the lossy wrapper answers a floor");
-        assert!(
-            clock_read_failures() > failures,
-            "and the floor is still on the record as a failure"
-        );
 
         let iv = OccupancyInterval::start();
         assert_eq!(

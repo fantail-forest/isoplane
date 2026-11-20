@@ -1491,7 +1491,6 @@ dependencies = [
 name = "isoplane-control"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "blake3",
  "isoplane-abi",
@@ -1642,7 +1641,6 @@ name = "isoplane-native"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-trait",
  "blake3",
  "csbindgen",
  "fd-lock",
@@ -1665,7 +1663,6 @@ dependencies = [
  "parking_lot",
  "portable-pty",
  "procfs",
- "rand 0.9.5",
  "reqwest 0.12.28",
  "rustix",
  "serde",
@@ -1699,7 +1696,6 @@ dependencies = [
  "isoplane-fixtures",
  "isoplane-host",
  "isoplane-runtime",
- "isoplane-test-support",
  "parking_lot",
  "postcard",
  "rayon",
@@ -1731,7 +1727,6 @@ dependencies = [
  "isoplane-abi",
  "parking_lot",
  "rand 0.9.5",
- "serde",
  "serde_json",
  "thiserror 2.0.20",
  "tokio",
@@ -1745,19 +1740,11 @@ name = "isoplane-runtime"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-trait",
- "hex",
  "isoplane-abi",
  "isoplane-fixtures",
- "isoplane-host",
- "isoplane-proxy",
- "parking_lot",
  "serde",
- "serde_json",
  "tempfile",
- "thiserror 2.0.20",
  "tokio",
- "tracing",
  "wasmparser 0.244.0",
  "wat",
 ]
