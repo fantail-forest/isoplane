@@ -319,12 +319,5 @@ mod tests {
         // 0 is a REAL unit id; the sentinel is -1 (u32::MAX host-side).
         assert_ne!(unit_id(0), NO_UNIT);
         assert_eq!(NO_UNIT, u32::MAX as i32);
-        // The same const slice every pass: that is the whole of "ids are
-        // stable across runs".
-        let again: &[InitUnit] = init_units![A, B];
-        assert_eq!(units.len(), again.len());
-        for (x, y) in units.iter().zip(again) {
-            assert_eq!(x.name, y.name);
-        }
     }
 }

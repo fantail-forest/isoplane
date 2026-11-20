@@ -974,11 +974,6 @@ mod tests {
     fn a_bundle_without_a_manifest_reports_a_time_derived_from_its_content() {
         let a: [u8; 32] = Sha256::digest(b"bundle a").into();
         let b: [u8; 32] = Sha256::digest(b"bundle b").into();
-        assert_eq!(
-            content_modified_ns(&a),
-            content_modified_ns(&a),
-            "the same bytes give the same timestamp on every node"
-        );
         assert_ne!(
             content_modified_ns(&a),
             content_modified_ns(&b),

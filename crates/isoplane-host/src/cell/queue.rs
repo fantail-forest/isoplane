@@ -88,6 +88,9 @@ struct QueueInner {
     dispatches: std::collections::VecDeque<QueuedDispatch>,
     closed: bool,
     last_was_wake: bool,
+    /// Workers waiting on this lane's condition variable, for tests that need one there.
+    #[cfg(test)]
+    waiting: usize,
 }
 
 struct QueuedDispatch {
@@ -247,7 +250,15 @@ impl WorkQueue {
             if g.closed {
                 return None;
             }
+            #[cfg(test)]
+            {
+                g.waiting += 1;
+            }
             lane.cv.wait(&mut g);
+            #[cfg(test)]
+            {
+                g.waiting -= 1;
+            }
         }
     }
 
@@ -567,10 +578,16 @@ mod queue_tests {
                 std::thread::spawn(move || q.pop(w))
             })
             .collect();
-        // A worker with an empty lane is on its condition variable by the
-        // time it can be observed holding nothing, so the close must reach it
-        // there or the join below hangs.
-        std::thread::sleep(Duration::from_millis(20));
+        // The count changes under the lane's lock, which the wait releases, so a
+        // worker counted here is on its condition variable and only the close's
+        // notification can release it.
+        assert!(
+            isoplane_test_support::wait_for(
+                || q.lanes.iter().all(|lane| lane.inner.lock().waiting == 1),
+                Duration::from_secs(10)
+            ),
+            "every worker must reach its lane's wait"
+        );
         q.close();
         for (w, h) in hs.into_iter().enumerate() {
             assert!(
