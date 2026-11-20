@@ -342,7 +342,7 @@ fn guest_module(body: &str, message: Option<&str>) -> Vec<u8> {
         body: body.as_bytes().to_vec(),
         streaming: false,
     };
-    let bytes = isoplane_abi::encode(&response).unwrap();
+    let bytes = postcard::to_allocvec(&response).unwrap();
     let escaped = isoplane_test_support::wat_bytes(&bytes);
     let log = message.map_or_else(String::new, |message| {
         let bytes = message.as_bytes();

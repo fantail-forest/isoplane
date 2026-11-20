@@ -21,7 +21,7 @@ fn guest(head: &ResponseHead) -> Vec<u8> {
 }
 
 fn guest_with_functions(head: &ResponseHead, functions: &str, before_response: &str) -> Vec<u8> {
-    let encoded = isoplane_abi::encode(head).expect("encoding a response head");
+    let encoded = postcard::to_allocvec(head).expect("encoding a response head");
     let escaped = isoplane_test_support::wat_bytes(&encoded);
     let len = encoded.len();
     let src = format!(

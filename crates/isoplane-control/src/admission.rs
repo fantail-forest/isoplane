@@ -9,12 +9,6 @@ use crate::validator::{self, ValidationReport, Violation};
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct VersionId(pub String);
 
-impl std::fmt::Display for VersionId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
 /// Owner identity and initialization policy supplied by the local host.
 #[derive(Debug, Clone)]
 pub struct DeployOptions {

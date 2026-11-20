@@ -237,10 +237,6 @@ pub fn is_declared(module: &str, field: &str) -> bool {
     module == HOST_MODULE && lookup(field).is_some()
 }
 
-pub fn init_visible() -> impl Iterator<Item = &'static ImportDef> {
-    IMPORTS.iter().filter(|i| i.init_visible)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -258,7 +254,7 @@ mod tests {
     #[test]
     fn unconditional_initialization_imports_exclude_runtime_capability_groups() {
         let io = [Group::Http, Group::Socket, Group::Clock, Group::Entropy];
-        for i in init_visible() {
+        for i in IMPORTS.iter().filter(|i| i.init_visible) {
             assert!(
                 !io.contains(&i.group),
                 "unconditional initialization metadata grants a runtime capability via {}",

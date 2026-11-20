@@ -696,7 +696,7 @@ fn real_zero_wall_backstop_reports_execution_wall_limit() {
 }
 
 async fn ended_real_guest_response(transport_failure: bool) {
-    let head = isoplane_abi::encode(&isoplane_abi::dispatch::ResponseHead {
+    let head = postcard::to_allocvec(&isoplane_abi::dispatch::ResponseHead {
         status: 200,
         headers: vec![],
         body: b"open".to_vec(),

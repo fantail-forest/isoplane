@@ -43,13 +43,6 @@ impl Disposition {
     pub fn is_delegated(&self) -> bool {
         matches!(self, Disposition::Delegate(_))
     }
-    /// `None` for both `TrapOnCall` and [`Delegation::Nothing`].
-    pub fn capability(&self) -> Option<&'static str> {
-        match self {
-            Disposition::Delegate(Delegation::Cap(c)) => Some(c),
-            _ => None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -86,20 +79,11 @@ pub const CLI_TERM_OUT: &str = "wasi:cli/terminal-output@0.2.0";
 pub const CLI_TERM_STDIN: &str = "wasi:cli/terminal-stdin@0.2.0";
 pub const CLI_TERM_STDOUT: &str = "wasi:cli/terminal-stdout@0.2.0";
 pub const CLI_TERM_STDERR: &str = "wasi:cli/terminal-stderr@0.2.0";
-pub const MONOTONIC: &str = "wasi:clocks/monotonic-clock@0.2.0";
 pub const WALL_CLOCK: &str = "wasi:clocks/wall-clock@0.2.0";
-pub const IO_ERROR: &str = "wasi:io/error@0.2.0";
-pub const IO_POLL: &str = "wasi:io/poll@0.2.0";
 pub const IO_STREAMS: &str = "wasi:io/streams@0.2.0";
 pub const FS_TYPES: &str = "wasi:filesystem/types@0.2.0";
 pub const FS_PREOPENS: &str = "wasi:filesystem/preopens@0.2.0";
 pub const RANDOM: &str = "wasi:random/random@0.2.0";
-
-/// The interfaces that carry a delegated entry, named for the init sandbox's
-/// adapter so it matches on the strings this table is built from.
-pub const MONOTONIC_CLOCK: &str = MONOTONIC;
-pub const CLI_ENVIRONMENT: &str = CLI_ENV;
-pub const RANDOM_RANDOM: &str = RANDOM;
 
 const ENTROPY: Delegation = Delegation::Cap("entropy_fill");
 
@@ -276,21 +260,6 @@ pub fn lookup(module: &str, func: &str) -> Option<&'static PalDef> {
         .find(|p| p.module == module && p.func == func)
 }
 
-pub fn delegated() -> impl Iterator<Item = &'static PalDef> {
-    PAL_IMPORTS.iter().filter(|p| p.disposition.is_delegated())
-}
-
-/// The distinct `isoplane:platform` capabilities reachable through the adapter.
-pub fn delegation_targets() -> Vec<&'static str> {
-    let mut v: Vec<&'static str> = PAL_IMPORTS
-        .iter()
-        .filter_map(|p| p.disposition.capability())
-        .collect();
-    v.sort_unstable();
-    v.dedup();
-    v
-}
-
 /// The quantum of the delegated monotonic clock, and what `resolution` reports.
 pub const CLOCK_QUANTUM_NS: i64 = 1_000_000;
 
@@ -301,6 +270,18 @@ pub const MAX_ENTROPY_BYTES: u64 = crate::imports::MAX_OUT_BUFFER_BYTES as u64;
 mod tests {
     use super::*;
     use crate::imports;
+
+    fn delegated() -> impl Iterator<Item = &'static PalDef> {
+        PAL_IMPORTS.iter().filter(|p| p.disposition.is_delegated())
+    }
+
+    /// The platform import a delegated entry draws on, when it draws on one.
+    fn capability(p: &PalDef) -> Option<&'static str> {
+        match p.disposition {
+            Disposition::Delegate(Delegation::Cap(capability)) => Some(capability),
+            Disposition::Delegate(Delegation::Nothing) | Disposition::TrapOnCall => None,
+        }
+    }
 
     #[test]
     fn the_native_clock_reports_the_host_clock_quantum() {
@@ -343,7 +324,7 @@ mod tests {
     #[test]
     fn every_delegation_targets_a_real_platform_capability() {
         for p in delegated() {
-            if let Some(cap) = p.disposition.capability() {
+            if let Some(cap) = capability(p) {
                 assert!(
                     imports::lookup(cap).is_some(),
                     "{} delegates to `{cap}`, which is not in IMPORTS",
@@ -358,7 +339,7 @@ mod tests {
         use imports::Group::*;
         let forbidden = [Http, Socket, Response, Ctx];
         for p in delegated() {
-            let Some(cap) = p.disposition.capability() else {
+            let Some(cap) = capability(p) else {
                 continue;
             };
             let def = imports::lookup(cap).expect("every delegation target is in IMPORTS");
@@ -378,8 +359,11 @@ mod tests {
 
     #[test]
     fn the_adapter_draws_only_on_declared_platform_capabilities() {
+        let mut targets: Vec<&'static str> = PAL_IMPORTS.iter().filter_map(capability).collect();
+        targets.sort_unstable();
+        targets.dedup();
         assert_eq!(
-            delegation_targets(),
+            targets,
             vec![
                 "clock_now_coarse",
                 "entropy_fill",
