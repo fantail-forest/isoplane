@@ -42,7 +42,7 @@ const T: Duration = Duration::from_secs(10);
 
 #[test]
 fn sequential_dispatches_are_counted_and_pay_for_one_activation() {
-    let r = rig(CellConfig::for_test("metrics"));
+    let r = rig(isoplane_harness::fakes::cell_config("metrics"));
     let act = Arc::new(FakeActivator::named(
         ModuleId::new("m", "v1"),
         FakeBehaviour::done(),
@@ -87,7 +87,7 @@ fn sequential_dispatches_are_counted_and_pay_for_one_activation() {
 
 #[test]
 fn each_application_is_charged_for_its_own_dispatches() {
-    let r = rig(CellConfig::for_test("occupancy"));
+    let r = rig(isoplane_harness::fakes::cell_config("occupancy"));
     let app = |name: &str, slice_occupancy_ns: u64| {
         let mut behaviour = FakeBehaviour::done();
         behaviour.slice_occupancy = Some(Duration::from_nanos(slice_occupancy_ns));

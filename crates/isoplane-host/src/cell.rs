@@ -149,17 +149,6 @@ impl CellConfig {
         );
         Ok(())
     }
-
-    /// A small deterministic cell for tests.
-    pub fn for_test(name: &str) -> Self {
-        Self {
-            name: name.into(),
-            exec_threads: 4,
-            reactor_threads: 2,
-            sweep_interval_ms: 25,
-            ..Default::default()
-        }
-    }
 }
 
 /// Shards for `Cell::active`, above the default pool size so two threads are

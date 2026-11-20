@@ -9,7 +9,7 @@ use isoplane_harness::fakes::{FakeActivator, FakeBehaviour};
 use isoplane_hibernate::snapshot::{
     SnapshotBytes, SnapshotError, SnapshotReservation, SnapshotStorage,
 };
-use isoplane_host::cell::{Cell, CellConfig, Target};
+use isoplane_host::cell::{Cell, Target};
 use isoplane_host::Activator;
 
 pub mod common;
@@ -56,7 +56,7 @@ fn exhausted_snapshot_capacity_refuses_admission_before_guest_activation() {
 
     let (services, _) = common::services_resolving("93.184.216.34:80");
     let cell = Cell::with_snapshot_storage(
-        CellConfig::for_test("snapshot-admission"),
+        isoplane_harness::fakes::cell_config("snapshot-admission"),
         services,
         Arc::new(ExhaustedStorage),
     )

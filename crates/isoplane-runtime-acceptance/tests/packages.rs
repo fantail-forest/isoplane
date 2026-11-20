@@ -509,7 +509,7 @@ async fn an_aspnet_request_that_calls_out_through_a_factory_client_leaves_its_in
         &product,
         &request,
         &module,
-        isoplane_host::CellConfig::for_test("http-pooling"),
+        isoplane_harness::fakes::cell_config("http-pooling"),
         services.clone(),
     );
     let mut instance = None;
@@ -1010,7 +1010,7 @@ fn serving_cell(
         module,
         isoplane_host::CellConfig {
             background_idle_limit_ms,
-            ..isoplane_host::CellConfig::for_test("timer-wakes")
+            ..isoplane_harness::fakes::cell_config("timer-wakes")
         },
         services,
     )

@@ -59,7 +59,7 @@ fn dispatch_growth(
         let (services, _) = common::services_resolving("93.184.216.34:80");
         let cell = isoplane_host::cell::Cell::with_snapshot_storage(
             CellConfig {
-                ..CellConfig::for_test("memory-budget")
+                ..isoplane_harness::fakes::cell_config("memory-budget")
             },
             services,
             Arc::new(
@@ -168,7 +168,7 @@ fn a_template_larger_than_the_application_budget_is_refused_at_activation() {
         let template = engine
             .load_template(&wasm)
             .expect("template fits the engine capacity");
-        let context = Arc::new(isoplane_host::bindings::InstanceCtx::for_test(
+        let context = Arc::new(isoplane_harness::fakes::instance_ctx(
             isoplane_host::InstanceId(1),
             isoplane_abi::config::Limits::default(),
         ));
@@ -186,8 +186,10 @@ fn a_template_larger_than_the_application_budget_is_refused_at_activation() {
 
 #[test]
 fn a_dispatch_does_not_join_an_instance_at_its_memory_limit() {
-    let (cell, _) =
-        common::rig_resolving(CellConfig::for_test("memory-retiring"), "93.184.216.34:80");
+    let (cell, _) = common::rig_resolving(
+        isoplane_harness::fakes::cell_config("memory-retiring"),
+        "93.184.216.34:80",
+    );
     // Activation at the soft limit still serves a request, but has no join headroom.
     let mut behaviour =
         isoplane_harness::fakes::FakeBehaviour::program([isoplane_harness::fakes::Step::Park {

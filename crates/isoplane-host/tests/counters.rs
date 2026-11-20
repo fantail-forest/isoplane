@@ -86,7 +86,7 @@ fn app(r: &Rig, name: &str, behaviour: FakeBehaviour) -> ModuleId {
 fn a_hard_kill_is_not_counted_as_a_trap() {
     let r = rig(CellConfig {
         exec_threads: 4,
-        ..CellConfig::for_test("traps")
+        ..isoplane_harness::fakes::cell_config("traps")
     });
     let trapper = app(
         &r,
@@ -139,7 +139,7 @@ fn a_hard_kill_is_not_counted_as_a_trap() {
 
 #[test]
 fn a_trapped_instance_is_evicted() {
-    let r = rig(CellConfig::for_test("trap-eviction"));
+    let r = rig(isoplane_harness::fakes::cell_config("trap-eviction"));
     let module = app(
         &r,
         "trapper",
@@ -179,7 +179,7 @@ fn a_trapped_instance_is_evicted() {
 /// result.
 #[test]
 fn a_completion_for_an_instance_that_is_gone_is_counted_rather_than_dropped_in_silence() {
-    let r = rig(CellConfig::for_test("wake-dropped"));
+    let r = rig(isoplane_harness::fakes::cell_config("wake-dropped"));
     // Never resident, so the wake router cannot reach it.
     let ghost = isoplane_host::InstanceId::alloc();
     let fid = r
@@ -214,7 +214,7 @@ fn a_completion_for_an_instance_that_is_gone_is_counted_rather_than_dropped_in_s
 /// count.
 #[test]
 fn a_deliverable_completion_moves_wakes_and_not_the_drop_count() {
-    let r = rig(CellConfig::for_test("wake-delivered"));
+    let r = rig(isoplane_harness::fakes::cell_config("wake-delivered"));
     let module = app(
         &r,
         "parker",

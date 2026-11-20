@@ -192,7 +192,7 @@ impl Rig {
                     handler_after_ms: 0,
                     ..Default::default()
                 },
-                ..CellConfig::for_test("local-snapshot")
+                ..isoplane_harness::fakes::cell_config("local-snapshot")
             },
             Arc::new(Services {
                 egress,

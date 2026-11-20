@@ -250,7 +250,7 @@ pub(super) mod cell_tests {
 
     #[test]
     fn the_sweeper_warms_a_template_only_while_its_module_has_instances() {
-        let cell = cell(CellConfig::for_test("template-warm"));
+        let cell = cell(crate::fakes::cell_config("template-warm"));
         let act = Arc::new(FakeActivator::named(
             ModuleId::new("warm", "v1"),
             FakeBehaviour::done(),
@@ -292,7 +292,7 @@ pub(super) mod cell_tests {
     fn a_panicking_dispatch_does_not_take_the_execution_thread_with_it() {
         let cell = cell(CellConfig {
             exec_threads: 1,
-            ..CellConfig::for_test("panic-dispatch")
+            ..crate::fakes::cell_config("panic-dispatch")
         });
 
         let bad = ModuleId::new("bad", "v1");
@@ -364,7 +364,7 @@ pub(super) mod cell_tests {
         use crate::bindings::request_body::RequestBodyScope;
         let cell = cell(CellConfig {
             exec_threads: 0,
-            ..CellConfig::for_test("busy-upload")
+            ..crate::fakes::cell_config("busy-upload")
         });
         let act = Arc::new(FakeActivator::new(FakeBehaviour::done()));
         let module = act.module().clone();
@@ -428,7 +428,7 @@ pub(super) mod cell_tests {
     fn a_discarded_idle_instance_leaves_the_index_when_acquisition_skips_it() {
         let cell = cell(CellConfig {
             exec_threads: 0,
-            ..CellConfig::for_test("discarded-idle-cleanup")
+            ..crate::fakes::cell_config("discarded-idle-cleanup")
         });
         let act = Arc::new(FakeActivator::new(FakeBehaviour::done()));
         let module = act.module().clone();
@@ -556,7 +556,7 @@ pub(super) mod cell_tests {
     fn concurrent_io_wakes_restore_a_hibernated_dispatch_once() {
         let cell = cell(CellConfig {
             exec_threads: 0,
-            ..CellConfig::for_test("restoring-io")
+            ..crate::fakes::cell_config("restoring-io")
         });
         let events = super::super::completion::test_events::Events::default();
         let clock = Arc::new(AtomicU64::new(100));
@@ -622,7 +622,7 @@ pub(super) mod cell_tests {
         let _trace = events.install();
         let cell = cell(CellConfig {
             exec_threads: 0,
-            ..CellConfig::for_test("missing-checkpoint")
+            ..crate::fakes::cell_config("missing-checkpoint")
         });
         let (slot, response, future) = hibernated_dispatch(&cell);
         slot.ctx.snapshot.lock().take();
@@ -678,7 +678,7 @@ pub(super) mod cell_tests {
         const LIVE: u64 = 900;
         let cell = cell(CellConfig {
             exec_threads: 2,
-            ..CellConfig::for_test("stale-panic")
+            ..crate::fakes::cell_config("stale-panic")
         });
         let m = app(
             &cell,
@@ -738,7 +738,7 @@ pub(super) mod cell_tests {
     #[tokio::test]
     async fn a_streaming_dispatch_records_every_hot_slice_once_at_final_completion() {
         let events = Events::default();
-        let cell = cell(CellConfig::for_test("stream-occupancy"));
+        let cell = cell(crate::fakes::cell_config("stream-occupancy"));
         let mut behaviour = FakeBehaviour::program([
             Step::Park {
                 imports: vec![("clock_deadline_in", 0)],
@@ -835,7 +835,7 @@ pub(super) mod cell_tests {
 
     #[tokio::test]
     async fn a_client_going_away_leaves_the_other_dispatches_on_its_instance_running() {
-        let cell = cell(CellConfig::for_test("client-gone"));
+        let cell = cell(crate::fakes::cell_config("client-gone"));
         let module = app(
             &cell,
             "client-gone",
@@ -932,7 +932,7 @@ pub(super) mod cell_tests {
 
     #[test]
     fn a_dispatch_joins_only_an_instance_with_nothing_waiting_for_its_thread() {
-        let cell = cell(CellConfig::for_test("join-rule"));
+        let cell = cell(crate::fakes::cell_config("join-rule"));
         let module = app(
             &cell,
             "join-rule",

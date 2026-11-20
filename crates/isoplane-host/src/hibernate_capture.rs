@@ -323,7 +323,7 @@ mod tests {
         let pool = InstancePool::new(act.clone(), 4);
         let (slot, _) = pool
             .acquire(|id| {
-                Arc::new(crate::bindings::InstanceCtx::for_test(
+                Arc::new(crate::fakes::instance_ctx(
                     id,
                     isoplane_abi::config::Limits::default(),
                 ))

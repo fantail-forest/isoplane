@@ -35,7 +35,7 @@ fn cleanup_cell(
     operation: &str,
 ) -> (Arc<Cell>, ModuleId) {
     cleanup_cell_with(
-        CellConfig::for_test("managed-cleanup"),
+        isoplane_harness::fakes::cell_config("managed-cleanup"),
         runtime,
         work,
         operation,
@@ -678,8 +678,10 @@ fn upload_cell() -> (Arc<Cell>, ModuleId) {
         .with_application_files(managed::files("isoplane_guest_dotnet_upload"))
         .expect("the upload fixture must bind its application files");
     let activator = EngineActivator::new(engine.clone(), template, module.clone());
-    let (cell, _) =
-        common::rig_resolving(CellConfig::for_test("managed-upload"), "93.184.216.34:80");
+    let (cell, _) = common::rig_resolving(
+        isoplane_harness::fakes::cell_config("managed-upload"),
+        "93.184.216.34:80",
+    );
     cell.register_module(
         "tenant",
         Arc::new(activator),
