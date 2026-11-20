@@ -111,7 +111,7 @@ fn configured_engine_resource_limits_reach_the_execution_engine() {
     );
 }
 
-impl super::RealCells {
+impl super::NodeCells {
     pub(crate) async fn install_prepared(
         &self,
         app: &str,

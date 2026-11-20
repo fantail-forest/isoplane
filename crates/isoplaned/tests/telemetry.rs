@@ -93,7 +93,7 @@ async fn an_actual_http_guest_completion_crosses_the_otlp_boundary() {
             (i64.shl (i64.extend_i32_u (call $response (i32.const 1024) (i32.const {}))) (i64.const 32)))
         )"#, head.len())).unwrap();
     let manifest: AppManifest = toml::from_str("name = 'quotes'").unwrap();
-    node.real
+    node.execution
         .as_ref()
         .deploy_locally(
             "quotes",
@@ -152,7 +152,7 @@ async fn an_actual_http_guest_completion_crosses_the_otlp_boundary() {
     server.await.unwrap();
     tokio::task::spawn_blocking(move || {
         let cell = node
-            .real
+            .execution
             .as_ref()
             .cells()
             .iter()

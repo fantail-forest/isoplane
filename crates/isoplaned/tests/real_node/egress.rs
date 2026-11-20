@@ -79,7 +79,7 @@ async fn node_for(destination: SocketAddr, policy: Option<Arc<dyn DestinationPol
         None => Node::build(configuration),
     }
     .expect("the real node must assemble");
-    node.real
+    node.execution
         .as_ref()
         .deploy_locally(
             "quotes",
@@ -111,7 +111,7 @@ async fn a_default_node_refuses_private_outbound_destinations() {
     );
     let denied: u64 = rig
         .node
-        .real
+        .execution
         .as_ref()
         .cells()
         .iter()
@@ -181,7 +181,7 @@ async fn a_managed_network_stream_exchanges_partial_payloads_through_a_real_node
     let node =
         Node::build_with_destinations(config(directory.path()), Arc::new(OwnedEndpoint(address)))
             .expect("the real native stream node must assemble");
-    node.real
+    node.execution
         .as_ref()
         .deploy_locally(
             "quotes",
@@ -194,7 +194,7 @@ async fn a_managed_network_stream_exchanges_partial_payloads_through_a_real_node
         .await
         .expect("the ordinary NetworkStream fixture must deploy");
     let rig = serve(node, directory).await;
-    let cell = rig.node.real.as_ref().cells()[0].clone();
+    let cell = rig.node.execution.as_ref().cells()[0].clone();
     let proxy = rig.proxy;
     let request = tokio::spawn(async move {
         get(

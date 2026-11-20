@@ -1,39 +1,18 @@
-//! `misbehaver` — hostile and broken routes, for the kill tests.
+//! `misbehaver`: hostile and broken routes for the budget, memory and trap
+//! tests.
 //!
-//! Every route here is supposed to die. What matters is *how*:
-//!
-//! | route | what it does | expected platform response |
+//! | route | what it does | what the tests expect |
 //! |---|---|---|
-//! | `/spin` | infinite loop, never awaits | **hard** kill at B+G; no unwinding; instance discarded |
-//! | `/cooperative` | the same loop in chunks, awaiting between them | **clean** kill inside grace: `Drop` runs, slot reusable |
-//! | `/gc_pin` | spins with the *unsafe-to-trap* bit pinned | **hard** kill at B+G anyway — a pinned bit buys exactly G |
-//! | `/sync_over_async` | polls a host future in a loop without returning | **can never** be woken, so it dies at the cap |
-//! | `/alloc_bomb` | grows memory past the configured memory ceiling | allocation fails -> trap (the configured memory ceiling, and validator rule V3) |
+//! | `/spin` | infinite loop, never awaits | trapped when its grace ends; no unwinding; instance discarded |
+//! | `/cooperative` | the same loop in chunks, awaiting between them | returns inside its grace: `Drop` runs and the instance is reusable |
+//! | `/gc_pin` | spins with the *unsafe-to-trap* bit pinned | trapped when its grace ends all the same |
+//! | `/sync_over_async` | polls a host future in a loop without returning | can never be woken, since a wake needs a return to the host; ends like `/spin` |
+//! | `/alloc_bomb` | grows memory past the configured memory ceiling | the allocation fails and the guest traps |
 //! | `/trap` | explicit `unreachable` | trapped; instance discarded, never retried on the same memory |
 //! | `/ok` | returns 200 | the control: the module itself is fine |
 //!
-//! The blocking residue is meant to be *self-punishing*: a spinner
-//! occupies only its own execution-pool thread, the kernel preempts it, and
-//! the epoch-delivered budget kill ends it. `/sync_over_async` is the sharper
-//! case -- it is not merely slow, it is **provably unable to make progress**,
-//! because the only way to receive a wake is to return to the host, and it
-//! never does. That is the whole of "sync-over-async can never complete".
-//!
-//! # This module is the negative control for the two-phase kill
-//!
-//! The platform offers a grace window and expects clean kills to be the
-//! common case. A platform can make that look true by weakening the
-//! hard path -- extending deadlines, forgiving overage, treating a spin as a
-//! slow return. `/spin` exists so that it cannot: it is genuinely
-//! uncooperative, it has no await point, and if the hard trap at exactly B+G
-//! ever stops firing there is nothing left to catch it. `/cooperative` is the
-//! same loop with an await between chunks, so the ONLY difference between a
-//! clean kill and a hard one is guest behaviour.
-//!
-//! `/gc_pin` closes the remaining hole. A runtime layer may defer grace while
-//! its *unsafe-to-trap* bit is set, and a deferral that could be held
-//! indefinitely would be an escape hatch from the budget itself. This route
-//! pins the bit and spins; it must still die at B+G.
+//! `/spin` and `/cooperative` run the same loop, so the await between chunks
+//! is the only difference between the two outcomes.
 
 use core::future::Future;
 use core::hint::black_box;
