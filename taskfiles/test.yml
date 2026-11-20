@@ -195,6 +195,8 @@ tasks:
   editor:prepared:
     internal: true
     deps: [':fixtures:editor:prepared', ':cli:stage', editor:environment, editor:unit, debugger:library]
+    vars:
+      SUITES: '{{.CLI_ARGS | default "suite launch"}}'
     env:
       # The debug adapter the editor starts loads the debug protocol library from here.
       ISOPLANE_HOME: '{{.TEST_HOME}}'
@@ -202,7 +204,9 @@ tasks:
       ISOPLANE_TEST_CLI: '{{env "ISOPLANE_TEST_CLI" | default .CLI}}'
       ISOPLANE_TEST_SKIP_PUBLICATION_FLUSH: '1'
     cmds:
-      - '{{if eq OS "linux"}}xvfb-run -a {{end}}npm --prefix tools/vscode-isoplane test -- {{.CLI_ARGS | default "launch"}}'
+      # Without a suite named after --, both run: the adapter's registration and cancellation, then a launched application.
+      - for: { var: SUITES }
+        cmd: '{{if eq OS "linux"}}xvfb-run -a {{end}}npm --prefix tools/vscode-isoplane test -- {{.ITEM}}'
 
   editor:unit:
     desc: Check editor Hot Reload scheduling without launching VS Code
