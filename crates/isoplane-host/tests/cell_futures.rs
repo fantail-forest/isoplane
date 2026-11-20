@@ -47,7 +47,9 @@ const PARK_MS: u64 = 600_000;
 
 #[test]
 fn the_pending_futures_cap_refuses_the_extra_operation_and_keeps_the_instance_serving() {
-    let r = rig(CellConfig::for_test("independent-app-limits"));
+    let r = rig(isoplane_harness::fakes::cell_config(
+        "independent-app-limits",
+    ));
     let limit = 6;
 
     let act = Arc::new(FakeActivator::named(
@@ -171,7 +173,7 @@ fn the_pending_futures_cap_refuses_the_extra_operation_and_keeps_the_instance_se
 
 #[test]
 fn response_completion_hands_work_to_background_without_holding_the_request_open() {
-    let r = rig(CellConfig::for_test("handover"));
+    let r = rig(isoplane_harness::fakes::cell_config("handover"));
     let act = Arc::new(FakeActivator::named(
         ModuleId::new("handover", "v1"),
         FakeBehaviour::program([
@@ -265,7 +267,7 @@ fn response_completion_hands_work_to_background_without_holding_the_request_open
 
 #[test]
 fn entering_grace_wakes_the_dispatch_cancellation_future() {
-    let rig = rig(CellConfig::for_test("cancellation"));
+    let rig = rig(isoplane_harness::fakes::cell_config("cancellation"));
     let activator = Arc::new(FakeActivator::named(
         ModuleId::new("cancellation", "v1"),
         FakeBehaviour::program([
@@ -297,7 +299,7 @@ fn entering_grace_wakes_the_dispatch_cancellation_future() {
 
 #[test]
 fn operator_budgets_reach_the_dispatch_and_pending_future_table() {
-    let r = rig(CellConfig::for_test("operator-budgets"));
+    let r = rig(isoplane_harness::fakes::cell_config("operator-budgets"));
     let act = Arc::new(FakeActivator::named(
         ModuleId::new("bounded", "v1"),
         FakeBehaviour::program([Step::Park {

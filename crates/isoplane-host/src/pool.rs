@@ -362,7 +362,7 @@ mod tests {
     use isoplane_engine::Completion;
 
     fn ctx_for(id: InstanceId) -> Arc<InstanceCtx> {
-        Arc::new(InstanceCtx::for_test(
+        Arc::new(crate::fakes::instance_ctx(
             id,
             isoplane_abi::config::Limits::default(),
         ))

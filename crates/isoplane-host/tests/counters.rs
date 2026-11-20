@@ -84,7 +84,7 @@ fn app(r: &Rig, name: &str, behaviour: FakeBehaviour) -> ModuleId {
 fn a_hard_kill_is_not_counted_as_a_trap() {
     let r = rig(CellConfig {
         exec_threads: 4,
-        ..CellConfig::for_test("traps")
+        ..isoplane_harness::fakes::cell_config("traps")
     });
     let trapper = app(
         &r,
@@ -146,7 +146,7 @@ fn a_hard_kill_is_not_counted_as_a_trap() {
 
 #[test]
 fn a_trapped_instance_is_evicted() {
-    let r = rig(CellConfig::for_test("trap-eviction"));
+    let r = rig(isoplane_harness::fakes::cell_config("trap-eviction"));
     let module = app(
         &r,
         "trapper",

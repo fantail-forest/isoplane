@@ -183,7 +183,7 @@ impl Output {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bindings::{CellRuntime, InstanceCtx, Services, WakeSink};
+    use crate::bindings::{CellRuntime, Services, WakeSink};
     use crate::egress::{DestinationPolicy, HostEgressPolicy, Resolver};
     use crate::fakes::FakeFetcher;
 
@@ -255,7 +255,7 @@ mod tests {
             .established();
         let wake = Arc::new(Wake(tokio::sync::Notify::new()));
         let mut context =
-            InstanceCtx::for_test(InstanceId(83), isoplane_abi::config::Limits::default());
+            crate::fakes::instance_ctx(InstanceId(83), isoplane_abi::config::Limits::default());
         context.rt = Some(Arc::new(CellRuntime {
             runtime_configuration: Default::default(),
             services: Arc::new(Services {

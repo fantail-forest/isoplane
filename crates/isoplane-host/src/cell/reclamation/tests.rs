@@ -145,7 +145,7 @@ fn test_cell(storage: Arc<Storage>, handler_after_ms: u64) -> Arc<Cell> {
                 handler_after_ms,
                 ..Default::default()
             },
-            ..CellConfig::for_test("reclamation")
+            ..crate::fakes::cell_config("reclamation")
         },
         services(),
         storage,

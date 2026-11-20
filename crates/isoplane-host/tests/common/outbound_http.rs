@@ -225,7 +225,7 @@ pub fn cell(
 ) {
     let module = activator.module().clone();
     let cell = isoplane_host::cell::Cell::new(
-        isoplane_host::cell::CellConfig::for_test("outbound-http"),
+        isoplane_harness::fakes::cell_config("outbound-http"),
         services,
     )
     .expect("the HTTP cell must start");

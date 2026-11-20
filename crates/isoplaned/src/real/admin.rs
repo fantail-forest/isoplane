@@ -136,7 +136,7 @@ mod tests {
             crate::config::NodeConfig::from_toml(include_str!("../../tests/fixtures/node.toml"))
                 .expect("small test engine");
         config.data_dir = directory.path().to_owned();
-        config.host = isoplane_host::CellConfig::for_test("metrics");
+        config.host = isoplane_harness::fakes::cell_config("metrics");
         config.host.breaker.kill_threshold = 1;
         let cells = RealCells::build_with_destinations(
             &config,

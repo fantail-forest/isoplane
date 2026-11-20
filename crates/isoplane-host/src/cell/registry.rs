@@ -562,7 +562,7 @@ mod tests {
         let cell = Cell::build(
             CellConfig {
                 exec_threads: 1,
-                ..CellConfig::for_test("replacement")
+                ..crate::fakes::cell_config("replacement")
             },
             crate::cell::pool::cell_tests::services(),
             Arc::new(
@@ -609,7 +609,7 @@ mod tests {
 
     #[test]
     fn application_admission_counts_versions_and_releases_discarded_instances() {
-        let cell = cell(CellConfig::for_test("app-cap"));
+        let cell = cell(crate::fakes::cell_config("app-cap"));
         let register = |tenant: &str, app: &str, version: &str| {
             let module = ModuleId::new(app, version);
             let mut manifest = manifest(app);
@@ -655,7 +655,7 @@ mod tests {
 
     #[test]
     fn a_live_version_can_replace_an_idle_sibling_at_the_application_cap() {
-        let cell = cell(CellConfig::for_test("split-cap"));
+        let cell = cell(crate::fakes::cell_config("split-cap"));
         let register = |version| {
             let module = ModuleId::new("app", version);
             let mut limits = manifest("app");
@@ -687,7 +687,7 @@ mod tests {
 
     #[test]
     fn a_request_at_the_application_instance_cap_receives_service_unavailable() {
-        let cell = cell(CellConfig::for_test("app-refusal"));
+        let cell = cell(crate::fakes::cell_config("app-refusal"));
         let module = ModuleId::new("app", "v1");
         let mut manifest = manifest("app");
         manifest.resource_limits.instances_per_application = Some(0);

@@ -337,8 +337,10 @@ async fn cancelling_a_future_through_the_import_cannot_affect_another_instance()
         payload: &[],
         scalars: [60_000, 0, 0],
     });
-    let mut other_context =
-        InstanceCtx::for_test(InstanceId(2), isoplane_abi::config::Limits::default());
+    let mut other_context = isoplane_harness::fakes::instance_ctx(
+        InstanceId(2),
+        isoplane_abi::config::Limits::default(),
+    );
     other_context.rt = owner.ctx.rt.clone();
     let mut other = CellBindings::new(Arc::new(other_context));
     let cancel = || ImportCall {

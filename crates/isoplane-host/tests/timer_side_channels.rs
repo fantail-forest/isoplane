@@ -10,7 +10,7 @@ mod common;
 
 use isoplane_abi::dispatch::HttpRequest;
 use isoplane_engine::{Completion, EngineConfig, IsoplaneEngine};
-use isoplane_host::cell::{CellConfig, DispatchResult, Target};
+use isoplane_host::cell::{DispatchResult, Target};
 use isoplane_host::{EngineActivator, ModuleId};
 use std::sync::Arc;
 use std::time::Duration;
@@ -55,7 +55,7 @@ fn dispatch(handle: &str, wake: &str) -> DispatchResult {
             .expect("a module importing poll_call must link"),
     );
     let (cell, _) = common::rig_resolving(
-        CellConfig::for_test("timer-side-channels"),
+        isoplane_harness::fakes::cell_config("timer-side-channels"),
         "93.184.216.34:80",
     );
     cell.register_module("owner", activator, common::manifest("timer-side-channels"))

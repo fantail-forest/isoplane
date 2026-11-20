@@ -12,7 +12,7 @@ fn pool() -> InstancePool {
 
 fn acquire(pool: &InstancePool) -> Arc<Slot> {
     pool.acquire(|id| {
-        Arc::new(InstanceCtx::for_test(
+        Arc::new(crate::fakes::instance_ctx(
             id,
             isoplane_abi::config::Limits::default(),
         ))

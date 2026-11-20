@@ -218,7 +218,7 @@ mod tests {
             let _trace = events.install();
             let cell = cell(CellConfig {
                 exec_threads: 0,
-                ..CellConfig::for_test("background-outcome")
+                ..crate::fakes::cell_config("background-outcome")
             });
             let module = app(
                 &cell,

@@ -493,7 +493,7 @@ mod tests {
     }
 
     pub(super) fn ctx() -> Arc<InstanceCtx> {
-        Arc::new(InstanceCtx::for_test(
+        Arc::new(crate::fakes::instance_ctx(
             InstanceId(1),
             isoplane_abi::config::Limits::default(),
         ))
@@ -641,11 +641,11 @@ mod tests {
 
     #[test]
     fn independent_contexts_receive_distinct_live_entropy_draws() {
-        let a = Arc::new(InstanceCtx::for_test(
+        let a = Arc::new(crate::fakes::instance_ctx(
             InstanceId(1),
             isoplane_abi::config::Limits::default(),
         ));
-        let z = Arc::new(InstanceCtx::for_test(
+        let z = Arc::new(crate::fakes::instance_ctx(
             InstanceId(2),
             isoplane_abi::config::Limits::default(),
         ));

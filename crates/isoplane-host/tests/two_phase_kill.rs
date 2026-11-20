@@ -14,7 +14,7 @@ use isoplane_engine::{Completion, EngineConfig, IsoplaneEngine};
 
 use isoplane_harness::fakes::*;
 use isoplane_host::activator::EngineActivator;
-use isoplane_host::cell::{Cell, CellConfig, DispatchResult, Services, Target};
+use isoplane_host::cell::{Cell, DispatchResult, Services, Target};
 use isoplane_host::egress::HostEgressPolicy;
 use isoplane_host::{ModuleId, Resolver};
 use isoplane_test_support::wait_for;
@@ -81,7 +81,11 @@ fn rig() -> (Arc<Cell>, ModuleId) {
 fn cell_with(act: Arc<dyn isoplane_host::Activator>) -> (Arc<Cell>, ModuleId) {
     isoplane_harness::logging::LogCapture::global();
     let module = act.module().clone();
-    let cell = Cell::new(CellConfig::for_test("isoplane-kill"), services()).expect("a cell starts");
+    let cell = Cell::new(
+        isoplane_harness::fakes::cell_config("isoplane-kill"),
+        services(),
+    )
+    .expect("a cell starts");
     cell.register_module("acme", act, manifest("misbehaver"))
         .expect("register");
     (cell, module)

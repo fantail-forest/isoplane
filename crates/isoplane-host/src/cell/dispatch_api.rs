@@ -413,7 +413,7 @@ mod tests {
     async fn http_waits_through_long_parks_and_arms_idle_cleanup_on_completion() {
         let cell = cell(CellConfig {
             exec_threads: 0,
-            ..CellConfig::for_test("long-http")
+            ..crate::fakes::cell_config("long-http")
         });
         let module = app(
             &cell,

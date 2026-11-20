@@ -41,7 +41,7 @@ const T: Duration = Duration::from_secs(10);
 
 #[test]
 fn the_metrics_endpoint_decomposes_the_lifecycle() {
-    let r = rig(CellConfig::for_test("metrics"));
+    let r = rig(isoplane_harness::fakes::cell_config("metrics"));
     let act = Arc::new(FakeActivator::named(
         ModuleId::new("m", "v1"),
         FakeBehaviour::done(),
@@ -103,7 +103,7 @@ fn the_metrics_endpoint_decomposes_the_lifecycle() {
 
 #[test]
 fn logging_is_charged_to_the_dispatch_that_logs() {
-    let r = rig(CellConfig::for_test("log-occupancy"));
+    let r = rig(isoplane_harness::fakes::cell_config("log-occupancy"));
 
     let quiet = Arc::new(FakeActivator::named(
         ModuleId::new("quiet-logger", "v1"),

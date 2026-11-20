@@ -37,7 +37,12 @@ async fn response(after_finish: &str) -> (Arc<Cell>, HttpExchange) {
 }
 
 async fn response_program(handle: &str, wake: &str) -> (Arc<Cell>, HttpExchange) {
-    response_program_with(CellConfig::for_test("response-boundary"), handle, wake).await
+    response_program_with(
+        isoplane_harness::fakes::cell_config("response-boundary"),
+        handle,
+        wake,
+    )
+    .await
 }
 
 async fn response_program_with(
@@ -210,7 +215,7 @@ async fn a_nonreturning_background_callback_is_killed_after_its_request_complete
     tokio::time::timeout(Duration::from_secs(10), async {
         let config = CellConfig {
             slice_wall_ms_cap: 50,
-            ..CellConfig::for_test("background-hard-stop")
+            ..isoplane_harness::fakes::cell_config("background-hard-stop")
         };
         let (cell, mut response) = response_program_with(config,
             "(call $finish (call $start (i32.const 1024) (i32.const {head_len}))) (drop (call $timer (i64.const 0))) (i64.const 1)",

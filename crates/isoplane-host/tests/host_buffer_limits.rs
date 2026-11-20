@@ -34,7 +34,7 @@ fn rig(program: &str, resources: GuestResourceLimits) -> (Arc<Cell>, ModuleId) {
     let (cell, _) = common::rig_resolving(
         CellConfig {
             guest_resources: resources,
-            ..CellConfig::for_test("host-buffers")
+            ..isoplane_harness::fakes::cell_config("host-buffers")
         },
         "93.184.216.34:80",
     );

@@ -190,7 +190,7 @@ mod tests {
     use super::build;
     use isoplane_engine::{HostBindings, ImportCall};
     use isoplane_harness::logging::LogCapture;
-    use isoplane_host::bindings::{CellBindings, InstanceCtx};
+    use isoplane_host::bindings::CellBindings;
     use std::sync::Arc;
 
     #[test]
@@ -207,7 +207,7 @@ mod tests {
                 "info".parse().unwrap(),
             )
             .expect("diagnostic subscriber");
-            let context = Arc::new(InstanceCtx::for_test(
+            let context = Arc::new(isoplane_harness::fakes::instance_ctx(
                 isoplane_host::InstanceId::alloc(),
                 Default::default(),
             ));

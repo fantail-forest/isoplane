@@ -232,21 +232,6 @@ impl InstanceCtx {
         }
     }
 
-    /// A context with no cell behind it, for tests of the slot machinery.
-    pub fn for_test(instance: InstanceId, limits: Limits) -> Self {
-        Self::new(
-            instance,
-            Tenancy {
-                module: ModuleId::new("test", "v1"),
-                tenant: "t".into(),
-                limits,
-                allowlist: None,
-            },
-            Arc::new(Meters::new()),
-            None,
-        )
-    }
-
     /// Freezes the coarse clock for one slice of `dispatch`, which the slice's
     /// imports then act on; a slice of a dispatch the instance has not seen
     /// begins it, and dispatch 0 is outside any dispatch. Monotonic per

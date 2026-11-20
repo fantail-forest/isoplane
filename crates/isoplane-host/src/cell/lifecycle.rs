@@ -1105,7 +1105,7 @@ mod tests {
         for limit in [1, 2] {
             let cell = cell(CellConfig {
                 exec_threads: 0,
-                ..CellConfig::for_test("join-fallback")
+                ..crate::fakes::cell_config("join-fallback")
             });
             let module = ModuleId::new("join-fallback", "v1");
             let mut manifest = manifest("join-fallback");
@@ -1178,7 +1178,7 @@ mod tests {
         let cell = Cell::build(
             CellConfig {
                 exec_threads: 1,
-                ..CellConfig::for_test("join-recheck")
+                ..crate::fakes::cell_config("join-recheck")
             },
             crate::cell::pool::cell_tests::services(),
             Arc::new(
@@ -1295,7 +1295,7 @@ mod tests {
         let cell = Cell::build(
             CellConfig {
                 exec_threads: 1,
-                ..CellConfig::for_test("bounded-wake")
+                ..crate::fakes::cell_config("bounded-wake")
             },
             crate::cell::pool::cell_tests::services(),
             Arc::new(
@@ -1373,7 +1373,7 @@ mod tests {
 
     #[test]
     fn only_request_dispatches_refresh_instance_demand() {
-        let cell = cell(CellConfig::for_test("demand-recency"));
+        let cell = cell(crate::fakes::cell_config("demand-recency"));
         let module = app(&cell, "demand-recency", FakeBehaviour::done());
         let mut request = http(1);
         request.now_ms = 10;
@@ -1414,7 +1414,7 @@ mod tests {
                 kill_threshold: 1,
                 ..Default::default()
             },
-            ..CellConfig::for_test("grace-breaker")
+            ..crate::fakes::cell_config("grace-breaker")
         });
         let module = app(
             &cell,

@@ -7,7 +7,7 @@ use isoplane_engine::prepared::PreparedIdentity;
 use isoplane_engine::{
     Completion, EngineConfig, HostBindings, ImportCall, IsoplaneEngine, OccupancyBudget,
 };
-use isoplane_host::cell::{CellConfig, Target};
+use isoplane_host::cell::Target;
 use isoplane_host::{EngineActivator, LifecycleTier, ModuleId};
 use std::sync::Arc;
 use std::time::Duration;
@@ -82,7 +82,10 @@ fn a_hibernated_guest_restores_its_delta_into_the_same_mapping() {
         .load_prepared_product_in(&product, &std::env::temp_dir())
         .expect("template");
     let module = ModuleId::new("retained", "v1");
-    let (cell, _) = common::rig_resolving(CellConfig::for_test("retained"), "93.184.216.34:80");
+    let (cell, _) = common::rig_resolving(
+        isoplane_harness::fakes::cell_config("retained"),
+        "93.184.216.34:80",
+    );
     cell.register_module(
         "owner",
         Arc::new(EngineActivator::new(engine, template, module.clone())),

@@ -295,7 +295,7 @@ fn unsupported(message: &'static str) -> DispatchOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CellBindings, InstanceCtx, InstanceId};
+    use crate::{CellBindings, InstanceId};
 
     use isoplane_abi::dispatch::{DispatchKind, HttpRequest, TraceContext};
 
@@ -343,7 +343,7 @@ mod tests {
     }
 
     fn activate(activator: DebugActivator) -> Box<dyn InstanceOps + Send> {
-        let ctx = Arc::new(InstanceCtx::for_test(
+        let ctx = Arc::new(crate::fakes::instance_ctx(
             InstanceId(1),
             isoplane_abi::config::Limits::default(),
         ));
@@ -541,7 +541,7 @@ mod tests {
 
     #[test]
     fn debug_bindings_preserve_the_application_memory_ceiling() {
-        let context = Arc::new(crate::bindings::InstanceCtx::for_test(
+        let context = Arc::new(crate::fakes::instance_ctx(
             crate::InstanceId(1),
             isoplane_abi::config::Limits::default(),
         ));

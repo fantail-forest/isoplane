@@ -50,7 +50,7 @@ const PARK_MS: u64 = 600_000;
 fn a_budget_killed_spinner_does_not_block_another_tenants_wake() {
     let r = rig(CellConfig {
         exec_threads: 1,
-        ..CellConfig::for_test("c7")
+        ..isoplane_harness::fakes::cell_config("c7")
     });
 
     let spinner = Arc::new(FakeActivator::named(
@@ -176,7 +176,7 @@ fn wake_once(r: &Rig, module: &ModuleId) {
 fn the_breaker_fails_a_repeat_offender_fast_without_entering_the_guest() {
     let r = rig(CellConfig {
         exec_threads: 2,
-        ..CellConfig::for_test("breaker")
+        ..isoplane_harness::fakes::cell_config("breaker")
     });
     let act = Arc::new(FakeActivator::named(
         ModuleId::new("hangs", "v1"),
@@ -256,7 +256,7 @@ fn many_dispatches_share_one_channel_and_stay_matchable() {
     let r = rig(CellConfig {
         exec_threads: 4,
         queue_depth_per_worker: 64,
-        ..CellConfig::for_test("share")
+        ..isoplane_harness::fakes::cell_config("share")
     });
 
     let slow = Arc::new(FakeActivator::named(
@@ -359,7 +359,7 @@ fn a_shed_submission_says_so_rather_than_going_quiet() {
     let r = rig(CellConfig {
         exec_threads: 1,
         queue_depth_per_worker: 1,
-        ..CellConfig::for_test("shed")
+        ..isoplane_harness::fakes::cell_config("shed")
     });
     let (entered, observed) = std::sync::mpsc::channel();
     let (release, released) = std::sync::mpsc::channel();
@@ -437,7 +437,7 @@ fn a_shed_submission_says_so_rather_than_going_quiet() {
 
 #[test]
 fn async_dispatch_completes_while_the_blocking_pool_is_occupied() {
-    let r = rig(CellConfig::for_test("async-dispatch"));
+    let r = rig(isoplane_harness::fakes::cell_config("async-dispatch"));
     let guest = Arc::new(FakeActivator::named(
         ModuleId::new("async-dispatch", "v1"),
         FakeBehaviour::program([

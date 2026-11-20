@@ -114,7 +114,7 @@ mod tests {
         use crate::fakes::FakeBehaviour;
         use isoplane_test_support::wait_for;
         for hibernate in [false, true] {
-            let cell = cell(CellConfig::for_test("background-idle-stop"));
+            let cell = cell(crate::fakes::cell_config("background-idle-stop"));
             let module = app(&cell, "background-idle-stop", FakeBehaviour::done());
             let result = cell
                 .dispatch_blocking(
