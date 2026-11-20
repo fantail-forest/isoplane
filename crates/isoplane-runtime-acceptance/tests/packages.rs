@@ -118,14 +118,7 @@ fn request(runtime: &[u8], files: Vec<PlatformFile>) -> BuildRequest {
         validation_limits: Default::default(),
         initialization: Initialization {
             network: Some(network()),
-            runtime_config: b"{}".to_vec(),
-
-            config: b"{}".to_vec(),
-            sandbox: InitSandbox::RuntimeBringUp,
-            occupancy_ms: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_OCCUPANCY_MS,
-            wall_ms: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_WALL_MS,
-            max_passes: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_PASSES,
-            log_bytes: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_LOG_BYTES,
+            ..Initialization::new(InitSandbox::RuntimeBringUp, b"{}".to_vec())
         },
         input_hash: *blake3::hash(runtime).as_bytes(),
     }

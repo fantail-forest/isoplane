@@ -7,7 +7,6 @@ use std::collections::BTreeMap;
 
 use isoplane_abi::dispatch::{DispatchKind, HttpRequest};
 use isoplane_abi::imports::{self, Ty};
-use isoplane_abi::result::FutureError;
 use isoplane_abi::status::{PollStatus, TrapCode};
 
 fn sdk_file(name: &str) -> String {
@@ -168,21 +167,6 @@ fn dispatch_kind_in_records_cs_mirrors_the_rust_enum() {
                 }),
             ),
             ("Background", DispatchKind::Background),
-        ],
-    );
-}
-
-#[test]
-fn future_error_in_records_cs_mirrors_the_rust_enum() {
-    assert_mirror(
-        "Records.cs",
-        "FutureError",
-        &[
-            ("Cancelled", FutureError::Cancelled),
-            ("Denied", FutureError::Denied(String::new())),
-            ("NotFound", FutureError::NotFound),
-            ("Io", FutureError::Io(String::new())),
-            ("BufferLimit", FutureError::BufferLimit),
         ],
     );
 }

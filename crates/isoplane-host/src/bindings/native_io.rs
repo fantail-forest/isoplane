@@ -752,6 +752,7 @@ impl Timer {
 
 /// The import that makes a timer a host future rather than a native resource;
 /// its timers count toward the same limit.
+#[cfg(feature = "rust-guests")]
 pub(crate) const DEADLINE_IMPORT: &str = "clock_deadline_in";
 
 /// `duration` rounded up to the guest clock's quantum.
@@ -838,15 +839,32 @@ pub(crate) struct IdleTimers {
 }
 
 impl Resources {
+    #[cfg(feature = "rust-guests")]
     pub(crate) fn slice_start(&self) -> Option<tokio::time::Instant> {
         self.slice
     }
 
-    pub(crate) fn timers(&self) -> usize {
-        self.entries
+    /// The timers the instance holds against
+    /// [`isoplane_abi::native_io::MAX_TIMERS`]: its native timers and, for a
+    /// Rust guest, its pending `clock_deadline_in` futures.
+    #[cfg_attr(
+        not(feature = "rust-guests"),
+        expect(unused_variables, reason = "only a Rust guest holds deadline futures")
+    )]
+    pub(crate) fn timers(&self, bindings: &dyn Context) -> usize {
+        let timers = self
+            .entries
             .values()
             .filter(|resource| matches!(resource, Resource::Timer(_)))
-            .count()
+            .count();
+        #[cfg(feature = "rust-guests")]
+        let timers = timers
+            + bindings.runtime().map_or(0, |runtime| {
+                runtime
+                    .futures
+                    .pending_for_import(bindings.instance(), DEADLINE_IMPORT)
+            });
+        timers
     }
 
     /// Fixes what the guest observes of timers for the slice beginning `now`.
@@ -1310,12 +1328,7 @@ impl Resources {
             }
             Request::Timer(duration) => {
                 self.reserve(ResourceCount(1))?;
-                let deadline_futures = bindings.runtime().map_or(0, |runtime| {
-                    runtime
-                        .futures
-                        .pending_for_import(bindings.instance(), DEADLINE_IMPORT)
-                });
-                if self.timers() + deadline_futures >= isoplane_abi::native_io::MAX_TIMERS {
+                if self.timers(bindings) >= isoplane_abi::native_io::MAX_TIMERS {
                     return Err(Error::ResourceLimit);
                 }
                 let timer = if duration.0 == 0 {
@@ -2225,6 +2238,47 @@ mod timer_tests {
             indexes,
             vec![1],
             "poll must report the ready input index without reporting pending resources"
+        );
+    }
+
+    #[cfg(feature = "rust-guests")]
+    #[tokio::test(start_paused = true)]
+    async fn native_timers_and_deadline_futures_share_one_limit() {
+        use isoplane_engine::{HostBindings, ImportCall};
+
+        let (context, _woken) = reactor_bindings();
+        let futures = context.rt.as_ref().expect("reactor").futures.clone();
+        let mut bindings = CellBindings::new(context.clone());
+        let deadline = |bindings: &mut CellBindings| {
+            bindings.call_future(ImportCall {
+                import: DEADLINE_IMPORT,
+                payload: &[],
+                scalars: [1_000, 0, 0],
+            })
+        };
+        for _ in 1..isoplane_abi::native_io::MAX_TIMERS {
+            bindings
+                .native_io(Request::Timer(DurationNanos(0)))
+                .expect("a native timer within the limit");
+        }
+        deadline(&mut bindings);
+        assert_eq!(
+            futures.pending_for_import(context.instance, DEADLINE_IMPORT),
+            1,
+            "a deadline future takes the last timer"
+        );
+        assert!(
+            matches!(
+                bindings.native_io(Request::Timer(DurationNanos(0))),
+                Err(Error::ResourceLimit)
+            ),
+            "a native timer past the limit is refused"
+        );
+        deadline(&mut bindings);
+        assert_eq!(
+            futures.pending_for_import(context.instance, DEADLINE_IMPORT),
+            1,
+            "a deadline future past the limit is settled as denied"
         );
     }
 }

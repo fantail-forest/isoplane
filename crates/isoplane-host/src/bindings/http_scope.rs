@@ -34,6 +34,21 @@ pub trait ResponseBody: Send + 'static {
     async fn read(&mut self, max_len: usize) -> Result<BodyChunk, FutureError>;
 }
 
+/// Sends an outbound request and transfers ownership of its response body.
+#[async_trait::async_trait]
+pub trait Fetcher: Send + Sync + 'static {
+    /// `target.addr` is the pinned address from the egress check; an
+    /// implementation that re-resolves `target.url` has thrown the rebinding
+    /// control away. `attempt` is the instance's connection in progress: it
+    /// opens the connection, and its open permit stays with the transport.
+    async fn fetch(
+        &self,
+        attempt: crate::egress::ConnectAttempt,
+        target: isoplane_abi::host::PinnedTarget,
+        req: isoplane_abi::calls::FetchRequest,
+    ) -> Result<OutboundResponse, FutureError>;
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) struct BodyHandle(u32);
 

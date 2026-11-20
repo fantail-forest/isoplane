@@ -171,24 +171,12 @@ pub(crate) fn retained_entry_limit(native_handles: usize, pending_per_request: u
         .min(u32::MAX as usize) as u32
 }
 
-fn result_bytes(result: &ResultRecord) -> usize {
-    match result {
-        ResultRecord::Ok(bytes) => bytes.capacity(),
-        ResultRecord::Err(FutureError::Denied(message) | FutureError::Io(message)) => {
-            message.capacity()
-        }
-        ResultRecord::Err(
-            FutureError::Cancelled | FutureError::NotFound | FutureError::BufferLimit,
-        ) => 0,
-    }
-}
-
 impl Owned {
     fn removed(&mut self, entry: &Entry) {
         if !entry.is_control() {
             self.retained_entries -= 1;
         }
-        self.buffered_bytes -= entry.result.as_ref().map_or(0, result_bytes);
+        self.buffered_bytes -= entry.result.as_ref().map_or(0, ResultRecord::heap_bytes);
     }
 }
 
@@ -528,7 +516,7 @@ impl FutureTable {
             if entry.state != State::Pending {
                 return None;
             }
-            let bytes = result_bytes(&result);
+            let bytes = result.heap_bytes();
             let result = if bytes > self.buffered_budget_bytes.saturating_sub(owned.buffered_bytes) {
                 tracing::warn!(instance = %arc.instance(), future = id, limit_bytes = self.buffered_budget_bytes,
                     result_bytes = bytes, "instance buffered-result byte limit exceeded");
@@ -689,6 +677,7 @@ impl FutureTable {
     }
 
     /// The owner's pending futures that `import` created.
+    #[cfg(feature = "rust-guests")]
     pub fn pending_for_import(&self, owner: InstanceId, import: &str) -> usize {
         let Some(arc) = self.existing(owner) else {
             return 0;

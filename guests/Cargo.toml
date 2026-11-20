@@ -27,7 +27,8 @@ license = "Apache-2.0"
 isoplane-guest = { path = "../guest-sdks/rust" }
 # The contract. Built from the same source as the host side, so the encoding
 # on both sides of the sandbox boundary is one implementation, not two.
-isoplane-abi   = { path = "../crates/isoplane-abi", default-features = false }
+# `rust-guests` adds the imports and records only a Rust guest uses.
+isoplane-abi   = { path = "../crates/isoplane-abi", default-features = false, features = ["rust-guests"] }
 serde      = { version = "1", features = ["derive"] }
 serde_json = { version = "1" }
 postcard   = { version = "1", features = ["alloc"] }

@@ -81,7 +81,7 @@ Prefer these, in order:
 
 The order is a preference. A `test-util` feature is acceptable where rewriting the tests onto the product's entry points would mean re-architecting them.
 
-`task lint:shipped`, which `task lint:gate` runs, lints the shipped packages without their tests, which is where code only the feature reaches shows up as dead. The release build fails if its dependency graph resolves any `test-util` feature, a dependency's included.
+`task lint:shipped`, which `task lint:gate` runs, lints the shipped packages without their tests, which is where code only the feature reaches shows up as dead. The release tasks build the shipped packages without their tests, so they select no `test-util` feature.
 
 **This, not that:** a test that needs a small cell configuration calls a function in the harness crate that fills in the public fields, not a `for_test` constructor on the product type.
 

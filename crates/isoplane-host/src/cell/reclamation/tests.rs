@@ -360,7 +360,7 @@ fn a_corrupt_snapshot_is_replaced_with_a_fresh_instance_and_host_context() {
             isoplane_abi::native_io::DurationNanos(0),
         ))
         .expect("retained native timer");
-    assert_eq!(old.ctx.native_timers(), 1);
+    assert_eq!(old.ctx.timers(), 1);
     storage.state.corrupt_save.store(true, Ordering::Relaxed);
     assert!(
         cell.reclaim_candidate(candidate(&cell, first.instance))
@@ -377,8 +377,8 @@ fn a_corrupt_snapshot_is_replaced_with_a_fresh_instance_and_host_context() {
     assert!(cell.slot(first.instance).is_none());
     let fresh = cell.slot(second.instance).expect("fresh instance");
     assert!(!Arc::ptr_eq(&old.ctx, &fresh.ctx));
-    assert_eq!(old.ctx.native_timers(), 0);
-    assert_eq!(fresh.ctx.native_timers(), 0);
+    assert_eq!(old.ctx.timers(), 0);
+    assert_eq!(fresh.ctx.timers(), 0);
     assert_eq!(
         second.body, first.body,
         "a corrupt snapshot must not leave its pages in the instance"

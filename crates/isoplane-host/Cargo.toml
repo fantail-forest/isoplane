@@ -23,23 +23,33 @@ futures = { workspace = true }
 socket2 = { workspace = true }
 hickory-resolver = { workspace = true }
 libc = { workspace = true }
-hyper = { workspace = true }
-hyper-util = { workspace = true }
-http-body-util = { workspace = true }
-bytes = { workspace = true }
+hyper = { workspace = true, optional = true }
+hyper-util = { workspace = true, optional = true }
+http-body-util = { workspace = true, optional = true }
+bytes = { workspace = true, optional = true }
 rand = { workspace = true }
 rand_chacha.workspace = true
 scc = { workspace = true }
 serde_json = { workspace = true }
-url = { workspace = true }
+url = { workspace = true, optional = true }
 
 [features]
 # Entry points and observations the test suites drive the cell through. No shipped build enables it.
 test-util = []
+# Experimental: Rust guests are not a supported guest language yet.
+rust-guests = [
+    "isoplane-abi/rust-guests",
+    "isoplane-engine/rust-guests",
+    "dep:hyper",
+    "dep:hyper-util",
+    "dep:http-body-util",
+    "dep:bytes",
+    "dep:url",
+]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
-isoplane-host = { workspace = true, features = ["test-util"] }
+isoplane-host = { workspace = true, features = ["test-util", "rust-guests"] }
 tempfile = { workspace = true }
 tracing-subscriber = { workspace = true }
 wat = { workspace = true }

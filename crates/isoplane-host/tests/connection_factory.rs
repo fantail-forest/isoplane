@@ -3,7 +3,7 @@
 mod connection_factory;
 
 use connection_factory::RecordingConnections;
-use isoplane_host::bindings::{Fetcher, OutboundBody, ResponseBody};
+use isoplane_host::bindings::{Fetcher, OutboundBody, ResponseBody, Services};
 use isoplane_host::egress::{
     ConnectAttempt, ConnectionOwner, DenyReason, DestinationPolicy, DnsError, HostEgressPolicy,
     Resolver,
@@ -54,8 +54,8 @@ async fn attempt(policy: &Arc<HostEgressPolicy>) -> ConnectAttempt {
         .expect("the instance may start a connection")
 }
 
-#[tokio::test]
-async fn http_uses_the_injected_connection_provider_with_dispatch_identity() {
+/// Serves one connection, answering `provider` with its length declared.
+async fn provider_server() -> (SocketAddr, tokio::task::JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("the owned HTTP server must bind");
@@ -79,6 +79,60 @@ async fn http_uses_the_injected_connection_provider_with_dispatch_identity() {
             .await
             .expect("the owned HTTP exchange must complete");
     });
+    (address, server)
+}
+
+/// Whether the services `configure` makes over a node's defaults return the
+/// eight-byte `provider` response inline.
+async fn returns_provider_inline(configure: impl FnOnce(Services) -> Services) -> bool {
+    let (address, server) = provider_server().await;
+    let policy = Arc::new(
+        HostEgressPolicy::new(
+            Box::new(NoDns),
+            isoplane_harness::uniform_connection_limits(1),
+        )
+        .with_destinations(Arc::new(ExactPeer(address))),
+    );
+    let services = configure(Services::new(policy.clone()));
+    let response = tokio::time::timeout(
+        std::time::Duration::from_secs(60),
+        services
+            .fetcher
+            .fetch(attempt(&policy).await, target(address), request()),
+    )
+    .await
+    .expect("the fetch must finish before its test deadline")
+    .expect("the fetch must reach the owned server");
+    let inline = match response.body {
+        OutboundBody::Inline(_) => true,
+        OutboundBody::Stream(mut body) => {
+            while !body.read(0).await.expect("the body must stay readable").eof {}
+            false
+        }
+    };
+    server.await.expect("the owned HTTP server must not panic");
+    inline
+}
+
+#[tokio::test]
+async fn a_nodes_services_return_a_response_inline_only_within_their_threshold() {
+    assert!(
+        returns_provider_inline(|services| services).await,
+        "eight bytes are within the default threshold"
+    );
+    assert!(
+        returns_provider_inline(|services| services.with_inline_response_bytes(8)).await,
+        "eight bytes are within a threshold of eight"
+    );
+    assert!(
+        !returns_provider_inline(|services| services.with_inline_response_bytes(7)).await,
+        "eight bytes are past a threshold of seven, so the body is streamed"
+    );
+}
+
+#[tokio::test]
+async fn http_uses_the_injected_connection_provider_with_dispatch_identity() {
+    let (address, server) = provider_server().await;
     let connections = Arc::new(RecordingConnections::default());
     let policy = Arc::new(
         HostEgressPolicy::new(

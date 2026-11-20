@@ -43,10 +43,6 @@ vars:
   TEST_HOME: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/test-home'
   TEST_COMPILED_RUNTIME: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/test-compiled-runtime'
 
-  # Prefix for a Cargo build run with --message-format=json-render-diagnostics: fails when a package it
-  # compiled enables a test-util feature. The pipe to jq is made inside the development command.
-  REFUSE_TEST_FEATURES: '{{.DEVELOPMENT_COMMAND}}bash taskfiles/refuse-test-features.sh '
-
   MODULES: '{{.ISOPLANE_TEST_RUNTIME_MODULES | default (printf "%s/.build/wasm32/runtime-modules" .ROOT_DIR)}}'
   FEED: '{{.ISOPLANE_TEST_RUNTIME_FEED | default (printf "%s/.build/wasm32/runtime/feed" .ROOT_DIR)}}'
 
@@ -135,14 +131,14 @@ tasks:
         vars: {CLI_ARGS: '{{.CLI_ARGS}}'}
 
   lint:shipped:
-    desc: Lint the shipped packages as a release builds them and refuse a test-util feature in them
+    desc: Lint the shipped packages as a release builds them, without their tests
     deps: [initialize]
     vars:
       SHIPPED: '{{.SHIPPED | default "isoplane-native isoplaned"}}'
     cmds:
-      # Without the tests, and so without the `test-util` features the tests turn on:
-      # code only those features reach is dead here.
-      - '{{.REFUSE_TEST_FEATURES}}cargo clippy{{range splitList " " .SHIPPED}} -p {{.}}{{end}} --lib --bins {{.CLI_ARGS}} --message-format=json-render-diagnostics -- -D warnings'
+      # Without the tests, and so without the `test-util` and `rust-guests` features the
+      # tests turn on: code only those features reach is dead here.
+      - '{{.DEVELOPMENT_COMMAND}}cargo clippy{{range splitList " " .SHIPPED}} -p {{.}}{{end}} --lib --bins {{.CLI_ARGS}} -- -D warnings'
 
   format:
     desc: Format both Cargo workspaces

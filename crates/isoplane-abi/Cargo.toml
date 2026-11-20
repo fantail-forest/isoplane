@@ -20,6 +20,8 @@ anyhow = { workspace = true, optional = true }
 [features]
 default = []
 host = ["dep:async-trait", "dep:anyhow"]
+# Experimental: Rust guests are not a supported guest language yet.
+rust-guests = []
 
 [dev-dependencies]
 serde_json.workspace = true

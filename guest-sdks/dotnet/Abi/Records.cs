@@ -101,13 +101,3 @@ internal sealed class WakeRecord
         return new WakeRecord { Dispatch = dispatch, Result = ResultRecord.Decode(ref r) };
     }
 }
-
-/// <summary>Mirrors <c>isoplane-abi::result::FutureError</c>.</summary>
-internal enum FutureError : uint
-{
-    Cancelled = 0,
-    Denied = 1,
-    NotFound = 2,
-    Io = 3,
-    BufferLimit = 4,
-}

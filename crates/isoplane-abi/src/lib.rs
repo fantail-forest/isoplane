@@ -6,6 +6,7 @@
 //! Builds for `wasm32-unknown-unknown` so a guest SDK can share these types
 //! with the host instead of re-implementing the encoding.
 
+#[cfg(feature = "rust-guests")]
 pub mod calls;
 pub mod config;
 pub mod dispatch;
@@ -35,7 +36,7 @@ pub fn local_debug_header() -> String {
 }
 
 /// The version of the guest host-interface contract.
-pub const ABI_REV: u32 = 7;
+pub const ABI_REV: u32 = 8;
 
 /// The unit of copy-on-write sharing and of the hibernation page diff.
 pub const PAGE_SIZE: usize = 4096;

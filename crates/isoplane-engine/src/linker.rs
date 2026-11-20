@@ -131,6 +131,7 @@ fn invoke(c: &mut Caller<'_, StoreState>, def: &'static ImportDef, raw: &[u64]) 
         // Engine-owned: a host-sourced value here would hand the guest back
         // the timing primitive the freeze removes.
         "clock_now_coarse" => return Ok(c.data().clock_ms),
+        #[cfg(feature = "rust-guests")]
         "unsafe_to_trap" => {
             c.data_mut().unsafe_to_trap = raw[0] != 0;
             return Ok(0);
@@ -175,9 +176,9 @@ fn call_binding(
         *scratch = bytes;
     }
     // The second parameter of an out-buffer is a capacity. The host may
-    // report a larger value than fits (`init_config_get` answers a zero-length
-    // probe with the blob's full size), so the return value is never treated
-    // as a byte count to copy.
+    // report a larger value than fits (`runtime_config_get` answers a
+    // zero-length probe with the configuration's full size), so the return
+    // value is never treated as a byte count to copy.
     if let BufSpec::Out(i) = def.buf {
         let cap = raw[i as usize + 1] as usize;
         if cap > MAX_OUT_BUFFER_BYTES {

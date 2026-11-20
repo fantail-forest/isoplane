@@ -13,7 +13,7 @@ use isoplane_host::egress::{DenyReason, DestinationPolicy, DnsError, HostEgressP
 use isoplane_host::futures::FutureTable;
 use isoplane_host::meters::Meters;
 use isoplane_host::metrics::Metrics;
-use isoplane_host::{InstanceId, ModuleId, PinnedHttpFetcher};
+use isoplane_host::{InstanceId, ModuleId};
 use tokio::sync::{mpsc, oneshot, Notify};
 
 pub async fn deadline<T>(future: impl std::future::Future<Output = T>) -> T {
@@ -112,10 +112,7 @@ pub fn services(address: SocketAddr) -> Arc<Services> {
         )
         .with_destinations(Arc::new(Endpoint(address))),
     );
-    Arc::new(Services {
-        fetcher: Arc::new(PinnedHttpFetcher::new(0)),
-        egress: policy,
-    })
+    Arc::new(Services::new(policy).with_inline_response_bytes(0))
 }
 
 #[derive(Default)]

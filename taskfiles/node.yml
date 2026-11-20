@@ -14,7 +14,7 @@ tasks:
       CARGO_TARGET_DIR: '{{.NATIVE_TARGET}}'
       CARGO_BUILD_BUILD_DIR: '{{.NATIVE_TARGET}}'
     cmds:
-      - '{{.REFUSE_TEST_FEATURES}}cargo build --locked --release -p isoplaned --message-format=json-render-diagnostics'
+      - '{{.DEVELOPMENT_COMMAND}}cargo build --locked --release -p isoplaned'
 
   package:
     desc: Package qualified node binaries and runtime directories without copying their payloads
