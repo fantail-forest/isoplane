@@ -132,7 +132,7 @@ fn template_memory(template: &[u8]) -> Vec<u8> {
 #[test]
 fn a_declared_file_read_during_pre_init_is_baked_into_the_template() {
     let wasm = guest();
-    let outcome = PreInitializer::new()
+    let outcome = PreInitializer::new(isoplane_abi::config::InitSandbox::Sealed)
         .with_platform_files(declared())
         .run(&wasm, &request(&wasm))
         .expect("pre-init converges");
@@ -157,7 +157,7 @@ fn a_declared_file_read_during_pre_init_is_baked_into_the_template() {
 #[test]
 fn without_a_declared_set_the_same_path_is_no_entry_during_pre_init() {
     let wasm = guest();
-    let outcome = PreInitializer::new()
+    let outcome = PreInitializer::new(isoplane_abi::config::InitSandbox::Sealed)
         .run(&wasm, &request(&wasm))
         .expect("pre-init converges");
     let memory = template_memory(&outcome.template_wasm);

@@ -143,6 +143,7 @@ impl Instance {
             trap: Some(TrapInfo { kind, message: why }),
             grace_end: None,
             overage_ns: 0,
+            #[cfg(feature = "rust-guests")]
             grace_deferrals: 0,
         }
     }
@@ -286,7 +287,8 @@ impl Instance {
 
         let violation = live.store.data().violation;
         let grace_at_ns = live.store.data().grace_at_ns;
-        let grace_deferrals = live.store.data().grace_deferrals;
+        #[cfg(feature = "rust-guests")]
+        let grace_deferrals = live.store.data().grace_cooperation.deferrals;
 
         // A `BudgetExceeded` trap comes only from the hard deadline. A slice
         // that entered grace and returned `done` is an exit; one that
@@ -360,6 +362,7 @@ impl Instance {
             trap,
             grace_end,
             overage_ns,
+            #[cfg(feature = "rust-guests")]
             grace_deferrals,
         }
     }

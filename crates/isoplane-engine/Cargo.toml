@@ -34,9 +34,11 @@ windows-sys.workspace = true
 [features]
 # Inspection the test suites use. No shipped build enables it.
 test-util = []
+# Experimental: Rust guests are not a supported guest language yet.
+rust-guests = ["isoplane-abi/rust-guests"]
 
 [dev-dependencies]
-isoplane-engine = { workspace = true, features = ["test-util"] }
+isoplane-engine = { workspace = true, features = ["test-util", "rust-guests"] }
 isoplane-cache.workspace = true
 # Hand-written .wat fixtures, so a guest-SDK bug is never mistaken for an
 # engine bug.

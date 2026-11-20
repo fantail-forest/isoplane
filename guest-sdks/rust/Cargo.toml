@@ -11,6 +11,7 @@ name = "isoplane-guest"
 #   * `[workspace.dependencies]` there pins `isoplane-abi` with
 #     `default-features = false`. Inert today (`default = []`), and a guard
 #     worth keeping: a guest must not pick up a host-shaped feature by default.
+#     It also enables `rust-guests`, which declares the imports this SDK calls.
 #
 # Naming the root is required because Cargo finds one by walking UP, which from
 # here reaches the repo root — whose explicit `members` list does not include

@@ -10,6 +10,8 @@ pub use http::{
 
 pub type Result<T> = anyhow::Result<T>;
 
+/// The address an egress check pinned for one outbound fetch.
+#[cfg(feature = "rust-guests")]
 #[derive(Debug, Clone)]
 pub struct PinnedTarget {
     pub url: String,

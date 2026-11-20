@@ -193,9 +193,12 @@ impl DebugInstance {
         );
         result.occupancy_ns = result.occupancy_ns.saturating_add(initialize.occupancy_ns);
         result.wall_ns = result.wall_ns.saturating_add(initialize.wall_ns);
-        result.grace_deferrals = result
-            .grace_deferrals
-            .saturating_add(initialize.grace_deferrals);
+        #[cfg(feature = "rust-guests")]
+        {
+            result.grace_deferrals = result
+                .grace_deferrals
+                .saturating_add(initialize.grace_deferrals);
+        }
         result.occupancy_measurement = match (
             initialize.occupancy_measurement,
             result.occupancy_measurement,
@@ -288,6 +291,7 @@ fn unsupported(message: &'static str) -> DispatchOutcome {
         }),
         grace_end: None,
         overage_ns: 0,
+        #[cfg(feature = "rust-guests")]
         grace_deferrals: 0,
     }
 }

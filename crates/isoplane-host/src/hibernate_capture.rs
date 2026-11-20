@@ -20,6 +20,7 @@ pub enum CaptureRefused {
     /// An unread or in-flight client upload cannot be preserved in a guest checkpoint.
     OpenRequest,
     /// An outbound HTTP operation or response body still owns a transport.
+    #[cfg(feature = "rust-guests")]
     OutboundHttp,
     /// The pre-capture gc hint did not return `done`. `Parked` means the
     /// guest awaited inside the hint and stays resident; any other
@@ -145,6 +146,7 @@ fn capture_with<T>(
     if slot.ctx.has_active_request_body() {
         return Err(CaptureRefused::OpenRequest);
     }
+    #[cfg(feature = "rust-guests")]
     if slot.ctx.has_outbound_http() {
         return Err(CaptureRefused::OutboundHttp);
     }

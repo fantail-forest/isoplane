@@ -107,7 +107,6 @@ internal enum FutureError : uint
 {
     Cancelled = 0,
     Denied = 1,
-    NotFound = 2,
-    Io = 3,
-    BufferLimit = 4,
+    Io = 2,
+    BufferLimit = 3,
 }

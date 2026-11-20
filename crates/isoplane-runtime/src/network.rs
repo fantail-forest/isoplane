@@ -7,7 +7,7 @@ pub const DEFAULT_INSTANCE_PENDING_CONNECTIONS: u64 = 6;
 /// Default for [`NetworkLimits::instance_open_connections`].
 pub use isoplane_abi::config::DEFAULT_INSTANCE_OPEN_CONNECTIONS;
 
-/// Limits used when constructing the host's egress policy and HTTP fetcher.
+/// Limits used when constructing the host's egress policy.
 ///
 /// Outbound connections are limited per instance only.
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
@@ -23,7 +23,8 @@ pub struct NetworkLimits {
     /// released, including while the instance is hibernated. Further connections are
     /// refused. At least 1.
     pub instance_open_connections: u64,
-    /// Response bodies at or below this size are returned inline.
+    /// Response bodies of a host HTTP fetch at or below this size are returned inline.
+    #[cfg(feature = "rust-guests")]
     pub inline_response_bytes: usize,
 }
 
@@ -32,6 +33,7 @@ impl Default for NetworkLimits {
         Self {
             instance_pending_connections: DEFAULT_INSTANCE_PENDING_CONNECTIONS,
             instance_open_connections: DEFAULT_INSTANCE_OPEN_CONNECTIONS,
+            #[cfg(feature = "rust-guests")]
             inline_response_bytes: 1 << 20,
         }
     }

@@ -15,11 +15,11 @@ async-trait = { workspace = true }
 postcard = { workspace = true }
 serde = { workspace = true }
 isoplane-cache.workspace = true
-isoplane-abi = { workspace = true, features = ["host"] }
+isoplane-abi = { workspace = true, features = ["host", "rust-guests"] }
 isoplane-fixtures = { workspace = true }
-isoplane-engine = { workspace = true, features = ["test-util"] }
-isoplane-host = { workspace = true, features = ["test-util"] }
-isoplane-runtime = { workspace = true }
+isoplane-engine = { workspace = true, features = ["test-util", "rust-guests"] }
+isoplane-host = { workspace = true, features = ["test-util", "rust-guests"] }
+isoplane-runtime = { workspace = true, features = ["rust-guests"] }
 isoplane-hibernate = { workspace = true }
 tokio = { workspace = true }
 fs4 = { workspace = true }

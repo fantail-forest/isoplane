@@ -16,6 +16,18 @@ tasks:
     cmds:
       - '{{.DEVELOPMENT_COMMAND}}cargo test --locked --manifest-path guests/Cargo.toml -p isoplane-guest --all-features'
 
+  validator:shipped:
+    desc: Run the validator's tests against the host interface a release ships
+    deps: [':initialize']
+    cmds:
+      # The workspace's tests turn rust-guests on. Tested alone, isoplane-runtime must not.
+      - |
+        if {{.DEVELOPMENT_COMMAND}}cargo tree --locked -p isoplane-runtime -e features | grep -F 'feature "rust-guests"'; then
+          echo "isoplane-runtime's own tests would enable rust-guests, so they would not test the validator a release ships." >&2
+          exit 1
+        fi
+      - '{{.DEVELOPMENT_COMMAND}}cargo test --locked -p isoplane-runtime --lib'
+
   unit:
     desc: Run Rust library tests without preparing integration fixtures
     deps: [':initialize']

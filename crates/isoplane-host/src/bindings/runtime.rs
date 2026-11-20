@@ -4,9 +4,6 @@
 
 use std::sync::Arc;
 
-use isoplane_abi::calls::FetchRequest;
-use isoplane_abi::result::FutureError;
-
 use crate::egress::HostEgressPolicy;
 use crate::futures::{FutureTable, WakeTarget};
 use crate::metrics::Metrics;
@@ -17,25 +14,11 @@ pub trait WakeSink: Send + Sync + 'static {
     fn signal(&self, owner: InstanceId);
 }
 
-/// Sends an outbound request and transfers ownership of its response body.
-#[async_trait::async_trait]
-pub trait Fetcher: Send + Sync + 'static {
-    /// `target.addr` is the pinned address from the egress check; an
-    /// implementation that re-resolves `target.url` has thrown the rebinding
-    /// control away. `attempt` is the instance's connection in progress: it
-    /// opens the connection, and its open permit stays with the transport.
-    async fn fetch(
-        &self,
-        attempt: crate::egress::ConnectAttempt,
-        target: isoplane_abi::host::PinnedTarget,
-        req: FetchRequest,
-    ) -> Result<super::http_scope::OutboundResponse, FutureError>;
-}
-
 /// Everything the vtable routes to.
 pub struct Services {
     pub egress: Arc<HostEgressPolicy>,
-    pub fetcher: Arc<dyn Fetcher>,
+    #[cfg(feature = "rust-guests")]
+    pub fetcher: Arc<dyn super::Fetcher>,
 }
 
 /// The per-cell machinery an instance's bindings share; per-instance state

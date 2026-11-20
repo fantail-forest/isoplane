@@ -428,6 +428,42 @@ mod tests {
             .collect()
     }
 
+    /// The imports the .NET SDK never calls, as a Rust guest declares them.
+    const RUST_GUEST_IMPORTS: [&str; 10] = [
+        r#""init_unit_begin" (func (param i32))"#,
+        r#""init_unit_deferred" (func (param i32) (result i32))"#,
+        r#""init_hash_seed" (func (param i32 i32))"#,
+        r#""init_config_get" (func (param i32 i32) (result i32))"#,
+        r#""trace_span_begin" (func (param i32 i32) (result i32))"#,
+        r#""trace_span_end" (func (param i32))"#,
+        r#""clock_deadline_in" (func (param i64) (result i64))"#,
+        r#""http_fetch" (func (param i32 i32) (result i64))"#,
+        r#""http_body_read" (func (param i32 i32) (result i64))"#,
+        r#""unsafe_to_trap" (func (param i32))"#,
+    ];
+
+    #[test]
+    fn a_rust_guest_import_is_admitted_only_by_a_host_built_for_rust_guests() {
+        for import in RUST_GUEST_IMPORTS {
+            let wasm = guest(&format!(r#"(import "isoplane" {import})"#));
+            let codes: Vec<_> = validate(&wasm, isoplane_abi::config::GuestMemoryBytes::default())
+                .err()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|violation| violation.code)
+                .collect();
+            let expected = if cfg!(feature = "rust-guests") {
+                vec![]
+            } else {
+                vec![ViolationCode::V1UndeclaredImport]
+            };
+            assert_eq!(
+                codes, expected,
+                "{import}: a release host has no such import, and a host built for Rust guests declares it"
+            );
+        }
+    }
+
     #[test]
     fn unvalidated_table_sizes_are_rejected_with_an_exact_aggregate() {
         for tables in [

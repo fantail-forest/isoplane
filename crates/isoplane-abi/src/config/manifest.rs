@@ -24,22 +24,27 @@ pub struct AppManifest {
 
 /// Selects additional runtime initialization imports.
 /// Application entropy admission is independent of this selector.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "rust-guests", derive(Default))]
 #[serde(rename_all = "kebab-case")]
 pub enum InitSandbox {
-    /// Uses the default initialization capability policy.
-    #[default]
-    Sealed,
     /// Permits additional runtime imports when the host records no active initialization unit.
     #[serde(rename = "runtime-bringup", alias = "runtime-bring-up")]
     RuntimeBringUp,
+    /// Uses the default initialization capability policy, which is what a
+    /// guest without a managed runtime to bring up runs under. Last, so
+    /// `RuntimeBringUp` encodes the same with and without the feature.
+    #[cfg(feature = "rust-guests")]
+    #[default]
+    Sealed,
 }
 
 impl InitSandbox {
     pub fn as_str(self) -> &'static str {
         match self {
-            InitSandbox::Sealed => "sealed",
             InitSandbox::RuntimeBringUp => "runtime-bringup",
+            #[cfg(feature = "rust-guests")]
+            InitSandbox::Sealed => "sealed",
         }
     }
 }

@@ -161,10 +161,8 @@ pub(crate) struct StoreState {
     /// deferral on the unsafe-to-trap bit leaves it `None` so the next tick
     /// tries again.
     pub grace_at_ns: Option<u64>,
-    /// The runtime layer's unsafe-to-trap bit. Grace entry defers while it is
-    /// set; the hard deadline ignores it.
-    pub unsafe_to_trap: bool,
-    pub grace_deferrals: u64,
+    #[cfg(feature = "rust-guests")]
+    pub grace_cooperation: GraceCooperation,
     /// The import that violated capability policy.
     pub violation: Option<&'static str>,
     pub abort_msg: Option<String>,
@@ -209,8 +207,8 @@ impl StoreState {
             meter: Meter::default(),
             kill: None,
             grace_at_ns: None,
-            unsafe_to_trap: false,
-            grace_deferrals: 0,
+            #[cfg(feature = "rust-guests")]
+            grace_cooperation: GraceCooperation::default(),
             violation: None,
             abort_msg: None,
             limits,
@@ -230,9 +228,11 @@ impl StoreState {
             });
         }
         if occupancy_ns >= self.meter.occupancy_budget_ns && self.grace_at_ns.is_none() {
-            if self.unsafe_to_trap {
-                self.grace_deferrals += 1;
-            } else if let Some(bindings) = self.bindings.as_mut() {
+            #[cfg(feature = "rust-guests")]
+            if self.grace_cooperation.defers_grace() {
+                return Ok(());
+            }
+            if let Some(bindings) = self.bindings.as_mut() {
                 bindings.enter_grace();
                 self.grace_at_ns = Some(occupancy_ns);
             }
@@ -245,10 +245,10 @@ impl StoreState {
         self.meter = meter;
         self.kill = None;
         self.grace_at_ns = None;
-        // The bit describes the runtime layer's current critical section; a
-        // slice that ended inside one ended by trapping.
-        self.unsafe_to_trap = false;
-        self.grace_deferrals = 0;
+        #[cfg(feature = "rust-guests")]
+        {
+            self.grace_cooperation = GraceCooperation::default();
+        }
         self.violation = None;
         self.abort_msg = None;
         self.limits.oom = false;
@@ -278,6 +278,29 @@ impl StoreState {
                 .bindings
                 .as_ref()
                 .is_some_and(|b| b.init_runtime_bringup())
+    }
+}
+
+/// The `unsafe_to_trap` import's state for one slice.
+#[cfg(feature = "rust-guests")]
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct GraceCooperation {
+    /// The runtime layer's unsafe-to-trap bit. Grace entry defers while it is
+    /// set; the hard deadline ignores it. It describes the runtime layer's
+    /// current critical section, so a slice that ended inside one ended by
+    /// trapping and the next slice starts with it clear.
+    pub unsafe_to_trap: bool,
+    /// Epoch ticks that found the bit set and deferred grace entry.
+    pub deferrals: u64,
+}
+
+#[cfg(feature = "rust-guests")]
+impl GraceCooperation {
+    fn defers_grace(&mut self) -> bool {
+        if self.unsafe_to_trap {
+            self.deferrals += 1;
+        }
+        self.unsafe_to_trap
     }
 }
 
@@ -429,9 +452,9 @@ mod occupancy_tests {
     #[test]
     fn unsafe_runtime_work_defers_grace_but_cannot_defer_the_hard_kill() {
         let (mut state, calls) = state();
-        state.unsafe_to_trap = true;
+        state.grace_cooperation.unsafe_to_trap = true;
         state.check_occupancy(1_070).expect("grace defers");
-        assert_eq!(state.grace_deferrals, 1);
+        assert_eq!(state.grace_cooperation.deferrals, 1);
         assert_eq!(state.grace_at_ns, None);
         state
             .check_occupancy(1_090)
@@ -443,9 +466,9 @@ mod occupancy_tests {
     #[test]
     fn clearing_the_unsafe_bit_allows_the_next_check_to_deliver_grace() {
         let (mut state, calls) = state();
-        state.unsafe_to_trap = true;
+        state.grace_cooperation.unsafe_to_trap = true;
         state.check_occupancy(1_070).expect("grace defers");
-        state.unsafe_to_trap = false;
+        state.grace_cooperation.unsafe_to_trap = false;
         state.check_occupancy(1_071).expect("grace can now enter");
         assert_eq!(calls.load(Ordering::Relaxed), 1);
         assert_eq!(state.grace_at_ns, Some(101));

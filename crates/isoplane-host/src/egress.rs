@@ -1,9 +1,7 @@
-//! Egress policy for `http_fetch`, enforced host-side: private and link-local
-//! ranges denied, optional per-app allowlists, per-instance connection limits,
-//! and resolve-then-pin. The check resolves once, validates
-//! every address it got back, and returns a [`PinnedTarget`] carrying the
-//! `SocketAddr` the connection uses, so DNS cannot move the target between
-//! the check and the connect.
+//! Egress policy, enforced host-side: private and link-local ranges denied,
+//! optional per-app allowlists, per-instance connection limits, and
+//! resolve-then-pin. A check resolves once and validates every address it got
+//! back, so DNS cannot move the target between the check and the connect.
 
 mod additional_destinations;
 mod attempts;
@@ -23,6 +21,7 @@ use std::sync::Arc;
 
 use tracing::Instrument;
 
+#[cfg(feature = "rust-guests")]
 use isoplane_abi::host::PinnedTarget;
 
 /// What one application may reach through the node's egress policy.
@@ -86,7 +85,10 @@ pub enum EgressError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DenyReason {
     /// HTTP fetch accepts only HTTP and HTTPS URLs.
+    #[cfg(feature = "rust-guests")]
     Scheme(String),
+    /// The fetch URL does not parse, or carries credentials.
+    #[cfg(feature = "rust-guests")]
     Malformed(String),
     /// The resolved address is in a range the platform never dials.
     PrivateAddress(IpAddr),
@@ -108,7 +110,9 @@ impl std::error::Error for DenyReason {}
 impl std::fmt::Display for DenyReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            #[cfg(feature = "rust-guests")]
             DenyReason::Scheme(s) => write!(f, "scheme `{s}` is not http(s)"),
+            #[cfg(feature = "rust-guests")]
             DenyReason::Malformed(s) => write!(f, "malformed url: {s}"),
             DenyReason::PrivateAddress(ip) => {
                 write!(f, "target {ip} is private/link-local; denied by default")
@@ -182,6 +186,7 @@ fn is_v6_link_local(v6: Ipv6Addr) -> bool {
 }
 
 /// Parses an HTTP(S) fetch URL, refusing credentials in its authority.
+#[cfg(feature = "rust-guests")]
 pub(crate) fn parse_url(url: &str) -> Result<url::Url, DenyReason> {
     // Empty userinfo is normalized away, but fetch policy refuses it too.
     let has_userinfo = std::cell::Cell::new(false);
@@ -399,6 +404,7 @@ impl HostEgressPolicy {
     }
 
     /// Checks a URL's destination and pins the address the connection must use.
+    #[cfg(feature = "rust-guests")]
     pub(crate) async fn check_url(
         &self,
         url: &str,
