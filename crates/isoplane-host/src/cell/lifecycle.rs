@@ -213,8 +213,7 @@ impl Cell {
         let outcome = {
             let mut guard = match slot.enter() {
                 Ok(g) => g,
-                Err(e) => {
-                    self.count_enter_refusal(e);
+                Err(_) => {
                     job.completion.select(TerminalReason::EntryRefused, 409);
                     let _completion = job.completion.settlement();
                     self.respond(
@@ -237,11 +236,9 @@ impl Cell {
                     return;
                 }
             };
-            let hot = super::completion::HotSlice::new(&self.hot);
             job.completion.begin_slice();
             let out = tracing::info_span!("guest_slice")
                 .in_scope(|| guard.instance().dispatch(&job.rec, budget));
-            drop(hot);
             job.completion.add_slice(&out);
             entry.meters.record_occupancy(&out);
             if ends_the_instance(&out, slot) {
@@ -273,27 +270,25 @@ impl Cell {
     /// The metrics for how a dispatch got its instance.
     fn note_acquired(&self, src: AcquireSource, took: Duration) {
         match src {
-            AcquireSource::WarmParked => &self.metrics.served_warm,
+            AcquireSource::WarmParked => {}
             AcquireSource::HibernationWake => {
                 self.metrics
                     .hibernation_wake_us
                     .record(took.as_micros() as u64);
-                self.metrics
-                    .hibernation_wakes
-                    .fetch_add(1, Ordering::Relaxed);
-                &self.metrics.served_hibernation_wake
             }
             AcquireSource::Activated => {
                 self.metrics.activation_us.record(took.as_micros() as u64);
-                &self.metrics.served_activated
+                self.metrics
+                    .served_activated
+                    .fetch_add(1, Ordering::Relaxed);
             }
-            AcquireSource::Shared => &self.metrics.served_shared,
+            AcquireSource::Shared => {
+                self.metrics.served_shared.fetch_add(1, Ordering::Relaxed);
+            }
         }
-        .fetch_add(1, Ordering::Relaxed);
     }
 
     pub(super) fn queue_wake(&self, slot: Arc<Slot>) {
-        self.metrics.in_cell_wakes.fetch_add(1, Ordering::Relaxed);
         self.queue.push_wake(WakeItem { slot });
     }
 
@@ -365,12 +360,8 @@ impl Cell {
             // instance drains the result itself when its call returns.
             let guard = match slot.enter() {
                 Ok(g) => g,
-                Err(EnterError::Busy) => {
-                    self.count_enter_refusal(EnterError::Busy);
-                    return true;
-                }
-                Err(error @ EnterError::NotResident(_)) => {
-                    self.count_enter_refusal(error);
+                Err(EnterError::Busy) => return true,
+                Err(EnterError::NotResident(_)) => {
                     self.fail_instance(
                         &slot,
                         &entry,
@@ -435,10 +426,6 @@ impl Cell {
         self.metrics
             .hibernation_wake_us
             .record(started.elapsed().as_micros() as u64);
-        self.metrics
-            .hibernation_wakes
-            .fetch_add(1, Ordering::Relaxed);
-        entry.meters.record_hibernation_wake();
         true
     }
 
@@ -461,15 +448,12 @@ impl Cell {
         }
         slot.ctx.begin_slice(crate::now_ms(), ready.dispatch);
 
-        let t0 = Instant::now();
-        let hot = super::completion::HotSlice::new(&self.hot);
         owner.begin_slice();
         let outcome = tracing::info_span!("guest_slice").in_scope(|| {
             guard
                 .instance()
                 .wake(ready.dispatch, ready.future, &ready.result, budget)
         });
-        drop(hot);
         owner.add_slice(&outcome);
         entry.meters.record_occupancy(&outcome);
         if ends_the_instance(&outcome, slot) {
@@ -478,7 +462,6 @@ impl Cell {
             self.retire_past_memory_limit(slot, entry, guard.instance().memory_len());
             drop(guard);
         }
-        self.metrics.wake_us.record(t0.elapsed().as_micros() as u64);
 
         self.settle(slot, entry, ready.dispatch, outcome, owner)
     }
@@ -492,13 +475,7 @@ impl Cell {
         out: DispatchOutcome,
         owner: &Arc<DispatchCompletion>,
     ) -> bool {
-        if out.grace_deferrals > 0 {
-            self.metrics
-                .grace_deferrals
-                .fetch_add(out.grace_deferrals, Ordering::Relaxed);
-        }
         self.arm_grace(slot, did);
-        self.metrics.slice_us.record(out.wall_ns / 1_000);
         // A latched trap becomes a trap here, before the guest proceeds as
         // though the import had succeeded. An exit is left alone: its
         // latched code is almost always a poisoned import the guest ignored
@@ -614,7 +591,7 @@ impl Cell {
 
                 match decide(completion, streaming_open) {
                     DispatchEnd::RetainedForStreaming => {
-                        slot.park(crate::now_ms());
+                        slot.park();
                         !self.has_runnable(slot)
                     }
                     DispatchEnd::Disposed(d) => {
@@ -632,7 +609,6 @@ impl Cell {
                 let overage = out.overage_ns;
                 entry.meters.record_grace_end(GraceEnd::Exited, overage);
                 self.metrics.budget_exits.fetch_add(1, Ordering::Relaxed);
-                self.metrics.grace_entries.fetch_add(1, Ordering::Relaxed);
                 self.metrics
                     .overage_ns
                     .fetch_add(overage, Ordering::Relaxed);
@@ -674,12 +650,8 @@ impl Cell {
                     self.metrics
                         .overage_ns
                         .fetch_add(out.overage_ns, Ordering::Relaxed);
-                    if out.grace_end.is_some() {
-                        self.metrics.grace_entries.fetch_add(1, Ordering::Relaxed);
-                    }
                     self.breaker.record_kill(&breaker_key, crate::now_ms());
                 } else {
-                    entry.meters.record_trap();
                     // A kill is not also a trap.
                     self.metrics.traps.fetch_add(1, Ordering::Relaxed);
                 }
@@ -724,7 +696,6 @@ impl Cell {
         self.metrics
             .memory_limit_retirements
             .fetch_add(1, Ordering::Relaxed);
-        entry.meters.record_memory_limit_retirement();
         tracing::info!(
             tenant = %entry.tenant, instance = %slot.id,
             memory_mib = memory_bytes >> 20, limit_mib = limit >> 20,
@@ -736,9 +707,6 @@ impl Cell {
     /// after it was ready to run.
     pub(super) fn waited_for_thread(&self, owner: &DispatchCompletion, waited: Duration) {
         owner.add_thread_wait(waited);
-        self.metrics
-            .thread_wait_us
-            .record(waited.as_micros() as u64);
     }
 
     /// Ends the dispatch and, when retaining its instance, hands remaining
@@ -752,12 +720,7 @@ impl Cell {
     ) -> bool {
         if d.is_warm() {
             self.end_request_body(slot, did);
-            let handed = self.rt.futures.hand_to_instance(slot.id, did);
-            if handed > 0 {
-                self.metrics
-                    .work_handed_to_instance
-                    .fetch_add(1, Ordering::Relaxed);
-            }
+            self.rt.futures.hand_to_instance(slot.id, did);
         }
         self.finish_and_release(slot, entry, did, d)
     }
@@ -783,7 +746,7 @@ impl Cell {
     /// The instance parks between slices. Returns whether the wake loop is
     /// done with it.
     fn park_after_slice(&self, slot: &Arc<Slot>) -> bool {
-        slot.park(crate::now_ms());
+        slot.park();
         // A completion that landed while Hot is drained now.
         !self.has_runnable(slot)
     }
@@ -985,11 +948,11 @@ impl Cell {
                 503,
                 "instance_discarded",
             );
-            self.end_dispatch_books(slot, entry, dispatch);
+            self.end_dispatch_books(slot, dispatch);
         }
         for &(dispatch, _) in expired {
             self.fail_grace_expired(slot, dispatch);
-            self.end_dispatch_books(slot, entry, dispatch);
+            self.end_dispatch_books(slot, dispatch);
         }
         self.fail_grace_expired(slot, *last);
         slot.discard();
@@ -1032,7 +995,7 @@ impl Cell {
         };
         for &dispatch in others {
             self.fail_dispatch(slot, dispatch, reason, status, code);
-            self.end_dispatch_books(slot, entry, dispatch);
+            self.end_dispatch_books(slot, dispatch);
         }
         self.fail_dispatch(slot, last, reason, status, code);
         self.finish_and_release(slot, entry, last, evict());
@@ -1069,7 +1032,6 @@ impl Cell {
     fn end_dispatch_books(
         &self,
         slot: &Arc<Slot>,
-        entry: &Arc<ModuleEntry>,
         did: u64,
     ) -> (Option<ActiveDispatch>, usize, bool) {
         let _settlement = slot
@@ -1094,8 +1056,6 @@ impl Cell {
             if let Some(total_wall_ns) = r.completion.total_wall_ns() {
                 self.metrics.dispatch_us.record(total_wall_ns / 1_000);
             }
-            self.metrics.park_ms.record(slot.parked_ms_total());
-            entry.meters.record_park(slot.parked_ms_total());
         }
         (req, remaining, abandoned_guest_work)
     }
@@ -1111,7 +1071,7 @@ impl Cell {
         did: u64,
         d: crate::disposition::Disposition,
     ) -> bool {
-        let (_req, remaining, abandoned_guest_work) = self.end_dispatch_books(slot, entry, did);
+        let (_req, remaining, abandoned_guest_work) = self.end_dispatch_books(slot, did);
         let d = if abandoned_guest_work || (remaining == 0 && slot.is_retiring()) {
             evict()
         } else {
@@ -1130,7 +1090,7 @@ impl Cell {
                     503,
                     "instance_discarded",
                 );
-                self.end_dispatch_books(slot, entry, dispatch);
+                self.end_dispatch_books(slot, dispatch);
             }
         }
 
@@ -1274,7 +1234,10 @@ mod tests {
         cell.register_module(
             "tenant",
             Arc::new(
-                crate::EngineActivator::load(engine, module.clone(), &wasm).expect("template"),
+                engine
+                    .load_template(&wasm)
+                    .map(|template| crate::EngineActivator::new(engine, template, module.clone()))
+                    .expect("template"),
             ),
             manifest,
         )

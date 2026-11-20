@@ -134,7 +134,8 @@ impl PreparationIo {
     }
 
     /// Restore captured handle identities before issuing native operations.
-    pub fn restore_resources(&self, prepared: &PreparedResources) -> Result<(), Error> {
+    #[cfg(test)]
+    fn restore_resources(&self, prepared: &PreparedResources) -> Result<(), Error> {
         self.resources
             .lock()
             .restore_prepared(prepared, super::native_io::reactor_now(&self.runtime))

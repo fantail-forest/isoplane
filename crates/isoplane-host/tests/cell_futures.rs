@@ -212,7 +212,6 @@ fn response_completion_hands_work_to_background_without_holding_the_request_open
         ),
         "the request ends while its operation is still pending"
     );
-    assert_eq!(r.cell.metrics().work_handed_to_instance, 1);
     assert_eq!(r.cell.futures().live_futures(), 1);
     let future = r.cell.futures().live_future_ids()[0];
     r.cell

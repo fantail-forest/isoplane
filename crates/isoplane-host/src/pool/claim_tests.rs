@@ -61,11 +61,6 @@ fn an_idle_claim_prevents_acquisition_without_holding_the_pool_lock() {
         );
     });
     assert_eq!(
-        pool.live(),
-        1,
-        "the reclaimed slot retains its capacity while a competing release is discarded"
-    );
-    assert_eq!(
         acquire(&pool).id,
         slot.id,
         "returning a claim must make its original slot available again"
@@ -87,11 +82,6 @@ fn claims_reserve_idle_capacity_until_they_are_returned() {
         "a claim must keep its idle capacity reserved against competing releases"
     );
     drop(claim);
-    assert_eq!(
-        pool.live(),
-        1,
-        "only the original claimed entry remains live"
-    );
     assert_eq!(
         acquire(&pool).id,
         first.id,
@@ -118,11 +108,6 @@ fn a_claim_returns_a_hibernated_entry_to_the_idle_list() {
         1,
         "claim return must put the entry back on the idle list"
     );
-    assert_eq!(
-        pool.live(),
-        1,
-        "a local hibernation retains its live pool identity"
-    );
 }
 
 #[test]
@@ -133,11 +118,6 @@ fn a_discarded_claim_leaves_pool_accounting_once() {
     let claim = pool.claim_idle(slot.id).expect("idle slot");
     claim.slot().discard();
     drop(claim);
-    assert_eq!(
-        pool.live(),
-        0,
-        "discarding a claimed entry must decrement live accounting"
-    );
     assert_eq!(
         pool.idle(),
         0,
@@ -165,11 +145,6 @@ fn an_outstanding_claim_cannot_repopulate_a_drained_pool() {
         slot.state(),
         LifecycleTier::Discarded,
         "a claim from before the drain must be discarded on return"
-    );
-    assert_eq!(
-        pool.live(),
-        0,
-        "a drained claim must release its pool accounting"
     );
     assert_eq!(
         pool.idle(),

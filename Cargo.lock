@@ -1613,7 +1613,6 @@ dependencies = [
  "libc",
  "parking_lot",
  "postcard",
- "prometheus",
  "rand 0.9.5",
  "rand_chacha",
  "scc",

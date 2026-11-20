@@ -527,7 +527,7 @@ mod tests {
             "pressure restoration must preserve the guest's modified memory and global state"
         );
         assert_eq!(
-            cell.metrics().hibernation_wakes,
+            cell.metrics_raw().hibernation_wake_us.count(),
             1,
             "the HTTP continuation must actually restore a reserved snapshot"
         );

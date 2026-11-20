@@ -46,10 +46,10 @@ pub(super) struct ActiveDispatch {
 pub(super) struct ActiveDispatches {
     dispatches: Vec<ActiveDispatch>,
     joining: usize,
-    /// Since when one of the dispatches has been in the grace after its
-    /// cancellation. The instance takes no new dispatches meanwhile, since a
-    /// kill at the end of the grace would fail them too.
-    held_since: Option<Instant>,
+    /// Whether one of the dispatches is in the grace after its cancellation.
+    /// The instance takes no new dispatches meanwhile, since a kill at the
+    /// end of the grace would fail them too.
+    held: bool,
 }
 
 impl ActiveDispatches {
@@ -147,11 +147,9 @@ impl Cell {
                     .count()
                     + active.joining
                     < DISPATCHES_PER_INSTANCE;
-                held |= room && active.held_since.is_some();
-                let join = room
-                    && active.held_since.is_none()
-                    && (!behind || allow_queued)
-                    && slot.has_memory_for_join();
+                held |= room && active.held;
+                let join =
+                    room && !active.held && (!behind || allow_queued) && slot.has_memory_for_join();
                 if join {
                     active.joining += 1;
                 }
@@ -195,8 +193,8 @@ impl Cell {
                 else {
                     return false;
                 };
-                if active.held_since.is_none() {
-                    active.held_since = Some(Instant::now());
+                if !active.held {
+                    active.held = true;
                     self.metrics.instance_holds.fetch_add(1, Ordering::Relaxed);
                     started.record_instance_hold();
                 }
@@ -274,17 +272,10 @@ impl Cell {
                         .iter()
                         .position(|candidate| candidate.dispatch_id == dispatch)
                         .map(|index| active.dispatches.remove(index));
-                    if let (Some(removed), Some(since)) = (&removed, active.held_since) {
-                        if active.iter().all(|other| other.grace_deadline.is_none()) {
-                            active.held_since = None;
-                            let held_ms = since.elapsed().as_millis() as u64;
-                            self.metrics.instance_hold_ms.record(held_ms);
-                            removed
-                                .completion
-                                .entry
-                                .meters
-                                .record_instance_hold_ms(held_ms);
-                        }
+                    if removed.is_some()
+                        && active.iter().all(|other| other.grace_deadline.is_none())
+                    {
+                        active.held = false;
                     }
                     (removed, active.count())
                 },
@@ -422,17 +413,6 @@ impl Cell {
         Ok(())
     }
 
-    /// Stops admitting work for `module` and discards its idle instances. Work
-    /// already running holds the module until it finishes. Returns whether the
-    /// module was registered.
-    pub fn retire_module(&self, module: &ModuleId) -> bool {
-        let Some(entry) = self.modules.write().remove(module) else {
-            return false;
-        };
-        entry.pool.retire();
-        true
-    }
-
     pub fn meters(&self, module: &ModuleId) -> Option<Arc<Meters>> {
         self.modules.read().get(module).map(|m| m.meters.clone())
     }
@@ -463,7 +443,6 @@ impl Cell {
         self: &Arc<Self>,
         entry: &Arc<ModuleEntry>,
     ) -> crate::Result<(Arc<Slot>, AcquireSource)> {
-        let mut replacing_snapshot = false;
         let (slot, src) = entry.pool.acquire_reserved(
             |id| {
                 let limit = crate::admission::InstanceLimit(
@@ -492,17 +471,8 @@ impl Cell {
                 Ok(ctx)
             },
             |slot| self.forget(slot),
-            |slot| {
-                let result = self.wake(slot, entry);
-                replacing_snapshot |= result
-                    .as_ref()
-                    .is_err_and(|error| error.is::<isoplane_hibernate::WakeFallback>());
-                result
-            },
+            |slot| self.wake(slot, entry),
         )?;
-        if replacing_snapshot {
-            self.metrics.delta_fallbacks.fetch_add(1, Ordering::Relaxed);
-        }
         self.index.lock().insert(slot.id, Arc::downgrade(&slot));
         let mut residents = self.residents.lock();
         residents.entry(slot.id).or_insert_with(|| Resident {
@@ -569,14 +539,6 @@ impl Cell {
     pub fn resident_ids(&self) -> Vec<InstanceId> {
         self.residents.lock().keys().copied().collect()
     }
-    /// Bytes buffered in a response handle. Chunks delivered through an HTTP
-    /// transport are consumed by its requester and are not retained here.
-    pub fn response_snapshot(&self, id: InstanceId, handle: u32) -> Option<Vec<u8>> {
-        let g = self.residents.lock();
-        let r = g.get(&id)?;
-        let t = r.slot.ctx.responses.lock();
-        t.get(handle).map(|resp| resp.body())
-    }
 }
 
 #[cfg(test)]
@@ -631,7 +593,6 @@ mod tests {
             LifecycleTier::Discarded,
             "replacement retires the old pool"
         );
-        assert!(cell.retire_module(&module));
         register("second", "second").expect("discarded guests release capacity");
         cell.shutdown();
     }
@@ -655,12 +616,11 @@ mod tests {
         let old = register("tenant", "app", "v1");
         let (first, _) = cell.acquire_handler(&old).expect("first activation");
         let (second, _) = cell.acquire_handler(&old).expect("second activation");
-        cell.retire_module(old.activator.module());
         let new = register("tenant", "app", "v2");
         let failure = cell
             .acquire_handler(&new)
             .err()
-            .expect("draining versions count");
+            .expect("another version's instances count");
         assert!(failure.is::<crate::admission::InstanceLimitReached>());
         let independent = register("other-tenant", "other-app", "v1");
         assert!(cell.acquire_handler(&independent).is_ok());
@@ -708,8 +668,6 @@ mod tests {
         let (second, _) = cell.acquire_handler(&new).expect("replace idle sibling");
         assert_ne!(first.id, second.id);
         assert_eq!(first.state(), LifecycleTier::Discarded);
-        assert_eq!(old.pool.live(), 0);
-        assert_eq!(new.pool.live(), 1);
         assert!(cell.acquire_handler(&old).is_err(), "the cap still applies");
         cell.shutdown();
     }

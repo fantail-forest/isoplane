@@ -87,7 +87,7 @@ pub struct InstanceCtx {
     /// Current outside any dispatch: during initialization and host-initiated
     /// slices such as the pre-capture GC hint.
     no_dispatch: Arc<DispatchState>,
-    pub(super) entropy_calls: AtomicU64,
+
     /// A trap the vtable owes the guest but cannot raise from an import call
     /// that returns an `i64`; the cell converts it after the slice returns.
     pub(super) trap_latch: Mutex<Option<TrapCode>>,
@@ -217,7 +217,7 @@ impl InstanceCtx {
             dispatches: Mutex::new(HashMap::new()),
             current: Mutex::new(no_dispatch.clone()),
             no_dispatch,
-            entropy_calls: AtomicU64::new(0),
+
             trap_latch: Mutex::new(None),
             dispatch_generation: AtomicU64::new(0),
             responses: Mutex::new(ResponseTable::new(
@@ -360,9 +360,7 @@ impl InstanceCtx {
             self.limits.pending_futures_per_dispatch
         }
     }
-    pub fn entropy_calls(&self) -> u64 {
-        self.entropy_calls.load(Ordering::Relaxed)
-    }
+
     pub fn take_trap(&self) -> Option<TrapCode> {
         self.trap_latch.lock().take()
     }

@@ -108,7 +108,7 @@ pub fn services(address: SocketAddr) -> Arc<Services> {
     let policy = Arc::new(
         HostEgressPolicy::new(
             Box::new(Endpoint(address)),
-            isoplane_host::egress::ConnectionLimits::uniform(1).expect("connection limits"),
+            isoplane_harness::uniform_connection_limits(1),
         )
         .with_destinations(Arc::new(Endpoint(address))),
     );
@@ -216,6 +216,28 @@ impl Rig {
     }
 }
 
+/// Registers `activator`'s module. Registering it again replaces the
+/// registration, which discards the idle instances of the one it replaces.
+pub fn register(
+    cell: &Arc<isoplane_host::cell::Cell>,
+    activator: Arc<dyn isoplane_host::Activator>,
+) {
+    let app = activator.module().app.clone();
+    cell.register_module(
+        "tenant",
+        activator,
+        isoplane_abi::config::AppManifest {
+            guest_memory_bytes: None,
+            resource_limits: Default::default(),
+            validation_limits: Default::default(),
+            name: app,
+            bindings: Default::default(),
+            init_visible_vars: vec![],
+        },
+    )
+    .expect("the HTTP guest must register");
+}
+
 pub fn cell(
     services: Arc<Services>,
     activator: Arc<dyn isoplane_host::Activator>,
@@ -229,19 +251,7 @@ pub fn cell(
         services,
     )
     .expect("the HTTP cell must start");
-    cell.register_module(
-        "tenant",
-        activator,
-        isoplane_abi::config::AppManifest {
-            guest_memory_bytes: None,
-            resource_limits: Default::default(),
-            validation_limits: Default::default(),
-            name: module.app.clone(),
-            bindings: Default::default(),
-            init_visible_vars: vec![],
-        },
-    )
-    .expect("the HTTP guest must register");
+    register(&cell, activator);
     let record = cell.http_record(
         &module,
         isoplane_abi::dispatch::HttpRequest {

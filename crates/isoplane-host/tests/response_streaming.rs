@@ -77,8 +77,12 @@ async fn response_program_with(
         .expect("real engine"),
     );
     let module = ModuleId::new("response", "v1");
-    let activator =
-        Arc::new(EngineActivator::load(engine, module, &wasm).expect("real response guest"));
+    let activator = Arc::new(
+        engine
+            .load_template(&wasm)
+            .map(|template| EngineActivator::new(engine, template, module))
+            .expect("real response guest"),
+    );
     let (cell, _) = common::rig_resolving(config, "93.184.216.34:80");
     cell.register_module("owner", activator, common::manifest("response"))
         .expect("register response guest");

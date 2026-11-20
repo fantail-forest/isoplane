@@ -8,7 +8,6 @@ use isoplane_abi::dispatch::{DispatchRecord, HttpRequest};
 use isoplane_harness::fakes::*;
 use isoplane_host::cell::{Cell, CellConfig, Target};
 use isoplane_host::{Activator, ModuleId};
-use isoplane_test_support::wait_for;
 
 mod common;
 use common::manifest;
@@ -94,8 +93,7 @@ fn a_reused_instance_keeps_its_residue() {
         observed[1..].contains(&1),
         "reuse must let per-instance memoization pay off: {observed:?}"
     );
-    let m = r.cell.meters(&module).unwrap();
-    assert_eq!(m.dispatches(), 25, "every dispatch is counted");
+    assert_eq!(r.cell.metrics().dispatches, 25, "every dispatch is counted");
     r.cell.shutdown();
 }
 
@@ -142,45 +140,6 @@ fn clones_of_one_template_never_share_entropy() {
     assert!(
         unique.iter().all(|d| d.iter().any(|b| *b != 0)),
         "entropy was zero-filled"
-    );
-    r.cell.shutdown();
-}
-
-#[test]
-fn a_retired_module_refuses_new_work_and_discards_its_idle_instances() {
-    let r = rig(CellConfig::for_test("retire"));
-    let act = Arc::new(FakeActivator::named(
-        ModuleId::new("retired-app", "v1"),
-        FakeBehaviour::done(),
-    ));
-    let module = act.module().clone();
-    r.cell
-        .register_module("acme", act, manifest("retired-app"))
-        .unwrap();
-    let handler = || Target::Handler { route: "/".into() };
-    let served = r
-        .cell
-        .dispatch_blocking(&module, handler(), http(&r.cell, &module, "/"), T)
-        .unwrap();
-    assert_eq!(
-        served.status, 200,
-        "the module must serve before it retires"
-    );
-    assert!(
-        wait_for(|| r.cell.idle_instances(&module) == Some(1), T),
-        "the served instance must return to the pool"
-    );
-    assert!(r.cell.retire_module(&module), "the module was registered");
-    assert_eq!(
-        r.cell.metrics().live,
-        0,
-        "retiring a module must discard its idle instances"
-    );
-    assert!(
-        r.cell
-            .dispatch_blocking(&module, handler(), http(&r.cell, &module, "/"), T)
-            .is_err(),
-        "a retired module must not admit new work"
     );
     r.cell.shutdown();
 }

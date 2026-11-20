@@ -1,18 +1,5 @@
 //! Native worker occupancy and monotonic clocks used by dispatch accounting.
 
-use std::sync::atomic::{AtomicU64, Ordering};
-
-/// Clock reads that failed, process-wide. A failed read is a different fact
-/// from a zero interval: a failed end read under-records a dispatch and a failed
-/// start read must not become a fabricated zero timestamp.
-static CLOCK_READ_FAILURES: AtomicU64 = AtomicU64::new(0);
-
-/// Exported on the scrape as `clock_read_failures`; non-zero means some measured
-/// interval is a floor rather than a measurement.
-pub fn clock_read_failures() -> u64 {
-    CLOCK_READ_FAILURES.load(Ordering::Relaxed)
-}
-
 #[cfg(test)]
 thread_local! {
     /// Fault injection for the unreadable-clock path; thread-local so one
@@ -32,11 +19,11 @@ fn clock_failure_forced() -> bool {
 }
 
 fn read_clock_ns(read: impl FnOnce() -> Option<u64>) -> Option<u64> {
-    let measured = if clock_failure_forced() { None } else { read() };
-    if measured.is_none() {
-        CLOCK_READ_FAILURES.fetch_add(1, Ordering::Relaxed);
+    if clock_failure_forced() {
+        None
+    } else {
+        read()
     }
-    measured
 }
 
 /// Monotonic timestamp for measuring occupied worker intervals.
@@ -154,11 +141,6 @@ impl OccupancyInterval {
     pub fn try_elapsed_ns(&self) -> Option<u64> {
         Some(try_read_occupancy_ns()?.saturating_sub(self.start?))
     }
-    /// An unreadable clock flattened to `0`, still counted in
-    /// [`clock_read_failures`].
-    pub fn elapsed_ns(&self) -> u64 {
-        self.try_elapsed_ns().unwrap_or(0)
-    }
 }
 
 #[cfg(test)]
@@ -168,7 +150,6 @@ mod tests {
 
     #[test]
     fn an_unreadable_clock_is_not_a_zero_measurement() {
-        let before = clock_read_failures();
         FORCE_CLOCK_FAILURE.with(|f| f.set(true));
 
         assert_eq!(
@@ -176,8 +157,6 @@ mod tests {
             None,
             "an unreadable clock must say so"
         );
-        let failures = clock_read_failures();
-        assert!(failures > before, "the failed read was not counted");
 
         let iv = OccupancyInterval::start();
         assert_eq!(
@@ -192,7 +171,6 @@ mod tests {
             0,
             "an unmeasured interval must not be invented"
         );
-        assert_eq!(m.incomplete_intervals(), 1, "...and must not vanish either");
 
         FORCE_CLOCK_FAILURE.with(|f| f.set(false));
 
@@ -204,11 +182,6 @@ mod tests {
             m.occupancy_ns(),
             measured_ns,
             "the measured interval is recorded"
-        );
-        assert_eq!(
-            m.incomplete_intervals(),
-            1,
-            "the working read must not be counted as a fault"
         );
     }
 
@@ -227,18 +200,13 @@ mod tests {
     }
 
     #[test]
-    fn a_monotonic_clock_failure_remains_missing_and_counted() {
-        let before = clock_read_failures();
+    fn a_monotonic_clock_failure_remains_missing() {
         FORCE_CLOCK_FAILURE.with(|failure| failure.set(true));
         let measured = try_read_mono_ns();
         FORCE_CLOCK_FAILURE.with(|failure| failure.set(false));
         assert_eq!(
             measured, None,
             "a failed monotonic read must not become a timestamp"
-        );
-        assert!(
-            clock_read_failures() > before,
-            "the monotonic clock failure must be recorded"
         );
         assert!(
             try_read_mono_ns().is_some(),

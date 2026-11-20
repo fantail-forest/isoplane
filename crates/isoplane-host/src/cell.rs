@@ -5,7 +5,7 @@
 //! admission with a bounded lane per worker.
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
@@ -203,7 +203,6 @@ pub struct Cell {
     storage_reclaimer: RwLock<Option<Arc<StorageReclaimer>>>,
     breaker: HangBreaker,
     metrics: Arc<Metrics>,
-    hot: AtomicUsize,
     next_dispatch: AtomicU64,
     shutdown: Arc<AtomicBool>,
     workers: Mutex<Vec<std::thread::JoinHandle<()>>>,
@@ -289,7 +288,6 @@ impl Cell {
             node_coordinated_reclamation: AtomicBool::new(false),
             storage_reclaimer: RwLock::new(None),
             metrics,
-            hot: AtomicUsize::new(0),
             next_dispatch: AtomicU64::new(1),
             shutdown: Arc::new(AtomicBool::new(false)),
             workers: Mutex::new(Vec::new()),
@@ -318,44 +316,23 @@ impl Cell {
     pub fn metrics_raw(&self) -> &Arc<Metrics> {
         &self.metrics
     }
-    pub fn metrics_json(&self) -> String {
-        self.refresh_gauges();
-        self.metrics.to_json()
-    }
-    pub fn metrics_text(&self) -> String {
-        self.refresh_gauges();
-        self.metrics.to_text()
-    }
 
     fn refresh_gauges(&self) {
-        let (mut live, mut parked, mut hib, mut hot) = (0u64, 0u64, 0u64, 0u64);
+        let (mut parked, mut hib, mut hot) = (0u64, 0u64, 0u64);
         for r in self.residents.lock().values() {
             match r.slot.state() {
-                LifecycleTier::Hot => {
-                    hot += 1;
-                    live += 1;
-                }
-                LifecycleTier::Parked => {
-                    parked += 1;
-                    live += 1;
-                }
+                LifecycleTier::Hot => hot += 1,
+                LifecycleTier::Parked => parked += 1,
                 LifecycleTier::Hibernated => hib += 1,
                 LifecycleTier::Discarded => {}
             }
         }
         for m in self.modules.read().values() {
-            let idle = m.pool.idle() as u64;
-            parked += idle;
-            live += idle;
+            parked += m.pool.idle() as u64;
         }
-        self.metrics.live.store(live, Ordering::Relaxed);
         self.metrics.parked.store(parked, Ordering::Relaxed);
         self.metrics.hibernated.store(hib, Ordering::Relaxed);
         self.metrics.hot.store(hot, Ordering::Relaxed);
-    }
-
-    pub fn clear_breaker(&self, module: &ModuleId) {
-        self.breaker.clear_module(module);
     }
 
     /// Warm instances waiting for a dispatch. An instance is Parked from the
@@ -365,13 +342,6 @@ impl Cell {
         self.modules.read().get(module).map(|e| e.pool.idle())
     }
 
-    /// Queued work, across every lane.
-    pub fn queue_depth(&self) -> usize {
-        self.queue.depth()
-    }
-    pub fn hot_count(&self) -> usize {
-        self.hot.load(Ordering::Relaxed)
-    }
     pub fn futures(&self) -> &Arc<FutureTable> {
         &self.rt.futures
     }

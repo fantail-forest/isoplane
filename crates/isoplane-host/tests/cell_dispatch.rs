@@ -120,10 +120,9 @@ fn a_budget_killed_spinner_does_not_block_another_tenants_wake() {
     wake_once(&r, &victim_mod);
 
     let m = r.cell.metrics();
-    assert_eq!(m.tenants["quiet"].traps, 0, "the victim tenant was harmed");
     assert_eq!(
-        m.tenants["noisy"].traps, 0,
-        "budget kills remain distinct from guest traps for the offender"
+        m.traps, 0,
+        "budget kills are not guest traps, and the victim never trapped"
     );
     assert_eq!(m.budget_kills, 2, "both spinners were killed at budget");
     r.cell.shutdown();

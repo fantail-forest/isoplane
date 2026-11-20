@@ -259,11 +259,6 @@ fn completion_events_keep_queue_and_park_wall_separate_from_hot_occupancy() {
         .expect("completed response");
     let records = events.completed(1);
     assert_eq!(
-        cell.metrics().tenants["acme"].dispatches,
-        1,
-        "three slices complete one tenant dispatch"
-    );
-    assert_eq!(
         records.len(),
         1,
         "all hot slices must produce one terminal event"
@@ -295,22 +290,24 @@ fn completion_events_keep_queue_and_park_wall_separate_from_hot_occupancy() {
 }
 
 #[test]
-fn tenant_diagnostics_count_terminal_dispatches_and_promoted_traps() {
-    for (terminal, latched, traps) in [
-        (Step::Terminal(PollStatus::Failed), false, 0),
-        (Step::Terminal(PollStatus::Cancelled), false, 0),
-        (Step::BudgetExit { overage_ns: 1 }, false, 0),
-        (Step::HardKill, false, 0),
-        (Step::Trap(TrapCode::Panic), false, 1),
+fn a_parked_dispatch_completes_once_as_a_guest_trap_only_when_it_trapped() {
+    for (terminal, latched, trapped) in [
+        (Step::Terminal(PollStatus::Failed), false, false),
+        (Step::Terminal(PollStatus::Cancelled), false, false),
+        (Step::BudgetExit { overage_ns: 1 }, false, false),
+        (Step::HardKill, false, false),
+        (Step::Trap(TrapCode::Panic), false, true),
         (
             Step::Done {
                 status: 200,
                 body: vec![],
             },
             true,
-            1,
+            true,
         ),
     ] {
+        let events = Events::default();
+        let _subscriber = events.install();
         let cell = cell(CellConfig {
             exec_threads: 0,
             ..CellConfig::for_test("tenant-completion")
@@ -342,21 +339,15 @@ fn tenant_diagnostics_count_terminal_dispatches_and_promoted_traps() {
         let result = response
             .recv_timeout(Duration::from_secs(10))
             .expect("final response");
-        let json: serde_json::Value =
-            serde_json::from_str(&cell.metrics_json()).expect("diagnostics");
+        let outcomes: Vec<_> = events
+            .completed(1)
+            .iter()
+            .map(|record| record["outcome"] == "guest_trap")
+            .collect();
         assert_eq!(
-            json["tenants"]["acme"]["traps"], traps,
-            "final trap classification: {result:?}"
-        );
-        assert_eq!(
-            json["tenants"]["acme"]["dispatches"], 1,
-            "one parked dispatch: {result:?}"
-        );
-        let text = cell.metrics_text();
-        assert!(
-            text.lines()
-                .any(|line| line == format!("isoplane_tenant_traps{{tenant=\"acme\"}} {traps}")),
-            "{text}"
+            outcomes,
+            [trapped],
+            "one completion with the dispatch's final trap classification: {result:?}"
         );
         cell.shutdown();
     }
@@ -460,15 +451,6 @@ fn recorded_fault(
         cell.futures().live_guest_future_ids().is_empty(),
         "terminal fault cleanup must release owned futures before shutdown"
     );
-    if matches!(fault, FaultPoint::EndClock) {
-        assert_eq!(
-            cell.meters(&module)
-                .expect("registered module meters")
-                .incomplete_intervals(),
-            1,
-            "an incomplete engine interval must be counted rather than reported as a complete zero"
-        );
-    }
     cell.shutdown();
     (result, events.completed(1))
 }
@@ -566,7 +548,10 @@ fn real_completion_cell(wasm: Vec<u8>, slice_wall_ms_cap: u32) -> (Arc<Cell>, Mo
     );
     let module = ModuleId::new("real-completion", "v1");
     let activator = Arc::new(
-        crate::EngineActivator::load(engine, module.clone(), &wasm).expect("real completion guest"),
+        engine
+            .load_template(&wasm)
+            .map(|template| crate::EngineActivator::new(engine, template, module.clone()))
+            .expect("real completion guest"),
     );
     let cell = cell(CellConfig {
         exec_threads: 1,
@@ -1278,7 +1263,7 @@ fn completion_waits_for_the_active_poll_but_not_transferred_operations_or_childr
     assert_eq!(records[0]["slice_occupancy_ns"], 0);
     assert_eq!(meters.occupancy_ns(), 50);
     assert_eq!(
-        cell.metrics().tenants["acme"].occupancy_ns,
+        cell.metrics().tenant_occupancy_ns["acme"],
         50,
         "tenant aggregates include the final reactor poll"
     );
@@ -1304,7 +1289,7 @@ fn completion_waits_for_the_active_poll_but_not_transferred_operations_or_childr
         "later polls remain charged to the application"
     );
     assert_eq!(
-        cell.metrics().tenants["acme"].occupancy_ns,
+        cell.metrics().tenant_occupancy_ns["acme"],
         100,
         "polls after dispatch completion remain visible in tenant aggregates"
     );

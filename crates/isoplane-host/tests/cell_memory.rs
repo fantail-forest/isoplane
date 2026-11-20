@@ -46,7 +46,9 @@ fn dispatch_growth(
         );
         let module = ModuleId::new("memory-budget", "v1");
         let activator = Arc::new(
-            EngineActivator::load(engine, module.clone(), &wasm)
+            engine
+                .load_template(&wasm)
+                .map(|template| EngineActivator::new(engine, template, module.clone()))
                 .expect("small initial memory fits the engine"),
         );
         // macOS network mounts can require writing every reserved byte eagerly.

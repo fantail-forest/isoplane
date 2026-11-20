@@ -381,10 +381,10 @@ impl FakeInstance {
             completion,
             occupancy_measurement: isoplane_engine::OccupancyMeasurement::Complete,
             execution_limit: None,
-            occupancy_ns: self
-                .behaviour
-                .slice_occupancy
-                .map_or_else(|| interval.elapsed_ns(), |value| value.as_nanos() as u64),
+            occupancy_ns: self.behaviour.slice_occupancy.map_or_else(
+                || interval.try_elapsed_ns().unwrap_or(0),
+                |value| value.as_nanos() as u64,
+            ),
             wall_ns: wall.elapsed().as_nanos() as u64,
             trap: match status {
                 PollStatus::Trapped { .. } => Some(TrapInfo {

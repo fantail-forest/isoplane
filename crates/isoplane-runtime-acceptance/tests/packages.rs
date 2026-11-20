@@ -1001,7 +1001,7 @@ fn serving_cell(
         fetcher: Arc::new(isoplane_harness::fakes::FakeFetcher::default()),
         egress: Arc::new(isoplane_host::egress::HostEgressPolicy::new(
             Box::new(fixed_dns::FixedDns(vec![])),
-            isoplane_host::egress::ConnectionLimits::uniform(8).expect("connection limits"),
+            isoplane_harness::uniform_connection_limits(8),
         )),
     });
     prepared_cell(
@@ -1129,8 +1129,7 @@ async fn a_request_that_unblocks_another_on_its_instance_leaves_it_to_resume_in_
                 .first()
                 .and_then(|id| cell.slot(*id))
                 .is_some_and(|slot| {
-                    slot.state() == isoplane_host::LifecycleTier::Parked
-                        && cell.metrics().served_activated == 1
+                    slot.state() == isoplane_host::LifecycleTier::Parked && slot.parks() > 0
                 })
         },
     )
@@ -1146,12 +1145,8 @@ async fn a_request_that_unblocks_another_on_its_instance_leaves_it_to_resume_in_
         .await
         .expect("step 2: the opening request must be answered");
     assert_eq!(
-        (
-            opened.status,
-            opened.body.as_slice(),
-            cell.metrics().served_shared
-        ),
-        (200, b"opened".as_slice(), 1),
+        (opened.status, opened.body.as_slice(), opened.acquired),
+        (200, b"opened".as_slice(), "shared"),
         "step 2: the opening request must join the waiting request's instance: {opened:?}"
     );
 

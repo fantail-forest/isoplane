@@ -19,7 +19,6 @@ pub use quota::{
 };
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use tracing::Instrument;
@@ -212,7 +211,6 @@ pub struct HostEgressPolicy {
     destinations: Arc<dyn DestinationPolicy>,
     open: quota::OpenConnections,
     pending: Arc<attempts::PendingConnections>,
-    resolutions: AtomicU64,
 }
 
 /// Counts one open connection against its instance until the host socket is released.
@@ -264,7 +262,6 @@ impl HostEgressPolicy {
         if !Self::allowlisted(name, reach.allowlist) {
             return Err(DenyReason::NotAllowlisted(name.to_owned()).into());
         }
-        self.resolutions.fetch_add(1, Ordering::Relaxed);
         let addresses = self.resolver.resolve(name, 0).await?;
         if addresses.is_empty() {
             return Err(DnsError::NoAddress.into());
@@ -374,17 +371,12 @@ impl HostEgressPolicy {
             pending: Arc::new(attempts::PendingConnections::new(
                 limits.ceilings().in_progress,
             )),
-            resolutions: AtomicU64::new(0),
         }
     }
 
     /// Creates an egress policy using the system DNS resolver.
     pub fn system(limits: ConnectionLimits) -> Result<Self, DnsError> {
         Ok(Self::new(Box::new(SystemResolver::new()?), limits))
-    }
-
-    pub fn resolutions(&self) -> u64 {
-        self.resolutions.load(Ordering::Relaxed)
     }
 
     /// Open outbound connections `instance` holds.
@@ -425,7 +417,6 @@ impl HostEgressPolicy {
         let port = parsed
             .port_or_known_default()
             .ok_or_else(|| DenyReason::Malformed("missing port".into()))?;
-        self.resolutions.fetch_add(1, Ordering::Relaxed);
         let addrs = self.resolver.resolve(&host, port).await?;
         if addrs.is_empty() {
             return Err(DnsError::NoAddress.into());
@@ -447,17 +438,18 @@ mod tests {
     use super::*;
     use parking_lot::Mutex;
     use std::net::Ipv4Addr;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     /// Answers differently on each call, the shape of a DNS rebinding attack.
     struct Rebinder {
         answers: Mutex<Vec<Vec<SocketAddr>>>,
-        calls: AtomicU64,
+        calls: Arc<AtomicU64>,
     }
     impl Rebinder {
         fn new(answers: Vec<Vec<SocketAddr>>) -> Self {
             Self {
                 answers: Mutex::new(answers),
-                calls: AtomicU64::new(0),
+                calls: Arc::new(AtomicU64::new(0)),
             }
         }
     }
@@ -534,11 +526,6 @@ mod tests {
             0,
             "denied names must never reach DNS"
         );
-        assert_eq!(
-            policy.resolutions(),
-            0,
-            "a denied name must start no lookup"
-        );
     }
 
     #[tokio::test]
@@ -607,10 +594,12 @@ mod tests {
 
     #[tokio::test]
     async fn dns_rebinding_cannot_move_the_target_after_the_check() {
-        let p = policy(Rebinder::new(vec![
+        let rebinder = Rebinder::new(vec![
             vec![sa([93, 184, 216, 34], 443)],
             vec![sa([127, 0, 0, 1], 443)],
-        ]));
+        ]);
+        let resolutions = rebinder.calls.clone();
+        let p = policy(rebinder);
         let pinned = p
             .check_url("https://rebind.example/", Reach::default())
             .await
@@ -620,7 +609,11 @@ mod tests {
             sa([93, 184, 216, 34], 443),
             "the pinned address is the one that was checked"
         );
-        assert_eq!(p.resolutions(), 1, "the policy must resolve exactly once");
+        assert_eq!(
+            resolutions.load(Ordering::Relaxed),
+            1,
+            "the policy must resolve exactly once"
+        );
         assert_ne!(
             pinned.addr.ip(),
             IpAddr::V4(Ipv4Addr::LOCALHOST),

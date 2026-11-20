@@ -62,7 +62,7 @@ fn cleanup_cell_with(
     } else {
         let egress = isoplane_host::egress::HostEgressPolicy::new(
             Box::new(PendingResolver(work.clone())),
-            isoplane_host::egress::ConnectionLimits::uniform(32).expect("connection limits"),
+            isoplane_harness::uniform_connection_limits(32),
         )
         .with_connections(Arc::new(PendingConnection(work)));
         let services = Arc::new(isoplane_host::cell::Services {

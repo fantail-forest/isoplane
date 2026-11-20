@@ -278,6 +278,7 @@ impl WorkQueue {
             .collect()
     }
 
+    #[cfg(test)]
     pub(super) fn depth(&self) -> usize {
         self.lanes
             .iter()

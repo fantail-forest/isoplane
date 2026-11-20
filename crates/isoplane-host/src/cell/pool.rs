@@ -553,42 +553,6 @@ pub(super) mod cell_tests {
     }
 
     #[test]
-    fn an_in_flight_hibernated_handler_cannot_be_discarded() {
-        let cell = cell(CellConfig {
-            exec_threads: 0,
-            ..CellConfig::for_test("protected-continuation")
-        });
-        let (slot, response, future) = hibernated_dispatch(&cell);
-        assert!(
-            cell.discard_instance(slot.id).is_err(),
-            "eviction must refuse an unfinished dispatch even when it is hibernated"
-        );
-        assert_eq!(
-            slot.state(),
-            LifecycleTier::Hibernated,
-            "refused eviction must leave the continuation available for wake"
-        );
-        cell.futures()
-            .complete(future, isoplane_abi::result::ResultRecord::Ok(vec![]));
-        cell.run_wake(slot.clone());
-        let result = response
-            .recv_timeout(Duration::from_secs(10))
-            .expect("the protected dispatch must finish after its I/O completes");
-        assert_eq!(
-            result.body, b"restored",
-            "the original continuation must finish"
-        );
-        cell.discard_instance(slot.id)
-            .expect("the completed handler must become evictable");
-        assert_eq!(
-            slot.state(),
-            LifecycleTier::Discarded,
-            "idle eviction must reclaim the instance"
-        );
-        cell.shutdown();
-    }
-
-    #[test]
     fn concurrent_io_wakes_restore_a_hibernated_dispatch_once() {
         let cell = cell(CellConfig {
             exec_threads: 0,
@@ -625,7 +589,7 @@ pub(super) mod cell_tests {
             "restoration must deliver the captured continuation's result"
         );
         assert_eq!(
-            cell.metrics().hibernation_wakes,
+            cell.metrics_raw().hibernation_wake_us.count(),
             1,
             "concurrent notifications must coalesce into one restoration"
         );
@@ -831,13 +795,6 @@ pub(super) mod cell_tests {
             result.occupancy_ns >= 33,
             "response usage includes every prescribed hot slice"
         );
-        tokio::time::timeout(Duration::from_secs(10), async {
-            while cell.metrics_raw().dispatch_us.count() == 0 {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("dispatch cleanup must settle");
         let records = events.completed(1);
         assert_eq!(records[0]["slice_occupancy_ns"], 33);
         let slot = cell
@@ -864,7 +821,7 @@ pub(super) mod cell_tests {
             "application usage includes request execution and transferred work exactly once"
         );
         assert_eq!(
-            meters.dispatches(),
+            cell.metrics().dispatches,
             1,
             "parks and EOF must not count extra dispatches"
         );
@@ -952,13 +909,13 @@ pub(super) mod cell_tests {
             .expect("dispatch task")
             .expect("the client is answered");
         assert_eq!(gone.status, 502, "the client is answered for its transport");
-        tokio::time::timeout(Duration::from_secs(10), async {
-            while cell.metrics_raw().dispatch_us.count() == 0 {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("the abandoned dispatch must end once its guest stops");
+        assert!(
+            wait_for(
+                || cell.active_dispatch_ids(instance) == [1],
+                Duration::from_secs(10)
+            ),
+            "the abandoned dispatch must end once its guest stops"
+        );
         assert!(
             cell.slot(instance).is_some(),
             "a dispatch whose client went away must not take its instance with it"
@@ -1006,6 +963,9 @@ pub(super) mod cell_tests {
         let slot = parked().expect("parked instance");
         let entry = cell.modules.read().get(&module).cloned().expect("entry");
 
+        // The dispatches made from here report their completions to this thread.
+        let events = Events::default();
+        let _trace = events.install();
         let job = |id: u64| {
             let (responder, answer) = std::sync::mpsc::sync_channel(1);
             let job = DispatchJob {
@@ -1056,11 +1016,17 @@ pub(super) mod cell_tests {
             .recv_timeout(Duration::from_secs(10))
             .expect("the joined dispatch must be answered");
         assert_eq!(joined.status, 200);
-        assert_eq!(
-            cell.metrics_raw().thread_wait_us.count(),
-            1,
-            "the joined dispatch's wait for the thread must be measured"
+        // The cancelled start and the joined dispatch have each completed.
+        let completed = events.completed(2);
+        let joined = completed
+            .iter()
+            .find(|event| event["dispatch_id"] == 3)
+            .expect("the joined dispatch's completion");
+        assert!(
+            joined["thread_wait_ns"].as_u64() >= Some(5_000_000),
+            "the joined dispatch's wait for the thread must be measured: {joined:?}"
         );
+
         cell.shutdown();
     }
 }

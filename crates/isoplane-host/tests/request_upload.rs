@@ -65,7 +65,9 @@ fn request_body_reads_reject_zero_and_negative_sizes_through_the_real_import() {
             .expect("real engine"),
         );
         let activator = Arc::new(
-            EngineActivator::load(engine, module.clone(), &wasm)
+            engine
+                .load_template(&wasm)
+                .map(|template| EngineActivator::new(engine, template, module.clone()))
                 .expect("optional request import must link"),
         );
         assert!(
@@ -133,8 +135,12 @@ fn response_cell(imports: &str, before_response: &str) -> Arc<isoplane_host::Cel
         .expect("real engine"),
     );
     let module = ModuleId::new("early-upload", "v1");
-    let activator =
-        Arc::new(EngineActivator::load(engine, module, &wasm).expect("upload-aware guest"));
+    let activator = Arc::new(
+        engine
+            .load_template(&wasm)
+            .map(|template| EngineActivator::new(engine, template, module))
+            .expect("upload-aware guest"),
+    );
     let (cell, _) = common::rig_resolving(CellConfig::for_test("early-upload"), "93.184.216.34:80");
     cell.register_module("owner", activator, common::manifest("early-upload"))
         .expect("register early response guest");

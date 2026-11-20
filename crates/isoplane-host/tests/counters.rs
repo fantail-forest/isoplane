@@ -40,7 +40,7 @@ fn rig(cfg: CellConfig) -> Rig {
     let svc = Arc::new(Services {
         egress: Arc::new(HostEgressPolicy::new(
             Box::new(Fixed(vec!["93.184.216.34:80".parse().unwrap()])),
-            isoplane_host::egress::ConnectionLimits::uniform(1024).expect("connection limits"),
+            isoplane_harness::uniform_connection_limits(1024),
         )),
         fetcher: fetcher.clone(),
     });
@@ -123,22 +123,16 @@ fn a_hard_kill_is_not_counted_as_a_trap() {
             T,
         )
         .unwrap();
-    assert_eq!(out.status, 503, "a hard budget kill is a 503");
-
-    assert!(
-        wait_for(|| r.cell.metrics().tenants["acme"].dispatches == 2, T,),
-        "both dispatches must finalize their diagnostic counters"
-    );
-    let m = r.cell.metrics();
-    assert_eq!(m.budget_kills, 1, "the spin was killed");
     assert_eq!(
-        m.traps, 1,
+        (out.completion, out.status),
+        (isoplane_engine::Completion::BudgetKill, 503),
+        "the spin was killed at its budget, which is a 503"
+    );
+
+    assert_eq!(
+        r.cell.metrics().traps,
+        1,
         "the budget kill was counted as a trap as well as a kill"
-    );
-
-    assert_eq!(
-        m.tenants["acme"].traps, 1,
-        "the tenant trap count also excludes the budget kill"
     );
     r.cell.shutdown();
 }
