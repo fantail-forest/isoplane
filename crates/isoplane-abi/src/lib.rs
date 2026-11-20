@@ -21,8 +21,6 @@ pub mod status;
 pub mod host;
 
 pub use dispatch::{DispatchKind, DispatchRecord, HttpRequest, ResponseHead};
-pub use result::{FutureError, ResultRecord};
-pub use status::{PollStatus, TrapCode};
 
 /// Custom section identifying artifacts restricted to a local debugger session.
 pub const LOCAL_DEBUG_SECTION: &str = "isoplane.local-debug";

@@ -130,8 +130,5 @@ pub fn mono_ns() -> Option<u64> {
     meters::try_read_mono_ns()
 }
 
-/// Monotonic timestamp for measuring active worker intervals.
-pub use meters::read_occupancy_ns as occupancy_ns;
-
 /// Maximum simultaneous request dispatches sharing one instance.
 pub(crate) const DISPATCHES_PER_INSTANCE: usize = 8;

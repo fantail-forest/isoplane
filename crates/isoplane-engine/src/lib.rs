@@ -41,7 +41,6 @@ pub use budget::{
     DispatchOutcome, ExecutionLimit, GraceEnd, OccupancyBudget, OccupancyMeasurement, TrapInfo,
     TrapKind,
 };
-pub use compiler::COMPILER_STACK_BYTES;
 pub use image::{MemoryImage, PAGE};
 pub use instance::{Completion, Instance, InstanceOps};
 pub use mapped::DormantInstance;

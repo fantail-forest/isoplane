@@ -20,7 +20,6 @@ zstd = { workspace = true }
 [dev-dependencies]
 isoplane-engine.workspace = true
 blake3.workspace = true
-anyhow.workspace = true
 isoplane-prepare.workspace = true
 tokio-util.workspace = true
 wasmtime.workspace = true

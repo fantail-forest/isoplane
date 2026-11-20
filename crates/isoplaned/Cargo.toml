@@ -60,7 +60,7 @@ isoplane-prepare   = { workspace = true }
 tempfile       = { workspace = true }
 isoplane-engine    = { workspace = true }
 
-isoplane-runtime = { workspace = true, features = ["local"] }
+isoplane-runtime = { workspace = true }
 
 [dev-dependencies]
 isoplane-harness = { workspace = true }

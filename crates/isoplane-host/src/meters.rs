@@ -6,10 +6,7 @@ use std::sync::Arc;
 
 use isoplane_engine::DispatchOutcome;
 
-pub use crate::occupancy_clock::{
-    clock_read_failures, read_occupancy_ns, try_read_mono_ns, try_read_occupancy_ns,
-    OccupancyInterval,
-};
+pub use crate::occupancy_clock::{clock_read_failures, try_read_mono_ns, OccupancyInterval};
 
 /// Cumulative execution counters used for limit enforcement and diagnostics.
 #[derive(Debug, Default)]
