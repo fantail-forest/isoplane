@@ -14,10 +14,6 @@ namespace Isoplane.Abi;
 internal static unsafe partial class H
 {
     [WasmImportLinkage]
-    [DllImport("isoplane", EntryPoint = "entropy_fill")]
-    internal static extern void EntropyFill(byte* ptr, int len);
-
-    [WasmImportLinkage]
     [DllImport("isoplane", EntryPoint = "runtime_config_get")]
     internal static extern int RuntimeConfigGet(byte* ptr, int len);
 

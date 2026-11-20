@@ -14,7 +14,6 @@
     <WasmEnableExceptionHandling>false</WasmEnableExceptionHandling>
     <MSBuildEnableWorkloadResolver>true</MSBuildEnableWorkloadResolver>
     <Nullable Condition="'$(Nullable)' == ''">enable</Nullable>
-    <DefineConstants>$(DefineConstants);ISOPLANE_MONO</DefineConstants>
     <WASI_SDK_PATH Condition="'$(WASI_SDK_PATH)' == ''">/opt/wasi-sdk</WASI_SDK_PATH>
     <!-- The interpreter runs the feed's Mono runtime pack. The build
          pipeline (WasiApp.targets) comes from the Wasi SDK pack built beside

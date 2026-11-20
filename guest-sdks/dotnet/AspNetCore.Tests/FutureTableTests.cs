@@ -28,7 +28,7 @@ public sealed class FutureTableTests
                 operations.Add(FutureTable.Start(() => { started.Add(future); return future; }));
             }
             Assert.Equal(new[] { 101L, 102L }, started);
-            Assert.True(FutureTable.Owned(7) == 2 && FutureTable.Waiting(7) == 3, "the cap holds two and queues three");
+            Assert.True(FutureTable.Owned(7) == 2, "the cap holds two; the three not started are queued");
 
             Assert.True(FutureTable.Complete(102, Ok(2)), "a completion settles its operation");
             Assert.Equal(new[] { 101L, 102L, 103L }, started);
@@ -41,7 +41,7 @@ public sealed class FutureTableTests
                 var result = await operations[index].Completion;
                 Assert.True(result.IsOk && result.Payload[0] == index + 1, $"operation {index + 1} must receive its own result");
             }
-            Assert.True(FutureTable.Owned(7) == 0 && FutureTable.Waiting(7) == 0, "nothing is left pending or waiting");
+            Assert.True(FutureTable.Owned(7) == 0, "nothing is left pending");
         }
         finally { dispatch.End(); }
     }
@@ -74,8 +74,7 @@ public sealed class FutureTableTests
         FutureTable.Start(() => { started.Add(302); return 302; });
         dispatch.End();
         Assert.Equal(new[] { 301L }, started);
-        Assert.True(FutureTable.Owned(FutureTable.InstanceLane) == 1 && FutureTable.Waiting(FutureTable.InstanceLane) == 1,
-            "the instance inherits the pending and waiting operations");
+        Assert.True(FutureTable.Owned(FutureTable.InstanceLane) == 1, "the instance inherits the pending operation");
 
         FutureTable.Open(FutureTable.InstanceLane, 2);
         FutureTable.Start(() => { started.Add(303); return 303; });

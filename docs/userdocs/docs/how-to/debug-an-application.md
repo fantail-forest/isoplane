@@ -23,8 +23,8 @@ C# Dev Kit's **Debug project associated with this file** button starts the same
 session for an Isoplane project. The
 adapter builds and starts the application in an **Isoplane** terminal. Send an HTTP
 request to the URL printed in the terminal or Debug Console. Stopping the debugger
-stops the application and its owned processes. No application-code call or
-`IsoplaneDebug` project property is needed for this workflow. The default build
+stops the application and its owned processes. No application-code call is
+needed for this workflow. The default build
 configuration is Debug; optimized Release builds can have fewer inspectable locals
 and source locations.
 

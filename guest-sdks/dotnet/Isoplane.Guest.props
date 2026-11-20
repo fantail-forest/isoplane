@@ -1,7 +1,6 @@
 <Project>
   <PropertyGroup>
     <IsoplaneGuestRuntimeFeed Condition="'$(IsoplaneGuestRuntimeFeed)' == '' AND '$(ISOPLANE_GUEST_RUNTIME_FEED)' != ''">$([MSBuild]::EnsureTrailingSlash('$(ISOPLANE_GUEST_RUNTIME_FEED)'))</IsoplaneGuestRuntimeFeed>
-    <_IsoplaneToolExtension Condition="$([MSBuild]::IsOSPlatform('Windows'))">.exe</_IsoplaneToolExtension>
     <_IsoplaneSdkDirectory>$(MSBuildThisFileDirectory)</_IsoplaneSdkDirectory>
     <_IsoplaneCheckoutFeed>$([MSBuild]::NormalizeDirectory('$(_IsoplaneSdkDirectory)', '..', '..', '.build', 'wasm32', 'runtime', 'feed'))</_IsoplaneCheckoutFeed>
     <IsoplaneGuestRuntimeFeed Condition="'$(IsoplaneGuestRuntimeFeed)' == '' AND Exists('$(_IsoplaneCheckoutFeed)Isoplane.GuestRuntime.props')">$(_IsoplaneCheckoutFeed)</IsoplaneGuestRuntimeFeed>

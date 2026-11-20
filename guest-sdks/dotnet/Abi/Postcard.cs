@@ -22,8 +22,6 @@ internal ref struct PostcardReader
         _pos = 0;
     }
 
-    internal bool AtEnd => _pos >= _buf.Length;
-
     internal byte U8()
     {
         if (_pos >= _buf.Length) throw new PostcardException();
@@ -46,7 +44,6 @@ internal ref struct PostcardReader
 
     internal uint U32() => (uint)Varint();
     internal ulong U64() => Varint();
-    internal ushort U16() => (ushort)Varint();
 
     internal bool Bool() => U8() != 0;
 
