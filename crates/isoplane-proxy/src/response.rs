@@ -202,15 +202,35 @@ mod tests {
     ) -> Response<Body> {
         guest_stream_response(
             method,
-            HttpExchange::buffered(isoplane_abi::host::HttpReply {
+            HttpExchange {
                 status,
                 headers: headers.to_vec(),
-                body,
-                streaming: false,
-            }),
+                body: Box::new(CompleteBody(Some(body))),
+            },
             platform,
         )
         .await
+    }
+
+    /// A response body that was complete before the proxy saw its head.
+    struct CompleteBody(Option<Vec<u8>>);
+
+    #[async_trait::async_trait]
+    impl isoplane_abi::host::HttpBody for CompleteBody {
+        fn remaining_bytes(&self) -> Option<u64> {
+            Some(self.0.as_ref().map_or(0, |body| body.len() as u64))
+        }
+
+        async fn read(&mut self) -> anyhow::Result<Option<Vec<u8>>> {
+            Ok(self.0.take().filter(|body| !body.is_empty()))
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl HttpResponseBody for CompleteBody {
+        async fn finish(self: Box<Self>, _: ResponseDisposition) -> anyhow::Result<()> {
+            Ok(())
+        }
     }
 
     use super::*;

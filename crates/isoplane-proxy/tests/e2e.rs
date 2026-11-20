@@ -446,7 +446,6 @@ async fn proxy_shutdown_drops_a_blocked_response_body_before_returning() {
 
     let cell = Arc::new(FakeCell::new());
     let dispatcher = Arc::new(shutdown::BlockedResponse {
-        cell: cell.clone(),
         polled: CancellationToken::new(),
         dropped: CancellationToken::new(),
     });

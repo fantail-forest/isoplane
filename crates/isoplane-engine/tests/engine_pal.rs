@@ -75,7 +75,12 @@ fn a_module_with_wasi_imports_instantiates_through_the_pal_adapter() {
     let mut caps: Vec<&str> = t
         .pal_composed()
         .iter()
-        .filter_map(|d| d.disposition.capability())
+        .filter_map(|d| match d.disposition {
+            isoplane_abi::pal::Disposition::Delegate(isoplane_abi::pal::Delegation::Cap(
+                capability,
+            )) => Some(capability),
+            _ => None,
+        })
         .collect();
     caps.sort_unstable();
     assert_eq!(
@@ -423,8 +428,8 @@ mod native_readiness {
             let error = isoplane_abi::native_io::Error::from(std::io::Error::from(kind));
             let encoded = send_bridge("try-send-with-error-code", Err(error), false) as u64;
             assert_eq!(
-                isoplane_abi::native_io::canonical::send_failure_code(encoded),
-                Some(code as u8),
+                isoplane_abi::native_io::canonical::SEND_FAILED.checked_sub(encoded),
+                Some(code as u64),
                 "the new bridge must carry the actual network error for {kind:?}"
             );
         }

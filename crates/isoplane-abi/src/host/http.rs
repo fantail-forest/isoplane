@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 
-use super::{HttpReply, Result};
+use super::Result;
 use crate::dispatch::HttpRequest;
 
 /// Default queued-response high-water mark in bytes, independent of total response size.
@@ -44,40 +44,6 @@ pub struct HttpExchange {
     pub headers: Vec<(String, String)>,
     /// Owned response body and its cancellation lifetime.
     pub body: Box<dyn HttpResponseBody>,
-}
-
-impl HttpExchange {
-    /// Adapt an already completed buffered dispatch without changing its payload.
-    pub fn buffered(reply: HttpReply) -> Self {
-        Self {
-            status: reply.status,
-            headers: reply.headers,
-            body: Box::new(BufferedBody(Some(reply.body))),
-        }
-    }
-}
-
-struct BufferedBody(Option<Vec<u8>>);
-
-#[async_trait]
-impl HttpBody for BufferedBody {
-    fn remaining_bytes(&self) -> Option<u64> {
-        Some(self.0.as_ref().map_or(0, |body| body.len() as u64))
-    }
-
-    async fn read(&mut self) -> Result<Option<Vec<u8>>> {
-        Ok(self.0.take().filter(|body| !body.is_empty()))
-    }
-}
-
-#[async_trait]
-impl HttpResponseBody for BufferedBody {
-    async fn finish(self: Box<Self>, disposition: ResponseDisposition) -> Result<()> {
-        match disposition {
-            ResponseDisposition::NoBody => drop(self),
-        }
-        Ok(())
-    }
 }
 
 /// Request metadata and an owned upload, kept outside the serialized guest record.

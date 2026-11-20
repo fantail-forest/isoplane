@@ -401,7 +401,7 @@ mod tests {
         // This test drives reclamation itself, under a pressure it controls.
         node.background.cancel();
         let real = node.real.clone();
-        let response = isoplane_abi::encode(&isoplane_abi::dispatch::ResponseHead {
+        let response = postcard::to_allocvec(&isoplane_abi::dispatch::ResponseHead {
             status: 200,
             headers: vec![],
             body: b"resumed".to_vec(),

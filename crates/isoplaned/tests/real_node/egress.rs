@@ -14,7 +14,7 @@ use isoplane_host::egress::DestinationPolicy;
 use super::{common, config, get, manifest, serve, InitSandbox, Node, Rig};
 
 fn fetching_guest(destination: SocketAddr) -> Vec<u8> {
-    let request = isoplane_abi::encode(&FetchRequest {
+    let request = postcard::to_allocvec(&FetchRequest {
         method: "GET".into(),
         url: format!("http://{destination}/owned"),
         headers: vec![],
@@ -22,7 +22,7 @@ fn fetching_guest(destination: SocketAddr) -> Vec<u8> {
     })
     .expect("the fetch request must encode");
     let response = |status| {
-        isoplane_abi::encode(&ResponseHead {
+        postcard::to_allocvec(&ResponseHead {
             status,
             headers: vec![],
             body: vec![],
@@ -33,7 +33,7 @@ fn fetching_guest(destination: SocketAddr) -> Vec<u8> {
     let success = response(200);
     let failure = response(502);
     let ok_tag =
-        isoplane_abi::encode(&ResultRecord::Ok(vec![])).expect("result tag must encode")[0];
+        postcard::to_allocvec(&ResultRecord::Ok(vec![])).expect("result tag must encode")[0];
     let pending = isoplane_abi::status::PollStatus::Pending.encode();
     wat::parse_str(format!(
         r#"(module

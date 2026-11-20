@@ -1,6 +1,7 @@
 //! Fixture helpers shared by the validator corpus and the WASI PAL corpus.
 
-use isoplane_control::validator::{self, ViolationCode as V};
+use isoplane_abi::config::GuestMemoryBytes;
+use isoplane_control::validator::{self, ValidationReport, Violation, ViolationCode as V};
 
 /// The four exports every deployable module must have, with the
 /// signatures implied by `PollStatus::encode` (a packed `u64`).
@@ -15,8 +16,14 @@ pub fn parse(wat: &str) -> Vec<u8> {
     wat::parse_str(wat).expect("fixture must be assemblable")
 }
 
+/// Admission under the default structural limits, with `memory` as the
+/// ceiling a module's declared maximum must fit.
+pub fn validate(wasm: &[u8], memory: GuestMemoryBytes) -> Result<ValidationReport, Vec<Violation>> {
+    validator::validate_with_limits(wasm, memory, None, &Default::default())
+}
+
 pub fn codes(wasm: &[u8], memory: isoplane_abi::config::GuestMemoryBytes) -> Vec<V> {
-    match validator::validate(wasm, memory) {
+    match validate(wasm, memory) {
         Ok(_) => vec![],
         Err(vs) => {
             for v in &vs {

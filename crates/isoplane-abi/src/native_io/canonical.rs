@@ -1213,18 +1213,9 @@ pub const SEND_FAILED: u64 = u64::MAX - 1;
 pub const SEND_FAILURE_CODES: u64 = 64;
 
 /// The send result reporting a failure with `code`: the wrapper recovers the
-/// code with [`send_failure_code`] and sets the errno libc maps it to.
+/// code and sets the errno libc maps it to.
 pub const fn send_failure(code: super::network_error::NetworkErrorCode) -> u64 {
     SEND_FAILED - code as u64
-}
-
-/// The network error code a failed send result carries, if it is a failure.
-pub const fn send_failure_code(result: u64) -> Option<u8> {
-    if result <= SEND_FAILED && result > SEND_FAILED - SEND_FAILURE_CODES {
-        Some((SEND_FAILED - result) as u8)
-    } else {
-        None
-    }
 }
 
 /// Maximum number of scalar arguments accepted by a canonical packet.

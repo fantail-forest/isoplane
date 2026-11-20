@@ -73,7 +73,7 @@ async fn an_actual_http_guest_completion_crosses_the_otlp_boundary() {
             &["quotes.isoplane.dev".into()],
         )
         .unwrap();
-    let head = isoplane_abi::encode(&ResponseHead {
+    let head = postcard::to_allocvec(&ResponseHead {
         status: 204,
         headers: vec![],
         body: vec![],

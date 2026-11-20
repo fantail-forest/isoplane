@@ -348,16 +348,20 @@ async fn managed_request_failures_leave_other_requests_and_instance_state_intact
                 }
             );
             if status == 500 {
-                use isoplane_abi::host::{CodeTier, Dispatcher, RouteTarget};
+                use isoplane_abi::host::{CodeTier, Dispatcher, HttpUpload, RouteTarget};
                 let mut response = cell
-                    .dispatch_http_stream(
+                    .dispatch_http_upload(
                         &RouteTarget {
                             app: module.app.clone(),
                             version: module.version.clone(),
                             tenant: "tenant".into(),
                             tier: CodeTier::Fast,
                         },
-                        request(path),
+                        HttpUpload {
+                            request: request(path),
+                            body: Box::new(EmptyUpload),
+                            can_have_body: false,
+                        },
                     )
                     .await
                     .expect("a handler failure must produce an HTTP response");

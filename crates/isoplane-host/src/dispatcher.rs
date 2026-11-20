@@ -1,12 +1,12 @@
 //! Adapts HTTP requests to cell dispatches.
 
 use async_trait::async_trait;
-use isoplane_abi::dispatch::{DispatchRecord, HttpRequest};
-use isoplane_abi::host::{Dispatcher, HttpExchange, HttpReply, HttpUpload, RouteTarget};
+use isoplane_abi::dispatch::HttpRequest;
+use isoplane_abi::host::{Dispatcher, HttpExchange, HttpUpload, RouteTarget};
 use tracing::instrument::WithSubscriber;
 use tracing::Instrument;
 
-use crate::cell::{Cell, DispatchResult, Target};
+use crate::cell::{Cell, Target};
 use crate::ModuleId;
 
 impl Cell {
@@ -14,7 +14,7 @@ impl Cell {
         &self,
         target: &RouteTarget,
         req: HttpRequest,
-        upload: Option<std::sync::Arc<crate::bindings::request_body::RequestBodyScope>>,
+        upload: std::sync::Arc<crate::bindings::request_body::RequestBodyScope>,
     ) -> anyhow::Result<HttpExchange> {
         let module = self.module_for(target)?;
         let route = req.path.clone();
@@ -35,7 +35,7 @@ impl Cell {
                     record,
                     Some(crate::cell::HttpDispatch {
                         response: stream,
-                        upload,
+                        upload: Some(upload),
                     }),
                 )
                 .await;
@@ -101,56 +101,10 @@ impl Cell {
         );
         Ok(module)
     }
-
-    /// Waits for execution-pool completion without retaining a worker thread.
-    async fn run(
-        &self,
-        module: ModuleId,
-        target: Target,
-        rec: DispatchRecord,
-    ) -> anyhow::Result<DispatchResult> {
-        let me = self
-            .me()
-            .ok_or_else(|| anyhow::anyhow!("cell `{}` is shutting down", self.cfg.name))?;
-        me.dispatch_http_async(&module, target, rec, None).await
-    }
 }
 
 #[async_trait]
 impl Dispatcher for Cell {
-    async fn dispatch_http(
-        &self,
-        target: &RouteTarget,
-        req: HttpRequest,
-    ) -> anyhow::Result<HttpReply> {
-        let module = self.module_for(target)?;
-        let route = req.path.clone();
-        let rec = self.http_record(&module, req);
-        let out = self.run(module, Target::Handler { route }, rec).await?;
-
-        if let Some(trap) = &out.trap {
-            tracing::warn!(
-                app = %target.app, version = %target.version, trap,
-                "guest fault"
-            );
-        }
-        Ok(HttpReply {
-            status: out.status,
-            headers: out.headers,
-            body: out.body,
-            // Chunks written after `done` are not piped to the requester.
-            streaming: false,
-        })
-    }
-
-    async fn dispatch_http_stream(
-        &self,
-        target: &RouteTarget,
-        req: HttpRequest,
-    ) -> anyhow::Result<HttpExchange> {
-        self.run_http_exchange(target, req, None).await
-    }
-
     async fn dispatch_http_upload(
         &self,
         target: &RouteTarget,
@@ -161,7 +115,7 @@ impl Dispatcher for Cell {
             let can_have_body = upload.can_have_body || !upload.request.body.is_empty();
             let request = upload.collect().await?;
             let source = crate::bindings::request_body::RequestBodyScope::new(None, can_have_body);
-            return self.run_http_exchange(target, request, Some(source)).await;
+            return self.run_http_exchange(target, request, source).await;
         }
         let body = if !upload.can_have_body || upload.body.remaining_bytes() == Some(0) {
             None
@@ -172,7 +126,6 @@ impl Dispatcher for Cell {
             body,
             upload.can_have_body || !upload.request.body.is_empty(),
         );
-        self.run_http_exchange(target, upload.request, Some(source))
-            .await
+        self.run_http_exchange(target, upload.request, source).await
     }
 }

@@ -8,8 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 
-use isoplane_abi::dispatch::HttpRequest;
-use isoplane_abi::host::{Dispatcher, HttpReply};
+use isoplane_abi::host::Dispatcher;
 use isoplane_host::cell::Services;
 use isoplane_host::ModuleId;
 use isoplane_host::{Cell, CellConfig, EngineActivator};
@@ -368,25 +367,6 @@ impl RealCells {
 /// Exact registered deployment dispatch through the shared execution pool.
 #[async_trait::async_trait]
 impl Dispatcher for RealCells {
-    async fn dispatch_http(
-        &self,
-        target: &isoplane_abi::host::RouteTarget,
-        req: HttpRequest,
-    ) -> anyhow::Result<HttpReply> {
-        self.cell_for(&target.app, &target.version)?
-            .dispatch_http(target, req)
-            .await
-    }
-
-    async fn dispatch_http_stream(
-        &self,
-        target: &isoplane_abi::host::RouteTarget,
-        req: HttpRequest,
-    ) -> anyhow::Result<isoplane_abi::host::HttpExchange> {
-        self.cell_for(&target.app, &target.version)?
-            .dispatch_http_stream(target, req)
-            .await
-    }
     async fn dispatch_http_upload(
         &self,
         target: &isoplane_abi::host::RouteTarget,

@@ -105,7 +105,7 @@ impl HostBindings for TestBindings {
             self.rec
                 .responses
                 .lock()
-                .push(isoplane_abi::decode(call.payload).expect("the guest response must decode"));
+                .push(postcard::from_bytes(call.payload).expect("the guest response must decode"));
             let handle = self.next_response;
             self.next_response += 1;
             return handle;

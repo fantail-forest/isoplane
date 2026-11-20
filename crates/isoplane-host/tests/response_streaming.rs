@@ -9,10 +9,22 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use isoplane_abi::dispatch::{HttpRequest, ResponseHead};
-use isoplane_abi::host::{CodeTier, Dispatcher, HttpExchange, ResponseDisposition, RouteTarget};
+use isoplane_abi::host::{
+    CodeTier, Dispatcher, HttpExchange, HttpUpload, ResponseDisposition, RouteTarget,
+};
 use isoplane_engine::{EngineConfig, IsoplaneEngine};
 use isoplane_host::cell::{Cell, CellConfig};
 use isoplane_host::{EngineActivator, ModuleId};
+
+/// A request without content.
+struct NoUpload;
+
+#[async_trait::async_trait]
+impl isoplane_abi::host::HttpBody for NoUpload {
+    async fn read(&mut self) -> anyhow::Result<Option<Vec<u8>>> {
+        Ok(None)
+    }
+}
 
 async fn response(after_finish: &str) -> (Arc<Cell>, HttpExchange) {
     response_program(
@@ -77,15 +89,19 @@ async fn response_program_with(
         tier: CodeTier::Fast,
     };
     let exchange = cell
-        .dispatch_http_stream(
+        .dispatch_http_upload(
             &target,
-            HttpRequest {
-                method: "GET".into(),
-                url: "http://app.example/".into(),
-                path: "/".into(),
-                query: vec![],
-                headers: vec![],
-                body: vec![],
+            HttpUpload {
+                request: HttpRequest {
+                    method: "GET".into(),
+                    url: "http://app.example/".into(),
+                    path: "/".into(),
+                    query: vec![],
+                    headers: vec![],
+                    body: vec![],
+                },
+                body: Box::new(NoUpload),
+                can_have_body: false,
             },
         )
         .await

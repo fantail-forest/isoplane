@@ -152,7 +152,9 @@ fn the_init_sandbox_permits_exactly_the_init_visible_set() {
         "two host fills in one dispatch must be two draws"
     );
 
-    let visible: Vec<&str> = isoplane_abi::imports::init_visible()
+    let visible: Vec<&str> = isoplane_abi::imports::IMPORTS
+        .iter()
+        .filter(|d| d.init_visible)
         .map(|d| d.name)
         .collect();
     assert!(

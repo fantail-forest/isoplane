@@ -125,7 +125,7 @@ fn csharp_enum(src: &str, name: &str) -> BTreeMap<String, u32> {
 
 /// The discriminant postcard writes first for a value of an enum type.
 fn discriminant<T: serde::Serialize>(v: &T) -> u32 {
-    let bytes = isoplane_abi::encode(v).expect("encodes");
+    let bytes = postcard::to_allocvec(v).expect("encodes");
     let mut value = 0u32;
     let mut shift = 0;
     for b in bytes {
@@ -255,7 +255,7 @@ fn the_managed_dispatch_record_reads_the_rust_records_fields_in_order() {
         pending_futures_limit: 64,
         now_ms: 1_700_000_000_000,
     };
-    let bytes = isoplane_abi::encode(&record).expect("encodes");
+    let bytes = postcard::to_allocvec(&record).expect("encodes");
     let mut reader = Reader { bytes: &bytes };
     assert_eq!(reader.varint(), record.dispatch_id);
     assert_eq!(
