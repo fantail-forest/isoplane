@@ -232,6 +232,7 @@ impl Cell {
     /// Captures now, bypassing the idle trajectory's timing and none of its
     /// eligibility rules. Blocks on the cell's reactor for the delta write,
     /// so it is called from a blocking task, never a reactor thread.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn force_hibernate(
         self: &Arc<Self>,
         id: InstanceId,
@@ -255,6 +256,7 @@ impl Cell {
 
     /// Wakes from a delta and queues any results that came due while asleep.
     /// Blocks on the reactor like [`Cell::force_hibernate`].
+    #[cfg(any(test, feature = "test-util"))]
     pub fn force_wake(self: &Arc<Self>, id: InstanceId) -> crate::Result<()> {
         let (slot, module) = {
             let g = self.residents.lock();
@@ -285,6 +287,7 @@ impl Cell {
     }
 
     /// Discards an idle instance without saving a delta.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn discard_instance(self: &Arc<Self>, id: InstanceId) -> crate::Result<()> {
         let slot = self
             .slot(id)

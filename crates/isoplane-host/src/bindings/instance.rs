@@ -259,6 +259,7 @@ impl InstanceCtx {
     }
 
     /// Starts a new dispatch and makes it current.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn begin_dispatch(&self, now_ms: u64, dispatch: u64) {
         self.start_dispatch(now_ms, dispatch);
     }

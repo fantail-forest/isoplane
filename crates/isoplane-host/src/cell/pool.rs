@@ -108,6 +108,7 @@ impl Cell {
     /// Host panics caught and contained; not zero is a host bug. On the cell
     /// rather than [`Metrics`] because it is a fact about this build, not a
     /// tenant.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn caught_panics(&self) -> u64 {
         self.caught_panics.load(Ordering::Relaxed)
     }

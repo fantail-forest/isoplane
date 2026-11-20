@@ -17,8 +17,8 @@ serde = { workspace = true }
 isoplane-cache.workspace = true
 isoplane-abi = { workspace = true, features = ["host"] }
 isoplane-fixtures = { workspace = true }
-isoplane-engine = { workspace = true }
-isoplane-host = { workspace = true }
+isoplane-engine = { workspace = true, features = ["test-util"] }
+isoplane-host = { workspace = true, features = ["test-util"] }
 isoplane-runtime = { workspace = true }
 isoplane-hibernate = { workspace = true }
 tokio = { workspace = true }

@@ -163,3 +163,7 @@ impl IsoplaneEngine {
         })
     }
 }
+
+// The test suites' entry points must never reach a shipped build.
+#[cfg(all(feature = "test-util", not(debug_assertions)))]
+compile_error!("the `test-util` feature is for tests and must not be enabled in a release build");

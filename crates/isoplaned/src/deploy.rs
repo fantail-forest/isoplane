@@ -69,6 +69,7 @@ pub struct PreparedInstallation {
 }
 
 impl PreparedInstallation {
+    #[cfg(any(test, feature = "test-util"))]
     /// Transfers artifact ownership and returns the producer observations separately.
     pub fn into_application(
         self,

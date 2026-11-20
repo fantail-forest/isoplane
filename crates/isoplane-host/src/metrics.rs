@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use parking_lot::Mutex;
+#[cfg(any(test, feature = "test-util"))]
 use prometheus::{proto, TextEncoder};
 
 /// Exact percentiles over the most recent 4096 observations, with lifetime
@@ -200,11 +201,13 @@ impl Metrics {
         }
     }
 
+    #[cfg(any(test, feature = "test-util"))]
     pub fn to_json(&self) -> String {
         serde_json::to_string_pretty(&self.snapshot().as_json()).unwrap_or_else(|_| "{}".into())
     }
 
     /// Encodes the current diagnostic snapshot as Prometheus gauges.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn to_text(&self) -> String {
         let snapshot = self.snapshot();
         let mut families: Vec<_> = snapshot
@@ -276,6 +279,7 @@ pub struct MetricsSnapshot {
     pub tenants: BTreeMap<String, TenantCounters>,
 }
 
+#[cfg(any(test, feature = "test-util"))]
 fn gauge_family(name: &str, values: Vec<(Option<&str>, f64)>) -> proto::MetricFamily {
     let mut family = proto::MetricFamily::default();
     family.set_name(name.to_owned());
@@ -302,6 +306,7 @@ fn gauge_family(name: &str, values: Vec<(Option<&str>, f64)>) -> proto::MetricFa
 }
 
 impl MetricsSnapshot {
+    #[cfg(any(test, feature = "test-util"))]
     fn values(&self) -> Vec<(&'static str, u64)> {
         vec![
             ("dispatches", self.dispatches),
@@ -324,6 +329,7 @@ impl MetricsSnapshot {
         ]
     }
 
+    #[cfg(any(test, feature = "test-util"))]
     pub fn as_json(&self) -> serde_json::Value {
         let mut m = serde_json::Map::new();
         for (name, value) in self.values() {

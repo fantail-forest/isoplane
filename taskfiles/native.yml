@@ -19,4 +19,10 @@ tasks:
       CARGO_TARGET_DIR: '{{.NATIVE_TARGET}}'
       CARGO_BUILD_BUILD_DIR: '{{.NATIVE_TARGET}}'
     cmds:
+      # A feature named test-util exists for tests. The release must not resolve one.
+      - |
+        if {{.DEVELOPMENT_COMMAND}}cargo tree --locked -p isoplane-native -e features,no-dev | grep -F 'feature "test-util"'; then
+          echo "The release build would enable a test-util feature. A normal dependency must not turn one on." >&2
+          exit 1
+        fi
       - '{{.DEVELOPMENT_COMMAND}}cargo build --locked --release -p isoplane-native'

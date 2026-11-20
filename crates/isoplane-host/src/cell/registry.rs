@@ -414,6 +414,7 @@ impl Cell {
     /// Stops admitting work for `module` and discards its idle instances. Work
     /// already running holds the module until it finishes. Returns whether the
     /// module was registered.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn retire_module(&self, module: &ModuleId) -> bool {
         let Some(entry) = self.modules.write().remove(module) else {
             return false;
@@ -542,9 +543,11 @@ impl Cell {
         self.modules.read().get(module).map(|m| m.tenant.clone())
     }
 
+    #[cfg(any(test, feature = "test-util"))]
     pub fn instance_state(&self, id: InstanceId) -> Option<LifecycleTier> {
         self.residents.lock().get(&id).map(|r| r.slot.state())
     }
+    #[cfg(any(test, feature = "test-util"))]
     pub fn resident_ids(&self) -> Vec<InstanceId> {
         self.residents.lock().keys().copied().collect()
     }

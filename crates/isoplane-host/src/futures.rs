@@ -623,6 +623,7 @@ impl FutureTable {
         None
     }
 
+    #[cfg(any(test, feature = "test-util"))]
     pub fn has_ready(&self, owner: InstanceId) -> bool {
         self.existing(owner)
             .is_some_and(|a| !a.inner.lock().ready.is_empty())
@@ -828,6 +829,7 @@ impl FutureTable {
     }
 
     /// Every live future id, ascending.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn live_future_ids(&self) -> Vec<u64> {
         let mut v = Vec::new();
         self.entries.retain_sync(|id, _| {
@@ -840,6 +842,7 @@ impl FutureTable {
 
     /// Live futures the guest issued, excluding each dispatch's implicit
     /// cancellation future.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn live_guest_future_ids(&self) -> Vec<u64> {
         let mut v = Vec::new();
         self.entries.retain_sync(|id, e| {
@@ -852,6 +855,7 @@ impl FutureTable {
         v
     }
 
+    #[cfg(any(test, feature = "test-util"))]
     pub fn live_futures(&self) -> usize {
         self.entries.len()
     }

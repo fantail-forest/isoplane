@@ -168,6 +168,7 @@ impl HangBreaker {
 
     /// An operator's manual override; a deploy clears the breaker on its own
     /// by producing a new key.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn clear_module(&self, module: &ModuleId) {
         self.entries.lock().retain(|k, _| &k.module != module);
     }

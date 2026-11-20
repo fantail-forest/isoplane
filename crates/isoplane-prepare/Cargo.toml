@@ -30,6 +30,7 @@ tar.workspace = true
 hex.workspace = true
 
 [dev-dependencies]
+isoplane-engine = { workspace = true, features = ["test-util"] }
 tempfile.workspace = true
 isoplane-fixtures.workspace = true
 wasmtime.workspace = true

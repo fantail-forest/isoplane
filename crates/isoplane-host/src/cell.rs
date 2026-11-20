@@ -201,6 +201,7 @@ pub struct Cell {
 
 impl Cell {
     /// Fails if the reactor or a pool thread cannot be started.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn new(cfg: CellConfig, services: Arc<Services>) -> crate::Result<Arc<Self>> {
         Self::with_snapshot_storage(
             cfg,
@@ -306,10 +307,12 @@ impl Cell {
     pub fn metrics_raw(&self) -> &Arc<Metrics> {
         &self.metrics
     }
+    #[cfg(any(test, feature = "test-util"))]
     pub fn metrics_json(&self) -> String {
         self.refresh_gauges();
         self.metrics.to_json()
     }
+    #[cfg(any(test, feature = "test-util"))]
     pub fn metrics_text(&self) -> String {
         self.refresh_gauges();
         self.metrics.to_text()
@@ -333,6 +336,7 @@ impl Cell {
         self.metrics.hot.store(hot, Ordering::Relaxed);
     }
 
+    #[cfg(any(test, feature = "test-util"))]
     pub fn clear_breaker(&self, module: &ModuleId) {
         self.breaker.clear_module(module);
     }
@@ -340,10 +344,12 @@ impl Cell {
     /// Warm instances waiting for a dispatch. An instance is Parked from the
     /// moment the guest returns but acquirable only once `finish_and_release`
     /// pools it, and the response leaves before that.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn idle_instances(&self, module: &ModuleId) -> Option<usize> {
         self.modules.read().get(module).map(|e| e.pool.idle())
     }
 
+    #[cfg(any(test, feature = "test-util"))]
     pub fn futures(&self) -> &Arc<FutureTable> {
         &self.rt.futures
     }

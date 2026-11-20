@@ -132,3 +132,7 @@ pub fn mono_ns() -> Option<u64> {
 
 /// Maximum simultaneous request dispatches sharing one instance.
 pub(crate) const DISPATCHES_PER_INSTANCE: usize = 8;
+
+// The test suites' entry points must never reach a shipped build.
+#[cfg(all(feature = "test-util", not(debug_assertions)))]
+compile_error!("the `test-util` feature is for tests and must not be enabled in a release build");

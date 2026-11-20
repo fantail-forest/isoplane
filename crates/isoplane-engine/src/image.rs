@@ -590,6 +590,7 @@ impl MemoryImage {
         live[cursor - off..].iter().all(|&byte| byte == 0)
     }
 
+    #[cfg(any(test, feature = "test-util"))]
     /// Expands the baseline for explicit inspection.
     pub fn to_dense(&self) -> Vec<u8> {
         let mut out = vec![0; self.len];
@@ -597,6 +598,8 @@ impl MemoryImage {
         out
     }
 
+    // Activation copies a layer with this where it has no copy-on-write mapping.
+    #[cfg(any(test, feature = "test-util", not(target_os = "linux")))]
     /// Writes the image over the start of `memory`, as far as the shorter of
     /// the two reaches: an overlay's base first, then this image's own
     /// regions, with zeros wherever neither stores anything.
