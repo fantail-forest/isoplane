@@ -18,7 +18,6 @@ pub(super) struct State {
     pub(super) mut_globals: Vec<(String, GlobalValue)>,
     pub(super) tables: Vec<(String, u64)>,
     pub(super) table_nullness: Vec<Vec<bool>>,
-    pub(super) has_gc_hint: bool,
     pub(super) has_initialize: bool,
 }
 
@@ -34,7 +33,6 @@ impl State {
             mut_globals: inner.mut_globals.clone(),
             tables: inner.tables.clone(),
             table_nullness: inner.table_nullness.clone(),
-            has_gc_hint: inner.has_gc_hint,
             has_initialize: inner.has_initialize,
         }
     }
@@ -89,7 +87,7 @@ impl IsoplaneEngine {
         image: MemoryImage,
     ) -> Result<Template> {
         let filesystem_files = state.filesystem(&self.inner.cfg.platform_files)?;
-        let (pal_linker, pal_composed) = self
+        let pal_linker = self
             .template_linker(&native.module)
             .map_err(PreparedError::Engine)?;
         Ok(Template {
@@ -104,7 +102,6 @@ impl IsoplaneEngine {
                 filesystem_files,
                 native,
                 pal_linker,
-                pal_composed,
                 image: Arc::new(image),
                 memory_pages: state.memory_pages,
                 deferred: state.deferred,
@@ -112,7 +109,6 @@ impl IsoplaneEngine {
                 mut_globals: state.mut_globals,
                 tables: state.tables,
                 table_nullness: state.table_nullness,
-                has_gc_hint: state.has_gc_hint,
                 has_initialize: state.has_initialize,
                 failed_storage: Default::default(),
                 prepared_hash: None,

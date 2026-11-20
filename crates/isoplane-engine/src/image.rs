@@ -539,12 +539,12 @@ impl MemoryImage {
     }
 
     /// Logical memory length, including zero gaps.
+    #[expect(
+        clippy::len_without_is_empty,
+        reason = "nothing asks whether an image is empty"
+    )]
     pub fn len(&self) -> usize {
         self.len
-    }
-    /// Whether the logical memory is empty.
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
     }
     #[cfg(test)]
     fn runs(&self) -> usize {
@@ -677,17 +677,13 @@ fn number(bytes: &[u8], offset: usize) -> Result<usize, &'static str> {
     usize::try_from(u64::from_le_bytes(value)).map_err(|_| "sparse field exceeds address space")
 }
 
-impl Default for MemoryImage {
-    fn default() -> Self {
-        Self::from_dense(&[])
-    }
-}
+#[cfg(test)]
 impl PartialEq for MemoryImage {
     fn eq(&self, other: &Self) -> bool {
         self.encoded() == other.encoded()
     }
 }
-impl Eq for MemoryImage {}
+#[cfg(test)]
 impl std::fmt::Debug for MemoryImage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MemoryImage")

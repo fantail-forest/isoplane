@@ -486,7 +486,6 @@ impl InstanceOps for FakeInstance {
     fn capture_mutable_state(&mut self) -> anyhow::Result<InstanceImage> {
         Ok(InstanceImage {
             globals: self.image.globals.clone(),
-            table_mutations: self.image.table_mutations.clone(),
             memory_pages: (self.memory.len() / isoplane_abi::WASM_PAGE_SIZE) as u32,
         })
     }

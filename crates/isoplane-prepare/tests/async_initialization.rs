@@ -1,6 +1,8 @@
 #![cfg_attr(not(target_os = "linux"), forbid(unsafe_code))]
 
 mod common;
+#[path = "common/provider.rs"]
+mod provider;
 
 use isoplane_abi::config::InitSandbox;
 use isoplane_abi::imports::Ty;
@@ -93,7 +95,7 @@ async fn layered_preparation_captures_the_completed_async_initializer() {
         input_hash: *blake3::hash(&wasm).as_bytes(),
     };
     use isoplane_prepare::Preparation;
-    let product = isoplane_prepare::LocalPreparation::new().unwrap()
+    let product = crate::provider::local_preparation()
         .prepare(&wasm, &build, &tokio_util::sync::CancellationToken::new()).await.expect(
         "layered capture and fresh-instance state verification must succeed after the timer wake",
     );
@@ -106,7 +108,9 @@ async fn layered_preparation_captures_the_completed_async_initializer() {
         engine.decode_builder_output(product.prepared_bytes(), build.identity().unwrap())
     }
     .unwrap();
-    let prepared = engine.load_prepared_product(&artifact).unwrap();
+    let prepared = engine
+        .load_prepared_product_in(&artifact, &std::env::temp_dir())
+        .unwrap();
     assert_eq!(
         prepared.memory_image_arc().to_dense()[128],
         42,

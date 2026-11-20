@@ -296,28 +296,6 @@ impl NodeConfig {
         Ok(config)
     }
 
-    /// Creates an empty host with an explicitly established owner.
-    pub fn new(owner: impl Into<String>) -> Self {
-        Self {
-            owner: owner.into(),
-            node: default_node_name(),
-            application_settings: Vec::new(),
-            proxy: Default::default(),
-            admin: Default::default(),
-            apps: Vec::new(),
-            data_dir: default_data_dir(),
-            engine: Default::default(),
-            host: Default::default(),
-            network: Default::default(),
-            response_queue_bytes: default_response_queue_bytes(),
-            otlp_logs_endpoint: None,
-            otlp_traces_endpoint: None,
-            trace_limits: Default::default(),
-            trust: Default::default(),
-            preparation: None,
-        }
-    }
-
     /// Refuses invalid static settings before opening services or binding listeners.
     pub fn validate(&self) -> Result<(), ConfigError> {
         if self.owner.trim().is_empty() {
@@ -420,8 +398,16 @@ mod tests {
     #[test]
     fn ownership_must_be_explicit_and_nonempty() {
         assert!(NodeConfig::from_toml("").is_err());
-        NodeConfig::new("operator").validate().unwrap();
-        assert_eq!(NodeConfig::new(" ").validate(), Err(ConfigError::Owner));
+        NodeConfig::from_toml(r#"owner = "operator""#)
+            .expect("a configuration naming only its owner")
+            .validate()
+            .unwrap();
+        assert_eq!(
+            NodeConfig::from_toml(r#"owner = " ""#)
+                .expect("a configuration naming only its owner")
+                .validate(),
+            Err(ConfigError::Owner)
+        );
     }
     #[test]
     fn duplicate_normalized_hosts_fail_before_service_construction() {
@@ -441,7 +427,8 @@ manifest = { name = "b" }
     }
     #[test]
     fn printed_configuration_preserves_operational_budgets() {
-        let mut config = NodeConfig::new("operator");
+        let mut config = NodeConfig::from_toml(r#"owner = "operator""#)
+            .expect("a configuration naming only its owner");
         config.host.queue_depth_per_worker = 3;
         config.network.instance_open_connections = 9;
         config.host.buffered_future_bytes = 23;

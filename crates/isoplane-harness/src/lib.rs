@@ -278,7 +278,7 @@ impl Source {
                 let engine = IsoplaneEngine::new(engine_configuration(files))
                     .expect("the returned-guest engine must initialize");
                 let template = engine
-                    .load_prepared_product(prepared)
+                    .load_prepared_product_in(prepared, &std::env::temp_dir())
                     .unwrap_or_else(|error| panic!("the prepared template must load: {error:#}"));
                 (engine, template)
             }
@@ -287,10 +287,10 @@ impl Source {
                 let engine = IsoplaneEngine::new(engine_configuration(files))
                     .expect("the returned-guest engine must initialize");
                 let base = engine
-                    .load_prepared_product(base)
+                    .load_prepared_product_in(base, &std::env::temp_dir())
                     .unwrap_or_else(|error| panic!("the base template must load: {error:#}"));
                 let template = engine
-                    .load_prepared_product_over(&base, layer)
+                    .load_prepared_product_over_in(&base, layer, &std::env::temp_dir())
                     .unwrap_or_else(|error| panic!("the layer must load over its base: {error:#}"));
                 (engine, template)
             }

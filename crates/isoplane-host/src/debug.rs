@@ -169,9 +169,6 @@ impl HostBindings for DebugBindings {
     fn end_slice(&mut self) {
         self.0.end_slice();
     }
-    fn is_init_sandbox(&self) -> bool {
-        self.0.is_init_sandbox()
-    }
     fn enter_grace(&mut self) {
         self.0.enter_grace();
     }

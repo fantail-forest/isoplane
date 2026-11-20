@@ -85,13 +85,14 @@ async fn prepared_deployment_serves_initialized_state_without_repeating_initiali
             first.len()
         ),
     );
-    let provider = real.local_preparation().expect("portable preparation");
+    let provider = crate::common::preparation::provider(&node.cfg);
+    let engine = node.real.engine();
     let cancellation = tokio_util::sync::CancellationToken::new();
     let context = PreparationContext {
         network: crate::common::preparation::network("acme", &manifest("quotes")),
         runtime_configuration: snapshot.configuration,
         application_files: isoplane_engine::PlatformFiles::default(),
-        engine: real.engine(),
+        engine,
         provider: &provider,
         runtime: RuntimeProfile::raw_wasm(),
         occupancy_ms: 1000,
@@ -126,20 +127,7 @@ async fn prepared_deployment_serves_initialized_state_without_repeating_initiali
     real.install_application("acme", installed)
         .await
         .expect("actual registration");
-    let artifact: String = receipt.artifact_key.clone().into();
-    let prepared = node
-        .cfg
-        .data_dir
-        .join("registry")
-        .join(artifact)
-        .join("prepared");
-    let digest = hex::decode(&receipt.manifest_sha256)
-        .unwrap()
-        .try_into()
-        .unwrap();
-    real.engine()
-        .check_prepared_receipt(&prepared, digest, receipt.runtime_profile.digest().unwrap())
-        .expect("selected receipt matches the published local template");
+    crate::common::preparation::route(&node, "quotes", &receipt.version);
     let duplicate = real
         .deployer
         .prepare_application(
@@ -181,11 +169,12 @@ async fn a_preparation_refusal_reaches_the_caller_without_publishing_artifacts()
     let node = Node::build(config(directory.path())).expect("real node");
     let real = node.real.clone();
     let cancellation = tokio_util::sync::CancellationToken::new();
+    let engine = node.real.engine();
     let context = PreparationContext {
         network: crate::common::preparation::network("acme", &manifest("quotes")),
         runtime_configuration: Default::default(),
         application_files: isoplane_engine::PlatformFiles::default(),
-        engine: real.engine(),
+        engine,
         provider: &Refusal,
         runtime: RuntimeProfile::raw_wasm(),
         occupancy_ms: 1000,

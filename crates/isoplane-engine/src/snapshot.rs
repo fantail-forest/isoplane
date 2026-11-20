@@ -22,7 +22,6 @@ pub enum SnapshotError {
 pub struct InstanceImage {
     /// Exported mutable globals, in module index order.
     pub globals: Vec<GlobalValue>,
-    pub table_mutations: Vec<TableMutation>,
     /// Linear-memory size in WASM pages, so restore can grow to match before
     /// delta pages are applied.
     pub memory_pages: u32,
@@ -60,12 +59,4 @@ impl From<GlobalValue> for Val {
             GlobalValue::F64(x) => Val::F64(x),
         }
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TableMutation {
-    pub table: u32,
-    pub index: u32,
-    /// Function index, or `None` for a null slot.
-    pub func: Option<u32>,
 }

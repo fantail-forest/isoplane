@@ -76,8 +76,8 @@ pub(crate) struct Limits {
     /// Whether the guest is initializing, which grows only to the limit: the
     /// room past it is for dispatches to finish in, and what initialization
     /// leaves is every instance's starting point. Set from the bindings when
-    /// the store is made and at every slice, since an instance can be made
-    /// before initialization and run dispatches after it.
+    /// the store is made: an instance bound for initialization never serves
+    /// dispatches.
     pub initializing: bool,
     pub max_tables: usize,
     pub max_table_elements: usize,
@@ -241,9 +241,6 @@ impl StoreState {
     }
 
     pub(crate) fn begin_slice(&mut self, clock_ms: u64, meter: Meter) {
-        if let Some(bindings) = &self.bindings {
-            self.limits.initializing = bindings.is_init_sandbox();
-        }
         self.clock_ms = clock_ms;
         self.meter = meter;
         self.kill = None;

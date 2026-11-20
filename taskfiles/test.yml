@@ -4,8 +4,6 @@ tasks:
   default:
     desc: Prepare fixtures, then run the Rust test suite
     deps: [':initialize', ':fixtures', guests]
-    env: &test_env
-      ISOPLANE_TEST_SKIP_PUBLICATION_FLUSH: '1'
     cmds:
       - '{{.DEVELOPMENT_COMMAND}}cargo test --workspace {{.CLI_ARGS}}'
 
@@ -21,7 +19,6 @@ tasks:
   unit:
     desc: Run Rust library tests without preparing integration fixtures
     deps: [':initialize']
-    env: *test_env
     cmds:
       - '{{.DEVELOPMENT_COMMAND}}cargo test --lib {{.CLI_ARGS}}'
 
@@ -200,7 +197,6 @@ tasks:
       ISOPLANE_HOME: '{{.TEST_HOME}}'
       ISOPLANE_TEST_PROJECT: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/editor-fixture/app'
       ISOPLANE_TEST_CLI: '{{env "ISOPLANE_TEST_CLI" | default .CLI}}'
-      ISOPLANE_TEST_SKIP_PUBLICATION_FLUSH: '1'
     cmds:
       - '{{if eq OS "linux"}}xvfb-run -a {{end}}npm --prefix tools/vscode-isoplane test -- {{.CLI_ARGS | default "launch"}}'
 
@@ -221,7 +217,6 @@ tasks:
     internal: true
     desc: Prepare the guest fixtures Rust tests load and run selected Rust tests
     deps: [':initialize', ':fixtures:rust', ':fixtures:dotnet:prepared', ':fixtures:acceptance:prepared', ':fixtures:package:prepared', ':fixtures:compiled-runtime:prepared', ':node:runtimes:prepared']
-    env: *test_env
     cmds:
       - '{{.DEVELOPMENT_COMMAND}}cargo test {{.CLI_ARGS}}'
 
@@ -229,7 +224,6 @@ tasks:
     internal: true
     desc: Run shared runtime acceptance tests
     deps: [':initialize', ':fixtures:acceptance:prepared', ':fixtures:feed:prepared', ':fixtures:package:prepared', ':fixtures:compiled-runtime:prepared']
-    env: *test_env
     cmds:
       - '{{.DEVELOPMENT_COMMAND}}cargo test -p isoplane-runtime-acceptance {{.CLI_ARGS}}'
 
@@ -237,7 +231,6 @@ tasks:
     internal: true
     desc: Run SDK and CLI integration tests using prepared packages
     deps: [':initialize', ':cli:stage', ':fixtures:feed:prepared', ':fixtures:runtime:prepared', ':fixtures:projects:prepared', ':fixtures:package:prepared', ':test:debugger:environment', ':test:managed:host:prepared']
-    env: *test_env
     cmds:
       - '{{.DEVELOPMENT_COMMAND}}cargo test -p isoplane-native {{.CLI_ARGS}}'
 
@@ -245,7 +238,6 @@ tasks:
     internal: true
     desc: Run selected native debugger integration tests
     deps: [':initialize', ':cli:stage', ':test:debugger:environment', ':fixtures:feed:prepared', ':fixtures:runtime:prepared', ':fixtures:projects:prepared', ':fixtures:package:debugger:prepared', ':fixtures:package:debugger-optimized:prepared', ':fixtures:debugger:hotreload:package:prepared', ':test:managed:host:prepared']
-    env: *test_env
     cmds:
       - '{{.DEVELOPMENT_COMMAND}}cargo test -p isoplane-native --test installed_dev {{.CLI_ARGS}}'
 
@@ -258,7 +250,6 @@ tasks:
     desc: Run managed tests; pass -- --filter <expression> to select tests
     deps: [managed:inputs]
     env:
-      ISOPLANE_TEST_SKIP_PUBLICATION_FLUSH: '1'
       # Packages the tests restore stay in this worktree, not the user's NuGet cache.
       NUGET_PACKAGES: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/test-nuget-packages'
     cmds:

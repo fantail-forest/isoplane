@@ -13,9 +13,7 @@ pub fn small_engine_config() -> EngineConfig {
     EngineConfig {
         max_instances: 64,
         max_memory_bytes: 4 << 20,
-        epoch_tick_us: 200,
         pooling: true,
-        spectre_mitigations: true,
         guard_size_bytes: 2 << 20,
         ..EngineConfig::default()
     }

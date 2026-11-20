@@ -2,8 +2,11 @@
 //! `isoplane_initialize` under.
 
 mod common;
+#[path = "common/initialization_bindings.rs"]
+mod initialization_bindings;
 
 use common::*;
+use initialization_bindings::InitializationTestBindings;
 use isoplane_engine::{Completion, InstanceOps, OccupancyBudget, TrapKind};
 
 fn read_u32(m: &[u8], off: usize) -> u32 {
@@ -22,15 +25,9 @@ fn import(name: &str, params: &str, results: &str) -> String {
     format!(r#"(import "isoplane" "{name}" (func ${name} {params} {results}))"#)
 }
 
-impl TestBindings {
-    /// Bindings whose `is_init_sandbox()` is true, for exercising the
-    /// capability restriction `isoplane_initialize` runs under.
-    fn init_sandbox(rec: Recorder) -> Self {
-        Self {
-            init_sandbox: true,
-            ..Self::new(rec)
-        }
-    }
+/// Bindings for exercising the capability restriction `isoplane_initialize` runs under.
+fn init_sandbox(rec: Recorder) -> Box<InitializationTestBindings> {
+    Box::new(InitializationTestBindings(TestBindings::new(rec)))
 }
 
 #[test]
@@ -56,7 +53,7 @@ fn the_init_sandbox_traps_on_a_forbidden_import_and_names_it() {
 
     let rec = Recorder::default();
     let mut i = e
-        .activate(&t, Box::new(TestBindings::init_sandbox(rec.clone())))
+        .activate_initialization(&t, init_sandbox(rec.clone()))
         .expect("activation");
     let out = i.run_initialize(budget(10_000));
 
@@ -114,9 +111,9 @@ fn the_init_sandbox_permits_exactly_the_init_visible_set() {
         DONE,
     );
     let t = e.load_template(&wasm).expect("template");
-    let mut b = TestBindings::init_sandbox(Recorder::default());
-    b.full_length = Some(9_000);
-    let mut i = e.activate(&t, Box::new(b)).expect("activation");
+    let mut b = init_sandbox(Recorder::default());
+    b.0.full_length = Some(9_000);
+    let mut i = e.activate_initialization(&t, b).expect("activation");
     let out = i.run_initialize(budget(10_000));
     assert_eq!(
         out.completion,
@@ -208,10 +205,7 @@ fn runtime_configuration_reaches_the_preparation_binding() {
         .expect("valid runtime configuration import");
     let recorder = Recorder::default();
     let mut instance = engine
-        .activate(
-            &template,
-            Box::new(TestBindings::init_sandbox(recorder.clone())),
-        )
+        .activate_initialization(&template, init_sandbox(recorder.clone()))
         .expect("activation");
     let outcome = instance.run_initialize(budget(10_000));
     assert_eq!(

@@ -12,7 +12,14 @@ async fn managed_logs_keep_request_and_background_ownership_across_park_wake() {
     let capture = LogCapture::default();
     let writer = capture.clone();
     let logging = tokio::task::spawn_blocking(move || {
-        isoplaned::logs::init(true, writer, "customer-log-test", None, None)
+        isoplaned::logs::init_with_limits(
+            true,
+            writer,
+            "customer-log-test",
+            None,
+            None,
+            Default::default(),
+        )
     })
     .await
     .expect("logging setup task")

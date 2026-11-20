@@ -457,7 +457,6 @@ async fn proxy_shutdown_drops_a_blocked_response_body_before_returning() {
                 max_in_flight: 1,
                 max_queued: 0,
             },
-            ..ProxyConfig::default()
         },
         dispatcher.clone(),
     )
@@ -496,8 +495,12 @@ async fn proxy_shutdown_drops_a_blocked_response_body_before_returning() {
     );
     assert_eq!(
         rig.metrics
-            .route_resolutions_total
-            .load(std::sync::atomic::Ordering::Relaxed),
+            .dispatches_tier_fast
+            .load(std::sync::atomic::Ordering::Relaxed)
+            + rig
+                .metrics
+                .dispatches_tier_optimized
+                .load(std::sync::atomic::Ordering::Relaxed),
         1,
         "the refused request never reaches route selection"
     );

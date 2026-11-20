@@ -4,8 +4,11 @@
 mod bindings;
 #[path = "common/dispatch.rs"]
 mod dispatch;
+#[path = "common/initialization_bindings.rs"]
+mod initialization_bindings;
 
 use bindings::{Recorder, TestBindings};
+use initialization_bindings::InitializationTestBindings;
 use isoplane_abi::WASM_PAGE_SIZE;
 use isoplane_engine::{Completion, EngineConfig, InstanceOps, IsoplaneEngine, OccupancyBudget};
 
@@ -49,10 +52,9 @@ fn observed_limit(
             .load_template(&wasm)
             .expect("the memory query fixture must load");
         let mut bindings = TestBindings::new(Recorder::default());
-        bindings.init_sandbox = true;
         bindings.memory_limit_bytes = application_pages.map(|pages| pages * WASM_PAGE_SIZE as u64);
         let mut instance = engine
-            .activate(&template, Box::new(bindings))
+            .activate_initialization(&template, Box::new(InitializationTestBindings(bindings)))
             .expect("the memory query fixture must activate");
         let outcome = instance.run_initialize(OccupancyBudget::default());
         assert_eq!(
@@ -91,8 +93,9 @@ fn an_unbounded_module_reports_the_engine_capacity() {
 }
 
 #[test]
-fn an_instance_made_while_initializing_grows_to_its_ceiling_once_it_serves_dispatches() {
+fn an_application_initialized_to_its_limit_grows_to_its_ceiling_once_it_serves_dispatches() {
     // A four-page limit, whose ceiling is five pages.
+    let limit_bytes = 4 * WASM_PAGE_SIZE as u64;
     let wasm = wat::parse_str(
         r#"(module
         (memory (export "memory") 1)
@@ -109,29 +112,52 @@ fn an_instance_made_while_initializing_grows_to_its_ceiling_once_it_serves_dispa
     )
     .expect("the growth fixture must assemble");
     let engine = IsoplaneEngine::new(EngineConfig {
-        max_instances: 1,
+        max_instances: 2,
         max_memory_bytes: 16 * WASM_PAGE_SIZE as u64,
-        pooling: false,
         ..EngineConfig::default()
     })
     .expect("the growth engine must start");
-    let template = engine
-        .load_template(&wasm)
+    let source = engine
+        .load_layer_source(&wasm)
         .expect("the growth fixture must load");
-    let initializing = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
     let mut bindings = TestBindings::new(Recorder::default());
-    bindings.sandbox_switch = Some(initializing.clone());
-    bindings.memory_limit_bytes = Some(4 * WASM_PAGE_SIZE as u64);
-    let mut instance = engine
-        .activate(&template, Box::new(bindings))
-        .expect("the growth fixture must activate");
-    let initialized = instance.run_initialize(OccupancyBudget::default());
+    bindings.memory_limit_bytes = Some(limit_bytes);
+    let mut initializing = engine
+        .activate_initialization(&source, Box::new(InitializationTestBindings(bindings)))
+        .expect("the growth fixture must activate for initialization");
+    let initialized = initializing.run_initialize(OccupancyBudget::default());
     assert_eq!(
         initialized.completion,
         Completion::Done,
         "initialization grows to the limit and no further: {initialized:?}"
     );
-    initializing.store(false, std::sync::atomic::Ordering::Relaxed);
+    let prepared = engine
+        .prepare_initialized_template(
+            &source,
+            &mut initializing,
+            isoplane_engine::prepared::PreparedIdentity {
+                input_hash: [1; 32],
+                runtime_profile: [2; 32],
+                initialization_hash: [3; 32],
+            },
+            Default::default(),
+            vec![],
+        )
+        .expect("the initialized application must be captured");
+    drop(initializing);
+    let template = engine
+        .load_prepared_product_in(&prepared, &std::env::temp_dir())
+        .expect("the captured application must load");
+    let mut bindings = TestBindings::new(Recorder::default());
+    bindings.memory_limit_bytes = Some(limit_bytes);
+    let mut instance = engine
+        .activate(&template, Box::new(bindings))
+        .expect("the initialized application must activate");
+    assert_eq!(
+        instance.memory_len() as u64,
+        limit_bytes,
+        "an instance starts from the memory initialization left"
+    );
     let served = instance.dispatch(&dispatch::http_dispatch(1), OccupancyBudget::default());
     assert_eq!(
         served.completion,

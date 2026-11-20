@@ -263,12 +263,27 @@ mod tests {
     use super::*;
     use std::sync::atomic::Ordering::Relaxed;
 
+    /// Nearest-rank quantiles over a sample vector.
+    fn latency(mut s: Vec<u64>) -> Latency {
+        s.sort_unstable();
+        let at = |q: f64| {
+            let rank = (q * s.len() as f64).ceil().max(1.0) as usize;
+            s[(rank - 1).min(s.len() - 1)]
+        };
+        Latency {
+            p50_us: at(0.50),
+            p99_us: at(0.99),
+            count: s.len() as u64,
+            sum_us: s.iter().map(|value| u128::from(*value)).sum::<u128>() as f64,
+        }
+    }
+
     fn snap() -> NodeSnapshot {
         NodeSnapshot {
             dispatches_total: 12,
             occupancy_ms_total: 4.25,
-            activation: Latency::from_samples(vec![300, 700, 900, 4000]),
-            wake: Latency::from_samples(vec![8000, 9000, 40000]),
+            activation: latency(vec![300, 700, 900, 4000]),
+            wake: latency(vec![8000, 9000, 40000]),
             instances_hot: 1,
             instances_parked: 3,
             instances_hibernated: 7,

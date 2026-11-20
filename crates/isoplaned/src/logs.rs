@@ -55,29 +55,9 @@ impl Logging {
     }
 }
 
-/// Installs diagnostic output through `writer` and optional OTLP exporters.
+/// Installs diagnostic output through `writer` and optional OTLP exporters, with
+/// operator-supplied bounds on complete-trace buffering.
 /// Construction uses a blocking HTTP client; call outside an async reactor.
-pub fn init<W>(
-    json: bool,
-    writer: W,
-    node: &str,
-    endpoint: Option<&OtlpEndpoint>,
-    traces_endpoint: Option<&OtlpEndpoint>,
-) -> Result<Logging, LogError>
-where
-    W: for<'writer> MakeWriter<'writer> + Send + Sync + 'static,
-{
-    init_with_limits(
-        json,
-        writer,
-        node,
-        endpoint,
-        traces_endpoint,
-        TraceLimits::default(),
-    )
-}
-
-/// Installs telemetry with operator-supplied bounds on complete-trace buffering.
 pub fn init_with_limits<W>(
     json: bool,
     writer: W,

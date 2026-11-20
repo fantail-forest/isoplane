@@ -1,6 +1,7 @@
 #[test]
 fn preparation_uses_the_application_owner_and_execution_network_budgets() {
-    let mut config = crate::config::NodeConfig::new("test-owner");
+    let mut config = crate::config::NodeConfig::from_toml(r#"owner = "test-owner""#)
+        .expect("a configuration naming only its owner");
     config.network.instance_pending_connections = 1;
     config.network.instance_open_connections = 2;
     config.host.guest_resources.native_handles = 7;
@@ -55,7 +56,8 @@ fn preparation_uses_the_application_owner_and_execution_network_budgets() {
 
 #[test]
 fn operator_profiling_configuration_reaches_the_engine() {
-    let mut config = crate::config::NodeConfig::new("test-owner");
+    let mut config = crate::config::NodeConfig::from_toml(r#"owner = "test-owner""#)
+        .expect("a configuration naming only its owner");
     let trust = config.trust_bundle().expect("the bundled roots must load");
     assert!(
         !super::engine_config(&config, &trust)
@@ -75,7 +77,8 @@ fn operator_profiling_configuration_reaches_the_engine() {
 
 #[test]
 fn configured_engine_resource_limits_reach_the_execution_engine() {
-    let mut config = crate::config::NodeConfig::new("test-owner");
+    let mut config = crate::config::NodeConfig::from_toml(r#"owner = "test-owner""#)
+        .expect("a configuration naming only its owner");
     config.engine = toml::from_str(
             "max_core_instance_size_bytes=8388608\ntable_elements=262144\nmax_tables_per_module=8\ncompiler_stack_bytes=16777216\nmax_wasm_stack_bytes=1048576\ntotal_tables=20",
         ).expect("operator engine limits must deserialize");
@@ -112,23 +115,54 @@ fn configured_engine_resource_limits_reach_the_execution_engine() {
 }
 
 impl super::RealCells {
+    /// Prepares raw `wasm` through this node's deployer and installs the
+    /// publication as a restored selection is installed.
     pub(crate) async fn install_prepared(
         &self,
-        app: &str,
+        config: &crate::config::NodeConfig,
         version: &str,
-        tenant: &str,
-        manifest: isoplane_abi::config::AppManifest,
-        template: isoplane_engine::Template,
+        manifest: &isoplane_abi::config::AppManifest,
+        wasm: &[u8],
     ) -> anyhow::Result<isoplane_host::ModuleId> {
-        self.ensure_configured(app)?;
-        self.install_prepared_on_cell(
-            isoplane_host::ModuleId::new(app, version),
-            tenant,
-            manifest,
-            template,
-            None,
-            None,
-        )
-        .await
+        let artifacts = super::RealPaths::under(&config.data_dir).artifacts;
+        // SAFETY: the node owns this cache and writes it only through the compiler's atomic path.
+        let cache =
+            unsafe { isoplane_engine::CompilationCache::from_trusted_directory(artifacts) }?;
+        let provider = isoplane_prepare::LocalPreparation::with_cache(std::sync::Arc::new(cache))?;
+        let cancellation = tokio_util::sync::CancellationToken::new();
+        let context = crate::deploy::PreparationContext {
+            network: super::initialization_network(
+                &config.owner,
+                manifest,
+                Vec::new(),
+                config.network,
+                &config.host,
+            ),
+            runtime_configuration: Default::default(),
+            application_files: Default::default(),
+            engine: &self.engine,
+            provider: &provider,
+            runtime: isoplane_prepare::RuntimeProfile::RawWasm,
+            occupancy_ms: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_OCCUPANCY_MS,
+            wall_ms: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_WALL_MS,
+            max_passes: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_PASSES,
+            log_bytes: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_LOG_BYTES,
+            cancellation: &cancellation,
+        };
+        let prepared = self
+            .deployer
+            .prepare_application(
+                manifest,
+                wasm,
+                &isoplane_control::DeployOptions {
+                    version: isoplane_control::VersionId(version.to_owned()),
+                    tenant: config.owner.clone(),
+                    init_sandbox: Default::default(),
+                },
+                &context,
+            )
+            .await?;
+        self.install_application(&config.owner, prepared.into_application().0)
+            .await
     }
 }

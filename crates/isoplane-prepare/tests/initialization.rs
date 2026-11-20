@@ -98,17 +98,15 @@ fn a_sealed_initializer_clock_attempt_fails_before_a_host_effect() {
         .err()
         .expect("sealed clock access must fail");
     assert!(
-        matches!(error, PrepareError::Unattributable { ref import, .. } if import == "clock_now_coarse"),
-        "forbidden capabilities must terminate initialization"
-    );
-    let failure = isoplane_prepare::WorkerFailure::new(
-        isoplane_prepare::BuildStage::Initialization,
-        error.into(),
-    );
-    assert_eq!(
-        failure.completion,
-        Some(isoplane_engine::Completion::Trapped),
-        "capability refusals must retain the guest completion in the preparation failure"
+        matches!(
+            error,
+            PrepareError::Unattributable {
+                ref import,
+                completion: isoplane_engine::Completion::Trapped,
+                ..
+            } if import == "clock_now_coarse"
+        ),
+        "a forbidden capability must end initialization with the guest's trap: {error}"
     );
 }
 

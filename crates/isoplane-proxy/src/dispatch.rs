@@ -2,7 +2,6 @@
 //! request into a call through `Dispatcher`, and a guest's reply into an
 //! HTTP response.
 
-use std::net::SocketAddr;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::Arc;
 
@@ -22,7 +21,6 @@ impl Proxy {
         self: &Arc<Self>,
         req: Request<Incoming>,
         target: RouteTarget,
-        _peer: SocketAddr,
     ) -> Response<Body> {
         let (mut parts, body) = req.into_parts();
         let can_have_body = !body.is_end_stream();

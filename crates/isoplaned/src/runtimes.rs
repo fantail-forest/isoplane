@@ -23,8 +23,6 @@ struct Installed {
 
 /// A package resolved to the installed runtime it was built against.
 pub struct PackageOnRuntime {
-    /// The SDK release the package was built with.
-    pub sdk_version: String,
     /// The runtime module, checked against its identity.
     pub runtime: Vec<u8>,
     /// The provenance a template prepared from it records.
@@ -129,9 +127,8 @@ impl Runtimes {
         Ok(PackageOnRuntime {
             runtime: self.module(&package.runtime)?,
             profile: isoplane_prepare::RuntimeProfile::SharedRuntime {
-                sdk_version: package.runtime.sdk_version.clone(),
+                sdk_version: package.runtime.sdk_version,
             },
-            sdk_version: package.runtime.sdk_version,
             files: package.files,
         })
     }

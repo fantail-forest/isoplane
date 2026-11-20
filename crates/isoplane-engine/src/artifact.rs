@@ -59,7 +59,6 @@ impl IsoplaneEngine {
             module_hash: t.hash.0,
             engine_fingerprint: self.inner.fingerprint.clone(),
             cwasm_hash: *blake3::hash(&cwasm).as_bytes(),
-            memory_pages: t.inner.memory_pages,
             deferred: t.inner.deferred.clone(),
             prepared_resources: t.inner.prepared_resources.clone(),
             mut_global_names: t.inner.mut_globals.iter().map(|(n, _)| n.clone()).collect(),
@@ -210,14 +209,11 @@ impl IsoplaneEngine {
     pub(crate) fn template_linker(
         &self,
         module: &wasmtime::Module,
-    ) -> Result<(
-        Option<wasmtime::Linker<StoreState>>,
-        Vec<&'static isoplane_abi::pal::PalDef>,
-    )> {
+    ) -> Result<Option<wasmtime::Linker<StoreState>>> {
         let needs_pal = module
             .imports()
             .any(|i| crate::pal::is_foreign_module(i.module()));
-        let (pal_linker, pal_composed) = if needs_pal {
+        if needs_pal {
             let mut l = self.inner.linker.clone();
             let composed = crate::pal::link(&mut l, module)
                 .context("composing the WASI PAL adapter for a template")?;
@@ -229,12 +225,10 @@ impl IsoplaneEngine {
                     .count(),
                 "composed the WASI PAL adapter for a template"
             );
-            (Some(l), composed)
+            Ok(Some(l))
         } else {
-            (None, Vec::new())
-        };
-
-        Ok((pal_linker, pal_composed))
+            Ok(None)
+        }
     }
 
     pub(crate) fn finish_template(
@@ -265,7 +259,7 @@ impl IsoplaneEngine {
         // the module's own declaration, and every instance of the module
         // shares the result. A module importing only `isoplane` takes the shared
         // linker.
-        let (pal_linker, pal_composed) = self.template_linker(&module)?;
+        let pal_linker = self.template_linker(&module)?;
 
         let inst = pal_linker
             .as_ref()
@@ -315,7 +309,6 @@ impl IsoplaneEngine {
             table_nullness.push(nulls);
         }
 
-        let has_gc_hint = inst.get_func(&mut store, guest_exports::GC_HINT).is_some();
         let has_initialize = inst
             .get_func(&mut store, guest_exports::INITIALIZE)
             .is_some();
@@ -333,7 +326,6 @@ impl IsoplaneEngine {
                 filesystem_files: self.inner.cfg.platform_files.clone(),
                 native: Arc::new(crate::prepared::native::SharedNative { module }),
                 pal_linker,
-                pal_composed,
                 image,
                 memory_pages,
                 deferred,
@@ -341,7 +333,6 @@ impl IsoplaneEngine {
                 mut_globals,
                 tables,
                 table_nullness,
-                has_gc_hint,
                 has_initialize,
                 failed_storage: Default::default(),
                 prepared_hash: None,

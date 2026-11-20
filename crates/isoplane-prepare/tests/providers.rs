@@ -1,6 +1,8 @@
 mod common;
+#[path = "common/provider.rs"]
+mod provider;
 
-use isoplane_prepare::{BuildRequest, LocalPreparation, Preparation, RuntimeProfile};
+use isoplane_prepare::{BuildRequest, Preparation, RuntimeProfile};
 use tokio_util::sync::CancellationToken;
 
 fn file_imports() -> String {
@@ -131,7 +133,7 @@ async fn preserves_application_state(provider: &dyn Preparation) {
 
 #[tokio::test]
 async fn local_preparation_preserves_the_same_state_as_the_portable_sdk_path() {
-    preserves_application_state(&LocalPreparation::new().expect("local provider")).await;
+    preserves_application_state(&*crate::provider::local_preparation()).await;
 }
 
 #[cfg(target_os = "linux")]
@@ -163,8 +165,7 @@ async fn layered_preparation_accepts_a_guest_without_an_initializer() {
         initialization: common::request(),
         input_hash: *blake3::hash(&wasm).as_bytes(),
     };
-    let product = LocalPreparation::new()
-        .expect("local provider")
+    let product = crate::provider::local_preparation()
         .prepare(&wasm, &request, &CancellationToken::new())
         .await
         .expect("a guest without an initializer needs no initialized capture boundary");
@@ -177,7 +178,7 @@ async fn layered_preparation_accepts_a_guest_without_an_initializer() {
     let prepared = unsafe { engine.decode_builder_output(product.prepared_bytes(), identity) }
         .expect("decode prepared output");
     let template = engine
-        .load_prepared_product(&prepared)
+        .load_prepared_product_in(&prepared, &std::env::temp_dir())
         .expect("load prepared guest");
     assert!(
         !template.has_initialize(),

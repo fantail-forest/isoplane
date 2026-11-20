@@ -71,10 +71,10 @@ fn an_uncooperative_spinner_is_hard_killed_and_discarded() {
         "the dispatch was killed"
     );
     assert!(
-        out.occupancy_ns >= b.hard_ns(),
+        out.occupancy_ns >= b.budget_ns() + b.grace_ns(),
         "the kill lands at B+G, not before: {} ns against {} ns",
         out.occupancy_ns,
-        b.hard_ns()
+        b.budget_ns() + b.grace_ns()
     );
     assert!(
         out.overage_ns >= b.grace_ns(),
@@ -170,7 +170,7 @@ fn a_spinner_with_the_unsafe_to_trap_bit_pinned_is_still_hard_killed() {
         "the dispatch was killed"
     );
     assert!(
-        out.occupancy_ns >= b.hard_ns(),
+        out.occupancy_ns >= b.budget_ns() + b.grace_ns(),
         "the kill still lands at B+G, not before"
     );
     assert!(

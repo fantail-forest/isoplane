@@ -32,7 +32,8 @@ pub fn config(dir: &std::path::Path) -> NodeConfig {
 
 /// A node for raw-WASM tests that do not consume the shared managed runtime.
 pub fn bare_config(dir: &std::path::Path) -> NodeConfig {
-    let mut cfg = NodeConfig::new("acme");
+    let mut cfg =
+        NodeConfig::from_toml(r#"owner = "acme""#).expect("a configuration naming only its owner");
     cfg.node = "real-node".into();
     cfg.data_dir = dir.to_path_buf();
     cfg.engine = NodeConfig::from_toml(include_str!("../fixtures/node.toml"))
@@ -117,38 +118,25 @@ pub async fn start_with_policy(
         None => Node::build(cfg),
     }
     .expect("a real node must assemble");
-    let real = node.real.clone();
-    real.deploy_locally("quotes", "v1", "acme", manifest("quotes"), wasm, sandbox)
+    node.deploy_locally("quotes", "v1", "acme", manifest("quotes"), wasm, sandbox)
         .await
         .expect("deploying the module");
     serve(node, dir).await
 }
 
-/// `node` on ephemeral proxy and admin ports.
+/// `node` on ephemeral proxy and admin ports, serving the routes its deployments published.
 pub async fn serve(node: Arc<Node>, dir: tempfile::TempDir) -> Rig {
-    for app in &node.cfg.apps {
-        let version = node
-            .real
-            .registered_deployment(&app.manifest.name, &node.cfg.owner);
-        let version = version.expect("a fixture must register its application before serving");
-        node.routes
-            .insert(
-                isoplane_abi::host::RouteTarget {
-                    app: app.manifest.name.clone(),
-                    tenant: node.cfg.owner.clone(),
-                    version: version.clone(),
-                    tier: isoplane_abi::host::CodeTier::Optimized,
-                },
-                &app.hosts,
-            )
-            .expect("fixture host routes");
-    }
     let p = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let a = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let (proxy, admin) = (p.local_addr().unwrap(), a.local_addr().unwrap());
     let listeners = vec![
         tokio::spawn(node.clone().serve(p)),
-        tokio::spawn(isoplaned::http::serve(node.clone(), a)),
+        tokio::spawn(isoplaned::http::serve_until(
+            node.clone(),
+            a,
+            tokio_util::sync::CancellationToken::new(),
+            tokio_util::task::TaskTracker::new(),
+        )),
     ];
     Rig {
         proxy,

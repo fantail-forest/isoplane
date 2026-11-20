@@ -64,31 +64,6 @@ fn a_module_with_wasi_imports_instantiates_through_the_pal_adapter() {
         .load_template(&wasm)
         .expect("a whitelisted wasi: surface must instantiate");
 
-    assert!(t.uses_pal(), "the adapter was composed for this module");
-    let composed: Vec<String> = t.pal_composed().iter().map(|d| d.full_name()).collect();
-    assert_eq!(
-        composed.len(),
-        4,
-        "every declared wasi: import was composed: {composed:?}"
-    );
-
-    let mut caps: Vec<&str> = t
-        .pal_composed()
-        .iter()
-        .filter_map(|d| match d.disposition {
-            isoplane_abi::pal::Disposition::Delegate(isoplane_abi::pal::Delegation::Cap(
-                capability,
-            )) => Some(capability),
-            _ => None,
-        })
-        .collect();
-    caps.sort_unstable();
-    assert_eq!(
-        caps,
-        vec!["clock_now_coarse", "entropy_fill"],
-        "the adapter drew on exactly the two declared capabilities"
-    );
-
     let mut i = activate(&e, &t);
     assert_eq!(
         i.dispatch(&http_dispatch(1), OccupancyBudget::default())

@@ -1,7 +1,6 @@
 //! HTTP/1.1 termination, route resolution and
 //! shedding. The listener is plaintext; TLS termination is not implemented.
 
-use std::net::SocketAddr;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::Arc;
 use std::time::Instant;
@@ -25,20 +24,9 @@ use crate::shed::{AdmissionControl, Admit, ShedConfig};
 
 pub type Body = UnsyncBoxBody<Bytes, anyhow::Error>;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ProxyConfig {
-    /// Address for the plaintext application HTTP listener.
-    pub listen: SocketAddr,
     pub shed: ShedConfig,
-}
-
-impl Default for ProxyConfig {
-    fn default() -> Self {
-        ProxyConfig {
-            listen: ([127, 0, 0, 1], 8787).into(),
-            shed: ShedConfig::default(),
-        }
-    }
 }
 
 pub struct Proxy {
@@ -101,28 +89,27 @@ impl Proxy {
                 () = self.shutdown.cancelled() => break,
                 accepted = listener.accept() => accepted,
             };
-            let (stream, peer) = match accepted {
+            let (stream, _peer) = match accepted {
                 Ok(v) => v,
                 Err(e) => {
                     tracing::warn!(error = %e, "accept failed");
                     continue;
                 }
             };
-            self.transports
-                .spawn(self.clone().serve_connection(stream, peer));
+            self.transports.spawn(self.clone().serve_connection(stream));
         }
         drop(listener);
         self.wait_for_shutdown().await;
         Ok(())
     }
 
-    async fn serve_connection<S>(self: Arc<Self>, stream: S, peer: SocketAddr)
+    async fn serve_connection<S>(self: Arc<Self>, stream: S)
     where
         S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
     {
         let shutdown = self.shutdown.clone();
         let io = TokioIo::new(stream);
-        let svc = service_fn(move |request| self.clone().handle(request, peer));
+        let svc = service_fn(move |request| self.clone().handle(request));
         let connection = hyper::server::conn::http1::Builder::new()
             .serve_connection(io, svc)
             .with_upgrades();
@@ -138,7 +125,6 @@ impl Proxy {
     pub async fn handle(
         self: Arc<Self>,
         req: Request<Incoming>,
-        peer: SocketAddr,
     ) -> Result<Response<Body>, hyper::Error> {
         let trace = crate::request_trace::RequestTrace::new(&req);
         if self.shutdown.is_cancelled() {
@@ -159,20 +145,13 @@ impl Proxy {
             .route_generation
             .store(self.routes.generation(), Relaxed);
 
-        let resp = self
-            .route_and_dispatch(req, peer)
-            .instrument(trace.span())
-            .await;
+        let resp = self.route_and_dispatch(req).instrument(trace.span()).await;
         Ok(trace
             .response(resp)
             .map(|body| crate::response::hold_until_body_end(body.boxed_unsync(), measurement)))
     }
 
-    async fn route_and_dispatch(
-        self: &Arc<Self>,
-        req: Request<Incoming>,
-        peer: SocketAddr,
-    ) -> Response<Body> {
+    async fn route_and_dispatch(self: &Arc<Self>, req: Request<Incoming>) -> Response<Body> {
         let host = match req.headers().get(hyper::header::HOST) {
             Some(host) => host.to_str().ok(),
             None => req.uri().host(),
@@ -197,10 +176,9 @@ impl Proxy {
             self.metrics.requests_404.fetch_add(1, Relaxed);
             return text(StatusCode::NOT_FOUND, "no route", &[]);
         };
-        self.metrics.route_resolutions_total.fetch_add(1, Relaxed);
         self.metrics.note_tier(target.tier);
 
-        let response = self.dispatch_http(req, target, peer).await;
+        let response = self.dispatch_http(req, target).await;
         response.map(|body| crate::response::hold_until_body_end(body, permit))
     }
 }

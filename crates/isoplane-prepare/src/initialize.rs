@@ -54,8 +54,6 @@ impl Initialization {
 pub struct Initialized {
     /// Units deferred because they requested forbidden capabilities.
     pub deferred: Vec<u32>,
-    /// Execution and reactor occupancy across all passes.
-    pub occupancy_ns: u64,
     /// Preparation occupancy across compilation, replay and verification, excluding idle I/O waits.
     pub preparation_occupancy_ns: u64,
     /// The capability each deferred unit attempted.
@@ -401,7 +399,6 @@ pub(crate) fn initialize_with_cache(
                 restored: None,
                 initialized: Initialized {
                     deferred: Vec::new(),
-                    occupancy_ns: usage.occupancy_ns,
                     preparation_occupancy_ns: preparation_occupancy()?
                         .saturating_sub(occupancy_start_ns)
                         .saturating_sub(usage.unoccupied_ns),
@@ -585,7 +582,6 @@ pub(crate) fn initialize_with_cache(
             restored: Some(restored_template),
             initialized: Initialized {
                 deferred,
-                occupancy_ns: usage.occupancy_ns,
                 preparation_occupancy_ns: preparation_occupancy()?
                     .saturating_sub(occupancy_start_ns)
                     .saturating_sub(usage.unoccupied_ns),

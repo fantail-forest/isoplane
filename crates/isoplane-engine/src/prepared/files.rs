@@ -77,46 +77,16 @@ enum Persistence {
     Durable,
     /// A crash may lose the publication or leave it incomplete; verification
     /// against the manifest rejects an incomplete one.
+    #[cfg(target_os = "linux")]
     Unflushed,
-}
-
-/// Set to `1` by Task's test targets: tests discard what they publish, so
-/// flushing only costs them time.
-const SKIP_FLUSH_VARIABLE: &str = "ISOPLANE_TEST_SKIP_PUBLICATION_FLUSH";
-
-/// Release builds always publish durably, whatever their environment.
-fn default_persistence() -> Persistence {
-    static PERSISTENCE: std::sync::OnceLock<Persistence> = std::sync::OnceLock::new();
-    if !cfg!(debug_assertions) {
-        return Persistence::Durable;
-    }
-    *PERSISTENCE.get_or_init(|| match std::env::var_os(SKIP_FLUSH_VARIABLE) {
-        None => Persistence::Durable,
-        Some(value) if value == "1" => {
-            tracing::info!(
-                variable = SKIP_FLUSH_VARIABLE,
-                "publishing prepared templates without flushing"
-            );
-            Persistence::Unflushed
-        }
-        Some(value) => {
-            tracing::warn!(
-                variable = SKIP_FLUSH_VARIABLE,
-                ?value,
-                "unrecognized value; publishing prepared templates durably"
-            );
-            Persistence::Durable
-        }
-    })
 }
 
 impl PreparedTemplate {
     /// Atomically publishes a new directory of payloads, read-only on Unix;
     /// existing versions are never overwritten. Flushes the publication for crash
-    /// durability, except in a debug build whose environment sets
-    /// `ISOPLANE_TEST_SKIP_PUBLICATION_FLUSH=1`.
+    /// durability.
     pub fn publish(&self, directory: &Path) -> Result<()> {
-        self.publish_as(directory, default_persistence())
+        self.publish_as(directory, Persistence::Durable)
     }
 
     /// Publishes without flushing, for a directory no one reads after the caller returns.
