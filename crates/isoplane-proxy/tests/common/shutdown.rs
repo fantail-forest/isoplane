@@ -1,16 +1,11 @@
-use std::sync::Arc;
-
-use crate::common::fake::FakeCell;
 use async_trait::async_trait;
-use isoplane_abi::dispatch::HttpRequest;
 use isoplane_abi::host::{
-    Dispatcher, HttpBody, HttpExchange, HttpReply, HttpResponseBody, ResponseDisposition,
+    Dispatcher, HttpBody, HttpExchange, HttpResponseBody, HttpUpload, ResponseDisposition,
     RouteTarget,
 };
 use tokio_util::sync::CancellationToken;
 
 pub struct BlockedResponse {
-    pub cell: Arc<FakeCell>,
     pub polled: CancellationToken,
     pub dropped: CancellationToken,
 }
@@ -43,18 +38,12 @@ impl HttpResponseBody for PendingBody {
 
 #[async_trait]
 impl Dispatcher for BlockedResponse {
-    async fn dispatch_http(
-        &self,
-        target: &RouteTarget,
-        request: HttpRequest,
-    ) -> anyhow::Result<HttpReply> {
-        self.cell.dispatch_http(target, request).await
-    }
-    async fn dispatch_http_stream(
+    async fn dispatch_http_upload(
         &self,
         _: &RouteTarget,
-        _: HttpRequest,
+        upload: HttpUpload,
     ) -> anyhow::Result<HttpExchange> {
+        upload.collect().await?;
         Ok(HttpExchange {
             status: 200,
             headers: vec![],

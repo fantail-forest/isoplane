@@ -35,7 +35,7 @@ fn cleanup_cell(
     operation: &str,
 ) -> (Arc<Cell>, ModuleId) {
     cleanup_cell_with(
-        CellConfig::for_test("managed-cleanup"),
+        isoplane_harness::fakes::cell_config("managed-cleanup"),
         runtime,
         work,
         operation,
@@ -62,7 +62,7 @@ fn cleanup_cell_with(
     } else {
         let egress = isoplane_host::egress::HostEgressPolicy::new(
             Box::new(PendingResolver(work.clone())),
-            isoplane_host::egress::ConnectionLimits::uniform(32).expect("connection limits"),
+            isoplane_harness::uniform_connection_limits(32),
         )
         .with_connections(Arc::new(PendingConnection(work)));
         let services = Arc::new(isoplane_host::cell::Services {
@@ -274,7 +274,6 @@ async fn a_guest_cancelled_request_fails_without_discarding_its_instance() {
         after.body, b"3:1",
         "cancellation must run finally and preserve instance state"
     );
-    assert_eq!(cell.metrics().cancellation_grace_kills, 0);
     cell.shutdown();
 }
 
@@ -348,16 +347,20 @@ async fn managed_request_failures_leave_other_requests_and_instance_state_intact
                 }
             );
             if status == 500 {
-                use isoplane_abi::host::{CodeTier, Dispatcher, RouteTarget};
+                use isoplane_abi::host::{CodeTier, Dispatcher, HttpUpload, RouteTarget};
                 let mut response = cell
-                    .dispatch_http_stream(
+                    .dispatch_http_upload(
                         &RouteTarget {
                             app: module.app.clone(),
                             version: module.version.clone(),
                             tenant: "tenant".into(),
                             tier: CodeTier::Fast,
                         },
-                        request(path),
+                        HttpUpload {
+                            request: request(path),
+                            body: Box::new(EmptyUpload),
+                            can_have_body: false,
+                        },
                     )
                     .await
                     .expect("a handler failure must produce an HTTP response");
@@ -674,8 +677,10 @@ fn upload_cell() -> (Arc<Cell>, ModuleId) {
         .with_application_files(managed::files("isoplane_guest_dotnet_upload"))
         .expect("the upload fixture must bind its application files");
     let activator = EngineActivator::new(engine.clone(), template, module.clone());
-    let (cell, _) =
-        common::rig_resolving(CellConfig::for_test("managed-upload"), "93.184.216.34:80");
+    let (cell, _) = common::rig_resolving(
+        isoplane_harness::fakes::cell_config("managed-upload"),
+        "93.184.216.34:80",
+    );
     cell.register_module(
         "tenant",
         Arc::new(activator),

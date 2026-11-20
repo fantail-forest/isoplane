@@ -11,7 +11,6 @@ use super::native_io::{Context, ResourceCount, ResourceLimits, Resources, Runtim
 use super::WakeSink;
 use crate::egress::{ConnectionOwner, HostEgressPolicy};
 use crate::futures::FutureTable;
-use crate::metrics::Metrics;
 use crate::InstanceId;
 
 /// Caller-established authority and budgets for one initialization run.
@@ -53,7 +52,6 @@ impl PreparationIo {
         let runtime = Runtime {
             egress: config.egress.clone(),
             futures: Arc::new(FutureTable::new(config.buffered_bytes)),
-            metrics: Arc::new(Metrics::default()),
             wake: wake.clone(),
             reactor,
             usage: crate::reactor_accounting::TaskUsage::new(
@@ -134,7 +132,8 @@ impl PreparationIo {
     }
 
     /// Restore captured handle identities before issuing native operations.
-    pub fn restore_resources(&self, prepared: &PreparedResources) -> Result<(), Error> {
+    #[cfg(test)]
+    fn restore_resources(&self, prepared: &PreparedResources) -> Result<(), Error> {
         self.resources
             .lock()
             .restore_prepared(prepared, super::native_io::reactor_now(&self.runtime))

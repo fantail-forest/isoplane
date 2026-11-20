@@ -205,15 +205,6 @@ impl IsoplaneEngine {
         })
     }
 
-    /// As [`IsoplaneEngine::load_prepared_product`], for a template captured as a layer over `base`.
-    pub fn load_prepared_product_over(
-        &self,
-        base: &Template,
-        product: &PreparedTemplate,
-    ) -> Result<Template> {
-        self.load_prepared_product_over_in(base, product, &std::env::temp_dir())
-    }
-
     /// As [`IsoplaneEngine::load_prepared_product_in`], for a template captured as a layer over `base`.
     pub fn load_prepared_product_over_in(
         &self,

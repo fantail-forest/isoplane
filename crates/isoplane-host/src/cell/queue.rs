@@ -278,6 +278,7 @@ impl WorkQueue {
             .collect()
     }
 
+    #[cfg(test)]
     pub(super) fn depth(&self) -> usize {
         self.lanes
             .iter()
@@ -292,7 +293,7 @@ impl WorkQueue {
 #[cfg(test)]
 mod queue_tests {
     use super::*;
-    use crate::bindings::InstanceCtx;
+
     use crate::pool::InstancePool;
 
     use std::time::{Duration, Instant};
@@ -372,7 +373,7 @@ mod queue_tests {
         );
         let (slot, _) = pool
             .acquire(|id| {
-                Arc::new(InstanceCtx::for_test(
+                Arc::new(crate::fakes::instance_ctx(
                     id,
                     isoplane_abi::config::Limits::default(),
                 ))

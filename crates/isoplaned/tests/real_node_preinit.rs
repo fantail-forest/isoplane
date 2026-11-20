@@ -25,7 +25,8 @@ use isoplaned::node::Node;
 use tokio::net::TcpStream;
 
 fn config(dir: &std::path::Path) -> NodeConfig {
-    let mut cfg = NodeConfig::new("acme");
+    let mut cfg =
+        NodeConfig::from_toml(r#"owner = "acme""#).expect("a configuration naming only its owner");
     cfg.node = "real-node".into();
     cfg.data_dir = dir.to_path_buf();
     cfg.engine = isoplaned::config::EngineLimits {
@@ -74,7 +75,12 @@ async fn serve(node: Arc<Node>, dir: tempfile::TempDir) -> Rig {
     let a = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let (proxy, admin) = (p.local_addr().unwrap(), a.local_addr().unwrap());
     tokio::spawn(node.proxy.clone().serve(p));
-    tokio::spawn(isoplaned::http::serve(node.clone(), a));
+    tokio::spawn(isoplaned::http::serve_until(
+        node.clone(),
+        a,
+        tokio_util::sync::CancellationToken::new(),
+        tokio_util::task::TaskTracker::new(),
+    ));
     Rig {
         proxy,
         _admin: admin,
@@ -123,8 +129,6 @@ async fn a_real_guests_init_visible_config_is_consumed_at_preinit_not_at_runtime
     manifest.init_visible_vars = vec![("REGION".to_string(), "nz-akl".to_string())];
     let node = Node::build(cfg).expect("a real node must assemble");
     let rec = node
-        .real
-        .as_ref()
         .deploy_locally("quotes", "v1", "acme", manifest, &wasm, Default::default())
         .await
         .expect("explicit local preparation");

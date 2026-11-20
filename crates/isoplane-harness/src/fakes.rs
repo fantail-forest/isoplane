@@ -25,6 +25,35 @@ use isoplane_host::meters::OccupancyInterval;
 use isoplane_host::pool::Activator;
 use isoplane_host::ModuleId;
 
+/// A small cell configuration for tests: few threads and a short sweep.
+pub fn cell_config(name: &str) -> isoplane_host::cell::CellConfig {
+    isoplane_host::cell::CellConfig {
+        name: name.into(),
+        exec_threads: 4,
+        reactor_threads: 2,
+        sweep_interval_ms: 25,
+        ..Default::default()
+    }
+}
+
+/// An instance context with no cell behind it, for tests of the slot machinery.
+pub fn instance_ctx(
+    instance: isoplane_host::InstanceId,
+    limits: isoplane_abi::config::Limits,
+) -> isoplane_host::bindings::InstanceCtx {
+    isoplane_host::bindings::InstanceCtx::new(
+        instance,
+        isoplane_host::bindings::Tenancy {
+            module: ModuleId::new("test", "v1"),
+            tenant: "t".into(),
+            limits,
+            allowlist: None,
+        },
+        Arc::new(isoplane_host::meters::Meters::new()),
+        None,
+    )
+}
+
 /// What the scripted guest does for one call into it.
 #[derive(Debug, Clone)]
 pub enum Step {
@@ -486,7 +515,6 @@ impl InstanceOps for FakeInstance {
     fn capture_mutable_state(&mut self) -> anyhow::Result<InstanceImage> {
         Ok(InstanceImage {
             globals: self.image.globals.clone(),
-            table_mutations: self.image.table_mutations.clone(),
             memory_pages: (self.memory.len() / isoplane_abi::WASM_PAGE_SIZE) as u32,
         })
     }

@@ -79,8 +79,6 @@ pub fn size_bound(shape: SnapshotShape) -> Result<u64> {
 pub struct Saved {
     /// Pages that differ from the template, zero pages included.
     pub changed_pages: u32,
-    /// Of those, pages that are entirely zero and so cost no payload.
-    pub zero_pages: u32,
     /// Bytes written to the reservation.
     pub bytes: u64,
 }
@@ -120,12 +118,10 @@ pub fn save(
     let mut parts = Vec::with_capacity(header.runs.len() + 2);
     parts.push(IoSlice::new(&prefix));
     parts.push(IoSlice::new(&encoded));
-    let (mut changed_pages, mut zero_pages) = (0, 0);
+    let mut changed_pages = 0;
     for run in &header.runs {
         changed_pages += run.pages;
-        if run.zero {
-            zero_pages += run.pages;
-        } else {
+        if !run.zero {
             parts.push(IoSlice::new(&memory[run.bytes()]));
         }
     }
@@ -133,7 +129,6 @@ pub fn save(
     tracing::info_span!("delta_write", bytes).in_scope(|| reservation.save(&parts))?;
     Ok(Saved {
         changed_pages,
-        zero_pages,
         bytes,
     })
 }
@@ -393,7 +388,6 @@ mod tests {
             binding(),
             InstanceImage {
                 globals: globals.clone(),
-                table_mutations: Vec::new(),
                 memory_pages: 1,
             },
             &live,
@@ -402,12 +396,7 @@ mod tests {
         )
         .expect("save changed pages");
         assert_eq!(
-            saved,
-            Saved {
-                changed_pages: 4,
-                zero_pages: 1,
-                bytes: saved.bytes,
-            },
+            saved.changed_pages, 4,
             "two neighbouring written pages, one zeroed page and one grown page changed"
         );
         assert_eq!(
@@ -588,7 +577,6 @@ mod tests {
             binding(),
             InstanceImage {
                 globals: vec![GlobalValue::I64(i64::MIN); 128],
-                table_mutations: Vec::new(),
                 memory_pages: u32::MAX,
             },
             &live,

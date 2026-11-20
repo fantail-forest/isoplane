@@ -5,7 +5,7 @@ mod common;
 use isoplane_abi::dispatch::HttpRequest;
 use isoplane_abi::result::{FutureError, ResultRecord, WakeRecord};
 use isoplane_engine::{Completion, EngineConfig, IsoplaneEngine};
-use isoplane_host::cell::{CellConfig, Target};
+use isoplane_host::cell::Target;
 use isoplane_host::{EngineActivator, ModuleId};
 use std::sync::Arc;
 use std::time::Duration;
@@ -14,8 +14,10 @@ use std::time::Duration;
 fn request_body_reads_reject_zero_and_negative_sizes_through_the_real_import() {
     for max_bytes in [0, -1] {
         let module = ModuleId::new("read-size", "v1");
-        let (cell, _) =
-            common::rig_resolving(CellConfig::for_test("read-size"), "93.184.216.34:80");
+        let (cell, _) = common::rig_resolving(
+            isoplane_harness::fakes::cell_config("read-size"),
+            "93.184.216.34:80",
+        );
         let request = cell.http_record(
             &module,
             HttpRequest {
@@ -65,7 +67,9 @@ fn request_body_reads_reject_zero_and_negative_sizes_through_the_real_import() {
             .expect("real engine"),
         );
         let activator = Arc::new(
-            EngineActivator::load(engine, module.clone(), &wasm)
+            engine
+                .load_template(&wasm)
+                .map(|template| EngineActivator::new(engine, template, module.clone()))
                 .expect("optional request import must link"),
         );
         assert!(
@@ -133,9 +137,16 @@ fn response_cell(imports: &str, before_response: &str) -> Arc<isoplane_host::Cel
         .expect("real engine"),
     );
     let module = ModuleId::new("early-upload", "v1");
-    let activator =
-        Arc::new(EngineActivator::load(engine, module, &wasm).expect("upload-aware guest"));
-    let (cell, _) = common::rig_resolving(CellConfig::for_test("early-upload"), "93.184.216.34:80");
+    let activator = Arc::new(
+        engine
+            .load_template(&wasm)
+            .map(|template| EngineActivator::new(engine, template, module))
+            .expect("upload-aware guest"),
+    );
+    let (cell, _) = common::rig_resolving(
+        isoplane_harness::fakes::cell_config("early-upload"),
+        "93.184.216.34:80",
+    );
     cell.register_module("owner", activator, common::manifest("early-upload"))
         .expect("register early response guest");
     cell

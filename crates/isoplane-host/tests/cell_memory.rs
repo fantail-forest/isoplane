@@ -46,7 +46,9 @@ fn dispatch_growth(
         );
         let module = ModuleId::new("memory-budget", "v1");
         let activator = Arc::new(
-            EngineActivator::load(engine, module.clone(), &wasm)
+            engine
+                .load_template(&wasm)
+                .map(|template| EngineActivator::new(engine, template, module.clone()))
                 .expect("small initial memory fits the engine"),
         );
         // macOS network mounts can require writing every reserved byte eagerly.
@@ -57,7 +59,7 @@ fn dispatch_growth(
         let (services, _) = common::services_resolving("93.184.216.34:80");
         let cell = isoplane_host::cell::Cell::with_snapshot_storage(
             CellConfig {
-                ..CellConfig::for_test("memory-budget")
+                ..isoplane_harness::fakes::cell_config("memory-budget")
             },
             services,
             Arc::new(
@@ -92,11 +94,6 @@ fn dispatch_growth(
             Completion::Done,
             "memory.grow must observe the application ceiling under either allocator"
         );
-        assert_eq!(
-            cell.metrics().memory_limit_retirements,
-            expected_retirements,
-            "an instance is retired exactly when its memory passes its limit"
-        );
         if expected_retirements > 0 {
             assert!(
                 wait_for(
@@ -104,6 +101,14 @@ fn dispatch_growth(
                     Duration::from_secs(10)
                 ),
                 "a retired instance must be discarded once its dispatch ends"
+            );
+        } else {
+            assert!(
+                wait_for(
+                    || cell.idle_instances(&module) == Some(1),
+                    Duration::from_secs(10)
+                ) && cell.slot(result.instance).is_some(),
+                "an instance within its memory limit must return to the pool, not be retired"
             );
         }
         cell.shutdown();
@@ -166,7 +171,7 @@ fn a_template_larger_than_the_application_budget_is_refused_at_activation() {
         let template = engine
             .load_template(&wasm)
             .expect("template fits the engine capacity");
-        let context = Arc::new(isoplane_host::bindings::InstanceCtx::for_test(
+        let context = Arc::new(isoplane_harness::fakes::instance_ctx(
             isoplane_host::InstanceId(1),
             isoplane_abi::config::Limits::default(),
         ));
@@ -184,8 +189,10 @@ fn a_template_larger_than_the_application_budget_is_refused_at_activation() {
 
 #[test]
 fn a_dispatch_does_not_join_an_instance_at_its_memory_limit() {
-    let (cell, _) =
-        common::rig_resolving(CellConfig::for_test("memory-retiring"), "93.184.216.34:80");
+    let (cell, _) = common::rig_resolving(
+        isoplane_harness::fakes::cell_config("memory-retiring"),
+        "93.184.216.34:80",
+    );
     // Activation at the soft limit still serves a request, but has no join headroom.
     let mut behaviour =
         isoplane_harness::fakes::FakeBehaviour::program([isoplane_harness::fakes::Step::Park {

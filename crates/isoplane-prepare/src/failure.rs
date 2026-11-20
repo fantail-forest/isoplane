@@ -1,5 +1,3 @@
-use isoplane_engine::Completion;
-
 /// The operation that refused preparation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuildStage {
@@ -16,13 +14,11 @@ pub enum BuildStage {
     Artifact,
 }
 
-/// Structured preparation refusal, retaining the stage and guest outcome.
+/// Structured preparation refusal, retaining the stage.
 #[derive(Debug)]
 pub struct WorkerFailure {
     /// Operation that failed.
     pub stage: BuildStage,
-    /// Guest execution outcome, when initialization entered the guest.
-    pub completion: Option<Completion>,
     /// Diagnostic context; callers classify using the typed fields.
     pub detail: String,
 }
@@ -43,17 +39,8 @@ impl std::fmt::Display for WorkerFailure {
 impl WorkerFailure {
     /// Classify an operation failure without parsing its diagnostic text.
     pub fn new(stage: BuildStage, error: anyhow::Error) -> Self {
-        let completion = match error.downcast_ref::<crate::PrepareError>() {
-            Some(
-                crate::PrepareError::Initialization { completion, .. }
-                | crate::PrepareError::Unattributable { completion, .. },
-            ) => Some(*completion),
-            // Other preparation failures have no guest completion outcome.
-            _ => None,
-        };
         Self {
             stage,
-            completion,
             detail: format!("{error:#}").chars().take(4096).collect(),
         }
     }
@@ -71,6 +58,5 @@ mod tests {
             failure.detail,
             "constructing runtime engine: allocation refused"
         );
-        assert!(failure.completion.is_none());
     }
 }

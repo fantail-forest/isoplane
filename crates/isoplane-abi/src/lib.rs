@@ -21,8 +21,6 @@ pub mod status;
 pub mod host;
 
 pub use dispatch::{DispatchKind, DispatchRecord, HttpRequest, ResponseHead};
-pub use result::{FutureError, ResultRecord};
-pub use status::{PollStatus, TrapCode};
 
 /// Custom section identifying artifacts restricted to a local debugger session.
 pub const LOCAL_DEBUG_SECTION: &str = "isoplane.local-debug";
@@ -35,11 +33,3 @@ pub const PAGE_SIZE: usize = 4096;
 
 /// The WASM linear-memory page size.
 pub const WASM_PAGE_SIZE: usize = include!(concat!(env!("OUT_DIR"), "/wasm_page_bytes.rs"));
-
-pub fn encode<T: serde::Serialize>(v: &T) -> Result<Vec<u8>, postcard::Error> {
-    postcard::to_allocvec(v)
-}
-
-pub fn decode<'a, T: serde::Deserialize<'a>>(b: &'a [u8]) -> Result<T, postcard::Error> {
-    postcard::from_bytes(b)
-}

@@ -49,16 +49,6 @@ pub struct Instance {
     pub(crate) last_violation: Option<&'static str>,
 }
 
-impl std::fmt::Debug for Instance {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Instance")
-            .field("template", &self.template.memory_pages)
-            .field("discarded", &self.discarded)
-            .field("last", &self.last)
-            .finish()
-    }
-}
-
 pub(crate) enum Entry<'a> {
     Handle(&'a DispatchRecord),
     /// The dispatch the slice runs, the completed future and its result.
@@ -115,9 +105,8 @@ impl Instance {
         self.last_violation
     }
 
-    /// Run `isoplane_initialize`, for pre-initialisation with bindings whose
-    /// `is_init_sandbox()` is true. Ordinary activation never calls this; the
-    /// template already ran it.
+    /// Run `isoplane_initialize`, for pre-initialisation. Ordinary activation
+    /// never calls this; the template already ran it.
     pub fn run_initialize(&mut self, budget: OccupancyBudget) -> DispatchOutcome {
         self.slice(budget, Entry::Initialize)
     }

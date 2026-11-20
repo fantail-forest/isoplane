@@ -108,7 +108,7 @@ pub fn services(address: SocketAddr) -> Arc<Services> {
     let policy = Arc::new(
         HostEgressPolicy::new(
             Box::new(Endpoint(address)),
-            isoplane_host::egress::ConnectionLimits::uniform(1).expect("connection limits"),
+            isoplane_harness::uniform_connection_limits(1),
         )
         .with_destinations(Arc::new(Endpoint(address))),
     );
@@ -225,7 +225,7 @@ pub fn cell(
 ) {
     let module = activator.module().clone();
     let cell = isoplane_host::cell::Cell::new(
-        isoplane_host::cell::CellConfig::for_test("outbound-http"),
+        isoplane_harness::fakes::cell_config("outbound-http"),
         services,
     )
     .expect("the HTTP cell must start");

@@ -190,7 +190,7 @@ impl Rig {
                     handler_after_ms: 0,
                     ..Default::default()
                 },
-                ..CellConfig::for_test("local-snapshot")
+                ..isoplane_harness::fakes::cell_config("local-snapshot")
             },
             Arc::new(Services {
                 egress,
@@ -297,7 +297,7 @@ fn growing_to_the_memory_ceiling_preserves_the_final_page_through_local_reclamat
         2 * isoplane_abi::WASM_PAGE_SIZE as u64,
         Arc::new(HostEgressPolicy::new(
             Box::new(NoDns),
-            isoplane_host::egress::ConnectionLimits::uniform(1).expect("connection limits"),
+            isoplane_harness::uniform_connection_limits(1),
         )),
     );
     let first = rig
@@ -384,7 +384,7 @@ fn managed_stream_snapshot(runtime: GuestRuntime) {
     let policy = Arc::new(
         HostEgressPolicy::new(
             Box::new(NoDns),
-            isoplane_host::egress::ConnectionLimits::uniform(1).expect("connection limits"),
+            isoplane_harness::uniform_connection_limits(1),
         )
         .with_connections(connections.clone())
         .with_destinations(Arc::new(ExactPeer(peer))),

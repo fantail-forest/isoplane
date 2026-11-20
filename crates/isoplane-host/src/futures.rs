@@ -47,16 +47,6 @@ pub struct PendingCapError {
     pub outstanding: u32,
 }
 
-impl std::fmt::Display for PendingCapError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "simultaneous pending futures cap exceeded: {} outstanding, limit {}",
-            self.outstanding, self.limit
-        )
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WakeTarget {
     /// The owning instance has a deliverable result.
@@ -633,6 +623,7 @@ impl FutureTable {
         None
     }
 
+    #[cfg(any(test, feature = "test-util"))]
     pub fn has_ready(&self, owner: InstanceId) -> bool {
         self.existing(owner)
             .is_some_and(|a| !a.inner.lock().ready.is_empty())
@@ -724,22 +715,6 @@ impl FutureTable {
             self.entries
                 .read_sync(id, |_, entry| {
                     entry.is_guest_work() && entry.dispatch != INSTANCE_WORK
-                })
-                .unwrap_or(false)
-        })
-    }
-
-    /// Whether `dispatch` has a pending or undelivered future the guest is
-    /// waiting on, so the dispatch is not finished even if its response is.
-    pub fn dispatch_holds_guest_work(&self, owner: InstanceId, dispatch: u64) -> bool {
-        let Some(arc) = self.existing(owner) else {
-            return false;
-        };
-        let o = arc.inner.lock();
-        o.pending.iter().chain(o.ready.iter()).any(|id| {
-            self.entries
-                .read_sync(id, |_, entry| {
-                    entry.dispatch == dispatch && entry.is_guest_work()
                 })
                 .unwrap_or(false)
         })
@@ -854,6 +829,7 @@ impl FutureTable {
     }
 
     /// Every live future id, ascending.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn live_future_ids(&self) -> Vec<u64> {
         let mut v = Vec::new();
         self.entries.retain_sync(|id, _| {
@@ -866,6 +842,7 @@ impl FutureTable {
 
     /// Live futures the guest issued, excluding each dispatch's implicit
     /// cancellation future.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn live_guest_future_ids(&self) -> Vec<u64> {
         let mut v = Vec::new();
         self.entries.retain_sync(|id, e| {
@@ -878,6 +855,7 @@ impl FutureTable {
         v
     }
 
+    #[cfg(any(test, feature = "test-util"))]
     pub fn live_futures(&self) -> usize {
         self.entries.len()
     }
@@ -1270,9 +1248,13 @@ mod tests {
         let left = t.alloc(owner, 1, "clock_deadline_in", 8).expect("alloc");
         let own = t.alloc(owner, 2, "clock_deadline_in", 8).expect("alloc");
         assert_eq!(t.hand_to_instance(owner, 1), 1);
-        assert!(
-            !t.dispatch_holds_guest_work(owner, 1),
-            "the handed work belongs to no dispatch"
+        assert_eq!(
+            (
+                t.pending_of_dispatch(owner, 1, "clock_deadline_in"),
+                t.pending_of_dispatch(owner, INSTANCE_WORK, "clock_deadline_in")
+            ),
+            (vec![], vec![left]),
+            "the handed work belongs to the instance and to no dispatch"
         );
         t.complete(left, ResultRecord::Ok(vec![]));
         assert!(

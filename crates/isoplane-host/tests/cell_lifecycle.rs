@@ -40,7 +40,7 @@ const T: Duration = Duration::from_secs(10);
 
 #[tokio::test]
 async fn dropping_a_cell_from_an_async_task_cancels_its_reactor_tasks() {
-    let r = rig(CellConfig::for_test("async-drop"));
+    let r = rig(isoplane_harness::fakes::cell_config("async-drop"));
     let task = r.cell.reactor().spawn(std::future::pending::<()>());
     r.cell.shutdown();
     tokio::spawn(async move { drop(r) })
@@ -60,7 +60,7 @@ async fn dropping_a_cell_from_an_async_task_cancels_its_reactor_tasks() {
 /// `1` for a previous dispatch's residue.
 #[test]
 fn a_reused_instance_keeps_its_residue() {
-    let r = rig(CellConfig::for_test("residue"));
+    let r = rig(isoplane_harness::fakes::cell_config("residue"));
     let act = Arc::new(FakeActivator::named(
         ModuleId::new("reuse-app", "v1"),
         FakeBehaviour::done().with_lazy_init_probe(),
@@ -94,8 +94,7 @@ fn a_reused_instance_keeps_its_residue() {
         observed[1..].contains(&1),
         "reuse must let per-instance memoization pay off: {observed:?}"
     );
-    let m = r.cell.meters(&module).unwrap();
-    assert_eq!(m.dispatches(), 25, "every dispatch is counted");
+    assert_eq!(r.cell.metrics().dispatches, 25, "every dispatch is counted");
     r.cell.shutdown();
 }
 
@@ -106,7 +105,7 @@ fn clones_of_one_template_never_share_entropy() {
     // so every step draws.
     let r = rig(CellConfig {
         max_idle_per_module: 0,
-        ..CellConfig::for_test("entropy")
+        ..isoplane_harness::fakes::cell_config("entropy")
     });
     let act = Arc::new(FakeActivator::named(
         ModuleId::new("rng", "v1"),
@@ -148,7 +147,7 @@ fn clones_of_one_template_never_share_entropy() {
 
 #[test]
 fn a_retired_module_refuses_new_work_and_discards_its_idle_instances() {
-    let r = rig(CellConfig::for_test("retire"));
+    let r = rig(isoplane_harness::fakes::cell_config("retire"));
     let act = Arc::new(FakeActivator::named(
         ModuleId::new("retired-app", "v1"),
         FakeBehaviour::done(),
@@ -171,9 +170,11 @@ fn a_retired_module_refuses_new_work_and_discards_its_idle_instances() {
         "the served instance must return to the pool"
     );
     assert!(r.cell.retire_module(&module), "the module was registered");
-    assert_eq!(
-        r.cell.metrics().live,
-        0,
+    assert!(
+        matches!(
+            r.cell.instance_state(served.instance),
+            None | Some(isoplane_host::LifecycleTier::Discarded)
+        ),
         "retiring a module must discard its idle instances"
     );
     assert!(

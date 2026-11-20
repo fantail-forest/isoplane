@@ -19,33 +19,13 @@ pub struct PinnedTarget {
 /// Dispatches HTTP requests to the application execution layer.
 #[async_trait]
 pub trait Dispatcher: Send + Sync + 'static {
-    async fn dispatch_http(
-        &self,
-        target: &RouteTarget,
-        req: crate::dispatch::HttpRequest,
-    ) -> Result<HttpReply>;
-
-    /// Starts an HTTP response whose body may arrive incrementally. Implementations
-    /// without streaming retain their buffered dispatch behavior through this adapter.
-    async fn dispatch_http_stream(
-        &self,
-        target: &RouteTarget,
-        req: crate::dispatch::HttpRequest,
-    ) -> Result<HttpExchange> {
-        self.dispatch_http(target, req)
-            .await
-            .map(HttpExchange::buffered)
-    }
-
-    /// Deliver an owned upload; existing dispatchers receive its complete inline body.
+    /// Delivers a request with its owned upload and starts the response, whose
+    /// body may arrive incrementally.
     async fn dispatch_http_upload(
         &self,
         target: &RouteTarget,
         upload: HttpUpload,
-    ) -> Result<HttpExchange> {
-        self.dispatch_http_stream(target, upload.collect().await?)
-            .await
-    }
+    ) -> Result<HttpExchange>;
 }
 
 /// A resolved route: which app version this request dispatch runs against, and under
@@ -63,13 +43,4 @@ pub struct RouteTarget {
 pub enum CodeTier {
     Fast,
     Optimized,
-}
-
-#[derive(Debug, Clone)]
-pub struct HttpReply {
-    pub status: u16,
-    pub headers: Vec<(String, String)>,
-    pub body: Vec<u8>,
-    /// The guest returned `done` while still producing body chunks.
-    pub streaming: bool,
 }

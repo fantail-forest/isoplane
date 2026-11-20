@@ -3,7 +3,6 @@
 mod common;
 
 use common::*;
-use isoplane_engine::{EngineConfig, IsoplaneEngine};
 
 fn import(name: &str, params: &str, results: &str) -> String {
     format!(r#"(import "isoplane" "{name}" (func ${name} {params} {results}))"#)
@@ -26,7 +25,8 @@ fn an_import_outside_the_table_fails_to_load() {
     );
     let err = e
         .load_template(&wasm)
-        .expect_err("an undeclared import must be rejected");
+        .err()
+        .expect("an undeclared import must be rejected");
     let msg = format!("{err:#}");
     assert!(
         msg.contains("definitely_not_an_import"),
@@ -42,7 +42,8 @@ fn an_import_outside_the_table_fails_to_load() {
     );
     let err = e
         .load_template(&wasm)
-        .expect_err("an import from an unknown module must be rejected");
+        .err()
+        .expect("an import from an unknown module must be rejected");
     assert!(
         format!("{err:#}").contains("fd_write"),
         "the error must name the offending import: {err:#}"
@@ -71,7 +72,8 @@ fn a_module_missing_a_required_export_cannot_activate() {
         .expect("the module compiles");
     let err = e
         .activate(&t, Box::new(TestBindings::new(Recorder::default())))
-        .expect_err("a module without isoplane_wake is not deployable");
+        .err()
+        .expect("a module without isoplane_wake is not deployable");
     assert!(
         format!("{err:#}").contains("isoplane_wake"),
         "the error must name the missing export: {err:#}"
@@ -92,7 +94,8 @@ fn a_template_whose_start_function_calls_an_import_is_refused() {
     );
     let err = e
         .load_template(&wasm)
-        .expect_err("a template that reaches the host during instantiation must be refused");
+        .err()
+        .expect("a template that reaches the host during instantiation must be refused");
     assert!(
         format!("{err:#}").contains("called a host import"),
         "the error must say the start function reached the host: {err:#}"
@@ -104,28 +107,11 @@ fn a_module_with_more_table_elements_than_the_pool_allows_is_refused() {
     let e = test_engine();
     let wasm = guest(4, "", "(table 131073 funcref)", DONE, DONE);
     e.load_template(&wasm)
-        .expect_err("a table over the pool's element cap must not load");
+        .err()
+        .expect("a table over the pool's element cap must not load");
     let wasm = guest(4, "", "(table 131072 funcref)", DONE, DONE);
     let t = e.load_template(&wasm).expect("a table at the cap loads");
     activate(&e, &t);
-}
-
-// ---------------------------------------------------------------------------
-// engine construction
-// ---------------------------------------------------------------------------
-
-#[test]
-fn an_epoch_tick_too_coarse_for_the_grace_floor_is_refused_at_construction() {
-    let err = IsoplaneEngine::new(EngineConfig {
-        epoch_tick_us: 5_000,
-        ..small_engine_config()
-    })
-    .err()
-    .expect("a 5 ms tick cannot deliver a 2 ms grace window and must be refused");
-    assert!(
-        format!("{err:#}").contains("grace"),
-        "the refusal must say what the tick is too coarse for: {err:#}"
-    );
 }
 
 // ---------------------------------------------------------------------------

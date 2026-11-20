@@ -10,7 +10,14 @@ async fn the_packaged_aspnet_provider_emits_attributed_customer_logs() {
     let capture = LogCapture::default();
     let writer = capture.clone();
     let logging = tokio::task::spawn_blocking(move || {
-        isoplaned::logs::init(true, writer, "customer-log-test", None, None)
+        isoplaned::logs::init_with_limits(
+            true,
+            writer,
+            "customer-log-test",
+            None,
+            None,
+            Default::default(),
+        )
     })
     .await
     .expect("logging setup task")

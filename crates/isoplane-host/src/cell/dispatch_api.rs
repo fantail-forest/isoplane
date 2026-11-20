@@ -94,10 +94,12 @@ pub(super) fn ends_the_instance(out: &DispatchOutcome, slot: &Arc<Slot>) -> bool
 
 #[derive(Clone)]
 pub(super) enum Responder {
+    #[cfg(any(test, feature = "test-util"))]
     Blocking(std::sync::mpsc::SyncSender<DispatchResult>),
     Async(Arc<Mutex<Option<tokio::sync::oneshot::Sender<DispatchResult>>>>),
 }
 
+#[cfg(any(test, feature = "test-util"))]
 impl From<std::sync::mpsc::SyncSender<DispatchResult>> for Responder {
     fn from(sender: std::sync::mpsc::SyncSender<DispatchResult>) -> Self {
         Self::Blocking(sender)
@@ -109,6 +111,7 @@ impl From<std::sync::mpsc::SyncSender<DispatchResult>> for Responder {
 pub(super) fn answer(tx: &Responder, result: DispatchResult) {
     let dispatch_id = result.dispatch_id;
     let disconnected = match tx {
+        #[cfg(any(test, feature = "test-util"))]
         Responder::Blocking(tx) => tx.send(result).is_err(),
         Responder::Async(tx) => match tx.lock().take() {
             Some(tx) => tx.send(result).is_err(),
@@ -126,6 +129,7 @@ pub(super) fn answer(tx: &Responder, result: DispatchResult) {
 impl Cell {
     /// Blocks until the response is final: a dispatch that parks and is later
     /// woken keeps this call outstanding.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn dispatch_blocking(
         &self,
         module: &ModuleId,
@@ -136,6 +140,7 @@ impl Cell {
         self.dispatch_with_stream(module, target, rec, timeout, None)
     }
 
+    #[cfg(any(test, feature = "test-util"))]
     pub(crate) fn dispatch_with_stream(
         &self,
         module: &ModuleId,
@@ -156,6 +161,7 @@ impl Cell {
         )
     }
 
+    #[cfg(any(test, feature = "test-util"))]
     pub(crate) fn dispatch_with_http(
         &self,
         module: &ModuleId,
@@ -184,6 +190,7 @@ impl Cell {
             .await
     }
 
+    #[cfg(any(test, feature = "test-util"))]
     fn dispatch_with_resources(
         &self,
         module: &ModuleId,
@@ -250,8 +257,7 @@ impl Cell {
         if let Err(job) = self.queue.push_dispatch(job) {
             job.completion
                 .reject(super::completion::AdmissionRejection::QueueUnavailable);
-            self.metrics.shed.fetch_add(1, Ordering::Relaxed);
-            job.completion.entry.meters.record_shed();
+
             answer(&job.responder, DispatchResult::shed(job.rec.dispatch_id));
         }
     }
@@ -282,6 +288,7 @@ impl Cell {
     }
 
     /// Submits without waiting; `None` if the cell shed at admission.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn submit(
         &self,
         module: &ModuleId,
@@ -299,6 +306,7 @@ impl Cell {
     /// breaker rejection is sent, because it returns `true`. The sender is an
     /// execution-pool thread, so a channel the caller lets fill stops the
     /// cell.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn submit_with(
         &self,
         module: &ModuleId,
@@ -348,16 +356,14 @@ impl Cell {
             Err(job) => {
                 job.completion
                     .reject(super::completion::AdmissionRejection::QueueUnavailable);
-                self.metrics.shed.fetch_add(1, Ordering::Relaxed);
-                if let Some(m) = self.meters(module) {
-                    m.record_shed();
-                }
+
                 false
             }
         }
     }
 
     /// Async form, for callers already on a reactor.
+    #[cfg(any(test, feature = "test-util"))]
     pub async fn dispatch(
         self: &Arc<Self>,
         module: &ModuleId,
@@ -370,6 +376,7 @@ impl Cell {
     }
 
     /// Delivers a host future's result through the cell runtime.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn complete_future(&self, id: u64, result: isoplane_abi::result::ResultRecord) {
         self.rt.settle_future(id, result);
     }
@@ -417,7 +424,7 @@ mod tests {
     async fn http_waits_through_long_parks_and_arms_idle_cleanup_on_completion() {
         let cell = cell(CellConfig {
             exec_threads: 0,
-            ..CellConfig::for_test("long-http")
+            ..crate::fakes::cell_config("long-http")
         });
         let module = app(
             &cell,

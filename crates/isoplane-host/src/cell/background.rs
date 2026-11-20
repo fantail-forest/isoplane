@@ -162,36 +162,12 @@ impl Cell {
             drop(hot);
             owner.add_slice(&outcome);
             entry.meters.record_occupancy(&outcome);
-            self.metrics.slice_us.record(outcome.wall_ns / 1_000);
-            self.metrics
-                .grace_deferrals
-                .fetch_add(outcome.grace_deferrals, Ordering::Relaxed);
-            if outcome.completion == Completion::BudgetExit {
-                entry
-                    .meters
-                    .record_grace_end(GraceEnd::Exited, outcome.overage_ns);
-                self.metrics.budget_exits.fetch_add(1, Ordering::Relaxed);
-                self.metrics.grace_entries.fetch_add(1, Ordering::Relaxed);
-                self.metrics
-                    .overage_ns
-                    .fetch_add(outcome.overage_ns, Ordering::Relaxed);
-            }
             slot.ctx
                 .background
                 .charge(Duration::from_nanos(outcome.occupancy_ns));
             if ends_the_instance(&outcome, slot) || slot.ctx.has_trap() {
                 guard.destroy();
                 let reason = if outcome.completion == Completion::BudgetKill {
-                    entry
-                        .meters
-                        .record_grace_end(GraceEnd::Killed, outcome.overage_ns);
-                    self.metrics.budget_kills.fetch_add(1, Ordering::Relaxed);
-                    self.metrics
-                        .overage_ns
-                        .fetch_add(outcome.overage_ns, Ordering::Relaxed);
-                    if outcome.grace_end.is_some() {
-                        self.metrics.grace_entries.fetch_add(1, Ordering::Relaxed);
-                    }
                     match outcome.execution_limit {
                         Some(isoplane_engine::ExecutionLimit::Wall) => TerminalReason::WallLimit,
                         Some(isoplane_engine::ExecutionLimit::Occupancy) | None => {
@@ -199,7 +175,6 @@ impl Cell {
                         }
                     }
                 } else {
-                    entry.meters.record_trap();
                     self.metrics.traps.fetch_add(1, Ordering::Relaxed);
                     TerminalReason::GuestTrap
                 };
@@ -243,7 +218,7 @@ mod tests {
             let _trace = events.install();
             let cell = cell(CellConfig {
                 exec_threads: 0,
-                ..CellConfig::for_test("background-outcome")
+                ..crate::fakes::cell_config("background-outcome")
             });
             let module = app(
                 &cell,

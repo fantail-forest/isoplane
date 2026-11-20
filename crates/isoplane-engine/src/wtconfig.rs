@@ -74,15 +74,14 @@ pub(crate) fn build_engine(cfg: &EngineConfig) -> Result<Engine> {
     c.memory_guard_size(cfg.guard_size_bytes);
     c.guard_before_linear_memory(false);
     c.cranelift_opt_level(OptLevel::Speed);
-    if cfg.spectre_mitigations {
-        // Both default to on in Cranelift; set explicitly so a default flip
-        // cannot silently disarm a security control.
-        // SAFETY: both are recognised Cranelift settings with boolean values;
-        // an unknown name or bad value is caught by `Engine::new` below.
-        unsafe {
-            c.cranelift_flag_set("enable_heap_access_spectre_mitigation", "true");
-            c.cranelift_flag_set("enable_table_access_spectre_mitigation", "true");
-        }
+    // Cranelift bounds-check masking and pointer sanitisation on loads. Both
+    // default to on in Cranelift; set explicitly so a default flip cannot
+    // silently disarm a security control.
+    // SAFETY: both are recognised Cranelift settings with boolean values;
+    // an unknown name or bad value is caught by `Engine::new` below.
+    unsafe {
+        c.cranelift_flag_set("enable_heap_access_spectre_mitigation", "true");
+        c.cranelift_flag_set("enable_table_access_spectre_mitigation", "true");
     }
 
     // Trap messages feed `TrapKind` classification and tenant-facing
@@ -188,7 +187,6 @@ impl std::hash::Hasher for FingerprintHasher {
 pub(crate) fn engine_fingerprint(engine: &Engine, cfg: &EngineConfig) -> String {
     let mut h = FingerprintHasher::new();
     engine.precompile_compatibility_hash().hash(&mut h);
-    cfg.spectre_mitigations.hash(&mut h);
     cfg.guard_size_bytes.hash(&mut h);
     cfg.max_memory_bytes.hash(&mut h);
     cfg.pooling.hash(&mut h);

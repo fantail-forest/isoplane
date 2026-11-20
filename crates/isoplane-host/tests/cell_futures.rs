@@ -47,7 +47,9 @@ const PARK_MS: u64 = 600_000;
 
 #[test]
 fn the_pending_futures_cap_refuses_the_extra_operation_and_keeps_the_instance_serving() {
-    let r = rig(CellConfig::for_test("independent-app-limits"));
+    let r = rig(isoplane_harness::fakes::cell_config(
+        "independent-app-limits",
+    ));
     let limit = 6;
 
     let act = Arc::new(FakeActivator::named(
@@ -171,7 +173,7 @@ fn the_pending_futures_cap_refuses_the_extra_operation_and_keeps_the_instance_se
 
 #[test]
 fn response_completion_hands_work_to_background_without_holding_the_request_open() {
-    let r = rig(CellConfig::for_test("handover"));
+    let r = rig(isoplane_harness::fakes::cell_config("handover"));
     let act = Arc::new(FakeActivator::named(
         ModuleId::new("handover", "v1"),
         FakeBehaviour::program([
@@ -212,7 +214,6 @@ fn response_completion_hands_work_to_background_without_holding_the_request_open
         ),
         "the request ends while its operation is still pending"
     );
-    assert_eq!(r.cell.metrics().work_handed_to_instance, 1);
     assert_eq!(r.cell.futures().live_futures(), 1);
     let future = r.cell.futures().live_future_ids()[0];
     r.cell
@@ -233,9 +234,27 @@ fn response_completion_hands_work_to_background_without_holding_the_request_open
         slot.ctx.logs()[0].dispatch,
         isoplane_host::futures::INSTANCE_WORK
     );
+    let completed = || {
+        isoplane_harness::logging::LogCapture::global()
+            .host_events("dispatch_completed")
+            .into_iter()
+            .filter(|event| event["instance"] == first.instance.0)
+            .map(|event| (event["dispatch_id"].clone(), event["dispatch_kind"].clone()))
+            .collect::<Vec<_>>()
+    };
+    assert!(
+        wait_for(|| completed().len() == 2, T),
+        "the request and the work it left behind each complete once"
+    );
     assert_eq!(
-        r.cell.meters(&module).unwrap().dispatches(),
-        1,
+        completed(),
+        [
+            (first.dispatch_id.into(), "http".into()),
+            (
+                isoplane_host::futures::INSTANCE_WORK.into(),
+                "background".into()
+            )
+        ],
         "background execution is not a request"
     );
     let second = send();
@@ -248,7 +267,7 @@ fn response_completion_hands_work_to_background_without_holding_the_request_open
 
 #[test]
 fn entering_grace_wakes_the_dispatch_cancellation_future() {
-    let rig = rig(CellConfig::for_test("cancellation"));
+    let rig = rig(isoplane_harness::fakes::cell_config("cancellation"));
     let activator = Arc::new(FakeActivator::named(
         ModuleId::new("cancellation", "v1"),
         FakeBehaviour::program([
@@ -280,7 +299,7 @@ fn entering_grace_wakes_the_dispatch_cancellation_future() {
 
 #[test]
 fn operator_budgets_reach_the_dispatch_and_pending_future_table() {
-    let r = rig(CellConfig::for_test("operator-budgets"));
+    let r = rig(isoplane_harness::fakes::cell_config("operator-budgets"));
     let act = Arc::new(FakeActivator::named(
         ModuleId::new("bounded", "v1"),
         FakeBehaviour::program([Step::Park {

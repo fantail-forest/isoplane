@@ -114,9 +114,6 @@ impl Cell {
         let res = match capture {
             Ok(r) => r,
             Err(hibernate_policy::CaptureRefused::SnapshotWrite(e)) => {
-                self.metrics
-                    .capture_write_failures
-                    .fetch_add(1, Ordering::Relaxed);
                 tracing::warn!(
                     tenant = %entry.tenant, instance = %slot.id, error = %e,
                     "hibernation snapshot write failed; the instance stays Parked and no capture is \
@@ -148,11 +145,7 @@ impl Cell {
         slot.hibernate()
             .map_err(|e| hibernate_policy::CaptureRefused::Failed(format!("{e:?}")))?;
 
-        entry.meters.record_capture(bytes);
-        self.metrics.captures.fetch_add(1, Ordering::Relaxed);
         self.metrics.delta_bytes.fetch_add(bytes, Ordering::Relaxed);
-        self.metrics.capture_us.record(res.capture_us);
-        self.metrics.gc_hint_us.record(res.gc_hint_us);
         self.metrics
             .dirty_pages
             .record(res.saved.changed_pages as u64);
@@ -239,6 +232,7 @@ impl Cell {
     /// Captures now, bypassing the idle trajectory's timing and none of its
     /// eligibility rules. Blocks on the cell's reactor for the delta write,
     /// so it is called from a blocking task, never a reactor thread.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn force_hibernate(
         self: &Arc<Self>,
         id: InstanceId,
@@ -262,6 +256,7 @@ impl Cell {
 
     /// Wakes from a delta and queues any results that came due while asleep.
     /// Blocks on the reactor like [`Cell::force_hibernate`].
+    #[cfg(any(test, feature = "test-util"))]
     pub fn force_wake(self: &Arc<Self>, id: InstanceId) -> crate::Result<()> {
         let (slot, module) = {
             let g = self.residents.lock();
@@ -285,10 +280,6 @@ impl Cell {
         self.metrics
             .hibernation_wake_us
             .record(t0.elapsed().as_micros() as u64);
-        self.metrics
-            .hibernation_wakes
-            .fetch_add(1, Ordering::Relaxed);
-        entry.meters.record_hibernation_wake();
         if self.has_runnable(&slot) {
             self.queue_wake(slot.clone());
         }
@@ -296,6 +287,7 @@ impl Cell {
     }
 
     /// Discards an idle instance without saving a delta.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn discard_instance(self: &Arc<Self>, id: InstanceId) -> crate::Result<()> {
         let slot = self
             .slot(id)

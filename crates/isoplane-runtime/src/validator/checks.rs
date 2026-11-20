@@ -12,12 +12,7 @@ use super::scan::{
     func_type_index, kind_label, kind_matches, render_sig, render_want, sig_matches, Scan,
 };
 
-pub(super) fn check_imports(
-    s: &Scan,
-    report: &mut ValidationReport,
-    v: &mut Vec<Violation>,
-    policy: &ValidationLimits,
-) {
+pub(super) fn check_imports(s: &Scan, v: &mut Vec<Violation>, policy: &ValidationLimits) {
     if s.nested {
         v.push(Violation::new(
             ViolationCode::V1UndeclaredImport,
@@ -36,7 +31,6 @@ pub(super) fn check_imports(
         ));
     }
 
-    let mut seen: BTreeSet<&'static str> = BTreeSet::new();
     for (module, field, ty) in &s.imports {
         let Some(def) = (if module == imports::HOST_MODULE {
             imports::lookup(field)
@@ -45,7 +39,7 @@ pub(super) fn check_imports(
         }) else {
             match pal::lookup(module, field) {
                 Some(p) => {
-                    check_pal_import(p, ty, s, &mut seen, report, v);
+                    check_pal_import(p, ty, s, v);
                     continue;
                 }
                 None => {
@@ -77,9 +71,7 @@ pub(super) fn check_imports(
         match func_type_index(ty) {
             Some(idx) => match s.func_types.get(idx as usize) {
                 Some(Some((params, results))) => {
-                    if sig_matches(&def.sig, params, results) {
-                        seen.insert(def.name);
-                    } else {
+                    if !sig_matches(&def.sig, params, results) {
                         v.push(Violation::about(
                             ViolationCode::V1SignatureMismatch,
                             def.name,
@@ -112,32 +104,12 @@ pub(super) fn check_imports(
             )),
         }
     }
-
-    // Table order, not module order: the manifest is the platform's document.
-    report.capabilities = imports::IMPORTS
-        .iter()
-        .map(|d| d.name)
-        .filter(|n| seen.contains(n))
-        .collect();
-    report.pal.sort_by_key(|p| {
-        pal::PAL_IMPORTS
-            .iter()
-            .position(|q| q.module == p.module && q.func == p.func)
-            .unwrap_or(usize::MAX)
-    });
 }
 
 /// A delegated entry runs a body against its declared type, so its
 /// signature is checked; a trap-on-call stub is generated from the module's
 /// own type and traps before it reads an argument.
-fn check_pal_import(
-    p: &'static PalDef,
-    ty: &TypeRef,
-    s: &Scan,
-    seen: &mut BTreeSet<&'static str>,
-    report: &mut ValidationReport,
-    v: &mut Vec<Violation>,
-) {
+fn check_pal_import(p: &'static PalDef, ty: &TypeRef, s: &Scan, v: &mut Vec<Violation>) {
     let Some(idx) = func_type_index(ty) else {
         v.push(Violation::about(
             ViolationCode::V1SignatureMismatch,
@@ -167,22 +139,15 @@ fn check_pal_import(
                         render_want(&want)
                     ),
                 ));
-                return;
             }
             _ => {
                 v.push(Violation::new(
                     ViolationCode::V1SignatureMismatch,
                     format!("`{}` references non-function type {idx}", p.full_name()),
                 ));
-                return;
             }
         }
     }
-
-    if let Some(def) = p.disposition.capability().and_then(imports::lookup) {
-        seen.insert(def.name);
-    }
-    report.pal.push(p);
 }
 
 pub(super) fn check_exports(
@@ -299,7 +264,6 @@ pub(super) fn check_memory(
     s: &Scan,
     ceiling_bytes: u64,
     require_maximum: bool,
-    report: &mut ValidationReport,
     v: &mut Vec<Violation>,
 ) {
     let ceiling_pages = ceiling_bytes / isoplane_abi::WASM_PAGE_SIZE as u64;
@@ -360,21 +324,10 @@ pub(super) fn check_memory(
             ));
         }
     }
-
-    if let Some(m) = s.memories.first() {
-        report.memory_pages_initial = Some(m.initial.min(u32::MAX as u64) as u32);
-        report.memory_pages_max = m.maximum.map(|x| x.min(u32::MAX as u64) as u32);
-    }
 }
 
-pub(super) fn check_bombs(
-    s: &Scan,
-    report: &mut ValidationReport,
-    v: &mut Vec<Violation>,
-    policy: &ValidationLimits,
-) {
-    report.function_count = s.imported_funcs.saturating_add(s.defined_funcs);
-    report.custom_section_bytes = s.custom_section_bytes;
+pub(super) fn check_bombs(s: &Scan, v: &mut Vec<Violation>, policy: &ValidationLimits) {
+    let function_count = s.imported_funcs.saturating_add(s.defined_funcs);
 
     let mut bomb = |cond: bool, detail: String| {
         if cond {
@@ -382,11 +335,11 @@ pub(super) fn check_bombs(
         }
     };
     bomb(
-        report.function_count > policy.max_functions,
+        function_count > policy.max_functions,
         format!(
             "{} functions exceeds MAX_FUNCTIONS={} — AOT compile time is superlinear in \
              function count and compile bombs are a real attack",
-            report.function_count, policy.max_functions
+            function_count, policy.max_functions
         ),
     );
     bomb(
@@ -437,28 +390,17 @@ pub(super) fn check_bombs(
     );
 }
 
-/// The V4 limits, published so tenants can design against them.
-pub mod limits {
-    pub const MAX_FUNCTIONS: u32 = isoplane_abi::config::ValidationLimits::DEFAULT.max_functions;
-    pub const MAX_LOCALS_PER_FUNCTION: u32 =
-        isoplane_abi::config::ValidationLimits::DEFAULT.max_locals_per_function;
-    pub const MAX_TABLE_ELEMENTS: u32 =
-        isoplane_abi::config::ValidationLimits::DEFAULT.max_table_elements;
-    pub const MAX_CUSTOM_SECTION_BYTES: u64 =
-        isoplane_abi::config::ValidationLimits::DEFAULT.max_custom_section_bytes;
-    pub const MAX_IMPORTS: u32 = isoplane_abi::config::ValidationLimits::DEFAULT.max_imports;
-    pub const MAX_EXPORTS: u32 = isoplane_abi::config::ValidationLimits::DEFAULT.max_exports;
-    pub const MAX_TYPES: u32 = isoplane_abi::config::ValidationLimits::DEFAULT.max_types;
-    pub const MAX_ELEMENT_SEGMENTS: u32 =
-        isoplane_abi::config::ValidationLimits::DEFAULT.max_element_segments;
-    pub const MAX_DATA_SEGMENTS: u32 =
-        isoplane_abi::config::ValidationLimits::DEFAULT.max_data_segments;
-}
-
 #[cfg(test)]
 mod tests {
 
-    use crate::validator::{validate, Violation, ViolationCode};
+    use crate::validator::{validate_with_limits, ValidationReport, Violation, ViolationCode};
+
+    fn validate(
+        wasm: &[u8],
+        memory_limit: isoplane_abi::config::GuestMemoryBytes,
+    ) -> Result<ValidationReport, Vec<Violation>> {
+        validate_with_limits(wasm, memory_limit, None, &Default::default())
+    }
 
     fn guest(globals: &str) -> Vec<u8> {
         wat::parse_str(format!(
@@ -476,10 +418,13 @@ mod tests {
         validate(wasm, isoplane_abi::config::GuestMemoryBytes::default())
             .err()
             .unwrap_or_default()
-            .iter()
-            .map(Violation::parts)
-            .filter(|(_, subject, _)| subject.is_some_and(|s| s.starts_with("global ")))
-            .map(|(code, subject, _)| (code, subject.map(str::to_string)))
+            .into_iter()
+            .filter(|v| {
+                v.subject
+                    .as_deref()
+                    .is_some_and(|s| s.starts_with("global "))
+            })
+            .map(|v| (v.code, v.subject))
             .collect()
     }
 

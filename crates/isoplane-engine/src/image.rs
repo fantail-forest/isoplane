@@ -539,12 +539,12 @@ impl MemoryImage {
     }
 
     /// Logical memory length, including zero gaps.
+    #[expect(
+        clippy::len_without_is_empty,
+        reason = "nothing asks whether an image is empty"
+    )]
     pub fn len(&self) -> usize {
         self.len
-    }
-    /// Whether the logical memory is empty.
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
     }
     #[cfg(test)]
     fn runs(&self) -> usize {
@@ -590,6 +590,7 @@ impl MemoryImage {
         live[cursor - off..].iter().all(|&byte| byte == 0)
     }
 
+    #[cfg(any(test, feature = "test-util"))]
     /// Expands the baseline for explicit inspection.
     pub fn to_dense(&self) -> Vec<u8> {
         let mut out = vec![0; self.len];
@@ -597,6 +598,8 @@ impl MemoryImage {
         out
     }
 
+    // Activation copies a layer with this where it has no copy-on-write mapping.
+    #[cfg(any(test, feature = "test-util", not(target_os = "linux")))]
     /// Writes the image over the start of `memory`, as far as the shorter of
     /// the two reaches: an overlay's base first, then this image's own
     /// regions, with zeros wherever neither stores anything.
@@ -677,17 +680,13 @@ fn number(bytes: &[u8], offset: usize) -> Result<usize, &'static str> {
     usize::try_from(u64::from_le_bytes(value)).map_err(|_| "sparse field exceeds address space")
 }
 
-impl Default for MemoryImage {
-    fn default() -> Self {
-        Self::from_dense(&[])
-    }
-}
+#[cfg(test)]
 impl PartialEq for MemoryImage {
     fn eq(&self, other: &Self) -> bool {
         self.encoded() == other.encoded()
     }
 }
-impl Eq for MemoryImage {}
+#[cfg(test)]
 impl std::fmt::Debug for MemoryImage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MemoryImage")

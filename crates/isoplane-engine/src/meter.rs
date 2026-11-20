@@ -35,16 +35,11 @@ fn clock_failure_forced() -> bool {
     })
 }
 
-#[cfg(not(test))]
-#[inline(always)]
-fn clock_failure_forced() -> bool {
-    false
-}
-
 /// Monotonic nanoseconds from a process-local origin, or `None` on overflow.
 /// Differences measure worker occupancy only when taken around active work.
 #[inline]
 pub fn try_occupancy_nanos() -> Option<u64> {
+    #[cfg(test)]
     if clock_failure_forced() {
         CLOCK_READ_FAILURES.fetch_add(1, Ordering::Relaxed);
         return None;
@@ -232,7 +227,7 @@ mod tests {
                 1,
             ),
             (
-                budget.hard_ns() + 1,
+                budget.budget_ns() + budget.grace_ns() + 1,
                 Completion::BudgetKill,
                 GraceEnd::Killed,
                 0,

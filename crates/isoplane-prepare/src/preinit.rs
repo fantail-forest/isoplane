@@ -1,6 +1,6 @@
 //! Portable SDK initialization through the shared execution engine.
 
-use crate::{BuildRequest, Initialization, PrepareError, RuntimeProfile};
+use crate::{Initialization, PrepareError, RuntimeProfile};
 use isoplane_abi::{
     config::{GuestMemoryBytes, InitSandbox},
     imports,
@@ -47,12 +47,6 @@ pub struct PreInitOutcome {
     pub deferred_units: Vec<u32>,
     /// Number of initialization passes executed.
     pub passes: u32,
-    /// Preparation-worker occupancy, including compilation, in milliseconds.
-    pub init_occupancy_ms: u64,
-    /// Length of the portable initialized module in bytes.
-    pub template_bytes: u64,
-    /// Digest binding source, configuration, policy and declared files.
-    pub initialization_identity: [u8; 32],
     /// The capability each deferred unit reached for.
     pub deferred_reasons: Vec<(u32, String)>,
     /// `log_emit` output from the final pass.
@@ -200,26 +194,10 @@ impl PreInitializer {
                 wasm: template_wasm,
                 initialized: output,
             } = crate::initialize(&engine, wasm, &request).map_err(map_error)?;
-            let digest = BuildRequest {
-                guest_memory_bytes: self.memory_limit,
-                validation_limits: Default::default(),
-                engine: configuration,
-                application_files: PlatformFiles::default(),
-                runtime: self.runtime.clone(),
-                memory_limit: self.memory_limit.unwrap_or_default(),
-                initialization: request,
-                input_hash: req.module_hash.0,
-            }
-            .identity()
-            .map_err(|error| PreInitError::Trapped(error.into()))?
-            .initialization_hash;
             Ok(PreInitOutcome {
-                template_bytes: template_wasm.len() as u64,
                 template_wasm,
                 deferred_units: output.deferred,
                 passes: output.passes,
-                init_occupancy_ms: output.preparation_occupancy_ns / 1_000_000,
-                initialization_identity: digest,
                 deferred_reasons: output.deferred_reasons,
                 init_logs: output.logs,
                 capability_refusals: output.capability_refusals,

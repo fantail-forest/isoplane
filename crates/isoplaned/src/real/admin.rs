@@ -25,16 +25,12 @@ impl RealNodeAdmin {
                 None => s,
                 Some(mut a) => {
                     a.dispatches += s.dispatches;
-                    a.wakes += s.wakes;
                     a.traps += s.traps;
-                    a.shed += s.shed;
                     a.breaker_rejections += s.breaker_rejections;
-                    a.live += s.live;
                     a.parked += s.parked;
                     a.hibernated += s.hibernated;
                     a.hot += s.hot;
                     a.delta_bytes += s.delta_bytes;
-                    a.hibernation_wakes += s.hibernation_wakes;
                     for (tenant, t) in s.tenants {
                         let e = a.tenants.entry(tenant).or_default();
                         e.dispatches += t.dispatches;
@@ -51,7 +47,6 @@ impl RealNodeAdmin {
                         a.hibernation_wake_p99_us.max(s.hibernation_wake_p99_us);
                     a.dirty_pages_p50 = a.dirty_pages_p50.max(s.dirty_pages_p50);
                     a.dirty_pages_p99 = a.dirty_pages_p99.max(s.dirty_pages_p99);
-                    a.trap_rate = a.trap_rate.max(s.trap_rate);
                     a
                 }
             });
@@ -141,10 +136,15 @@ mod tests {
             crate::config::NodeConfig::from_toml(include_str!("../../tests/fixtures/node.toml"))
                 .expect("small test engine");
         config.data_dir = directory.path().to_owned();
-        config.host = isoplane_host::CellConfig::for_test("metrics");
+        config.host = isoplane_harness::fakes::cell_config("metrics");
         config.host.breaker.kill_threshold = 1;
-        let cells = RealCells::build(&config, &super::super::RealPaths::under(directory.path()))
-            .expect("node accounting");
+        let cells = RealCells::build_with_destinations(
+            &config,
+            &super::super::RealPaths::under(directory.path()),
+            Arc::new(isoplane_host::egress::PublicDestinations),
+            &config.trust_bundle().expect("the bundled roots must load"),
+        )
+        .expect("node accounting");
         (directory, cells)
     }
 

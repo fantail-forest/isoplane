@@ -57,7 +57,6 @@
              AssemblyFile="$(_IsoplaneConformanceAssembly)" />
   <Target Name="IsoplanePackSharedRuntime" BeforeTargets="_GetPackageFiles">
     <PropertyGroup>
-      <IsoplaneRuntimeModuleDirectory Condition="'$(IsoplaneRuntimeModuleDirectory)' == ''">$(ISOPLANE_RUNTIME_MODULE_DIRECTORY)</IsoplaneRuntimeModuleDirectory>
       <_IsoplaneRuntimeDirectory>$([MSBuild]::EnsureTrailingSlash('$(IsoplaneRuntimeModuleDirectory)'))</_IsoplaneRuntimeDirectory>
       <_IsoplaneRuntimeProvenance>$(_IsoplaneRuntimeDirectory)runtime.json</_IsoplaneRuntimeProvenance>
       <_IsoplaneRuntimeNativeImports>$(_IsoplaneRuntimeDirectory)native-imports.txt</_IsoplaneRuntimeNativeImports>

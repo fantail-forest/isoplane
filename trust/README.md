@@ -61,10 +61,8 @@ trust/review-bundle.sh old.pem trust/ca-bundle.pem   # what changed, per certifi
 
 Find the current date on <https://curl.se/docs/caextract.html>. Ingest in a
 commit of its own with the review output in the commit message, and release
-the node. Check upstream weekly from an automated job; the daemon warns when
-`ingested_at` is more than `trust.warn_after_days` old (default 30) and keeps
-serving. An urgent distrust is an expedited out-of-band release, not a wait
-for the next scheduled one.
+the node. Check upstream weekly from an automated job. An urgent distrust is
+an expedited out-of-band release, not a wait for the next scheduled one.
 
 ## Licence
 

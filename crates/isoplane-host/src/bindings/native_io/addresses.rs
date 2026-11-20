@@ -65,13 +65,7 @@ impl Addresses {
                 )
                 .await
                 .map_err(|error| match error {
-                    crate::egress::EgressError::Denied(reason) => {
-                        completion
-                            .metrics
-                            .egress_denials
-                            .fetch_add(1, Ordering::Relaxed);
-                        Error::Denied(reason.to_string())
-                    }
+                    crate::egress::EgressError::Denied(reason) => Error::Denied(reason.to_string()),
                     crate::egress::EgressError::Dns(error) => Error::Dns {
                         kind: error.kind(),
                         message: error.to_string(),

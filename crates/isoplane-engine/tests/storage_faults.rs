@@ -117,7 +117,8 @@ fn a_template_whose_storage_failed_refuses_new_activations() {
     instance.gc_hint(0);
     let refused = engine
         .activate(&template, Box::new(TestBindings::new(Recorder::default())))
-        .expect_err("a template whose storage failed must not activate again");
+        .err()
+        .expect("a template whose storage failed must not activate again");
     assert!(
         refused.is::<TemplateStorageFailed>(),
         "the refusal must say the template's storage failed: {refused:#}"

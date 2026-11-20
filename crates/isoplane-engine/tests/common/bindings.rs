@@ -22,10 +22,6 @@ pub struct Recorder {
 
 pub struct TestBindings {
     pub rec: Recorder,
-    pub init_sandbox: bool,
-    /// When set, whether the bindings are in the initialization sandbox,
-    /// switchable after the instance is made.
-    pub sandbox_switch: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     pub memory_limit_bytes: Option<u64>,
     pub next_future: u64,
     pub(crate) next_response: i64,
@@ -42,8 +38,6 @@ impl TestBindings {
     pub fn new(rec: Recorder) -> Self {
         Self {
             rec,
-            init_sandbox: false,
-            sandbox_switch: None,
             memory_limit_bytes: None,
             next_future: 1,
             next_response: 1,
@@ -105,7 +99,7 @@ impl HostBindings for TestBindings {
             self.rec
                 .responses
                 .lock()
-                .push(isoplane_abi::decode(call.payload).expect("the guest response must decode"));
+                .push(postcard::from_bytes(call.payload).expect("the guest response must decode"));
             let handle = self.next_response;
             self.next_response += 1;
             return handle;
@@ -146,13 +140,5 @@ impl HostBindings for TestBindings {
     fn slice_clock_ms(&self) -> u64 {
         self.rec.clock_reads.fetch_add(1, Ordering::Relaxed);
         self.rec.clock.fetch_add(1, Ordering::Relaxed) + 1
-    }
-
-    fn is_init_sandbox(&self) -> bool {
-        self.sandbox_switch
-            .as_ref()
-            .map_or(self.init_sandbox, |switch| {
-                switch.load(std::sync::atomic::Ordering::Relaxed)
-            })
     }
 }

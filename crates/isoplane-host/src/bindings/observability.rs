@@ -3,8 +3,6 @@
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 
-use crate::meters::OccupancyInterval;
-
 use super::CellBindings;
 
 #[derive(Default)]
@@ -82,10 +80,9 @@ impl TraceSpans {
 }
 
 impl CellBindings {
-    /// Log occupancy is already on the dispatch's meter; the interval makes the
-    /// share visible and the byte cap bounds volume.
+    /// Log occupancy is already on the dispatch's meter; the byte cap bounds
+    /// volume.
     pub(super) fn log_emit(&self, payload: &[u8], scalars: [u64; 3]) -> i64 {
-        let interval = OccupancyInterval::start();
         let Ok(level @ 0..=4) = u8::try_from(scalars[0]) else {
             self.ctx
                 .latch_trap(isoplane_abi::status::TrapCode::Protocol);
@@ -119,7 +116,7 @@ impl CellBindings {
             %fields,
             "guest log"
         );
-        self.ctx.meters.record_log_occupancy(interval.elapsed_ns());
+
         0
     }
 
@@ -286,26 +283,6 @@ mod tests {
             assert!(context.spans.lock().open.is_empty());
             assert_eq!(context.spans.lock().names_bytes, 0);
         }
-    }
-
-    #[test]
-    fn logging_records_its_occupancy_share_without_counting_it_twice() {
-        let capture = LogCapture::default();
-        let dispatch = capture.dispatch();
-        let _subscriber = tracing::dispatcher::set_default(&dispatch);
-        let context = ctx();
-        context.begin_dispatch(1, 1);
-        let mut bindings = CellBindings::new(context.clone());
-        crate::occupancy_clock::with_readings([100, 350], || {
-            bindings.call_sync(call("log_emit", b"a", [2, 0, 0]));
-        });
-        assert_eq!(context.meters.log_occupancy_ns(), 250);
-        assert_eq!(
-            context.meters.occupancy_ns(),
-            0,
-            "the enclosing slice records occupied time"
-        );
-        assert_eq!(capture.records().len(), 1);
     }
 
     #[test]

@@ -105,25 +105,16 @@ pub trait PalSource: Send + 'static {
     fn record_initialization_call(&mut self, module: &'static str);
 
     /// Apply context-specific policy before a delegated clock or entropy call.
-    fn check_capability(&mut self, _import: &'static str) -> wasmtime::Result<()> {
-        Ok(())
-    }
+    fn check_capability(&mut self, import: &'static str) -> wasmtime::Result<()>;
     /// Perform nonblocking native I/O; sealed initialization has no resource authority.
     fn native_io(
         &mut self,
-        _request: isoplane_abi::native_io::Request,
-    ) -> Result<isoplane_abi::native_io::Response, isoplane_abi::native_io::Error> {
-        Err(isoplane_abi::native_io::Error::Denied(
-            "native I/O unavailable in this execution context".into(),
-        ))
-    }
+        request: isoplane_abi::native_io::Request,
+    ) -> Result<isoplane_abi::native_io::Response, isoplane_abi::native_io::Error>;
     /// The coarse clock, frozen for the slice.
     fn slice_clock_ms(&mut self) -> u64;
-    /// The host-declared read-only files the PAL filesystem serves; nothing
-    /// by default.
-    fn platform_files(&self) -> PlatformFiles {
-        PlatformFiles::default()
-    }
+    /// The host-declared read-only files the PAL filesystem serves.
+    fn platform_files(&self) -> PlatformFiles;
     /// Fill `out` from the host CSPRNG, once per guest draw.
     fn entropy_fill(&mut self, out: &mut [u8]) -> wasmtime::Result<()>;
 }

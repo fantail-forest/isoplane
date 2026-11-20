@@ -41,19 +41,22 @@ const T: Duration = Duration::from_secs(10);
 
 #[test]
 fn the_metrics_endpoint_decomposes_the_lifecycle() {
-    let r = rig(CellConfig::for_test("metrics"));
+    let r = rig(isoplane_harness::fakes::cell_config("metrics"));
     let act = Arc::new(FakeActivator::named(
         ModuleId::new("m", "v1"),
         FakeBehaviour::done(),
     ));
     let module = act.module().clone();
     r.cell.register_module("acme", act, manifest("m")).unwrap();
+    let mut acquired = Vec::new();
     for i in 0..5 {
         let mut rec = http(&r.cell, &module, "/");
         rec.dispatch_id = i;
-        r.cell
+        let result = r
+            .cell
             .dispatch_blocking(&module, Target::Handler { route: "/".into() }, rec, T)
             .unwrap();
+        acquired.push(result.acquired);
         // The response leaves before the instance is pooled, so a client that
         // fires the next request at once can race the release and pay for a
         // second activation; waiting for the pool measures the steady state.
@@ -68,14 +71,12 @@ fn the_metrics_endpoint_decomposes_the_lifecycle() {
     let text = r.cell.metrics_text();
     for needle in [
         "isoplane_cell_dispatches 5",
-        "isoplane_cell_instances_live",
         "isoplane_cell_instances_parked",
         "isoplane_cell_instances_hibernated",
         "isoplane_cell_activation_p50_us",
-        "isoplane_cell_wake_p50_us",
+        "isoplane_cell_hibernation_wake_p50_us",
         "isoplane_cell_dirty_pages_p50",
         "isoplane_cell_delta_bytes",
-        "isoplane_cell_trap_rate",
         "isoplane_tenant_dispatches{tenant=\"acme\"}",
     ] {
         assert!(
@@ -92,13 +93,17 @@ fn the_metrics_endpoint_decomposes_the_lifecycle() {
         json["served_activated"], 1,
         "only the first request paid for an activation"
     );
-    assert_eq!(json["served_warm"], 4, "the rest were served warm");
+    assert_eq!(
+        acquired,
+        ["activated", "warm", "warm", "warm", "warm"],
+        "the rest were served warm"
+    );
     r.cell.shutdown();
 }
 
 #[test]
 fn logging_is_charged_to_the_dispatch_that_logs() {
-    let r = rig(CellConfig::for_test("log-occupancy"));
+    let r = rig(isoplane_harness::fakes::cell_config("log-occupancy"));
 
     let quiet = Arc::new(FakeActivator::named(
         ModuleId::new("quiet-logger", "v1"),
@@ -146,10 +151,6 @@ fn logging_is_charged_to_the_dispatch_that_logs() {
         assert_eq!(result.status, 204);
         let meters = r.cell.meters(module).expect("tenant meters");
         assert_eq!(meters.occupancy_ns(), result.occupancy_ns);
-        assert!(
-            meters.log_occupancy_ns() <= meters.occupancy_ns(),
-            "logging is a subset of slice occupancy"
-        );
     }
     r.cell.shutdown();
 }

@@ -16,8 +16,15 @@ async fn terminating_a_process_drops_its_unfinished_trace() {
             .parse()
             .expect("test collector endpoint");
         let _logging = tokio::task::spawn_blocking(move || {
-            isoplaned::logs::init(true, std::io::sink, "abort-test", None, Some(&endpoint))
-                .expect("trace exporter")
+            isoplaned::logs::init_with_limits(
+                true,
+                std::io::sink,
+                "abort-test",
+                None,
+                Some(&endpoint),
+                Default::default(),
+            )
+            .expect("trace exporter")
         })
         .await
         .expect("logging task");

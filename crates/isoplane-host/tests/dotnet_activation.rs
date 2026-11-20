@@ -7,7 +7,7 @@ use isoplane_abi::dispatch::HttpRequest;
 use isoplane_engine::{IsoplaneEngine, PlatformFile, PlatformFiles};
 use isoplane_host::activator::EngineActivator;
 use isoplane_host::bindings::RuntimeConfiguration;
-use isoplane_host::cell::{Cell, CellConfig, Target};
+use isoplane_host::cell::{Cell, Target};
 use isoplane_host::ModuleId;
 use std::sync::Arc;
 use std::time::Duration;
@@ -31,7 +31,7 @@ fn activation_cell(settings: &[u8]) -> (Arc<Cell>, ModuleId) {
         .expect("bind the managed activation probe");
     let activator = EngineActivator::new(engine, template, module.clone());
     let cell = common::rig_resolving(
-        CellConfig::for_test("managed-activation"),
+        isoplane_harness::fakes::cell_config("managed-activation"),
         "93.184.216.34:80",
     )
     .0;

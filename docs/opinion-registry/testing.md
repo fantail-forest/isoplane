@@ -68,6 +68,23 @@ Tests may write temporary files wherever keeps them fast, including local disk o
 
 A permission a test changes reverts when the test ends, however it ends, so a failure never leaves a path that cleanup cannot delete. Rust tests hold `isoplane_test_support::TemporaryPermissions`, which the lint on `set_permissions` points at; managed tests hold `TemporaryFilePermissions` with `using`. A file or directory the test creates gets its mode at creation, which leaves nothing to revert.
 
+## Test code stays out of the product
+
+Nothing that exists for tests is compiled into a shipped crate or assembly. That covers fixtures, fakes and hooks, and it also covers code with an ordinary name that only tests call: an accessor, a constructor, a counter nothing exports, a parameter only a test varies. Such code gets called by the product while it is maintained as test code, and in the release build it is dead code.
+
+Prefer these, in order:
+
+1. `#[cfg(test)]`, for what a crate's own unit tests need.
+2. A real dependency the product supplies and a test can supply too: a clock, a resolver, a connection factory. The product passes its own through the same parameter, so nothing test-only exists.
+3. A helper in the test-support crates, built from the product's public API.
+4. A Cargo feature named `test-util`, for integration tests that must drive or read private state when none of the above reaches. Only dev-dependencies and the test-support crates turn it on.
+
+The order is a preference. A `test-util` feature is acceptable where rewriting the tests onto the product's entry points would mean re-architecting them.
+
+A crate with a `test-util` feature refuses to compile with it in a non-debug build. `task lint` also lints the shipped packages without their tests, which is where code only the feature reaches shows up as dead. The release build fails if its dependency graph resolves any `test-util` feature, a dependency's included.
+
+**This, not that:** a test that needs a small cell configuration calls a function in the harness crate that fills in the public fields, not a `for_test` constructor on the product type.
+
 ## Ask the owner for acceptance criteria
 
 Ask before inventing product behaviour or performance targets for a test to check.

@@ -142,6 +142,7 @@ pub struct InstalledApplication {
 }
 
 impl InstalledApplication {
+    #[cfg(any(test, feature = "test-util"))]
     pub(crate) fn new(receipt: PreparedReceipt, lease: PreparationOwner) -> Self {
         Self {
             receipt,

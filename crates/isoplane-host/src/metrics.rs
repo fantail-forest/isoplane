@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use parking_lot::Mutex;
+#[cfg(any(test, feature = "test-util"))]
 use prometheus::{proto, TextEncoder};
 
 /// Exact percentiles over the most recent 4096 observations, with lifetime
@@ -81,16 +82,6 @@ impl Histogram {
     pub fn p99(&self) -> u64 {
         self.percentile(0.99)
     }
-
-    /// Returns the lifetime arithmetic mean, or zero if empty.
-    pub fn mean(&self) -> f64 {
-        let state = self.state.lock();
-        if state.count == 0 {
-            0.0
-        } else {
-            state.sum as f64 / state.count as f64
-        }
-    }
 }
 
 impl Default for Histogram {
@@ -102,91 +93,29 @@ impl Default for Histogram {
 #[derive(Debug, Default)]
 pub struct Metrics {
     pub dispatches: AtomicU64,
-    /// Wakes the wake router enqueued.
-    pub wakes: AtomicU64,
-    /// Wakes queued inside the cell, for a completion that landed while the
-    /// dispatch was still Hot; not in [`Metrics::wakes`].
-    pub in_cell_wakes: AtomicU64,
-    /// Completions for an instance nobody could hand them to. The result is
-    /// already in the future table, so for a live instance this is a dispatch
-    /// that is never answered; for a discarded one it is the correct outcome.
-    pub wakes_dropped: AtomicU64,
     pub traps: AtomicU64,
-    /// Dispatches that entered grace and returned inside it; the instance
-    /// stayed.
-    pub budget_exits: AtomicU64,
-    /// Dispatches still executing at the end of grace, terminated without
-    /// unwinding and discarded. The hang breaker counts these. Disjoint from
-    /// `traps`: a kill is not a trap.
-    pub budget_kills: AtomicU64,
-    /// Dispatches that crossed the budget at all.
-    pub grace_entries: AtomicU64,
-    /// Dispatches still in progress when the grace after their cancellation
-    /// ran out; each evicted its instance.
-    pub cancellation_grace_kills: AtomicU64,
     /// Times an instance stopped taking new dispatches because one of its
     /// dispatches entered the grace after its cancellation.
     pub instance_holds: AtomicU64,
-    /// How long each such hold lasted, until no dispatch on the instance was
-    /// in its grace.
-    pub instance_hold_ms: Histogram,
-    /// Activations made because the instances that had room were held.
-    pub activations_for_holds: AtomicU64,
-    /// Instances whose memory passed their memory limit, retired once their
-    /// dispatches finished.
-    pub memory_limit_retirements: AtomicU64,
-    /// Dispatches that still had work pending when their window after the
-    /// response ran out, and handed it to their instance.
-    pub work_handed_to_instance: AtomicU64,
-    /// Epoch ticks that found the unsafe-to-trap bit set and deferred grace.
-    pub grace_deferrals: AtomicU64,
-    /// occupancy consumed past the budget on kills of either phase; already inside
-    /// the tenant's `occupancy_ns`.
-    pub overage_ns: AtomicU64,
 
-    pub shed: AtomicU64,
     pub breaker_rejections: AtomicU64,
-    /// A wake that found a previous call into its instance still running and
-    /// left the result queued for it to drain.
-    pub reentrancy_refusals: AtomicU64,
     pub pending_cap_rejections: AtomicU64,
-    /// Egress-policy refusals, including connection-limit refusals.
-    pub egress_denials: AtomicU64,
 
-    pub live: AtomicU64,
     pub parked: AtomicU64,
     pub hibernated: AtomicU64,
     pub hot: AtomicU64,
 
-    /// Captures whose delta reached the store.
-    pub captures: AtomicU64,
     /// Cumulative bytes written to local snapshot reservations.
     pub delta_bytes: AtomicU64,
-    /// Captures whose store write failed; the instance stays Parked and
-    /// capturable.
-    pub capture_write_failures: AtomicU64,
-    pub hibernation_wakes: AtomicU64,
-    pub delta_fallbacks: AtomicU64,
     pub activation_us: Histogram,
-    pub wake_us: Histogram,
     pub hibernation_wake_us: Histogram,
-    pub capture_us: Histogram,
     /// Admission to final response.
     pub dispatch_us: Histogram,
-    pub park_ms: Histogram,
-    /// Each slice's wall time.
-    pub slice_us: Histogram,
-    /// How long each slice waited for its instance's thread once ready.
-    pub thread_wait_us: Histogram,
     pub dirty_pages: Histogram,
-    /// The pre-capture gc hint.
-    pub gc_hint_us: Histogram,
 
-    /// How a dispatch got its instance, for both instance kinds. The four are
-    /// exhaustive over admitted dispatches: their sum is `dispatches`.
-    pub served_warm: AtomicU64,
+    /// Dispatches that joined an instance already running another dispatch.
     pub served_shared: AtomicU64,
-    pub served_hibernation_wake: AtomicU64,
+    /// Dispatches that got a newly activated instance.
     pub served_activated: AtomicU64,
 
     by_tenant: Mutex<BTreeMap<String, Arc<TenantMetrics>>>,
@@ -243,91 +172,26 @@ impl Metrics {
             .clone()
     }
 
-    pub fn tenant(&self, tenant: &str) -> TenantCounters {
-        self.by_tenant
-            .lock()
-            .get(tenant)
-            .map(|counters| counters.snapshot())
-            .unwrap_or_default()
-    }
-
     pub fn snapshot(&self) -> MetricsSnapshot {
         let l = |a: &AtomicU64| a.load(Ordering::Relaxed);
         MetricsSnapshot {
             dispatches: l(&self.dispatches),
-            wakes: l(&self.wakes),
-            in_cell_wakes: l(&self.in_cell_wakes),
-            wakes_dropped: l(&self.wakes_dropped),
             traps: l(&self.traps),
-            budget_exits: l(&self.budget_exits),
-            budget_kills: l(&self.budget_kills),
-            grace_entries: l(&self.grace_entries),
-            cancellation_grace_kills: l(&self.cancellation_grace_kills),
             instance_holds: l(&self.instance_holds),
-            instance_hold_p50_ms: self.instance_hold_ms.p50(),
-            instance_hold_p99_ms: self.instance_hold_ms.p99(),
-            activations_for_holds: l(&self.activations_for_holds),
-            memory_limit_retirements: l(&self.memory_limit_retirements),
-            work_handed_to_instance: l(&self.work_handed_to_instance),
-            grace_deferrals: l(&self.grace_deferrals),
-            overage_ns: l(&self.overage_ns),
-            // With no kills the ratio is reported as the exit count, the most
-            // it can claim.
-            exit_kill_ratio: {
-                let (c, h) = (l(&self.budget_exits), l(&self.budget_kills));
-                if h == 0 {
-                    c as f64
-                } else {
-                    c as f64 / h as f64
-                }
-            },
-            shed: l(&self.shed),
             breaker_rejections: l(&self.breaker_rejections),
-            reentrancy_refusals: l(&self.reentrancy_refusals),
             pending_cap_rejections: l(&self.pending_cap_rejections),
-            egress_denials: l(&self.egress_denials),
-            live: l(&self.live),
             parked: l(&self.parked),
             hibernated: l(&self.hibernated),
             hot: l(&self.hot),
-            captures: l(&self.captures),
             delta_bytes: l(&self.delta_bytes),
-            capture_write_failures: l(&self.capture_write_failures),
-            hibernation_wakes: l(&self.hibernation_wakes),
-            delta_fallbacks: l(&self.delta_fallbacks),
-            served_warm: l(&self.served_warm),
             served_shared: l(&self.served_shared),
-            served_hibernation_wake: l(&self.served_hibernation_wake),
             served_activated: l(&self.served_activated),
             activation_p50_us: self.activation_us.p50(),
             activation_p99_us: self.activation_us.p99(),
-            wake_p50_us: self.wake_us.p50(),
-            wake_p99_us: self.wake_us.p99(),
             hibernation_wake_p50_us: self.hibernation_wake_us.p50(),
             hibernation_wake_p99_us: self.hibernation_wake_us.p99(),
-            capture_p50_us: self.capture_us.p50(),
-            dispatch_p50_us: self.dispatch_us.p50(),
-            dispatch_p99_us: self.dispatch_us.p99(),
-            gc_hint_p50_us: self.gc_hint_us.p50(),
             dirty_pages_p50: self.dirty_pages.p50(),
             dirty_pages_p99: self.dirty_pages.p99(),
-            park_p50_ms: self.park_ms.p50(),
-            slice_p50_us: self.slice_us.p50(),
-            slice_p99_us: self.slice_us.p99(),
-            thread_wait_p50_us: self.thread_wait_us.p50(),
-            thread_wait_p99_us: self.thread_wait_us.p99(),
-            // Process-wide, and both crates' clocks: the engine's is where the
-            // measured `occupancy_ns` comes from, this crate's is the log-occupancy share.
-            clock_read_failures: crate::meters::clock_read_failures()
-                + isoplane_engine::clock_read_failures(),
-            trap_rate: {
-                let d = l(&self.dispatches);
-                if d == 0 {
-                    0.0
-                } else {
-                    l(&self.traps) as f64 / d as f64
-                }
-            },
             tenants: self
                 .by_tenant
                 .lock()
@@ -337,21 +201,20 @@ impl Metrics {
         }
     }
 
+    #[cfg(any(test, feature = "test-util"))]
     pub fn to_json(&self) -> String {
         serde_json::to_string_pretty(&self.snapshot().as_json()).unwrap_or_else(|_| "{}".into())
     }
 
     /// Encodes the current diagnostic snapshot as Prometheus gauges.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn to_text(&self) -> String {
         let snapshot = self.snapshot();
         let mut families: Vec<_> = snapshot
             .values()
             .into_iter()
             .map(|(name, value)| {
-                gauge_family(
-                    &format!("isoplane_cell_{name}"),
-                    vec![(None, value.as_f64())],
-                )
+                gauge_family(&format!("isoplane_cell_{name}"), vec![(None, value as f64)])
             })
             .collect();
         if !snapshot.tenants.is_empty() {
@@ -397,85 +260,26 @@ impl Metrics {
 #[derive(Debug, Clone)]
 pub struct MetricsSnapshot {
     pub dispatches: u64,
-    pub wakes: u64,
-    pub in_cell_wakes: u64,
-    pub wakes_dropped: u64,
     pub traps: u64,
-    pub budget_exits: u64,
-    pub budget_kills: u64,
-    pub grace_entries: u64,
-    pub cancellation_grace_kills: u64,
     pub instance_holds: u64,
-    pub instance_hold_p50_ms: u64,
-    pub instance_hold_p99_ms: u64,
-    pub activations_for_holds: u64,
-    pub memory_limit_retirements: u64,
-    pub work_handed_to_instance: u64,
-    pub grace_deferrals: u64,
-    pub overage_ns: u64,
-    pub exit_kill_ratio: f64,
-    pub shed: u64,
     pub breaker_rejections: u64,
-    pub reentrancy_refusals: u64,
     pub pending_cap_rejections: u64,
-    pub egress_denials: u64,
-    pub live: u64,
     pub parked: u64,
     pub hibernated: u64,
     pub hot: u64,
-    pub captures: u64,
     pub delta_bytes: u64,
-    pub capture_write_failures: u64,
-    pub hibernation_wakes: u64,
-    pub delta_fallbacks: u64,
-    pub served_warm: u64,
     pub served_shared: u64,
-    pub served_hibernation_wake: u64,
     pub served_activated: u64,
     pub activation_p50_us: u64,
     pub activation_p99_us: u64,
-    pub wake_p50_us: u64,
-    pub wake_p99_us: u64,
     pub hibernation_wake_p50_us: u64,
     pub hibernation_wake_p99_us: u64,
-    pub capture_p50_us: u64,
-    pub dispatch_p50_us: u64,
-    pub dispatch_p99_us: u64,
-    pub gc_hint_p50_us: u64,
     pub dirty_pages_p50: u64,
     pub dirty_pages_p99: u64,
-    pub park_p50_ms: u64,
-    pub slice_p50_us: u64,
-    pub slice_p99_us: u64,
-    pub thread_wait_p50_us: u64,
-    pub thread_wait_p99_us: u64,
-    pub clock_read_failures: u64,
-    pub trap_rate: f64,
     pub tenants: BTreeMap<String, TenantCounters>,
 }
 
-#[derive(Clone, Copy)]
-enum MetricValue {
-    Count(u64),
-    Fraction(f64),
-}
-
-impl MetricValue {
-    fn as_f64(self) -> f64 {
-        match self {
-            Self::Count(value) => value as f64,
-            Self::Fraction(value) => value,
-        }
-    }
-
-    fn as_json(self) -> serde_json::Value {
-        match self {
-            Self::Count(value) => value.into(),
-            Self::Fraction(value) => value.into(),
-        }
-    }
-}
-
+#[cfg(any(test, feature = "test-util"))]
 fn gauge_family(name: &str, values: Vec<(Option<&str>, f64)>) -> proto::MetricFamily {
     let mut family = proto::MetricFamily::default();
     family.set_name(name.to_owned());
@@ -502,136 +306,34 @@ fn gauge_family(name: &str, values: Vec<(Option<&str>, f64)>) -> proto::MetricFa
 }
 
 impl MetricsSnapshot {
-    fn values(&self) -> Vec<(&'static str, MetricValue)> {
+    #[cfg(any(test, feature = "test-util"))]
+    fn values(&self) -> Vec<(&'static str, u64)> {
         vec![
-            ("dispatches", MetricValue::Count(self.dispatches)),
-            ("wakes", MetricValue::Count(self.wakes)),
-            ("in_cell_wakes", MetricValue::Count(self.in_cell_wakes)),
-            ("wakes_dropped", MetricValue::Count(self.wakes_dropped)),
-            ("traps", MetricValue::Count(self.traps)),
-            ("budget_exits", MetricValue::Count(self.budget_exits)),
-            ("budget_kills", MetricValue::Count(self.budget_kills)),
-            ("grace_entries", MetricValue::Count(self.grace_entries)),
-            (
-                "cancellation_grace_kills",
-                MetricValue::Count(self.cancellation_grace_kills),
-            ),
-            ("instance_holds", MetricValue::Count(self.instance_holds)),
-            (
-                "instance_hold_p50_ms",
-                MetricValue::Count(self.instance_hold_p50_ms),
-            ),
-            (
-                "instance_hold_p99_ms",
-                MetricValue::Count(self.instance_hold_p99_ms),
-            ),
-            (
-                "activations_for_holds",
-                MetricValue::Count(self.activations_for_holds),
-            ),
-            (
-                "memory_limit_retirements",
-                MetricValue::Count(self.memory_limit_retirements),
-            ),
-            (
-                "work_handed_to_instance",
-                MetricValue::Count(self.work_handed_to_instance),
-            ),
-            ("grace_deferrals", MetricValue::Count(self.grace_deferrals)),
-            (
-                "overage_ms",
-                MetricValue::Fraction(self.overage_ns as f64 / 1e6),
-            ),
-            (
-                "exit_kill_ratio",
-                MetricValue::Fraction(self.exit_kill_ratio),
-            ),
-            ("shed", MetricValue::Count(self.shed)),
-            (
-                "breaker_rejections",
-                MetricValue::Count(self.breaker_rejections),
-            ),
-            (
-                "reentrancy_refusals",
-                MetricValue::Count(self.reentrancy_refusals),
-            ),
-            (
-                "pending_cap_rejections",
-                MetricValue::Count(self.pending_cap_rejections),
-            ),
-            ("egress_denials", MetricValue::Count(self.egress_denials)),
-            ("instances_live", MetricValue::Count(self.live)),
-            ("instances_parked", MetricValue::Count(self.parked)),
-            ("instances_hibernated", MetricValue::Count(self.hibernated)),
-            ("instances_hot", MetricValue::Count(self.hot)),
-            ("captures", MetricValue::Count(self.captures)),
-            ("delta_bytes", MetricValue::Count(self.delta_bytes)),
-            (
-                "capture_write_failures",
-                MetricValue::Count(self.capture_write_failures),
-            ),
-            (
-                "hibernation_wakes",
-                MetricValue::Count(self.hibernation_wakes),
-            ),
-            ("delta_fallbacks", MetricValue::Count(self.delta_fallbacks)),
-            ("served_warm", MetricValue::Count(self.served_warm)),
-            ("served_shared", MetricValue::Count(self.served_shared)),
-            (
-                "served_hibernation_wake",
-                MetricValue::Count(self.served_hibernation_wake),
-            ),
-            (
-                "served_activated",
-                MetricValue::Count(self.served_activated),
-            ),
-            (
-                "activation_p50_us",
-                MetricValue::Count(self.activation_p50_us),
-            ),
-            (
-                "activation_p99_us",
-                MetricValue::Count(self.activation_p99_us),
-            ),
-            ("wake_p50_us", MetricValue::Count(self.wake_p50_us)),
-            ("wake_p99_us", MetricValue::Count(self.wake_p99_us)),
-            (
-                "hibernation_wake_p50_us",
-                MetricValue::Count(self.hibernation_wake_p50_us),
-            ),
-            (
-                "hibernation_wake_p99_us",
-                MetricValue::Count(self.hibernation_wake_p99_us),
-            ),
-            ("capture_p50_us", MetricValue::Count(self.capture_p50_us)),
-            ("dispatch_p50_us", MetricValue::Count(self.dispatch_p50_us)),
-            ("dispatch_p99_us", MetricValue::Count(self.dispatch_p99_us)),
-            ("gc_hint_p50_us", MetricValue::Count(self.gc_hint_p50_us)),
-            ("dirty_pages_p50", MetricValue::Count(self.dirty_pages_p50)),
-            ("dirty_pages_p99", MetricValue::Count(self.dirty_pages_p99)),
-            ("park_p50_ms", MetricValue::Count(self.park_p50_ms)),
-            ("slice_p50_us", MetricValue::Count(self.slice_p50_us)),
-            ("slice_p99_us", MetricValue::Count(self.slice_p99_us)),
-            (
-                "thread_wait_p50_us",
-                MetricValue::Count(self.thread_wait_p50_us),
-            ),
-            (
-                "thread_wait_p99_us",
-                MetricValue::Count(self.thread_wait_p99_us),
-            ),
-            (
-                "clock_read_failures",
-                MetricValue::Count(self.clock_read_failures),
-            ),
-            ("trap_rate", MetricValue::Fraction(self.trap_rate)),
+            ("dispatches", self.dispatches),
+            ("traps", self.traps),
+            ("instance_holds", self.instance_holds),
+            ("breaker_rejections", self.breaker_rejections),
+            ("pending_cap_rejections", self.pending_cap_rejections),
+            ("instances_parked", self.parked),
+            ("instances_hibernated", self.hibernated),
+            ("instances_hot", self.hot),
+            ("delta_bytes", self.delta_bytes),
+            ("served_shared", self.served_shared),
+            ("served_activated", self.served_activated),
+            ("activation_p50_us", self.activation_p50_us),
+            ("activation_p99_us", self.activation_p99_us),
+            ("hibernation_wake_p50_us", self.hibernation_wake_p50_us),
+            ("hibernation_wake_p99_us", self.hibernation_wake_p99_us),
+            ("dirty_pages_p50", self.dirty_pages_p50),
+            ("dirty_pages_p99", self.dirty_pages_p99),
         ]
     }
 
+    #[cfg(any(test, feature = "test-util"))]
     pub fn as_json(&self) -> serde_json::Value {
         let mut m = serde_json::Map::new();
         for (name, value) in self.values() {
-            m.insert(name.to_owned(), value.as_json());
+            m.insert(name.to_owned(), value.into());
         }
         let tenants: serde_json::Map<String, serde_json::Value> = self
             .tenants
@@ -722,11 +424,10 @@ mod tests {
             }
             ready.wait();
         });
-        let snapshot = metrics.snapshot();
-        assert_eq!(snapshot.dispatch_p50_us, 101);
-        assert_eq!(snapshot.dispatch_p99_us, 102);
+        assert_eq!(metrics.dispatch_us.p50(), 101);
+        assert_eq!(metrics.dispatch_us.p99(), 102);
         assert_eq!(metrics.dispatch_us.count(), 8);
-        assert_eq!(metrics.dispatch_us.mean(), 51.5);
+        assert_eq!(metrics.dispatch_us.sum(), 412);
     }
 
     #[test]
@@ -738,7 +439,7 @@ mod tests {
         assert_eq!(histogram.percentile(0.0), 10);
         assert_eq!(histogram.percentile(1.0), 20);
         assert_eq!(histogram.count(), 3);
-        assert_eq!(histogram.mean(), 40.0);
+        assert_eq!(histogram.sum(), 120);
         assert_eq!(histogram.state.lock().samples.len(), 2);
     }
 
@@ -749,7 +450,7 @@ mod tests {
         histogram.record(u64::MAX);
         assert_eq!(histogram.p99(), 0);
         assert_eq!(histogram.count(), 2);
-        assert_eq!(histogram.mean(), u64::MAX as f64);
+        assert_eq!(histogram.sum(), 2 * u128::from(u64::MAX));
         assert!(histogram.state.lock().samples.is_empty());
     }
 
@@ -764,7 +465,7 @@ mod tests {
         histogram.record(u64::MAX);
         histogram.record(0);
         assert_eq!(histogram.count(), u64::MAX);
-        assert_eq!(histogram.mean(), u64::MAX as f64);
+        assert_eq!(histogram.sum(), u128::from(u64::MAX) * u128::from(u64::MAX));
         assert_eq!(histogram.p99(), u64::MAX);
     }
 
@@ -777,7 +478,7 @@ mod tests {
         assert_eq!(h.count(), 100, "every sample is counted");
         assert_eq!(h.p50(), 50, "nearest rank, lower inclusive");
         assert_eq!(h.p99(), 99, "p99 of 1..=100");
-        assert!((h.mean() - 50.5).abs() < 0.001, "the mean of 1..=100");
+        assert_eq!(h.sum(), 5_050, "the sum of 1..=100");
     }
 
     #[test]
@@ -785,49 +486,7 @@ mod tests {
         let h = Histogram::default();
         assert_eq!(h.p50(), 0, "no samples, no p50");
         assert_eq!(h.p99(), 0, "no samples, no p99");
-        assert_eq!(h.mean(), 0.0, "no samples, no mean");
-    }
-
-    #[test]
-    fn the_exit_kill_ratio_is_a_scraped_metric() {
-        let m = Metrics::new();
-        for _ in 0..3_000 {
-            m.budget_exits.fetch_add(1, Ordering::Relaxed);
-        }
-        m.budget_kills.fetch_add(1, Ordering::Relaxed);
-        let s = m.snapshot();
-        assert_eq!(
-            s.exit_kill_ratio, 3_000.0,
-            "3,000 exits against 1 kill is 3,000"
-        );
-        assert!(
-            m.to_text().contains("isoplane_cell_exit_kill_ratio 3000"),
-            "the ratio is on the text scrape"
-        );
-        let json: serde_json::Value = serde_json::from_str(&m.to_json()).expect("json");
-        assert_eq!(
-            json["budget_exits"], 3_000,
-            "the exit count is on the json scrape"
-        );
-        assert_eq!(json["budget_kills"], 1, "so is the kill count");
-    }
-
-    #[test]
-    fn the_exit_kill_ratio_can_report_an_unhealthy_fleet() {
-        let m = Metrics::new();
-        m.budget_exits.fetch_add(1, Ordering::Relaxed);
-        for _ in 0..1_000 {
-            m.budget_kills.fetch_add(1, Ordering::Relaxed);
-        }
-        assert!(
-            m.snapshot().exit_kill_ratio < 0.01,
-            "a fleet that is all kills must read as such, not as healthy"
-        );
-        assert_eq!(
-            Metrics::new().snapshot().exit_kill_ratio,
-            0.0,
-            "with no kills at all the ratio must not invent a healthy number"
-        );
+        assert_eq!(h.sum(), 0, "no samples, no sum");
     }
 
     #[test]
@@ -836,7 +495,7 @@ mod tests {
         m.dispatches.fetch_add(7, Ordering::Relaxed);
         m.traps.fetch_add(1, Ordering::Relaxed);
         m.activation_us.record(900);
-        m.wake_us.record(40);
+        m.hibernation_wake_us.record(40);
         m.dirty_pages.record(512);
         m.delta_bytes.fetch_add(4096, Ordering::Relaxed);
         let accounting = m.tenant_accounting("acme");
@@ -847,12 +506,11 @@ mod tests {
         for needle in [
             "isoplane_cell_dispatches 7",
             "isoplane_cell_activation_p50_us 900",
-            "isoplane_cell_wake_p50_us 40",
+            "isoplane_cell_hibernation_wake_p50_us 40",
             "isoplane_cell_dirty_pages_p50 512",
             "isoplane_cell_delta_bytes 4096",
             "isoplane_cell_instances_parked",
             "isoplane_cell_instances_hibernated",
-            "isoplane_cell_trap_rate",
             "isoplane_tenant_occupancy_ms{tenant=\"acme\"} 2",
         ] {
             assert!(
@@ -861,10 +519,10 @@ mod tests {
             );
         }
 
-        m.wakes.store(u64::MAX, Ordering::Relaxed);
+        m.delta_bytes.store(u64::MAX, Ordering::Relaxed);
         let json: serde_json::Value = serde_json::from_str(&m.to_json()).expect("json");
         assert_eq!(
-            json["wakes"].as_u64(),
+            json["delta_bytes"].as_u64(),
             Some(u64::MAX),
             "JSON keeps integer precision"
         );
@@ -875,10 +533,6 @@ mod tests {
         assert_eq!(
             json["tenants"]["acme"]["dispatches"], 1,
             "and the per-tenant counters"
-        );
-        assert!(
-            (json["trap_rate"].as_f64().expect("a number") - 1.0 / 7.0).abs() < 1e-6,
-            "the trap rate is traps over dispatches"
         );
     }
 }

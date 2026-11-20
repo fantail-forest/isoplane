@@ -72,7 +72,6 @@ impl AcquireSource {
 
 /// A per-module pool of Handler instances.
 pub struct InstancePool {
-    pub module: ModuleId,
     activator: Arc<dyn Activator>,
     warm: Mutex<IdleList>,
     max_idle: usize,
@@ -130,7 +129,6 @@ impl Drop for IdleClaim<'_> {
 impl InstancePool {
     pub fn new(activator: Arc<dyn Activator>, max_idle: usize) -> Self {
         Self {
-            module: activator.module().clone(),
             activator,
             warm: Mutex::new(IdleList::default()),
             max_idle,
@@ -169,7 +167,8 @@ impl InstancePool {
         self.drain_idle()
     }
 
-    pub fn live(&self) -> u64 {
+    #[cfg(test)]
+    pub(crate) fn live(&self) -> u64 {
         self.live.load(Ordering::Relaxed)
     }
 
@@ -210,7 +209,8 @@ impl InstancePool {
     }
 
     /// Reuse a warm instance or activate.
-    pub fn acquire<F>(&self, make_ctx: F) -> anyhow::Result<(Arc<Slot>, AcquireSource)>
+    #[cfg(test)]
+    pub(crate) fn acquire<F>(&self, make_ctx: F) -> anyhow::Result<(Arc<Slot>, AcquireSource)>
     where
         F: FnOnce(InstanceId) -> Arc<InstanceCtx>,
     {
@@ -219,7 +219,8 @@ impl InstancePool {
 
     /// Calls `discard` synchronously for failed candidates so their owner can
     /// remove registry entries before replacement activation, including when it fails.
-    pub(crate) fn acquire_with_cleanup<F, D>(
+    #[cfg(test)]
+    fn acquire_with_cleanup<F, D>(
         &self,
         make_ctx: F,
         mut discard: D,
@@ -314,7 +315,7 @@ impl InstancePool {
     pub fn release(&self, slot: Arc<Slot>, d: Disposition) {
         match d.kind() {
             DispositionKind::Warm => {
-                slot.park(crate::now_ms());
+                slot.park();
                 let mut w = self.warm.lock();
                 if !self.retired.load(Ordering::Acquire)
                     && w.slots.len() + w.claimed < self.max_idle
@@ -361,7 +362,7 @@ mod tests {
     use isoplane_engine::Completion;
 
     fn ctx_for(id: InstanceId) -> Arc<InstanceCtx> {
-        Arc::new(InstanceCtx::for_test(
+        Arc::new(crate::fakes::instance_ctx(
             id,
             isoplane_abi::config::Limits::default(),
         ))

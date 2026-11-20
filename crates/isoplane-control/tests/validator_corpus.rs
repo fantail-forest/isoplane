@@ -1,6 +1,7 @@
 //! Admission fixtures for host capabilities, execution features and structural limits.
 //! A rejected fixture can report more than one violation code.
 
+use isoplane_abi::config::ValidationLimits;
 use isoplane_control::validator::{self, ViolationCode as V};
 
 #[path = "common/validate.rs"]
@@ -33,35 +34,16 @@ fn clean_wat() -> String {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn clean_module_validates_and_reports_its_capabilities() {
+fn a_clean_module_validates_and_reports_its_optional_exports() {
     let wasm = parse(&clean_wat());
-    let report = validator::validate(
+    let report = validate::validate(
         &wasm,
         isoplane_abi::config::GuestMemoryBytes::new(128 << 20).unwrap(),
     )
     .expect("clean module must validate");
 
-    // Capabilities are reported in IMPORTS-table order, not module order: the
-    // manifest is the platform's document (invariant 4), not the tenant's.
-    assert_eq!(
-        report.capabilities,
-        vec![
-            "log_emit",
-            "clock_now_coarse",
-            "entropy_fill",
-            "http_fetch",
-            "resp_write",
-        ]
-    );
-    assert_eq!(report.memory_pages_initial, Some(17));
-    assert_eq!(report.memory_pages_max, Some(2048));
     assert_eq!(report.optional_exports, vec!["isoplane_gc_hint"]);
     assert!(!report.has_initialize());
-
-    let manifest = report.manifest();
-    println!("{manifest}");
-    assert!(manifest.contains("egress:http"));
-    assert!(manifest.contains("NOT requested"));
 }
 
 /// Unlisted imports are rejected during admission.
@@ -284,7 +266,7 @@ fn v2_relaxed_simd_and_exceptions() {
   (func $use"#,
     );
     assert!(
-        validator::validate(
+        validate::validate(
             &parse(&ok),
             isoplane_abi::config::GuestMemoryBytes::new(128 << 20).unwrap()
         )
@@ -353,7 +335,7 @@ fn v3_memory_shape() {
         r#"(memory (export "memory") 17 2048)"#,
         r#"(memory (export "memory") 17 8192)"#,
     );
-    assert!(validator::validate(
+    assert!(validate::validate(
         &parse(&at_larger_ceiling),
         isoplane_abi::config::GuestMemoryBytes::new(512 << 20).unwrap()
     )
@@ -379,7 +361,7 @@ fn v3_memory_shape() {
 /// Structural limits reject excessive compilation inputs.
 #[test]
 fn v4_function_count_bomb() {
-    let n = validator::limits::MAX_FUNCTIONS + 1;
+    let n = ValidationLimits::DEFAULT.max_functions + 1;
     let mut wat = String::with_capacity(n as usize * 8 + 512);
     wat.push_str("(module\n");
     wat.push_str(REQUIRED_EXPORTS);
@@ -400,7 +382,7 @@ fn v4_function_count_bomb() {
 
 #[test]
 fn v4_locals_bomb() {
-    let n = validator::limits::MAX_LOCALS_PER_FUNCTION + 1;
+    let n = ValidationLimits::DEFAULT.max_locals_per_function + 1;
     let wat = clean_wat().replace(
         "(func $use",
         &format!(
@@ -434,7 +416,7 @@ fn v4_table_bomb() {
 #[test]
 fn v4_huge_custom_section() {
     let mut wasm = parse(&clean_wat());
-    let payload_len = validator::limits::MAX_CUSTOM_SECTION_BYTES as usize + 1;
+    let payload_len = ValidationLimits::DEFAULT.max_custom_section_bytes as usize + 1;
     let name = b".debug_info_bomb";
     let mut body = Vec::with_capacity(payload_len + 32);
     leb128(&mut body, name.len() as u64);
@@ -487,7 +469,7 @@ fn v1_component_upload_is_rejected() {
 fn malformed_binary_is_rejected_as_malformed() {
     let mut wasm = parse(&clean_wat());
     wasm.truncate(wasm.len() - 5);
-    match validator::validate(
+    match validate::validate(
         &wasm,
         isoplane_abi::config::GuestMemoryBytes::new(128 << 20).unwrap(),
     ) {
@@ -562,10 +544,11 @@ fn a_local_debug_artifact_is_rejected_by_normal_admission() {
         "normal deployment must refuse a local debugger artifact"
     );
     assert!(
-        validator::validate_local_debug(
+        validator::validate_local_debug_with_limits(
             &wasm,
             isoplane_abi::config::GuestMemoryBytes::new(128 << 20).unwrap(),
-            None
+            None,
+            &Default::default()
         )
         .is_ok(),
         "explicit local debug admission must accept an otherwise valid marked module"
@@ -577,10 +560,11 @@ fn explicit_debug_validation_still_rejects_forbidden_imports() {
     let wasm = debug_wasm(&format!(
         "(module (import \"evil\" \"escape\" (func)) {REQUIRED_EXPORTS})"
     ));
-    let errors = validator::validate_local_debug(
+    let errors = validator::validate_local_debug_with_limits(
         &wasm,
         isoplane_abi::config::GuestMemoryBytes::new(128 << 20).unwrap(),
         None,
+        &Default::default(),
     )
     .expect_err("debug mode cannot bypass sandbox admission");
     assert!(
@@ -593,10 +577,11 @@ fn explicit_debug_validation_still_rejects_forbidden_imports() {
 
 #[test]
 fn explicit_debug_validation_requires_a_marked_artifact() {
-    let errors = validator::validate_local_debug(
+    let errors = validator::validate_local_debug_with_limits(
         &parse(&clean_wat()),
         isoplane_abi::config::GuestMemoryBytes::new(128 << 20).unwrap(),
         None,
+        &Default::default(),
     )
     .expect_err("normal publication cannot accidentally select debug execution");
     assert!(
@@ -613,7 +598,7 @@ fn a_memory_override_accepts_a_larger_bounded_module_without_relaxing_capabiliti
         isoplane_abi::config::GuestMemoryBytes::new(512 << 20).expect("valid memory budget");
     let source = clean_wat().replace("17 2048", "17 8192");
     assert!(
-        validator::validate(
+        validate::validate(
             &parse(&source),
             isoplane_abi::config::GuestMemoryBytes::new(128 << 20).unwrap()
         )
@@ -621,19 +606,21 @@ fn a_memory_override_accepts_a_larger_bounded_module_without_relaxing_capabiliti
         "the standard default must continue to refuse a 512 MiB maximum"
     );
     assert!(
-        validator::validate_with_memory_limit(
+        validator::validate_with_limits(
             &parse(&source),
             isoplane_abi::config::GuestMemoryBytes::new(128 << 20).unwrap(),
-            Some(budget)
+            Some(budget),
+            &Default::default()
         )
         .is_ok(),
         "an explicit memory-only budget must admit the bounded larger module"
     );
     let hostile = source.replace("\"clock_now_coarse\"", "\"undeclared_clock\"");
-    let failures = validator::validate_with_memory_limit(
+    let failures = validator::validate_with_limits(
         &parse(&hostile),
         isoplane_abi::config::GuestMemoryBytes::new(128 << 20).unwrap(),
         Some(budget),
+        &Default::default(),
     )
     .expect_err("memory authorization cannot grant host capabilities");
     assert!(
@@ -649,10 +636,11 @@ fn an_explicit_memory_budget_refuses_unbounded_or_larger_memory() {
     let budget = isoplane_abi::config::GuestMemoryBytes::new(128 << 20).expect("valid budget");
     for memory in ["17", "17 2049", "2049 2049"] {
         let source = clean_wat().replace("17 2048", memory);
-        let failures = validator::validate_with_memory_limit(
+        let failures = validator::validate_with_limits(
             &parse(&source),
             isoplane_abi::config::GuestMemoryBytes::new(128 << 20).unwrap(),
             Some(budget),
+            &Default::default(),
         )
         .expect_err("memory shape must enforce the explicit ceiling");
         assert!(
@@ -670,28 +658,31 @@ fn local_debug_validation_applies_only_the_authorized_memory_override() {
     let source = clean_wat().replace("17 2048", "17 8192");
     let wasm = debug_wasm(&source);
     assert!(
-        validator::validate_local_debug(
+        validator::validate_local_debug_with_limits(
             &wasm,
             isoplane_abi::config::GuestMemoryBytes::new(128 << 20).unwrap(),
-            None
+            None,
+            &Default::default()
         )
         .is_err(),
         "local debugging must retain the default configured memory ceiling without an override"
     );
     assert!(
-        validator::validate_local_debug(
+        validator::validate_local_debug_with_limits(
             &wasm,
             isoplane_abi::config::GuestMemoryBytes::new(128 << 20).unwrap(),
-            Some(budget)
+            Some(budget),
+            &Default::default()
         )
         .is_ok(),
         "the explicit local debug ceiling must admit a larger bounded module"
     );
     let hostile = debug_wasm(&source.replace("clock_now_coarse", "undeclared_clock"));
-    let errors = validator::validate_local_debug(
+    let errors = validator::validate_local_debug_with_limits(
         &hostile,
         isoplane_abi::config::GuestMemoryBytes::new(128 << 20).unwrap(),
         Some(budget),
+        &Default::default(),
     )
     .unwrap_err();
     assert!(
@@ -710,7 +701,7 @@ fn optional_initialization_requires_the_canonical_poll_result_signature() {
         r#"(func (export "isoplane_initialize") (result i32) i32.const 0)"#,
     ] {
         let wasm = parse(&format!("(module {REQUIRED_EXPORTS} {definition})"));
-        let violations = validator::validate(
+        let violations = validate::validate(
             &wasm,
             isoplane_abi::config::GuestMemoryBytes::new(128 << 20).unwrap(),
         )
@@ -731,7 +722,7 @@ fn optional_initialization_requires_the_canonical_poll_result_signature() {
         (func (export "isoplane_initialize") (result i64) i64.const 0))"#
     ));
     assert!(
-        validator::validate(
+        validate::validate(
             &wasm,
             isoplane_abi::config::GuestMemoryBytes::new(128 << 20).unwrap()
         )
@@ -748,7 +739,7 @@ fn optional_exports_cannot_disguise_nonfunction_objects_as_guest_entrypoints() {
             r#"(module {REQUIRED_EXPORTS}
             (global (export "{name}") i32 (i32.const 0)))"#
         ));
-        let violations = validator::validate(
+        let violations = validate::validate(
             &wasm,
             isoplane_abi::config::GuestMemoryBytes::new(128 << 20).unwrap(),
         )

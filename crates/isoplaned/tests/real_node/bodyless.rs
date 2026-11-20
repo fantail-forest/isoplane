@@ -11,7 +11,7 @@ use isoplane_abi::dispatch::ResponseHead;
 use super::common;
 
 fn guest(status: u16, after_headers: &str) -> Vec<u8> {
-    let head = isoplane_abi::encode(&ResponseHead {
+    let head = postcard::to_allocvec(&ResponseHead {
         status,
         headers: vec![],
         body: b"not a wire body".to_vec(),

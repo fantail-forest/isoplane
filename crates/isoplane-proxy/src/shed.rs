@@ -59,11 +59,13 @@ impl AdmissionControl {
         }
     }
 
-    pub fn in_flight(&self) -> usize {
+    #[cfg(test)]
+    fn in_flight(&self) -> usize {
         self.cfg.max_in_flight - self.sem.available_permits()
     }
 
-    pub fn queued(&self) -> usize {
+    #[cfg(test)]
+    fn queued(&self) -> usize {
         self.queued.load(Ordering::Relaxed)
     }
 

@@ -7,7 +7,6 @@ use std::collections::HashMap;
 use std::mem::size_of;
 
 use isoplane_abi::dispatch::ResponseHead;
-use parking_lot::Mutex;
 use serde::de::{DeserializeSeed, Error, SeqAccess, Visitor};
 
 /// A response retained until its dispatch completes or its requester takes it.
@@ -242,22 +241,6 @@ impl ResponseTable {
         self.open.clear();
         self.retained_bytes = 0;
     }
-
-    /// Whether a streaming response can still receive writes.
-    pub fn is_streaming(&self, handle: u32) -> bool {
-        self.open
-            .get(&handle)
-            .is_some_and(|response| response.head.streaming && !response.finished)
-    }
-}
-
-impl Default for ResponseTable {
-    fn default() -> Self {
-        Self::new(
-            crate::bindings::GuestResourceLimits::default().response_handles,
-            isoplane_abi::config::Limits::default().instance_memory_max,
-        )
-    }
 }
 
 /// A response allocation, ownership or protocol refusal.
@@ -400,11 +383,18 @@ impl<'de> Visitor<'de> for HeaderAllocationSeed<'_> {
     }
 }
 
-pub type SharedResponses = Mutex<ResponseTable>;
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    impl Default for ResponseTable {
+        fn default() -> Self {
+            Self::new(
+                crate::bindings::GuestResourceLimits::default().response_handles,
+                isoplane_abi::config::Limits::default().instance_memory_max,
+            )
+        }
+    }
 
     fn head(streaming: bool) -> ResponseHead {
         ResponseHead {
@@ -565,14 +555,9 @@ mod tests {
     fn streaming_appends_after_done() {
         let mut t = ResponseTable::default();
         let h = t.create(1, head(true)).expect("create");
-        assert!(
-            t.is_streaming(h),
-            "an unfinished streaming response is open"
-        );
         t.write(h, b"-one").expect("write");
         t.write(h, b"-two").expect("write");
         t.finish(h).expect("finish");
-        assert!(!t.is_streaming(h), "a finished response is no longer open");
         assert_eq!(
             t.take(h).expect("the response").body(),
             b"head-one-two",

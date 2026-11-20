@@ -19,10 +19,6 @@ use isoplane_abi::result::{BodyChunk, FutureError};
 
 use crate::bindings::{Fetcher, OutboundBody, OutboundResponse, ResponseBody};
 
-/// Bodies at or below this size return inline and release their transport
-/// before the fetch completes.
-pub const INLINE_BODY_LIMIT: usize = 256 * 1024;
-
 /// Sends HTTP over the connection the instance's attempt opens.
 pub struct PinnedHttpFetcher {
     inline_limit: usize,
@@ -197,6 +193,8 @@ mod tests {
     use crate::egress::{ConnectionFactory, ConnectionOwner, DnsError, HostEgressPolicy, Resolver};
     use std::future::Future;
     use std::sync::Arc;
+
+    const INLINE_BODY_LIMIT: usize = 256 * 1024;
 
     fn owner() -> ConnectionOwner {
         ConnectionOwner::new("tenant".into(), crate::InstanceId(1)).expect("identified owner")

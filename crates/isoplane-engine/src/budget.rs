@@ -17,7 +17,6 @@
 //! overage is recorded. A check observing B+G or more kills it. Checks are best effort;
 //! scheduler delays can skip grace or delay termination.
 
-use anyhow::bail;
 use isoplane_abi::status::PollStatus;
 
 use crate::Completion;
@@ -56,11 +55,6 @@ impl OccupancyBudget {
         (self.budget_ns() / 10).max(GRACE_FLOOR_NS)
     }
 
-    /// The hard deadline, B+G.
-    pub fn hard_ns(self) -> u64 {
-        self.budget_ns().saturating_add(self.grace_ns())
-    }
-
     /// The budget for a later slice of a dispatch that has already burned
     /// `spent_ns`.
     pub fn after(self, spent_ns: u64) -> Self {
@@ -75,19 +69,9 @@ pub const GRACE_FLOOR_NS: u64 = 2_000_000;
 /// Scheduling delays can still prevent grace delivery.
 pub const MIN_GRACE_TICKS: u64 = 4;
 
-/// Refuses an epoch interval too coarse for the configured grace policy.
-pub(crate) fn check_grace_deliverable(epoch_tick_us: u64) -> crate::Result<()> {
-    let tick_ns = epoch_tick_us.max(1).saturating_mul(1_000);
-    let ticks_in_floor = GRACE_FLOOR_NS / tick_ns;
-    if ticks_in_floor < MIN_GRACE_TICKS {
-        bail!(
-            "epoch_tick_us = {epoch_tick_us} fits only {ticks_in_floor} tick(s) inside the \
-             {} ms grace floor, fewer than the {MIN_GRACE_TICKS} required by the grace policy",
-            GRACE_FLOOR_NS / 1_000_000
-        );
-    }
-    Ok(())
-}
+// Grace is delivered by epoch ticks, so the watchdog's tick has to fit the
+// minimum number of them inside the smallest grace window.
+const _: () = assert!(GRACE_FLOOR_NS / (crate::watchdog::EPOCH_TICK_US * 1_000) >= MIN_GRACE_TICKS);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GraceEnd {
@@ -205,11 +189,6 @@ mod tests {
             5_000_000,
             "a tenth of the 50 ms default dominates the floor"
         );
-        assert_eq!(
-            OccupancyBudget::default().hard_ns(),
-            55_000_000,
-            "the hard deadline is B plus G"
-        );
         let small = OccupancyBudget {
             occupancy_ms: 5,
             ..OccupancyBudget::default()
@@ -232,7 +211,7 @@ mod tests {
 
     #[test]
     fn configured_occupancy_budgets_get_a_deliverable_grace_window() {
-        let tick_ns = crate::EngineConfig::default().epoch_tick_us * 1_000;
+        let tick_ns = crate::watchdog::EPOCH_TICK_US * 1_000;
         for occupancy_ms in [1, 100, 30_000, 300_000] {
             let b = OccupancyBudget {
                 occupancy_ms,
@@ -247,17 +226,5 @@ mod tests {
                 g / tick_ns,
             );
         }
-    }
-
-    #[test]
-    fn a_coarse_epoch_tick_is_refused() {
-        assert!(
-            check_grace_deliverable(5_000).is_err(),
-            "a 5 ms tick cannot deliver a 2 ms grace floor and must be refused"
-        );
-        assert!(
-            check_grace_deliverable(500).is_ok(),
-            "a 500 us tick fits exactly the minimum ticks and is accepted"
-        );
     }
 }

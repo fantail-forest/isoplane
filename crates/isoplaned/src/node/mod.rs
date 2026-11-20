@@ -64,7 +64,6 @@ impl Node {
             real.clone(),
             metrics.clone(),
             ProxyConfig {
-                listen: cfg.proxy.listen,
                 shed: ShedConfig {
                     max_in_flight: cfg.proxy.max_in_flight,
                     max_queued: cfg.proxy.max_queued,

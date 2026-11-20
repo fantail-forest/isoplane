@@ -18,13 +18,6 @@ pub enum LifecycleTier {
 }
 
 impl LifecycleTier {
-    pub const ALL: &'static [LifecycleTier] = &[
-        LifecycleTier::Hot,
-        LifecycleTier::Parked,
-        LifecycleTier::Hibernated,
-        LifecycleTier::Discarded,
-    ];
-
     pub fn as_str(self) -> &'static str {
         match self {
             LifecycleTier::Hot => "hot",
@@ -32,11 +25,6 @@ impl LifecycleTier {
             LifecycleTier::Hibernated => "hibernated",
             LifecycleTier::Discarded => "discarded",
         }
-    }
-
-    /// Whether an instance in this tier occupies linear memory.
-    pub fn is_resident(self) -> bool {
-        matches!(self, LifecycleTier::Hot | LifecycleTier::Parked)
     }
 
     /// The legal transitions. `Hibernated -> Parked` is absent because the
@@ -53,36 +41,5 @@ impl LifecycleTier {
                 | (Parked, Discarded)
                 | (Hibernated, Hot)
         )
-    }
-}
-
-impl std::fmt::Display for LifecycleTier {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn only_hot_and_parked_hold_memory() {
-        assert!(
-            LifecycleTier::Hot.is_resident(),
-            "a hot instance is in memory"
-        );
-        assert!(
-            LifecycleTier::Parked.is_resident(),
-            "a parked instance is in memory"
-        );
-        assert!(
-            !LifecycleTier::Hibernated.is_resident(),
-            "a hibernated instance is bytes in storage"
-        );
-        assert!(
-            !LifecycleTier::Discarded.is_resident(),
-            "a discarded instance holds nothing"
-        );
     }
 }

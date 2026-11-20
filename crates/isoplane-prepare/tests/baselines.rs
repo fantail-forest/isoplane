@@ -1,6 +1,8 @@
 //! A runtime prepared once to the end of its own initializer, and
 //! applications prepared as layers over it.
 mod common;
+#[path = "common/provider.rs"]
+mod provider;
 #[path = "common/staged.rs"]
 mod staged;
 
@@ -8,8 +10,8 @@ use isoplane_abi::config::InitSandbox;
 use isoplane_engine::prepared::PreparedIdentity;
 use isoplane_engine::{IsoplaneEngine, Template};
 use isoplane_prepare::{
-    BuildProduct, BuildRequest, BuildStage, LocalPreparation, Preparation, PreparedBaseline,
-    RuntimeBaseline, RuntimeProfile, WorkerFailure,
+    BuildProduct, BuildRequest, BuildStage, Preparation, PreparedBaseline, RuntimeBaseline,
+    RuntimeProfile, WorkerFailure,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -86,7 +88,7 @@ fn load(
 async fn an_application_over_a_baseline_loads_to_the_memory_its_whole_initialization_leaves() {
     let wasm = staged::staged_guest(SEED, RUNTIME, APPLICATION);
     let request = request(&wasm, InitSandbox::Sealed);
-    let preparation = LocalPreparation::new().expect("local preparation");
+    let preparation = crate::provider::local_preparation();
     let whole = preparation
         .prepare(&wasm, &request, &CancellationToken::new())
         .await
@@ -259,11 +261,11 @@ mod published {
     async fn an_application_prepared_over_a_published_baseline_loads_to_its_whole_initialization() {
         let wasm = staged::staged_guest(SEED, RUNTIME, APPLICATION);
         let request = request(&wasm, InitSandbox::Sealed);
-        let preparation = LocalPreparation::new().expect("local preparation");
+        let preparation = crate::provider::local_preparation();
         let engine = common::engine();
         let directory = tempfile::tempdir().expect("publication");
         let (published, base) = published_baseline(
-            &preparation,
+            &*preparation,
             &engine,
             &wasm,
             &request,
@@ -304,10 +306,10 @@ mod published {
     async fn an_application_is_refused_when_the_supplied_baseline_digest_differs() {
         let wasm = staged::staged_guest(SEED, RUNTIME, APPLICATION);
         let request = request(&wasm, InitSandbox::Sealed);
-        let preparation = LocalPreparation::new().expect("local preparation");
+        let preparation = crate::provider::local_preparation();
         let directory = tempfile::tempdir().expect("publication");
-        let (published, _base) = published_baseline(
-            &preparation,
+        let (_published, _base) = published_baseline(
+            &*preparation,
             &common::engine(),
             &wasm,
             &request,
@@ -316,7 +318,7 @@ mod published {
         .await;
         // SAFETY: this test's LocalPreparation produced the private baseline;
         // its native code, state and mapped bytes remain unchanged while in use.
-        let other = unsafe { PublishedBaseline::new(published.directory().to_path_buf(), [0; 32]) };
+        let other = unsafe { PublishedBaseline::new(directory.path().join("base"), [0; 32]) };
         match preparation
             .prepare_over(&other, &request, &CancellationToken::new())
             .await
@@ -424,12 +426,14 @@ async fn a_guest_that_traps_while_collecting_fails_its_preparation() {
         Err(failure) => failure,
     };
     assert_eq!(
-        (failure.stage, failure.completion),
-        (
-            BuildStage::Initialization,
-            Some(isoplane_engine::Completion::Trapped)
-        ),
+        failure.stage,
+        BuildStage::Initialization,
         "a trap in the collection before capture must fail initialization: {}",
+        failure.detail
+    );
+    assert!(
+        failure.detail.contains("ended with Trapped"),
+        "the failure must report the guest's trap as its outcome: {}",
         failure.detail
     );
 }

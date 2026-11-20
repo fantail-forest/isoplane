@@ -41,7 +41,7 @@ pub const WAKE_DEADLINE: Duration = Duration::from_secs(60);
 /// Controlled network dependencies with production budgets, which tests cannot override.
 ///
 /// ```compile_fail
-/// let limits = isoplane_host::egress::ConnectionLimits::uniform(1).unwrap();
+/// let limits = isoplane_harness::production_connection_limits();
 /// let policy = isoplane_host::egress::HostEgressPolicy::system(limits).unwrap();
 /// let network = isoplane_harness::Network(policy);
 /// ```
@@ -55,6 +55,16 @@ pub fn production_connection_limits() -> isoplane_host::egress::ConnectionLimits
         open: limits.instance_open_connections,
     })
     .expect("the production connection limits must be valid")
+}
+
+/// The same value for both connection limits, so that attempts never wait
+/// before the open limit refuses them.
+pub fn uniform_connection_limits(connections: u64) -> isoplane_host::egress::ConnectionLimits {
+    isoplane_host::egress::ConnectionLimits::new(isoplane_host::egress::ConnectionCeilings {
+        in_progress: connections,
+        open: connections,
+    })
+    .expect("test connection limits must be valid")
 }
 
 impl Default for Network {
@@ -268,7 +278,7 @@ impl Source {
                 let engine = IsoplaneEngine::new(engine_configuration(files))
                     .expect("the returned-guest engine must initialize");
                 let template = engine
-                    .load_prepared_product(prepared)
+                    .load_prepared_product_in(prepared, &std::env::temp_dir())
                     .unwrap_or_else(|error| panic!("the prepared template must load: {error:#}"));
                 (engine, template)
             }
@@ -277,10 +287,10 @@ impl Source {
                 let engine = IsoplaneEngine::new(engine_configuration(files))
                     .expect("the returned-guest engine must initialize");
                 let base = engine
-                    .load_prepared_product(base)
+                    .load_prepared_product_in(base, &std::env::temp_dir())
                     .unwrap_or_else(|error| panic!("the base template must load: {error:#}"));
                 let template = engine
-                    .load_prepared_product_over(&base, layer)
+                    .load_prepared_product_over_in(&base, layer, &std::env::temp_dir())
                     .unwrap_or_else(|error| panic!("the layer must load over its base: {error:#}"));
                 (engine, template)
             }

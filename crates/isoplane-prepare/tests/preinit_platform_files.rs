@@ -167,20 +167,3 @@ fn without_a_declared_set_the_same_path_is_no_entry_during_pre_init() {
         "an undeclared path is no-entry inside the init sandbox"
     );
 }
-
-#[test]
-fn the_local_template_identity_binds_its_declared_files() {
-    let wasm = guest();
-    let request = request(&wasm);
-    let declared = PreInitializer::new()
-        .with_platform_files(declared())
-        .run(&wasm, &request)
-        .expect("declared-file initialization");
-    let empty = PreInitializer::new()
-        .run(&wasm, &request)
-        .expect("empty-file initialization");
-    assert_ne!(
-        declared.initialization_identity, empty.initialization_identity,
-        "templates initialized from different declared file sets need different identities"
-    );
-}

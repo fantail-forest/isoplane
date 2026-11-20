@@ -5,7 +5,7 @@ mod common;
 use isoplane_abi::dispatch::HttpRequest;
 use isoplane_engine::{Completion, EngineConfig, IsoplaneEngine};
 use isoplane_host::activator::EngineActivator;
-use isoplane_host::cell::{Cell, CellConfig, Target};
+use isoplane_host::cell::{Cell, Target};
 use isoplane_host::hibernate_policy::CaptureRefused;
 use isoplane_host::{LifecycleTier, ModuleId};
 use std::sync::Arc;
@@ -37,9 +37,14 @@ fn rig(pending: bool) -> (Arc<Cell>, ModuleId) {
         .unwrap(),
     );
     let id = ModuleId::new("capture-lifetime", "v1");
-    let activator = EngineActivator::load(engine, id.clone(), &module).unwrap();
-    let (cell, _) =
-        common::rig_resolving(CellConfig::for_test("capture-lifetime"), "93.184.216.34:80");
+    let activator = engine
+        .load_template(&module)
+        .map(|template| EngineActivator::new(engine, template, id.clone()))
+        .unwrap();
+    let (cell, _) = common::rig_resolving(
+        isoplane_harness::fakes::cell_config("capture-lifetime"),
+        "93.184.216.34:80",
+    );
     cell.register_module(
         "owner",
         Arc::new(activator),

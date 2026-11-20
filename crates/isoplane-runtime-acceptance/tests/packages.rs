@@ -509,7 +509,7 @@ async fn an_aspnet_request_that_calls_out_through_a_factory_client_leaves_its_in
         &product,
         &request,
         &module,
-        isoplane_host::CellConfig::for_test("http-pooling"),
+        isoplane_harness::fakes::cell_config("http-pooling"),
         services.clone(),
     );
     let mut instance = None;
@@ -1001,7 +1001,7 @@ fn serving_cell(
         fetcher: Arc::new(isoplane_harness::fakes::FakeFetcher::default()),
         egress: Arc::new(isoplane_host::egress::HostEgressPolicy::new(
             Box::new(fixed_dns::FixedDns(vec![])),
-            isoplane_host::egress::ConnectionLimits::uniform(8).expect("connection limits"),
+            isoplane_harness::uniform_connection_limits(8),
         )),
     });
     prepared_cell(
@@ -1010,7 +1010,7 @@ fn serving_cell(
         module,
         isoplane_host::CellConfig {
             background_idle_limit_ms,
-            ..isoplane_host::CellConfig::for_test("timer-wakes")
+            ..isoplane_harness::fakes::cell_config("timer-wakes")
         },
         services,
     )
@@ -1029,7 +1029,7 @@ fn prepared_cell(
             .expect("the serving engine must initialize"),
     );
     let template = engine
-        .load_prepared_product(&decode(product, request))
+        .load_prepared_product_in(&decode(product, request), &std::env::temp_dir())
         .expect("the prepared template must load");
     let cell = isoplane_host::cell::Cell::new(config, services).expect("the cell must start");
     cell.register_module(
@@ -1188,7 +1188,6 @@ async fn idle_timers_run_by_default_without_counting_http_requests_and_stop_afte
     let (product, request) = alpha_initialized_by("StartHeartbeatAsync").await;
     let module = isoplane_host::ModuleId::new("alpha", "v1");
     let cell = serving_cell(&product, &request, &module, 1_000);
-    let meters = cell.meters(&module).expect("the module has meters");
 
     let first = ask_for_beats(&cell, &module).await;
     wait_until(
@@ -1212,10 +1211,21 @@ async fn idle_timers_run_by_default_without_counting_http_requests_and_stop_afte
         .iter()
         .any(|log| log.fields.contains("heartbeat")
             && log.dispatch == isoplane_host::futures::INSTANCE_WORK));
+    let completed = |kind: &str| {
+        isoplane_harness::logging::LogCapture::global()
+            .host_events("dispatch_completed")
+            .into_iter()
+            .filter(|event| event["instance"] == first.instance.0 && event["dispatch_kind"] == kind)
+            .count()
+    };
+    wait_until("step 2: a wake for the timers must complete", || {
+        completed("background") > 0
+    })
+    .await;
     assert_eq!(
-        meters.dispatches(),
+        completed("http"),
         1,
-        "background wakes are not HTTP requests"
+        "step 2: background wakes are not HTTP requests"
     );
 
     wait_until(
@@ -1563,7 +1573,7 @@ mod over_the_runtime_baseline {
         }
         .expect("the baseline must decode");
         let loaded = engine
-            .load_prepared_product(&base)
+            .load_prepared_product_in(&base, &std::env::temp_dir())
             .expect("the baseline must load");
         let identity = request.identity().expect("the layer's identity");
         // SAFETY: LocalPreparation in this process produced these bytes.
@@ -1671,7 +1681,7 @@ async fn initialization_crypto_draws_are_fresh_while_activations_copy_captured_v
         let engine = IsoplaneEngine::new(request.engine.clone()).expect("captured-state engine");
         let prepared = decode(&product, &request);
         let captured_memory = engine
-            .load_prepared_product(&prepared)
+            .load_prepared_product_in(&prepared, &std::env::temp_dir())
             .expect("restore the captured application without initialization")
             .memory_image_arc()
             .to_dense();

@@ -5,7 +5,7 @@ use isoplane_control::admission::admit;
 use isoplane_control::validator::{self, ViolationCode as V};
 use isoplane_prepare::preinit::{PreInitRequest, PreInitializer};
 
-/// The verdict `validate(.., isoplane_abi::config::GuestMemoryBytes::default())` must reach for each module in
+/// The verdict admission under the default limits must reach for each module in
 /// the build script's manifest, as `(code, subject)` pairs; empty means the
 /// module is accepted.
 const VERDICTS: &[(&str, &[(V, &str)])] = &[
@@ -70,7 +70,7 @@ fn every_module_build_sh_writes_draws_the_verdict_recorded_for_it() {
 /// A module's violations as sortable `"<code> <subject>"` strings; an accepted
 /// module yields none.
 fn verdict(wasm: &[u8], memory: isoplane_abi::config::GuestMemoryBytes) -> Vec<String> {
-    validator::validate(wasm, memory).map_or_else(
+    validator::validate_with_limits(wasm, memory, None, &Default::default()).map_or_else(
         |vs| {
             vs.iter()
                 .map(|v| format!("{:?} {}", v.code, v.subject.as_deref().unwrap_or("-")))
@@ -91,8 +91,13 @@ fn render(v: &[String]) -> String {
 #[test]
 fn the_impure_cctor_guest_defers_and_converges() {
     let wasm = isoplane_fixtures::rust("impure-cctor");
-    let report = validator::validate(&wasm, isoplane_abi::config::GuestMemoryBytes::default())
-        .expect("impure-cctor must validate");
+    let report = validator::validate_with_limits(
+        &wasm,
+        isoplane_abi::config::GuestMemoryBytes::default(),
+        None,
+        &Default::default(),
+    )
+    .expect("impure-cctor must validate");
     assert!(
         report.has_initialize(),
         "the guest SDK must export isoplane_initialize"
@@ -157,7 +162,6 @@ fn a_real_guest_is_admitted_and_initialized_without_a_version_catalog() {
     };
     let report = admit(&manifest, &wasm).expect("admission");
     assert!(report.has_initialize());
-    assert!(!report.capabilities.is_empty());
     let request = PreInitRequest {
         module_hash: isoplane_engine::ModuleHash::of(&wasm),
 

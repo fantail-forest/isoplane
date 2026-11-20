@@ -24,14 +24,14 @@ isoplane-host.workspace = true
 isoplane-runtime.workspace = true
 wasmparser.workspace = true
 wasm-encoder.workspace = true
-tempfile.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tar.workspace = true
 hex.workspace = true
 
 [dev-dependencies]
+isoplane-engine = { workspace = true, features = ["test-util"] }
+tempfile.workspace = true
 isoplane-fixtures.workspace = true
-isoplane-test-support.workspace = true
 wasmtime.workspace = true
 wat.workspace = true

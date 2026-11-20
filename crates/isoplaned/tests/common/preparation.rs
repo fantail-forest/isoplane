@@ -1,5 +1,5 @@
 use isoplane_abi::config::{AppManifest, InitSandbox};
-use isoplaned::real::RealCells;
+use isoplaned::node::Node;
 
 #[allow(
     dead_code,
@@ -76,7 +76,40 @@ pub(crate) trait LocalDeployment {
     ) -> anyhow::Result<Deployed>;
 }
 
-impl LocalDeployment for RealCells {
+/// Local preparation compiling into the artifact store of a node configured as `cfg`.
+pub fn provider(cfg: &isoplaned::config::NodeConfig) -> isoplane_prepare::LocalPreparation {
+    let artifacts = isoplaned::real::RealPaths::under(&cfg.data_dir).artifacts;
+    // SAFETY: the node under test owns this cache, and only the compiler's atomic,
+    // content-addressed writer fills it.
+    let cache = unsafe { isoplane_engine::CompilationCache::from_trusted_directory(artifacts) }
+        .expect("the node's compilation cache");
+    isoplane_prepare::LocalPreparation::with_cache(std::sync::Arc::new(cache))
+        .expect("local preparation")
+}
+
+/// Publishes the hosts `node` configures for `app` to its registered `version`.
+pub fn route(node: &Node, app: &str, version: &str) {
+    let hosts = &node
+        .cfg
+        .apps
+        .iter()
+        .find(|configured| configured.manifest.name == app)
+        .expect("a routed application is configured")
+        .hosts;
+    node.routes
+        .insert(
+            isoplane_abi::host::RouteTarget {
+                app: app.to_owned(),
+                tenant: node.cfg.owner.clone(),
+                version: version.to_owned(),
+                tier: isoplane_abi::host::CodeTier::Optimized,
+            },
+            hosts,
+        )
+        .expect("fixture host routes");
+}
+
+impl LocalDeployment for Node {
     async fn deploy_locally(
         &self,
         app: &str,
@@ -87,13 +120,14 @@ impl LocalDeployment for RealCells {
         sandbox: InitSandbox,
     ) -> anyhow::Result<Deployed> {
         let guest = guest.into();
-        let provider = self.local_preparation()?;
+        let provider = provider(&self.cfg);
+        let engine = self.real.engine();
         let cancellation = tokio_util::sync::CancellationToken::new();
         let context = isoplaned::deploy::PreparationContext {
             network: network(tenant, &manifest),
             runtime_configuration: Default::default(),
             application_files: guest.files.clone(),
-            engine: self.engine(),
+            engine,
             provider: &provider,
             runtime: guest.runtime.clone(),
             occupancy_ms: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_OCCUPANCY_MS,
@@ -104,6 +138,7 @@ impl LocalDeployment for RealCells {
         };
         manifest.name = app.to_string();
         let prepared = self
+            .real
             .deployer
             .prepare_application(
                 &manifest,
@@ -118,7 +153,8 @@ impl LocalDeployment for RealCells {
             .await?;
         let (installed, initialized, stages) = prepared.into_application();
         let receipt = installed.receipt.clone();
-        self.install_application(tenant, installed).await?;
+        self.real.install_application(tenant, installed).await?;
+        route(self, app, version);
         Ok(Deployed {
             prepared: receipt,
             stages,

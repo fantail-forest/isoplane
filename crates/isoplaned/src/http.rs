@@ -37,17 +37,6 @@ fn plain(status: StatusCode, body: String) -> Response<AdminBody> {
     resp
 }
 
-/// Serves health and metrics until cancelled by its owner.
-pub async fn serve(node: Arc<Node>, listener: TcpListener) -> anyhow::Result<()> {
-    serve_until(
-        node,
-        listener,
-        tokio_util::sync::CancellationToken::new(),
-        tokio_util::task::TaskTracker::new(),
-    )
-    .await
-}
-
 /// Cancels and joins accepted operator connections when shutdown is requested.
 /// The owner can retain `connections` to await cleanup if this future is cancelled.
 pub async fn serve_until(

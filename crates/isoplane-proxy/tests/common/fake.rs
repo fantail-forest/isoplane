@@ -5,8 +5,10 @@ use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 
 use async_trait::async_trait;
 
-use isoplane_abi::dispatch::HttpRequest;
-use isoplane_abi::host::{CodeTier, Dispatcher, HttpReply, RouteTarget};
+use isoplane_abi::host::{
+    CodeTier, Dispatcher, HttpBody, HttpExchange, HttpResponseBody, HttpUpload,
+    ResponseDisposition, RouteTarget,
+};
 use parking_lot::Mutex;
 
 pub struct FakeCell {
@@ -44,18 +46,18 @@ impl FakeCell {
 
 #[async_trait]
 impl Dispatcher for FakeCell {
-    async fn dispatch_http(
+    async fn dispatch_http_upload(
         &self,
         target: &RouteTarget,
-        req: HttpRequest,
-    ) -> anyhow::Result<HttpReply> {
+        upload: HttpUpload,
+    ) -> anyhow::Result<HttpExchange> {
+        let req = upload.collect().await?;
         if self.breaker_is_tripped(&format!("{}:{}", target.app, req.path)) {
-            return Ok(HttpReply {
-                status: 503,
-                headers: vec![("retry-after".into(), "5".into())],
-                body: b"hang breaker tripped".to_vec(),
-                streaming: false,
-            });
+            return Ok(complete(
+                503,
+                vec![("retry-after".into(), "5".into())],
+                b"hang breaker tripped".to_vec(),
+            ));
         }
         self.http_dispatches.fetch_add(1, Relaxed);
         let body = serde_json::json!({
@@ -68,14 +70,42 @@ impl Dispatcher for FakeCell {
             "headers": req.headers,
             "body": req.body,
         });
-        Ok(HttpReply {
-            status: 200,
-            headers: vec![
+        Ok(complete(
+            200,
+            vec![
                 ("content-type".into(), "application/json".into()),
                 ("x-isoplane-version".into(), target.version.clone()),
             ],
-            body: body.to_string().into_bytes(),
-            streaming: false,
-        })
+            body.to_string().into_bytes(),
+        ))
+    }
+}
+
+fn complete(status: u16, headers: Vec<(String, String)>, body: Vec<u8>) -> HttpExchange {
+    HttpExchange {
+        status,
+        headers,
+        body: Box::new(CompleteBody(Some(body))),
+    }
+}
+
+/// A response body that was complete before the proxy saw its head.
+struct CompleteBody(Option<Vec<u8>>);
+
+#[async_trait]
+impl HttpBody for CompleteBody {
+    fn remaining_bytes(&self) -> Option<u64> {
+        Some(self.0.as_ref().map_or(0, |body| body.len() as u64))
+    }
+
+    async fn read(&mut self) -> anyhow::Result<Option<Vec<u8>>> {
+        Ok(self.0.take().filter(|body| !body.is_empty()))
+    }
+}
+
+#[async_trait]
+impl HttpResponseBody for CompleteBody {
+    async fn finish(self: Box<Self>, _: ResponseDisposition) -> anyhow::Result<()> {
+        Ok(())
     }
 }
