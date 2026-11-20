@@ -31,7 +31,7 @@ def provenance(receipt):
     }
 
 
-def main(directory, root, revision=None):
+def main(directory, root):
     directory, root = Path(directory), Path(root)
     version = re.search(r"<Version>([^<]+)</Version>", (root / "Directory.Build.props").read_text())
     if version is None:
@@ -41,7 +41,7 @@ def main(directory, root, revision=None):
         sys.exit(f"runtime manifest: the runtime modules linked different Mono packs: {sorted(packs)}")
     receipt = {
         "sdkVersion": version.group(1).strip(),
-        "sourceRevision": revision or source_revision(root),
+        "sourceRevision": source_revision(root),
         "monoPack": packs.pop(),
         "modules": {name: hashlib.sha256((directory / name).read_bytes()).hexdigest() for name in MODULES},
     }

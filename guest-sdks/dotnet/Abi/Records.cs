@@ -82,12 +82,6 @@ internal sealed class ResultRecord
     internal byte[] Payload = Array.Empty<byte>();
     internal FutureError Error;
 
-    internal static ResultRecord Decode(ReadOnlySpan<byte> bytes)
-    {
-        var r = new PostcardReader(bytes);
-        return Decode(ref r);
-    }
-
     internal static ResultRecord Decode(ref PostcardReader r)
     {
         uint tag = r.U32();

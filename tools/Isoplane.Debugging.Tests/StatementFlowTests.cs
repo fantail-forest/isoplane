@@ -81,9 +81,9 @@ public sealed class StatementFlowTests
         bytes.Position = 0;
         using var loaded = ModuleDefinition.ReadModule(bytes);
         var definition = loaded.Types.Single(type => type.Name == "Application").Methods.Single();
-        Assert.Equal([0, 1, 2, 5], StatementFlow.ReachableTargets(definition, 0).Order().ToArray());
-        Assert.Equal([0, 1, 2, 5], StatementFlow.ReachableTargets(definition, 5).Order().ToArray());
-        Assert.Equal([4], StatementFlow.ReachableTargets(definition, 4).Order().ToArray());
+        Assert.Equal([0, 1, 2, 5], EmittedStatements.ReachableTargets(definition, 0).Order().ToArray());
+        Assert.Equal([0, 1, 2, 5], EmittedStatements.ReachableTargets(definition, 5).Order().ToArray());
+        Assert.Equal([4], EmittedStatements.ReachableTargets(definition, 4).Order().ToArray());
     }
 
     [Fact]
@@ -121,13 +121,13 @@ public sealed class StatementFlowTests
         bytes.Position = 0;
         using var loaded = ModuleDefinition.ReadModule(bytes);
         var definition = loaded.Types.Single(type => type.Name == "Application").Methods.Single();
-        var outerTargets = StatementFlow.ReachableTargets(definition, outer.Offset);
+        var outerTargets = EmittedStatements.ReachableTargets(definition, outer.Offset);
         Assert.Contains(afterInner.Offset, outerTargets);
         Assert.Contains(inner.Offset, outerTargets);
         Assert.DoesNotContain(caught.Offset, outerTargets);
         Assert.DoesNotContain(cleanup.Offset, outerTargets);
         Assert.Contains(end.Offset, outerTargets);
-        var innerTargets = StatementFlow.ReachableTargets(definition, inner.Offset);
+        var innerTargets = EmittedStatements.ReachableTargets(definition, inner.Offset);
         Assert.Contains(inner.Next.Offset, innerTargets);
         Assert.Contains(afterInner.Offset, innerTargets);
     }
@@ -147,6 +147,6 @@ public sealed class StatementFlowTests
         module.Write(bytes);
         bytes.Position = 0;
         using var loaded = ModuleDefinition.ReadModule(bytes);
-        return StatementFlow.EmptyStackOffsets(loaded.Types.Single(type => type.Name == "Application").Methods.Single()).Order().ToArray();
+        return EmittedStatements.EmptyStackOffsets(loaded.Types.Single(type => type.Name == "Application").Methods.Single()).Order().ToArray();
     }
 }

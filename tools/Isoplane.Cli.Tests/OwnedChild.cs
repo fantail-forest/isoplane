@@ -34,18 +34,6 @@ internal static class OwnedChild
             }
             catch (OperationCanceledException) when (cancellation.Token.IsCancellationRequested) { return 0; }
         }
-        if (arguments is ["--successful-doctor-probe"])
-        {
-            await Processes.CheckAsync("dotnet", [typeof(OwnedChild).Assembly.Location, "--doctor-tool", "0"],
-                AppContext.BaseDirectory, CancellationToken.None);
-            return 0;
-        }
-        if (arguments is ["--doctor-tool", var toolExit])
-        {
-            Console.WriteLine("version-detail");
-            Console.Error.WriteLine("missing-library");
-            return int.Parse(toolExit);
-        }
         if (arguments is ["--read-local-secrets", var secretsId])
         {
             Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(LocalSecrets.Read(secretsId)));
