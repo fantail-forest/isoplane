@@ -29,7 +29,17 @@ tokio-util.workspace = true
 tar.workspace = true
 hex.workspace = true
 
+[features]
+# Experimental: Rust guests are not a supported guest language yet.
+rust-guests = [
+    "isoplane-abi/rust-guests",
+    "isoplane-engine/rust-guests",
+    "isoplane-host/rust-guests",
+    "isoplane-runtime/rust-guests",
+]
+
 [dev-dependencies]
+isoplane-prepare = { workspace = true, features = ["rust-guests"] }
 isoplane-engine = { workspace = true, features = ["test-util"] }
 tempfile.workspace = true
 isoplane-fixtures.workspace = true

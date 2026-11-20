@@ -38,8 +38,10 @@ pub struct GuestResourceLimits {
     /// Maximum incoming guest log payload bytes accepted per dispatch.
     pub log_bytes_per_dispatch: u32,
     /// Maximum guest trace spans retained in one instance.
+    #[cfg(feature = "rust-guests")]
     pub trace_spans: usize,
     /// Maximum UTF-8 name bytes retained by the instance's guest trace spans.
+    #[cfg(feature = "rust-guests")]
     pub trace_name_bytes: usize,
     /// Maximum responses retained in one instance.
     pub response_handles: usize,
@@ -50,7 +52,9 @@ impl Default for GuestResourceLimits {
         Self {
             native_handles: 1024,
             log_bytes_per_dispatch: 256 * 1024,
+            #[cfg(feature = "rust-guests")]
             trace_spans: 1024,
+            #[cfg(feature = "rust-guests")]
             trace_name_bytes: 256 * 1024,
             response_handles: 1024,
         }
@@ -93,8 +97,10 @@ pub struct InstanceCtx {
     pub(super) trap_latch: Mutex<Option<TrapCode>>,
     dispatch_generation: AtomicU64,
     pub responses: Mutex<ResponseTable>,
+    #[cfg(feature = "rust-guests")]
     pub(super) http: Arc<super::http_scope::HttpScope>,
-    pub(super) spans: Mutex<super::observability::TraceSpans>,
+    #[cfg(feature = "rust-guests")]
+    pub(super) spans: Mutex<super::trace_spans::TraceSpans>,
     pub(super) native_io: Mutex<super::native_io::Resources>,
 }
 
@@ -134,11 +140,13 @@ impl InstanceCtx {
     }
 
     /// When the guest's current slice began, if one has.
+    #[cfg(feature = "rust-guests")]
     pub(crate) fn slice_start(&self) -> Option<tokio::time::Instant> {
         self.native_io.lock().slice_start()
     }
 
     /// Timers the instance holds as native resources.
+    #[cfg(feature = "rust-guests")]
     pub(crate) fn native_timers(&self) -> usize {
         self.native_io.lock().timers()
     }
@@ -149,9 +157,12 @@ impl InstanceCtx {
     }
 
     pub(crate) fn release_native_resources(&self) {
-        self.http.close();
+        #[cfg(feature = "rust-guests")]
+        {
+            self.http.close();
+            self.spans.lock().clear();
+        }
         self.native_io.lock().clear();
-        self.spans.lock().clear();
         self.responses.lock().clear();
         for dispatch in self.dispatches.lock().values() {
             dispatch.close();
@@ -166,6 +177,7 @@ impl InstanceCtx {
         }
     }
 
+    #[cfg(feature = "rust-guests")]
     pub(crate) fn has_outbound_http(&self) -> bool {
         self.http.is_active()
     }
@@ -224,8 +236,10 @@ impl InstanceCtx {
                 GuestResourceLimits::default().response_handles,
                 tenancy.limits.instance_memory_max,
             )),
+            #[cfg(feature = "rust-guests")]
             http: super::http_scope::HttpScope::new(),
-            spans: Mutex::new(super::observability::TraceSpans::default()),
+            #[cfg(feature = "rust-guests")]
+            spans: Mutex::new(super::trace_spans::TraceSpans::default()),
             native_io: Mutex::new(super::native_io::Resources::new(
                 super::native_io::ResourceLimits::default(),
             )),
@@ -274,17 +288,24 @@ impl InstanceCtx {
 
     /// Ends a dispatch's state, closing what it held open.
     pub(crate) fn end_dispatch(&self, dispatch: u64) {
+        #[cfg(feature = "rust-guests")]
         let mut dropped_spans = 0;
         if let Some(state) = self.dispatches.lock().remove(&dispatch) {
-            dropped_spans = state.trace_dropped.load(Ordering::Relaxed);
+            #[cfg(feature = "rust-guests")]
+            {
+                dropped_spans = state.trace_dropped.load(Ordering::Relaxed);
+            }
             let background: Arc<dyn crate::reactor_accounting::Observer> = self.background.clone();
             state.reactor_attribution.set(Some(&background));
             state.close();
         }
-        let abandoned_spans = self.spans.lock().end_dispatch(dispatch);
-        if abandoned_spans != 0 || dropped_spans != 0 {
-            tracing::debug!(tenant = %self.tenant, instance = %self.instance, dispatch,
-                abandoned_spans, dropped_spans, "guest trace resources released");
+        #[cfg(feature = "rust-guests")]
+        {
+            let abandoned_spans = self.spans.lock().end_dispatch(dispatch);
+            if abandoned_spans != 0 || dropped_spans != 0 {
+                tracing::debug!(tenant = %self.tenant, instance = %self.instance, dispatch,
+                    abandoned_spans, dropped_spans, "guest trace resources released");
+            }
         }
         self.responses.lock().end_dispatch(dispatch);
         let mut current = self.current.lock();
@@ -363,6 +384,7 @@ impl InstanceCtx {
     }
 }
 
+#[cfg(feature = "rust-guests")]
 impl Drop for InstanceCtx {
     fn drop(&mut self) {
         self.http.close();

@@ -1,6 +1,6 @@
 //! The import vtable routes guest capabilities through host-owned services.
 //! `clock_now_coarse` is frozen within a slice; `entropy_fill` draws from the
-//! host CSPRNG per call. `http_fetch` enforces egress policy host-side.
+//! host CSPRNG per call.
 //!
 //! `ImportCall::scalars` carries the non-buffer scalar arguments in
 //! declaration order, the `(ptr, len)` pair stripped.
@@ -8,26 +8,35 @@
 //! `call_future` and `call_sync` are routers: each import's arms live in a
 //! module named for the capability it belongs to (`http`,
 //! `sockets`, `observability`); a capability with no state or subrequest to
-//! coordinate (the clock, entropy, `abort`, the budget imports
-//! and the init stubs) stays here as a sandbox primitive.
+//! coordinate (the clock, entropy and `abort`) stays here as a sandbox
+//! primitive.
+//!
+//! The imports only a Rust guest calls are routed with the `rust-guests`
+//! feature, and their modules are compiled only with it.
 
 mod cancellation;
 mod dispatch;
 mod http;
+#[cfg(feature = "rust-guests")]
 mod http_scope;
 mod instance;
 mod native_io;
 mod observability;
+#[cfg(feature = "rust-guests")]
+mod outbound_http;
 mod preparation;
 pub(crate) mod request_body;
 mod runtime;
 mod runtime_configuration;
+#[cfg(feature = "rust-guests")]
+mod trace_spans;
 
-pub use http_scope::{OutboundBody, OutboundResponse, ResponseBody};
+#[cfg(feature = "rust-guests")]
+pub use http_scope::{Fetcher, OutboundBody, OutboundResponse, ResponseBody};
 pub use instance::{GuestResourceLimits, InstanceCtx, Tenancy};
 pub(crate) use native_io::IdleTimers;
 pub use preparation::{PreparationIo, PreparationIoConfig};
-pub use runtime::{CellRuntime, Fetcher, Services, WakeSink};
+pub use runtime::{CellRuntime, Services, WakeSink};
 pub use runtime_configuration::{
     RuntimeConfiguration, RuntimeConfigurationError, RuntimeConfigurations,
 };
@@ -173,6 +182,7 @@ impl CellBindings {
         id
     }
 
+    #[cfg(feature = "rust-guests")]
     pub(super) fn decode<T: serde::de::DeserializeOwned>(&self, payload: &[u8]) -> Option<T> {
         match postcard::from_bytes(payload) {
             Ok(v) => Some(v),
@@ -287,6 +297,7 @@ impl HostBindings for CellBindings {
         };
 
         match def.name {
+            #[cfg(feature = "rust-guests")]
             native_io::DEADLINE_IMPORT => {
                 let timers = self.ctx.native_timers()
                     + rt.futures
@@ -316,7 +327,9 @@ impl HostBindings for CellBindings {
                 id
             }
 
+            #[cfg(feature = "rust-guests")]
             "http_fetch" => self.http_fetch(rt, id, call.payload),
+            #[cfg(feature = "rust-guests")]
             "http_body_read" => self.http_body_read(rt, id, call.scalars),
             "req_body_read" => self.req_body_read(rt, id, call.scalars),
             "resp_write" => self.resp_write(rt, id, call.payload, call.scalars),
@@ -350,11 +363,13 @@ impl HostBindings for CellBindings {
                 0
             }
             // At runtime every init unit has already run or been deferred.
-            "init_unit_begin" => 0,
-            "init_unit_deferred" => 0,
+            #[cfg(feature = "rust-guests")]
+            "init_unit_begin" | "init_unit_deferred" => 0,
 
             "log_emit" => self.log_emit(call.payload, call.scalars),
+            #[cfg(feature = "rust-guests")]
             "trace_span_begin" => self.trace_span_begin(call.payload),
+            #[cfg(feature = "rust-guests")]
             "trace_span_end" => self.trace_span_end(call.scalars),
 
             "clock_now_coarse" => ctx.slice_clock_ms() as i64,
@@ -363,7 +378,7 @@ impl HostBindings for CellBindings {
             // Out-buffer imports belong to `call_fill`; here there is nowhere
             // to put the bytes, and a zero-filled buffer would be a constant
             // CSPRNG.
-            "entropy_fill" | "init_hash_seed" | "init_config_get" | "runtime_config_get" => {
+            _ if matches!(def.buf, imports::BufSpec::Out(_)) => {
                 ctx.latch_trap(TrapCode::Protocol);
                 -1
             }
@@ -380,8 +395,9 @@ impl HostBindings for CellBindings {
             "resp_finish" => self.resp_finish(call.scalars),
 
             // Answered by the engine before reaching this vtable; an engine
-            // that does not intercept them gets "budget untouched, bit clear"
-            // rather than a capability violation for a declared import.
+            // that does not intercept it gets "bit clear" rather than a
+            // capability violation for a declared import.
+            #[cfg(feature = "rust-guests")]
             "unsafe_to_trap" => 0,
 
             other => {
@@ -422,6 +438,7 @@ impl HostBindings for CellBindings {
                     .unwrap_or_default();
                 Ok(configuration.fill(out))
             }
+            #[cfg(feature = "rust-guests")]
             "init_hash_seed" | "init_config_get" => {
                 self.ctx.latch_trap(TrapCode::CapabilityViolation);
                 Err(BindingError::Unsupported(call.import))

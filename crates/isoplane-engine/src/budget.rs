@@ -131,6 +131,7 @@ pub struct DispatchOutcome {
     pub overage_ns: u64,
     /// Epoch ticks that found the unsafe-to-trap bit set and deferred grace
     /// entry.
+    #[cfg(feature = "rust-guests")]
     pub grace_deferrals: u64,
 }
 

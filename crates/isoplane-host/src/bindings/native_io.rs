@@ -740,6 +740,7 @@ impl Timer {
 
 /// The import that makes a timer a host future rather than a native resource;
 /// its timers count toward the same limit.
+#[cfg(feature = "rust-guests")]
 pub(crate) const DEADLINE_IMPORT: &str = "clock_deadline_in";
 
 /// `duration` rounded up to the guest clock's quantum.
@@ -826,6 +827,7 @@ pub(crate) struct IdleTimers {
 }
 
 impl Resources {
+    #[cfg(feature = "rust-guests")]
     pub(crate) fn slice_start(&self) -> Option<tokio::time::Instant> {
         self.slice
     }
@@ -1294,12 +1296,15 @@ impl Resources {
             }
             Request::Timer(duration) => {
                 self.reserve(ResourceCount(1))?;
-                let deadline_futures = bindings.runtime().map_or(0, |runtime| {
-                    runtime
-                        .futures
-                        .pending_for_import(bindings.instance(), DEADLINE_IMPORT)
-                });
-                if self.timers() + deadline_futures >= isoplane_abi::native_io::MAX_TIMERS {
+                let timers = self.timers();
+                #[cfg(feature = "rust-guests")]
+                let timers = timers
+                    + bindings.runtime().map_or(0, |runtime| {
+                        runtime
+                            .futures
+                            .pending_for_import(bindings.instance(), DEADLINE_IMPORT)
+                    });
+                if timers >= isoplane_abi::native_io::MAX_TIMERS {
                     return Err(Error::ResourceLimit);
                 }
                 let timer = if duration.0 == 0 {

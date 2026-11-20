@@ -11,6 +11,7 @@ tasks:
       - task: ':test:unit'
         vars: {CLI_ARGS: '--locked --workspace'}
       - task: ':test:guests'
+      - task: ':test:validator:shipped'
       - '{{.DEVELOPMENT_COMMAND}}cargo test --locked -p isoplane-control --test validator_corpus --test validator_wasi_pal --test real_guests'
       - '{{.DEVELOPMENT_COMMAND}}cargo test --locked -p isoplane-engine --test engine_validation --test engine_init_sandbox --test engine_budget --test engine_memory_limit'
 

@@ -110,7 +110,8 @@ tasks:
     cmds:
       - '{{.DEVELOPMENT_COMMAND}}cargo clippy {{.CLI_ARGS | default "--workspace"}} --all-targets -- -D warnings'
       # The shipped packages as a release builds them: without the tests, and so without
-      # the `test-util` features the tests turn on. Code only those features reach is dead here.
+      # the `test-util` and `rust-guests` features the tests turn on. Code only those
+      # features reach is dead here.
       - '{{.DEVELOPMENT_COMMAND}}cargo clippy -p isoplane-native -p isoplaned --lib --bins -- -D warnings'
 
   format:

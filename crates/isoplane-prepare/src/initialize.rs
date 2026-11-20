@@ -37,7 +37,7 @@ impl Initialization {
     /// Fresh random draws and execution budgets are excluded from this input identity.
     pub fn digest(&self, input_hash: [u8; 32]) -> Result<[u8; 32], postcard::Error> {
         let mut hash = blake3::Hasher::new();
-        hash.update(b"isoplane.initialization-input.v2\0");
+        hash.update(b"isoplane.initialization-input.v3\0");
         hash.update(&postcard::to_allocvec(&(
             input_hash,
             &self.config,
@@ -295,7 +295,11 @@ pub(crate) fn initialize_with_cache(
             }
             _ => None,
         };
-        let state = Arc::new(Mutex::new(Sandbox::new(request, deferred.clone())));
+        let state = Arc::new(Mutex::new(Sandbox::new(
+            request,
+            #[cfg(feature = "rust-guests")]
+            deferred.clone(),
+        )));
         let mut instance = engine
             .activate_initialization(
                 &template,
@@ -717,9 +721,12 @@ fn with_guest_logs<'a>(
 }
 
 struct Sandbox {
+    #[cfg(feature = "rust-guests")]
     seed: Option<[u8; 16]>,
+    #[cfg(feature = "rust-guests")]
     config: Vec<u8>,
     runtime_config: Vec<u8>,
+    #[cfg(feature = "rust-guests")]
     deferred: BTreeSet<u32>,
     unit: Option<u32>,
     last_deferred: Option<u32>,
@@ -731,11 +738,17 @@ struct Sandbox {
 }
 
 impl Sandbox {
-    fn new(request: &Initialization, deferred: BTreeSet<u32>) -> Self {
+    fn new(
+        request: &Initialization,
+        #[cfg(feature = "rust-guests")] deferred: BTreeSet<u32>,
+    ) -> Self {
         Self {
+            #[cfg(feature = "rust-guests")]
             seed: None,
+            #[cfg(feature = "rust-guests")]
             config: request.config.clone(),
             runtime_config: request.runtime_config.clone(),
+            #[cfg(feature = "rust-guests")]
             deferred,
             unit: None,
             last_deferred: None,
@@ -801,12 +814,14 @@ impl isoplane_engine::bindings::InitializationBindings for Bindings {
     ) -> Result<i64, isoplane_engine::bindings::BindingError> {
         let mut state = self.state.lock();
         match call.import {
+            #[cfg(feature = "rust-guests")]
             "init_unit_begin" => {
                 let unit = call.scalars[0] as u32;
                 state.unit = (!matches!(unit, 0 | u32::MAX)).then_some(unit);
                 state.last_deferred = None;
                 Ok(0)
             }
+            #[cfg(feature = "rust-guests")]
             "init_unit_deferred" => {
                 let unit = call.scalars[0] as u32;
                 let deferred = state.deferred.contains(&unit);
@@ -839,6 +854,7 @@ impl isoplane_engine::bindings::InitializationBindings for Bindings {
     ) -> Result<i64, isoplane_engine::bindings::BindingError> {
         let mut state = self.state.lock();
         match call.import {
+            #[cfg(feature = "rust-guests")]
             "init_hash_seed" => {
                 if output.len() != 16 {
                     return Err(isoplane_engine::bindings::BindingError::InvalidRequest(
@@ -872,6 +888,7 @@ impl isoplane_engine::bindings::InitializationBindings for Bindings {
                 output[..length].copy_from_slice(&state.runtime_config[..length]);
                 Ok(state.runtime_config.len() as i64)
             }
+            #[cfg(feature = "rust-guests")]
             "init_config_get" => {
                 let length = output.len().min(state.config.len());
                 output[..length].copy_from_slice(&state.config[..length]);

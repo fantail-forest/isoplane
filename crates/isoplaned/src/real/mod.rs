@@ -100,7 +100,6 @@ impl RealCells {
         destinations: Arc<dyn isoplane_host::egress::DestinationPolicy>,
         trust: &crate::trust::TrustBundle,
     ) -> anyhow::Result<Arc<Self>> {
-        let network = cfg.network;
         let egress = Arc::new(
             isoplane_host::HostEgressPolicy::system(cfg.connection_limits()?)?
                 .with_destinations(destinations),
@@ -110,8 +109,9 @@ impl RealCells {
         )?)?);
 
         let tenants: Arc<RwLock<HashMap<String, String>>> = Arc::new(RwLock::new(HashMap::new()));
+        #[cfg(feature = "rust-guests")]
         let fetcher = Arc::new(isoplane_host::PinnedHttpFetcher::new(
-            network.inline_response_bytes,
+            cfg.network.inline_response_bytes,
         ));
 
         let mut cells = Vec::with_capacity(1);
@@ -119,6 +119,7 @@ impl RealCells {
             let name = &cfg.host.name;
             let services = Arc::new(Services {
                 egress: egress.clone(),
+                #[cfg(feature = "rust-guests")]
                 fetcher: fetcher.clone(),
             });
             cells.push(Cell::with_snapshot_storage(

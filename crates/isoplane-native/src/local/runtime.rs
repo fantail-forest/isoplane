@@ -225,7 +225,7 @@ fn local_compilation(
 
 fn preinitialize(project: &Project, wasm: &[u8], configuration: &[u8]) -> anyhow::Result<Vec<u8>> {
     let files = project.served_files()?;
-    Ok(isoplane_prepare::PreInitializer::new()
+    Ok(isoplane_prepare::PreInitializer::new(project.init_sandbox)
         .with_runtime_profile(project.runtime_profile.clone())
         .with_memory_limit(isoplane_abi::config::GuestMemoryBytes::new(
             project.manifest.memory_max_bytes(),
@@ -235,7 +235,6 @@ fn preinitialize(project: &Project, wasm: &[u8], configuration: &[u8]) -> anyhow
             ..engine_configuration(project)
         })
         .with_network(initialization_network(project))
-        .with_pal(project.init_sandbox)
         .with_runtime_configuration(configuration.to_vec())
         .with_platform_files(files)
         .run(
@@ -389,6 +388,7 @@ impl LocalApp {
         let cfg = isoplane_proxy::ProxyConfig::default();
         let services = Arc::new(isoplane_host::cell::Services {
             egress: egress.clone(),
+            #[cfg(feature = "rust-guests")]
             fetcher: Arc::new(isoplane_host::PinnedHttpFetcher::new(
                 network.inline_response_bytes,
             )),

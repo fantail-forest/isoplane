@@ -177,9 +177,9 @@ fn result_bytes(result: &ResultRecord) -> usize {
         ResultRecord::Err(FutureError::Denied(message) | FutureError::Io(message)) => {
             message.capacity()
         }
-        ResultRecord::Err(
-            FutureError::Cancelled | FutureError::NotFound | FutureError::BufferLimit,
-        ) => 0,
+        ResultRecord::Err(FutureError::Cancelled | FutureError::BufferLimit) => 0,
+        #[cfg(feature = "rust-guests")]
+        ResultRecord::Err(FutureError::NotFound) => 0,
     }
 }
 
@@ -689,6 +689,7 @@ impl FutureTable {
     }
 
     /// The owner's pending futures that `import` created.
+    #[cfg(feature = "rust-guests")]
     pub fn pending_for_import(&self, owner: InstanceId, import: &str) -> usize {
         let Some(arc) = self.existing(owner) else {
             return 0;

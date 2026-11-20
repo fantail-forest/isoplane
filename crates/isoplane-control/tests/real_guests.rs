@@ -108,7 +108,7 @@ fn the_impure_cctor_guest_defers_and_converges() {
 
         init_blob: Vec::new(),
     };
-    let out = PreInitializer::new()
+    let out = PreInitializer::new(isoplane_abi::config::InitSandbox::Sealed)
         .run(&wasm, &req)
         .expect("pre-init must converge");
 
@@ -167,7 +167,7 @@ fn a_real_guest_is_admitted_and_initialized_without_a_version_catalog() {
 
         init_blob: Vec::new(),
     };
-    let output = PreInitializer::new()
+    let output = PreInitializer::new(isoplane_abi::config::InitSandbox::Sealed)
         .run(&wasm, &request)
         .expect("initialization");
     assert!(!exports_init(&output.template_wasm));

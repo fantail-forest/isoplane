@@ -279,11 +279,14 @@ fn future_error_in_records_cs_mirrors_the_rust_enum() {
         &[
             ("Cancelled", FutureError::Cancelled),
             ("Denied", FutureError::Denied(String::new())),
-            ("NotFound", FutureError::NotFound),
             ("Io", FutureError::Io(String::new())),
             ("BufferLimit", FutureError::BufferLimit),
         ],
     );
+    // A .NET guest never receives the variant only a Rust guest's imports
+    // produce, so the SDK does not mirror it; it encodes past the mirrored ones.
+    #[cfg(feature = "rust-guests")]
+    assert_eq!(discriminant(&FutureError::NotFound), 4);
 }
 
 #[test]

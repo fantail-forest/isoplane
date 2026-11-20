@@ -31,12 +31,13 @@ impl IdleStep {
 
 impl Cell {
     pub(super) fn watch_idle_timers(self: &Arc<Self>, slot: &Arc<Slot>, entry: &Arc<ModuleEntry>) {
+        let has_host_work = slot.ctx.background.has_work()
+            || self.rt.futures.pending_total(slot.id) > 0
+            || self.rt.futures.has_background_ready(slot.id);
+        #[cfg(feature = "rust-guests")]
+        let has_host_work = has_host_work || slot.ctx.has_outbound_http();
         let timers = slot.ctx.idle_timers().or_else(|| {
-            (slot.ctx.background.has_work()
-                || slot.ctx.has_outbound_http()
-                || self.rt.futures.pending_total(slot.id) > 0
-                || self.rt.futures.has_background_ready(slot.id))
-            .then_some(IdleTimers {
+            has_host_work.then_some(IdleTimers {
                 earliest_deadline: None,
             })
         });
