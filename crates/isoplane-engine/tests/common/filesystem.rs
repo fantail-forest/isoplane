@@ -4,7 +4,7 @@
 //! guest memory.
 
 use crate::common::{activate, guest, DONE};
-use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest, TraceContext};
+use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest};
 use isoplane_abi::filesystem::{Operation, IMPORTS};
 use isoplane_abi::imports::Ty;
 use isoplane_engine::{Completion, InstanceOps, IsoplaneEngine, OccupancyBudget};
@@ -99,7 +99,6 @@ pub fn dispatch() -> DispatchRecord {
             headers: vec![],
             body: vec![],
         }),
-        trace: TraceContext::default(),
         cancel_future: 0,
         occupancy_budget_ms: 30_000,
         pending_futures_limit: 64,

@@ -2,7 +2,7 @@
 #![forbid(unsafe_code)]
 use anyhow::{ensure, Context, Result};
 
-use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest, TraceContext};
+use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest};
 use isoplane_engine::prepared::PreparedIdentity;
 use isoplane_engine::{
     Completion, DormantInstance, EngineConfig, HostBindings, InstanceOps, IsoplaneEngine,
@@ -136,7 +136,7 @@ fn run(
             scope.spawn(move || -> Result<Vec<serde_json::Value>> {
                 let record = DispatchRecord { dispatch_id: 1, kind: DispatchKind::Http(HttpRequest {
                     method: "GET".into(), url: "https://mapping.test/".into(), path: "/".into(), query: vec![], headers: vec![], body: vec![],
-                }), trace: TraceContext::default(), cancel_future: 0, occupancy_budget_ms: request_budget().occupancy_ms, pending_futures_limit: 64, now_ms: 0 };
+                }), cancel_future: 0, occupancy_budget_ms: request_budget().occupancy_ms, pending_futures_limit: 64, now_ms: 0 };
                 barrier.wait();
                 let mut rows = Vec::new();
                 for guest in chunk {

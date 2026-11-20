@@ -57,9 +57,8 @@ pub enum Action {
     FinishConnect,
     /// Read currently available stream bytes.
     Read,
-    /// Send bytes without a host queue, returning the actual accepted count.
-    TrySend,
-    /// Send bytes with a specific network error code on failure.
+    /// Send bytes without a host queue, returning the actual accepted count
+    /// or a specific network error code on failure.
     TrySendWithErrorCode,
     /// Return an owned error's diagnostic message.
     ErrorMessage,
@@ -1106,18 +1105,6 @@ pub const DEFINITIONS: &[Definition] = &[
         Action::ErrorMessage,
     ),
     definition(
-        69,
-        "isoplane_socket_try_send",
-        SOCKET_BRIDGE_MODULE,
-        "try-send",
-        SOCKET_IMPORT,
-        Sig {
-            params: &[Ty::I32, Ty::I32, Ty::I32, Ty::I32],
-            results: &[Ty::I64],
-        },
-        Action::TrySend,
-    ),
-    definition(
         70,
         "ip_name_lookup_resolve_addresses",
         "wasi:sockets/ip-name-lookup@0.2.0",
@@ -1205,9 +1192,8 @@ pub const DEFINITIONS: &[Definition] = &[
 
 /// A native send should retry after output readiness.
 pub const SEND_PENDING: u64 = u64::MAX;
-/// A legacy native send failed without accepting bytes. The detailed send
-/// bridge encodes a failure as `SEND_FAILED` less its network error code,
-/// see [`send_failure`].
+/// A native send failed without accepting bytes. The send bridge encodes a
+/// failure as `SEND_FAILED` less its network error code, see [`send_failure`].
 pub const SEND_FAILED: u64 = u64::MAX - 1;
 /// How many network error codes the failure range below `SEND_FAILED` holds.
 pub const SEND_FAILURE_CODES: u64 = 64;

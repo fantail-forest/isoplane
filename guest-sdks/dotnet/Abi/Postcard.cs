@@ -45,8 +45,6 @@ internal ref struct PostcardReader
     internal uint U32() => (uint)Varint();
     internal ulong U64() => Varint();
 
-    internal bool Bool() => U8() != 0;
-
     internal ReadOnlySpan<byte> Bytes()
     {
         int len = checked((int)Varint());
@@ -57,8 +55,6 @@ internal ref struct PostcardReader
     }
 
     internal string Str() => Encoding.UTF8.GetString(Bytes());
-
-    internal void SkipBytes() => Bytes();
 
     internal KeyValuePair<string, string>[] StringPairs()
     {

@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest, TraceContext};
+use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest};
 use isoplane_abi::native_io::{ByteCount, Error, Request, Response};
 use isoplane_engine::{HostBindings, ImportCall, OccupancyBudget, PlatformFile, PlatformFiles};
 use isoplane_harness::{Network, Reactor};
@@ -202,7 +202,6 @@ pub(super) fn first_dispatch(path: &str) -> (DispatchRecord, OccupancyBudget) {
                 headers: vec![],
                 body: vec![],
             }),
-            trace: TraceContext::default(),
             cancel_future: 0,
             occupancy_budget_ms: 180_000,
             pending_futures_limit: 64,

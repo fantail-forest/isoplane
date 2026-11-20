@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
 use super::bindings::{Recorder, TestBindings};
-use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest, TraceContext};
+use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest};
 use isoplane_engine::{
     Completion, DispatchOutcome, Instance, InstanceOps, IsoplaneEngine, OccupancyBudget, Template,
 };
@@ -186,7 +186,6 @@ impl Request {
                 headers: vec![],
                 body: self.body.clone(),
             }),
-            trace: TraceContext::default(),
             cancel_future: 0,
             occupancy_budget_ms: budget().occupancy_ms,
             pending_futures_limit: 64,

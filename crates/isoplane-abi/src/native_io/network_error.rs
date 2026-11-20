@@ -1,56 +1,42 @@
-//! Canonical WASI network error values shared by the engine and managed adapter.
+//! The wasi:sockets network error codes the host reports to a guest.
 
-macro_rules! errors {
-    ($($name:ident = $value:literal, $doc:literal;)*) => {
-        /// Error discriminants in wasi:sockets/network@0.2.0.
-        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-        #[repr(u8)]
-        pub enum NetworkErrorCode {
-            $(#[doc = $doc] $name = $value,)*
-        }
-
-        /// Generate the managed representation of canonical network errors.
-        pub fn managed_errors() -> String {
-            let mut output = String::from("// Generated from isoplane_abi::native_io::network_error.\nnamespace Isoplane.Abi;\n\ninternal enum NetworkErrorCode\n{\n");
-            $(output.push_str(&format!("    {} = {},\n", stringify!($name), $value));)*
-            output.push_str("}\n");
-            output
-        }
-    };
-}
-
-errors! {
-    Unknown = 0, "No more specific classification is available.";
-    AccessDenied = 1, "The operation was denied.";
-    NotSupported = 2, "The operation is unsupported.";
-    InvalidArgument = 3, "An argument is invalid.";
-    OutOfMemory = 4, "Memory is exhausted.";
-    Timeout = 5, "The operation timed out.";
-    ConcurrencyConflict = 6, "Another operation conflicts with this one.";
-    NotInProgress = 7, "No operation is in progress.";
-    WouldBlock = 8, "The operation is pending.";
-    InvalidState = 9, "The resource state does not permit this operation.";
-    NewSocketLimit = 10, "The socket limit is reached.";
-    AddressNotBindable = 11, "The address cannot be bound.";
-    AddressInUse = 12, "The address is in use.";
-    RemoteUnreachable = 13, "The remote endpoint is unreachable.";
-    ConnectionRefused = 14, "The remote endpoint refused the connection.";
-    ConnectionReset = 15, "The peer reset the connection.";
-    ConnectionAborted = 16, "The connection was aborted.";
-    DatagramTooLarge = 17, "The datagram exceeds its size limit.";
-    NameUnresolvable = 18, "The name has no address.";
-    TemporaryResolverFailure = 19, "The resolver failed temporarily.";
-    PermanentResolverFailure = 20, "The resolver failed permanently.";
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn managed_errors_match_the_canonical_network_errors() {
-        assert_eq!(
-            super::managed_errors(),
-            include_str!("../../../../guest-sdks/dotnet/Abi/NetworkErrorCode.cs"),
-            "regenerate managed network errors with the native_network_errors example"
-        );
-    }
+/// The wasi:sockets/network@0.2.0 error codes the host reports, with that
+/// interface's discriminants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum NetworkErrorCode {
+    /// No more specific classification is available.
+    Unknown = 0,
+    /// The operation was denied.
+    AccessDenied = 1,
+    /// The operation is unsupported.
+    NotSupported = 2,
+    /// An argument is invalid.
+    InvalidArgument = 3,
+    /// The operation timed out.
+    Timeout = 5,
+    /// The operation is pending.
+    WouldBlock = 8,
+    /// The resource state does not permit this operation.
+    InvalidState = 9,
+    /// The socket limit is reached.
+    NewSocketLimit = 10,
+    /// The address cannot be bound.
+    AddressNotBindable = 11,
+    /// The address is in use.
+    AddressInUse = 12,
+    /// The remote endpoint is unreachable.
+    RemoteUnreachable = 13,
+    /// The remote endpoint refused the connection.
+    ConnectionRefused = 14,
+    /// The peer reset the connection.
+    ConnectionReset = 15,
+    /// The connection was aborted.
+    ConnectionAborted = 16,
+    /// The name has no address.
+    NameUnresolvable = 18,
+    /// The resolver failed temporarily.
+    TemporaryResolverFailure = 19,
+    /// The resolver failed permanently.
+    PermanentResolverFailure = 20,
 }

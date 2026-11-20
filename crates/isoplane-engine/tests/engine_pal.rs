@@ -23,7 +23,6 @@ fn http_dispatch(id: u64) -> isoplane_abi::dispatch::DispatchRecord {
             headers: vec![("host".into(), "example.test".into())],
             body: vec![],
         }),
-        trace: TraceContext::default(),
         cancel_future: 0,
         occupancy_budget_ms: 30_000,
         pending_futures_limit: 64,
@@ -243,7 +242,7 @@ fn the_pal_environment_delegation_answers_empty() {
 
 mod native_readiness {
     use super::common::{guest, test_engine, DONE};
-    use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest, TraceContext};
+    use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest};
     use isoplane_abi::native_io::{Request, ResourceHandle, Response};
     use isoplane_engine::{Completion, HostBindings, ImportCall, InstanceOps, OccupancyBudget};
 
@@ -281,6 +280,20 @@ mod native_readiness {
         }
     }
 
+    /// An address with at least `MAX_OUT_BUFFER_BYTES + 1` bytes after it that
+    /// neither the packet nor the dispatch record occupies, so they read as
+    /// zeros.
+    const ZEROED: u32 = 65536;
+
+    fn operation(symbol: &str) -> u32 {
+        isoplane_abi::native_io::canonical::DEFINITIONS
+            .iter()
+            .find(|definition| definition.symbol == symbol)
+            .unwrap_or_else(|| panic!("the canonical contract defines {symbol}"))
+            .id
+            .0
+    }
+
     fn packet(operation: u32, pointer: u32, count: u32, setup: &str) -> Completion {
         capability_packet("poll_call", operation, pointer, count, setup)
     }
@@ -314,7 +327,6 @@ mod native_readiness {
                         headers: vec![],
                         body: vec![],
                     }),
-                    trace: TraceContext::default(),
                     cancel_future: 0,
                     occupancy_budget_ms: 30_000,
                     pending_futures_limit: 64,
@@ -329,28 +341,12 @@ mod native_readiness {
             .completion
     }
 
-    fn send_bridge(
-        import: &str,
-        answer: Result<u64, isoplane_abi::native_io::Error>,
-        legacy_wrapper: bool,
-    ) -> i64 {
+    fn send_bridge(answer: Result<u64, isoplane_abi::native_io::Error>) -> i64 {
         let engine = test_engine();
-        // The v1 C wrapper recognizes only -1 (pending) and -2 (failed),
-        // returning -1 for either; any other value becomes ssize_t directly.
-        let decode = if legacy_wrapper {
-            "(if (result i64) (i32.or (i64.eq (local.get $result) (i64.const -1)) \
-                (i64.eq (local.get $result) (i64.const -2))) \
-                (then (i64.const -1)) (else (local.get $result)))"
-        } else {
-            "(local.get $result)"
-        };
         let wasm = guest(2,
-            &format!(r#"(import "isoplane:native-sockets" "{import}" (func $send (param i32 i32 i32 i32) (result i64)))"#),
-            &format!(r#"(data (i32.const 2000) "abc")
-                (func $wrapper (result i64) (local $result i64)
-                    (local.set $result (call $send (i32.const 3000) (i32.const 1) (i32.const 2000) (i32.const 3)))
-                    {decode})"#),
-            &format!("(i32.store (i32.const 3000) (i32.const 7)) (i64.store (i32.const 1000) (call $wrapper)) {DONE}"), DONE);
+            r#"(import "isoplane:native-sockets" "try-send-with-error-code" (func $send (param i32 i32 i32 i32) (result i64)))"#,
+            r#"(data (i32.const 2000) "abc")"#,
+            &format!("(i32.store (i32.const 3000) (i32.const 7)) (i64.store (i32.const 1000) (call $send (i32.const 3000) (i32.const 1) (i32.const 2000) (i32.const 3))) {DONE}"), DONE);
         let template = engine
             .load_template(&wasm)
             .expect("the socket bridge must remain admitted");
@@ -372,19 +368,7 @@ mod native_readiness {
     }
 
     #[test]
-    fn legacy_send_errors_still_reach_the_original_wrappers_failure_branch() {
-        for kind in [
-            std::io::ErrorKind::ConnectionReset,
-            std::io::ErrorKind::PermissionDenied,
-        ] {
-            let error = isoplane_abi::native_io::Error::from(std::io::Error::from(kind));
-            assert_eq!(send_bridge("try-send", Err(error), true), -1,
-                "an existing guest must not receive an unrecognized negative byte count for {kind:?}");
-        }
-    }
-
-    #[test]
-    fn the_versioned_send_bridge_preserves_distinct_network_failures() {
+    fn the_send_bridge_preserves_distinct_network_failures() {
         use isoplane_abi::native_io::network_error::NetworkErrorCode;
         for (kind, code) in [
             (
@@ -401,43 +385,38 @@ mod native_readiness {
             ),
         ] {
             let error = isoplane_abi::native_io::Error::from(std::io::Error::from(kind));
-            let encoded = send_bridge("try-send-with-error-code", Err(error), false) as u64;
+            let encoded = send_bridge(Err(error)) as u64;
             assert_eq!(
                 isoplane_abi::native_io::canonical::SEND_FAILED.checked_sub(encoded),
                 Some(code as u64),
-                "the new bridge must carry the actual network error for {kind:?}"
+                "the send bridge must carry the actual network error for {kind:?}"
             );
         }
     }
 
     #[test]
-    fn both_send_bridges_distinguish_pending_from_partial_success() {
-        for import in ["try-send", "try-send-with-error-code"] {
-            assert_eq!(
-                send_bridge(
-                    import,
-                    Err(isoplane_abi::native_io::Error::WouldBlock),
-                    false
-                ),
-                -1,
-                "{import} must retain the pending sentinel"
-            );
-            assert_eq!(
-                send_bridge(import, Ok(2), false),
-                2,
-                "{import} must report the number of bytes actually accepted"
-            );
-        }
+    fn the_send_bridge_distinguishes_pending_from_partial_success() {
+        assert_eq!(
+            send_bridge(Err(isoplane_abi::native_io::Error::WouldBlock)),
+            -1,
+            "a send the socket cannot take yet must return the pending sentinel"
+        );
+        assert_eq!(
+            send_bridge(Ok(2)),
+            2,
+            "a partial send must report the number of bytes actually accepted"
+        );
     }
 
     #[test]
     fn readiness_permission_cannot_invoke_the_versioned_send_bridge() {
-        let operation = isoplane_abi::native_io::canonical::DEFINITIONS
-            .iter()
-            .find(|definition| definition.pal.func == "try-send-with-error-code")
-            .expect("the canonical contract defines the detailed send bridge");
         assert_eq!(
-            packet(operation.id.0, 1000, 4, ""),
+            packet(
+                operation("isoplane_socket_try_send_with_error_code"),
+                1000,
+                4,
+                ""
+            ),
             Completion::Trapped,
             "a readiness-only packet must not acquire socket send authority"
         );
@@ -479,12 +458,8 @@ mod native_readiness {
     #[test]
     fn readiness_permission_cannot_invoke_clock_capabilities() {
         for symbol in ["monotonic_clock_now", "monotonic_clock_resolution"] {
-            let operation = isoplane_abi::native_io::canonical::DEFINITIONS
-                .iter()
-                .find(|definition| definition.symbol == symbol)
-                .expect("the native contract must define the clock operation");
             assert_eq!(
-                packet(operation.id.0, 1000, 0, ""),
+                packet(operation(symbol), 1000, 0, ""),
                 Completion::Trapped,
                 "{symbol} must require the clock capability rather than readiness permission"
             );
@@ -493,10 +468,23 @@ mod native_readiness {
 
     #[test]
     fn a_native_send_cannot_allocate_an_unbounded_pollable_list() {
-        let count = isoplane_abi::imports::MAX_OUT_BUFFER_BYTES / 4 + 1;
-        let setup = format!("(i64.store (i32.const 1008) (i64.const {count}))");
+        let limit = isoplane_abi::imports::MAX_OUT_BUFFER_BYTES / 4;
+        let send = |pollables: usize| {
+            capability_packet(
+                "socket_call",
+                operation("isoplane_socket_try_send_with_error_code"),
+                1000,
+                4,
+                &format!("(i64.store (i32.const 1008) (i64.const {pollables}))"),
+            )
+        };
         assert_eq!(
-            capability_packet("socket_call", 69, 1000, 4, &setup),
+            send(limit),
+            Completion::Done,
+            "a native send list at the host buffer limit must reach the host"
+        );
+        assert_eq!(
+            send(limit + 1),
             Completion::Trapped,
             "an oversized native send list must trap before host allocation"
         );
@@ -504,10 +492,26 @@ mod native_readiness {
 
     #[test]
     fn a_native_dns_name_cannot_exceed_the_host_buffer_budget() {
-        let count = isoplane_abi::imports::MAX_OUT_BUFFER_BYTES + 1;
-        let setup = format!("(i64.store (i32.const 1016) (i64.const {count}))");
+        let limit = isoplane_abi::imports::MAX_OUT_BUFFER_BYTES;
+        let resolve = |length: usize| {
+            capability_packet(
+                "socket_call",
+                operation("ip_name_lookup_resolve_addresses"),
+                1000,
+                4,
+                &format!(
+                    "(i64.store (i32.const 1008) (i64.const {ZEROED})) \
+                     (i64.store (i32.const 1016) (i64.const {length}))"
+                ),
+            )
+        };
         assert_eq!(
-            capability_packet("socket_call", 70, 1000, 4, &setup),
+            resolve(limit),
+            Completion::Done,
+            "a DNS name at the host buffer limit must reach the resolver"
+        );
+        assert_eq!(
+            resolve(limit + 1),
             Completion::Trapped,
             "an oversized DNS name must trap before host allocation"
         );
@@ -515,14 +519,24 @@ mod native_readiness {
 
     #[test]
     fn a_native_no_delay_packet_refuses_invalid_settings() {
-        assert_eq!(
+        let no_delay = |setting: u64| {
             capability_packet(
                 "socket_call",
-                74,
+                operation("isoplane_socket_no_delay"),
                 1000,
                 2,
-                "(i64.store (i32.const 1008) (i64.const 2))"
-            ),
+                &format!("(i64.store (i32.const 1008) (i64.const {setting}))"),
+            )
+        };
+        for setting in [0, 1, u64::from(u32::MAX)] {
+            assert_eq!(
+                no_delay(setting),
+                Completion::Done,
+                "TCP_NODELAY setting {setting} is false, true or a read"
+            );
+        }
+        assert_eq!(
+            no_delay(2),
             Completion::Trapped,
             "TCP_NODELAY accepts only a read, false, or true operation"
         );
@@ -530,9 +544,26 @@ mod native_readiness {
 
     #[test]
     fn a_native_dns_name_must_be_valid_utf8() {
-        let setup = "(i64.store (i32.const 1008) (i64.const 2000)) (i64.store (i32.const 1016) (i64.const 1)) (i32.store8 (i32.const 2000) (i32.const 255))";
+        let resolve = |byte: u8| {
+            capability_packet(
+                "socket_call",
+                operation("ip_name_lookup_resolve_addresses"),
+                1000,
+                4,
+                &format!(
+                    "(i64.store (i32.const 1008) (i64.const 2000)) \
+                     (i64.store (i32.const 1016) (i64.const 1)) \
+                     (i32.store8 (i32.const 2000) (i32.const {byte}))"
+                ),
+            )
+        };
         assert_eq!(
-            capability_packet("socket_call", 70, 1000, 4, setup),
+            resolve(b'a'),
+            Completion::Done,
+            "a one-byte ASCII name must reach the resolver"
+        );
+        assert_eq!(
+            resolve(0xff),
             Completion::Trapped,
             "invalid DNS name encoding must trap before resolver work starts"
         );
@@ -547,24 +578,26 @@ mod native_readiness {
         );
     }
 
+    const TIMER: &str = "monotonic_clock_subscribe_duration";
+
     #[test]
     fn a_native_readiness_packet_must_match_its_canonical_argument_count() {
         assert_eq!(
-            packet(0, 1000, 2, ""),
-            Completion::Trapped,
-            "a timer packet must reject surplus arguments"
+            packet(operation(TIMER), 1000, 1, ""),
+            Completion::Done,
+            "a timer packet with its one argument must reach the host"
         );
         assert_eq!(
-            packet(0, 1000, 1, ""),
-            Completion::Done,
-            "a timer packet with its canonical argument count must reach the host"
+            packet(operation(TIMER), 1000, 2, ""),
+            Completion::Trapped,
+            "a timer packet must reject surplus arguments"
         );
     }
 
     #[test]
     fn native_readiness_packets_cannot_read_outside_guest_memory() {
         assert_eq!(
-            packet(0, u32::MAX, 1, ""),
+            packet(operation(TIMER), u32::MAX, 1, ""),
             Completion::Trapped,
             "an out-of-bounds timer packet must trap before reaching host resources"
         );
@@ -572,10 +605,25 @@ mod native_readiness {
 
     #[test]
     fn a_native_poll_list_cannot_exceed_the_host_buffer_budget() {
-        let count = isoplane_abi::imports::MAX_OUT_BUFFER_BYTES / 4 + 1;
-        let setup = format!("(i64.store (i32.const 1000) (i64.const 2000)) (i64.store (i32.const 1008) (i64.const {count}))");
+        let limit = isoplane_abi::imports::MAX_OUT_BUFFER_BYTES / 4;
+        let poll = |pollables: usize| {
+            packet(
+                operation("poll_poll"),
+                1000,
+                3,
+                &format!(
+                    "(i64.store (i32.const 1000) (i64.const {ZEROED})) \
+                     (i64.store (i32.const 1008) (i64.const {pollables}))"
+                ),
+            )
+        };
         assert_eq!(
-            packet(2, 1000, 3, &setup),
+            poll(limit),
+            Completion::Done,
+            "a poll list at the host buffer limit must reach the host"
+        );
+        assert_eq!(
+            poll(limit + 1),
             Completion::Trapped,
             "an oversized poll list must be rejected even when guest memory contains it"
         );
@@ -584,7 +632,7 @@ mod native_readiness {
     #[test]
     fn a_native_blocking_wait_is_refused_even_when_the_host_would_accept_it() {
         assert_eq!(
-            packet(59, 1000, 1, ""),
+            packet(operation("poll_method_pollable_block"), 1000, 1, ""),
             Completion::Trapped,
             "a canonical blocking wait must never enter the host resource implementation"
         );
