@@ -26,7 +26,9 @@ fn rig(program: &str, resources: GuestResourceLimits) -> (Arc<Cell>, ModuleId) {
     );
     let module = ModuleId::new("host-buffers", "v1");
     let activator = Arc::new(
-        EngineActivator::load(engine, module.clone(), &wasm)
+        engine
+            .load_template(&wasm)
+            .map(|template| EngineActivator::new(engine, template, module.clone()))
             .expect("hostile guest passes the real validator"),
     );
     let (cell, _) = common::rig_resolving(

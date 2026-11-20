@@ -55,37 +55,6 @@ impl EngineActivator {
         }
     }
 
-    /// Compiles and pre-stages portable WASM locally. The engine checks its
-    /// structural declarations; compilation runs in the host process.
-    pub fn load(
-        engine: Arc<IsoplaneEngine>,
-        module: ModuleId,
-        template_wasm: &[u8],
-    ) -> crate::Result<Self> {
-        let template = engine.load_template(template_wasm)?;
-        Ok(Self::new(engine, template, module))
-    }
-
-    /// Loads by mapping a precompiled artifact out of `cache_dir`, compiling
-    /// one into it only if it is not already there, and returns whether it had
-    /// to compile. Unlike [`EngineActivator::load`], the code and memory image
-    /// are page cache: demand-paged, evictable, and shared between every
-    /// mapping of the same artifact.
-    ///
-    /// # Safety
-    /// `cache_dir` must be a directory this node owns, holding only artifacts
-    /// produced by an engine equal to `engine`. See [`IsoplaneEngine::load_mapped`].
-    pub unsafe fn load_mapped(
-        engine: Arc<IsoplaneEngine>,
-        module: ModuleId,
-        template_wasm: &[u8],
-        cache_dir: &std::path::Path,
-    ) -> crate::Result<(Self, bool)> {
-        // SAFETY: delegated to this function's contract.
-        let (template, compiled) = unsafe { engine.load_mapped(template_wasm, cache_dir) }?;
-        Ok((Self::new(engine, template, module), compiled))
-    }
-
     pub(crate) fn activate_raw(&self, bindings: Box<dyn HostBindings>) -> crate::Result<Instance> {
         self.engine.activate(&*self.current()?, bindings)
     }
@@ -183,7 +152,9 @@ mod tests {
             (func (export "isoplane_wake") (param i64 i32 i32) (result i64) (i64.const 0)))"#,
         )
         .expect("guest must parse");
-        let activator = EngineActivator::load(engine, ModuleId::new("bound", "v1"), &module)
+        let activator = engine
+            .load_template(&module)
+            .map(|template| EngineActivator::new(engine, template, ModuleId::new("bound", "v1")))
             .expect("guest must load");
         let expected =
             isoplane_hibernate::local::size_bound(isoplane_hibernate::local::SnapshotShape {

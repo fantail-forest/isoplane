@@ -3,8 +3,7 @@
 //! host CSPRNG per call. `http_fetch` enforces egress policy host-side.
 //!
 //! `ImportCall::scalars` carries the non-buffer scalar arguments in
-//! declaration order, the `(ptr, len)` pair stripped; [`SCALARS`] names them
-//! and a test checks it against the contract crate.
+//! declaration order, the `(ptr, len)` pair stripped.
 //!
 //! `call_future` and `call_sync` are routers: each import's arms live in a
 //! module named for the capability it belongs to (`http`,
@@ -45,7 +44,8 @@ use crate::futures::INVALID_FUTURE;
 
 /// What each import's `scalars` entries mean; the contract crate's `BufSpec`
 /// is the authority on where the buffer pair sits.
-pub const SCALARS: &[(&str, &[&str])] = &[
+#[cfg(test)]
+const SCALARS: &[(&str, &[&str])] = &[
     ("socket_call", &["operation", "arguments", "count"]),
     ("poll_call", &["operation", "arguments", "count"]),
     ("log_emit", &["level"]),
@@ -78,9 +78,6 @@ impl CellBindings {
     }
     pub fn boxed(ctx: Arc<InstanceCtx>) -> Box<dyn HostBindings> {
         Box::new(Self::new(ctx))
-    }
-    pub fn ctx(&self) -> &Arc<InstanceCtx> {
-        &self.ctx
     }
 
     pub(super) fn rt(&self) -> Option<&Arc<CellRuntime>> {
@@ -412,7 +409,7 @@ impl HostBindings for CellBindings {
                 }
                 crate::entropy::fill(out)
                     .map_err(|error| BindingError::Entropy(std::io::Error::other(error)))?;
-                self.ctx.entropy_calls.fetch_add(1, Ordering::Relaxed);
+
                 Ok(out.len() as i64)
             }
             "runtime_config_get" => {
@@ -611,7 +608,6 @@ mod tests {
                 "entropy repeated: it was cached somewhere"
             );
         }
-        assert_eq!(c.entropy_calls(), 64, "every draw is counted");
     }
 
     #[test]
@@ -625,7 +621,6 @@ mod tests {
             "a fill past the out-buffer cap is refused"
         );
         assert!(big.iter().all(|x| *x == 0), "and nothing was written");
-        assert_eq!(c.entropy_calls(), 0, "and no draw was counted");
     }
 
     #[test]

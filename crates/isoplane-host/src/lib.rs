@@ -56,7 +56,7 @@ pub mod slot;
 pub mod threads;
 pub use activator::{EngineActivator, ReloadedTemplateDiffers, TemplateReload};
 pub use bindings::{CellBindings, InstanceCtx};
-pub use breaker::{BreakerState, HangBreaker};
+pub use breaker::HangBreaker;
 pub use cell::{Cell, CellConfig, DispatchResult, Services, Target};
 pub use disposition::Disposition;
 pub use egress::{DenyReason, HostEgressPolicy, Resolver};

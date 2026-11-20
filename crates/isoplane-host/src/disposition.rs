@@ -21,12 +21,6 @@ impl Disposition {
     pub fn is_warm(self) -> bool {
         self.0 == DispositionKind::Warm
     }
-    pub fn label(self) -> &'static str {
-        match self.0 {
-            DispositionKind::Warm => "warm",
-            DispositionKind::Discard => "discard",
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

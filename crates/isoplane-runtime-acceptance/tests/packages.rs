@@ -1001,7 +1001,7 @@ fn serving_cell(
         fetcher: Arc::new(isoplane_harness::fakes::FakeFetcher::default()),
         egress: Arc::new(isoplane_host::egress::HostEgressPolicy::new(
             Box::new(fixed_dns::FixedDns(vec![])),
-            isoplane_host::egress::ConnectionLimits::uniform(8).expect("connection limits"),
+            isoplane_harness::uniform_connection_limits(8),
         )),
     });
     prepared_cell(
@@ -1188,7 +1188,6 @@ async fn idle_timers_run_by_default_without_counting_http_requests_and_stop_afte
     let (product, request) = alpha_initialized_by("StartHeartbeatAsync").await;
     let module = isoplane_host::ModuleId::new("alpha", "v1");
     let cell = serving_cell(&product, &request, &module, 1_000);
-    let meters = cell.meters(&module).expect("the module has meters");
 
     let first = ask_for_beats(&cell, &module).await;
     wait_until(
@@ -1212,10 +1211,21 @@ async fn idle_timers_run_by_default_without_counting_http_requests_and_stop_afte
         .iter()
         .any(|log| log.fields.contains("heartbeat")
             && log.dispatch == isoplane_host::futures::INSTANCE_WORK));
+    let completed = |kind: &str| {
+        isoplane_harness::logging::LogCapture::global()
+            .host_events("dispatch_completed")
+            .into_iter()
+            .filter(|event| event["instance"] == first.instance.0 && event["dispatch_kind"] == kind)
+            .count()
+    };
+    wait_until("step 2: a wake for the timers must complete", || {
+        completed("background") > 0
+    })
+    .await;
     assert_eq!(
-        meters.dispatches(),
+        completed("http"),
         1,
-        "background wakes are not HTTP requests"
+        "step 2: background wakes are not HTTP requests"
     );
 
     wait_until(

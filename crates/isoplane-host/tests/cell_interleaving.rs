@@ -21,12 +21,10 @@ fn rig() -> (Arc<Cell>, ModuleId) {
     let engine =
         Arc::new(IsoplaneEngine::new(isoplane_fixtures::engine_config(16)).expect("engine"));
     let module = ModuleId::new("quotes-api", "v1");
-    let activator = EngineActivator::load(
-        engine,
-        module.clone(),
-        &isoplane_fixtures::rust("quotes-api"),
-    )
-    .expect("quotes-api.wasm must compile");
+    let activator = engine
+        .load_template(&isoplane_fixtures::rust("quotes-api"))
+        .map(|template| EngineActivator::new(engine, template, module.clone()))
+        .expect("quotes-api.wasm must compile");
     let (cell, _) = common::rig_resolving(CellConfig::for_test("interleaving"), "93.184.216.34:80");
     cell.register_module("acme", Arc::new(activator), common::manifest("quotes-api"))
         .expect("register quotes-api");

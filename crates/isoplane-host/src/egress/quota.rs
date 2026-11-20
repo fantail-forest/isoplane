@@ -79,7 +79,8 @@ impl ConnectionLimits {
 
     /// The same value for both limits, so that attempts never wait before the
     /// open limit refuses them.
-    pub fn uniform(connections: u64) -> Result<Self, ConnectionLimitsError> {
+    #[cfg(test)]
+    pub(crate) fn uniform(connections: u64) -> Result<Self, ConnectionLimitsError> {
         Self::new(ConnectionCeilings {
             in_progress: connections,
             open: connections,

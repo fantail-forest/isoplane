@@ -94,8 +94,7 @@ fn a_reused_instance_keeps_its_residue() {
         observed[1..].contains(&1),
         "reuse must let per-instance memoization pay off: {observed:?}"
     );
-    let m = r.cell.meters(&module).unwrap();
-    assert_eq!(m.dispatches(), 25, "every dispatch is counted");
+    assert_eq!(r.cell.metrics().dispatches, 25, "every dispatch is counted");
     r.cell.shutdown();
 }
 
@@ -171,9 +170,11 @@ fn a_retired_module_refuses_new_work_and_discards_its_idle_instances() {
         "the served instance must return to the pool"
     );
     assert!(r.cell.retire_module(&module), "the module was registered");
-    assert_eq!(
-        r.cell.metrics().live,
-        0,
+    assert!(
+        matches!(
+            r.cell.instance_state(served.instance),
+            None | Some(isoplane_host::LifecycleTier::Discarded)
+        ),
         "retiring a module must discard its idle instances"
     );
     assert!(

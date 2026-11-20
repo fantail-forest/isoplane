@@ -381,7 +381,7 @@ async fn a_gc_hint_cannot_hide_a_new_fetch_from_capture() {
             (func (export "isoplane_wake") (param i64 i32 i32) (result i64) (i64.const 0))
             (func (export "isoplane_gc_hint") (param i32) (drop (call $fetch (i32.const 1024) (i32.const {})))))"#, payload.len())).expect("the GC fixture must compile");
         let engine = std::sync::Arc::new(isoplane_engine::IsoplaneEngine::new(isoplane_engine::EngineConfig { max_instances: 4, max_memory_bytes: 2 << 20, guard_size_bytes: 64 << 20, ..Default::default() }).expect("the real engine must start"));
-        let activator = isoplane_host::activator::EngineActivator::load(engine, isoplane_host::ModuleId::new("gc-fetch", "v1"), &wasm).expect("the GC fixture must load");
+        let activator = engine.load_template(&wasm).map(|template| isoplane_host::activator::EngineActivator::new(engine, template, isoplane_host::ModuleId::new("gc-fetch", "v1"))).expect("the GC fixture must load");
         let (cell, _response) = common::cell(svc, std::sync::Arc::new(activator));
         let instance = loop {
             if let Some(instance) = cell.resident_ids().first().copied() {

@@ -32,8 +32,14 @@ fn fetching_guest(destination: SocketAddr) -> Vec<u8> {
     };
     let success = response(200);
     let failure = response(502);
+    let denied = response(403);
     let ok_tag =
         postcard::to_allocvec(&ResultRecord::Ok(vec![])).expect("result tag must encode")[0];
+    let denied_tag = postcard::to_allocvec(&ResultRecord::Err(
+        isoplane_abi::result::FutureError::Denied(String::new()),
+    ))
+    .expect("the refusal must encode")[1];
+    let (denied_data, denied_len) = (isoplane_test_support::wat_bytes(&denied), denied.len());
     let pending = isoplane_abi::status::PollStatus::Pending.encode();
     wat::parse_str(format!(
         r#"(module
@@ -43,6 +49,7 @@ fn fetching_guest(destination: SocketAddr) -> Vec<u8> {
           (data (i32.const 1024) "{}")
           (data (i32.const 2048) "{}")
           (data (i32.const 3072) "{}")
+          (data (i32.const 4096) "{denied_data}")
           (func (export "isoplane_alloc") (param i32 i32) (result i32) (i32.const 16384))
           (func (export "isoplane_handle") (param i32 i32) (result i64)
             (drop (call $fetch (i32.const 1024) (i32.const {})))
@@ -54,11 +61,19 @@ fn fetching_guest(destination: SocketAddr) -> Vec<u8> {
               (local.set $at (i32.add (local.get $at) (i32.const 1)))
               (br $byte)))
             (i32.add (local.get $at) (i32.const 1)))
+          ;; Answers 200 for a fetched response, 403 for a fetch policy refused
+          ;; and 502 for any other failure.
           (func (export "isoplane_wake") (param i64) (param $wake i32) (param i32) (result i64)
+            (local $result i32)
+            (local.set $result (call $result (local.get $wake)))
             (i64.shl (i64.extend_i32_u
-              (if (result i32) (i32.eq (i32.load8_u (call $result (local.get $wake))) (i32.const {ok_tag}))
+              (if (result i32) (i32.eq (i32.load8_u (local.get $result)) (i32.const {ok_tag}))
                 (then (call $response (i32.const 2048) (i32.const {})))
-                (else (call $response (i32.const 3072) (i32.const {})))))
+                (else
+                  (if (result i32)
+                    (i32.eq (i32.load8_u (i32.add (local.get $result) (i32.const 1))) (i32.const {denied_tag}))
+                    (then (call $response (i32.const 4096) (i32.const {denied_len})))
+                    (else (call $response (i32.const 3072) (i32.const {})))))))
               (i64.const 32))))"#,
         isoplane_test_support::wat_bytes(&request),
         isoplane_test_support::wat_bytes(&success),
@@ -106,20 +121,8 @@ async fn a_default_node_refuses_private_outbound_destinations() {
     .await;
     let response = get(rig.proxy, "quotes.isoplane.dev", "/").await;
     assert_eq!(
-        response.status, 502,
-        "the guest must receive a refused fetch"
-    );
-    let denied: u64 = rig
-        .node
-        .real
-        .as_ref()
-        .cells()
-        .iter()
-        .map(|cell| cell.metrics().egress_denials)
-        .sum();
-    assert_eq!(
-        denied, 1,
-        "the default node must deny the private destination before transport"
+        response.status, 403,
+        "the default node must deny the private destination by policy, before transport"
     );
     rig.shutdown().await;
 }

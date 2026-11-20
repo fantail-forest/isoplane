@@ -14,7 +14,7 @@ use parking_lot::{Mutex, RwLock};
 use isoplane_abi::config::AppManifest;
 use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, TraceContext};
 use isoplane_abi::status::{PollStatus, TrapCode};
-use isoplane_engine::{Completion, DispatchOutcome, GraceEnd, OccupancyBudget};
+use isoplane_engine::{Completion, DispatchOutcome, OccupancyBudget};
 
 use crate::bindings::Tenancy;
 use crate::bindings::{CellRuntime, InstanceCtx, WakeSink};
@@ -264,7 +264,6 @@ impl Cell {
             wake: Arc::new(CellWake {
                 queue: queue.clone(),
                 index: index.clone(),
-                metrics: metrics.clone(),
             }),
             reactor: runtime.handle().clone(),
         });
@@ -328,27 +327,18 @@ impl Cell {
     }
 
     fn refresh_gauges(&self) {
-        let (mut live, mut parked, mut hib, mut hot) = (0u64, 0u64, 0u64, 0u64);
+        let (mut parked, mut hib, mut hot) = (0u64, 0u64, 0u64);
         for r in self.residents.lock().values() {
             match r.slot.state() {
-                LifecycleTier::Hot => {
-                    hot += 1;
-                    live += 1;
-                }
-                LifecycleTier::Parked => {
-                    parked += 1;
-                    live += 1;
-                }
+                LifecycleTier::Hot => hot += 1,
+                LifecycleTier::Parked => parked += 1,
                 LifecycleTier::Hibernated => hib += 1,
                 LifecycleTier::Discarded => {}
             }
         }
         for m in self.modules.read().values() {
-            let idle = m.pool.idle() as u64;
-            parked += idle;
-            live += idle;
+            parked += m.pool.idle() as u64;
         }
-        self.metrics.live.store(live, Ordering::Relaxed);
         self.metrics.parked.store(parked, Ordering::Relaxed);
         self.metrics.hibernated.store(hib, Ordering::Relaxed);
         self.metrics.hot.store(hot, Ordering::Relaxed);
@@ -365,13 +355,6 @@ impl Cell {
         self.modules.read().get(module).map(|e| e.pool.idle())
     }
 
-    /// Queued work, across every lane.
-    pub fn queue_depth(&self) -> usize {
-        self.queue.depth()
-    }
-    pub fn hot_count(&self) -> usize {
-        self.hot.load(Ordering::Relaxed)
-    }
     pub fn futures(&self) -> &Arc<FutureTable> {
         &self.rt.futures
     }

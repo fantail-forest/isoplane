@@ -788,12 +788,7 @@ impl Resolver for FailingDns {
     }
 }
 
-async fn managed_dns_error(
-    runtime: GuestRuntime,
-    resolver: Box<dyn Resolver>,
-    expected: &[u8],
-    denials: u64,
-) {
+async fn managed_dns_error(runtime: GuestRuntime, resolver: Box<dyn Resolver>, expected: &[u8]) {
     let owner = InstanceId::alloc();
     let reactor = Reactor::with_network(owner, isoplane_harness::Network::with_resolver(resolver));
     let context = &reactor.context;
@@ -827,15 +822,6 @@ async fn managed_dns_error(
     assert_eq!(
         reactor
             .runtime()
-            .metrics
-            .egress_denials
-            .load(std::sync::atomic::Ordering::Relaxed),
-        denials,
-        "only a destination policy refusal must increment denial accounting"
-    );
-    assert_eq!(
-        reactor
-            .runtime()
             .services
             .egress
             .instance_connections(reactor.context.instance),
@@ -851,52 +837,48 @@ async fn managed_dns_error(
 
 in_mono_runtime! {
     #[tokio::test]
-    async fn managed_dns_reports_a_missing_name_without_counting_a_denial(runtime: GuestRuntime) {
+    async fn managed_dns_reports_a_missing_name(runtime: GuestRuntime) {
         managed_dns_error(
             runtime,
             Box::new(FailingDns(isoplane_abi::native_io::DnsFailure::NotFound)),
             b"HostNotFound",
-            0,
         )
         .await;
     }
 
     #[tokio::test]
-    async fn managed_dns_reports_a_retryable_resolver_failure_without_counting_a_denial(runtime: GuestRuntime) {
+    async fn managed_dns_reports_a_retryable_resolver_failure(runtime: GuestRuntime) {
         managed_dns_error(
             runtime,
             Box::new(FailingDns(isoplane_abi::native_io::DnsFailure::Temporary)),
             b"TryAgain",
-            0,
         )
         .await;
     }
 
     #[tokio::test]
-    async fn managed_dns_reports_a_resolver_timeout_without_counting_a_denial(runtime: GuestRuntime) {
+    async fn managed_dns_reports_a_resolver_timeout(runtime: GuestRuntime) {
         managed_dns_error(
             runtime,
             Box::new(FailingDns(isoplane_abi::native_io::DnsFailure::Timeout)),
             b"TimedOut",
-            0,
         )
         .await;
     }
 
     #[tokio::test]
-    async fn managed_dns_reports_a_permanent_resolver_failure_without_counting_a_denial(runtime: GuestRuntime) {
+    async fn managed_dns_reports_a_permanent_resolver_failure(runtime: GuestRuntime) {
         managed_dns_error(
             runtime,
             Box::new(FailingDns(isoplane_abi::native_io::DnsFailure::Permanent)),
             b"NoRecovery",
-            0,
         )
         .await;
     }
 
     #[tokio::test]
-    async fn managed_dns_refuses_a_mixed_public_private_answer_and_counts_the_policy_denial(runtime: GuestRuntime) {
-        managed_dns_error(runtime, Box::new(MixedDns), b"AccessDenied", 1).await;
+    async fn managed_dns_refuses_a_mixed_public_private_answer(runtime: GuestRuntime) {
+        managed_dns_error(runtime, Box::new(MixedDns), b"AccessDenied").await;
     }
 }
 
@@ -916,7 +898,7 @@ impl Resolver for MixedDns {
 }
 
 #[tokio::test]
-async fn a_native_tcp_policy_refusal_counts_once_without_starting_owned_work() {
+async fn a_native_tcp_policy_refusal_starts_no_owned_work() {
     use isoplane_abi::native_io::{AddressFamily, Error, Request, Response};
     use isoplane_engine::HostBindings;
     let owner = InstanceId::alloc();
@@ -947,14 +929,6 @@ async fn a_native_tcp_policy_refusal_counts_once_without_starting_owned_work() {
         "native TCP must reject private destinations before dialing"
     );
     let runtime = reactor.runtime();
-    assert_eq!(
-        runtime
-            .metrics
-            .egress_denials
-            .load(std::sync::atomic::Ordering::Relaxed),
-        1,
-        "a refused native connection must record one denial"
-    );
     assert_eq!(
         runtime.services.egress.instance_connections(owner),
         0,
@@ -1256,13 +1230,6 @@ async fn an_instance_at_its_open_connection_limit_is_refused_and_another_instanc
         .limits
         .instance_open_connections = limit;
     let egress = reactor.runtime().services.egress.clone();
-    let denials = || {
-        reactor
-            .runtime()
-            .metrics
-            .egress_denials
-            .load(std::sync::atomic::Ordering::Relaxed)
-    };
     let mut sockets = NativeSockets::new(&reactor);
     let mut open = Vec::new();
     for index in 0..limit {
@@ -1281,7 +1248,6 @@ async fn an_instance_at_its_open_connection_limit_is_refused_and_another_instanc
             if reason.contains(&owner.to_string()) && reason.contains(&format!("limit of {limit} open"))),
         "the connection beyond the limit is refused, naming the instance and the limit: {settled:?}"
     );
-    assert_eq!(denials(), 1, "the refusal is counted as one egress denial");
     assert_eq!(
         egress.instance_connections(owner),
         limit,
@@ -1327,7 +1293,6 @@ async fn an_instance_at_its_open_connection_limit_is_refused_and_another_instanc
         matches!(settled, Ok(Response::Streams { .. })),
         "a returned permit admits the instance again: {settled:?}"
     );
-    assert_eq!(denials(), 1);
 }
 
 struct RefusedConnections;

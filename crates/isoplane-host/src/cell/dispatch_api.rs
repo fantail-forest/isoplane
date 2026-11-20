@@ -250,8 +250,7 @@ impl Cell {
         if let Err(job) = self.queue.push_dispatch(job) {
             job.completion
                 .reject(super::completion::AdmissionRejection::QueueUnavailable);
-            self.metrics.shed.fetch_add(1, Ordering::Relaxed);
-            job.completion.entry.meters.record_shed();
+
             answer(&job.responder, DispatchResult::shed(job.rec.dispatch_id));
         }
     }
@@ -348,10 +347,7 @@ impl Cell {
             Err(job) => {
                 job.completion
                     .reject(super::completion::AdmissionRejection::QueueUnavailable);
-                self.metrics.shed.fetch_add(1, Ordering::Relaxed);
-                if let Some(m) = self.meters(module) {
-                    m.record_shed();
-                }
+
                 false
             }
         }

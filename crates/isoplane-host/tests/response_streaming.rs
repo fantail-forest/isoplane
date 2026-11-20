@@ -77,15 +77,22 @@ async fn response_program_with(
         .expect("real engine"),
     );
     let module = ModuleId::new("response", "v1");
-    let activator =
-        Arc::new(EngineActivator::load(engine, module, &wasm).expect("real response guest"));
+    let activator = Arc::new(
+        engine
+            .load_template(&wasm)
+            .map(|template| EngineActivator::new(engine, template, module))
+            .expect("real response guest"),
+    );
+    // The cell's name is the tenant, so a test can pick its own dispatches
+    // out of the process's completion events.
+    let tenant = config.name.clone();
     let (cell, _) = common::rig_resolving(config, "93.184.216.34:80");
-    cell.register_module("owner", activator, common::manifest("response"))
+    cell.register_module(&tenant, activator, common::manifest("response"))
         .expect("register response guest");
     let target = RouteTarget {
         app: "response".into(),
         version: "v1".into(),
-        tenant: "owner".into(),
+        tenant,
         tier: CodeTier::Fast,
     };
     let exchange = cell
@@ -191,7 +198,6 @@ async fn suppressing_a_response_body_keeps_leftover_work_running() {
             cell.slot(instance).is_some(),
             "body suppression must not cancel the guest and trigger its trapping cancellation wake"
         );
-        assert_eq!(cell.metrics().cancellation_grace_kills, 0);
         assert_eq!(cell.futures().live_futures(), 0);
         cell.shutdown();
     })
@@ -218,7 +224,24 @@ async fn a_nonreturning_background_callback_is_killed_after_its_request_complete
         while !cell.resident_ids().is_empty() {
             tokio::task::yield_now().await;
         }
-        assert_eq!(cell.metrics().budget_kills, 1);
+        let background = loop {
+            let completed = isoplane_harness::logging::LogCapture::global()
+                .host_events("dispatch_completed")
+                .into_iter()
+                .find(|event| {
+                    event["tenant"] == "background-hard-stop"
+                        && event["dispatch_id"] == isoplane_host::futures::INSTANCE_WORK
+                });
+            match completed {
+                Some(completed) => break completed,
+                None => tokio::task::yield_now().await,
+            }
+        };
+        assert_eq!(
+            (&background["outcome"], &background["grace_end"]),
+            (&"execution_wall_limit".into(), &"killed".into()),
+            "the instance must be evicted because its callback was killed at the wall cap: {background}"
+        );
         assert_eq!(cell.futures().live_futures(), 0);
         cell.shutdown();
     }).await.expect("the background hard stop must evict the spinning instance");

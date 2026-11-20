@@ -212,7 +212,6 @@ fn response_completion_hands_work_to_background_without_holding_the_request_open
         ),
         "the request ends while its operation is still pending"
     );
-    assert_eq!(r.cell.metrics().work_handed_to_instance, 1);
     assert_eq!(r.cell.futures().live_futures(), 1);
     let future = r.cell.futures().live_future_ids()[0];
     r.cell
@@ -233,9 +232,27 @@ fn response_completion_hands_work_to_background_without_holding_the_request_open
         slot.ctx.logs()[0].dispatch,
         isoplane_host::futures::INSTANCE_WORK
     );
+    let completed = || {
+        isoplane_harness::logging::LogCapture::global()
+            .host_events("dispatch_completed")
+            .into_iter()
+            .filter(|event| event["instance"] == first.instance.0)
+            .map(|event| (event["dispatch_id"].clone(), event["dispatch_kind"].clone()))
+            .collect::<Vec<_>>()
+    };
+    assert!(
+        wait_for(|| completed().len() == 2, T),
+        "the request and the work it left behind each complete once"
+    );
     assert_eq!(
-        r.cell.meters(&module).unwrap().dispatches(),
-        1,
+        completed(),
+        [
+            (first.dispatch_id.into(), "http".into()),
+            (
+                isoplane_host::futures::INSTANCE_WORK.into(),
+                "background".into()
+            )
+        ],
         "background execution is not a request"
     );
     let second = send();

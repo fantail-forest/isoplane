@@ -46,7 +46,9 @@ fn dispatch_growth(
         );
         let module = ModuleId::new("memory-budget", "v1");
         let activator = Arc::new(
-            EngineActivator::load(engine, module.clone(), &wasm)
+            engine
+                .load_template(&wasm)
+                .map(|template| EngineActivator::new(engine, template, module.clone()))
                 .expect("small initial memory fits the engine"),
         );
         // macOS network mounts can require writing every reserved byte eagerly.
@@ -92,11 +94,6 @@ fn dispatch_growth(
             Completion::Done,
             "memory.grow must observe the application ceiling under either allocator"
         );
-        assert_eq!(
-            cell.metrics().memory_limit_retirements,
-            expected_retirements,
-            "an instance is retired exactly when its memory passes its limit"
-        );
         if expected_retirements > 0 {
             assert!(
                 wait_for(
@@ -104,6 +101,14 @@ fn dispatch_growth(
                     Duration::from_secs(10)
                 ),
                 "a retired instance must be discarded once its dispatch ends"
+            );
+        } else {
+            assert!(
+                wait_for(
+                    || cell.idle_instances(&module) == Some(1),
+                    Duration::from_secs(10)
+                ) && cell.slot(result.instance).is_some(),
+                "an instance within its memory limit must return to the pool, not be retired"
             );
         }
         cell.shutdown();

@@ -835,18 +835,21 @@ in_mono_runtime! {
             reactor.context.logs()
         );
         assert_eq!(
-            reactor
-                .runtime()
-                .metrics
-                .egress_denials
-                .load(std::sync::atomic::Ordering::Relaxed),
-            1,
-            "the refusal is the policy's, counted once"
-        );
-        assert_eq!(
             sentinel.reached(),
             0,
             "the refused destination never hears from the guest"
+        );
+        let instance = reactor.context.instance.to_string();
+        let failures: Vec<_> = isoplane_harness::logging::LogCapture::global()
+            .host_logs("native I/O operation failed")
+            .into_iter()
+            .filter(|record| record["span"]["instance"] == instance.as_str())
+            .collect();
+        assert!(
+            matches!(&failures[..], [refusal] if refusal["fields"]["error"]
+                .as_str()
+                .is_some_and(|error| error.starts_with("outbound operation denied"))),
+            "the refusal is the policy's, reported once: {failures:?}"
         );
     }
 

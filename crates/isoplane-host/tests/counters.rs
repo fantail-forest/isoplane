@@ -16,8 +16,6 @@ use isoplane_host::egress::HostEgressPolicy;
 use isoplane_host::{Activator, ModuleId, Resolver};
 
 const T: Duration = Duration::from_secs(10);
-/// A host timer that never fires during a test.
-const PARK_MS: u64 = 600_000;
 
 struct Fixed(Vec<std::net::SocketAddr>);
 #[async_trait::async_trait]
@@ -40,7 +38,7 @@ fn rig(cfg: CellConfig) -> Rig {
     let svc = Arc::new(Services {
         egress: Arc::new(HostEgressPolicy::new(
             Box::new(Fixed(vec!["93.184.216.34:80".parse().unwrap()])),
-            isoplane_host::egress::ConnectionLimits::uniform(1024).expect("connection limits"),
+            isoplane_harness::uniform_connection_limits(1024),
         )),
         fetcher: fetcher.clone(),
     });
@@ -123,14 +121,17 @@ fn a_hard_kill_is_not_counted_as_a_trap() {
             T,
         )
         .unwrap();
-    assert_eq!(out.status, 503, "a hard budget kill is a 503");
+    assert_eq!(
+        (out.completion, out.status),
+        (isoplane_engine::Completion::BudgetKill, 503),
+        "the spin was killed at its budget, which is a 503"
+    );
 
     assert!(
         wait_for(|| r.cell.metrics().tenants["acme"].dispatches == 2, T,),
         "both dispatches must finalize their diagnostic counters"
     );
     let m = r.cell.metrics();
-    assert_eq!(m.budget_kills, 1, "the spin was killed");
     assert_eq!(
         m.traps, 1,
         "the budget kill was counted as a trap as well as a kill"
@@ -177,91 +178,6 @@ fn a_trapped_instance_is_evicted() {
         r.cell.idle_instances(&module),
         Some(0),
         "and nothing of it is kept for reuse"
-    );
-    r.cell.shutdown();
-}
-
-/// The counter says the drop was seen; `has_ready` says it stranded a real
-/// result.
-#[test]
-fn a_completion_for_an_instance_that_is_gone_is_counted_rather_than_dropped_in_silence() {
-    let r = rig(CellConfig::for_test("wake-dropped"));
-    // Never resident, so the wake router cannot reach it.
-    let ghost = isoplane_host::InstanceId::alloc();
-    let fid = r
-        .cell
-        .futures()
-        .alloc(ghost, 1, "clock_deadline_in", 8)
-        .expect("the per-dispatch cap cannot refuse the first future");
-
-    assert_eq!(
-        r.cell.metrics().wakes_dropped,
-        0,
-        "nothing has been dropped yet"
-    );
-    r.cell
-        .complete_future(fid, isoplane_abi::result::ResultRecord::Ok(vec![]));
-
-    let m = r.cell.metrics();
-    assert_eq!(
-        m.wakes_dropped, 1,
-        "a completion arrived for an unreachable instance and nothing counted it"
-    );
-    assert_eq!(m.wakes, 0, "no wake was enqueued, so none may be counted");
-    assert!(
-        r.cell.futures().has_ready(ghost),
-        "the completion was written into the table before the wake was dropped, so the result \
-         is stranded"
-    );
-    r.cell.shutdown();
-}
-
-/// The control: a deliverable completion moves `wakes` and not the drop
-/// count.
-#[test]
-fn a_deliverable_completion_moves_wakes_and_not_the_drop_count() {
-    let r = rig(CellConfig::for_test("wake-delivered"));
-    let module = app(
-        &r,
-        "parker",
-        FakeBehaviour::program([Step::Park {
-            imports: vec![("clock_deadline_in", PARK_MS)],
-        }]),
-    );
-    let rx = r
-        .cell
-        .submit(
-            &module,
-            Target::Handler { route: "/x".into() },
-            http(&r.cell, &module, "/x"),
-        )
-        .unwrap();
-    assert!(
-        wait_for(
-            || r.cell.futures().live_futures() > 0,
-            Duration::from_secs(5)
-        ),
-        "the guest never parked, so there was no completion to deliver"
-    );
-    let fid = r
-        .cell
-        .futures()
-        .live_future_ids()
-        .into_iter()
-        .next()
-        .expect("one pending future");
-    r.cell
-        .complete_future(fid, isoplane_abi::result::ResultRecord::Ok(vec![]));
-    let out = rx
-        .recv_timeout(T)
-        .expect("the woken dispatch never answered");
-    assert_eq!(out.status, 200, "the dispatch was served");
-
-    let m = r.cell.metrics();
-    assert_eq!(m.wakes, 1, "the wake was enqueued and must be counted");
-    assert_eq!(
-        m.wakes_dropped, 0,
-        "a live instance's completion was counted as undeliverable"
     );
     r.cell.shutdown();
 }

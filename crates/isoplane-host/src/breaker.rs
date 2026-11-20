@@ -20,15 +20,6 @@ pub struct BreakerKey {
     pub route: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BreakerState {
-    Closed,
-    /// Dispatches are refused without entering the guest.
-    Open {
-        until_ms: u64,
-    },
-}
-
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct BreakerConfig {
@@ -175,26 +166,10 @@ impl HangBreaker {
         }
     }
 
-    pub fn state(&self, key: &BreakerKey, now_ms: u64) -> BreakerState {
-        let g = self.entries.lock();
-        match g.get(key) {
-            Some(e) if e.open_until_ms > now_ms => BreakerState::Open {
-                until_ms: e.open_until_ms,
-            },
-            _ => BreakerState::Closed,
-        }
-    }
-
     /// An operator's manual override; a deploy clears the breaker on its own
     /// by producing a new key.
     pub fn clear_module(&self, module: &ModuleId) {
         self.entries.lock().retain(|k, _| &k.module != module);
-    }
-}
-
-impl Default for HangBreaker {
-    fn default() -> Self {
-        Self::new(BreakerConfig::default())
     }
 }
 
@@ -252,8 +227,8 @@ mod tests {
         assert!(b.check(&k, 200).is_ok(), "two kills must not trip it");
         b.record_kill(&k, 200);
         assert_eq!(
-            b.state(&k, 250),
-            BreakerState::Open { until_ms: 5_200 },
+            b.entries.lock().get(&k).map(|entry| entry.open_until_ms),
+            Some(5_200),
             "the third kill opens it for the cooldown"
         );
         assert!(
@@ -264,7 +239,7 @@ mod tests {
 
     #[test]
     fn other_routes_are_unaffected() {
-        let b = HangBreaker::default();
+        let b = HangBreaker::new(BreakerConfig::default());
         let spin = key("/spin");
         for t in 0..3 {
             b.record_kill(&spin, t * 10);
@@ -289,7 +264,7 @@ mod tests {
 
     #[test]
     fn cools_and_lets_a_single_probe_through() {
-        let b = HangBreaker::default();
+        let b = HangBreaker::new(BreakerConfig::default());
         let k = key("/spin");
         for t in 0..3 {
             b.record_kill(&k, t);
@@ -298,16 +273,12 @@ mod tests {
         let _probe = b.check(&k, 6_000).expect("one probe after the cooldown");
         assert!(b.check(&k, 6_001).is_err(), "only one probe may pass");
         b.record_success(&k);
-        assert_eq!(
-            b.state(&k, 6_002),
-            BreakerState::Closed,
-            "a successful probe closes it"
-        );
+        assert!(b.check(&k, 6_002).is_ok(), "a successful probe closes it");
     }
 
     #[test]
     fn a_failed_probe_reopens_immediately() {
-        let b = HangBreaker::default();
+        let b = HangBreaker::new(BreakerConfig::default());
         let k = key("/spin");
         for t in 0..3 {
             b.record_kill(&k, t);
@@ -322,7 +293,7 @@ mod tests {
 
     #[test]
     fn releasing_an_unsuccessful_probe_allows_another_attempt() {
-        let breaker = HangBreaker::default();
+        let breaker = HangBreaker::new(BreakerConfig::default());
         let route = key("/spin");
         for now in 0..3 {
             breaker.record_kill(&route, now);
@@ -336,7 +307,7 @@ mod tests {
 
     #[test]
     fn a_new_version_starts_closed() {
-        let b = HangBreaker::default();
+        let b = HangBreaker::new(BreakerConfig::default());
         let v1 = key("/spin");
         for t in 0..3 {
             b.record_kill(&v1, t);

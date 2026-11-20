@@ -28,15 +28,7 @@ use crate::futures::{FutureId, FutureTable};
 use crate::InstanceId;
 pub(crate) use context::{Context, Runtime};
 
-fn report_failure(bindings: &dyn Context, error: &Error) {
-    if matches!(error, Error::Denied(_)) {
-        if let Some(runtime) = bindings.runtime() {
-            runtime
-                .metrics
-                .egress_denials
-                .fetch_add(1, Ordering::Relaxed);
-        }
-    }
+fn report_failure(error: &Error) {
     tracing::warn!(%error, "native I/O operation failed");
 }
 
@@ -1123,7 +1115,7 @@ impl Resources {
                     Error::Dns { .. } | Error::Connection { .. } | Error::Denied(_)
                 );
             if !already_reported && !matches!(error, Error::WouldBlock) {
-                report_failure(bindings, error);
+                report_failure(error);
             }
         }
         result
@@ -1222,7 +1214,7 @@ impl Resources {
                     _ => return Err(Error::InvalidHandle(stream)),
                 };
                 if let Err(error) = &result {
-                    report_failure(bindings, error);
+                    report_failure(error);
                 }
                 self.stream_result(result)
             }
@@ -1671,9 +1663,6 @@ impl Resources {
                     Err(error) => SocketState::Failed(error),
                 };
                 if let SocketState::Failed(error) = &*current {
-                    if matches!(error, Error::Denied(_)) {
-                        completion.metrics.egress_denials.fetch_add(1, Ordering::Relaxed);
-                    }
                     tracing::warn!(%tenant, %instance, %destination, %error, "outbound TCP connect failed");
                 }
             }

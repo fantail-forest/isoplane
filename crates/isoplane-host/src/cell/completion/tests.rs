@@ -460,15 +460,6 @@ fn recorded_fault(
         cell.futures().live_guest_future_ids().is_empty(),
         "terminal fault cleanup must release owned futures before shutdown"
     );
-    if matches!(fault, FaultPoint::EndClock) {
-        assert_eq!(
-            cell.meters(&module)
-                .expect("registered module meters")
-                .incomplete_intervals(),
-            1,
-            "an incomplete engine interval must be counted rather than reported as a complete zero"
-        );
-    }
     cell.shutdown();
     (result, events.completed(1))
 }
@@ -566,7 +557,10 @@ fn real_completion_cell(wasm: Vec<u8>, slice_wall_ms_cap: u32) -> (Arc<Cell>, Mo
     );
     let module = ModuleId::new("real-completion", "v1");
     let activator = Arc::new(
-        crate::EngineActivator::load(engine, module.clone(), &wasm).expect("real completion guest"),
+        engine
+            .load_template(&wasm)
+            .map(|template| crate::EngineActivator::new(engine, template, module.clone()))
+            .expect("real completion guest"),
     );
     let cell = cell(CellConfig {
         exec_threads: 1,

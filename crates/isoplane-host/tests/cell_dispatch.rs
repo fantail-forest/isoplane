@@ -125,7 +125,6 @@ fn a_budget_killed_spinner_does_not_block_another_tenants_wake() {
         m.tenants["noisy"].traps, 0,
         "budget kills remain distinct from guest traps for the offender"
     );
-    assert_eq!(m.budget_kills, 2, "both spinners were killed at budget");
     r.cell.shutdown();
 }
 
@@ -365,7 +364,7 @@ fn a_shed_submission_says_so_rather_than_going_quiet() {
     let (entered, observed) = std::sync::mpsc::channel();
     let (release, released) = std::sync::mpsc::channel();
     let act = Arc::new(FakeActivator::named(
-        ModuleId::new("spin", "v1"),
+        ModuleId::new("shed-app", "v1"),
         FakeBehaviour::program([Step::Hold {
             entered,
             release: Arc::new(parking_lot::Mutex::new(released)),
@@ -417,10 +416,12 @@ fn a_shed_submission_says_so_rather_than_going_quiet() {
         "one Hot and one queued; everything else must shed at admission"
     );
     assert_eq!(shed, 62, "the rest were shed");
-    assert!(
-        r.cell.metrics().shed >= 62,
-        "the cell must count what it shed"
-    );
+    let refusals = isoplane_harness::logging::LogCapture::global()
+        .host_events("dispatch_rejected")
+        .into_iter()
+        .filter(|event| event["app"] == "shed-app" && event["reason"] == "queue_unavailable")
+        .count();
+    assert_eq!(refusals, 62, "the cell must report each dispatch it shed");
 
     drop(release);
     let mut got = 0;

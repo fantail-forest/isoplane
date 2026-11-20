@@ -12,12 +12,6 @@ pub(crate) trait ShardKey {
     fn shard_key(&self) -> u64;
 }
 
-impl ShardKey for u64 {
-    fn shard_key(&self) -> u64 {
-        *self
-    }
-}
-
 impl ShardKey for crate::InstanceId {
     fn shard_key(&self) -> u64 {
         self.0
@@ -114,6 +108,11 @@ impl<K: ShardKey + Hash + Eq, V> ShardedMap<K, V> {
 mod tests {
     use super::*;
 
+    impl ShardKey for u64 {
+        fn shard_key(&self) -> u64 {
+            *self
+        }
+    }
     #[test]
     fn sequential_keys_spread_across_the_shards_and_route_back_to_their_own() {
         let m: ShardedMap<u64, u32> = ShardedMap::new(64);

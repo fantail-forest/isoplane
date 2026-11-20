@@ -49,7 +49,9 @@ fn dispatch(handle: &str, wake: &str) -> DispatchResult {
     );
     let module = ModuleId::new("timer-side-channels", "v1");
     let activator = Arc::new(
-        EngineActivator::load(engine, module.clone(), &wasm)
+        engine
+            .load_template(&wasm)
+            .map(|template| EngineActivator::new(engine, template, module.clone()))
             .expect("a module importing poll_call must link"),
     );
     let (cell, _) = common::rig_resolving(
@@ -176,7 +178,14 @@ fn no_import_exposes_the_remaining_budget() {
         .expect("real engine"),
     );
     assert!(
-        EngineActivator::load(engine, ModuleId::new("budget-reader", "v1"), &wasm).is_err(),
+        engine
+            .load_template(&wasm)
+            .map(|template| EngineActivator::new(
+                engine,
+                template,
+                ModuleId::new("budget-reader", "v1")
+            ))
+            .is_err(),
         "a module importing budget_remaining_ns must be refused"
     );
 }

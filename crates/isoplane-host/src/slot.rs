@@ -43,15 +43,6 @@ pub enum EnterError {
     NotResident(LifecycleTier),
 }
 
-impl std::fmt::Display for EnterError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            EnterError::Busy => write!(f, "reentrant call refused"),
-            EnterError::NotResident(s) => write!(f, "instance is {}", s.as_str()),
-        }
-    }
-}
-
 /// Exclusive access to a live instance. Dropping the guard returns it unless
 /// `CallGuard::destroy` consumed it.
 pub struct CallGuard<'a> {
@@ -94,9 +85,6 @@ impl Drop for CallGuard<'_> {
                 // Back to the tier it came from, so a host-initiated call such
                 // as the pre-capture gc hint leaves no trace.
                 g.state = g.resume_state;
-                if g.state == LifecycleTier::Parked && g.parked_since_ms.is_none() {
-                    g.parked_since_ms = Some(crate::now_ms().max(1));
-                }
             }
             None => {
                 g.resident = None;
@@ -117,7 +105,6 @@ struct SlotInner {
     resident: Option<Box<dyn InstanceOps + Send>>,
     dormant: Option<Box<dyn isoplane_engine::DormantInstance>>,
     in_call: bool,
-    parked_since_ms: Option<u64>,
 }
 
 pub(crate) struct WakeReservation(Arc<Slot>);
@@ -134,13 +121,12 @@ pub struct Slot {
     inner: Mutex<SlotInner>,
     execution: Mutex<()>,
     wake_queued: std::sync::atomic::AtomicBool,
-    /// Accumulated parked time, reported separately from active execution time.
-    parked_ms_total: AtomicU64,
-    /// Lock-free mirrors of `inner.state` and `inner.parked_since_ms`, written
-    /// in the same critical sections, so the idle sweep and the gauges do not
-    /// take a mutex per parked instance per tick.
+
+    /// Lock-free mirror of `inner.state`, written in the same critical
+    /// sections, so the idle sweep and the gauges do not take a mutex per
+    /// parked instance per tick.
     state_hint: AtomicU8,
-    parked_since_hint: AtomicU64,
+
     last_used_ms: AtomicU64,
     memory_bytes: AtomicU64,
     parks: AtomicU64,
@@ -161,13 +147,12 @@ impl Slot {
                 resident: Some(inst),
                 dormant: None,
                 in_call: false,
-                parked_since_ms: None,
             }),
             execution: Mutex::new(()),
             wake_queued: std::sync::atomic::AtomicBool::new(false),
-            parked_ms_total: AtomicU64::new(0),
+
             state_hint: AtomicU8::new(tier_as_u8(LifecycleTier::Parked)),
-            parked_since_hint: AtomicU64::new(0),
+
             last_used_ms: AtomicU64::new(0),
             memory_bytes: AtomicU64::new(memory_bytes),
             parks: AtomicU64::new(0),
@@ -190,8 +175,6 @@ impl Slot {
         }
         self.state_hint
             .store(tier_as_u8(g.state), Ordering::Relaxed);
-        self.parked_since_hint
-            .store(g.parked_since_ms.unwrap_or(0), Ordering::Relaxed);
     }
 
     /// Serializes a dispatch slice with its settlement and pool release, so
@@ -215,11 +198,7 @@ impl Slot {
             return Err(EnterError::NotResident(g.state));
         };
         g.in_call = true;
-        if let Some(since) = g.parked_since_ms.take() {
-            let now = crate::now_ms();
-            self.parked_ms_total
-                .fetch_add(now.saturating_sub(since), Ordering::Relaxed);
-        }
+
         g.resume_state = g.state;
         g.state = LifecycleTier::Hot;
         self.publish(&g);
@@ -264,17 +243,6 @@ impl Slot {
         !g.in_call && g.state == LifecycleTier::Parked && g.resident.is_some()
     }
 
-    pub fn parked_since_ms(&self) -> Option<u64> {
-        match self.parked_since_hint.load(Ordering::Relaxed) {
-            0 => None,
-            v => Some(v),
-        }
-    }
-
-    pub fn parked_ms_total(&self) -> u64 {
-        self.parked_ms_total.load(Ordering::Relaxed)
-    }
-
     /// Records demand from requests without treating other dispatches as demand.
     pub(crate) fn record_dispatch(&self, record: &isoplane_abi::DispatchRecord) {
         match record.kind {
@@ -286,7 +254,7 @@ impl Slot {
         }
     }
 
-    pub fn park(&self, now_ms: u64) {
+    pub fn park(&self) {
         self.parks.fetch_add(1, Ordering::Relaxed);
         let mut g = self.inner.lock();
         debug_assert!(
@@ -295,7 +263,6 @@ impl Slot {
             g.state
         );
         g.state = LifecycleTier::Parked;
-        g.parked_since_ms = Some(now_ms.max(1));
         self.publish(&g);
     }
 
@@ -310,7 +277,6 @@ impl Slot {
         }
         g.dormant = g.resident.take().and_then(|instance| instance.evict());
         g.state = LifecycleTier::Hibernated;
-        g.parked_since_ms = None;
         self.publish(&g);
         Ok(())
     }
@@ -343,7 +309,6 @@ impl Slot {
         self.ctx.release_futures();
         self.ctx.admission.lock().take();
         g.state = LifecycleTier::Discarded;
-        g.parked_since_ms = None;
         self.publish(&g);
     }
 }
@@ -521,7 +486,7 @@ mod tests {
     fn a_hibernated_slot_has_nothing_to_call_into() {
         let p = pool();
         let (slot, _) = p.acquire(ctx_for).expect("acquire");
-        slot.park(0);
+        slot.park();
         slot.hibernate().expect("hibernate");
         assert_eq!(
             slot.enter().err(),
@@ -545,7 +510,7 @@ mod tests {
             "hibernating a Hot slot is refused"
         );
         drop(guard);
-        slot.park(0);
+        slot.park();
         assert!(slot.is_capture_eligible(), "a parked slot is capturable");
         assert!(
             slot.hibernate().is_ok(),

@@ -5,19 +5,14 @@ use super::*;
 
 impl Cell {
     /// The books for a guest that trapped or was killed inside the pre-capture
-    /// gc hint, on the sweeper's thread with no dispatch to answer. No overage
-    /// is claimed: the hint runs on a cap, not a budget the tenant bought.
+    /// gc hint, on the sweeper's thread with no dispatch to answer.
     pub(super) fn record_offpath_kill(
         &self,
         slot: &Arc<Slot>,
         entry: &Arc<ModuleEntry>,
         completion: Completion,
     ) {
-        if completion == Completion::BudgetKill {
-            entry.meters.record_grace_end(GraceEnd::Killed, 0);
-            self.metrics.budget_kills.fetch_add(1, Ordering::Relaxed);
-        } else {
-            entry.meters.record_trap();
+        if completion != Completion::BudgetKill {
             self.metrics.traps.fetch_add(1, Ordering::Relaxed);
         }
         self.forget(slot);
@@ -25,18 +20,6 @@ impl Cell {
             tenant = %entry.tenant, instance = %slot.id, ?completion,
             "the guest was killed in its pre-capture gc hint; the instance is discarded"
         );
-    }
-
-    pub(super) fn count_enter_refusal(&self, e: EnterError) {
-        match e {
-            EnterError::Busy => {
-                self.metrics
-                    .reentrancy_refusals
-                    .fetch_add(1, Ordering::Relaxed);
-            }
-            // An instance that is not here, counted by the tier gauges.
-            EnterError::NotResident(_) => {}
-        }
     }
 
     /// Finalizes only the owner whose slice unwound. Pointer identity

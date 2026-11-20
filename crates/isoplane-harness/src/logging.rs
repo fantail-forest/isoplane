@@ -65,6 +65,29 @@ impl LogCapture {
             .collect()
     }
 
+    /// The fields of every host event named `event`, such as `dispatch_completed`
+    /// or `dispatch_rejected`, in publication order.
+    pub fn host_events(&self, event: &str) -> Vec<serde_json::Value> {
+        self.output()
+            .lines()
+            .filter_map(|line| {
+                let mut record: serde_json::Value =
+                    serde_json::from_str(line).expect("tracing JSON event");
+                (record["fields"]["event"] == event).then(|| record["fields"].take())
+            })
+            .collect()
+    }
+
+    /// Every host log line whose message is `message`, in publication order:
+    /// the event under `fields` and its innermost span under `span`.
+    pub fn host_logs(&self, message: &str) -> Vec<serde_json::Value> {
+        self.output()
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("tracing JSON event"))
+            .filter(|record: &serde_json::Value| record["fields"]["message"] == message)
+            .collect()
+    }
+
     /// An isolated JSON subscriber for a test that drives imports on its own thread.
     pub fn dispatch(&self) -> tracing::Dispatch {
         tracing::Dispatch::new(
@@ -77,7 +100,8 @@ impl LogCapture {
         )
     }
 
-    /// Installs one guest-event writer for tests whose cells run on other threads.
+    /// Installs one writer of guest events, the host's import diagnostics and
+    /// dispatch outcomes for tests whose cells run on other threads.
     pub fn global() -> &'static Self {
         static CAPTURE: OnceLock<LogCapture> = OnceLock::new();
         CAPTURE.get_or_init(|| {
@@ -88,7 +112,8 @@ impl LogCapture {
                     .with_ansi(false)
                     .with_writer(capture.clone())
                     .with_filter(tracing_subscriber::filter::filter_fn(|metadata| {
-                        metadata.target() == "isoplane_host::bindings::observability"
+                        metadata.target().starts_with("isoplane_host::bindings")
+                            || metadata.target() == "isoplane_host::cell::completion"
                     })),
             );
             tracing::subscriber::set_global_default(subscriber)
@@ -113,6 +138,32 @@ impl<'a> MakeWriter<'a> for LogCapture {
     type Writer = Self;
     fn make_writer(&'a self) -> Self::Writer {
         self.clone()
+    }
+}
+
+/// The completion event the host emitted for `dispatch` on `instance`, from
+/// the process-wide capture. The host emits it after answering the caller, so
+/// this waits for it within a deadline and panics if it never arrives.
+pub fn dispatch_completion(
+    instance: isoplane_host::InstanceId,
+    dispatch: u64,
+) -> serde_json::Value {
+    let find = || {
+        LogCapture::global()
+            .host_events("dispatch_completed")
+            .into_iter()
+            .find(|event| event["instance"] == instance.0 && event["dispatch_id"] == dispatch)
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        if let Some(event) = find() {
+            return event;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no completion event for dispatch {dispatch} on instance {instance}"
+        );
+        std::thread::yield_now();
     }
 }
 

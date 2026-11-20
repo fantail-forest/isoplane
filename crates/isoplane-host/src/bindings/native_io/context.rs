@@ -7,14 +7,12 @@ use isoplane_abi::result::ResultRecord;
 use crate::bindings::{CellBindings, WakeSink};
 use crate::egress::HostEgressPolicy;
 use crate::futures::{FutureTable, WakeTarget};
-use crate::metrics::Metrics;
 use crate::InstanceId;
 
 #[derive(Clone)]
 pub(crate) struct Runtime {
     pub egress: Arc<HostEgressPolicy>,
     pub futures: Arc<FutureTable>,
-    pub metrics: Arc<Metrics>,
     pub wake: Arc<dyn WakeSink>,
     pub reactor: tokio::runtime::Handle,
     pub usage: crate::reactor_accounting::TaskUsage,
@@ -52,7 +50,6 @@ impl Context for CellBindings {
         self.rt().map(|runtime| Runtime {
             egress: runtime.services.egress.clone(),
             futures: runtime.futures.clone(),
-            metrics: runtime.metrics.clone(),
             wake: runtime.wake.clone(),
             reactor: runtime.reactor.clone(),
             usage: self.ctx.reactor_usage(),

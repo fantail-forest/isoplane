@@ -25,16 +25,12 @@ impl RealNodeAdmin {
                 None => s,
                 Some(mut a) => {
                     a.dispatches += s.dispatches;
-                    a.wakes += s.wakes;
                     a.traps += s.traps;
-                    a.shed += s.shed;
                     a.breaker_rejections += s.breaker_rejections;
-                    a.live += s.live;
                     a.parked += s.parked;
                     a.hibernated += s.hibernated;
                     a.hot += s.hot;
                     a.delta_bytes += s.delta_bytes;
-                    a.hibernation_wakes += s.hibernation_wakes;
                     for (tenant, t) in s.tenants {
                         let e = a.tenants.entry(tenant).or_default();
                         e.dispatches += t.dispatches;
@@ -51,7 +47,6 @@ impl RealNodeAdmin {
                         a.hibernation_wake_p99_us.max(s.hibernation_wake_p99_us);
                     a.dirty_pages_p50 = a.dirty_pages_p50.max(s.dirty_pages_p50);
                     a.dirty_pages_p99 = a.dirty_pages_p99.max(s.dirty_pages_p99);
-                    a.trap_rate = a.trap_rate.max(s.trap_rate);
                     a
                 }
             });

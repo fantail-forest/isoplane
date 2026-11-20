@@ -108,7 +108,7 @@ pub fn services(address: SocketAddr) -> Arc<Services> {
     let policy = Arc::new(
         HostEgressPolicy::new(
             Box::new(Endpoint(address)),
-            isoplane_host::egress::ConnectionLimits::uniform(1).expect("connection limits"),
+            isoplane_harness::uniform_connection_limits(1),
         )
         .with_destinations(Arc::new(Endpoint(address))),
     );

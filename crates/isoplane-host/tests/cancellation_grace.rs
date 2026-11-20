@@ -120,7 +120,6 @@ fn a_dispatch_still_waiting_when_its_grace_runs_out_is_killed_with_its_instance(
         wait_for(|| cell.slot(instance).is_none(), Duration::from_secs(30)),
         "the killed dispatch's instance must be evicted"
     );
-    assert_eq!(cell.metrics().cancellation_grace_kills, 1);
     cell.shutdown();
 }
 
@@ -147,11 +146,9 @@ fn a_dispatch_that_finishes_inside_its_grace_keeps_its_instance() {
         (200, first.instance, "warm"),
         "the instance must outlive a grace its dispatch finished inside"
     );
-    assert_eq!(cell.metrics().cancellation_grace_kills, 0);
-    let metrics = cell.metrics();
     assert_eq!(
-        (metrics.instance_holds, metrics.activations_for_holds),
-        (1, 0),
+        cell.metrics().instance_holds,
+        1,
         "the grace held the instance until its dispatch finished"
     );
     cell.shutdown();
@@ -164,7 +161,7 @@ fn a_dispatch_goes_to_another_instance_while_one_in_its_grace_holds_the_first() 
         vec![Step::EnterGrace, Step::Park { imports: vec![] }],
         WAIT_MS,
     );
-    let _ignoring = submit(&cell, &module);
+    let ignoring = submit(&cell, &module);
     assert!(
         wait_for(
             || cell.metrics().instance_holds > 0,
@@ -173,7 +170,7 @@ fn a_dispatch_goes_to_another_instance_while_one_in_its_grace_holds_the_first() 
         "the dispatch never entered its grace"
     );
     let held = cell.resident_ids()[0];
-    let _next = submit(&cell, &module);
+    let next = submit(&cell, &module);
     // The next dispatch enters a grace of its own on the instance it gets,
     // so the cell is at rest once both holds exist.
     assert!(
@@ -185,12 +182,8 @@ fn a_dispatch_goes_to_another_instance_while_one_in_its_grace_holds_the_first() 
     );
     let metrics = cell.metrics();
     assert_eq!(
-        (
-            metrics.served_activated,
-            metrics.served_shared,
-            metrics.activations_for_holds
-        ),
-        (2, 0, 1),
+        (metrics.served_activated, metrics.served_shared),
+        (2, 0),
         "the next dispatch must not join the held instance"
     );
     assert_eq!(
@@ -201,10 +194,19 @@ fn a_dispatch_goes_to_another_instance_while_one_in_its_grace_holds_the_first() 
         1,
         "the next dispatch runs on a second instance"
     );
-    let meters = cell.meters(&module).expect("module meters");
-    assert_eq!(
-        (meters.instance_holds(), meters.activations_for_holds()),
-        (2, 1)
-    );
     cell.shutdown();
+    // Stopping the cell ends both dispatches, and each completion says why
+    // its instance was activated.
+    let (ignoring, next) = (result(&ignoring), result(&next));
+    assert_eq!(ignoring.instance, held);
+    let activated_for_hold = |dispatch: &DispatchResult| {
+        isoplane_harness::logging::dispatch_completion(dispatch.instance, dispatch.dispatch_id)
+            ["activated_for_hold"]
+            .clone()
+    };
+    assert_eq!(
+        (activated_for_hold(&ignoring), activated_for_hold(&next)),
+        (false.into(), true.into()),
+        "only the second activation was made because the first instance was held"
+    );
 }
