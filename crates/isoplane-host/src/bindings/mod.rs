@@ -102,6 +102,7 @@ impl CellBindings {
         if let Some(id) = self.alloc(import, false) {
             return id;
         }
+        #[cfg(any(test, feature = "test-util"))]
         if let Some(rt) = self.rt() {
             rt.metrics
                 .pending_cap_rejections

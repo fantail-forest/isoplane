@@ -48,7 +48,7 @@ cargo metadata --no-deps --format-version 1 \
 | **Build orchestration**   | `Taskfile.yml`, `taskfiles/`                             | Run common operations through Task; `task --list` is the menu. Task handles repository build dependencies, preparation and per-platform build directories; native build tools own compilation and incrementality. |
 | **.NET SDK**             | `global.json`, `tools.env`                                  | `global.json` selects the contributor SDK. Customer compatibility fixtures use `MINIMUM_DOTNET_SDK_VERSION` from `tools.env`.                                                                                             |
 | **wasi-sdk, wasm-tools** | `guest-runtime/manifest.env`, `tools.env`                       | The C# guest linker and the wasm inspection tool.                                                                                                |
-| **Lint**                 | `task lint`                                             | Full Rust gate before merging or releasing code changes; lint affected packages (`task lint -- -p <name>`) during development. See the validation workflow. |
+| **Lint**                 | `task lint:gate`                                        | Full Rust gate before merging or releasing code changes; lint affected packages (`task lint -- -p <name>`) during development. See the validation workflow. |
 | **Format**               | `rustfmt.toml` (root and `guests/`)                     | Check affected workspaces during development; `task format:check` is the full format gate. Default rustfmt settings, without `#[rustfmt::skip]`. |
 | **Tests**                | `task test`, `task test:unit`, `task test:rust`         | The test tasks prepare their prerequisites before running `cargo test`. Fixture helpers resolve and load prepared artifacts. |
 | **Database**             | PostgreSQL for relational integrations | Use the PostgreSQL protocol. Local PostgreSQL containers are suitable for tests. See the relational-storage opinion. |
@@ -66,7 +66,8 @@ task exec -- <command>                             # Run a native development co
 task exec                                          # A development shell
 
 task build                                         # Build crates, tests, examples
-task lint                                          # The Rust lint gate; task lint -- -p <name> for one package
+task lint:gate                                     # The Rust lint gate
+task lint -- -p <name>                             # Lint one package
 task format                                        # Format both workspaces; task format:check is the gate
 
 task test -- -- --skip a_prepared_release_ # Rust suite without the installation journey

@@ -91,40 +91,9 @@ impl Default for Histogram {
 #[derive(Debug, Default)]
 pub struct Metrics {
     pub dispatches: AtomicU64,
-    /// Wakes the wake router enqueued.
-    pub wakes: AtomicU64,
-    /// Completions for an instance nobody could hand them to. The result is
-    /// already in the future table, so for a live instance this is a dispatch
-    /// that is never answered; for a discarded one it is the correct outcome.
-    pub wakes_dropped: AtomicU64,
     pub traps: AtomicU64,
-    /// Dispatches that entered grace and returned inside it; the instance
-    /// stayed.
-    pub budget_exits: AtomicU64,
-    /// Dispatches still executing at the end of grace, terminated without
-    /// unwinding and discarded. The hang breaker counts these. Disjoint from
-    /// `traps`: a kill is not a trap.
-    pub budget_kills: AtomicU64,
-    /// Dispatches still in progress when the grace after their cancellation
-    /// ran out; each evicted its instance.
-    pub cancellation_grace_kills: AtomicU64,
-    /// Times an instance stopped taking new dispatches because one of its
-    /// dispatches entered the grace after its cancellation.
-    pub instance_holds: AtomicU64,
-    /// Activations made because the instances that had room were held.
-    pub activations_for_holds: AtomicU64,
-    /// Instances whose memory passed their memory limit, retired once their
-    /// dispatches finished.
-    pub memory_limit_retirements: AtomicU64,
-    /// occupancy consumed past the budget on kills of either phase; already inside
-    /// the tenant's `occupancy_ns`.
-    pub overage_ns: AtomicU64,
 
-    pub shed: AtomicU64,
     pub breaker_rejections: AtomicU64,
-    pub pending_cap_rejections: AtomicU64,
-    /// Egress-policy refusals, including connection-limit refusals.
-    pub egress_denials: AtomicU64,
 
     pub parked: AtomicU64,
     pub hibernated: AtomicU64,
@@ -134,16 +103,62 @@ pub struct Metrics {
     pub delta_bytes: AtomicU64,
     pub activation_us: Histogram,
     pub hibernation_wake_us: Histogram,
-    /// Admission to final response.
-    pub dispatch_us: Histogram,
     pub dirty_pages: Histogram,
 
-    /// How a dispatch got its instance, when it activated one or joined one
-    /// already running another dispatch.
-    pub served_shared: AtomicU64,
-    pub served_activated: AtomicU64,
-
     by_tenant: Mutex<BTreeMap<String, Arc<TenantMetrics>>>,
+
+    /// Wakes the wake router enqueued.
+    #[cfg(any(test, feature = "test-util"))]
+    pub wakes: AtomicU64,
+    /// Completions for an instance nobody could hand them to. The result is
+    /// already in the future table, so for a live instance this is a dispatch
+    /// that is never answered; for a discarded one it is the correct outcome.
+    #[cfg(any(test, feature = "test-util"))]
+    pub wakes_dropped: AtomicU64,
+    /// Dispatches that entered grace and returned inside it; the instance
+    /// stayed.
+    #[cfg(any(test, feature = "test-util"))]
+    pub budget_exits: AtomicU64,
+    /// Dispatches still executing at the end of grace, terminated without
+    /// unwinding and discarded. The hang breaker counts these. Disjoint from
+    /// `traps`: a kill is not a trap.
+    #[cfg(any(test, feature = "test-util"))]
+    pub budget_kills: AtomicU64,
+    /// Occupancy consumed past the budget by exits and kills; already inside
+    /// the tenant's occupancy.
+    #[cfg(any(test, feature = "test-util"))]
+    pub overage_ns: AtomicU64,
+    /// Dispatches still in progress when the grace after their cancellation
+    /// ran out; each evicted its instance.
+    #[cfg(any(test, feature = "test-util"))]
+    pub cancellation_grace_kills: AtomicU64,
+    /// Times an instance stopped taking new dispatches because one of its
+    /// dispatches entered the grace after its cancellation.
+    #[cfg(any(test, feature = "test-util"))]
+    pub instance_holds: AtomicU64,
+    /// Activations made because the instances that had room were held.
+    #[cfg(any(test, feature = "test-util"))]
+    pub activations_for_holds: AtomicU64,
+    /// Instances whose memory passed their memory limit, retired once their
+    /// dispatches finished.
+    #[cfg(any(test, feature = "test-util"))]
+    pub memory_limit_retirements: AtomicU64,
+    /// Dispatches that activated an instance.
+    #[cfg(any(test, feature = "test-util"))]
+    pub served_activated: AtomicU64,
+    /// Dispatches that joined an instance already running another dispatch.
+    #[cfg(any(test, feature = "test-util"))]
+    pub served_shared: AtomicU64,
+    #[cfg(any(test, feature = "test-util"))]
+    pub shed: AtomicU64,
+    #[cfg(any(test, feature = "test-util"))]
+    pub pending_cap_rejections: AtomicU64,
+    /// Egress-policy refusals, including connection-limit refusals.
+    #[cfg(any(test, feature = "test-util"))]
+    pub egress_denials: AtomicU64,
+    /// Admission to final response.
+    #[cfg(any(test, feature = "test-util"))]
+    pub dispatch_us: Histogram,
 }
 
 #[derive(Debug, Default)]
@@ -178,26 +193,12 @@ impl Metrics {
         let l = |a: &AtomicU64| a.load(Ordering::Relaxed);
         MetricsSnapshot {
             dispatches: l(&self.dispatches),
-            wakes: l(&self.wakes),
-            wakes_dropped: l(&self.wakes_dropped),
             traps: l(&self.traps),
-            budget_exits: l(&self.budget_exits),
-            budget_kills: l(&self.budget_kills),
-            cancellation_grace_kills: l(&self.cancellation_grace_kills),
-            instance_holds: l(&self.instance_holds),
-            activations_for_holds: l(&self.activations_for_holds),
-            memory_limit_retirements: l(&self.memory_limit_retirements),
-            overage_ns: l(&self.overage_ns),
-            shed: l(&self.shed),
             breaker_rejections: l(&self.breaker_rejections),
-            pending_cap_rejections: l(&self.pending_cap_rejections),
-            egress_denials: l(&self.egress_denials),
             parked: l(&self.parked),
             hibernated: l(&self.hibernated),
             hot: l(&self.hot),
             delta_bytes: l(&self.delta_bytes),
-            served_shared: l(&self.served_shared),
-            served_activated: l(&self.served_activated),
             activation_p50_us: self.activation_us.p50(),
             activation_p99_us: self.activation_us.p99(),
             hibernation_wake_p50_us: self.hibernation_wake_us.p50(),
@@ -210,6 +211,34 @@ impl Metrics {
                 .iter()
                 .map(|(tenant, metrics)| (tenant.clone(), metrics.occupancy_ns()))
                 .collect(),
+            #[cfg(any(test, feature = "test-util"))]
+            wakes: l(&self.wakes),
+            #[cfg(any(test, feature = "test-util"))]
+            wakes_dropped: l(&self.wakes_dropped),
+            #[cfg(any(test, feature = "test-util"))]
+            budget_exits: l(&self.budget_exits),
+            #[cfg(any(test, feature = "test-util"))]
+            budget_kills: l(&self.budget_kills),
+            #[cfg(any(test, feature = "test-util"))]
+            overage_ns: l(&self.overage_ns),
+            #[cfg(any(test, feature = "test-util"))]
+            cancellation_grace_kills: l(&self.cancellation_grace_kills),
+            #[cfg(any(test, feature = "test-util"))]
+            instance_holds: l(&self.instance_holds),
+            #[cfg(any(test, feature = "test-util"))]
+            activations_for_holds: l(&self.activations_for_holds),
+            #[cfg(any(test, feature = "test-util"))]
+            memory_limit_retirements: l(&self.memory_limit_retirements),
+            #[cfg(any(test, feature = "test-util"))]
+            served_activated: l(&self.served_activated),
+            #[cfg(any(test, feature = "test-util"))]
+            served_shared: l(&self.served_shared),
+            #[cfg(any(test, feature = "test-util"))]
+            shed: l(&self.shed),
+            #[cfg(any(test, feature = "test-util"))]
+            pending_cap_rejections: l(&self.pending_cap_rejections),
+            #[cfg(any(test, feature = "test-util"))]
+            egress_denials: l(&self.egress_denials),
         }
     }
 }
@@ -217,26 +246,12 @@ impl Metrics {
 #[derive(Debug, Clone)]
 pub struct MetricsSnapshot {
     pub dispatches: u64,
-    pub wakes: u64,
-    pub wakes_dropped: u64,
     pub traps: u64,
-    pub budget_exits: u64,
-    pub budget_kills: u64,
-    pub cancellation_grace_kills: u64,
-    pub instance_holds: u64,
-    pub activations_for_holds: u64,
-    pub memory_limit_retirements: u64,
-    pub overage_ns: u64,
-    pub shed: u64,
     pub breaker_rejections: u64,
-    pub pending_cap_rejections: u64,
-    pub egress_denials: u64,
     pub parked: u64,
     pub hibernated: u64,
     pub hot: u64,
     pub delta_bytes: u64,
-    pub served_shared: u64,
-    pub served_activated: u64,
     pub activation_p50_us: u64,
     pub activation_p99_us: u64,
     pub hibernation_wake_p50_us: u64,
@@ -246,6 +261,34 @@ pub struct MetricsSnapshot {
     /// Each tenant's measured slice and reactor occupancy, including work
     /// after a dispatch ends.
     pub tenant_occupancy_ns: BTreeMap<String, u64>,
+    #[cfg(any(test, feature = "test-util"))]
+    pub wakes: u64,
+    #[cfg(any(test, feature = "test-util"))]
+    pub wakes_dropped: u64,
+    #[cfg(any(test, feature = "test-util"))]
+    pub budget_exits: u64,
+    #[cfg(any(test, feature = "test-util"))]
+    pub budget_kills: u64,
+    #[cfg(any(test, feature = "test-util"))]
+    pub overage_ns: u64,
+    #[cfg(any(test, feature = "test-util"))]
+    pub cancellation_grace_kills: u64,
+    #[cfg(any(test, feature = "test-util"))]
+    pub instance_holds: u64,
+    #[cfg(any(test, feature = "test-util"))]
+    pub activations_for_holds: u64,
+    #[cfg(any(test, feature = "test-util"))]
+    pub memory_limit_retirements: u64,
+    #[cfg(any(test, feature = "test-util"))]
+    pub served_activated: u64,
+    #[cfg(any(test, feature = "test-util"))]
+    pub served_shared: u64,
+    #[cfg(any(test, feature = "test-util"))]
+    pub shed: u64,
+    #[cfg(any(test, feature = "test-util"))]
+    pub pending_cap_rejections: u64,
+    #[cfg(any(test, feature = "test-util"))]
+    pub egress_denials: u64,
 }
 #[cfg(test)]
 mod tests {

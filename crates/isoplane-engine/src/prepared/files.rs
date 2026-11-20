@@ -20,6 +20,7 @@ pub enum PreparedPayload {
 
 impl PreparedPayload {
     /// Canonical file name inside a published prepared-artifact directory.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn file_name(self) -> &'static str {
         match self {
             Self::Native => super::NATIVE,

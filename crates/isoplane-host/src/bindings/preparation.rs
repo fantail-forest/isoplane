@@ -11,6 +11,7 @@ use super::native_io::{Context, ResourceCount, ResourceLimits, Resources, Runtim
 use super::WakeSink;
 use crate::egress::{ConnectionOwner, HostEgressPolicy};
 use crate::futures::FutureTable;
+#[cfg(any(test, feature = "test-util"))]
 use crate::metrics::Metrics;
 use crate::InstanceId;
 
@@ -53,6 +54,7 @@ impl PreparationIo {
         let runtime = Runtime {
             egress: config.egress.clone(),
             futures: Arc::new(FutureTable::new(config.buffered_bytes)),
+            #[cfg(any(test, feature = "test-util"))]
             metrics: Arc::new(Metrics::default()),
             wake: wake.clone(),
             reactor,

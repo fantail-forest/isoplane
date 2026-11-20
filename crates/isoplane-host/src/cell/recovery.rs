@@ -13,11 +13,15 @@ impl Cell {
         entry: &Arc<ModuleEntry>,
         completion: Completion,
     ) {
-        if completion == Completion::BudgetKill {
-            entry.meters.record_grace_end(GraceEnd::Killed, 0);
-            self.metrics.budget_kills.fetch_add(1, Ordering::Relaxed);
-        } else {
+        if completion != Completion::BudgetKill {
             self.metrics.traps.fetch_add(1, Ordering::Relaxed);
+        }
+        #[cfg(any(test, feature = "test-util"))]
+        if completion == Completion::BudgetKill {
+            entry
+                .meters
+                .record_grace_end(isoplane_engine::GraceEnd::Killed, 0);
+            self.metrics.budget_kills.fetch_add(1, Ordering::Relaxed);
         }
         self.forget(slot);
         tracing::warn!(

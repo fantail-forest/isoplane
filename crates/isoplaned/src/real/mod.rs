@@ -310,6 +310,7 @@ impl RealCells {
         Ok(module)
     }
 
+    #[cfg(any(test, feature = "test-util"))]
     /// The engine this node's templates are admitted and activated on. A template
     /// prepared in memory can only be installed here when it was built on this engine.
     pub fn engine(&self) -> &isoplane_engine::IsoplaneEngine {

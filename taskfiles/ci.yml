@@ -6,8 +6,8 @@ tasks:
     deps: [':fixtures:rust']
     cmds:
       - task: ':format:check'
-      - task: ':lint'
-        vars: {CLI_ARGS: '--locked --workspace'}
+      - task: ':lint:gate'
+        vars: {CLI_ARGS: '--locked'}
       - task: ':test:unit'
         vars: {CLI_ARGS: '--locked --workspace'}
       - task: ':test:guests'
@@ -42,6 +42,8 @@ tasks:
         vars: {CLI_ARGS: '--locked -p isoplane-native'}
       - task: ':lint'
         vars: {CLI_ARGS: '--locked -p isoplane-native'}
+      - task: ':lint:shipped'
+        vars: {CLI_ARGS: '--locked', SHIPPED: isoplane-native}
 
   integration:host:
     desc: Run host and runtime acceptance tests with managed fixtures
@@ -72,7 +74,7 @@ tasks:
       - task: ':test:native'
         vars: {CLI_ARGS: '--locked --test release_journey'}
       - task: ':release:editor'
-      - '{{.DEVELOPMENT_COMMAND}}cargo build --locked --release -p isoplaned'
+      - task: ':node:binary'
       - task: ':node:package'
         vars:
           BINARIES: '{{.NATIVE_TARGET}}/release'

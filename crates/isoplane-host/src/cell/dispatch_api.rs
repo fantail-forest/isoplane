@@ -94,10 +94,12 @@ pub(super) fn ends_the_instance(out: &DispatchOutcome, slot: &Arc<Slot>) -> bool
 
 #[derive(Clone)]
 pub(super) enum Responder {
+    #[cfg(any(test, feature = "test-util"))]
     Blocking(std::sync::mpsc::SyncSender<DispatchResult>),
     Async(Arc<Mutex<Option<tokio::sync::oneshot::Sender<DispatchResult>>>>),
 }
 
+#[cfg(any(test, feature = "test-util"))]
 impl From<std::sync::mpsc::SyncSender<DispatchResult>> for Responder {
     fn from(sender: std::sync::mpsc::SyncSender<DispatchResult>) -> Self {
         Self::Blocking(sender)
@@ -109,6 +111,7 @@ impl From<std::sync::mpsc::SyncSender<DispatchResult>> for Responder {
 pub(super) fn answer(tx: &Responder, result: DispatchResult) {
     let dispatch_id = result.dispatch_id;
     let disconnected = match tx {
+        #[cfg(any(test, feature = "test-util"))]
         Responder::Blocking(tx) => tx.send(result).is_err(),
         Responder::Async(tx) => match tx.lock().take() {
             Some(tx) => tx.send(result).is_err(),
@@ -126,6 +129,7 @@ pub(super) fn answer(tx: &Responder, result: DispatchResult) {
 impl Cell {
     /// Blocks until the response is final: a dispatch that parks and is later
     /// woken keeps this call outstanding.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn dispatch_blocking(
         &self,
         module: &ModuleId,
@@ -136,6 +140,7 @@ impl Cell {
         self.dispatch_with_stream(module, target, rec, timeout, None)
     }
 
+    #[cfg(any(test, feature = "test-util"))]
     pub(crate) fn dispatch_with_stream(
         &self,
         module: &ModuleId,
@@ -156,6 +161,7 @@ impl Cell {
         )
     }
 
+    #[cfg(any(test, feature = "test-util"))]
     pub(crate) fn dispatch_with_http(
         &self,
         module: &ModuleId,
@@ -180,10 +186,11 @@ impl Cell {
         rec: DispatchRecord,
         http: Option<super::HttpDispatch>,
     ) -> crate::Result<DispatchResult> {
-        self.dispatch_resources_async(module, target, rec, None, http.map(DispatchResources::Http))
+        self.dispatch_resources_async(module, target, rec, http.map(DispatchResources::Http))
             .await
     }
 
+    #[cfg(any(test, feature = "test-util"))]
     fn dispatch_with_resources(
         &self,
         module: &ModuleId,
@@ -250,6 +257,7 @@ impl Cell {
         if let Err(job) = self.queue.push_dispatch(job) {
             job.completion
                 .reject(super::completion::AdmissionRejection::QueueUnavailable);
+            #[cfg(any(test, feature = "test-util"))]
             self.metrics.shed.fetch_add(1, Ordering::Relaxed);
             answer(&job.responder, DispatchResult::shed(job.rec.dispatch_id));
         }
@@ -260,7 +268,6 @@ impl Cell {
         module: &ModuleId,
         target: Target,
         rec: DispatchRecord,
-        timeout: Option<Duration>,
         resources: Option<DispatchResources>,
     ) -> crate::Result<DispatchResult> {
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -271,89 +278,42 @@ impl Cell {
             resources,
             Responder::Async(Arc::new(Mutex::new(Some(tx)))),
         )?;
-        let response = match timeout {
-            Some(timeout) => tokio::time::timeout(timeout, rx)
-                .await
-                .map_err(|_| anyhow::anyhow!("dispatch did not complete within {timeout:?}"))?,
-            None => rx.await,
-        };
-        response.map_err(|_| anyhow::anyhow!("dispatch response channel closed before completion"))
+        rx.await
+            .map_err(|_| anyhow::anyhow!("dispatch response channel closed before completion"))
     }
 
-    /// Submits without waiting; `None` if the cell shed at admission.
+    /// Submits without waiting. A dispatch the cell sheds or the breaker
+    /// refuses is answered on the returned channel.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn submit(
         &self,
         module: &ModuleId,
         target: Target,
         rec: DispatchRecord,
-    ) -> Option<std::sync::mpsc::Receiver<DispatchResult>> {
+    ) -> crate::Result<std::sync::mpsc::Receiver<DispatchResult>> {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
-        self.submit_with(module, target, rec, tx).then_some(rx)
+        self.submit_with(module, target, rec, tx)?;
+        Ok(rx)
     }
 
     /// Submits onto a caller-provided channel that many submissions may
     /// share; results carry [`DispatchResult::dispatch_id`] for matching.
-    /// Returns `false` if the cell shed at admission, and sends nothing in
-    /// that case, so a caller draining the channel counts each shed once. A
-    /// breaker rejection is sent, because it returns `true`. The sender is an
-    /// execution-pool thread, so a channel the caller lets fill stops the
-    /// cell.
+    /// A shed or breaker refusal is sent from the calling thread and every
+    /// other result from an execution-pool thread, so a channel the caller
+    /// lets fill stops the caller or the cell.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn submit_with(
         &self,
         module: &ModuleId,
         target: Target,
         rec: DispatchRecord,
         responder: std::sync::mpsc::SyncSender<DispatchResult>,
-    ) -> bool {
-        let responder = Responder::Blocking(responder);
-        let completion = match self.completion_owner(module, &rec) {
-            Ok(completion) => completion,
-            Err(error) => {
-                tracing::warn!(module = %module, %error, "dispatch admission refused");
-                return false;
-            }
-        };
-        let now = crate::now_ms();
-        let dispatch_id = rec.dispatch_id;
-        let key = BreakerKey {
-            module: module.clone(),
-            route: target.route(),
-        };
-        match self.breaker.check(&key, now) {
-            Ok(probe) => completion.hold_breaker_probe(probe),
-            Err(reason) => {
-                completion.reject(super::completion::AdmissionRejection::Breaker(reason));
-                self.metrics
-                    .breaker_rejections
-                    .fetch_add(1, Ordering::Relaxed);
-                answer(
-                    &responder,
-                    DispatchResult::breaker_rejected(dispatch_id, reason),
-                );
-                return true;
-            }
-        }
-        let job = Box::new(DispatchJob {
-            module: module.clone(),
-            target: target.into(),
-            rec,
-            responder,
-            stream: None,
-            upload: None,
-            completion,
-        });
-        match self.queue.push_dispatch(job) {
-            Ok(()) => true,
-            Err(job) => {
-                job.completion
-                    .reject(super::completion::AdmissionRejection::QueueUnavailable);
-                self.metrics.shed.fetch_add(1, Ordering::Relaxed);
-                false
-            }
-        }
+    ) -> crate::Result<()> {
+        self.enqueue_dispatch(module, target, rec, None, responder.into())
     }
 
     /// Async form, for callers already on a reactor.
+    #[cfg(any(test, feature = "test-util"))]
     pub async fn dispatch(
         self: &Arc<Self>,
         module: &ModuleId,
@@ -361,11 +321,16 @@ impl Cell {
         rec: DispatchRecord,
         timeout: Duration,
     ) -> crate::Result<DispatchResult> {
-        self.dispatch_resources_async(module, target, rec, Some(timeout), None)
-            .await
+        tokio::time::timeout(
+            timeout,
+            self.dispatch_resources_async(module, target, rec, None),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("dispatch did not complete within {timeout:?}"))?
     }
 
     /// Delivers a host future's result through the cell runtime.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn complete_future(&self, id: u64, result: isoplane_abi::result::ResultRecord) {
         self.rt.settle_future(id, result);
     }

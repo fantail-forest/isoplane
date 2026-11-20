@@ -196,6 +196,7 @@ impl Template {
         self.inner.mut_globals.len()
     }
 
+    #[cfg(any(test, feature = "test-util"))]
     pub fn memory_pages(&self) -> u32 {
         self.inner.memory_pages
     }

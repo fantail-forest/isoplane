@@ -14,7 +14,7 @@ use parking_lot::{Mutex, RwLock};
 use isoplane_abi::config::AppManifest;
 use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, TraceContext};
 use isoplane_abi::status::{PollStatus, TrapCode};
-use isoplane_engine::{Completion, DispatchOutcome, GraceEnd, OccupancyBudget};
+use isoplane_engine::{Completion, DispatchOutcome, OccupancyBudget};
 
 use crate::bindings::Tenancy;
 use crate::bindings::{CellRuntime, InstanceCtx, WakeSink};
@@ -195,11 +195,13 @@ pub struct Cell {
     next_dispatch: AtomicU64,
     shutdown: Arc<AtomicBool>,
     workers: Mutex<Vec<std::thread::JoinHandle<()>>>,
+    #[cfg(test)]
     caught_panics: AtomicU64,
 }
 
 impl Cell {
     /// Fails if the reactor or a pool thread cannot be started.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn new(cfg: CellConfig, services: Arc<Services>) -> crate::Result<Arc<Self>> {
         Self::with_snapshot_storage(
             cfg,
@@ -252,6 +254,7 @@ impl Cell {
             wake: Arc::new(CellWake {
                 queue: queue.clone(),
                 index: index.clone(),
+                #[cfg(any(test, feature = "test-util"))]
                 metrics: metrics.clone(),
             }),
             reactor: runtime.handle().clone(),
@@ -280,6 +283,7 @@ impl Cell {
             next_dispatch: AtomicU64::new(1),
             shutdown: Arc::new(AtomicBool::new(false)),
             workers: Mutex::new(Vec::new()),
+            #[cfg(test)]
             caught_panics: AtomicU64::new(0),
             cfg,
         });
@@ -327,10 +331,12 @@ impl Cell {
     /// Warm instances waiting for a dispatch. An instance is Parked from the
     /// moment the guest returns but acquirable only once `finish_and_release`
     /// pools it, and the response leaves before that.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn idle_instances(&self, module: &ModuleId) -> Option<usize> {
         self.modules.read().get(module).map(|e| e.pool.idle())
     }
 
+    #[cfg(any(test, feature = "test-util"))]
     pub fn futures(&self) -> &Arc<FutureTable> {
         &self.rt.futures
     }

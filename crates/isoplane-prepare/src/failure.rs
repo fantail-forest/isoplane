@@ -1,5 +1,3 @@
-use isoplane_engine::Completion;
-
 /// The operation that refused preparation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuildStage {
@@ -16,13 +14,14 @@ pub enum BuildStage {
     Artifact,
 }
 
-/// Structured preparation refusal, retaining the stage and guest outcome.
+/// Structured preparation refusal, retaining the stage.
 #[derive(Debug)]
 pub struct WorkerFailure {
     /// Operation that failed.
     pub stage: BuildStage,
     /// Guest execution outcome, when initialization entered the guest.
-    pub completion: Option<Completion>,
+    #[cfg(any(test, feature = "test-util"))]
+    pub completion: Option<isoplane_engine::Completion>,
     /// Diagnostic context; callers classify using the typed fields.
     pub detail: String,
 }
@@ -43,6 +42,7 @@ impl std::fmt::Display for WorkerFailure {
 impl WorkerFailure {
     /// Classify an operation failure without parsing its diagnostic text.
     pub fn new(stage: BuildStage, error: anyhow::Error) -> Self {
+        #[cfg(any(test, feature = "test-util"))]
         let completion = match error.downcast_ref::<crate::PrepareError>() {
             Some(
                 crate::PrepareError::Initialization { completion, .. }
@@ -53,6 +53,7 @@ impl WorkerFailure {
         };
         Self {
             stage,
+            #[cfg(any(test, feature = "test-util"))]
             completion,
             detail: format!("{error:#}").chars().take(4096).collect(),
         }

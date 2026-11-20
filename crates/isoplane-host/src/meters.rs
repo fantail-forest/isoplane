@@ -15,13 +15,19 @@ pub struct Meters {
     tenant: Option<Arc<crate::metrics::TenantMetrics>>,
     /// The sole compute meter.
     occupancy_ns: AtomicU64,
+    #[cfg(any(test, feature = "test-util"))]
     dispatches: AtomicU64,
+    #[cfg(any(test, feature = "test-util"))]
     budget_exits: AtomicU64,
+    #[cfg(any(test, feature = "test-util"))]
     instance_holds: AtomicU64,
+    #[cfg(any(test, feature = "test-util"))]
     activations_for_holds: AtomicU64,
+    #[cfg(any(test, feature = "test-util"))]
     budget_kills: AtomicU64,
     /// occupancy burned past the budget on kills of either phase. Already inside
     /// `occupancy_ns`; counted again only so the share is reportable.
+    #[cfg(any(test, feature = "test-util"))]
     overage_ns: AtomicU64,
 }
 
@@ -55,9 +61,11 @@ impl Meters {
         }
     }
 
+    #[cfg(any(test, feature = "test-util"))]
     pub fn record_dispatch(&self) {
         self.dispatches.fetch_add(1, Ordering::Relaxed);
     }
+    #[cfg(any(test, feature = "test-util"))]
     pub fn record_grace_end(&self, phase: isoplane_engine::GraceEnd, overage_ns: u64) {
         match phase {
             isoplane_engine::GraceEnd::Exited => &self.budget_exits,
@@ -68,10 +76,12 @@ impl Meters {
     }
     /// One of the module's instances stopped taking new dispatches while a
     /// dispatch on it was in the grace after its cancellation.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn record_instance_hold(&self) {
         self.instance_holds.fetch_add(1, Ordering::Relaxed);
     }
     /// An activation made because the module's instances with room were held.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn record_activation_for_hold(&self) {
         self.activations_for_holds.fetch_add(1, Ordering::Relaxed);
     }
@@ -79,22 +89,28 @@ impl Meters {
     pub fn occupancy_ns(&self) -> u64 {
         self.occupancy_ns.load(Ordering::Relaxed)
     }
+    #[cfg(any(test, feature = "test-util"))]
     pub fn dispatches(&self) -> u64 {
         self.dispatches.load(Ordering::Relaxed)
     }
+    #[cfg(any(test, feature = "test-util"))]
     pub fn instance_holds(&self) -> u64 {
         self.instance_holds.load(Ordering::Relaxed)
     }
+    #[cfg(any(test, feature = "test-util"))]
     pub fn activations_for_holds(&self) -> u64 {
         self.activations_for_holds.load(Ordering::Relaxed)
     }
+    #[cfg(any(test, feature = "test-util"))]
     pub fn budget_exits(&self) -> u64 {
         self.budget_exits.load(Ordering::Relaxed)
     }
+    #[cfg(any(test, feature = "test-util"))]
     pub fn budget_kills(&self) -> u64 {
         self.budget_kills.load(Ordering::Relaxed)
     }
     /// A subset of [`Meters::occupancy_ns`], never an addition to it.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn overage_ns(&self) -> u64 {
         self.overage_ns.load(Ordering::Relaxed)
     }

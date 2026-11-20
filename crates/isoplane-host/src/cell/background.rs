@@ -160,10 +160,11 @@ impl Cell {
                 .wake(INSTANCE_WORK, future, &result, budget);
             owner.add_slice(&outcome);
             entry.meters.record_occupancy(&outcome);
+            #[cfg(any(test, feature = "test-util"))]
             if outcome.completion == Completion::BudgetExit {
                 entry
                     .meters
-                    .record_grace_end(GraceEnd::Exited, outcome.overage_ns);
+                    .record_grace_end(isoplane_engine::GraceEnd::Exited, outcome.overage_ns);
                 self.metrics.budget_exits.fetch_add(1, Ordering::Relaxed);
                 self.metrics
                     .overage_ns
@@ -175,13 +176,17 @@ impl Cell {
             if ends_the_instance(&outcome, slot) || slot.ctx.has_trap() {
                 guard.destroy();
                 let reason = if outcome.completion == Completion::BudgetKill {
-                    entry
-                        .meters
-                        .record_grace_end(GraceEnd::Killed, outcome.overage_ns);
-                    self.metrics.budget_kills.fetch_add(1, Ordering::Relaxed);
-                    self.metrics
-                        .overage_ns
-                        .fetch_add(outcome.overage_ns, Ordering::Relaxed);
+                    #[cfg(any(test, feature = "test-util"))]
+                    {
+                        entry.meters.record_grace_end(
+                            isoplane_engine::GraceEnd::Killed,
+                            outcome.overage_ns,
+                        );
+                        self.metrics.budget_kills.fetch_add(1, Ordering::Relaxed);
+                        self.metrics
+                            .overage_ns
+                            .fetch_add(outcome.overage_ns, Ordering::Relaxed);
+                    }
                     match outcome.execution_limit {
                         Some(isoplane_engine::ExecutionLimit::Wall) => TerminalReason::WallLimit,
                         Some(isoplane_engine::ExecutionLimit::Occupancy) | None => {

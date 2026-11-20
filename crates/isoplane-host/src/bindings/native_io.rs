@@ -28,7 +28,12 @@ use crate::futures::{FutureId, FutureTable};
 use crate::InstanceId;
 pub(crate) use context::{Context, Runtime};
 
-fn report_failure(bindings: &dyn Context, error: &Error) {
+fn report_failure(error: &Error) {
+    tracing::warn!(%error, "native I/O operation failed");
+}
+
+#[cfg(any(test, feature = "test-util"))]
+fn count_denial(bindings: &dyn Context, error: &Error) {
     if matches!(error, Error::Denied(_)) {
         if let Some(runtime) = bindings.runtime() {
             runtime
@@ -37,7 +42,6 @@ fn report_failure(bindings: &dyn Context, error: &Error) {
                 .fetch_add(1, Ordering::Relaxed);
         }
     }
-    tracing::warn!(%error, "native I/O operation failed");
 }
 
 struct ReactorWork {
@@ -1123,7 +1127,9 @@ impl Resources {
                     Error::Dns { .. } | Error::Connection { .. } | Error::Denied(_)
                 );
             if !already_reported && !matches!(error, Error::WouldBlock) {
-                report_failure(bindings, error);
+                #[cfg(any(test, feature = "test-util"))]
+                count_denial(bindings, error);
+                report_failure(error);
             }
         }
         result
@@ -1222,7 +1228,9 @@ impl Resources {
                     _ => return Err(Error::InvalidHandle(stream)),
                 };
                 if let Err(error) = &result {
-                    report_failure(bindings, error);
+                    #[cfg(any(test, feature = "test-util"))]
+                    count_denial(bindings, error);
+                    report_failure(error);
                 }
                 self.stream_result(result)
             }
@@ -1671,6 +1679,7 @@ impl Resources {
                     Err(error) => SocketState::Failed(error),
                 };
                 if let SocketState::Failed(error) = &*current {
+                    #[cfg(any(test, feature = "test-util"))]
                     if matches!(error, Error::Denied(_)) {
                         completion.metrics.egress_denials.fetch_add(1, Ordering::Relaxed);
                     }

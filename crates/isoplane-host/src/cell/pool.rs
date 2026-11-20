@@ -97,6 +97,7 @@ impl Cell {
     }
 
     pub(super) fn note_caught_panic(&self, stage: &'static str) {
+        #[cfg(test)]
         self.caught_panics.fetch_add(1, Ordering::Relaxed);
         tracing::error!(
             cell = %self.cfg.name, stage,
@@ -108,7 +109,8 @@ impl Cell {
     /// Host panics caught and contained; not zero is a host bug. On the cell
     /// rather than [`Metrics`] because it is a fact about this build, not a
     /// tenant.
-    pub fn caught_panics(&self) -> u64 {
+    #[cfg(test)]
+    pub(super) fn caught_panics(&self) -> u64 {
         self.caught_panics.load(Ordering::Relaxed)
     }
 

@@ -294,26 +294,30 @@ fn many_dispatches_share_one_channel_and_stay_matchable() {
 
     let mut rec = http(&r.cell, &slow_mod, "/slow");
     rec.dispatch_id = SLOW_ID;
-    assert!(r.cell.submit_with(
-        &slow_mod,
-        Target::Handler {
-            route: "/slow".into()
-        },
-        rec,
-        tx.clone()
-    ));
+    r.cell
+        .submit_with(
+            &slow_mod,
+            Target::Handler {
+                route: "/slow".into(),
+            },
+            rec,
+            tx.clone(),
+        )
+        .expect("the slow dispatch is submitted");
 
     for i in 0..FAST {
         let mut rec = http(&r.cell, &fast_mod, "/fast");
         rec.dispatch_id = i;
-        assert!(r.cell.submit_with(
-            &fast_mod,
-            Target::Handler {
-                route: "/fast".into()
-            },
-            rec,
-            tx.clone()
-        ));
+        r.cell
+            .submit_with(
+                &fast_mod,
+                Target::Handler {
+                    route: "/fast".into(),
+                },
+                rec,
+                tx.clone(),
+            )
+            .expect("a fast dispatch is submitted");
     }
     drop(tx);
 
@@ -379,56 +383,73 @@ fn a_shed_submission_says_so_rather_than_going_quiet() {
     let mut rec = http(&r.cell, &module, "/spin");
     rec.dispatch_id = 0;
     rec.occupancy_budget_ms = 50;
-    assert!(r.cell.submit_with(
-        &module,
-        Target::Handler {
-            route: "/spin".into()
-        },
-        rec,
-        tx.clone()
-    ));
-    observed
-        .recv_timeout(Duration::from_secs(10))
-        .expect("worker reached the explicit hold");
-
-    let mut shed = 0;
-    let mut accepted = 1;
-    for i in 1..64u64 {
-        let mut rec = http(&r.cell, &module, "/spin");
-        rec.dispatch_id = i;
-        rec.occupancy_budget_ms = 50;
-        if r.cell.submit_with(
+    r.cell
+        .submit_with(
             &module,
             Target::Handler {
                 route: "/spin".into(),
             },
             rec,
             tx.clone(),
-        ) {
-            accepted += 1;
-        } else {
-            shed += 1;
-        }
+        )
+        .expect("the held dispatch is submitted");
+    observed
+        .recv_timeout(Duration::from_secs(10))
+        .expect("worker reached the explicit hold");
+
+    const QUEUED: u64 = 1;
+    for i in 1..64u64 {
+        let mut rec = http(&r.cell, &module, "/spin");
+        rec.dispatch_id = i;
+        rec.occupancy_budget_ms = 50;
+        r.cell
+            .submit_with(
+                &module,
+                Target::Handler {
+                    route: "/spin".into(),
+                },
+                rec,
+                tx.clone(),
+            )
+            .expect("the dispatch is submitted");
     }
     drop(tx);
+    let shed: Vec<_> = rx.try_iter().collect();
     assert_eq!(
-        accepted, 2,
-        "one Hot and one queued; everything else must shed at admission"
+        shed.iter()
+            .map(|result| result.dispatch_id)
+            .collect::<Vec<_>>(),
+        (QUEUED + 1..64).collect::<Vec<_>>(),
+        "one Hot and one queued; everything else must be answered at admission"
     );
-    assert_eq!(shed, 62, "the rest were shed");
+    for result in &shed {
+        assert_eq!(result.status, 503, "dispatch {}", result.dispatch_id);
+        assert_eq!(
+            result.trap.as_deref(),
+            Some("shed"),
+            "dispatch {}",
+            result.dispatch_id
+        );
+    }
     assert!(
         r.cell.metrics().shed >= 62,
         "the cell must count what it shed"
     );
 
     drop(release);
-    let mut got = 0;
-    while rx.recv_timeout(Duration::from_secs(2)).is_ok() {
-        got += 1;
-    }
+    let mut accepted: Vec<_> = (0..=QUEUED)
+        .map(|_| {
+            let result = rx
+                .recv_timeout(Duration::from_secs(10))
+                .expect("accepted work is answered once released");
+            (result.dispatch_id, result.status)
+        })
+        .collect();
+    accepted.sort_unstable();
     assert_eq!(
-        got, accepted,
-        "results on the channel must equal accepted submissions"
+        accepted,
+        [(0, 200), (QUEUED, 200)],
+        "the held and the queued dispatch must each run"
     );
     r.cell.shutdown();
 }

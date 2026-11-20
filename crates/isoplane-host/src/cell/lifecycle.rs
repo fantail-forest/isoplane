@@ -56,10 +56,13 @@ impl Cell {
         let _execution = slot.lock_execution();
         self.note_acquired(src, t0.elapsed());
         if held && src == AcquireSource::Activated {
-            self.metrics
-                .activations_for_holds
-                .fetch_add(1, Ordering::Relaxed);
-            entry.meters.record_activation_for_hold();
+            #[cfg(any(test, feature = "test-util"))]
+            {
+                self.metrics
+                    .activations_for_holds
+                    .fetch_add(1, Ordering::Relaxed);
+                entry.meters.record_activation_for_hold();
+            }
             job.completion.activated_for_hold();
         }
         self.begin_dispatch(&slot, &entry, job, src);
@@ -166,6 +169,7 @@ impl Cell {
         }
 
         slot.record_dispatch(&job.rec);
+        #[cfg(any(test, feature = "test-util"))]
         if matches!(job.rec.kind, DispatchKind::Http(_)) {
             entry.meters.record_dispatch();
         }
@@ -278,11 +282,13 @@ impl Cell {
             }
             AcquireSource::Activated => {
                 self.metrics.activation_us.record(took.as_micros() as u64);
+                #[cfg(any(test, feature = "test-util"))]
                 self.metrics
                     .served_activated
                     .fetch_add(1, Ordering::Relaxed);
             }
             AcquireSource::Shared => {
+                #[cfg(any(test, feature = "test-util"))]
                 self.metrics.served_shared.fetch_add(1, Ordering::Relaxed);
             }
         }
@@ -390,7 +396,11 @@ impl Cell {
 
     /// Restores a hibernated instance before its next slice; false if it
     /// could not be restored, in which case every dispatch on it has failed.
-    fn restore_for_wake(self: &Arc<Self>, slot: &Arc<Slot>, entry: &Arc<ModuleEntry>) -> bool {
+    pub(super) fn restore_for_wake(
+        self: &Arc<Self>,
+        slot: &Arc<Slot>,
+        entry: &Arc<ModuleEntry>,
+    ) -> bool {
         let started = Instant::now();
         if let Err(error) = self.wake(slot, entry) {
             let message = format!(
@@ -607,11 +617,16 @@ impl Cell {
             // designed.
             Completion::BudgetExit => {
                 let overage = out.overage_ns;
-                entry.meters.record_grace_end(GraceEnd::Exited, overage);
-                self.metrics.budget_exits.fetch_add(1, Ordering::Relaxed);
-                self.metrics
-                    .overage_ns
-                    .fetch_add(overage, Ordering::Relaxed);
+                #[cfg(any(test, feature = "test-util"))]
+                {
+                    entry
+                        .meters
+                        .record_grace_end(isoplane_engine::GraceEnd::Exited, overage);
+                    self.metrics.budget_exits.fetch_add(1, Ordering::Relaxed);
+                    self.metrics
+                        .overage_ns
+                        .fetch_add(overage, Ordering::Relaxed);
+                }
                 tracing::info!(
                     tenant = %entry.tenant, instance = %slot.id,
                     overage_us = overage / 1_000,
@@ -643,13 +658,16 @@ impl Cell {
             Completion::Trapped | Completion::BudgetKill => {
                 let killed = completion == Completion::BudgetKill;
                 if killed {
-                    entry
-                        .meters
-                        .record_grace_end(GraceEnd::Killed, out.overage_ns);
-                    self.metrics.budget_kills.fetch_add(1, Ordering::Relaxed);
-                    self.metrics
-                        .overage_ns
-                        .fetch_add(out.overage_ns, Ordering::Relaxed);
+                    #[cfg(any(test, feature = "test-util"))]
+                    {
+                        entry
+                            .meters
+                            .record_grace_end(isoplane_engine::GraceEnd::Killed, out.overage_ns);
+                        self.metrics.budget_kills.fetch_add(1, Ordering::Relaxed);
+                        self.metrics
+                            .overage_ns
+                            .fetch_add(out.overage_ns, Ordering::Relaxed);
+                    }
                     self.breaker.record_kill(&breaker_key, crate::now_ms());
                 } else {
                     // A kill is not also a trap.
@@ -693,6 +711,7 @@ impl Cell {
         if memory_bytes as u64 <= limit || !slot.retire() {
             return;
         }
+        #[cfg(any(test, feature = "test-util"))]
         self.metrics
             .memory_limit_retirements
             .fetch_add(1, Ordering::Relaxed);
@@ -967,6 +986,7 @@ impl Cell {
         }) {
             self.breaker.record_kill(&key, crate::now_ms());
         }
+        #[cfg(any(test, feature = "test-util"))]
         self.metrics
             .cancellation_grace_kills
             .fetch_add(1, Ordering::Relaxed);
@@ -1053,6 +1073,7 @@ impl Cell {
                 r.completion.donate_to(&slot.ctx.background);
                 abandoned_guest_work = self.rt.futures.end_dispatch(slot.id, did);
             }
+            #[cfg(any(test, feature = "test-util"))]
             if let Some(total_wall_ns) = r.completion.total_wall_ns() {
                 self.metrics.dispatch_us.record(total_wall_ns / 1_000);
             }

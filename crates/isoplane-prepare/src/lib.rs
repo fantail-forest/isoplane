@@ -77,6 +77,7 @@ pub use product::{BuildProduct, LocalPreparation, Preparation};
 /// The module preparation compiles for `wasm`: `wasm` itself, or, when it has an initializer,
 /// `wasm` rewritten so that what initialization leaves can be captured. A compile of this module
 /// in a node's compilation cache is what that node's preparations reuse.
+#[cfg(any(test, feature = "test-util"))]
 pub fn compiled_module(wasm: &[u8]) -> anyhow::Result<Vec<u8>> {
     Ok(bake::instrument(wasm)?.wasm)
 }

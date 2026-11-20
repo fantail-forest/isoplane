@@ -230,6 +230,7 @@ impl Cell {
     /// Captures now, bypassing the idle trajectory's timing and none of its
     /// eligibility rules. Blocks on the cell's reactor for the delta write,
     /// so it is called from a blocking task, never a reactor thread.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn force_hibernate(
         self: &Arc<Self>,
         id: InstanceId,
@@ -251,8 +252,9 @@ impl Cell {
         self.hibernate_now(&slot, &entry)
     }
 
-    /// Wakes from a delta and queues any results that came due while asleep.
-    /// Blocks on the reactor like [`Cell::force_hibernate`].
+    /// Restores a hibernated instance as its next slice would. Blocks on the
+    /// reactor like [`Cell::force_hibernate`].
+    #[cfg(any(test, feature = "test-util"))]
     pub fn force_wake(self: &Arc<Self>, id: InstanceId) -> crate::Result<()> {
         let (slot, module) = {
             let g = self.residents.lock();
@@ -268,17 +270,10 @@ impl Cell {
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("no such module"))?;
         let _execution = slot.lock_execution();
-        if slot.state() != LifecycleTier::Hibernated {
-            return Ok(());
-        }
-        let t0 = Instant::now();
-        self.wake(&slot, &entry)?;
-        self.metrics
-            .hibernation_wake_us
-            .record(t0.elapsed().as_micros() as u64);
-        if self.has_runnable(&slot) {
-            self.queue_wake(slot.clone());
-        }
+        anyhow::ensure!(
+            slot.state() != LifecycleTier::Hibernated || self.restore_for_wake(&slot, &entry),
+            "instance {id} could not be restored"
+        );
         Ok(())
     }
 }

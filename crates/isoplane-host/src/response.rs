@@ -243,6 +243,7 @@ impl ResponseTable {
     }
 
     /// Whether a streaming response can still receive writes.
+    #[cfg(test)]
     pub fn is_streaming(&self, handle: u32) -> bool {
         self.open
             .get(&handle)

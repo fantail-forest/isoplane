@@ -3,7 +3,7 @@ version: '3'
 tasks:
   default:
     desc: Initialize source dependencies and install development tools
-    deps: [dotnet, rust, wasm-tools]
+    deps: [dotnet, rust, wasm-tools, jq]
     cmds:
       - git submodule update --init
 
@@ -43,6 +43,20 @@ tasks:
       - 'test "$(wasm-tools --version)" = "wasm-tools {{.WASM_TOOLS_VERSION}}"'
     cmds:
       - cargo install --locked wasm-tools@{{.WASM_TOOLS_VERSION}}
+
+  jq:
+    desc: Install jq, which reads Cargo's build messages, when no jq is on PATH
+    vars:
+      VERSION: '{{.JQ_VERSION}}'
+      ASSET: 'jq-{{if eq OS "darwin"}}macos{{else}}{{OS}}{{end}}-{{ARCH}}{{if eq OS "windows"}}.exe{{end}}'
+      EXECUTABLE: '{{.USER_HOME}}/.local/bin/jq{{if eq OS "windows"}}.exe{{end}}'
+    status:
+      - jq --version
+    cmds:
+      - mkdir -p "{{dir .EXECUTABLE}}"
+      - 'curl --fail --location --retry 3 --output "{{.EXECUTABLE}}" https://github.com/jqlang/jq/releases/download/jq-{{.VERSION}}/{{.ASSET}}'
+      - cmd: chmod +x "{{.EXECUTABLE}}"
+        platforms: [linux, darwin]
 
   workload:
     deps: [dotnet]

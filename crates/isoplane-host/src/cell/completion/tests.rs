@@ -921,9 +921,14 @@ fn shutdown_completes_accepted_queued_work_without_inventing_an_instance() {
     let response = cell
         .submit(&module, Target::Handler { route: "/".into() }, http(301))
         .expect("the first dispatch is accepted");
-    assert!(
+    assert_eq!(
         cell.submit(&module, Target::Handler { route: "/".into() }, http(302))
-            .is_none(),
+            .expect("the second dispatch is submitted")
+            .try_recv()
+            .expect("a shed dispatch is answered at admission")
+            .trap
+            .as_deref(),
+        Some("shed"),
         "the second dispatch must exercise rejected admission"
     );
     assert!(

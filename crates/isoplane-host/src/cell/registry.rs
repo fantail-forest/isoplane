@@ -180,24 +180,26 @@ impl Cell {
     ) -> bool {
         self.active
             .with_mut(&instance, |active| {
-                let Some(started) =
-                    active
-                        .get_mut(dispatch)
-                        .and_then(|dispatch| match dispatch.grace_deadline {
-                            Some(_) => None,
-                            None => {
-                                dispatch.grace_deadline = Some(deadline);
-                                Some(dispatch.completion.entry.meters.clone())
-                            }
-                        })
-                else {
+                let started = active.get_mut(dispatch).is_some_and(|dispatch| {
+                    match dispatch.grace_deadline {
+                        Some(_) => false,
+                        None => {
+                            dispatch.grace_deadline = Some(deadline);
+                            true
+                        }
+                    }
+                });
+                if !started {
                     return false;
-                };
-                if !active.held {
-                    active.held = true;
-                    self.metrics.instance_holds.fetch_add(1, Ordering::Relaxed);
-                    started.record_instance_hold();
                 }
+                #[cfg(any(test, feature = "test-util"))]
+                if !active.held {
+                    self.metrics.instance_holds.fetch_add(1, Ordering::Relaxed);
+                    if let Some(started) = active.get_mut(dispatch) {
+                        started.completion.entry.meters.record_instance_hold();
+                    }
+                }
+                active.held = true;
                 true
             })
             .unwrap_or(false)
@@ -413,6 +415,7 @@ impl Cell {
         Ok(())
     }
 
+    #[cfg(any(test, feature = "test-util"))]
     pub fn meters(&self, module: &ModuleId) -> Option<Arc<Meters>> {
         self.modules.read().get(module).map(|m| m.meters.clone())
     }
@@ -533,9 +536,11 @@ impl Cell {
         self.modules.read().get(module).map(|m| m.tenant.clone())
     }
 
+    #[cfg(any(test, feature = "test-util"))]
     pub fn instance_state(&self, id: InstanceId) -> Option<LifecycleTier> {
         self.residents.lock().get(&id).map(|r| r.slot.state())
     }
+    #[cfg(any(test, feature = "test-util"))]
     pub fn resident_ids(&self) -> Vec<InstanceId> {
         self.residents.lock().keys().copied().collect()
     }

@@ -279,6 +279,7 @@ impl HostEgressPolicy {
     }
 
     /// Select where both native TCP and HTTP sockets are opened.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn with_connections(mut self, connections: Arc<dyn ConnectionFactory>) -> Self {
         self.connections_factory = connections;
         self
