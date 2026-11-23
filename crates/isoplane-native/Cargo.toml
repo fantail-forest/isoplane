@@ -28,7 +28,6 @@ isoplane-trust.workspace = true
 parking_lot.workspace = true
 blake3.workspace = true
 sha2.workspace = true
-zstd.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true

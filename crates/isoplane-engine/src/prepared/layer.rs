@@ -39,6 +39,7 @@ impl IsoplaneEngine {
     /// Capture a completed initializer without recompiling its code. Refuses unsupported live state.
     /// The preparation caller must first instrument and admit the module, including all mutable
     /// exports and the restrictions on passive segments and function-table mutation.
+    #[cfg(feature = "rust-guests")]
     pub fn prepare_initialized_template(
         &self,
         template: &Template,
@@ -108,7 +109,9 @@ impl IsoplaneEngine {
             Capture::Over => Some(template.inner.prepared_hash.ok_or(PreparedError::Invalid(
                 "a base template must be loaded from a published baseline",
             ))?),
-            Capture::Application | Capture::RuntimeBaseline => None,
+            #[cfg(feature = "rust-guests")]
+            Capture::Application => None,
+            Capture::RuntimeBaseline => None,
         };
         let memory = instance.memory();
         let memory_ranges =
@@ -144,7 +147,11 @@ impl IsoplaneEngine {
                 &memory_ranges,
                 self.inner.cfg.max_memory_bytes as usize,
             ),
-            Capture::Application | Capture::RuntimeBaseline => {
+            #[cfg(feature = "rust-guests")]
+            Capture::Application => {
+                crate::MemoryImage::from_layer(instance.memory(), &memory_ranges)
+            }
+            Capture::RuntimeBaseline => {
                 crate::MemoryImage::from_layer(instance.memory(), &memory_ranges)
             }
         }
@@ -211,6 +218,7 @@ impl IsoplaneEngine {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Capture {
     /// The whole initialization, as a complete layer.
+    #[cfg(feature = "rust-guests")]
     Application,
     /// The runtime-only initialization, as a complete layer that still runs
     /// the application's initializer.

@@ -29,6 +29,7 @@ impl BuildProduct {
 #[async_trait::async_trait]
 pub trait Preparation: Send + Sync {
     /// Run bounded initialization attempts and return the successful captured output.
+    #[cfg(any(not(target_os = "linux"), feature = "rust-guests"))]
     async fn prepare(
         &self,
         wasm: &[u8],
@@ -108,6 +109,7 @@ impl LocalPreparation {
 
 #[async_trait::async_trait]
 impl Preparation for LocalPreparation {
+    #[cfg(any(not(target_os = "linux"), feature = "rust-guests"))]
     async fn prepare(
         &self,
         wasm: &[u8],
@@ -156,6 +158,7 @@ impl Preparation for LocalPreparation {
     }
 }
 
+#[cfg(any(not(target_os = "linux"), feature = "rust-guests"))]
 fn prepare(
     wasm: &[u8],
     request: &BuildRequest,
@@ -165,9 +168,9 @@ fn prepare(
         validate(wasm, request).map_err(|error| WorkerFailure::new(BuildStage::Input, error))?;
     let engine = IsoplaneEngine::new(request.engine.clone())
         .map_err(|error| WorkerFailure::new(BuildStage::Engine, error))?;
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", feature = "rust-guests"))]
     let capture = crate::initialize::CaptureMode::Layered { wasm, identity };
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(all(target_os = "linux", feature = "rust-guests")))]
     let capture = crate::initialize::CaptureMode::Portable { wasm };
     Ok(produce(&engine, request, cache, identity, capture)?.0)
 }
@@ -178,6 +181,13 @@ pub(crate) fn produce(
     engine: &IsoplaneEngine,
     request: &BuildRequest,
     cache: Option<&isoplane_engine::CompilationCache>,
+    #[cfg_attr(
+        not(any(not(target_os = "linux"), feature = "rust-guests")),
+        expect(
+            unused_variables,
+            reason = "only a portable capture is compiled after it is captured"
+        )
+    )]
     identity: PreparedIdentity,
     capture: crate::initialize::CaptureMode<'_>,
 ) -> Result<(BuildProduct, Option<isoplane_engine::Template>), WorkerFailure> {
@@ -207,6 +217,7 @@ pub(crate) fn produce(
         crate::initialize::Captured::Layered { prepared } => prepared
             .encode_builder_output()
             .map_err(|error| WorkerFailure::new(BuildStage::Artifact, error.into()))?,
+        #[cfg(any(not(target_os = "linux"), feature = "rust-guests"))]
         crate::initialize::Captured::Portable(module) => {
             encode(engine, &module, identity, request.application_files.clone())
                 .map_err(|error| WorkerFailure::new(BuildStage::Artifact, error))?
@@ -248,6 +259,7 @@ pub(crate) fn validate(wasm: &[u8], request: &BuildRequest) -> anyhow::Result<Pr
     Ok(request.identity()?)
 }
 
+#[cfg(any(not(target_os = "linux"), feature = "rust-guests"))]
 fn encode(
     engine: &IsoplaneEngine,
     wasm: &[u8],

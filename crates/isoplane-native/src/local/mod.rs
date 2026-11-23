@@ -22,8 +22,8 @@ pub struct Inputs {
     pub runtime_cache_directory: std::path::PathBuf,
     /// Host-provided files visible to the sandbox.
     pub platform_files: isoplane_engine::PlatformFiles,
-    /// The application package's files, for a module that runs a package
-    /// rather than carrying its application; empty otherwise.
+    /// The application package's files; empty for a shared runtime prepared
+    /// ahead of any application.
     pub application_files: isoplane_engine::PlatformFiles,
     /// Provenance of the runtime selected for the application package.
     pub runtime_profile: isoplane_prepare::RuntimeProfile,
@@ -53,6 +53,9 @@ pub enum Error {
     /// Local host services could not be started.
     #[error("local host startup failed: {0:#}")]
     Startup(anyhow::Error),
+    /// There is no application package to prepare.
+    #[error("the application package is empty")]
+    EmptyPackage,
     /// A debugger peer did not identify a bound loopback endpoint.
     #[error("the debugger endpoint must be the session-owned 127.0.0.1 address with a bound port")]
     DebugEndpoint,

@@ -60,7 +60,6 @@ mod tests {
         assert_eq!(limits.pending_futures_per_dispatch, 4096);
         assert_eq!(limits.instance_open_connections, 32);
         assert_eq!(limits.package_bytes, 50 << 20);
-        assert_eq!(limits.module_bytes_compressed, 50 << 20);
 
         let configured: AppManifest = serde_json::from_str(
             r#"{
@@ -78,6 +77,5 @@ mod tests {
         assert_eq!(limits.pending_futures_per_dispatch, 3);
         assert_eq!(limits.instance_open_connections, 4);
         assert_eq!(limits.package_bytes, 1024);
-        assert_eq!(limits.module_bytes_compressed, 50 << 20);
     }
 }

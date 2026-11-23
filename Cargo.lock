@@ -1676,7 +1676,6 @@ dependencies = [
  "wat",
  "win32job",
  "windows-sys 0.61.2",
- "zstd",
 ]
 
 [[package]]

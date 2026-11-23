@@ -55,6 +55,33 @@ pub struct PreparationContext<'a> {
     pub cancellation: &'a tokio_util::sync::CancellationToken,
 }
 
+/// How the daemon prepares a module of one runtime profile. Cargo can turn
+/// `rust-guests` on in `isoplane-prepare` without turning it on here, so this
+/// crate matches on its own enum and refuses in one place a profile it was
+/// not built to prepare.
+#[derive(Clone, Copy)]
+enum Producer {
+    /// An application package over an installed shared runtime.
+    SharedRuntime,
+    /// A module that carries its whole application.
+    #[cfg(feature = "rust-guests")]
+    SelfContained,
+}
+
+impl Producer {
+    fn of(profile: &isoplane_prepare::RuntimeProfile) -> anyhow::Result<Self> {
+        match profile.shared_runtime_sdk_version() {
+            Some(_) => Ok(Self::SharedRuntime),
+            #[cfg(feature = "rust-guests")]
+            None => Ok(Self::SelfContained),
+            #[cfg(not(feature = "rust-guests"))]
+            None => anyhow::bail!(
+                "deployments must be prepared from an application package on an installed shared runtime"
+            ),
+        }
+    }
+}
+
 /// A publication protected from collection until selected or discarded.
 pub struct PreparedInstallation {
     /// The exact immutable output to select.
@@ -178,11 +205,13 @@ impl Deployer {
         options: &DeployOptions,
         context: &PreparationContext<'_>,
     ) -> anyhow::Result<PreparedInstallation> {
-        let (report, request, identity) =
-            self.admit_request(manifest, wasm, options, context).await?;
-        let (product, artifact, baseline): (_, _, Option<String>) = match &context.runtime {
+        let producer = Producer::of(&context.runtime)?;
+        let (report, request, identity) = self
+            .admit_request(manifest, wasm, options, context, producer)
+            .await?;
+        let (product, artifact, baseline): (_, _, Option<String>) = match producer {
             #[cfg(target_os = "linux")]
-            isoplane_prepare::RuntimeProfile::SharedRuntime { .. } => {
+            Producer::SharedRuntime => {
                 anyhow::ensure!(
                     report.has_initialize()
                         && report
@@ -205,7 +234,8 @@ impl Deployer {
                 }?;
                 (product, artifact, Some(held.name))
             }
-            isoplane_prepare::RuntimeProfile::RawWasm => {
+            #[cfg(feature = "rust-guests")]
+            Producer::SelfContained => {
                 let product = context
                     .provider
                     .prepare(wasm, &request, context.cancellation)
@@ -219,7 +249,7 @@ impl Deployer {
                 (product, artifact, None)
             }
             #[cfg(not(target_os = "linux"))]
-            isoplane_prepare::RuntimeProfile::SharedRuntime { .. } => {
+            Producer::SharedRuntime => {
                 anyhow::ensure!(
                     report.has_initialize(),
                     "installed runtime needs application initialization"
@@ -228,7 +258,7 @@ impl Deployer {
                     .provider
                     .prepare(wasm, &request, context.cancellation)
                     .await?;
-                // SAFETY: as for RawWasm above; the profile changes admission, not producer trust.
+                // SAFETY: native output comes only from the selected trusted producer, never a bundle.
                 let artifact = unsafe {
                     context
                         .engine
@@ -270,6 +300,7 @@ impl Deployer {
         wasm: &'a [u8],
         opts: &DeployOptions,
         context: &PreparationContext<'_>,
+        producer: Producer,
     ) -> anyhow::Result<(
         isoplane_runtime::validator::ValidationReport,
         isoplane_prepare::BuildRequest,
@@ -286,13 +317,12 @@ impl Deployer {
             ),
             "daemon preparation requires explicit public destination policy"
         );
-        let admitted = match context.runtime {
-            isoplane_prepare::RuntimeProfile::SharedRuntime { .. } => {
+        let admitted = match producer {
+            Producer::SharedRuntime => {
                 isoplane_control::admission::admit_shared_runtime(manifest, wasm)?
             }
-            isoplane_prepare::RuntimeProfile::RawWasm => {
-                isoplane_control::admission::admit(manifest, wasm)?
-            }
+            #[cfg(feature = "rust-guests")]
+            Producer::SelfContained => isoplane_control::admission::admit(manifest, wasm)?,
         };
         let mut runtime_config = Vec::new();
         context
