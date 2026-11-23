@@ -32,8 +32,4 @@ impl isoplane_engine::bindings::InitializationBindings for InitializationTestBin
     ) -> Result<i64, isoplane_engine::bindings::BindingError> {
         self.0.call_fill(call, out)
     }
-
-    fn runtime_bringup(&self) -> bool {
-        false
-    }
 }

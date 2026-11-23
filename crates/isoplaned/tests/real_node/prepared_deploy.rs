@@ -110,7 +110,6 @@ async fn prepared_deployment_serves_initialized_state_without_repeating_initiali
             &DeployOptions {
                 version: VersionId("v1".into()),
                 tenant: "acme".into(),
-                init_sandbox: Default::default(),
             },
             &context,
         )
@@ -135,7 +134,6 @@ async fn prepared_deployment_serves_initialized_state_without_repeating_initiali
             &DeployOptions {
                 version: VersionId("v1".into()),
                 tenant: "acme".into(),
-                init_sandbox: Default::default(),
             },
             &context,
         )
@@ -196,7 +194,6 @@ async fn a_preparation_refusal_reaches_the_caller_without_publishing_artifacts()
             &DeployOptions {
                 version: VersionId("v1".into()),
                 tenant: "acme".into(),
-                init_sandbox: Default::default(),
             },
             &context,
         )
@@ -250,7 +247,6 @@ async fn source_admission_rejects_invalid_input_before_calling_preparation() {
             &DeployOptions {
                 version: VersionId("v1".into()),
                 tenant: "acme".into(),
-                init_sandbox: Default::default(),
             },
             &context,
         )

@@ -12,9 +12,6 @@ impl InitializationBindings for NoImports {
     fn call_fill(&mut self, call: ImportCall<'_>, _output: &mut [u8]) -> Result<i64, BindingError> {
         Err(BindingError::Unsupported(call.import))
     }
-    fn runtime_bringup(&self) -> bool {
-        false
-    }
 }
 
 fn dispatch(instance: &mut Instance) -> Completion {

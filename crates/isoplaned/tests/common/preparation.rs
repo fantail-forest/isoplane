@@ -1,4 +1,4 @@
-use isoplane_abi::config::{AppManifest, InitSandbox};
+use isoplane_abi::config::AppManifest;
 use isoplaned::node::Node;
 
 #[allow(
@@ -72,7 +72,6 @@ pub(crate) trait LocalDeployment {
         tenant: &str,
         manifest: AppManifest,
         guest: impl Into<Guest>,
-        sandbox: InitSandbox,
     ) -> anyhow::Result<Deployed>;
 }
 
@@ -117,7 +116,6 @@ impl LocalDeployment for Node {
         tenant: &str,
         mut manifest: AppManifest,
         guest: impl Into<Guest>,
-        sandbox: InitSandbox,
     ) -> anyhow::Result<Deployed> {
         let guest = guest.into();
         let provider = provider(&self.cfg);
@@ -145,7 +143,6 @@ impl LocalDeployment for Node {
                 &isoplane_control::DeployOptions {
                     version: isoplane_control::VersionId(version.to_string()),
                     tenant: tenant.to_string(),
-                    init_sandbox: sandbox,
                 },
                 &context,
             )

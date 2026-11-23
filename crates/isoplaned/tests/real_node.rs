@@ -10,7 +10,6 @@ mod mapped_storage;
 mod prepared_deploy;
 
 use common::{config, get, manifest, serve, start_with, Rig};
-use isoplane_abi::config::InitSandbox;
 use isoplane_abi::dispatch::ResponseHead;
 use isoplaned::node::Node;
 
@@ -68,7 +67,7 @@ fn head(status: u16, body: &str) -> ResponseHead {
 }
 
 async fn start(head: ResponseHead) -> Rig {
-    start_with(guest(&head), InitSandbox::Sealed).await
+    start_with(guest(&head)).await
 }
 
 // ---------------------------------------------------------------------------
@@ -159,10 +158,9 @@ async fn a_csharp_handler_receives_request_fields_for_every_standard_http_method
     use http_body_util::Full;
     use hyper::Request;
 
-    let rig = start_with(
-        common::preparation::Guest::from("isoplane_guest_dotnet_node"),
-        InitSandbox::RuntimeBringUp,
-    )
+    let rig = start_with(common::preparation::Guest::from(
+        "isoplane_guest_dotnet_node",
+    ))
     .await;
     // CONNECT's authority-form target has no path; this route also admits OPTIONS *.
     let base64 = base64::engine::general_purpose::STANDARD;
@@ -235,10 +233,9 @@ async fn a_csharp_streaming_handler_receives_its_upload() {
     use http_body_util::Full;
     use hyper::Request;
 
-    let rig = start_with(
-        common::preparation::Guest::from("isoplane_guest_dotnet_upload"),
-        InitSandbox::RuntimeBringUp,
-    )
+    let rig = start_with(common::preparation::Guest::from(
+        "isoplane_guest_dotnet_upload",
+    ))
     .await;
     let upload = Request::builder()
         .method("POST")
@@ -404,10 +401,9 @@ async fn response_framing_respects_methods_and_statuses_that_forbid_content() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn managed_libraries_observe_a_read_only_disk_holding_only_the_platform_files() {
-    let rig = start_with(
-        common::preparation::Guest::from("isoplane_guest_dotnet_node"),
-        InitSandbox::RuntimeBringUp,
-    )
+    let rig = start_with(common::preparation::Guest::from(
+        "isoplane_guest_dotnet_node",
+    ))
     .await;
     let mut mismatches = Vec::new();
     // The platform serves its trust bundle and the application's managed package.

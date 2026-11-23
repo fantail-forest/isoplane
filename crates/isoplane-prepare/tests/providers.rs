@@ -98,7 +98,7 @@ async fn preserves_application_state(provider: &dyn Preparation) {
         memory[100], b'a',
         "initialization must read immutable application files through the PAL"
     );
-    let portable = isoplane_prepare::PreInitializer::new(isoplane_abi::config::InitSandbox::Sealed)
+    let portable = isoplane_prepare::PreInitializer::new()
         .with_engine_config(request.engine.clone())
         .with_memory_limit(isoplane_abi::config::GuestMemoryBytes::new(4 << 20).unwrap())
         .with_platform_files(request.application_files.clone())

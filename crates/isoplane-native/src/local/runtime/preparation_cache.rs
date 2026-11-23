@@ -47,7 +47,6 @@ impl Cache {
             &serde_json::to_vec(&project.manifest)?,
             &serde_json::to_vec(&project.runtime_profile)?,
             &serde_json::to_vec(&super::initialization_network(project))?,
-            project.init_sandbox.as_str().as_bytes(),
         ] {
             hash_part(&mut key, bytes);
         }
@@ -163,7 +162,6 @@ fn hash_part(hash: &mut blake3::Hasher, bytes: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use isoplane_abi::config::InitSandbox;
     use isoplane_engine::{PlatformFile, PlatformFiles};
 
     struct Fixture {
@@ -186,7 +184,6 @@ mod tests {
                 runtime_library: directory.path().join("runtime"),
                 compilation_directory: directory.path().join("compilation"),
                 runtime_cache_directory: directory.path().join("runtimes"),
-                init_sandbox: InitSandbox::Sealed,
                 platform_files: PlatformFiles::new(vec![PlatformFile {
                     path: "/trust.pem".into(),
                     bytes: (&b"roots"[..]).into(),
@@ -381,14 +378,6 @@ mod tests {
             &fixture.wasm,
             &fixture.executable,
             "changed local project identity",
-        );
-        project = fixture.project.clone();
-        project.init_sandbox = InitSandbox::RuntimeBringUp;
-        assert_miss(
-            &project,
-            &fixture.wasm,
-            &fixture.executable,
-            "changed initialization sandbox",
         );
         project = fixture.project.clone();
         project.manifest.guest_memory_bytes =

@@ -17,7 +17,6 @@ async fn delimiter_collisions_cannot_substitute_another_applications_module() {
             "acme",
             common::manifest(app),
             &guest(&head(status, app)),
-            Default::default(),
         )
         .await
         .unwrap();

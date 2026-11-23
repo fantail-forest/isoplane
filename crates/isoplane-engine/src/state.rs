@@ -272,16 +272,12 @@ impl StoreState {
                 .as_ref()
                 .is_some_and(|bindings| bindings.permits_initialization_entropy());
         }
-        (isoplane_abi::imports::RUNTIME_INIT_CAPABILITIES.contains(&name)
+        isoplane_abi::imports::RUNTIME_INIT_CAPABILITIES.contains(&name)
             || (matches!(name, "socket_call" | "poll_call")
                 && self
                     .bindings
                     .as_ref()
-                    .is_some_and(|bindings| bindings.permits_initialization_io())))
-            && self
-                .bindings
-                .as_ref()
-                .is_some_and(|b| b.init_runtime_bringup())
+                    .is_some_and(|bindings| bindings.permits_initialization_io()))
     }
 }
 
@@ -308,7 +304,9 @@ pub(crate) struct WallCapExceeded {
 
 /// An import the guest may not call in its current phase.
 #[derive(Debug, thiserror::Error)]
-#[error("capability violation: import `{import}` is not reachable here (sealed init sandbox: {init_sandbox})")]
+#[error(
+    "capability violation: import `{import}` is not reachable here (initializing: {init_sandbox})"
+)]
 pub(crate) struct CapabilityViolation {
     pub import: &'static str,
     pub init_sandbox: bool,

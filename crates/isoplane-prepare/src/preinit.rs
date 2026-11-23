@@ -1,10 +1,7 @@
 //! Portable SDK initialization through the shared execution engine.
 
 use crate::{Initialization, InitializedModule, PrepareError, RuntimeProfile};
-use isoplane_abi::{
-    config::{GuestMemoryBytes, InitSandbox},
-    imports,
-};
+use isoplane_abi::{config::GuestMemoryBytes, imports};
 use isoplane_engine::{EngineConfig, IsoplaneEngine, ModuleHash, PlatformFiles};
 
 /// Default local initialization occupancy budget.
@@ -16,7 +13,6 @@ pub const DEFAULT_INITIALIZATION_LOG_BYTES: usize = 64 * 1024;
 
 /// Configures portable initialization for local SDK consumers.
 pub struct PreInitializer {
-    pal: InitSandbox,
     runtime: RuntimeProfile,
     platform_files: PlatformFiles,
     memory_limit: Option<GuestMemoryBytes>,
@@ -72,11 +68,16 @@ pub enum PreInitError {
     Trapped(anyhow::Error),
 }
 
+impl Default for PreInitializer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PreInitializer {
-    /// Select the caller's initialization capability policy, with no platform files.
-    pub fn new(pal: InitSandbox) -> Self {
+    /// Local initialization with no platform files.
+    pub fn new() -> Self {
         Self {
-            pal,
             runtime: RuntimeProfile::default(),
             platform_files: PlatformFiles::default(),
             memory_limit: None,
@@ -165,7 +166,6 @@ impl PreInitializer {
                 #[cfg(feature = "rust-guests")]
                 config: req.init_blob.clone(),
                 ..Initialization::new(
-                    self.pal,
                     self.runtime_config
                         .clone()
                         .unwrap_or_else(|| b"{}".to_vec()),
@@ -246,12 +246,12 @@ mod tests {
         let wasm = memory_module("1 16384", "");
         assert!(
             matches!(
-                PreInitializer::new(InitSandbox::Sealed).run(&wasm, &request(&wasm)),
+                PreInitializer::new().run(&wasm, &request(&wasm)),
                 Err(PreInitError::MemoryLimit { .. })
             ),
             "the existing default must retain its initialization memory ceiling"
         );
-        PreInitializer::new(InitSandbox::Sealed)
+        PreInitializer::new()
             .with_memory_limit(GuestMemoryBytes::new(1 << 30).unwrap())
             .run(&wasm, &request(&wasm))
             .expect(
@@ -265,7 +265,7 @@ mod tests {
             "1 65536",
             "(if (i32.ne (memory.grow (i32.const 1)) (i32.const -1)) (then unreachable))",
         );
-        PreInitializer::new(InitSandbox::Sealed)
+        PreInitializer::new()
             .with_runtime_profile(RuntimeProfile::SharedRuntime {
                 sdk_version: "test".into(),
             })
@@ -285,9 +285,7 @@ mod tests {
             init_blob: vec![],
         };
         assert!(
-            PreInitializer::new(InitSandbox::Sealed)
-                .run(&wasm, &request)
-                .is_err(),
+            PreInitializer::new().run(&wasm, &request).is_err(),
             "a template request must identify its exact source"
         );
     }

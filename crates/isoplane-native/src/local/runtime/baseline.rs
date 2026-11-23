@@ -220,7 +220,7 @@ fn request(
     let manifest = &project.manifest;
     let initialization = isoplane_prepare::Initialization {
         network: Some(super::initialization_network(project)),
-        ..isoplane_prepare::Initialization::new(project.init_sandbox, settings.to_vec())
+        ..isoplane_prepare::Initialization::new(settings.to_vec())
     };
     #[cfg(feature = "rust-guests")]
     let initialization = isoplane_prepare::Initialization {

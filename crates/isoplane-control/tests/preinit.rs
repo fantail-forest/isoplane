@@ -7,7 +7,6 @@
 //!    under the runtime engine with its imports bound to traps;
 //!  * input identities permit intentional captured-state reuse without forcing random draws to repeat.
 
-use isoplane_abi::config::InitSandbox;
 use isoplane_engine::ModuleHash;
 use isoplane_prepare::preinit::{PreInitError, PreInitRequest, PreInitializer};
 
@@ -78,7 +77,7 @@ fn req(wasm: &[u8]) -> PreInitRequest {
 #[test]
 fn initialization_reports_its_seed_read_and_logs_and_captures_what_it_built() {
     let wasm = wat::parse_str(guest_wat()).unwrap();
-    let out = PreInitializer::new(InitSandbox::Sealed)
+    let out = PreInitializer::new()
         .run(&wasm, &req(&wasm))
         .expect("pre-init must succeed");
 
@@ -122,9 +121,7 @@ fn initialization_reports_its_seed_read_and_logs_and_captures_what_it_built() {
 #[test]
 fn template_carries_post_init_memory_into_the_runtime_engine() {
     let wasm = wat::parse_str(guest_wat()).unwrap();
-    let out = PreInitializer::new(InitSandbox::Sealed)
-        .run(&wasm, &req(&wasm))
-        .unwrap();
+    let out = PreInitializer::new().run(&wasm, &req(&wasm)).unwrap();
     let mut t = Template::load(&out.wasm);
 
     let seed_lo = t.probe(0);
@@ -153,49 +150,14 @@ fn template_carries_post_init_memory_into_the_runtime_engine() {
 #[test]
 fn fresh_initializations_of_the_same_input_draw_fresh_seeds() {
     let wasm = wat::parse_str(guest_wat()).unwrap();
-    let a = PreInitializer::new(InitSandbox::Sealed)
-        .run(&wasm, &req(&wasm))
-        .unwrap();
-    let b = PreInitializer::new(InitSandbox::Sealed)
-        .run(&wasm, &req(&wasm))
-        .unwrap();
+    let a = PreInitializer::new().run(&wasm, &req(&wasm)).unwrap();
+    let b = PreInitializer::new().run(&wasm, &req(&wasm)).unwrap();
     assert_ne!(a.wasm, b.wasm, "new initialization must draw fresh entropy");
 }
 
-/// A forbidden import traps instead of returning zero, which would put a
-/// wrong value, such as a fixed clock, in every instance.
+/// Initialization is answered a fixed clock and fresh entropy.
 #[test]
-fn a_forbidden_import_fails_the_deploy_and_is_named() {
-    let wat = r#"(module
-  (import "isoplane" "clock_now_coarse" (func $now (result i64)))
-  (memory (export "memory") 1 16)
-  (global $g (mut i64) (i64.const 0))
-  (func (export "isoplane_initialize") (result i64)
-    (global.set $g (call $now)) i64.const 0)
-  (func (export "isoplane_alloc") (param i32 i32) (result i32) (i32.const 0))
-  (func (export "isoplane_handle") (param i32 i32) (result i64) (i64.const 1))
-  (func (export "isoplane_wake") (param i64 i32 i32) (result i64) (i64.const 1))
-)"#;
-    let wasm = wat::parse_str(wat).unwrap();
-    let err = PreInitializer::new(InitSandbox::Sealed)
-        .run(&wasm, &req(&wasm))
-        .err()
-        .expect("initialization must be refused");
-    assert!(
-        matches!(
-            err,
-            PreInitError::ForbiddenCapability {
-                ref import,
-                ..
-            } if import == "clock_now_coarse"
-        ),
-        "a forbidden import names the capability and fails the deploy: {err}"
-    );
-}
-
-/// Bring-up mode supplies the fixed clock and fresh entropy.
-#[test]
-fn runtime_bring_up_answers_the_clock_and_entropy_that_the_sealed_sandbox_refuses() {
+fn initialization_is_answered_a_fixed_clock_and_fresh_entropy() {
     let wat = r#"(module
   (import "isoplane" "clock_now_coarse" (func $now (result i64)))
   (import "isoplane" "entropy_fill"     (func $entropy (param i32 i32)))
@@ -212,19 +174,10 @@ fn runtime_bring_up_answers_the_clock_and_entropy_that_the_sealed_sandbox_refuse
 )"#;
     let wasm = wat::parse_str(wat).unwrap();
 
-    let err = PreInitializer::new(InitSandbox::Sealed)
-        .run(&wasm, &req(&wasm))
-        .err()
-        .expect("initialization must be refused");
-    assert!(
-        matches!(err, PreInitError::ForbiddenCapability { .. }),
-        "sealed, a runtime reading the clock fails the deploy: {err}"
-    );
-
     // The clock policy remains frozen; each entropy request uses the live host source.
-    let out = PreInitializer::new(InitSandbox::RuntimeBringUp)
+    let out = PreInitializer::new()
         .run(&wasm, &req(&wasm))
-        .expect("a runtime must be able to come up");
+        .expect("initialization may read the clock and draw entropy");
     println!("PAL calls: {:?}", out.initialized.pal_calls);
     assert_eq!(
         out.initialized.pal_calls,
@@ -232,28 +185,26 @@ fn runtime_bring_up_answers_the_clock_and_entropy_that_the_sealed_sandbox_refuse
             ("clock_now_coarse".to_string(), 1),
             ("entropy_fill".to_string(), 1)
         ],
-        "runtime bring-up must record the clock and entropy answers it consumed"
+        "initialization must record the clock and entropy answers it consumed"
     );
 
     let mut t = Template::load(&out.wasm);
     assert_eq!(
         t.i64("get_t"),
         0,
-        "runtime bring-up supplies the zero initialization clock"
+        "initialization without network authority reads a zero clock"
     );
     let entropy = t.probe(0);
     assert_ne!(entropy, 0, "entropy must be real bytes, not zeros");
 
-    let again = PreInitializer::new(InitSandbox::RuntimeBringUp)
-        .run(&wasm, &req(&wasm))
-        .unwrap();
+    let again = PreInitializer::new().run(&wasm, &req(&wasm)).unwrap();
     assert_ne!(out.wasm, again.wasm);
     assert_ne!(Template::load(&again.wasm).probe(0), entropy);
 }
 
-/// A timer is a serving capability in either initialization mode.
+/// A timer is a serving capability.
 #[test]
-fn a_timer_during_runtime_bring_up_fails_the_deploy_and_is_named() {
+fn a_timer_during_initialization_fails_the_deploy_and_is_named() {
     let wat = r#"(module
   (import "isoplane" "clock_deadline_in" (func $deadline (param i64) (result i64)))
   (memory (export "memory") 1 16)
@@ -265,7 +216,7 @@ fn a_timer_during_runtime_bring_up_fails_the_deploy_and_is_named() {
   (func (export "isoplane_wake") (param i64 i32 i32) (result i64) (i64.const 1))
 )"#;
     let wasm = wat::parse_str(wat).unwrap();
-    let err = PreInitializer::new(InitSandbox::RuntimeBringUp)
+    let err = PreInitializer::new()
         .run(&wasm, &req(&wasm))
         .err()
         .expect("initialization must be refused");
@@ -289,7 +240,7 @@ fn init_memory_limit_is_enforced() {
              (func (export "isoplane_initialize") (result i64) i64.const 0))"#,
     )
     .unwrap();
-    let err = PreInitializer::new(InitSandbox::Sealed)
+    let err = PreInitializer::new()
         .run(&big, &req(&big))
         .err()
         .expect("initialization must be refused");
@@ -306,7 +257,7 @@ fn a_module_without_an_init_func_is_not_pre_initialized() {
              (func (export "isoplane_alloc") (param i32 i32) (result i32) (i32.const 0)))"#,
     )
     .unwrap();
-    let err = PreInitializer::new(InitSandbox::Sealed)
+    let err = PreInitializer::new()
         .run(&wasm, &req(&wasm))
         .err()
         .expect("initialization must be refused");
@@ -366,7 +317,7 @@ impl Template {
 }
 
 #[test]
-fn the_sealed_initializer_preserves_both_filesystem_adapter_routes() {
+fn the_initializer_preserves_both_filesystem_adapter_routes() {
     let wasm = wat::parse_str(format!(
         r#"(module
       (import "wasi:filesystem/preopens@0.2.0" "get-directories" (func $directories (param i32)))
@@ -393,15 +344,15 @@ fn the_sealed_initializer_preserves_both_filesystem_adapter_routes() {
         isoplane_abi::filesystem::Operation::Stat as u32
     ))
     .expect("filesystem initialization fixture must compile");
-    let initialized = PreInitializer::new(InitSandbox::Sealed)
+    let initialized = PreInitializer::new()
         .run(&wasm, &req(&wasm))
-        .expect("deterministic filesystem probes must be admitted by sealed initialization");
+        .expect("deterministic filesystem probes must be admitted by initialization");
     let mut template = Template::load(&initialized.wasm);
     for pointer in [128, 256] {
         assert_eq!(
             template.probe(pointer),
             0,
-            "both adapter routes must return successful root metadata during sealed initialization"
+            "both adapter routes must return successful root metadata during initialization"
         );
         assert_eq!(
             template.probe(pointer + 8),
@@ -409,7 +360,7 @@ fn the_sealed_initializer_preserves_both_filesystem_adapter_routes() {
             "the initializer must preserve the synthetic directory type"
         );
     }
-    let repeated = PreInitializer::new(InitSandbox::Sealed)
+    let repeated = PreInitializer::new()
         .run(&wasm, &req(&wasm))
         .expect("repeat filesystem initialization");
     assert_eq!(
@@ -430,7 +381,7 @@ fn pal_init_guest(module: &str, function: &str, body: &str) -> Vec<u8> {
 }
 
 #[test]
-fn sealed_initialization_receives_an_empty_launch_argument_list() {
+fn initialization_receives_an_empty_launch_argument_list() {
     let wasm = pal_init_guest(
         isoplane_abi::pal::CLI_ENV,
         "get-arguments",
@@ -439,9 +390,9 @@ fn sealed_initialization_receives_an_empty_launch_argument_list() {
       (call $pal_probe (i32.const 64))
       (if (i64.ne (i64.load (i32.const 64)) (i64.const 0)) (then unreachable))"#,
     );
-    let output = PreInitializer::new(InitSandbox::Sealed)
+    let output = PreInitializer::new()
         .run(&wasm, &req(&wasm))
-        .expect("argument absence must also be supported during sealed initialization");
+        .expect("argument absence must also be supported during initialization");
     assert_eq!(
         output.initialized.pal_calls,
         vec![
@@ -460,9 +411,7 @@ fn initialization_rejects_an_invalid_argument_return_pointer() {
         "(call $pal_probe (i32.const -1))",
     );
     assert!(
-        PreInitializer::new(InitSandbox::Sealed)
-            .run(&wasm, &req(&wasm))
-            .is_err(),
+        PreInitializer::new().run(&wasm, &req(&wasm)).is_err(),
         "the init adapter must reject a return record outside guest memory"
     );
 }
@@ -474,7 +423,7 @@ fn initialization_cannot_query_a_denied_wall_clock_resolution() {
         "resolution",
         "(call $pal_probe (i32.const 64))",
     );
-    let error = PreInitializer::new(InitSandbox::Sealed)
+    let error = PreInitializer::new()
         .run(&wasm, &req(&wasm))
         .err()
         .expect("wall-clock resolution must remain denied during initialization");

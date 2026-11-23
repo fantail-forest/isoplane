@@ -8,7 +8,7 @@ use isoplane_harness::logging::GuestLogs;
 use std::io::Read;
 use std::sync::{Arc, OnceLock};
 
-use isoplane_abi::config::{InitSandbox, ValidationLimits};
+use isoplane_abi::config::ValidationLimits;
 use isoplane_abi::filesystem::APPLICATION_PACKAGE_ROOT;
 use isoplane_engine::prepared::PreparedTemplate;
 use isoplane_engine::{CompilationCache, Completion, IsoplaneEngine, PlatformFile, PlatformFiles};
@@ -118,7 +118,7 @@ fn request(runtime: &[u8], files: Vec<PlatformFile>) -> BuildRequest {
         validation_limits: Default::default(),
         initialization: Initialization {
             network: Some(network()),
-            ..Initialization::new(InitSandbox::RuntimeBringUp, b"{}".to_vec())
+            ..Initialization::new(b"{}".to_vec())
         },
         input_hash: *blake3::hash(runtime).as_bytes(),
     }

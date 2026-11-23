@@ -1,4 +1,3 @@
-use isoplane_abi::config::InitSandbox;
 use isoplane_engine::{EngineConfig, PlatformFile, PlatformFiles};
 use isoplane_prepare::Preparation as _;
 use isoplane_prepare::{BuildProduct, BuildRequest, Initialization, RuntimeProfile, WorkerFailure};
@@ -65,7 +64,6 @@ pub fn prepare_configured(
             network,
             config: Vec::new(),
             runtime_config: runtime_config.to_vec(),
-            sandbox: InitSandbox::RuntimeBringUp,
             occupancy_ms: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_OCCUPANCY_MS,
             wall_ms: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_WALL_MS,
             log_bytes: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_LOG_BYTES,

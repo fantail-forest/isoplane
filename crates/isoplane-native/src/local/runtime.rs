@@ -231,7 +231,7 @@ fn preinitialize(project: &Project, wasm: &[u8], configuration: &[u8]) -> anyhow
         init_blob: serde_json::to_vec(&project.manifest.init_visible_vars)?,
         ..request
     };
-    Ok(isoplane_prepare::PreInitializer::new(project.init_sandbox)
+    Ok(isoplane_prepare::PreInitializer::new()
         .with_runtime_profile(project.runtime_profile.clone())
         .with_memory_limit(isoplane_abi::config::GuestMemoryBytes::new(
             project.manifest.memory_max_bytes(),
@@ -244,13 +244,7 @@ fn preinitialize(project: &Project, wasm: &[u8], configuration: &[u8]) -> anyhow
         .with_runtime_configuration(configuration.to_vec())
         .with_platform_files(files)
         .run(wasm, &request)
-        .map_err(|e| {
-            anyhow::anyhow!(
-                "pre-initializing {} with {}: {e}; ",
-                project.manifest.name,
-                project.init_sandbox.as_str()
-            )
-        })?
+        .map_err(|e| anyhow::anyhow!("pre-initializing {}: {e}", project.manifest.name))?
         .wasm)
 }
 
@@ -457,7 +451,6 @@ mod storage_tests {
             runtime_library: library,
             compilation_directory: directory.path().join("compiled"),
             runtime_cache_directory: directory.path().join("runtimes"),
-            init_sandbox: isoplane_abi::config::InitSandbox::Sealed,
             platform_files: Default::default(),
             application_files: Default::default(),
             runtime_profile: isoplane_prepare::RuntimeProfile::RawWasm,

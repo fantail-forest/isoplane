@@ -6,7 +6,6 @@ mod provider;
 #[path = "common/staged.rs"]
 mod staged;
 
-use isoplane_abi::config::InitSandbox;
 use isoplane_engine::prepared::PreparedIdentity;
 use isoplane_engine::{IsoplaneEngine, Template};
 use isoplane_prepare::{
@@ -25,7 +24,7 @@ const RUNTIME: &str = "(i64.store (i32.const 100) (i64.const 0x656d69746e7572))"
 const APPLICATION: &str = "(global.set $state (i32.const 42))
     (i64.store (i32.const 70000) (i64.const 0x6170706c))";
 
-fn request(wasm: &[u8], sandbox: InitSandbox) -> BuildRequest {
+fn request(wasm: &[u8]) -> BuildRequest {
     BuildRequest {
         engine: common::engine().configuration(),
         application_files: Default::default(),
@@ -33,10 +32,7 @@ fn request(wasm: &[u8], sandbox: InitSandbox) -> BuildRequest {
         memory_limit: isoplane_abi::config::GuestMemoryBytes::default(),
         guest_memory_bytes: None,
         validation_limits: Default::default(),
-        initialization: isoplane_prepare::Initialization {
-            sandbox,
-            ..common::request()
-        },
+        initialization: common::request(),
         input_hash: *blake3::hash(wasm).as_bytes(),
     }
 }
@@ -87,7 +83,7 @@ fn load(
 #[tokio::test]
 async fn an_application_over_a_baseline_loads_to_the_memory_its_whole_initialization_leaves() {
     let wasm = staged::staged_guest(SEED, RUNTIME, APPLICATION);
-    let request = request(&wasm, InitSandbox::Sealed);
+    let request = request(&wasm);
     let preparation = crate::provider::local_preparation();
     let whole = preparation
         .prepare(&wasm, &request, &CancellationToken::new())
@@ -139,9 +135,7 @@ async fn an_application_over_a_baseline_loads_to_the_memory_its_whole_initializa
 async fn a_module_without_a_runtime_stage_cannot_produce_a_baseline() {
     let wasm = common::guest(SEED, "");
     assert!(
-        baseline(&wasm, &request(&wasm, InitSandbox::Sealed))
-            .await
-            .is_err(),
+        baseline(&wasm, &request(&wasm)).await.is_err(),
         "an absent runtime stage must not produce an uninitialized baseline"
     );
 }
@@ -158,9 +152,7 @@ async fn a_module_without_an_application_initializer_cannot_produce_a_baseline()
     )
     .expect("runtime-only fixture");
     assert!(
-        baseline(&wasm, &request(&wasm, InitSandbox::Sealed))
-            .await
-            .is_err(),
+        baseline(&wasm, &request(&wasm)).await.is_err(),
         "a runtime without an application initializer must not produce a deployable baseline"
     );
 }
@@ -169,7 +161,7 @@ async fn a_module_without_an_application_initializer_cannot_produce_a_baseline()
 async fn a_runtime_stage_that_reads_the_seed_is_refused_as_a_baseline() {
     let wasm = staged::staged_guest(SEED, "(call $seed (i32.const 64) (i32.const 16))", "");
     assert_eq!(
-        stage_of(baseline(&wasm, &request(&wasm, InitSandbox::Sealed)).await),
+        stage_of(baseline(&wasm, &request(&wasm)).await),
         BuildStage::Baseline,
         "a seed read into a baseline would give every application on it the same entropy"
     );
@@ -179,19 +171,9 @@ async fn a_runtime_stage_that_reads_the_seed_is_refused_as_a_baseline() {
 async fn a_runtime_stage_that_draws_entropy_is_refused_as_a_baseline() {
     let wasm = staged::staged_guest(ENTROPY, "(call $entropy (i32.const 64) (i32.const 16))", "");
     assert_eq!(
-        stage_of(baseline(&wasm, &request(&wasm, InitSandbox::RuntimeBringUp)).await),
+        stage_of(baseline(&wasm, &request(&wasm)).await),
         BuildStage::Baseline,
         "entropy drawn into a baseline would be shared by every application on it"
-    );
-}
-
-#[tokio::test]
-async fn a_runtime_stage_reaching_a_refused_capability_is_refused_as_a_baseline() {
-    let wasm = staged::staged_guest(ENTROPY, "(call $entropy (i32.const 64) (i32.const 16))", "");
-    assert_eq!(
-        stage_of(baseline(&wasm, &request(&wasm, InitSandbox::Sealed)).await),
-        BuildStage::Baseline,
-        "a runtime stage cannot defer work into every application's initialization"
     );
 }
 
@@ -205,7 +187,7 @@ async fn layer_refusal(runtime: &RuntimeBaseline, request: &BuildRequest) -> Bui
 #[tokio::test]
 async fn an_application_is_refused_over_a_baseline_prepared_for_other_limits() {
     let wasm = staged::staged_guest(SEED, RUNTIME, APPLICATION);
-    let request = request(&wasm, InitSandbox::Sealed);
+    let request = request(&wasm);
     let runtime = baseline(&wasm, &request).await.expect("the baseline");
     let other = BuildRequest {
         guest_memory_bytes: Some(
@@ -260,7 +242,7 @@ mod published {
     #[tokio::test]
     async fn an_application_prepared_over_a_published_baseline_loads_to_its_whole_initialization() {
         let wasm = staged::staged_guest(SEED, RUNTIME, APPLICATION);
-        let request = request(&wasm, InitSandbox::Sealed);
+        let request = request(&wasm);
         let preparation = crate::provider::local_preparation();
         let engine = common::engine();
         let directory = tempfile::tempdir().expect("publication");
@@ -305,7 +287,7 @@ mod published {
     #[tokio::test]
     async fn an_application_is_refused_when_the_supplied_baseline_digest_differs() {
         let wasm = staged::staged_guest(SEED, RUNTIME, APPLICATION);
-        let request = request(&wasm, InitSandbox::Sealed);
+        let request = request(&wasm);
         let preparation = crate::provider::local_preparation();
         let directory = tempfile::tempdir().expect("publication");
         let (_published, _base) = published_baseline(
@@ -371,7 +353,7 @@ fn word(template: &Template, offset: usize) -> u32 {
 
 /// Prepares `wasm`'s baseline and its application layer over it, loaded.
 async fn baseline_and_layer(wasm: &[u8], directory: &std::path::Path) -> (Template, Template) {
-    let request = request(wasm, InitSandbox::Sealed);
+    let request = request(wasm);
     let runtime = baseline(wasm, &request)
         .await
         .expect("the runtime stage must prepare as a baseline");
@@ -421,7 +403,7 @@ async fn each_initializer_stage_collects_the_guests_garbage_before_its_capture()
 #[tokio::test]
 async fn a_guest_that_traps_while_collecting_fails_its_preparation() {
     let wasm = collecting_guest(true, "unreachable");
-    let failure = match baseline(&wasm, &request(&wasm, InitSandbox::Sealed)).await {
+    let failure = match baseline(&wasm, &request(&wasm)).await {
         Ok(_) => panic!("a guest that traps while collecting must not be captured"),
         Err(failure) => failure,
     };

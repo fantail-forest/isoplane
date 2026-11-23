@@ -31,7 +31,6 @@ impl BuildRequest {
                 #[cfg(feature = "rust-guests")]
                 config: Vec::new(),
                 runtime_config: b"{}".to_vec(),
-                sandbox: initialization.sandbox,
                 occupancy_ms: initialization.occupancy_ms,
                 wall_ms: initialization.wall_ms,
                 log_bytes: initialization.log_bytes,

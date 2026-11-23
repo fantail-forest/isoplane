@@ -44,7 +44,6 @@ async fn deploy(node: &Node, name: &str) -> crate::common::preparation::Deployed
         "acme",
         manifest(name),
         &initialized(name.as_bytes()),
-        Default::default(),
     )
     .await
     .expect("deploy a prepared application")

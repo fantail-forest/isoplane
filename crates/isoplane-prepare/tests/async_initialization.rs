@@ -4,14 +4,12 @@ mod common;
 #[path = "common/provider.rs"]
 mod provider;
 
-use isoplane_abi::config::InitSandbox;
 use isoplane_abi::imports::Ty;
 use isoplane_abi::native_io::canonical::DEFINITIONS;
 use isoplane_prepare::{initialize, Initialization, InitializationNetwork, PrepareError};
 
 fn request() -> Initialization {
     let mut request = common::request();
-    request.sandbox = InitSandbox::RuntimeBringUp;
     request.network = Some(InitializationNetwork {
         tenant: "async-initialization-test".into(),
         allowlist: None,

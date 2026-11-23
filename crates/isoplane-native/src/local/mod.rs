@@ -20,8 +20,6 @@ pub struct Inputs {
     /// Compiler-owned storage for compiled shared runtimes, which every
     /// project of the user on the same runtime reuses.
     pub runtime_cache_directory: std::path::PathBuf,
-    /// Initialization capability policy supplied by the SDK.
-    pub init_sandbox: isoplane_abi::config::InitSandbox,
     /// Host-provided files visible to the sandbox.
     pub platform_files: isoplane_engine::PlatformFiles,
     /// The application package's files, for a module that runs a package

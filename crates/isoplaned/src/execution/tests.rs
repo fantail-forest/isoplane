@@ -156,7 +156,6 @@ impl super::NodeCells {
                 &isoplane_control::DeployOptions {
                     version: isoplane_control::VersionId(version.to_owned()),
                     tenant: config.owner.clone(),
-                    init_sandbox: Default::default(),
                 },
                 &context,
             )

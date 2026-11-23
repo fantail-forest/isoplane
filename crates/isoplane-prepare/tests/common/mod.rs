@@ -1,4 +1,3 @@
-use isoplane_abi::config::InitSandbox;
 use isoplane_engine::{EngineConfig, IsoplaneEngine};
 use isoplane_prepare::Initialization;
 
@@ -18,7 +17,6 @@ pub fn request() -> Initialization {
         runtime_config: b"{}".to_vec(),
 
         config: b"{}".to_vec(),
-        sandbox: InitSandbox::Sealed,
         occupancy_ms: 1000,
         wall_ms: 5000,
         log_bytes: 1024,
