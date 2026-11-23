@@ -1,20 +1,15 @@
 #!/usr/bin/env python3
 """Record and validate the identities of prepared release artifacts."""
 import argparse
-import hashlib
 import json
 from pathlib import Path
-import runpy
 import xml.etree.ElementTree as ET
 import zipfile
 
-
-def digest(path):
-    with path.open('rb') as stream:
-        return hashlib.file_digest(stream, 'sha256').hexdigest()
+from release_packages import SHARED_PACKAGES, digest, verify_nuspec
 
 
-def shared_files(packages, managed, notices, package_ids, version):
+def shared_files(packages, managed, notices, version):
     """Require the shared packages and support files used by platform packaging."""
     cli = managed / 'publish/Isoplane.Cli/release'
     required = [cli / name for name in (
@@ -27,7 +22,7 @@ def shared_files(packages, managed, notices, package_ids, version):
     required += [notices / name for name in (
         'rust-dependencies.json', 'managed-dependencies.json',
         'trust/NOTICE', 'trust/ca-bundle.manifest.json', 'sqlite/NOTICE')]
-    required += [packages / f'{name}.{version}.nupkg' for name in package_ids]
+    required += [packages / f'{name}.{version}.nupkg' for name in SHARED_PACKAGES]
     for path in required:
         if not path.is_file() or path.stat().st_size == 0:
             raise ValueError(f'Missing prepared artifact: {path}')
@@ -40,15 +35,12 @@ def shared_files(packages, managed, notices, package_ids, version):
 
 def shared(directory, packages, managed, notices, version, revision, write):
     """Bind the complete portable artifact set to its Linux preparation."""
-    verifier = runpy.run_path(str(Path(__file__).with_name('verify-publication.py')))
-    package_ids = [name for name in verifier['package_ids']()
-                   if name not in ('Isoplane.Native', 'Isoplane.Cli')]
-    files = shared_files(packages, managed, notices, package_ids, version)
-    expected_packages = {packages / f'{name}.{version}.nupkg' for name in package_ids}
+    files = shared_files(packages, managed, notices, version)
+    expected_packages = {packages / f'{name}.{version}.nupkg' for name in SHARED_PACKAGES}
     if set(packages.glob(f'Isoplane.*.{version}.nupkg')) != expected_packages:
         raise ValueError('Prepared shared packages differ from the canonical package set.')
-    for name in package_ids:
-        verifier['verify_nuspec'](packages / f'{name}.{version}.nupkg', name, version, revision)
+    for name in SHARED_PACKAGES:
+        verify_nuspec(packages / f'{name}.{version}.nupkg', name, version, revision)
     prepared = dict(sourceRevision=revision, packageVersion=version,
                     files={path.relative_to(directory).as_posix(): digest(path) for path in sorted(files)})
     receipt = managed.parent / 'release-shared.json'

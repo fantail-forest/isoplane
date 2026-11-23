@@ -27,7 +27,7 @@ tasks:
         platforms: [windows]
 
   release-python:
-    desc: Prepare the Python environment for release versioning and verification
+    desc: Prepare the Python environment for release versioning
     deps: [':initialize']
     sources:
       - '{{.ROOT_DIR}}/scripts/requirements.txt'

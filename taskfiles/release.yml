@@ -35,14 +35,13 @@ tasks:
   shared:validate:
     internal: true
     label: 'release:shared:validate:{{.MODE}}'
-    deps: [':setup:release-python']
     requires:
       vars: [MODE]
     vars:
       VERSION: &version
         sh: '"{{.DOTNET}}" msbuild Directory.Build.props -nologo -getProperty:Version'
     cmds:
-      - '"{{.RELEASE_PYTHON}}" -B scripts/release-manifest.py shared "{{.ROOT_DIR}}" --packages "{{.PACKAGES}}" --managed "{{.MANAGED}}" --notices "{{.NOTICES}}" --version {{.VERSION}} --revision {{.REVISION}} {{if eq .MODE "write"}}--write{{end}}'
+      - '"{{.PYTHON}}" -B scripts/release-manifest.py shared "{{.ROOT_DIR}}" --packages "{{.PACKAGES}}" --managed "{{.MANAGED}}" --notices "{{.NOTICES}}" --version {{.VERSION}} --revision {{.REVISION}} {{if eq .MODE "write"}}--write{{end}}'
 
   default:
     label: 'release:{{.PLATFORM}}:{{.VERSION}}:{{.RELEASES}}'
@@ -57,6 +56,7 @@ tasks:
       - '{{.ROOT_DIR}}/taskfiles/release.yml'
       - '{{.ROOT_DIR}}/taskfiles/Release.proj'
       - '{{.ROOT_DIR}}/scripts/release-manifest.py'
+      - '{{.ROOT_DIR}}/scripts/release_packages.py'
       - '{{.ROOT_DIR}}/scripts/developer-preview-readme.md'
       - '{{.SOURCE_REF}}'
     generates:
@@ -64,7 +64,7 @@ tasks:
       - '{{.RELEASE}}/README.md'
     cmds:
       - '"{{.DOTNET}}" msbuild taskfiles/Release.proj -nologo -t:StageRelease -p:Version={{.VERSION}} -p:SharedPackages="{{.PACKAGES}}" -p:NativePackages="{{.NATIVE_PACKAGES}}" -p:ReleaseDirectory="{{.RELEASE}}"'
-      - '{{.PYTHON}} scripts/release-manifest.py release "{{.RELEASE}}" --platform {{.PLATFORM}} --version {{.VERSION}} --revision {{.REVISION}}'
+      - '"{{.PYTHON}}" -B scripts/release-manifest.py release "{{.RELEASE}}" --platform {{.PLATFORM}} --version {{.VERSION}} --revision {{.REVISION}}'
       - |
         sed -e 's/@PACKAGE_VERSION@/{{.VERSION}}/g' -e 's/@RUNTIME_IDENTIFIER@/{{.PLATFORM}}/g' \
           -e 's|@SDK_PREREQUISITES@|Install the .NET 10 SDK. On Ubuntu 24.04:\n\nsudo apt-get install -y dotnet-sdk-10.0|' \
@@ -110,12 +110,20 @@ tasks:
 
   feed:
     desc: Pack one package feed with native libraries from all three platforms
+    vars:
+      VERSION: *version
+      PACKAGE_FEED: &package_feed '{{.RELEASES}}/publication-{{.VERSION}}/nuget/{{.VERSION}}'
+    cmds:
+      - task: feed:pack
+      - '"{{.PYTHON}}" -B scripts/verify-release-feed.py --releases "{{.RELEASES}}" --version {{.VERSION}} --feed "{{.PACKAGE_FEED}}"'
+
+  feed:pack:
+    internal: true
     deps: [shared]
     vars:
       VERSION: *version
-      PUBLICATION: '{{.RELEASES}}/publication-{{.VERSION}}'
+      PACKAGE_FEED: *package_feed
     sources:
-      - '{{.RELEASES}}/isoplane-*-{{.VERSION}}/release.json'
       - '{{.PACKAGES}}/*.{{.VERSION}}.nupkg'
       - '{{.MANAGED}}/publish/Isoplane.Cli/release/**/*'
       - '{{.MANAGED}}/bin/Isoplane.Native/release/*'
@@ -127,23 +135,10 @@ tasks:
       - '{{.ROOT_DIR}}/licenses/**/*'
       - '{{.NOTICES}}/**/*'
       - '{{.ROOT_DIR}}/tools/{Isoplane.Cli,Isoplane.Native}/README.md'
-      - '{{.ROOT_DIR}}/scripts/assemble-publication.py'
-      - '{{.ROOT_DIR}}/scripts/release-manifest.py'
     generates:
-      - '{{.PUBLICATION}}/nuget/{{.VERSION}}/Isoplane.Sdk.{{.VERSION}}.nupkg'
-      - '{{.PUBLICATION}}/nuget/{{.VERSION}}/Isoplane.AspNetCore.{{.VERSION}}.nupkg'
-      - '{{.PUBLICATION}}/nuget/{{.VERSION}}/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.{{.VERSION}}.nupkg'
-      - '{{.PUBLICATION}}/nuget/{{.VERSION}}/Isoplane.OpenTelemetry.{{.VERSION}}.nupkg'
-      - '{{.PUBLICATION}}/nuget/{{.VERSION}}/Isoplane.Templates.{{.VERSION}}.nupkg'
-      - '{{.PUBLICATION}}/nuget/{{.VERSION}}/Isoplane.Testing.{{.VERSION}}.nupkg'
-      - '{{.PUBLICATION}}/nuget/{{.VERSION}}/Isoplane.Native.{{.VERSION}}.nupkg'
-      - '{{.PUBLICATION}}/nuget/{{.VERSION}}/Isoplane.Cli.{{.VERSION}}.nupkg'
-      - '{{.PUBLICATION}}/publication/{{.VERSION}}/manifest.json'
-      - '{{.PUBLICATION}}/upload-plan.json'
-      - '{{.PUBLICATION}}/packages.json'
+      - '{{.PACKAGE_FEED}}/*.{{.VERSION}}.nupkg'
     cmds:
-      - 'mkdir -p "{{.PUBLICATION}}/nuget/{{.VERSION}}"'
+      - 'mkdir -p "{{.PACKAGE_FEED}}"'
       - for: [Isoplane.Native, Isoplane.Cli]
-        cmd: '"{{.DOTNET}}" msbuild taskfiles/NativePackages/NativePackages.csproj -restore -t:Pack -p:NoBuild=true -p:Configuration=Release -p:ArtifactsPath="{{.ROOT_DIR}}/.build/{{.PLATFORM}}/publication/{{.ITEM}}" -p:PackageOutputPath="{{.PUBLICATION}}/nuget/{{.VERSION}}" -p:PackageId={{.ITEM}} -p:ManagedDirectory="{{.MANAGED}}" -p:IsoplaneNativeRoot="{{.RELEASE_NATIVE_ROOT}}" -p:NoticesDirectory="{{.NOTICES}}"'
-      - 'cp "{{.PACKAGES}}/Isoplane.Sdk.{{.VERSION}}.nupkg" "{{.PACKAGES}}/Isoplane.AspNetCore.{{.VERSION}}.nupkg" "{{.PACKAGES}}/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.{{.VERSION}}.nupkg" "{{.PACKAGES}}/Isoplane.OpenTelemetry.{{.VERSION}}.nupkg" "{{.PACKAGES}}/Isoplane.Templates.{{.VERSION}}.nupkg" "{{.PACKAGES}}/Isoplane.Testing.{{.VERSION}}.nupkg" "{{.PUBLICATION}}/nuget/{{.VERSION}}/"'
-      - '{{.PYTHON}} scripts/assemble-publication.py --releases "{{.RELEASES}}" --version {{.VERSION}} --output "{{.PUBLICATION}}"'
+        cmd: '"{{.DOTNET}}" msbuild taskfiles/NativePackages/NativePackages.csproj -restore -t:Pack -p:NoBuild=true -p:Configuration=Release -p:ArtifactsPath="{{.ROOT_DIR}}/.build/{{.PLATFORM}}/publication/{{.ITEM}}" -p:PackageOutputPath="{{.PACKAGE_FEED}}" -p:PackageId={{.ITEM}} -p:ManagedDirectory="{{.MANAGED}}" -p:IsoplaneNativeRoot="{{.RELEASE_NATIVE_ROOT}}" -p:NoticesDirectory="{{.NOTICES}}"'
+      - 'cp "{{.PACKAGES}}"/*.{{.VERSION}}.nupkg "{{.PACKAGE_FEED}}/"'
