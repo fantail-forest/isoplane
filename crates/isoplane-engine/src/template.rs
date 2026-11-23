@@ -41,10 +41,6 @@ pub(crate) struct TemplateInner {
     /// The compiled module. Prepared templates with the same native payload
     /// share one, and holding it keeps its engine's index entry alive.
     pub native: Arc<crate::prepared::native::SharedNative>,
-    /// A linker carrying this module's WASI PAL adapter, or `None` when the
-    /// module imports only `isoplane`. Per template because a trap stub is typed
-    /// from the module's own declaration, and every instance shares it.
-    pub pal_linker: Option<wasmtime::Linker<crate::state::StoreState>>,
     /// The post-init linear memory, the baseline for the hibernation page
     /// diff. Its own `Arc` so the cell's activator holds it by refcount.
     pub image: Arc<crate::image::MemoryImage>,
@@ -94,7 +90,6 @@ impl TemplateInner {
             application_files: self.application_files.clone(),
             filesystem_files: self.filesystem_files.clone(),
             native: Arc::clone(&self.native),
-            pal_linker: self.pal_linker.clone(),
             image: Arc::clone(&self.image),
             memory_pages: self.memory_pages,
             prepared_resources: self.prepared_resources.clone(),

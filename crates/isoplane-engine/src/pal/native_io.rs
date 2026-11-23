@@ -11,11 +11,11 @@ use isoplane_abi::native_io::{
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6};
 
 use super::filesystem::{CallerMemory, Memory};
-use super::PalSource;
+use crate::state::StoreState;
 
 /// Decode a bounded packet and enforce the capability declared by its caller.
-pub fn packet<T: PalSource>(
-    caller: &mut wasmtime::Caller<'_, T>,
+pub(crate) fn packet(
+    caller: &mut wasmtime::Caller<'_, StoreState>,
     capability: &str,
     operation: u32,
     pointer: u32,
@@ -29,9 +29,8 @@ pub fn packet<T: PalSource>(
         definition.capability == capability,
         "native I/O packet attempted a different capability"
     );
-    let signature = definition.pal.sig.context("native I/O signature missing")?;
     ensure!(
-        count as usize == signature.params.len(),
+        count as usize == definition.sig.params.len(),
         "native I/O argument count differs from its canonical signature"
     );
     let mut arguments = [0; MAX_ARGUMENTS];
@@ -46,15 +45,15 @@ pub fn packet<T: PalSource>(
     call(caller, definition, &arguments[..count as usize])
 }
 
-/// Execute an admitted canonical call synchronously, without suspending the slice.
-pub fn call<T: PalSource>(
-    caller: &mut wasmtime::Caller<'_, T>,
+/// Execute a canonical call synchronously, without suspending the slice.
+pub(crate) fn call(
+    caller: &mut wasmtime::Caller<'_, StoreState>,
     definition: &Definition,
     arguments: &[u64],
 ) -> Result<u64> {
     caller
         .data_mut()
-        .check_capability(definition.capability)
+        .check_native_capability(definition.capability)
         .map_err(anyhow::Error::from)?;
     let scalar = |index: usize| {
         arguments
@@ -162,22 +161,12 @@ pub fn call<T: PalSource>(
         Action::Timer { absolute } => {
             let nanos = scalar(0)?;
             let duration = if absolute {
-                nanos.saturating_sub(caller.data_mut().slice_clock_ms().saturating_mul(1_000_000))
+                nanos.saturating_sub(caller.data().clock_ms.saturating_mul(1_000_000))
             } else {
                 nanos
             };
             Request::Timer(DurationNanos(duration))
         }
-        Action::ClockNow => {
-            caller
-                .data_mut()
-                .record_initialization_call(definition.pal.module);
-            return Ok(caller
-                .data_mut()
-                .slice_clock_ms()
-                .saturating_mul(isoplane_abi::pal::CLOCK_QUANTUM_NS as u64));
-        }
-        Action::ClockResolution => return Ok(isoplane_abi::pal::CLOCK_QUANTUM_NS as u64),
         Action::Ready => Request::Ready(handle(0)?),
         Action::Drop(kind) => Request::Drop {
             handle: handle(0)?,
@@ -205,10 +194,7 @@ pub fn call<T: PalSource>(
             write_error(&mut CallerMemory(caller), arguments, error_offset, code)?;
             return Ok(0);
         }
-        Action::Trap => bail!(
-            "unsupported native operation {}",
-            definition.pal.full_name()
-        ),
+        Action::Trap => bail!("unsupported native operation {}", definition.symbol),
     };
     let result = caller.data_mut().native_io(request);
     match result {
@@ -387,8 +373,6 @@ pub fn call<T: PalSource>(
                 | Action::ErrorMessage
                 | Action::ErrorCode
                 | Action::Timer { .. }
-                | Action::ClockNow
-                | Action::ClockResolution
                 | Action::Poll
                 | Action::Ready
                 | Action::Drop(_)

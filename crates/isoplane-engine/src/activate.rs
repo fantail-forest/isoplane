@@ -103,9 +103,8 @@ pub(crate) fn instantiate(
     store.set_epoch_deadline(u64::MAX / 2);
 
     let inst = tracing::info_span!("activation_instantiate").in_scope(|| {
-        t.pal_linker
-            .as_ref()
-            .unwrap_or(&engine.linker)
+        engine
+            .linker
             .instantiate(&mut store, t.module())
             .map_err(anyhow::Error::from)
             .context("activating template")

@@ -1,6 +1,6 @@
-//! The filesystem conformance rig: a `.wat` guest importing every filesystem
-//! operation, with the strings a test's paths need laid out in its data
-//! section, dispatched once so a test reads the result areas back out of
+//! The filesystem conformance rig: a `.wat` guest with a function for every
+//! filesystem operation, with the strings a test's paths need laid out in its
+//! data section, dispatched once so a test reads the result areas back out of
 //! guest memory.
 
 use crate::common::{activate, guest, DONE};
@@ -15,6 +15,9 @@ pub const ROOT: &str = "(i32.load (i32.const 1010))";
 pub const RET: &str = "(i32.const 1100)";
 /// Linear memory pages: room for a list as long as the ABI's out-buffer cap.
 const PAGES: u32 = 24;
+/// Where an operation's function lays out its packet: above the top of the
+/// guest's bump heap.
+const PACKET: u32 = PAGES * 65536 - 2048;
 
 /// A guest whose `isoplane_handle` runs `body` after fetching the preopens.
 pub fn module(body: &str, strings: &[(u32, &str)]) -> Vec<u8> {
@@ -24,12 +27,13 @@ pub fn module(body: &str, strings: &[(u32, &str)]) -> Vec<u8> {
 /// As [`module`], with `wake` as the body of `isoplane_wake`, for a test that
 /// parks between two filesystem calls.
 pub fn lifecycle_module(body: &str, wake: &str, strings: &[(u32, &str)]) -> Vec<u8> {
-    let imports = IMPORTS
+    let imports =
+        r#"(import "isoplane" "filesystem_call" (func $filesystem_call (param i32 i32 i32)))"#;
+    let operations = IMPORTS
         .iter()
         .map(|definition| {
-            let signature = definition.pal.sig.expect("filesystem signature");
-            let types = signature
-                .params
+            let parameters = definition.sig.params;
+            let types = parameters
                 .iter()
                 .map(|ty| match ty {
                     Ty::I32 => "i32",
@@ -37,9 +41,25 @@ pub fn lifecycle_module(body: &str, wake: &str, strings: &[(u32, &str)]) -> Vec<
                 })
                 .collect::<Vec<_>>()
                 .join(" ");
+            let stores = parameters
+                .iter()
+                .enumerate()
+                .map(|(index, ty)| {
+                    let value = match ty {
+                        Ty::I32 => format!("(i64.extend_i32_u (local.get {index}))"),
+                        Ty::I64 => format!("(local.get {index})"),
+                    };
+                    format!(
+                        "(i64.store (i32.const {}) {value})",
+                        PACKET + index as u32 * 8
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
             format!(
-                "(import \"{}\" \"{}\" (func $fs{} (param {types})))",
-                definition.pal.module, definition.pal.func, definition.operation as u32
+                "(func $fs{operation} (param {types}) {stores} (call $filesystem_call (i32.const {operation}) (i32.const {PACKET}) (i32.const {})))",
+                parameters.len(),
+                operation = definition.operation as u32
             )
         })
         .collect::<Vec<_>>()
@@ -59,13 +79,14 @@ pub fn lifecycle_module(body: &str, wake: &str, strings: &[(u32, &str)]) -> Vec<
               (i32.and (i32.add (i32.add (global.get $heap) (local.get $size)) (i32.const 15))
                        (i32.const -16)))
             (local.get $p))
+        {operations}
         {data}
     "#
     );
     let preopen = format!("(call $fs{} (i32.const 1000)) (i32.store (i32.const 1010) (i32.load (i32.load (i32.const 1000))))", Operation::Directories as u32);
     guest(
         PAGES,
-        &imports,
+        imports,
         &functions,
         &format!("{preopen} {body} {DONE}"),
         wake,
@@ -76,7 +97,7 @@ pub fn lifecycle_module(body: &str, wake: &str, strings: &[(u32, &str)]) -> Vec<
 pub fn run(engine: &IsoplaneEngine, wasm: &[u8]) -> Vec<u8> {
     let template = engine
         .load_template(wasm)
-        .expect("filesystem imports must validate and link");
+        .expect("the filesystem import must validate and link");
     let mut instance = activate(engine, &template);
     assert_eq!(
         instance

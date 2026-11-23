@@ -1,250 +1,57 @@
-//! The WASI adapter table. WASI runtime output declares `wasi:*` imports
-//! the capability table would reject, and reaches only a handful of them. At
-//! deploy the platform composes an adapter: each whitelisted import is either
-//! delegated to a `isoplane:platform` import at the same fidelity, or satisfied
-//! by a stub that traps when called, so the declaration validates while the
-//! capability stays absent. No WASI import may add a channel, time, entropy
-//! or otherwise, that `isoplane:platform` does not already offer.
-//!
-//! The table is sized to the closure of imports the toolchain emits for the
-//! guests in this tree, read out of the built modules with the guest-side PAL
-//! object disabled (`-p:IsoplanePalObject=`), not to a
-//! hello-world module: pulling in LINQ, source-generated `Regex` or
-//! `System.Text.Json` drags further filesystem and stream imports out of the
-//! BCL. It is still enumerated; the next unlisted import is a rejection.
-//! `monotonic-clock::resolution` is the one entry with no observed provenance,
-//! listed so a toolchain that starts asking gets the quantized answer.
+//! Lists the WASI imports accepted from the shared runtime and the native
+//! operation that serves each one. Unlisted WASI imports are rejected.
 
-use crate::imports::{Sig, Ty};
-
-const I32: Ty = Ty::I32;
-const I64: Ty = Ty::I64;
+use crate::imports::Sig;
+use crate::native_io::canonical::{
+    Definition, MONOTONIC_CLOCK_SUBSCRIBE_DURATION, POLL_POLL, POLL_POLLABLE_DROP,
+};
 
 pub const WASI_PREFIX: &str = "wasi:";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Delegation {
-    /// The `isoplane:platform` import that supplies the value.
-    Cap(&'static str),
-    /// The adapter answers with the empty value, because the platform has no
-    /// such capability and an empty answer is the same fidelity as absent.
-    Nothing,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Disposition {
-    Delegate(Delegation),
-    /// A stub that traps when called: the declaration validates, the
-    /// capability is absent.
-    TrapOnCall,
-}
-
-impl Disposition {
-    pub fn is_delegated(&self) -> bool {
-        matches!(self, Disposition::Delegate(_))
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 pub struct PalDef {
-    /// Core-wasm module name, `wasi:random/random@0.2.0`.
+    /// Core-wasm module name, `wasi:io/poll@0.2.0`.
     pub module: &'static str,
-    /// Core-wasm field name in canonical-ABI spelling, `get-random-bytes` or
-    /// `[method]descriptor.stat`.
+    /// Core-wasm field name in canonical-ABI spelling, `poll` or
+    /// `[resource-drop]pollable`.
     pub func: &'static str,
-    pub disposition: Disposition,
-    /// Present only for a delegated entry, whose body is typed against it. A
-    /// trap stub is generated from whatever type the module declares, so a
-    /// pinned shape would break the first time a toolchain lowered the
-    /// function differently while guarding nothing.
-    pub sig: Option<Sig>,
-    /// Why this disposition, for the manifest a tenant reads.
-    pub why: &'static str,
+    /// The native operation that answers the import.
+    pub operation: &'static Definition,
 }
 
 impl PalDef {
-    /// `module::func`, the spelling used in violation messages and manifests.
+    /// `module::func`, the spelling used in violation messages.
     pub fn full_name(&self) -> String {
         format!("{}::{}", self.module, self.func)
     }
-}
 
-pub const CLI_ENV: &str = "wasi:cli/environment@0.2.0";
-pub const CLI_EXIT: &str = "wasi:cli/exit@0.2.0";
-pub const CLI_STDIN: &str = "wasi:cli/stdin@0.2.0";
-pub const CLI_STDOUT: &str = "wasi:cli/stdout@0.2.0";
-pub const CLI_STDERR: &str = "wasi:cli/stderr@0.2.0";
-pub const CLI_TERM_IN: &str = "wasi:cli/terminal-input@0.2.0";
-pub const CLI_TERM_OUT: &str = "wasi:cli/terminal-output@0.2.0";
-pub const CLI_TERM_STDIN: &str = "wasi:cli/terminal-stdin@0.2.0";
-pub const CLI_TERM_STDOUT: &str = "wasi:cli/terminal-stdout@0.2.0";
-pub const CLI_TERM_STDERR: &str = "wasi:cli/terminal-stderr@0.2.0";
-pub const WALL_CLOCK: &str = "wasi:clocks/wall-clock@0.2.0";
-pub const IO_STREAMS: &str = "wasi:io/streams@0.2.0";
-pub const FS_TYPES: &str = "wasi:filesystem/types@0.2.0";
-pub const FS_PREOPENS: &str = "wasi:filesystem/preopens@0.2.0";
-pub const RANDOM: &str = "wasi:random/random@0.2.0";
-
-const ENTROPY: Delegation = Delegation::Cap("entropy_fill");
-
-const fn trap(module: &'static str, func: &'static str, why: &'static str) -> PalDef {
-    PalDef {
-        module,
-        func,
-        disposition: Disposition::TrapOnCall,
-        sig: None,
-        why,
+    /// The signature the import is declared with.
+    pub fn sig(&self) -> Sig {
+        self.operation.sig
     }
 }
 
-const fn delegate(
-    module: &'static str,
-    func: &'static str,
-    to: Delegation,
-    sig: Sig,
-    why: &'static str,
-) -> PalDef {
-    PalDef {
-        module,
-        func,
-        disposition: Disposition::Delegate(to),
-        sig: Some(sig),
-        why,
-    }
-}
+const MONOTONIC_CLOCK: &str = "wasi:clocks/monotonic-clock@0.2.0";
+const IO_POLL: &str = "wasi:io/poll@0.2.0";
 
-const COMMON_PAL_IMPORTS: &[PalDef] = &[
-    // ---- delegated ----------------------------------------------------------
-    delegate(
-        CLI_ENV,
-        "get-environment",
-        Delegation::Nothing,
-        Sig {
-            params: &[I32],
-            results: &[],
-        },
-        "there is no ambient environment, so the empty list is the \
-         same-fidelity answer for a capability the platform does not have",
-    ),
-    delegate(
-        CLI_ENV,
-        "get-arguments",
-        Delegation::Nothing,
-        Sig {
-            params: &[I32],
-            results: &[],
-        },
-        "the host invokes dispatch exports without process arguments, so the launch argument list is empty",
-    ),
-    // Not optional: a failed draw reaches `_Exit` through
-    // `ObjectHeader.AssignHashCode`, so a guest with no entropy does not run.
-    delegate(
-        RANDOM,
-        "get-random-bytes",
-        ENTROPY,
-        Sig {
-            params: &[I64, I32],
-            results: &[],
-        },
-        "host CSPRNG drawn per call; guest code can retain returned bytes \
-         or its own PRNG state in captured memory",
-    ),
-    // ---- trap-on-call: cli ------------------------------------------------
-    trap(
-        CLI_EXIT,
-        "exit",
-        "process exit is the host's decision, not the guest's",
-    ),
-    trap(
-        CLI_STDIN,
-        "get-stdin",
-        "no ambient I/O; observability is `log_emit`",
-    ),
-    trap(
-        CLI_STDOUT,
-        "get-stdout",
-        "stdout is not a log sink; `log_emit` is",
-    ),
-    trap(
-        CLI_STDERR,
-        "get-stderr",
-        "stderr is not a log sink; `log_emit` is",
-    ),
-    trap(
-        CLI_TERM_IN,
-        "[resource-drop]terminal-input",
-        "no terminal exists to drop a handle to",
-    ),
-    trap(
-        CLI_TERM_OUT,
-        "[resource-drop]terminal-output",
-        "no terminal exists to drop a handle to",
-    ),
-    trap(
-        CLI_TERM_STDIN,
-        "get-terminal-stdin",
-        "there is no terminal to hand out",
-    ),
-    trap(
-        CLI_TERM_STDOUT,
-        "get-terminal-stdout",
-        "there is no terminal to hand out",
-    ),
-    trap(
-        CLI_TERM_STDERR,
-        "get-terminal-stderr",
-        "there is no terminal to hand out",
-    ),
-    trap(
-        WALL_CLOCK,
-        "now",
-        "the platform has ONE clock; a second time source whose difference from \
-         the first is observable is a new channel",
-    ),
-    trap(
-        WALL_CLOCK,
-        "resolution",
-        "there is no delegated wall clock whose resolution can be queried",
-    ),
-    // ---- trap-on-call: io -------------------------------------------------
-    trap(
-        IO_STREAMS,
-        "[method]input-stream.blocking-read",
-        "no import waits, no stream exists",
-    ),
-    trap(
-        IO_STREAMS,
-        "[method]output-stream.blocking-flush",
-        "no import waits, no stream exists",
-    ),
+/// Every admitted WASI import.
+pub const PAL_IMPORTS: &[PalDef] = &[
+    PalDef {
+        module: MONOTONIC_CLOCK,
+        func: "subscribe-duration",
+        operation: &MONOTONIC_CLOCK_SUBSCRIBE_DURATION,
+    },
+    PalDef {
+        module: IO_POLL,
+        func: "poll",
+        operation: &POLL_POLL,
+    },
+    PalDef {
+        module: IO_POLL,
+        func: "[resource-drop]pollable",
+        operation: &POLL_POLLABLE_DROP,
+    },
 ];
-
-const PAL_COUNT: usize = COMMON_PAL_IMPORTS.len()
-    + crate::filesystem::IMPORTS.len()
-    + crate::native_io::canonical::DEFINITIONS.len();
-const fn all_imports() -> [PalDef; PAL_COUNT] {
-    let mut out = [COMMON_PAL_IMPORTS[0]; PAL_COUNT];
-    let mut i = 0;
-    while i < COMMON_PAL_IMPORTS.len() {
-        out[i] = COMMON_PAL_IMPORTS[i];
-        i += 1;
-    }
-    let mut j = 0;
-    while j < crate::filesystem::IMPORTS.len() {
-        out[i + j] = crate::filesystem::IMPORTS[j].pal;
-        j += 1;
-    }
-    i += j;
-    j = 0;
-    while j < crate::native_io::canonical::DEFINITIONS.len() {
-        out[i + j] = crate::native_io::canonical::DEFINITIONS[j].pal;
-        j += 1;
-    }
-    out
-}
-
-/// Every admitted WASI import, including the read-only filesystem adapter.
-pub const PAL_IMPORTS: &[PalDef] = &all_imports();
 
 /// Whether `module` is a WASI interface at all, so a rejection can say "not in
 /// the PAL whitelist" rather than "not in the capability table".
@@ -258,28 +65,13 @@ pub fn lookup(module: &str, func: &str) -> Option<&'static PalDef> {
         .find(|p| p.module == module && p.func == func)
 }
 
-/// The quantum of the delegated monotonic clock, and what `resolution` reports.
+/// The quantum of the coarse clock, which the native clock reports as its
+/// resolution and to which the host rounds every timer.
 pub const CLOCK_QUANTUM_NS: i64 = 1_000_000;
-
-/// Ceiling on one `get-random-bytes` draw.
-pub const MAX_ENTROPY_BYTES: u64 = crate::imports::MAX_OUT_BUFFER_BYTES as u64;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::imports;
-
-    fn delegated() -> impl Iterator<Item = &'static PalDef> {
-        PAL_IMPORTS.iter().filter(|p| p.disposition.is_delegated())
-    }
-
-    /// The platform import a delegated entry draws on, when it draws on one.
-    fn capability(p: &PalDef) -> Option<&'static str> {
-        match p.disposition {
-            Disposition::Delegate(Delegation::Cap(capability)) => Some(capability),
-            Disposition::Delegate(Delegation::Nothing) | Disposition::TrapOnCall => None,
-        }
-    }
 
     #[test]
     fn the_native_clock_reports_the_host_clock_quantum() {
@@ -289,124 +81,5 @@ mod tests {
             native.lines().any(|line| line == definition),
             "the native clock resolution must match the host PAL clock quantum"
         );
-    }
-
-    #[test]
-    fn every_pal_entry_has_a_distinct_name() {
-        let mut seen = std::collections::BTreeSet::new();
-        for p in PAL_IMPORTS {
-            assert!(
-                seen.insert((p.module, p.func)),
-                "duplicate PAL entry {}",
-                p.full_name()
-            );
-        }
-    }
-
-    #[test]
-    fn every_pal_entry_belongs_to_wasi_or_the_native_socket_bridge() {
-        for p in PAL_IMPORTS {
-            assert!(
-                is_wasi(p.module) || p.module == crate::native_io::canonical::SOCKET_BRIDGE_MODULE,
-                "{} is outside the supported platform interfaces",
-                p.full_name()
-            );
-            assert_ne!(
-                p.module,
-                imports::HOST_MODULE,
-                "an isoplane import does not belong in the PAL table"
-            );
-        }
-    }
-
-    #[test]
-    fn every_delegation_targets_a_real_platform_capability() {
-        for p in delegated() {
-            if let Some(cap) = capability(p) {
-                assert!(
-                    imports::lookup(cap).is_some(),
-                    "{} delegates to `{cap}`, which is not in IMPORTS",
-                    p.full_name()
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn native_io_delegation_cannot_reach_unrelated_capabilities() {
-        use imports::Group::*;
-        let forbidden = [
-            Http,
-            Socket,
-            Response,
-            #[cfg(feature = "rust-guests")]
-            Ctx,
-        ];
-        for p in delegated() {
-            let Some(cap) = capability(p) else {
-                continue;
-            };
-            let def = imports::lookup(cap).expect("every delegation target is in IMPORTS");
-            assert!(
-                !forbidden.contains(&def.group) || cap == crate::native_io::canonical::SOCKET_IMPORT,
-                "{} delegates to `{cap}` in group {:?}; native I/O must remain behind its dedicated capability",
-                p.full_name(),
-                def.group
-            );
-            assert!(
-                !def.sensitive,
-                "{} delegates to `{cap}`, which is marked sensitive",
-                p.full_name()
-            );
-        }
-    }
-
-    #[test]
-    fn the_adapter_draws_only_on_declared_platform_capabilities() {
-        let mut targets: Vec<&'static str> = PAL_IMPORTS.iter().filter_map(capability).collect();
-        targets.sort_unstable();
-        targets.dedup();
-        assert_eq!(
-            targets,
-            vec![
-                "clock_now_coarse",
-                "entropy_fill",
-                "filesystem_call",
-                "poll_call",
-                "socket_call"
-            ],
-            "the adapter must not introduce an undeclared channel"
-        );
-    }
-
-    #[test]
-    fn the_denied_interfaces_are_trap_on_call_without_exception() {
-        for p in PAL_IMPORTS {
-            let denied = p.module == CLI_STDIN
-                || p.module == CLI_STDOUT
-                || p.module == CLI_STDERR
-                || p.module == WALL_CLOCK;
-            if denied {
-                assert_eq!(
-                    p.disposition,
-                    Disposition::TrapOnCall,
-                    "{} is in a denied interface and must trap on call",
-                    p.full_name()
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn signatures_are_declared_exactly_for_delegated_entries() {
-        for p in PAL_IMPORTS {
-            assert_eq!(
-                p.sig.is_some(),
-                p.disposition.is_delegated(),
-                "{}: a delegated entry runs a body against its signature and a trap stub has \
-                 none to check",
-                p.full_name()
-            );
-        }
     }
 }

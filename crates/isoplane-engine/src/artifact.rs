@@ -202,31 +202,6 @@ impl IsoplaneEngine {
         Ok((t, compiled))
     }
 
-    pub(crate) fn template_linker(
-        &self,
-        module: &wasmtime::Module,
-    ) -> Result<Option<wasmtime::Linker<StoreState>>> {
-        let needs_pal = module
-            .imports()
-            .any(|i| crate::pal::is_foreign_module(i.module()));
-        if needs_pal {
-            let mut l = self.inner.linker.clone();
-            let composed = crate::pal::link(&mut l, module)
-                .context("composing the WASI PAL adapter for a template")?;
-            tracing::info!(
-                composed = composed.len(),
-                delegated = composed
-                    .iter()
-                    .filter(|d| d.disposition.is_delegated())
-                    .count(),
-                "composed the WASI PAL adapter for a template"
-            );
-            Ok(Some(l))
-        } else {
-            Ok(None)
-        }
-    }
-
     pub(crate) fn finish_template(
         &self,
         module: wasmtime::Module,
@@ -250,15 +225,9 @@ impl IsoplaneEngine {
         store.limiter(|d| &mut d.limits);
         store.set_epoch_deadline(u64::MAX / 2);
 
-        // The PAL adapter is composed per template: a trap stub is typed from
-        // the module's own declaration, and every instance of the module
-        // shares the result. A module importing only `isoplane` takes the shared
-        // linker.
-        let pal_linker = self.template_linker(&module)?;
-
-        let inst = pal_linker
-            .as_ref()
-            .unwrap_or(&self.inner.linker)
+        let inst = self
+            .inner
+            .linker
             .instantiate(&mut store, &module)
             .map_err(anyhow::Error::from)
             .context("instantiating the template to read its pre-initialized image")?;
@@ -320,7 +289,6 @@ impl IsoplaneEngine {
                 application_files: crate::PlatformFiles::default(),
                 filesystem_files: self.inner.cfg.platform_files.clone(),
                 native: Arc::new(crate::prepared::native::SharedNative { module }),
-                pal_linker,
                 image,
                 memory_pages,
                 prepared_resources,

@@ -1,4 +1,6 @@
 mod common;
+#[path = "common/packets.rs"]
+mod packets;
 #[path = "common/provider.rs"]
 mod provider;
 
@@ -7,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 
 fn file_imports() -> String {
     use isoplane_abi::filesystem::{Operation, IMPORTS};
-    let mut imports = String::new();
+    let mut imports = String::from(packets::FILESYSTEM_IMPORT);
     for (operation, name) in [
         (Operation::Directories, "directories"),
         (Operation::OpenAt, "open"),
@@ -17,19 +19,11 @@ fn file_imports() -> String {
             .iter()
             .find(|definition| definition.operation == operation)
             .expect("canonical filesystem operation");
-        let signature = definition.pal.sig.expect("filesystem signature");
-        let parameters = signature
-            .params
-            .iter()
-            .map(|ty| match ty {
-                isoplane_abi::imports::Ty::I32 => "i32",
-                isoplane_abi::imports::Ty::I64 => "i64",
-            })
-            .collect::<Vec<_>>()
-            .join(" ");
-        imports.push_str(&format!(
-            "(import \"{}\" \"{}\" (func ${name} (param {parameters})))",
-            definition.pal.module, definition.pal.func
+        imports.push_str(&packets::function(
+            name,
+            "filesystem_call",
+            operation as u32,
+            definition.sig,
         ));
     }
     imports.push_str(

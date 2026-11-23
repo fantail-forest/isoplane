@@ -1,17 +1,12 @@
 //! Canonical native socket and readiness entrypoints observed in the pinned runtime.
 use super::{ResourceKind, SocketBuffer};
 use crate::imports::{Sig, Ty};
-use crate::pal::{Delegation, Disposition, PalDef};
 
 /// Outbound socket operations, authorized by the host for every connection.
 pub const SOCKET_IMPORT: &str = "socket_call";
 
-/// SDK-native partial-send bridge, outside the standard WASI interfaces.
-pub const SOCKET_BRIDGE_MODULE: &str = "isoplane:native-sockets";
 /// Readiness and coarse deadline operations; cannot create connections.
 pub const POLL_IMPORT: &str = "poll_call";
-
-const CLOCK_IMPORT: &str = "clock_now_coarse";
 
 /// Canonical adapter operation identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,10 +73,6 @@ pub enum Action {
         /// Whether the supplied timestamp is absolute.
         absolute: bool,
     },
-    /// Return the frozen coarse clock in canonical nanoseconds.
-    ClockNow,
-    /// Return the coarse clock's resolution.
-    ClockResolution,
     /// Inspect a list of pollables without blocking.
     Poll,
     /// Inspect a single pollable without blocking.
@@ -99,7 +90,8 @@ pub enum Action {
     Trap,
 }
 
-/// The single definition consumed by the validator, native wrappers and engine adapter.
+/// The single definition consumed by the native wrappers, the engine adapter and the WASI table.
+#[derive(Debug)]
 pub struct Definition {
     /// Stable operation id in the scalar packet.
     pub id: OperationId,
@@ -107,8 +99,8 @@ pub struct Definition {
     pub symbol: &'static str,
     /// Isoplane capability used for this operation.
     pub capability: &'static str,
-    /// Canonical imported signature and name.
-    pub pal: PalDef,
+    /// Canonical signature of the wasi-libc symbol.
+    pub sig: Sig,
     /// Implemented action.
     pub action: Action,
 }
@@ -116,8 +108,6 @@ pub struct Definition {
 const fn definition(
     id: u32,
     symbol: &'static str,
-    module: &'static str,
-    name: &'static str,
     capability: &'static str,
     sig: Sig,
     action: Action,
@@ -126,64 +116,55 @@ const fn definition(
         id: OperationId(id),
         symbol,
         capability,
+        sig,
         action,
-        pal: PalDef {
-            module,
-            func: name,
-            sig: Some(sig),
-            disposition: Disposition::Delegate(Delegation::Cap(capability)),
-            why: if matches!(action, Action::ClockNow | Action::ClockResolution) {
-                "the coarse clock's 1 ms resolution and intra-slice freeze apply to both reads and the reported resolution"
-            } else {
-                "host-owned outbound TCP and coarse readiness; bind, listen, UDP and unsupported operations remain denied"
-            },
-        },
     }
 }
 
-/// Every admitted canonical entry, with no ambient network fallback.
+/// Arms a timer that becomes ready after a duration.
+pub const MONOTONIC_CLOCK_SUBSCRIBE_DURATION: Definition = definition(
+    0,
+    "monotonic_clock_subscribe_duration",
+    POLL_IMPORT,
+    Sig {
+        params: &[Ty::I64],
+        results: &[Ty::I32],
+    },
+    Action::Timer { absolute: false },
+);
+
+/// Releases a pollable.
+pub const POLL_POLLABLE_DROP: Definition = definition(
+    1,
+    "poll_pollable_drop",
+    POLL_IMPORT,
+    Sig {
+        params: &[Ty::I32],
+        results: &[],
+    },
+    Action::Drop(ResourceKind::Pollable),
+);
+
+/// Reports which of a list of pollables are ready.
+pub const POLL_POLL: Definition = definition(
+    2,
+    "poll_poll",
+    POLL_IMPORT,
+    Sig {
+        params: &[Ty::I32, Ty::I32, Ty::I32],
+        results: &[],
+    },
+    Action::Poll,
+);
+
+/// Every canonical entry, with no ambient network fallback.
 pub const DEFINITIONS: &[Definition] = &[
-    definition(
-        0,
-        "monotonic_clock_subscribe_duration",
-        "wasi:clocks/monotonic-clock@0.2.0",
-        "subscribe-duration",
-        POLL_IMPORT,
-        Sig {
-            params: &[Ty::I64],
-            results: &[Ty::I32],
-        },
-        Action::Timer { absolute: false },
-    ),
-    definition(
-        1,
-        "poll_pollable_drop",
-        "wasi:io/poll@0.2.0",
-        "[resource-drop]pollable",
-        POLL_IMPORT,
-        Sig {
-            params: &[Ty::I32],
-            results: &[],
-        },
-        Action::Drop(ResourceKind::Pollable),
-    ),
-    definition(
-        2,
-        "poll_poll",
-        "wasi:io/poll@0.2.0",
-        "poll",
-        POLL_IMPORT,
-        Sig {
-            params: &[Ty::I32, Ty::I32, Ty::I32],
-            results: &[],
-        },
-        Action::Poll,
-    ),
+    MONOTONIC_CLOCK_SUBSCRIBE_DURATION,
+    POLL_POLLABLE_DROP,
+    POLL_POLL,
     definition(
         3,
         "udp_udp_socket_drop",
-        "wasi:sockets/udp@0.2.0",
-        "[resource-drop]udp-socket",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32],
@@ -194,8 +175,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         4,
         "udp_incoming_datagram_stream_drop",
-        "wasi:sockets/udp@0.2.0",
-        "[resource-drop]incoming-datagram-stream",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32],
@@ -206,8 +185,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         5,
         "udp_outgoing_datagram_stream_drop",
-        "wasi:sockets/udp@0.2.0",
-        "[resource-drop]outgoing-datagram-stream",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32],
@@ -218,8 +195,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         6,
         "tcp_tcp_socket_drop",
-        "wasi:sockets/tcp@0.2.0",
-        "[resource-drop]tcp-socket",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32],
@@ -230,8 +205,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         7,
         "streams_method_input_stream_read",
-        "wasi:io/streams@0.2.0",
-        "[method]input-stream.read",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I64, Ty::I32],
@@ -242,8 +215,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         8,
         "instance_network_instance_network",
-        "wasi:sockets/instance-network@0.2.0",
-        "instance-network",
         SOCKET_IMPORT,
         Sig {
             params: &[],
@@ -254,8 +225,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         9,
         "udp_method_udp_socket_start_bind",
-        "wasi:sockets/udp@0.2.0",
-        "[method]udp-socket.start-bind",
         SOCKET_IMPORT,
         Sig {
             params: &[
@@ -285,8 +254,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         10,
         "udp_method_udp_socket_finish_bind",
-        "wasi:sockets/udp@0.2.0",
-        "[method]udp-socket.finish-bind",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I32],
@@ -300,8 +267,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         11,
         "udp_method_udp_socket_stream",
-        "wasi:sockets/udp@0.2.0",
-        "[method]udp-socket.stream",
         SOCKET_IMPORT,
         Sig {
             params: &[
@@ -331,8 +296,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         12,
         "udp_method_udp_socket_local_address",
-        "wasi:sockets/udp@0.2.0",
-        "[method]udp-socket.local-address",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I32],
@@ -346,8 +309,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         13,
         "udp_method_udp_socket_remote_address",
-        "wasi:sockets/udp@0.2.0",
-        "[method]udp-socket.remote-address",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I32],
@@ -361,8 +322,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         14,
         "udp_method_udp_socket_unicast_hop_limit",
-        "wasi:sockets/udp@0.2.0",
-        "[method]udp-socket.unicast-hop-limit",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I32],
@@ -376,8 +335,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         15,
         "udp_method_udp_socket_set_unicast_hop_limit",
-        "wasi:sockets/udp@0.2.0",
-        "[method]udp-socket.set-unicast-hop-limit",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I32, Ty::I32],
@@ -391,8 +348,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         16,
         "udp_method_udp_socket_receive_buffer_size",
-        "wasi:sockets/udp@0.2.0",
-        "[method]udp-socket.receive-buffer-size",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I32],
@@ -406,8 +361,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         17,
         "udp_method_udp_socket_set_receive_buffer_size",
-        "wasi:sockets/udp@0.2.0",
-        "[method]udp-socket.set-receive-buffer-size",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I64, Ty::I32],
@@ -421,8 +374,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         18,
         "udp_method_udp_socket_send_buffer_size",
-        "wasi:sockets/udp@0.2.0",
-        "[method]udp-socket.send-buffer-size",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I32],
@@ -436,8 +387,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         19,
         "udp_method_udp_socket_set_send_buffer_size",
-        "wasi:sockets/udp@0.2.0",
-        "[method]udp-socket.set-send-buffer-size",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I64, Ty::I32],
@@ -451,8 +400,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         20,
         "udp_method_udp_socket_subscribe",
-        "wasi:sockets/udp@0.2.0",
-        "[method]udp-socket.subscribe",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32],
@@ -463,8 +410,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         21,
         "udp_method_incoming_datagram_stream_receive",
-        "wasi:sockets/udp@0.2.0",
-        "[method]incoming-datagram-stream.receive",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I64, Ty::I32],
@@ -478,8 +423,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         22,
         "udp_method_incoming_datagram_stream_subscribe",
-        "wasi:sockets/udp@0.2.0",
-        "[method]incoming-datagram-stream.subscribe",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32],
@@ -490,8 +433,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         23,
         "udp_method_outgoing_datagram_stream_check_send",
-        "wasi:sockets/udp@0.2.0",
-        "[method]outgoing-datagram-stream.check-send",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I32],
@@ -505,8 +446,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         24,
         "udp_method_outgoing_datagram_stream_send",
-        "wasi:sockets/udp@0.2.0",
-        "[method]outgoing-datagram-stream.send",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I32, Ty::I32, Ty::I32],
@@ -520,8 +459,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         25,
         "udp_method_outgoing_datagram_stream_subscribe",
-        "wasi:sockets/udp@0.2.0",
-        "[method]outgoing-datagram-stream.subscribe",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32],
@@ -532,8 +469,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         26,
         "udp_create_socket_create_udp_socket",
-        "wasi:sockets/udp-create-socket@0.2.0",
-        "create-udp-socket",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I32],
@@ -547,8 +482,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         27,
         "tcp_method_tcp_socket_start_bind",
-        "wasi:sockets/tcp@0.2.0",
-        "[method]tcp-socket.start-bind",
         SOCKET_IMPORT,
         Sig {
             params: &[
@@ -578,8 +511,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         28,
         "tcp_method_tcp_socket_finish_bind",
-        "wasi:sockets/tcp@0.2.0",
-        "[method]tcp-socket.finish-bind",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I32],
@@ -593,8 +524,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         29,
         "tcp_method_tcp_socket_start_connect",
-        "wasi:sockets/tcp@0.2.0",
-        "[method]tcp-socket.start-connect",
         SOCKET_IMPORT,
         Sig {
             params: &[
@@ -621,8 +550,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         30,
         "tcp_method_tcp_socket_finish_connect",
-        "wasi:sockets/tcp@0.2.0",
-        "[method]tcp-socket.finish-connect",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I32],
@@ -633,8 +560,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         31,
         "tcp_method_tcp_socket_start_listen",
-        "wasi:sockets/tcp@0.2.0",
-        "[method]tcp-socket.start-listen",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I32],
@@ -648,8 +573,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         32,
         "tcp_method_tcp_socket_finish_listen",
-        "wasi:sockets/tcp@0.2.0",
-        "[method]tcp-socket.finish-listen",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I32],
@@ -663,8 +586,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         33,
         "tcp_method_tcp_socket_accept",
-        "wasi:sockets/tcp@0.2.0",
-        "[method]tcp-socket.accept",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I32],
@@ -678,8 +599,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         34,
         "tcp_method_tcp_socket_local_address",
-        "wasi:sockets/tcp@0.2.0",
-        "[method]tcp-socket.local-address",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I32],
@@ -690,8 +609,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         35,
         "tcp_method_tcp_socket_remote_address",
-        "wasi:sockets/tcp@0.2.0",
-        "[method]tcp-socket.remote-address",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I32],
@@ -702,8 +619,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         36,
         "tcp_method_tcp_socket_is_listening",
-        "wasi:sockets/tcp@0.2.0",
-        "[method]tcp-socket.is-listening",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32],
@@ -714,8 +629,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         37,
         "tcp_method_tcp_socket_set_listen_backlog_size",
-        "wasi:sockets/tcp@0.2.0",
-        "[method]tcp-socket.set-listen-backlog-size",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I64, Ty::I32],
@@ -729,8 +642,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         38,
         "tcp_method_tcp_socket_keep_alive_enabled",
-        "wasi:sockets/tcp@0.2.0",
-        "[method]tcp-socket.keep-alive-enabled",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I32],
@@ -741,8 +652,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         39,
         "tcp_method_tcp_socket_set_keep_alive_enabled",
-        "wasi:sockets/tcp@0.2.0",
-        "[method]tcp-socket.set-keep-alive-enabled",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I32, Ty::I32],
@@ -753,8 +662,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         40,
         "tcp_method_tcp_socket_keep_alive_idle_time",
-        "wasi:sockets/tcp@0.2.0",
-        "[method]tcp-socket.keep-alive-idle-time",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I32],
@@ -765,8 +672,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         41,
         "tcp_method_tcp_socket_set_keep_alive_idle_time",
-        "wasi:sockets/tcp@0.2.0",
-        "[method]tcp-socket.set-keep-alive-idle-time",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I64, Ty::I32],
@@ -777,8 +682,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         42,
         "tcp_method_tcp_socket_keep_alive_interval",
-        "wasi:sockets/tcp@0.2.0",
-        "[method]tcp-socket.keep-alive-interval",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I32],
@@ -789,8 +692,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         43,
         "tcp_method_tcp_socket_set_keep_alive_interval",
-        "wasi:sockets/tcp@0.2.0",
-        "[method]tcp-socket.set-keep-alive-interval",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I64, Ty::I32],
@@ -801,8 +702,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         44,
         "tcp_method_tcp_socket_keep_alive_count",
-        "wasi:sockets/tcp@0.2.0",
-        "[method]tcp-socket.keep-alive-count",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I32],
@@ -813,8 +712,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         45,
         "tcp_method_tcp_socket_set_keep_alive_count",
-        "wasi:sockets/tcp@0.2.0",
-        "[method]tcp-socket.set-keep-alive-count",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I32, Ty::I32],
@@ -825,8 +722,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         46,
         "tcp_method_tcp_socket_hop_limit",
-        "wasi:sockets/tcp@0.2.0",
-        "[method]tcp-socket.hop-limit",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I32],
@@ -840,8 +735,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         47,
         "tcp_method_tcp_socket_set_hop_limit",
-        "wasi:sockets/tcp@0.2.0",
-        "[method]tcp-socket.set-hop-limit",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I32, Ty::I32],
@@ -855,8 +748,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         48,
         "tcp_method_tcp_socket_receive_buffer_size",
-        "wasi:sockets/tcp@0.2.0",
-        "[method]tcp-socket.receive-buffer-size",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I32],
@@ -867,8 +758,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         49,
         "tcp_method_tcp_socket_set_receive_buffer_size",
-        "wasi:sockets/tcp@0.2.0",
-        "[method]tcp-socket.set-receive-buffer-size",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I64, Ty::I32],
@@ -879,8 +768,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         50,
         "tcp_method_tcp_socket_send_buffer_size",
-        "wasi:sockets/tcp@0.2.0",
-        "[method]tcp-socket.send-buffer-size",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I32],
@@ -891,8 +778,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         51,
         "tcp_method_tcp_socket_set_send_buffer_size",
-        "wasi:sockets/tcp@0.2.0",
-        "[method]tcp-socket.set-send-buffer-size",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I64, Ty::I32],
@@ -903,8 +788,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         52,
         "tcp_method_tcp_socket_subscribe",
-        "wasi:sockets/tcp@0.2.0",
-        "[method]tcp-socket.subscribe",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32],
@@ -915,8 +798,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         53,
         "tcp_method_tcp_socket_shutdown",
-        "wasi:sockets/tcp@0.2.0",
-        "[method]tcp-socket.shutdown",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I32, Ty::I32],
@@ -927,8 +808,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         54,
         "tcp_create_socket_create_tcp_socket",
-        "wasi:sockets/tcp-create-socket@0.2.0",
-        "create-tcp-socket",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I32],
@@ -937,34 +816,8 @@ pub const DEFINITIONS: &[Definition] = &[
         Action::CreateTcp,
     ),
     definition(
-        55,
-        "monotonic_clock_now",
-        "wasi:clocks/monotonic-clock@0.2.0",
-        "now",
-        CLOCK_IMPORT,
-        Sig {
-            params: &[],
-            results: &[Ty::I64],
-        },
-        Action::ClockNow,
-    ),
-    definition(
-        56,
-        "monotonic_clock_resolution",
-        "wasi:clocks/monotonic-clock@0.2.0",
-        "resolution",
-        CLOCK_IMPORT,
-        Sig {
-            params: &[],
-            results: &[Ty::I64],
-        },
-        Action::ClockResolution,
-    ),
-    definition(
         57,
         "monotonic_clock_subscribe_instant",
-        "wasi:clocks/monotonic-clock@0.2.0",
-        "subscribe-instant",
         POLL_IMPORT,
         Sig {
             params: &[Ty::I64],
@@ -975,8 +828,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         58,
         "poll_method_pollable_ready",
-        "wasi:io/poll@0.2.0",
-        "[method]pollable.ready",
         POLL_IMPORT,
         Sig {
             params: &[Ty::I32],
@@ -987,8 +838,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         59,
         "poll_method_pollable_block",
-        "wasi:io/poll@0.2.0",
-        "[method]pollable.block",
         POLL_IMPORT,
         Sig {
             params: &[Ty::I32],
@@ -999,8 +848,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         60,
         "streams_input_stream_drop",
-        "wasi:io/streams@0.2.0",
-        "[resource-drop]input-stream",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32],
@@ -1011,8 +858,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         61,
         "streams_output_stream_drop",
-        "wasi:io/streams@0.2.0",
-        "[resource-drop]output-stream",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32],
@@ -1023,8 +868,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         62,
         "streams_method_input_stream_subscribe",
-        "wasi:io/streams@0.2.0",
-        "[method]input-stream.subscribe",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32],
@@ -1035,8 +878,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         63,
         "streams_method_output_stream_subscribe",
-        "wasi:io/streams@0.2.0",
-        "[method]output-stream.subscribe",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32],
@@ -1047,8 +888,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         64,
         "streams_method_output_stream_check_write",
-        "wasi:io/streams@0.2.0",
-        "[method]output-stream.check-write",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I32],
@@ -1059,8 +898,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         65,
         "streams_method_output_stream_write",
-        "wasi:io/streams@0.2.0",
-        "[method]output-stream.write",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I32, Ty::I32, Ty::I32],
@@ -1071,8 +908,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         66,
         "streams_method_output_stream_flush",
-        "wasi:io/streams@0.2.0",
-        "[method]output-stream.flush",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I32],
@@ -1083,8 +918,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         67,
         "io_error_error_drop",
-        "wasi:io/error@0.2.0",
-        "[resource-drop]error",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32],
@@ -1095,8 +928,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         68,
         "io_error_method_error_to_debug_string",
-        "wasi:io/error@0.2.0",
-        "[method]error.to-debug-string",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I32],
@@ -1107,8 +938,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         70,
         "ip_name_lookup_resolve_addresses",
-        "wasi:sockets/ip-name-lookup@0.2.0",
-        "resolve-addresses",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I32, Ty::I32, Ty::I32],
@@ -1119,8 +948,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         71,
         "ip_name_lookup_method_resolve_address_stream_resolve_next_address",
-        "wasi:sockets/ip-name-lookup@0.2.0",
-        "[method]resolve-address-stream.resolve-next-address",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I32],
@@ -1131,8 +958,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         72,
         "ip_name_lookup_method_resolve_address_stream_subscribe",
-        "wasi:sockets/ip-name-lookup@0.2.0",
-        "[method]resolve-address-stream.subscribe",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32],
@@ -1143,8 +968,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         73,
         "ip_name_lookup_resolve_address_stream_drop",
-        "wasi:sockets/ip-name-lookup@0.2.0",
-        "[resource-drop]resolve-address-stream",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32],
@@ -1155,8 +978,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         74,
         "isoplane_socket_no_delay",
-        SOCKET_BRIDGE_MODULE,
-        "no-delay",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I32],
@@ -1167,8 +988,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         75,
         "network_network_error_code",
-        "wasi:sockets/network@0.2.0",
-        "network-error-code",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I32],
@@ -1179,8 +998,6 @@ pub const DEFINITIONS: &[Definition] = &[
     definition(
         76,
         "isoplane_socket_try_send_with_error_code",
-        SOCKET_BRIDGE_MODULE,
-        "try-send-with-error-code",
         SOCKET_IMPORT,
         Sig {
             params: &[Ty::I32, Ty::I32, Ty::I32, Ty::I32],
@@ -1209,17 +1026,15 @@ pub const MAX_ARGUMENTS: usize = {
     let mut maximum = 0;
     let mut index = 0;
     while index < DEFINITIONS.len() {
-        if let Some(signature) = DEFINITIONS[index].pal.sig {
-            if signature.params.len() > maximum {
-                maximum = signature.params.len();
-            }
+        if DEFINITIONS[index].sig.params.len() > maximum {
+            maximum = DEFINITIONS[index].sig.params.len();
         }
         index += 1;
     }
     maximum
 };
 
-/// Generate native wrappers from the same signatures the validator admits.
+/// Generate native wrappers from the signatures the engine's packet dispatch checks.
 pub fn native_wrappers() -> String {
     let mut output = String::from("/* Generated from isoplane_abi::native_io::canonical. */\n");
     output.push_str(&format!("#define ISOPLANE_SEND_PENDING UINT64_C({SEND_PENDING})\n#define ISOPLANE_SEND_FAILED UINT64_C({SEND_FAILED})\n"));
@@ -1229,15 +1044,7 @@ pub fn native_wrappers() -> String {
         output.push_str(&format!("__attribute__((import_module(\"isoplane\"), import_name(\"{capability}\")))\nextern int64_t isoplane_{capability}(int32_t operation, const uint64_t *arguments, int32_t count);\n"));
     }
     for definition in DEFINITIONS {
-        if matches!(
-            definition.action,
-            Action::ClockNow | Action::ClockResolution
-        ) {
-            continue;
-        }
-        let Some(signature) = definition.pal.sig else {
-            continue;
-        };
+        let signature = definition.sig;
         let parameters: Vec<_> = signature
             .params
             .iter()

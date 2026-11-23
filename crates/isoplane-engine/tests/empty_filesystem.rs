@@ -91,8 +91,8 @@ fn every_mutating_operation_refuses_a_valid_directory() {
         Operation::UnlinkFileAt,
     ] {
         let definition = &IMPORTS[operation as usize];
-        let signature = definition.pal.sig.expect("filesystem signature");
-        let mut arguments: Vec<String> = signature
+        let mut arguments: Vec<String> = definition
+            .sig
             .params
             .iter()
             .map(|ty| match ty {
@@ -233,21 +233,6 @@ fn filesystem_handles_survive_capture_in_guest_memory_alone() {
         &restored.memory()[1400..1408],
         &[0; 8],
         "the restored iterator must still report EOF"
-    );
-}
-
-#[test]
-fn a_filesystem_import_with_the_wrong_signature_is_rejected() {
-    let invalid = guest(
-        4,
-        r#"(import "wasi:filesystem/types@0.2.0" "[method]descriptor.stat" (func (param i32)))"#,
-        "",
-        DONE,
-        DONE,
-    );
-    assert!(
-        test_engine().load_template(&invalid).is_err(),
-        "an executing filesystem adapter must reject a mismatched canonical signature"
     );
 }
 

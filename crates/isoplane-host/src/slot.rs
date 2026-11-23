@@ -411,13 +411,24 @@ mod tests {
             next_handle: 5,
         };
         let bytes = isoplane_test_support::wat_bytes(&postcard::to_allocvec(&prepared).unwrap());
+        let network = isoplane_abi::native_io::canonical::DEFINITIONS
+            .iter()
+            .find(|definition| {
+                matches!(
+                    definition.action,
+                    isoplane_abi::native_io::canonical::Action::Network
+                )
+            })
+            .expect("the native contract defines the network operation")
+            .id
+            .0;
         let wasm = wat::parse_str(format!(r#"(module
           (@custom "{}" "{bytes}")
-          (import "wasi:sockets/instance-network@0.2.0" "instance-network" (func $network (result i32)))
+          (import "isoplane" "socket_call" (func $socket (param i32 i32 i32) (result i64)))
           (memory (export "memory") 1 64)
           (func (export "isoplane_gc_hint") (param i32)
-            (i32.store (i32.const 64) (call $network))
-            (if (i32.ne (i32.load (i32.const 64)) (i32.const 3)) (then unreachable)))
+            (i64.store (i32.const 64) (call $socket (i32.const {network}) (i32.const 0) (i32.const 0)))
+            (if (i64.ne (i64.load (i32.const 64)) (i64.const 3)) (then unreachable)))
           (func (export "isoplane_alloc") (param i32 i32) (result i32) (i32.const 2048))
           (func (export "isoplane_handle") (param i32 i32) (result i64) (i64.const 0))
           (func (export "isoplane_wake") (param i64 i32 i32) (result i64) (i64.const 0)))"#, isoplane_abi::native_io::PREPARED_RESOURCES_SECTION)).unwrap();
