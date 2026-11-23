@@ -1,0 +1,74 @@
+name: Little Helper
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: GitHub action
+        type: choice
+        options: [verify, issue, comment, review, review-comment]
+        required: true
+      number:
+        description: Issue or pull request number for comments and reviews
+        type: string
+      payload:
+        description: JSON request body for the selected GitHub REST endpoint
+        type: string
+permissions: {}
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: isoplane-helper
+    steps:
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3
+        id: app
+        with:
+          client-id: ${{ vars.ISOPLANE_HELPER_CLIENT_ID }}
+          private-key: ${{ secrets.ISOPLANE_HELPER_PRIVATE_KEY }}
+          permission-issues: write
+          permission-pull-requests: write
+      - name: Publish as Little Helper
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          OPERATION: ${{ inputs.operation }}
+          NUMBER: ${{ inputs.number }}
+          PAYLOAD: ${{ inputs.payload }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+          : "${GH_TOKEN:?Little Helper token is missing}"
+          bot=$(gh api graphql -f query='{ viewer { login } }' --jq '.data.viewer.login')
+          [[ $bot == 'isoplane-s-little-helper[bot]' ]] || fail "Unexpected GitHub identity"
+          if [[ $OPERATION == verify ]]; then
+            echo "Authenticated as $bot" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          [[ $GITHUB_RUN_ATTEMPT == 1 ]] || fail "Check the original run before dispatching a new post"
+          repo="repos/$GITHUB_REPOSITORY"
+          payload=$(jq -cse 'select(length == 1) | .[0] | objects' <<< "$PAYLOAD")
+          if [[ $OPERATION != issue ]]; then
+            [[ $NUMBER =~ ^[1-9][0-9]*$ ]] || fail "Expected a positive issue or PR number"
+          fi
+          case "$OPERATION" in
+            issue) endpoint="$repo/issues" ;;
+            comment) endpoint="$repo/issues/$NUMBER/comments" ;;
+            review-comment) endpoint="$repo/pulls/$NUMBER/comments" ;;
+            review)
+              endpoint="$repo/pulls/$NUMBER/reviews"
+              event=$(jq -er '.event' <<< "$payload")
+              jq -e '.commit_id | strings | test("^[0-9a-f]{40}$")' <<< "$payload" >/dev/null || fail "Supply the reviewed commit SHA"
+              case "$event" in
+                APPROVE|REQUEST_CHANGES)
+                  author=$(gh api "$repo/pulls/$NUMBER" --jq '.user.login')
+                  [[ $author != "$GITHUB_ACTOR" ]] || fail "PR authors can submit comment-only reviews on their own PRs"
+                  ;;
+                COMMENT) ;;
+                *) fail "Expected COMMENT, APPROVE or REQUEST_CHANGES" ;;
+              esac
+              ;;
+            *) fail "Unknown Little Helper operation" ;;
+          esac
+          result=$(gh api --method POST "$endpoint" --input - <<< "$payload")
+          url=$(jq -er --arg bot "$bot" 'select(.user.login == $bot) | .html_url' <<< "$result")
+          echo "$url" | tee -a "$GITHUB_STEP_SUMMARY"

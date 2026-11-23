@@ -22,6 +22,20 @@ copy-on-write from it, park with an empty stack while waiting on host I/O, and
 can be hibernated as a delta against the template and woken later. The host is
 Rust; the guest SDK is C#.
 
+## Posting to GitHub
+
+For authorized AI-generated issues, issue or PR conversation comments, and PR reviews (including inline comments and replies), use the **Little Helper** workflow. If it fails, report the failure and check the run before retrying. Posting directly with a personal GitHub connection would attribute the content to its owner. Use the usual Git identity for commits.
+
+Dispatch from `main` with the GitHub CLI. For example, to post a conversation comment, save a JSON object with a `body` field to a temporary file and run:
+
+```sh
+gh api repos/fantail-forest/isoplane/actions/workflows/little-helper.yml/dispatches \
+  -H 'X-GitHub-Api-Version: 2026-03-10' -f ref=main \
+  -f 'inputs[operation]=comment' -f 'inputs[number]=123' -F 'inputs[payload]=@/path/to/comment.json'
+```
+
+Use `issue` with `title` and `body` to open an issue (omit the number). Use `review` with the reviewed `commit_id`, an explicit `event` and the review text or inline `comments`. Use `review-comment` with `body` and `in_reply_to` to reply to a review thread. An approval or change request needs authorization for that verdict. Use `verify` alone to check the bot identity. Wait for the returned workflow run with `gh run watch RUN_ID --exit-status`; the successful run summary links the posted item.
+
 ## Architecture
 
 Two Cargo workspaces. The root workspace holds the host crates. `guests/` is a
