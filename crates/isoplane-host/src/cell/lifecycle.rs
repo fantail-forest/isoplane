@@ -171,9 +171,9 @@ impl Cell {
         let observer: Arc<dyn crate::reactor_accounting::Observer> = job.completion.clone();
         dispatch.reactor_attribution.set(Some(&observer));
         dispatch.set_cancel_future(job.rec.cancel_future);
-        if let isoplane_abi::dispatch::DispatchKind::Http(request) = &job.rec.kind {
+        if let isoplane_abi::dispatch::DispatchKind::Http(_) = &job.rec.kind {
             *dispatch.request_body.lock() = Some(job.upload.clone().unwrap_or_else(|| {
-                crate::bindings::request_body::RequestBodyScope::new(None, !request.body.is_empty())
+                crate::bindings::request_body::RequestBodyScope::new(None, false)
             }));
         }
 

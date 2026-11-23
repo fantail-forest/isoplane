@@ -65,7 +65,6 @@ async fn interpreted_activation_awaits_its_timer_before_dispatch_and_does_not_re
             path: "/activations".into(),
             query: vec![],
             headers: vec![],
-            body: vec![],
         };
         let response = cell
             .dispatch(
@@ -117,7 +116,6 @@ async fn failed_activation_discards_the_instance_before_another_request() {
             path: "/activations".into(),
             query: vec![],
             headers: vec![],
-            body: vec![],
         };
         let result = cell
             .dispatch(

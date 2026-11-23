@@ -30,7 +30,6 @@ fn http(cell: &Cell, module: &ModuleId, path: &str) -> DispatchRecord {
             path: path.into(),
             query: vec![],
             headers: vec![],
-            body: vec![],
         },
     )
 }

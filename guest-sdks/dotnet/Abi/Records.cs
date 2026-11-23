@@ -22,6 +22,9 @@ public sealed class DispatchRecord
     internal string Url = "";
     internal KeyValuePair<string, string>[] Query = Array.Empty<KeyValuePair<string, string>>();
     internal KeyValuePair<string, string>[] Headers = Array.Empty<KeyValuePair<string, string>>();
+
+    // Not part of the encoded record: the runtime reads the whole body from
+    // the host before it routes a request to a handler that takes it buffered.
     internal byte[] Body = Array.Empty<byte>();
 
     internal static DispatchRecord Decode(ReadOnlySpan<byte> bytes)
@@ -34,13 +37,12 @@ public sealed class DispatchRecord
         switch (d.Kind)
         {
             case DispatchKind.Http:
-                // HttpRequest { method, url, path, query, headers, body }
+                // HttpRequest { method, url, path, query, headers }
                 d.Method = r.Str();
                 d.Url = r.Str();
                 d.Path = r.Str();
                 d.Query = r.StringPairs();
                 d.Headers = r.StringPairs();
-                d.Body = r.Bytes().ToArray();
                 break;
             case DispatchKind.Background:
                 break;

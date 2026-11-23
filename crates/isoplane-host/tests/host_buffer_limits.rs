@@ -54,7 +54,6 @@ fn dispatch(cell: &Cell, module: &ModuleId) -> DispatchResult {
             path: "/".into(),
             query: vec![],
             headers: vec![],
-            body: vec![],
         },
     );
     cell.dispatch_blocking(

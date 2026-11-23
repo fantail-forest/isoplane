@@ -48,7 +48,6 @@ fn submit(cell: &Cell, module: &ModuleId) -> Receiver<DispatchResult> {
             path: "/".into(),
             query: vec![],
             headers: vec![],
-            body: vec![],
         },
     );
     cell.submit(module, Target::Handler { route: "/".into() }, record)

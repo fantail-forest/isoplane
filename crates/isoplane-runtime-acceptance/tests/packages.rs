@@ -515,7 +515,6 @@ async fn an_aspnet_request_that_calls_out_through_a_factory_client_leaves_its_in
             path: "/outbound".into(),
             query: vec![],
             headers: vec![],
-            body: vec![],
         };
         let response = cell
             .dispatch(
@@ -1057,7 +1056,6 @@ async fn ask_for_beats(
         path: "/beats".into(),
         query: vec![],
         headers: vec![],
-        body: vec![],
     };
     let result = cell
         .dispatch(
@@ -1097,7 +1095,6 @@ fn alpha_request(
             path: path.into(),
             query: vec![],
             headers: vec![],
-            body: vec![],
         },
     )
 }

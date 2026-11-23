@@ -48,20 +48,11 @@ pub struct HttpExchange {
 
 /// Request metadata and an owned upload, kept outside the serialized guest record.
 pub struct HttpUpload {
-    /// Existing request fields; body bytes here precede the owned upload.
+    /// The request line and headers the guest receives in its dispatch record.
     pub request: HttpRequest,
-    /// The remaining upload. Dropping it releases the client transport.
+    /// The request body, which the guest reads through `req_body_read`.
+    /// Dropping it releases the client transport.
     pub body: Box<dyn HttpBody>,
     /// Whether HTTP framing permits request content, including unknown-length uploads.
     pub can_have_body: bool,
-}
-
-impl HttpUpload {
-    /// Collect an upload for a dispatcher or compiled guest that requires inline bytes.
-    pub async fn collect(mut self) -> Result<HttpRequest> {
-        while let Some(chunk) = self.body.read().await? {
-            self.request.body.extend(chunk);
-        }
-        Ok(self.request)
-    }
 }

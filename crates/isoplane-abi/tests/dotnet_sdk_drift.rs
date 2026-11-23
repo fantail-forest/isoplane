@@ -163,7 +163,6 @@ fn dispatch_kind_in_records_cs_mirrors_the_rust_enum() {
                     path: "/".into(),
                     query: vec![],
                     headers: vec![],
-                    body: vec![],
                 }),
             ),
             ("Background", DispatchKind::Background),

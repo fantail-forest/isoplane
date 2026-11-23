@@ -266,7 +266,6 @@ mod tests {
         how: Completion,
         module: crate::ModuleId,
         template: Arc<Vec<u8>>,
-        upload_capable: bool,
     }
 
     impl HintActivator {
@@ -275,17 +274,11 @@ mod tests {
                 how,
                 module: crate::ModuleId::new("hint", "v1"),
                 template: Arc::new(vec![0u8; isoplane_abi::PAGE_SIZE]),
-                upload_capable: false,
             }
         }
     }
 
     impl Activator for HintActivator {
-        fn imports(&self, module: &str, name: &str) -> bool {
-            self.upload_capable
-                && module == isoplane_abi::imports::HOST_MODULE
-                && name == "req_body_read"
-        }
         fn module(&self) -> &crate::ModuleId {
             &self.module
         }
@@ -503,12 +496,9 @@ mod tests {
     #[test]
     fn an_eof_upload_stays_locally_capturable() {
         use crate::bindings::request_body::RequestBodyScope;
-        let (slot, _) = parked_slot(Completion::Done);
+        let (slot, act) = parked_slot(Completion::Done);
         *slot.ctx.start_dispatch(1, 1).request_body.lock() =
             Some(RequestBodyScope::new(None, true));
-        let mut concrete = HintActivator::new(Completion::Done);
-        concrete.upload_capable = true;
-        let act: Arc<dyn Activator> = Arc::new(concrete);
         assert!(
             try_capture(&slot, &act).is_ok(),
             "EOF upload metadata must not veto local capture"

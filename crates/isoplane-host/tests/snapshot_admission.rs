@@ -77,7 +77,6 @@ fn exhausted_snapshot_capacity_refuses_admission_before_guest_activation() {
             path: "/".into(),
             query: vec![],
             headers: vec![],
-            body: vec![],
         }),
         cancel_future: 0,
         occupancy_budget_ms: 1_000,

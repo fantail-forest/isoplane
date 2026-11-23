@@ -251,7 +251,6 @@ impl Rig {
             path: path.into(),
             query: vec![],
             headers: vec![],
-            body: vec![],
         };
         let mut record = self.cell.http_record(&self.module, request);
         record.occupancy_budget_ms = 30_000;

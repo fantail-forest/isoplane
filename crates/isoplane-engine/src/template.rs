@@ -161,14 +161,6 @@ impl Template {
         Ok(self)
     }
 
-    /// Whether the compiled module declares this import, including mapped artifacts.
-    pub fn imports(&self, module: &str, name: &str) -> bool {
-        self.inner
-            .module()
-            .imports()
-            .any(|import| import.module() == module && import.name() == name)
-    }
-
     /// Brings the template's initialization working set into the page cache,
     /// so a new instance's first faults on it hit memory. Cheap when it is
     /// already resident; call it off the dispatch path, at load and while the

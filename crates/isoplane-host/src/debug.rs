@@ -67,9 +67,6 @@ impl Activator for DebugActivator {
     fn abi_rev(&self) -> u32 {
         self.engine.abi_rev()
     }
-    fn imports(&self, module: &str, name: &str) -> bool {
-        self.engine.imports(module, name)
-    }
     fn template_image(&self) -> Arc<MemoryImage> {
         self.engine.template_image()
     }
@@ -358,7 +355,6 @@ mod tests {
                 path: "/".into(),
                 query: vec![],
                 headers: vec![],
-                body: vec![],
             }),
             cancel_future: 0,
             occupancy_budget_ms: DEBUG_BUDGET_MS,

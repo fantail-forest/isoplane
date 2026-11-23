@@ -6,9 +6,9 @@ using Isoplane.Abi;
 
 namespace Isoplane.Runtime;
 
-internal sealed class RequestStream(ReadOnlyMemory<byte> prefix, bool canHaveBody) : Stream
+internal sealed class RequestStream(bool canHaveBody) : Stream
 {
-    private ReadOnlyMemory<byte> remaining = prefix;
+    private ReadOnlyMemory<byte> remaining;
     private bool eof = !canHaveBody;
     private bool reading;
     private bool disposed;

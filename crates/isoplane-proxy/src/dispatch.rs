@@ -40,7 +40,6 @@ impl Proxy {
                     )
                 })
                 .collect(),
-            body: vec![],
         };
         match self
             .dispatcher
@@ -64,9 +63,6 @@ impl Proxy {
                     ],
                 )
                 .await
-            }
-            Err(e) if e.downcast_ref::<UploadReadError>().is_some() => {
-                text(StatusCode::BAD_REQUEST, "bad body", &[])
             }
             Err(e) => {
                 self.metrics.requests_failed.fetch_add(1, Relaxed);

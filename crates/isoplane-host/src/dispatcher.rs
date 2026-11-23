@@ -110,22 +110,13 @@ impl Dispatcher for Cell {
         target: &RouteTarget,
         upload: HttpUpload,
     ) -> anyhow::Result<HttpExchange> {
-        let module = self.module_for(target)?;
-        if !self.module_imports(&module, "req_body_read") {
-            let can_have_body = upload.can_have_body || !upload.request.body.is_empty();
-            let request = upload.collect().await?;
-            let source = crate::bindings::request_body::RequestBodyScope::new(None, can_have_body);
-            return self.run_http_exchange(target, request, source).await;
-        }
         let body = if !upload.can_have_body || upload.body.remaining_bytes() == Some(0) {
             None
         } else {
             Some(upload.body)
         };
-        let source = crate::bindings::request_body::RequestBodyScope::new(
-            body,
-            upload.can_have_body || !upload.request.body.is_empty(),
-        );
+        let source =
+            crate::bindings::request_body::RequestBodyScope::new(body, upload.can_have_body);
         self.run_http_exchange(target, upload.request, source).await
     }
 }

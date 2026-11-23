@@ -179,7 +179,7 @@ pub const IMPORTS: &[ImportDef] = &[
 
     // ---- inbound request --------------------------------------------------
     ImportDef { buf: BufSpec::None, ..imp!("req_body_read", Http, Sig { params: &[I32], results: &[I64] }, FUT,
-        "reads at most max bytes from this dispatch's upload; max is positive, empty bytes mean EOF; declaring this capability permits inline body bytes followed by a host-owned upload") },
+        "reads at most max bytes from this dispatch's upload; max is positive, empty bytes mean EOF") },
     ImportDef { buf: BufSpec::None, ..imp!("req_body_can_have_body", Http, Sig { params: &[], results: &[I32] }, SYNC,
         "whether HTTP framing permits content for this dispatch, including unknown-length uploads") },
 

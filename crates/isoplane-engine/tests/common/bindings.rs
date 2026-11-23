@@ -18,6 +18,16 @@ pub struct Recorder {
     pub entropy_draws: Arc<parking_lot::Mutex<Vec<Vec<u8>>>>,
     pub clock: Arc<AtomicU64>,
     pub clock_reads: Arc<AtomicU64>,
+    pub upload: Arc<parking_lot::Mutex<Upload>>,
+}
+
+/// The current request's body and the guest's unanswered reads of it.
+#[derive(Default)]
+pub struct Upload {
+    /// `None` when the request's framing permits no body.
+    pub remaining: Option<std::collections::VecDeque<u8>>,
+    /// The future and size limit of each unanswered `req_body_read`.
+    pub reads: std::collections::VecDeque<(u64, usize)>,
 }
 
 pub struct TestBindings {
@@ -73,6 +83,13 @@ impl HostBindings for TestBindings {
                 .lock()
                 .push_back((call.scalars[0], id));
         }
+        if call.import == "req_body_read" {
+            self.rec
+                .upload
+                .lock()
+                .reads
+                .push_back((id, call.scalars[0] as usize));
+        }
         if call.import == "resp_write" {
             self.rec
                 .responses
@@ -102,6 +119,9 @@ impl HostBindings for TestBindings {
             let handle = self.next_response;
             self.next_response += 1;
             return handle;
+        }
+        if call.import == "req_body_can_have_body" {
+            return i64::from(self.rec.upload.lock().remaining.is_some());
         }
         0
     }

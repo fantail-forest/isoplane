@@ -256,7 +256,6 @@ pub fn cell(
             path: "/".into(),
             query: vec![],
             headers: vec![],
-            body: vec![],
         },
     );
     let response = cell

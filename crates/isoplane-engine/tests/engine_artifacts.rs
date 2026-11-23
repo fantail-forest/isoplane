@@ -49,7 +49,6 @@ fn http_dispatch(id: u64) -> isoplane_abi::dispatch::DispatchRecord {
             path: "/x".into(),
             query: vec![],
             headers: vec![("host".into(), "example.test".into())],
-            body: vec![],
         }),
         cancel_future: 0,
         occupancy_budget_ms: 30_000,

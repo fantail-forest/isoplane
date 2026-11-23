@@ -107,7 +107,6 @@ async fn response_program_with(
                     path: "/".into(),
                     query: vec![],
                     headers: vec![],
-                    body: vec![],
                 },
                 body: Box::new(NoUpload),
                 can_have_body: false,

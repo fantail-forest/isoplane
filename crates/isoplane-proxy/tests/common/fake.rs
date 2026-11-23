@@ -49,9 +49,13 @@ impl Dispatcher for FakeCell {
     async fn dispatch_http_upload(
         &self,
         target: &RouteTarget,
-        upload: HttpUpload,
+        mut upload: HttpUpload,
     ) -> anyhow::Result<HttpExchange> {
-        let req = upload.collect().await?;
+        let req = upload.request;
+        let mut uploaded = Vec::new();
+        while let Some(chunk) = upload.body.read().await? {
+            uploaded.extend(chunk);
+        }
         if self.breaker_is_tripped(&format!("{}:{}", target.app, req.path)) {
             return Ok(complete(
                 503,
@@ -68,7 +72,7 @@ impl Dispatcher for FakeCell {
             "method": req.method,
             "path": req.path,
             "headers": req.headers,
-            "body": req.body,
+            "body": uploaded,
         });
         Ok(complete(
             200,

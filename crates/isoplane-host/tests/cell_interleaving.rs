@@ -48,7 +48,6 @@ fn request(
             path: path.into(),
             query,
             headers: vec![],
-            body: vec![],
         },
     )
 }

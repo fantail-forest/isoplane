@@ -227,7 +227,6 @@ pub(super) mod cell_tests {
                 path: "/go".into(),
                 query: vec![],
                 headers: vec![],
-                body: vec![],
             }),
             cancel_future: 0,
             occupancy_budget_ms: 1_000,

@@ -715,7 +715,6 @@ pub fn request(method: &str, path: &str, headers: Vec<(String, String)>) -> Http
         path: path.into(),
         query: vec![],
         headers,
-        body: vec![],
     }
 }
 

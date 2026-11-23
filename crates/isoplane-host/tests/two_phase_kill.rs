@@ -105,7 +105,6 @@ fn get(cell: &Cell, module: &ModuleId, path: &str) -> DispatchResult {
             path: path.into(),
             query: vec![],
             headers: vec![],
-            body: vec![],
         },
     );
     rec.occupancy_budget_ms = B_MS;

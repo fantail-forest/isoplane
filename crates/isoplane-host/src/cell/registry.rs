@@ -308,14 +308,6 @@ impl Cell {
         Ok(())
     }
 
-    pub(crate) fn module_imports(&self, module: &ModuleId, name: &str) -> bool {
-        self.modules.read().get(module).is_some_and(|entry| {
-            entry
-                .activator
-                .imports(isoplane_abi::imports::HOST_MODULE, name)
-        })
-    }
-
     pub fn register_module(
         self: &Arc<Self>,
         tenant: &str,
