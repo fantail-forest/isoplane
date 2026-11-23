@@ -6,6 +6,19 @@ tasks:
     cmds:
       - task: ':managed:all-tests'
       - task: default:prepared
+
+  shared:
+    run: once
+    desc: Build the application archives Rust tests load on Linux, which are the same on every platform
+    platforms: [linux]
+    cmds:
+      - task: ':managed:guest-fixtures'
+      - task: shared:prepared
+
+  shared:prepared:
+    internal: true
+    deps: [dotnet:prepared, acceptance:prepared, package:prepared]
+
   rust:
     desc: Build portable Rust WASM fixtures
     deps: [':initialize']

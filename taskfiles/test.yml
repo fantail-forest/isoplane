@@ -25,7 +25,7 @@ tasks:
   rust:
     desc: Prepare the guest fixtures Rust tests load and run selected Rust tests
     cmds:
-      - task: ':managed:guest-fixtures'
+      - task: ':fixtures:shared'
       - task: rust:prepared
         vars: {CLI_ARGS: '{{.CLI_ARGS}}'}
 
@@ -220,8 +220,8 @@ tasks:
       - npm --prefix tools/vscode-isoplane ci
   rust:prepared:
     internal: true
-    desc: Prepare the guest fixtures Rust tests load and run selected Rust tests
-    deps: [':initialize', ':fixtures:rust', ':fixtures:dotnet:prepared', ':fixtures:acceptance:prepared', ':fixtures:package:prepared', ':fixtures:compiled-runtime:prepared', ':node:runtimes:prepared']
+    desc: Run selected Rust tests against the application archives task fixtures:shared wrote
+    deps: [':initialize', ':fixtures:rust', ':fixtures:compiled-runtime:prepared', ':node:runtimes:prepared']
     cmds:
       - '{{.DEVELOPMENT_COMMAND}}cargo test {{.CLI_ARGS}}'
 

@@ -178,11 +178,18 @@ fn shared_runtime(name: &str) -> PathBuf {
 }
 
 /// The path of the package fixture `guest-runtime/tests/packages/<name>`,
-/// the archive `isoplane bundle` writes, prepared by Task.
+/// the archive `isoplane bundle` writes, prepared by Task on Linux. Fails,
+/// naming the task, when the archive is missing.
 pub fn mono_package(name: &str) -> PathBuf {
-    repo_root()
+    let path = repo_root()
         .join(".build/clr-anycpu/package-fixtures")
-        .join(format!("{name}.tar"))
+        .join(format!("{name}.tar"));
+    assert!(
+        path.is_file(),
+        "the package fixture {} is missing; task fixtures:shared builds it on Linux",
+        path.display()
+    );
+    path
 }
 
 /// Host-specific compiler baseline and deltas shared by Hot Reload scenarios.

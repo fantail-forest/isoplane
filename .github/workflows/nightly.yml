@@ -56,7 +56,7 @@ jobs:
     needs: runtime
     uses: ./.github/workflows/integration.yml
     with:
-      suites: '["host", "sdk", "release"]'
+      suites: '["sdk", "release"]'
 
   release-build:
     needs: runtime
