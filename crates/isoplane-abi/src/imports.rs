@@ -131,24 +131,6 @@ pub const IMPORTS: &[ImportDef] = &[
     ImportDef { init_visible: true, ..imp!("abort", Core, BUF_TO_VOID, SYNC,
         "guest panic; available at init so a failed pre-initialization reports usefully rather than \
          trapping anonymously") },
-    #[cfg(feature = "rust-guests")]
-    ImportDef {
-        init_visible: true,
-        sensitive: true,
-        ..ImportDef { buf: BufSpec::Out(0), ..imp!("init_hash_seed", Core, BUF_TO_VOID, SYNC,
-            "a fresh string-hash seed, stable within one initialization attempt and captured in its guest state") }
-    },
-
-    // Tenant-authored deploy input, fixed for the version.
-    #[cfg(feature = "rust-guests")]
-    ImportDef {
-        init_visible: true,
-        ..ImportDef { buf: BufSpec::Out(0), ..imp!("init_config_get", Core, BUF_TO_I32, SYNC,
-            "the init-visible config blob, so a config parse happens once at deploy time instead of \
-             once per activation; returns the blob's FULL length, so a guest can size its buffer \
-             with a zero-length probe") }
-    },
-
     ImportDef {
         sensitive: true,
         init_visible: true,

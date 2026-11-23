@@ -225,12 +225,6 @@ fn local_compilation(
 
 fn preinitialize(project: &Project, wasm: &[u8], configuration: &[u8]) -> anyhow::Result<Vec<u8>> {
     let files = project.served_files()?;
-    let request = isoplane_prepare::PreInitRequest::new(isoplane_engine::ModuleHash::of(wasm));
-    #[cfg(feature = "rust-guests")]
-    let request = isoplane_prepare::PreInitRequest {
-        init_blob: serde_json::to_vec(&project.manifest.init_visible_vars)?,
-        ..request
-    };
     Ok(isoplane_prepare::PreInitializer::new()
         .with_runtime_profile(project.runtime_profile.clone())
         .with_memory_limit(isoplane_abi::config::GuestMemoryBytes::new(
@@ -243,7 +237,7 @@ fn preinitialize(project: &Project, wasm: &[u8], configuration: &[u8]) -> anyhow
         .with_network(initialization_network(project))
         .with_runtime_configuration(configuration.to_vec())
         .with_platform_files(files)
-        .run(wasm, &request)
+        .run(wasm)
         .map_err(|e| anyhow::anyhow!("pre-initializing {}: {e}", project.manifest.name))?
         .wasm)
 }

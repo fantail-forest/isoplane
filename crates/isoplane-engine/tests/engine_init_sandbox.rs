@@ -83,42 +83,34 @@ fn the_init_sandbox_traps_on_a_forbidden_import_and_names_it() {
 }
 
 #[test]
-fn the_init_sandbox_permits_exactly_the_init_visible_set() {
+fn a_runtime_configuration_read_reports_the_full_length_and_fills_only_its_capacity() {
     let e = test_engine();
-    let imports = format!(
-        "{}\n{}",
-        import("init_hash_seed", "(param i32 i32)", ""),
-        import("init_config_get", "(param i32 i32)", "(result i32)"),
-    );
     let wasm = guest(
         4,
-        &imports,
+        &import("runtime_config_get", "(param i32 i32)", "(result i32)"),
         r#"
   (func (export "isoplane_initialize") (result i64)
-    (call $init_hash_seed (i32.const 512) (i32.const 16))
-    (i32.store (i32.const 600) (call $init_config_get (i32.const 0) (i32.const 0)))
-    (i32.store (i32.const 604) (call $init_config_get (i32.const 1024) (i32.const 8))) i64.const 0)"#,
+    (i32.store (i32.const 600) (call $runtime_config_get (i32.const 0) (i32.const 0)))
+    (i32.store (i32.const 604) (call $runtime_config_get (i32.const 1024) (i32.const 8))) i64.const 0)"#,
         DONE,
         DONE,
     );
     let t = e.load_template(&wasm).expect("template");
-    let mut b = init_sandbox(Recorder::default());
-    b.0.full_length = Some(9_000);
-    let mut i = e.activate_initialization(&t, b).expect("activation");
+    let settings: Vec<u8> = (1..=250).cycle().take(9_000).collect();
+    let rec = Recorder::default();
+    *rec.runtime_configuration.lock() = Some(settings.clone());
+    let mut i = e
+        .activate_initialization(&t, init_sandbox(rec))
+        .expect("activation");
     let out = i.run_initialize(budget(10_000));
     assert_eq!(
         out.completion,
         Completion::Done,
-        "the init-visible imports are reachable: {:?}",
+        "the settings read is reachable in the init sandbox: {:?}",
         out.trap
     );
 
     let m = i.memory();
-    let seed = &m[512..528];
-    assert!(
-        seed.iter().all(|b| *b == seed[0]) && seed[0] != 0,
-        "the hash seed must be delivered into the guest's buffer"
-    );
     assert_eq!(
         read_u32(m, 600),
         9_000,
@@ -129,26 +121,12 @@ fn the_init_sandbox_permits_exactly_the_init_visible_set() {
         9_000,
         "a capped read still reports the full length"
     );
-    let capped = &m[1024..1032];
-    assert!(
-        capped.iter().all(|b| *b == capped[0]) && capped[0] != 0,
+    assert_eq!(
+        &m[1024..1032],
+        &settings[..8],
         "the capped read must fill exactly `cap` bytes"
     );
     assert_eq!(m[1032], 0, "the capped read must not write past `cap`");
-    assert_ne!(
-        seed[0], capped[0],
-        "two host fills in one dispatch must be two draws"
-    );
-
-    let visible: Vec<&str> = isoplane_abi::imports::IMPORTS
-        .iter()
-        .filter(|d| d.init_visible)
-        .map(|d| d.name)
-        .collect();
-    assert!(
-        visible.contains(&"init_hash_seed") && visible.contains(&"init_config_get"),
-        "the sandbox admits what the table marks init-visible: {visible:?}"
-    );
 }
 
 #[test]
@@ -174,35 +152,6 @@ fn outside_the_init_sandbox_every_declared_import_is_reachable() {
         i.last_capability_violation(),
         None,
         "no violation is recorded outside the sandbox"
-    );
-}
-
-#[test]
-fn runtime_configuration_reaches_the_preparation_binding() {
-    let engine = test_engine();
-    let wasm = guest(
-        4,
-        &import("runtime_config_get", "(param i32 i32)", "(result i32)"),
-        r#"(func (export "isoplane_initialize") (result i64) (drop (call $runtime_config_get (i32.const 0) (i32.const 0))) i64.const 0)"#,
-        DONE,
-        DONE,
-    );
-    let template = engine
-        .load_template(&wasm)
-        .expect("valid runtime configuration import");
-    let recorder = Recorder::default();
-    let mut instance = engine
-        .activate_initialization(&template, init_sandbox(recorder.clone()))
-        .expect("activation");
-    let outcome = instance.run_initialize(budget(10_000));
-    assert_eq!(
-        outcome.completion,
-        Completion::Done,
-        "initialization must admit deployment settings"
-    );
-    assert!(
-        !recorder.calls.lock().is_empty(),
-        "the preparation binding must receive the settings read"
     );
 }
 

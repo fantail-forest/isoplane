@@ -21,7 +21,6 @@ fn manifest(name: &str) -> AppManifest {
         validation_limits: Default::default(),
         name: name.into(),
         bindings: Default::default(),
-        init_visible_vars: vec![("REGION".into(), "eu-west".into())],
     }
 }
 

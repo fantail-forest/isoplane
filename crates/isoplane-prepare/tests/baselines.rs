@@ -14,7 +14,6 @@ use isoplane_prepare::{
 };
 use tokio_util::sync::CancellationToken;
 
-const SEED: &str = r#"(import "isoplane" "init_hash_seed" (func $seed (param i32 i32)))"#;
 const ENTROPY: &str = r#"(import "isoplane" "entropy_fill" (func $entropy (param i32 i32)))"#;
 
 /// Writes the runtime's marker into the first page.
@@ -82,7 +81,7 @@ fn load(
 
 #[tokio::test]
 async fn an_application_over_a_baseline_loads_to_the_memory_its_whole_initialization_leaves() {
-    let wasm = staged::staged_guest(SEED, RUNTIME, APPLICATION);
+    let wasm = staged::staged_guest(ENTROPY, RUNTIME, APPLICATION);
     let request = request(&wasm);
     let preparation = crate::provider::local_preparation();
     let whole = preparation
@@ -133,7 +132,7 @@ async fn an_application_over_a_baseline_loads_to_the_memory_its_whole_initializa
 
 #[tokio::test]
 async fn a_module_without_a_runtime_stage_cannot_produce_a_baseline() {
-    let wasm = common::guest(SEED, "");
+    let wasm = common::guest(ENTROPY, "");
     assert!(
         baseline(&wasm, &request(&wasm)).await.is_err(),
         "an absent runtime stage must not produce an uninitialized baseline"
@@ -158,16 +157,6 @@ async fn a_module_without_an_application_initializer_cannot_produce_a_baseline()
 }
 
 #[tokio::test]
-async fn a_runtime_stage_that_reads_the_seed_is_refused_as_a_baseline() {
-    let wasm = staged::staged_guest(SEED, "(call $seed (i32.const 64) (i32.const 16))", "");
-    assert_eq!(
-        stage_of(baseline(&wasm, &request(&wasm)).await),
-        BuildStage::Baseline,
-        "a seed read into a baseline would give every application on it the same entropy"
-    );
-}
-
-#[tokio::test]
 async fn a_runtime_stage_that_draws_entropy_is_refused_as_a_baseline() {
     let wasm = staged::staged_guest(ENTROPY, "(call $entropy (i32.const 64) (i32.const 16))", "");
     assert_eq!(
@@ -186,7 +175,7 @@ async fn layer_refusal(runtime: &RuntimeBaseline, request: &BuildRequest) -> Bui
 
 #[tokio::test]
 async fn an_application_is_refused_over_a_baseline_prepared_for_other_limits() {
-    let wasm = staged::staged_guest(SEED, RUNTIME, APPLICATION);
+    let wasm = staged::staged_guest(ENTROPY, RUNTIME, APPLICATION);
     let request = request(&wasm);
     let runtime = baseline(&wasm, &request).await.expect("the baseline");
     let other = BuildRequest {
@@ -241,7 +230,7 @@ mod published {
 
     #[tokio::test]
     async fn an_application_prepared_over_a_published_baseline_loads_to_its_whole_initialization() {
-        let wasm = staged::staged_guest(SEED, RUNTIME, APPLICATION);
+        let wasm = staged::staged_guest(ENTROPY, RUNTIME, APPLICATION);
         let request = request(&wasm);
         let preparation = crate::provider::local_preparation();
         let engine = common::engine();
@@ -286,7 +275,7 @@ mod published {
 
     #[tokio::test]
     async fn an_application_is_refused_when_the_supplied_baseline_digest_differs() {
-        let wasm = staged::staged_guest(SEED, RUNTIME, APPLICATION);
+        let wasm = staged::staged_guest(ENTROPY, RUNTIME, APPLICATION);
         let request = request(&wasm);
         let preparation = crate::provider::local_preparation();
         let directory = tempfile::tempdir().expect("publication");

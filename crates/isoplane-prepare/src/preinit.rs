@@ -2,7 +2,7 @@
 
 use crate::{Initialization, InitializedModule, PrepareError, RuntimeProfile};
 use isoplane_abi::{config::GuestMemoryBytes, imports};
-use isoplane_engine::{EngineConfig, IsoplaneEngine, ModuleHash, PlatformFiles};
+use isoplane_engine::{EngineConfig, IsoplaneEngine, PlatformFiles};
 
 /// Default local initialization occupancy budget.
 pub const DEFAULT_INITIALIZATION_OCCUPANCY_MS: u32 = 30_000;
@@ -19,27 +19,6 @@ pub struct PreInitializer {
     engine: EngineConfig,
     runtime_config: Option<Vec<u8>>,
     network: Option<crate::InitializationNetwork>,
-}
-
-/// Immutable inputs to one local template build.
-#[derive(Debug, Clone)]
-pub struct PreInitRequest {
-    /// Digest of the exact source module.
-    pub module_hash: ModuleHash,
-    /// Serialized configuration a Rust guest's initializer reads with `init_config_get`.
-    #[cfg(feature = "rust-guests")]
-    pub init_blob: Vec<u8>,
-}
-
-impl PreInitRequest {
-    /// A build of the module with this digest, with no `init_config_get` configuration.
-    pub fn new(module_hash: ModuleHash) -> Self {
-        Self {
-            module_hash,
-            #[cfg(feature = "rust-guests")]
-            init_blob: Vec::new(),
-        }
-    }
 }
 
 /// Refusals from local preparation.
@@ -118,16 +97,7 @@ impl PreInitializer {
         self
     }
     /// Initialize locally using the shared execution engine and portable state baker.
-    pub fn run(
-        &self,
-        wasm: &[u8],
-        req: &PreInitRequest,
-    ) -> Result<InitializedModule, PreInitError> {
-        if req.module_hash != ModuleHash::of(wasm) {
-            return Err(PreInitError::Trapped(anyhow::anyhow!(
-                "initialization source digest mismatch"
-            )));
-        }
+    pub fn run(&self, wasm: &[u8]) -> Result<InitializedModule, PreInitError> {
         let (has_initializer, bytes) = module_shape(wasm).map_err(PreInitError::Trapped)?;
         if !has_initializer {
             return Err(PreInitError::NoInitFunc(imports::exports::INITIALIZE));
@@ -163,8 +133,6 @@ impl PreInitializer {
                 IsoplaneEngine::new(configuration.clone()).map_err(PreInitError::Trapped)?;
             let request = Initialization {
                 network: self.network.clone(),
-                #[cfg(feature = "rust-guests")]
-                config: req.init_blob.clone(),
                 ..Initialization::new(
                     self.runtime_config
                         .clone()
@@ -234,26 +202,19 @@ mod tests {
         .unwrap()
     }
 
-    fn request(wasm: &[u8]) -> PreInitRequest {
-        PreInitRequest {
-            module_hash: ModuleHash::of(wasm),
-            init_blob: vec![],
-        }
-    }
-
     #[test]
     fn local_initialization_accepts_the_explicit_engine_capacity_above_its_default() {
         let wasm = memory_module("1 16384", "");
         assert!(
             matches!(
-                PreInitializer::new().run(&wasm, &request(&wasm)),
+                PreInitializer::new().run(&wasm),
                 Err(PreInitError::MemoryLimit { .. })
             ),
             "the existing default must retain its initialization memory ceiling"
         );
         PreInitializer::new()
             .with_memory_limit(GuestMemoryBytes::new(1 << 30).unwrap())
-            .run(&wasm, &request(&wasm))
+            .run(&wasm)
             .expect(
                 "a configured larger engine must initialize a bounded module above the default ceiling",
             );
@@ -270,23 +231,7 @@ mod tests {
                 sdk_version: "test".into(),
             })
             .with_memory_limit(GuestMemoryBytes::new(65536).unwrap())
-            .run(&wasm, &request(&wasm))
+            .run(&wasm)
             .expect("initialization must deny growth beyond its configured engine capacity");
-    }
-
-    #[test]
-    fn initialization_refuses_a_request_bound_to_another_source() {
-        let wasm = wat::parse_str(
-            "(module (func (export \"isoplane_initialize\") (result i64) i64.const 0))",
-        )
-        .expect("valid module");
-        let request = PreInitRequest {
-            module_hash: ModuleHash::of(b"another source"),
-            init_blob: vec![],
-        };
-        assert!(
-            PreInitializer::new().run(&wasm, &request).is_err(),
-            "a template request must identify its exact source"
-        );
     }
 }

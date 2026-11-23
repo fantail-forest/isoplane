@@ -229,7 +229,6 @@ pub fn register(
             validation_limits: Default::default(),
             name: app,
             bindings: Default::default(),
-            init_visible_vars: vec![],
         },
     )
     .expect("the HTTP guest must register");

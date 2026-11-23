@@ -4,13 +4,10 @@ use isoplane_prepare::{initialize, PrepareError};
 use std::collections::BTreeMap;
 
 #[test]
-fn initialization_receives_fresh_entropy_and_a_hash_seed_that_is_stable_within_it() {
+fn initialization_receives_fresh_entropy() {
     let wasm = guest(
-        r#"(import "isoplane" "init_hash_seed" (func $seed (param i32 i32)))
-        (import "isoplane" "entropy_fill" (func $entropy (param i32 i32)))"#,
-        r#"(call $seed (i32.const 64) (i32.const 16))
-        (call $seed (i32.const 80) (i32.const 16))
-        (call $entropy (i32.const 96) (i32.const 32))"#,
+        r#"(import "isoplane" "entropy_fill" (func $entropy (param i32 i32)))"#,
+        "(call $entropy (i32.const 96) (i32.const 32))",
     );
     let engine = engine();
     let first = initialize(&engine, &wasm, &request()).unwrap();
@@ -22,14 +19,7 @@ fn initialization_receives_fresh_entropy_and_a_hash_seed_that_is_stable_within_i
             .memory_image_arc()
             .to_dense()
     };
-    let first_memory = memory(&first);
-    let second_memory = memory(&second);
-    for (prepared, memory) in [(&first, &first_memory), (&second, &second_memory)] {
-        assert_eq!(prepared.initialized.seed_reads, 2);
-        assert_eq!(&memory[64..80], &memory[80..96]);
-    }
-    assert_ne!(&first_memory[64..80], &second_memory[64..80]);
-    assert_ne!(&first_memory[96..128], &second_memory[96..128]);
+    assert_ne!(&memory(&first)[96..128], &memory(&second)[96..128]);
 }
 
 #[test]
@@ -139,21 +129,6 @@ fn a_table_mutation_is_refused_before_preparation_can_lose_it() {
             Err(PrepareError::State(_))
         ),
         "mutable table state must not be silently omitted from a template"
-    );
-}
-
-#[test]
-fn an_invalid_seed_buffer_traps_instead_of_baking_zero_entropy() {
-    let wasm = guest(
-        r#"(import "isoplane" "init_hash_seed" (func $seed (param i32 i32)))"#,
-        "(call $seed (i32.const 64) (i32.const 15))",
-    );
-    assert!(
-        matches!(
-            initialize(&engine(), &wasm, &request()),
-            Err(PrepareError::Initialization { .. })
-        ),
-        "invalid seed buffers must fail even though the import returns no value"
     );
 }
 

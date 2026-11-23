@@ -21,9 +21,9 @@ fn setup() -> (tempfile::TempDir, LocalPreparation) {
 }
 fn wasm(value: u32) -> Vec<u8> {
     common::guest(
-        r#"(import "isoplane" "init_hash_seed" (func $seed (param i32 i32)))
-        (import "isoplane" "init_config_get" (func $config (param i32 i32) (result i32)))"#,
-        &format!("(call $seed (i32.const 64) (i32.const 16)) (drop (call $config (i32.const 128) (i32.const 32))) (global.set $state (i32.const {value}))"),
+        r#"(import "isoplane" "entropy_fill" (func $entropy (param i32 i32)))
+        (import "isoplane" "runtime_config_get" (func $settings (param i32 i32) (result i32)))"#,
+        &format!("(call $entropy (i32.const 64) (i32.const 16)) (drop (call $settings (i32.const 128) (i32.const 32))) (global.set $state (i32.const {value}))"),
     )
 }
 fn request(wasm: &[u8]) -> BuildRequest {
@@ -49,13 +49,15 @@ fn files(directory: &Path) -> Vec<PathBuf> {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn compiled_input_is_reused_while_each_initialization_draws_a_fresh_seed_and_applies_configuration(
+async fn compiled_input_is_reused_while_each_initialization_draws_fresh_entropy_and_applies_configuration(
 ) {
     use std::os::unix::fs::MetadataExt;
     let (directory, provider) = setup();
     let wasm = wasm(42);
+    const FIRST: &[u8] = br#"{"name":"first"}"#;
+    const SECOND: &[u8] = br#"{"name":"second"}"#;
     let mut request = request(&wasm);
-    request.initialization.config = b"first".to_vec();
+    request.initialization.runtime_config = FIRST.to_vec();
     let first = provider
         .prepare(&wasm, &request, &CancellationToken::new())
         .await
@@ -70,7 +72,7 @@ async fn compiled_input_is_reused_while_each_initialization_draws_a_fresh_seed_a
         .iter()
         .map(|path| std::fs::metadata(path).expect("cache inode").ino())
         .collect();
-    request.initialization.config = b"second".to_vec();
+    request.initialization.runtime_config = SECOND.to_vec();
     let second = provider
         .prepare(&wasm, &request, &CancellationToken::new())
         .await
@@ -82,11 +84,11 @@ async fn compiled_input_is_reused_while_each_initialization_draws_a_fresh_seed_a
             "a cache hit must not replace its compiled input with another compile"
         );
     }
-    let mut seeds = Vec::new();
-    for (product, config) in [(first, b"first".as_slice()), (second, b"second".as_slice())] {
+    let mut draws = Vec::new();
+    for (product, config) in [(first, FIRST), (second, SECOND)] {
         let engine = common::engine();
         let mut expected = request.clone();
-        expected.initialization.config = config.to_vec();
+        expected.initialization.runtime_config = config.to_vec();
         // SAFETY: the local preparation provider above produced this native code.
         let prepared = unsafe {
             engine.decode_builder_output(product.prepared_bytes(), expected.identity().unwrap())
@@ -96,7 +98,7 @@ async fn compiled_input_is_reused_while_each_initialization_draws_a_fresh_seed_a
             .load_prepared_product_in(&prepared, &std::env::temp_dir())
             .unwrap();
         let memory = template.memory_image_arc().to_dense();
-        seeds.push(memory[64..80].to_vec());
+        draws.push(memory[64..80].to_vec());
         assert_eq!(
             &memory[128..128 + config.len()],
             config,
@@ -104,7 +106,7 @@ async fn compiled_input_is_reused_while_each_initialization_draws_a_fresh_seed_a
         );
     }
     assert_ne!(
-        seeds[0], seeds[1],
+        draws[0], draws[1],
         "compilation reuse must not reuse initialized random state"
     );
 }
@@ -166,7 +168,8 @@ async fn a_partial_cache_entry_is_recompiled_before_use() {
         .await
         .expect("partial entry repair");
     assert_eq!(
-        product.initialized.seed_reads, 1,
+        product.initialized.pal_calls,
+        vec![("entropy_fill".to_owned(), 1)],
         "a repaired entry must initialize successfully"
     );
     assert!(

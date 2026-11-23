@@ -12,8 +12,8 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 
 thread_local! {
     static NEXT_ID: Cell<u64> = const { Cell::new(1) };
-    /// The init-visible config blob this deploy supplies.
-    static CONFIG: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+    /// What `runtime_config_get` answers.
+    static RUNTIME_CONFIG: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
     /// Bytes an `Out(_)` import "wrote into guest memory". Host builds cannot
     /// use the passed pointer (it truncates to `i32`), so the stub parks them
     /// here and `abi::read_sized_out` copies them out.
@@ -43,10 +43,10 @@ impl StubHost {
         })
     }
 
-    /// Supply the init-visible config blob the init sandbox will
-    /// serve. Local preparation encodes it as JSON `[(name, value), ..]`.
-    pub fn set_config(&self, blob: Vec<u8>) {
-        CONFIG.with(|c| *c.borrow_mut() = blob);
+    /// Supply the deployment settings `runtime_config_get` answers: a JSON
+    /// object of string values.
+    pub fn set_runtime_config(&self, json: Vec<u8>) {
+        RUNTIME_CONFIG.with(|c| *c.borrow_mut() = json);
     }
 
     /// Every import the SDK called, in order.
@@ -69,12 +69,10 @@ pub fn with_stub_host<R>(f: impl FnOnce(&StubHost) -> R) -> R {
     let guard = lock().lock().unwrap_or_else(|e| e.into_inner());
     CALLS.with(|c| c.borrow_mut().clear());
     NEXT_ID.with(|c| c.set(1));
-    CONFIG.with(|c| c.borrow_mut().clear());
+    RUNTIME_CONFIG.with(|c| *c.borrow_mut() = b"{}".to_vec());
     OUT.with(|o| o.borrow_mut().clear());
-    // The executor and the pre-init state are module-globals; start every
-    // test from a clean one.
+    // The executor is a module-global; start every test from a clean one.
     crate::rt::reset();
-    crate::init::reset_for_test();
     let host = StubHost { _guard: guard };
     f(&host)
 }
@@ -98,11 +96,10 @@ pub(crate) fn stub_call(name: &'static str, args: &[i64]) -> i64 {
     if name == "resp_new" {
         return RESP_HANDLE;
     }
-    // Config blob: write up to `cap` bytes, return the FULL length so a
-    // zero-length probe sizes the buffer. Mirrors the host in
-    // `isoplane_prepare::preinit`.
-    if name == "init_config_get" {
-        return CONFIG.with(|c| {
+    // Writes up to `cap` bytes and returns the full length, as the host does,
+    // so a zero-length probe sizes the buffer.
+    if name == "runtime_config_get" {
+        return RUNTIME_CONFIG.with(|c| {
             let blob = c.borrow();
             let cap = args[1].max(0) as usize;
             let n = cap.min(blob.len());

@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use isoplane_abi::filesystem::{Operation, IMPORTS};
 use isoplane_abi::imports::Ty;
-use isoplane_engine::{ModuleHash, PlatformFile, PlatformFiles};
-use isoplane_prepare::{PreInitRequest, PreInitializer};
+use isoplane_engine::{PlatformFile, PlatformFiles};
+use isoplane_prepare::PreInitializer;
 use wasmtime as wt;
 
 const BUNDLE: &[u8] = b"-----BEGIN CERTIFICATE-----\nMIIBinit\n-----END CERTIFICATE-----\n";
@@ -92,14 +92,6 @@ fn guest() -> Vec<u8> {
     wat::parse_str(source).expect("the fixture assembles")
 }
 
-fn request(wasm: &[u8]) -> PreInitRequest {
-    PreInitRequest {
-        module_hash: ModuleHash::of(wasm),
-
-        init_blob: Vec::new(),
-    }
-}
-
 /// The template's linear memory after instantiation, with every import bound
 /// to a trap: a template that reached one here would be baking a host
 /// answer.
@@ -126,7 +118,7 @@ fn a_declared_file_read_during_pre_init_is_baked_into_the_template() {
     let wasm = guest();
     let outcome = PreInitializer::new()
         .with_platform_files(declared())
-        .run(&wasm, &request(&wasm))
+        .run(&wasm)
         .expect("pre-init converges");
     let memory = template_memory(&outcome.wasm);
     assert_eq!(
@@ -150,7 +142,7 @@ fn a_declared_file_read_during_pre_init_is_baked_into_the_template() {
 fn without_a_declared_set_the_same_path_is_no_entry_during_pre_init() {
     let wasm = guest();
     let outcome = PreInitializer::new()
-        .run(&wasm, &request(&wasm))
+        .run(&wasm)
         .expect("pre-init converges");
     let memory = template_memory(&outcome.wasm);
     assert_eq!(

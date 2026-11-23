@@ -124,15 +124,11 @@ isoplane_imports! {
     // ---- core -------------------------------------------------------------
     /// Guest panic. `init_visible`, so a failed pre-init reports usefully.
     fn abort(ptr: i32, len: i32);
-    /// A fresh string-hash seed, stable within one initialization attempt.
-    /// The host writes exactly 16 bytes at `ptr`; guest copies remain in captured state.
-    fn init_hash_seed(ptr: i32, len: i32);
-    /// Config parsing from *data* supplied as an init-time blob. Host writes
-    /// up to `cap` bytes at `ptr` and returns the blob's **full** length, so
-    /// the idiom is a zero-length probe then a second call.
-    /// Tenant-authored input fixed for the selected preparation and included
-    /// in its input identity. Parsed values remain in the captured guest state.
-    fn init_config_get(ptr: i32, cap: i32) -> i32;
+    /// The deployment's settings as a JSON object of string values. The host
+    /// writes up to `cap` bytes at `ptr` and returns the full length, so the
+    /// idiom is a zero-length probe then a second call. Values can be secret,
+    /// and what initialization keeps of them is captured in the template.
+    fn runtime_config_get(ptr: i32, cap: i32) -> i32;
 
     // ---- observability ----------------------------------------------------
     /// `(level, ptr, len)`. Counts against the dispatch occupancy budget, which is
@@ -289,8 +285,7 @@ mod tests {
             // Host writes INTO guest memory: we pass (ptr, capacity) of a
             // buffer we own.
             ("entropy_fill", BufSpec::Out(0)),
-            ("init_hash_seed", BufSpec::Out(0)),
-            ("init_config_get", BufSpec::Out(0)),
+            ("runtime_config_get", BufSpec::Out(0)),
             // A scalar before the pair.
             ("log_emit", BufSpec::In(1)),
             ("resp_write", BufSpec::In(1)),
@@ -321,7 +316,7 @@ mod tests {
             .collect();
         assert_eq!(
             outs,
-            vec!["init_hash_seed", "init_config_get", "entropy_fill"],
+            vec!["runtime_config_get", "entropy_fill"],
             "an SDK out-buffer binding needs a checked call site"
         );
     }

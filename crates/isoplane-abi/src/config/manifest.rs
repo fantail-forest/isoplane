@@ -17,10 +17,6 @@ pub struct AppManifest {
     /// Structural module bounds enforced before preparation.
     #[serde(default)]
     pub validation_limits: super::ValidationLimits,
-    /// Non-secret variables a Rust guest's initializer reads with `init_config_get`.
-    #[cfg(feature = "rust-guests")]
-    #[serde(default)]
-    pub init_visible_vars: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

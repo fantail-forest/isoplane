@@ -1,7 +1,7 @@
 //! Built Rust guests through admission and preparation, including hostile modules.
 
 use isoplane_control::validator::{self, ViolationCode as V};
-use isoplane_prepare::preinit::{PreInitRequest, PreInitializer};
+use isoplane_prepare::preinit::PreInitializer;
 
 /// The verdict admission under the default limits must reach for each module in
 /// the build script's manifest, as `(code, subject)` pairs; empty means the
@@ -100,13 +100,8 @@ fn a_guest_built_with_the_rust_sdk_is_prepared_into_a_template_without_its_initi
         "the guest SDK must export isoplane_initialize"
     );
 
-    let req = PreInitRequest {
-        module_hash: isoplane_engine::ModuleHash::of(&wasm),
-
-        init_blob: Vec::new(),
-    };
     let out = PreInitializer::new()
-        .run(&wasm, &req)
+        .run(&wasm)
         .expect("pre-init must succeed");
 
     assert_ne!(out.wasm, wasm, "the template must not be the input module");

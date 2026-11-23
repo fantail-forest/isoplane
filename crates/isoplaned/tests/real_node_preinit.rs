@@ -1,6 +1,6 @@
-//! Init-visible config is consumed at preinit, not at runtime: a different
-//! guest fixture from the rest of the real-node suite, asserted against the
-//! deploy record rather than a dispatch.
+//! Deployment settings a guest reads during initialization are captured in
+//! its template, with a different guest fixture from the rest of the
+//! real-node suite.
 
 #[path = "common/runtime_inventory.rs"]
 mod runtime_inventory;
@@ -116,20 +116,32 @@ async fn get(addr: SocketAddr, host: &str, path: &str) -> Resp {
     }
 }
 
-/// Configuration supplied during preparation is observed by the serving guest.
+/// What the quotes guest reports about its configuration. The guest counts the
+/// initializer's runs before the report first reads the configuration, so a
+/// read deferred to the request reports none.
+#[derive(Debug, PartialEq, serde::Deserialize)]
+struct MemoReport {
+    config_initializer_runs: u32,
+    config_region: String,
+}
+
+/// The serving daemon publishes the same settings, so the region alone would
+/// read the same from a guest that first asked for them while serving.
 #[tokio::test]
-async fn a_real_guests_init_visible_config_is_consumed_at_preinit_not_at_runtime() {
+async fn a_real_guests_deployment_settings_are_consumed_at_preinit_not_at_runtime() {
     let path = isoplane_fixtures::rust_path("quotes-api");
 
     let dir = private_files::directory().expect("a temporary directory");
     let cfg = config(dir.path());
     let wasm = std::fs::read(path).expect("the guest fixture is built");
-    let mut manifest: isoplane_abi::config::AppManifest =
+    let manifest: isoplane_abi::config::AppManifest =
         toml::from_str("name = 'quotes'").expect("valid manifest");
-    manifest.init_visible_vars = vec![("REGION".to_string(), "nz-akl".to_string())];
+    let settings =
+        isoplane_host::bindings::RuntimeConfiguration::from_json(br#"{"REGION":"nz-akl"}"#)
+            .expect("valid settings");
     let node = Node::build(cfg).expect("a real node must assemble");
     let rec = node
-        .deploy_locally("quotes", "v1", "acme", manifest, &wasm)
+        .deploy_locally_with_settings("quotes", "v1", "acme", manifest, &wasm, settings)
         .await
         .expect("explicit local preparation");
     assert!(
@@ -141,14 +153,14 @@ async fn a_real_guests_init_visible_config_is_consumed_at_preinit_not_at_runtime
 
     let r = get(rig.proxy, "quotes.isoplane.dev", "/memo").await;
     assert_eq!(r.status, StatusCode::OK, "body: {}", r.body);
-    assert!(
-        !r.body.contains("capability_violation"),
-        "the init-visible imports must have been consumed at deploy time: {}",
-        r.body
-    );
-    assert!(
-        r.body.contains("\"config_region\":\"nz-akl\""),
-        "the deploy-time config is inside the template: {}",
+    let report: MemoReport = serde_json::from_str(&r.body).expect("the guest's memo report");
+    assert_eq!(
+        report,
+        MemoReport {
+            config_initializer_runs: 1,
+            config_region: "nz-akl".into(),
+        },
+        "the first request finds the settings already read: {}",
         r.body
     );
 

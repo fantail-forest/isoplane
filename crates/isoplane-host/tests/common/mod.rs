@@ -51,6 +51,5 @@ pub fn manifest(name: &str) -> AppManifest {
         validation_limits: Default::default(),
         name: name.into(),
         bindings: Bindings::default(),
-        init_visible_vars: vec![],
     }
 }
