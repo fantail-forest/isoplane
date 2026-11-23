@@ -240,11 +240,7 @@ enum Source {
         application_files: PlatformFiles,
     },
     Prepared(Arc<PreparedTemplate>),
-    #[cfg(target_os = "linux")]
-    Layered {
-        base: Arc<PreparedTemplate>,
-        layer: Arc<PreparedTemplate>,
-    },
+    Application(preparation::shared_runtime::Application),
 }
 
 impl Source {
@@ -276,16 +272,10 @@ impl Source {
                     .unwrap_or_else(|error| panic!("the prepared template must load: {error:#}"));
                 (engine, template)
             }
-            #[cfg(target_os = "linux")]
-            Source::Layered { base, layer } => {
+            Source::Application(application) => {
                 let engine = IsoplaneEngine::new(engine_configuration(files))
                     .expect("the returned-guest engine must initialize");
-                let base = engine
-                    .load_prepared_product_in(base, &std::env::temp_dir())
-                    .unwrap_or_else(|error| panic!("the base template must load: {error:#}"));
-                let template = engine
-                    .load_prepared_product_over_in(&base, layer, &std::env::temp_dir())
-                    .unwrap_or_else(|error| panic!("the layer must load over its base: {error:#}"));
+                let template = application.load(&engine);
                 (engine, template)
             }
         }
@@ -356,17 +346,14 @@ impl ReturnedGuest {
         Self::serving(Source::Prepared(Arc::new(prepared)), reactor)
     }
 
-    /// Serves trusted preparation output captured as a layer over `base`, as
-    /// [`ReturnedGuest::prepared`] serves a whole template.
-    #[cfg(target_os = "linux")]
-    pub fn layered(base: PreparedTemplate, layer: PreparedTemplate, reactor: &Reactor) -> Self {
-        Self::serving(
-            Source::Layered {
-                base: Arc::new(base),
-                layer: Arc::new(layer),
-            },
-            reactor,
-        )
+    /// Serves an application prepared on the shared runtime for `reactor`'s
+    /// instance, as a node loads its layer over the runtime's baseline. The
+    /// preparation must have used [`engine_configuration`].
+    pub fn application(
+        application: &preparation::shared_runtime::Application,
+        reactor: &Reactor,
+    ) -> Self {
+        Self::serving(Source::Application(application.clone()), reactor)
     }
 
     fn serving(source: Source, reactor: &Reactor) -> Self {

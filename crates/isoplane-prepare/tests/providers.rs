@@ -1,3 +1,5 @@
+#![cfg(target_os = "linux")]
+
 mod common;
 #[path = "common/guest.rs"]
 mod guest;
@@ -88,18 +90,6 @@ async fn preserves_application_state(provider: &dyn Preparation) {
         memory[100], b'a',
         "initialization must read immutable application files through the PAL"
     );
-    let portable = isoplane_prepare::PreInitializer::new()
-        .with_engine_config(request.engine.clone())
-        .with_memory_limit(isoplane_abi::config::GuestMemoryBytes::new(4 << 20).unwrap())
-        .with_platform_files(request.application_files.clone())
-        .run(&wasm)
-        .expect("the SDK's portable preparation path");
-    let portable = engine.load_template(&portable.wasm).unwrap();
-    assert_eq!(
-        portable.memory_image_arc().to_dense(),
-        memory,
-        "the portable SDK path and native preparation preserve the same initialized memory"
-    );
     assert!(
         !loaded.has_initialize(),
         "the provider must remove initialization from its output"
@@ -107,11 +97,10 @@ async fn preserves_application_state(provider: &dyn Preparation) {
 }
 
 #[tokio::test]
-async fn local_preparation_preserves_the_same_state_as_the_portable_sdk_path() {
+async fn local_preparation_reads_application_files_and_removes_the_initializer() {
     preserves_application_state(&*isoplane_harness::preparation::local_preparation()).await;
 }
 
-#[cfg(target_os = "linux")]
 #[tokio::test]
 async fn layered_preparation_accepts_a_guest_without_an_initializer() {
     let wasm = wat::parse_str(

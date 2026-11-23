@@ -7,12 +7,19 @@ use std::sync::Arc;
 use isoplane_engine::prepared::PreparedIdentity;
 use isoplane_engine::snapshot::GlobalValue;
 use isoplane_engine::{
-    Completion, EngineConfig, Instance, InstanceOps, IsoplaneEngine, OccupancyBudget, Template,
+    CompilationCache, Completion, EngineConfig, Instance, InstanceOps, IsoplaneEngine,
+    OccupancyBudget, Template,
 };
 use isoplane_prepare::{
-    BuildProduct, BuildRequest, Initialization, Initialized, LocalPreparation, PrepareError,
-    RuntimeBaseline, RuntimeProfile,
+    BuildProduct, BuildRequest, Initialization, Initialized, PrepareError, RuntimeBaseline,
+    RuntimeProfile,
 };
+
+pub mod shared_runtime;
+#[cfg(target_os = "linux")]
+mod whole_module;
+#[cfg(target_os = "linux")]
+pub use whole_module::{local_preparation, prepare_whole_module, LocalProvider};
 
 /// A prepared template.
 pub struct Prepared {
@@ -122,13 +129,17 @@ pub fn request(wasm: &[u8], engine: EngineConfig, initialization: Initialization
 /// either stage's preparation refused; [`baseline_refusal`] and
 /// [`application_refusal`] say which.
 pub fn prepare(request: &BuildRequest) -> Result<Prepared, PrepareError> {
-    application(&baseline(request)?, request)
+    let (directory, cache) = temporary_cache();
+    let mut prepared = application(&baseline(request, &cache)?, request, &cache)?;
+    prepared.template.retain_storage(Arc::new(directory));
+    Ok(prepared)
 }
 
 /// What preparing the runtime stage of `request`'s module as a baseline
 /// refused.
 pub fn baseline_refusal(request: &BuildRequest) -> PrepareError {
-    match baseline(request) {
+    let (_directory, cache) = temporary_cache();
+    match baseline(request, &cache) {
         Ok(_) => panic!("the runtime stage must be refused as a baseline"),
         Err(error) => error,
     }
@@ -137,25 +148,39 @@ pub fn baseline_refusal(request: &BuildRequest) -> PrepareError {
 /// What preparing the application stage of `request`'s module refused, over
 /// the baseline its runtime stage prepared as.
 pub fn application_refusal(request: &BuildRequest) -> PrepareError {
-    let baseline = baseline(request).unwrap_or_else(|error| {
+    let (_directory, cache) = temporary_cache();
+    let baseline = baseline(request, &cache).unwrap_or_else(|error| {
         panic!("the runtime stage must prepare as a baseline before the application stage can be refused: {error}")
     });
-    match application(&baseline, request) {
+    match application(&baseline, request, &cache) {
         Ok(_) => panic!("the application stage must be refused"),
         Err(error) => error,
     }
 }
 
-fn baseline(request: &BuildRequest) -> Result<RuntimeBaseline, PrepareError> {
-    Ok(RuntimeBaseline::prepare(&request.baseline(), None)?.baseline)
+/// An empty compilation cache in a new directory, which preparation also
+/// keeps its working files in. Templates compiled through it map files there.
+fn temporary_cache() -> (tempfile::TempDir, CompilationCache) {
+    let directory = tempfile::tempdir().expect("a compilation cache directory");
+    // SAFETY: only the cache's compiler writes into this new, private directory.
+    let cache = unsafe { CompilationCache::from_trusted_directory(directory.path().join("cache")) }
+        .expect("the compilation cache must open");
+    (directory, cache)
+}
+
+fn baseline(
+    request: &BuildRequest,
+    cache: &CompilationCache,
+) -> Result<RuntimeBaseline, PrepareError> {
+    Ok(RuntimeBaseline::prepare(&request.baseline(), cache)?.baseline)
 }
 
 fn application(
     baseline: &RuntimeBaseline,
     request: &BuildRequest,
+    cache: &CompilationCache,
 ) -> Result<Prepared, PrepareError> {
-    let captured = tempfile::tempdir().expect("a directory for captured state");
-    let application = baseline.prepare_application_in(request, captured.path())?;
+    let application = baseline.prepare_application_in(request, cache.directory())?;
     Ok(Prepared {
         template: application.template,
         initialized: application.product.initialized,
@@ -223,59 +248,6 @@ pub unsafe fn load_in(
         }
     }
     .expect("the prepared output must load")
-}
-
-/// A local preparation provider and the directory holding its compilation cache.
-pub struct LocalProvider {
-    preparation: LocalPreparation,
-    _cache: tempfile::TempDir,
-}
-
-impl std::ops::Deref for LocalProvider {
-    type Target = LocalPreparation;
-
-    fn deref(&self) -> &LocalPreparation {
-        &self.preparation
-    }
-}
-
-/// A local preparation provider with an empty compilation cache of its own.
-pub fn local_preparation() -> LocalProvider {
-    let directory = tempfile::tempdir().expect("a compilation cache directory");
-    // SAFETY: only the cache's compiler writes into this new, private directory.
-    let cache = unsafe {
-        isoplane_engine::CompilationCache::from_trusted_directory(directory.path().join("cache"))
-    }
-    .expect("the compilation cache must open");
-    LocalProvider {
-        preparation: LocalPreparation::with_cache(Arc::new(cache))
-            .expect("the local provider must start"),
-        _cache: directory,
-    }
-}
-
-/// Prepares the module `request` carries, one that carries its whole
-/// application as a guest built with the Rust SDK does, the way a node
-/// prepares one: its whole initialization as one layer.
-pub async fn prepare_whole_module(request: &BuildRequest) -> Result<Prepared, PrepareError> {
-    use isoplane_prepare::Preparation;
-    let product = local_preparation()
-        .prepare(request, &tokio_util::sync::CancellationToken::new())
-        .await?;
-    let engine = Arc::new(
-        IsoplaneEngine::new(request.engine.clone()).expect("the request's engine must start"),
-    );
-    let template = load(
-        &engine,
-        &product,
-        request.identity().expect("the module's identity"),
-        None,
-    );
-    Ok(Prepared {
-        template,
-        initialized: product.initialized,
-        engine,
-    })
 }
 
 /// A guest whose runtime stage runs `runtime` once, through either

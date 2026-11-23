@@ -15,6 +15,7 @@ use std::process::Command;
 
 use isoplane_engine::{PlatformFile, PlatformFiles};
 use isoplane_fixtures::GuestRuntime;
+use isoplane_harness::preparation::shared_runtime::Application;
 use isoplane_harness::{Reactor, ReturnedGuest};
 use isoplane_host::egress::DnsError;
 use isoplane_host::{InstanceId, Resolver};
@@ -96,7 +97,7 @@ fn listing(roots: &[&Root]) -> String {
 struct Rotation {
     a: Root,
     b: Root,
-    template: managed::Prepared,
+    template: Application,
 }
 
 fn rotation(runtime: GuestRuntime) -> &'static Rotation {
@@ -106,9 +107,8 @@ fn rotation(runtime: GuestRuntime) -> &'static Rotation {
         let dir = tempfile::tempdir().expect("a temporary directory");
         let a = self_signed_root(dir.path(), "root-a");
         let b = self_signed_root(dir.path(), "root-b");
-        let prepared = managed::prepare("isoplane_guest_dotnet_bcl", bundle(&[&a]))
+        let template = managed::prepare("isoplane_guest_dotnet_bcl", bundle(&[&a]))
             .expect("prepare the trust application with the supplied bundle");
-        let template = prepared;
         Rotation { a, b, template }
     })
 }
@@ -126,7 +126,7 @@ impl Resolver for NoDns {
 /// clock at `clock_ms` for the first dispatch.
 fn node_serving(
     files: PlatformFiles,
-    template: &managed::Prepared,
+    template: &Application,
     clock_ms: u64,
 ) -> (Reactor, ReturnedGuest) {
     let reactor = Reactor::with_platform_files(
@@ -135,7 +135,7 @@ fn node_serving(
         files,
     );
     reactor.context.begin_slice(clock_ms, 1);
-    let guest = ReturnedGuest::prepared(template.artifact(), &reactor);
+    let guest = ReturnedGuest::application(template, &reactor);
     (reactor, guest)
 }
 

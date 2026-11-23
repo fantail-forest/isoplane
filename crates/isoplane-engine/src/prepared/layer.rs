@@ -1,6 +1,5 @@
 //! Initialization capture against an unchanged compiled module.
 
-use std::io::Write;
 use std::sync::Arc;
 
 use super::{
@@ -11,7 +10,9 @@ use crate::{Instance, InstanceOps, IsoplaneEngine, Template};
 
 impl IsoplaneEngine {
     /// Compile once, then map the unchanged code before observing initialization's working set.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn load_layer_source(&self, wasm: &[u8]) -> crate::Result<Template> {
+        use std::io::Write as _;
         let source = self.load_template(wasm)?;
         let mut copy = super::native::NativeCopy::new()?;
         copy.write_all(&source.inner.module().serialize()?)?;
@@ -20,7 +21,6 @@ impl IsoplaneEngine {
         self.finish_template(
             module,
             source.hash,
-            source.inner.prepared_resources.clone(),
             source
                 .inner
                 .mut_globals

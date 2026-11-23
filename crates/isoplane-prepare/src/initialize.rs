@@ -8,7 +8,7 @@ use isoplane_engine::{Completion, ImportCall, InstanceOps, IsoplaneEngine, Occup
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
-use crate::{bake, PrepareError};
+use crate::{instrument, PrepareError};
 
 /// Explicit deployment configuration and capability limits supplied by preparation.
 #[derive(Clone, Serialize, Deserialize)]
@@ -65,59 +65,22 @@ pub struct Initialized {
     pub compiled: bool,
 }
 
-/// A portable initialization: the initialized module, ready for trusted
-/// compilation, and what initialization observed.
-#[cfg(feature = "rust-guests")]
-pub struct InitializedModule {
-    /// Portable initialized module; its init export is removed.
-    pub wasm: Vec<u8>,
-    /// What initialization observed.
-    pub initialized: Initialized,
-}
-
-/// Execute a validated application under the supplied worker engine in a preparation process.
-/// Fails if initialization traps, exceeds a limit, or creates state the schema cannot preserve.
-#[cfg(feature = "rust-guests")]
-pub fn initialize(
-    engine: &IsoplaneEngine,
-    wasm: &[u8],
-    request: &Initialization,
-) -> Result<InitializedModule, PrepareError> {
-    let output = initialize_with_cache(
-        engine,
-        request,
-        None,
-        &isoplane_engine::PlatformFiles::default(),
-        None,
-        CaptureMode::Portable { wasm },
-    )?;
-    match output.captured {
-        Captured::Portable(wasm) => Ok(InitializedModule {
-            wasm,
-            initialized: output.initialized,
-        }),
-        Captured::Layered { .. } => Err(PrepareError::InvalidRequest(
-            "portable initialization captured a layer",
-        )),
-    }
-}
-
 /// What initialization runs and how its result is captured. Every mode but
-/// [`CaptureMode::Over`] compiles `wasm`, or loads its compilation from a cache.
+/// [`CaptureMode::Over`] loads `wasm`'s compilation from `cache`, compiling
+/// it there on a miss, and keeps its working files in `cache`'s directory.
 pub(crate) enum CaptureMode<'a> {
-    /// The module's whole initialization, as a portable module.
-    #[cfg(any(not(target_os = "linux"), feature = "rust-guests"))]
-    Portable { wasm: &'a [u8] },
     /// The module's whole initialization, as a layer.
     #[cfg(all(target_os = "linux", feature = "rust-guests"))]
     Layered {
         wasm: &'a [u8],
+        cache: &'a isoplane_engine::CompilationCache,
         identity: isoplane_engine::prepared::PreparedIdentity,
     },
     /// Only the runtime's own initializer, as a baseline that applications
     /// are prepared over.
     RuntimeBaseline {
         wasm: &'a [u8],
+        cache: &'a isoplane_engine::CompilationCache,
         identity: isoplane_engine::prepared::PreparedIdentity,
     },
     /// The application's initializer, run on an activation of `base`, as a
@@ -135,8 +98,6 @@ impl CaptureMode<'_> {
     /// layer over a baseline ends in the state whole initialization leaves.
     fn stages(&self) -> (Stage, Option<Stage>) {
         match self {
-            #[cfg(any(not(target_os = "linux"), feature = "rust-guests"))]
-            CaptureMode::Portable { .. } => (Stage::Runtime, Some(Stage::Application)),
             #[cfg(all(target_os = "linux", feature = "rust-guests"))]
             CaptureMode::Layered { .. } => (Stage::Runtime, Some(Stage::Application)),
             CaptureMode::RuntimeBaseline { .. } => (Stage::Runtime, None),
@@ -228,29 +189,18 @@ fn run_stage(
     Ok(collected)
 }
 
-/// What a capture produced, in the representation its mode asked for.
-pub(crate) enum Captured {
-    /// The initialized portable module, which portable consumers compile.
-    #[cfg(any(not(target_os = "linux"), feature = "rust-guests"))]
-    Portable(Vec<u8>),
-    /// Initialized native code and explicit state.
-    Layered {
-        prepared: Box<isoplane_engine::prepared::PreparedTemplate>,
-    },
-}
-
 pub(crate) struct InitializationOutput {
     pub initialized: Initialized,
-    pub captured: Captured,
+    /// Initialized native code and explicit state.
+    pub prepared: isoplane_engine::prepared::PreparedTemplate,
     /// The captured state loaded back, as it was verified against the
     /// initialized instance; absent for a module with no initializer.
     pub restored: Option<isoplane_engine::Template>,
 }
 
-pub(crate) fn initialize_with_cache(
+pub(crate) fn initialize(
     engine: &IsoplaneEngine,
     request: &Initialization,
-    cache: Option<&isoplane_engine::CompilationCache>,
     application_files: &isoplane_engine::PlatformFiles,
     memory_limit_bytes: Option<u64>,
     capture: CaptureMode<'_>,
@@ -268,12 +218,7 @@ pub(crate) fn initialize_with_cache(
         ));
     }
     let occupancy_start_ns = preparation_occupancy()?;
-    let Loaded {
-        template,
-        #[cfg(any(not(target_os = "linux"), feature = "rust-guests"))]
-        instrumented,
-        compiled,
-    } = load(engine, cache, application_files, &capture)?;
+    let (template, compiled) = load(engine, application_files, &capture)?;
     let reactor = request
         .network
         .as_ref()
@@ -361,37 +306,31 @@ pub(crate) fn initialize_with_cache(
             });
         }
     } else {
-        let captured = match capture {
-            #[cfg(any(not(target_os = "linux"), feature = "rust-guests"))]
-            CaptureMode::Portable { wasm } => Some(Captured::Portable(wasm.to_vec())),
+        return match capture {
             #[cfg(all(target_os = "linux", feature = "rust-guests"))]
-            CaptureMode::Layered { wasm, identity } => Some(Captured::Layered {
-                prepared: Box::new(
-                    engine
-                        .prepare_template_with_files(wasm, identity, application_files.clone())
-                        .map_err(|error| PrepareError::State(error.into()))?,
-                ),
+            CaptureMode::Layered { wasm, identity, .. } => Ok(InitializationOutput {
+                prepared: engine
+                    .prepare_template_with_files(wasm, identity, application_files.clone())
+                    .map_err(|error| PrepareError::State(error.into()))?,
+                restored: None,
+                initialized: Initialized {
+                    preparation_occupancy_ns: preparation_occupancy()?
+                        .saturating_sub(occupancy_start_ns)
+                        .saturating_sub(usage.unoccupied_ns),
+                    pal_calls: instance
+                        .initialization_pal_calls()
+                        .map_err(PrepareError::State)?,
+                    logs: Vec::new(),
+                    // Without an initializer the original module is compiled for the template.
+                    compiled: true,
+                },
             }),
-            CaptureMode::RuntimeBaseline { .. } | CaptureMode::Over { .. } => None,
-        }
-        .ok_or(PrepareError::InvalidRequest(
-            "a runtime baseline needs a module with an initializer",
-        ))?;
-        return Ok(InitializationOutput {
-            captured,
-            restored: None,
-            initialized: Initialized {
-                preparation_occupancy_ns: preparation_occupancy()?
-                    .saturating_sub(occupancy_start_ns)
-                    .saturating_sub(usage.unoccupied_ns),
-                pal_calls: instance
-                    .initialization_pal_calls()
-                    .map_err(PrepareError::State)?,
-                logs: Vec::new(),
-                // Without an initializer the original module is compiled for the template.
-                compiled: true,
-            },
-        });
+            CaptureMode::RuntimeBaseline { .. } | CaptureMode::Over { .. } => {
+                Err(PrepareError::InvalidRequest(
+                    "a runtime baseline needs a module with an initializer",
+                ))
+            }
+        };
     }
     let prepared_resources = io
         .as_ref()
@@ -408,33 +347,12 @@ pub(crate) fn initialize_with_cache(
             )))
         })?
         .unwrap_or_default();
-    let prepared_resources = isoplane_abi::native_io::PreparedResources {
-        ..prepared_resources
-    };
     // Reinstantiation verifies captured state without invoking the initializer again.
-    let (restored_template, captured, representation) = match capture {
-        #[cfg(any(not(target_os = "linux"), feature = "rust-guests"))]
-        CaptureMode::Portable { .. } => {
-            let instrumented = instrumented.as_ref().ok_or(PrepareError::InvalidRequest(
-                "a portable capture needs the instrumented module",
-            ))?;
-            let captured = instance
-                .capture_mutable_state()
-                .map_err(PrepareError::State)?;
-            let module = portable_module(
-                instrumented,
-                instance.memory(),
-                &captured.globals,
-                &prepared_resources,
-            )?;
-            let template = engine
-                .load_template(&module)
-                .and_then(|template| template.with_application_files(application_files.clone()))
-                .map_err(PrepareError::State)?;
-            (template, captured, Captured::Portable(module))
-        }
+    let (restored_template, captured, prepared) = match capture {
         #[cfg(all(target_os = "linux", feature = "rust-guests"))]
-        CaptureMode::Layered { identity, .. } => {
+        CaptureMode::Layered {
+            identity, cache, ..
+        } => {
             let prepared = engine
                 .prepare_initialized_template(
                     &template,
@@ -447,20 +365,13 @@ pub(crate) fn initialize_with_cache(
                 .capture_mutable_state()
                 .map_err(PrepareError::State)?;
             let template = engine
-                .load_prepared_product_in(
-                    &prepared,
-                    cache.map_or(std::env::temp_dir().as_path(), |cache| cache.directory()),
-                )
+                .load_prepared_product_in(&prepared, cache.directory())
                 .map_err(|error| PrepareError::State(error.into()))?;
-            (
-                template,
-                captured,
-                Captured::Layered {
-                    prepared: Box::new(prepared),
-                },
-            )
+            (template, captured, prepared)
         }
-        CaptureMode::RuntimeBaseline { identity, .. } => {
+        CaptureMode::RuntimeBaseline {
+            identity, cache, ..
+        } => {
             let prepared = engine
                 .prepare_runtime_baseline(
                     &template,
@@ -473,18 +384,9 @@ pub(crate) fn initialize_with_cache(
                 .capture_mutable_state()
                 .map_err(PrepareError::State)?;
             let template = engine
-                .load_prepared_product_in(
-                    &prepared,
-                    cache.map_or(std::env::temp_dir().as_path(), |cache| cache.directory()),
-                )
+                .load_prepared_product_in(&prepared, cache.directory())
                 .map_err(|error| PrepareError::State(error.into()))?;
-            (
-                template,
-                captured,
-                Captured::Layered {
-                    prepared: Box::new(prepared),
-                },
-            )
+            (template, captured, prepared)
         }
         CaptureMode::Over {
             ref base,
@@ -505,13 +407,7 @@ pub(crate) fn initialize_with_cache(
             let template = engine
                 .load_prepared_product_over_in(base, &prepared, storage)
                 .map_err(|error| PrepareError::State(error.into()))?;
-            (
-                template,
-                captured,
-                Captured::Layered {
-                    prepared: Box::new(prepared),
-                },
-            )
+            (template, captured, prepared)
         }
     };
     let mut restored = engine
@@ -546,7 +442,7 @@ pub(crate) fn initialize_with_cache(
     let state = state.lock();
     let logs = state.logs.iter().map(|log| log.line.clone()).collect();
     Ok(InitializationOutput {
-        captured: representation,
+        prepared,
         restored: Some(restored_template),
         initialized: Initialized {
             preparation_occupancy_ns: preparation_occupancy()?
@@ -559,121 +455,33 @@ pub(crate) fn initialize_with_cache(
     })
 }
 
-/// What initialization runs on.
-struct Loaded {
-    /// The template, with the application's files bound.
-    template: isoplane_engine::Template,
-    /// The instrumented module, when the template was compiled from it.
-    #[cfg(any(not(target_os = "linux"), feature = "rust-guests"))]
-    instrumented: Option<bake::Instrumented>,
-    /// Whether that compilation ran rather than reusing the cache's.
-    compiled: bool,
-}
-
+/// The template initialization runs on, with the application's files bound,
+/// and whether its compilation ran rather than reusing the cache's.
 fn load(
     engine: &IsoplaneEngine,
-    cache: Option<&isoplane_engine::CompilationCache>,
     application_files: &isoplane_engine::PlatformFiles,
     capture: &CaptureMode<'_>,
-) -> Result<Loaded, PrepareError> {
-    let wasm = match capture {
-        #[cfg(any(not(target_os = "linux"), feature = "rust-guests"))]
-        CaptureMode::Portable { wasm } => wasm,
+) -> Result<(isoplane_engine::Template, bool), PrepareError> {
+    let (wasm, cache) = match capture {
         #[cfg(all(target_os = "linux", feature = "rust-guests"))]
-        CaptureMode::Layered { wasm, .. } => wasm,
-        CaptureMode::RuntimeBaseline { wasm, .. } => wasm,
+        CaptureMode::Layered { wasm, cache, .. } => (wasm, cache),
+        CaptureMode::RuntimeBaseline { wasm, cache, .. } => (wasm, cache),
         CaptureMode::Over { base, .. } => {
             let template = base
                 .clone()
                 .with_application_files(application_files.clone())
                 .map_err(PrepareError::State)?;
-            return Ok(Loaded {
-                template,
-                #[cfg(any(not(target_os = "linux"), feature = "rust-guests"))]
-                instrumented: None,
-                compiled: false,
-            });
+            return Ok((template, false));
         }
     };
-    let instrumented = bake::instrument(wasm).map_err(PrepareError::State)?;
-    let (template, compiled) = match cache {
-        Some(cache) => cache.load(engine, &instrumented.wasm),
-        None => match capture {
-            #[cfg(any(not(target_os = "linux"), feature = "rust-guests"))]
-            CaptureMode::Portable { .. } => engine.load_template(&instrumented.wasm),
-            #[cfg(all(target_os = "linux", feature = "rust-guests"))]
-            CaptureMode::Layered { .. } => engine.load_layer_source(&instrumented.wasm),
-            CaptureMode::RuntimeBaseline { .. } | CaptureMode::Over { .. } => {
-                engine.load_layer_source(&instrumented.wasm)
-            }
-        }
-        .map(|template| (template, true)),
-    }
-    .map_err(PrepareError::State)?;
+    let instrumented = instrument::instrument(wasm).map_err(PrepareError::State)?;
+    let (template, compiled) = cache
+        .load(engine, &instrumented)
+        .map_err(PrepareError::State)?;
     let template = template
         .with_application_files(application_files.clone())
         .map_err(PrepareError::State)?;
-    Ok(Loaded {
-        template,
-        #[cfg(any(not(target_os = "linux"), feature = "rust-guests"))]
-        instrumented: Some(instrumented),
-        compiled,
-    })
-}
-
-/// The instrumented module with the initialized memory and globals baked in,
-/// and the resources the host holds for it.
-#[cfg(any(not(target_os = "linux"), feature = "rust-guests"))]
-fn portable_module(
-    instrumented: &bake::Instrumented,
-    memory: &[u8],
-    globals: &[isoplane_engine::snapshot::GlobalValue],
-    resources: &isoplane_abi::native_io::PreparedResources,
-) -> Result<Vec<u8>, PrepareError> {
-    let globals = captured_globals(instrumented, globals)?;
-    let mut module =
-        bake::bake(&instrumented.wasm, memory, &globals).map_err(PrepareError::State)?;
-    let resources = postcard::to_allocvec(resources).map_err(PrepareError::Encoding)?;
-    wasm_encoder::Section::append_to(
-        &wasm_encoder::CustomSection {
-            name: isoplane_abi::native_io::PREPARED_RESOURCES_SECTION.into(),
-            data: resources.into(),
-        },
-        &mut module,
-    );
-    Ok(module)
-}
-
-#[cfg(any(not(target_os = "linux"), feature = "rust-guests"))]
-fn captured_globals(
-    instrumented: &bake::Instrumented,
-    values: &[isoplane_engine::snapshot::GlobalValue],
-) -> Result<BTreeMap<u32, isoplane_engine::snapshot::GlobalValue>, PrepareError> {
-    let mut indexes = Vec::new();
-    for payload in wasmparser::Parser::new(0).parse_all(&instrumented.wasm) {
-        if let wasmparser::Payload::ExportSection(reader) =
-            payload.map_err(|error| PrepareError::State(error.into()))?
-        {
-            for export in reader {
-                let export = export.map_err(|error| PrepareError::State(error.into()))?;
-                if export.kind == wasmparser::ExternalKind::Global
-                    && instrumented
-                        .globals
-                        .iter()
-                        .any(|(index, _)| *index == export.index)
-                {
-                    indexes.push(export.index);
-                }
-            }
-        }
-    }
-    indexes.sort();
-    if indexes.len() != values.len() {
-        return Err(PrepareError::InvalidRequest(
-            "captured globals do not match instrumented exports",
-        ));
-    }
-    Ok(indexes.into_iter().zip(values.iter().copied()).collect())
+    Ok((template, compiled))
 }
 
 /// `log_emit` severities run from trace at 0 to error at 4.

@@ -304,27 +304,9 @@ pub(crate) struct ArtifactMeta {
     pub engine_fingerprint: String,
     /// blake3 of the `.cwasm`, checked before the file is mapped.
     pub cwasm_hash: [u8; 32],
-    pub prepared_resources: isoplane_abi::native_io::PreparedResources,
     pub mut_global_names: Vec<String>,
     pub table_names: Vec<String>,
 }
 
 pub(crate) const ARTIFACT_MAGIC: [u8; 8] = *b"ISOPTMPL";
-pub(crate) const ARTIFACT_FORMAT: u32 = 6;
-
-pub(crate) fn read_prepared_resources(
-    wasm: &[u8],
-) -> Result<isoplane_abi::native_io::PreparedResources> {
-    let mut found = None;
-    for payload in wasmparser::Parser::new(0).parse_all(wasm) {
-        if let wasmparser::Payload::CustomSection(section) = payload? {
-            if section.name() == isoplane_abi::native_io::PREPARED_RESOURCES_SECTION {
-                if found.is_some() {
-                    bail!("duplicate prepared native resource state");
-                }
-                found = Some(postcard::from_bytes(section.data())?);
-            }
-        }
-    }
-    Ok(found.unwrap_or_default())
-}
+pub(crate) const ARTIFACT_FORMAT: u32 = 7;

@@ -105,7 +105,7 @@ flate2      = "1"
 tar         = { version = "0.4", default-features = false }
 clap        = { version = "4", features = ["derive", "env"] }
 wasmparser  = "0.244"
-wasm-encoder = { version = "0.244", features = ["wasmparser"] }
+wasm-encoder = "0.244"
 # Preparation and execution share this Wasmtime dependency configuration.
 # Engine construction and module validation apply guest capability restrictions.
 wasmtime    = { git = "https://github.com/fantail-forest/isoplane-wasmtime", rev = "2e258ad7fbc02abe4cb139dd0c1108c4d017e57c", default-features = false, features = [

@@ -1,8 +1,8 @@
 //! One Mono runtime module, linked and compiled with no application, runs
 //! application packages it was never built with. Each package is served as
-//! application files, loaded by the runtime's fixed loader during real
-//! preparation, and executed through the reactor across a park and a
-//! hibernation delta.
+//! application files, loaded by the runtime's fixed loader as a layer over
+//! the runtime's baseline during real preparation, and executed through the
+//! reactor across a park and a hibernation delta.
 
 use isoplane_harness::logging::GuestLogs;
 use std::io::Read;
@@ -10,16 +10,12 @@ use std::sync::{Arc, OnceLock};
 
 use isoplane_abi::config::ValidationLimits;
 use isoplane_abi::filesystem::APPLICATION_PACKAGE_ROOT;
-use isoplane_engine::prepared::PreparedTemplate;
-use isoplane_engine::{CompilationCache, Completion, IsoplaneEngine, PlatformFile, PlatformFiles};
+use isoplane_engine::{Completion, IsoplaneEngine, PlatformFile, PlatformFiles};
+use isoplane_harness::preparation::shared_runtime::{self, Application};
 use isoplane_harness::{engine_configuration, ReturnedGuest};
 use isoplane_prepare::package::PackageLimits;
-use isoplane_prepare::{
-    BuildProduct, BuildRequest, Initialization, InitializationNetwork, LocalPreparation,
-    Preparation, PrepareError, RuntimeProfile,
-};
+use isoplane_prepare::{BuildRequest, InitializationNetwork, PrepareError, RuntimeProfile};
 use isoplane_test_support::hex_bytes as hex;
-use tokio_util::sync::CancellationToken;
 
 #[path = "common/admitted.rs"]
 pub mod admitted;
@@ -105,111 +101,70 @@ fn network() -> InitializationNetwork {
     }
 }
 
-fn request(runtime: &[u8], files: Vec<PlatformFile>) -> BuildRequest {
-    BuildRequest {
-        engine: engine_configuration(PlatformFiles::default()),
-        application_files: PlatformFiles::new(files)
-            .expect("package paths are valid application files"),
-        runtime: RuntimeProfile::SharedRuntime {
-            sdk_version: isoplane_fixtures::release_version(),
-        },
-        memory_limit: isoplane_abi::config::GuestMemoryBytes::default(),
-        guest_memory_bytes: None,
-        validation_limits: Default::default(),
-        initialization: Initialization {
-            network: Some(network()),
-            ..Initialization::new(b"{}".to_vec())
-        },
-        module: isoplane_prepare::Module::new(runtime),
-    }
-}
-
-/// The runtime Task compiled for the engine every preparation in this binary
-/// uses, except those about compilation reuse.
-fn shared_cache() -> Arc<CompilationCache> {
-    isoplane_fixtures::compiled_runtime_cache()
-}
-
-async fn prepare(
-    preparation: &LocalPreparation,
-    runtime: &[u8],
-    files: Vec<PlatformFile>,
-) -> Result<(BuildProduct, BuildRequest), PrepareError> {
-    let request = request(runtime, files);
-    let product = preparation
-        .prepare(&request, &CancellationToken::new())
-        .await?;
-    Ok((product, request))
-}
-
-/// `product`, prepared for `request` in this process, as a cell receives it.
-fn decode(product: &BuildProduct, request: &BuildRequest) -> PreparedTemplate {
-    let engine = IsoplaneEngine::new(request.engine.clone()).expect("the preparation engine");
-    let identity = request.identity().expect("the preparation identity");
-    // SAFETY: LocalPreparation in this process produced these bytes.
-    unsafe { engine.decode_builder_output(product.prepared_bytes(), identity) }
-        .expect("the prepared template must decode")
+/// The request for `files` as a package on the shared runtime, whose
+/// initialization may reach public destinations.
+fn request(files: Vec<PlatformFile>) -> BuildRequest {
+    let mut request = shared_runtime::request(
+        PlatformFiles::new(files).expect("package paths are valid application files"),
+        PlatformFiles::default(),
+    );
+    request.initialization.network = Some(network());
+    request
 }
 
 /// Prepares `files` on the shared runtime and answers `path` across a park
 /// on its host timer and a hibernation delta at every later park, returning
 /// the response body.
 async fn answer_across_a_delta(files: Vec<PlatformFile>, path: &str) -> String {
-    let (product, request) = prepare_on_the_shared_runtime(files).await;
-    answer_on_an_instance(&product, &request, isoplane_host::InstanceId::alloc(), path).await
+    let application = prepare_on_the_shared_runtime(files);
+    answer_on_an_instance(&application, isoplane_host::InstanceId::alloc(), path).await
 }
 
-async fn prepare_on_the_shared_runtime(files: Vec<PlatformFile>) -> (BuildProduct, BuildRequest) {
-    let runtime = isoplane_fixtures::mono_runtime();
-    let preparation = LocalPreparation::with_cache(shared_cache()).expect("local preparation");
-    prepare(&preparation, &runtime, files)
-        .await
+fn prepare_on_the_shared_runtime(files: Vec<PlatformFile>) -> Application {
+    shared_runtime::prepare(&request(files))
         .unwrap_or_else(|error| panic!("the package must prepare on the shared runtime: {error}"))
 }
 
 /// `name`, prepared on the shared runtime once for every test in this binary that only asks
 /// it for a route; a preparation is the template every instance starts from, so a test
 /// that activates its own instance cannot see another's requests.
-async fn prepared_package(name: &'static str) -> Arc<(BuildProduct, BuildRequest)> {
-    type Prepared = Arc<tokio::sync::OnceCell<Arc<(BuildProduct, BuildRequest)>>>;
+fn prepared_package(name: &'static str) -> Application {
+    type Prepared = Arc<OnceLock<Application>>;
     static PACKAGES: OnceLock<std::sync::Mutex<std::collections::HashMap<&'static str, Prepared>>> =
         OnceLock::new();
-    let cell = PACKAGES
+    let prepared = PACKAGES
         .get_or_init(Default::default)
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .entry(name)
         .or_default()
         .clone();
-    cell.get_or_init(|| async { Arc::new(prepare_on_the_shared_runtime(package(name)).await) })
-        .await
+    prepared
+        .get_or_init(|| prepare_on_the_shared_runtime(package(name)))
         .clone()
 }
 
 /// Answers `path` on a fresh instance of the shared preparation of package `name`, as
 /// [`answer_across_a_delta`] does.
 async fn answer_package(name: &'static str, path: &str) -> String {
-    let prepared = prepared_package(name).await;
     answer_on_an_instance(
-        &prepared.0,
-        &prepared.1,
+        &prepared_package(name),
         isoplane_host::InstanceId::alloc(),
         path,
     )
     .await
 }
 
-/// Activates `instance` from the prepared template and answers `path` on it
-/// as [`answer_across_a_delta`] does.
+/// Activates `instance` from the prepared application and answers `path` on
+/// it as [`answer_across_a_delta`] does.
 async fn answer_on_an_instance(
-    product: &BuildProduct,
-    request: &BuildRequest,
+    application: &Application,
     instance: isoplane_host::InstanceId,
     path: &str,
 ) -> String {
     let reactor = isoplane_harness::Reactor::new(instance);
     reactor.context.begin_slice(1, 1);
-    let guest = ReturnedGuest::prepared(decode(product, request), &reactor);
+    let guest = ReturnedGuest::application(application, &reactor);
     finish_across_a_delta(guest, &reactor, path).await
 }
 
@@ -233,11 +188,10 @@ async fn finish_across_a_delta(
     guest.finish_through_deltas(reactor, 8).await
 }
 
-/// The detail of a preparation whose initialization on the shared runtime was refused.
-async fn refusal(files: Vec<PlatformFile>) -> String {
-    let runtime = isoplane_fixtures::mono_runtime();
-    let preparation = LocalPreparation::with_cache(shared_cache()).expect("local preparation");
-    match prepare(&preparation, &runtime, files).await {
+/// The detail of a package whose initialization over the shared runtime's
+/// baseline was refused.
+fn refusal(files: Vec<PlatformFile>) -> String {
+    match shared_runtime::prepare(&request(files)) {
         Ok(_) => panic!("preparation must refuse the package"),
         Err(error) => {
             assert!(
@@ -330,19 +284,15 @@ async fn an_aspnet_package_serves_its_static_web_assets() {
 /// with its `ConsoleLogging` setting naming the logging calls its builder
 /// makes: the level and text of each record of the route's category.
 async fn logged_with(calls: &str) -> Vec<(u8, String)> {
-    let runtime = isoplane_fixtures::mono_runtime();
-    let preparation = LocalPreparation::with_cache(shared_cache()).expect("local preparation");
-    let mut request = request(&runtime, package("web"));
+    let mut request = request(package("web"));
     request.initialization.runtime_config =
         serde_json::to_vec(&serde_json::json!({ "ConsoleLogging": calls }))
             .expect("the settings serialize");
-    let product = preparation
-        .prepare(&request, &CancellationToken::new())
-        .await
+    let application = shared_runtime::prepare(&request)
         .unwrap_or_else(|error| panic!("the web package calling {calls} must prepare: {error}"));
     let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
     reactor.context.begin_slice(1, 1);
-    let guest = ReturnedGuest::prepared(decode(&product, &request), &reactor);
+    let guest = ReturnedGuest::application(&application, &reactor);
     let body = finish_across_a_delta(guest, &reactor, "/log").await;
     assert_eq!(
         body,
@@ -465,8 +415,8 @@ async fn an_aspnet_packages_systemd_console_logger_sends_entries_over_the_thresh
 
 /// The web package prepared with its `Peer` setting naming `peer`, which its
 /// initialization reaches as a local development session's does.
-fn calling_request(runtime: &[u8], peer: std::net::SocketAddr) -> BuildRequest {
-    let mut request = request(runtime, package("web"));
+fn calling_request(peer: std::net::SocketAddr) -> BuildRequest {
+    let mut request = request(package("web"));
     request.initialization.runtime_config =
         serde_json::to_vec(&serde_json::json!({ "Peer": format!("http://{peer}") }))
             .expect("the settings serialize");
@@ -479,13 +429,8 @@ fn calling_request(runtime: &[u8], peer: std::net::SocketAddr) -> BuildRequest {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_aspnet_request_that_calls_out_through_a_factory_client_leaves_its_instance_reusable() {
     let peer = http_peers::http_peer().await;
-    let runtime = isoplane_fixtures::mono_runtime();
-    let preparation = LocalPreparation::with_cache(shared_cache()).expect("local preparation");
-    let request = calling_request(&runtime, peer.address);
-    let product = preparation
-        .prepare(&request, &CancellationToken::new())
-        .await
-        .unwrap_or_else(|error| {
+    let application =
+        shared_runtime::prepare(&calling_request(peer.address)).unwrap_or_else(|error| {
             panic!("a route that calls out through a factory client must warm up: {error}")
         });
     let warmed = peer.connections();
@@ -499,8 +444,7 @@ async fn an_aspnet_request_that_calls_out_through_a_factory_client_leaves_its_in
     let module = isoplane_host::ModuleId::new("http-pooling", "v1");
     let services = reactor.runtime().services.clone();
     let cell = prepared_cell(
-        &product,
-        &request,
+        &application,
         &module,
         isoplane_harness::fakes::cell_config("http-pooling"),
         services.clone(),
@@ -577,18 +521,14 @@ struct Visit {
 }
 
 impl SessionVisitor {
-    async fn new(settings: serde_json::Value) -> Self {
-        let runtime = isoplane_fixtures::mono_runtime();
-        let preparation = LocalPreparation::with_cache(shared_cache()).expect("local preparation");
-        let mut request = request(&runtime, package("session"));
+    fn new(settings: serde_json::Value) -> Self {
+        let mut request = request(package("session"));
         request.initialization.runtime_config =
             serde_json::to_vec(&settings).expect("the settings serialize");
-        let product = preparation
-            .prepare(&request, &CancellationToken::new())
-            .await
+        let application = shared_runtime::prepare(&request)
             .unwrap_or_else(|error| panic!("the session package must prepare: {error}"));
         let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
-        let guest = ReturnedGuest::prepared(decode(&product, &request), &reactor);
+        let guest = ReturnedGuest::application(&application, &reactor);
         Self {
             guest,
             reactor,
@@ -680,7 +620,7 @@ impl SessionVisitor {
 
 #[tokio::test(start_paused = true)]
 async fn a_session_value_written_over_an_asynchronous_cache_is_read_by_the_next_request() {
-    let mut visitor = SessionVisitor::new(serde_json::json!({})).await;
+    let mut visitor = SessionVisitor::new(serde_json::json!({}));
     for expected in ["1", "2", "3"] {
         let visit = visitor.visit("GET", "/visits").await;
         assert_eq!(
@@ -698,7 +638,7 @@ async fn a_session_value_written_over_an_asynchronous_cache_is_read_by_the_next_
 
 #[tokio::test(start_paused = true)]
 async fn tempdata_kept_in_a_session_over_an_asynchronous_cache_survives_a_redirect() {
-    let mut visitor = SessionVisitor::new(serde_json::json!({})).await;
+    let mut visitor = SessionVisitor::new(serde_json::json!({}));
     let saved = visitor.visit("POST", "/notes").await;
     assert_eq!(
         (saved.status, saved.location.as_deref()),
@@ -718,8 +658,7 @@ async fn tempdata_kept_in_a_session_over_an_asynchronous_cache_survives_a_redire
 #[tokio::test(start_paused = true)]
 async fn a_session_over_the_in_memory_cache_works_without_loading_it_first() {
     let mut visitor =
-        SessionVisitor::new(serde_json::json!({ "Cache": "memory", "Pipeline": "UseSession" }))
-            .await;
+        SessionVisitor::new(serde_json::json!({ "Cache": "memory", "Pipeline": "UseSession" }));
     for expected in ["1", "2"] {
         let visit = visitor.visit("GET", "/visits").await;
         assert_eq!(
@@ -733,7 +672,7 @@ async fn a_session_over_the_in_memory_cache_works_without_loading_it_first() {
 
 #[tokio::test(start_paused = true)]
 async fn a_session_that_could_not_be_loaded_fails_the_request_naming_use_loaded_session() {
-    let mut visitor = SessionVisitor::new(serde_json::json!({ "Pipeline": "UseSession" })).await;
+    let mut visitor = SessionVisitor::new(serde_json::json!({ "Pipeline": "UseSession" }));
     let outcome = visitor.dispatch("GET", "/visits").await;
     let logs = visitor.logs();
     assert_eq!(
@@ -750,26 +689,29 @@ async fn a_session_that_could_not_be_loaded_fails_the_request_naming_use_loaded_
     );
 }
 
-#[tokio::test]
-async fn a_second_package_reuses_the_runtimes_native_compilation() {
-    let runtime = isoplane_fixtures::mono_runtime();
-    let directory = tempfile::tempdir().expect("an isolated compilation cache");
-    // SAFETY: the cache creates this directory privately, empty, for this test,
-    // and only CompilationCache's compiler path writes to it.
-    let cache = unsafe { CompilationCache::from_trusted_directory(directory.path().join("cache")) }
-        .expect("create the compilation cache");
-    let preparation = LocalPreparation::with_cache(Arc::new(cache)).expect("local preparation");
-    let (alpha, _) = prepare(&preparation, &runtime, package("alpha"))
-        .await
+#[tokio::test(start_paused = true)]
+async fn packages_over_one_runtime_baseline_each_answer_across_a_delta() {
+    let alpha = request(package("alpha"));
+    let baseline = shared_runtime::Baseline::prepare(
+        &alpha.baseline(),
+        &isoplane_fixtures::compiled_runtime_cache(),
+    );
+    let alpha = baseline
+        .prepare_application(&alpha)
         .expect("alpha must prepare");
-    let (beta, _) = prepare(&preparation, &runtime, package("beta"))
-        .await
+    let beta = baseline
+        .prepare_application(&request(package("beta")))
         .expect("beta must prepare");
+    let alpha =
+        answer_on_an_instance(&alpha, isoplane_host::InstanceId::alloc(), "/greeting").await;
+    let beta = answer_on_an_instance(&beta, isoplane_host::InstanceId::alloc(), "/beta").await;
+    assert_eq!(
+        alpha, "alpha:/greeting",
+        "alpha's layer must answer with its own handler over the shared baseline"
+    );
     assert!(
-        alpha.initialized.compiled && !beta.initialized.compiled,
-        "the first package compiles the runtime and the second must reuse it (first compiled: {}, second compiled: {})",
-        alpha.initialized.compiled,
-        beta.initialized.compiled
+        beta.contains("\"Path\":\"/beta\""),
+        "beta's layer must answer with its own handler over the same baseline: {beta}"
     );
 }
 
@@ -785,30 +727,28 @@ async fn an_unused_package_assembly_loads_on_demand_and_survives_hibernation() {
     );
 }
 
-#[tokio::test]
-async fn an_empty_package_manifest_is_refused() {
+#[test]
+fn an_empty_package_manifest_is_refused() {
     let detail = refusal(with_package_file(
         package("alpha"),
         "application.json",
         b"null",
-    ))
-    .await;
+    ));
     assert!(
         detail.contains("PackageManifestException"),
         "an empty manifest must be refused as such: {detail}"
     );
 }
 
-#[tokio::test]
-async fn a_package_assembly_the_runtime_supplies_is_refused() {
+#[test]
+fn a_package_assembly_the_runtime_supplies_is_refused() {
     let files = package("alpha");
     let impostor = package_file(&files, "assemblies/Alpha.dll");
     let detail = refusal(with_package_file(
         files,
         "assemblies/System.Text.Json.dll",
         &impostor,
-    ))
-    .await;
+    ));
     assert!(
         detail.contains("PackageAssemblyConflictException")
             && detail.contains("supplied by the runtime"),
@@ -816,19 +756,19 @@ async fn a_package_assembly_the_runtime_supplies_is_refused() {
     );
 }
 
-#[tokio::test]
-async fn a_package_file_defining_another_assembly_is_refused() {
+#[test]
+fn a_package_file_defining_another_assembly_is_refused() {
     let files = package("alpha");
     let impostor = package_file(&files, "assemblies/Alpha.dll");
-    let detail = refusal(with_package_file(files, "assemblies/Gamma.dll", &impostor)).await;
+    let detail = refusal(with_package_file(files, "assemblies/Gamma.dll", &impostor));
     assert!(
         detail.contains("PackageAssemblyConflictException"),
         "a package file must hold the assembly it is named for: {detail}"
     );
 }
 
-#[tokio::test]
-async fn a_recorded_handler_of_another_shape_is_refused() {
+#[test]
+fn a_recorded_handler_of_another_shape_is_refused() {
     let files = package("alpha");
     let manifest = String::from_utf8(package_file(&files, "application.json"))
         .expect("the manifest is UTF-8")
@@ -841,16 +781,15 @@ async fn a_recorded_handler_of_another_shape_is_refused() {
         files,
         "application.json",
         manifest.as_bytes(),
-    ))
-    .await;
+    ));
     assert!(
         detail.contains("PackageEntryException"),
         "the recorded handler must take a request and return a response: {detail}"
     );
 }
 
-#[tokio::test]
-async fn a_recorded_handler_the_assembly_lacks_is_refused() {
+#[test]
+fn a_recorded_handler_the_assembly_lacks_is_refused() {
     let files = package("alpha");
     let manifest = String::from_utf8(package_file(&files, "application.json"))
         .expect("the manifest is UTF-8")
@@ -863,8 +802,7 @@ async fn a_recorded_handler_the_assembly_lacks_is_refused() {
         files,
         "application.json",
         manifest.as_bytes(),
-    ))
-    .await;
+    ));
     assert!(
         detail.contains("PackageEntryException"),
         "the recorded handler must exist: {detail}"
@@ -899,10 +837,9 @@ async fn answer_at(
 
 #[tokio::test(start_paused = true)]
 async fn the_rate_limiter_middleware_starts_and_limits_an_instances_requests() {
-    let prepared = prepared_package("web").await;
     let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
     reactor.context.begin_slice(1, 1);
-    let mut guest = ReturnedGuest::prepared(decode(&prepared.0, &prepared.1), &reactor);
+    let mut guest = ReturnedGuest::application(&prepared_package("web"), &reactor);
     assert_eq!(
         answer_at(&mut guest, &reactor, "/limited", 1, 1).await,
         "allowed",
@@ -925,12 +862,11 @@ async fn timers_initialization_leaves_running_count_from_activation() {
         manifest.contains("\"LeaveTimersRunningAsync\""),
         "the manifest must name its initializer for this test to replace: {manifest}"
     );
-    let (product, request) = prepare_on_the_shared_runtime(with_package_file(
+    let application = prepare_on_the_shared_runtime(with_package_file(
         files,
         "application.json",
         manifest.as_bytes(),
-    ))
-    .await;
+    ));
 
     // Hours after the template was captured, on the wall clock the guest reads.
     let activated_ms = std::time::SystemTime::now()
@@ -940,7 +876,7 @@ async fn timers_initialization_leaves_running_count_from_activation() {
         + 5 * 60 * 60 * 1000;
     let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
     reactor.context.begin_slice(activated_ms, 1);
-    let mut guest = ReturnedGuest::prepared(decode(&product, &request), &reactor);
+    let mut guest = ReturnedGuest::application(&application, &reactor);
     assert_eq!(
         answer_at(&mut guest, &reactor, "/beats", activated_ms, 1).await,
         "beats=0",
@@ -976,16 +912,15 @@ fn alpha_files_initialized_by(initializer: &str) -> Vec<PlatformFile> {
     with_package_file(files, "application.json", manifest.as_bytes())
 }
 
-async fn alpha_initialized_by(initializer: &str) -> (BuildProduct, BuildRequest) {
-    prepare_on_the_shared_runtime(alpha_files_initialized_by(initializer)).await
+fn alpha_initialized_by(initializer: &str) -> Application {
+    prepare_on_the_shared_runtime(alpha_files_initialized_by(initializer))
 }
 
-/// A cell serving `product` as module `module`, whose instances stop after
+/// A cell serving `application` as module `module`, whose instances stop after
 /// `background_idle_limit_ms` without a request, and which shows guests'
 /// the configured idle stop.
 fn serving_cell(
-    product: &BuildProduct,
-    request: &BuildRequest,
+    application: &Application,
     module: &isoplane_host::ModuleId,
     background_idle_limit_ms: u64,
 ) -> Arc<isoplane_host::cell::Cell> {
@@ -997,8 +932,7 @@ fn serving_cell(
         )),
     });
     prepared_cell(
-        product,
-        request,
+        application,
         module,
         isoplane_host::CellConfig {
             background_idle_limit_ms,
@@ -1009,8 +943,7 @@ fn serving_cell(
 }
 
 fn prepared_cell(
-    product: &BuildProduct,
-    request: &BuildRequest,
+    application: &Application,
     module: &isoplane_host::ModuleId,
     config: isoplane_host::CellConfig,
     services: Arc<isoplane_host::cell::Services>,
@@ -1020,9 +953,7 @@ fn prepared_cell(
         IsoplaneEngine::new(engine_configuration(PlatformFiles::default()))
             .expect("the serving engine must initialize"),
     );
-    let template = engine
-        .load_prepared_product_in(&decode(product, request), &std::env::temp_dir())
-        .expect("the prepared template must load");
+    let template = application.load(&engine);
     let cell = isoplane_host::cell::Cell::new(config, services).expect("the cell must start");
     cell.register_module(
         "tenant",
@@ -1099,9 +1030,8 @@ fn alpha_request(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_request_that_unblocks_another_on_its_instance_leaves_it_to_resume_in_its_own_slice() {
-    let prepared = prepared_package("alpha").await;
     let module = isoplane_host::ModuleId::new("alpha", "v1");
-    let cell = serving_cell(&prepared.0, &prepared.1, &module, 300_000);
+    let cell = serving_cell(&prepared_package("alpha"), &module, 300_000);
     let gate = |path: &str| isoplane_host::cell::Target::Handler { route: path.into() };
 
     let waiting = cell
@@ -1169,9 +1099,8 @@ async fn a_request_that_unblocks_another_on_its_instance_leaves_it_to_resume_in_
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn idle_timers_run_by_default_without_counting_http_requests_and_stop_after_inactivity() {
-    let (product, request) = alpha_initialized_by("StartHeartbeatAsync").await;
     let module = isoplane_host::ModuleId::new("alpha", "v1");
-    let cell = serving_cell(&product, &request, &module, 1_000);
+    let cell = serving_cell(&alpha_initialized_by("StartHeartbeatAsync"), &module, 1_000);
     let meters = cell.meters(&module).expect("the module has meters");
 
     let first = ask_for_beats(&cell, &module).await;
@@ -1350,10 +1279,10 @@ async fn a_locked_sqlite_table_fails_the_command_instead_of_waiting() {
 async fn sqlites_generator_is_reseeded_in_each_activation() {
     // The package's initializer draws from SQLite's generator, so the
     // template holds its seeded state.
-    let prepared = prepared_package("sqlite").await;
+    let prepared = prepared_package("sqlite");
     let mut draws = Vec::new();
     for instance in [7301, 7302].map(isoplane_host::InstanceId) {
-        let answer = answer_on_an_instance(&prepared.0, &prepared.1, instance, "/random").await;
+        let answer = answer_on_an_instance(&prepared, instance, "/random").await;
         let draw: i64 = answer.parse().unwrap_or_else(|error| {
             panic!("SELECT random() must answer an integer, not {answer:?}: {error}")
         });
@@ -1367,11 +1296,10 @@ async fn sqlites_generator_is_reseeded_in_each_activation() {
 
 /// The first dispatch of `path` on the prepared `diagnostics` package, and
 /// what the guest logged.
-async fn diagnose(path: &str) -> (isoplane_engine::DispatchOutcome, Vec<String>) {
-    let prepared = prepared_package("diagnostics").await;
+fn diagnose(path: &str) -> (isoplane_engine::DispatchOutcome, Vec<String>) {
     let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
     reactor.context.begin_slice(1, 1);
-    let mut guest = ReturnedGuest::prepared(decode(&prepared.0, &prepared.1), &reactor);
+    let mut guest = ReturnedGuest::application(&prepared_package("diagnostics"), &reactor);
     let outcome = guest.start(path);
     let logs = reactor
         .context
@@ -1384,7 +1312,7 @@ async fn diagnose(path: &str) -> (isoplane_engine::DispatchOutcome, Vec<String>)
 
 #[tokio::test]
 async fn a_runtime_fail_fast_logs_its_reason_before_ending_the_instance() {
-    let (outcome, logs) = diagnose("/fail-fast").await;
+    let (outcome, logs) = diagnose("/fail-fast");
     assert_eq!(
         outcome.completion,
         Completion::Trapped,
@@ -1405,7 +1333,7 @@ async fn a_runtime_fail_fast_logs_its_reason_before_ending_the_instance() {
 
 #[tokio::test]
 async fn a_fatal_runtime_error_ends_the_instance_with_its_message() {
-    let (outcome, logs) = diagnose("/invalid-il").await;
+    let (outcome, logs) = diagnose("/invalid-il");
     let trap = outcome
         .trap
         .as_ref()
@@ -1475,168 +1403,75 @@ async fn a_debug_runtime_without_a_debug_session_is_refused() {
     );
 }
 
-/// Packages prepared as layers over the shared runtime's baseline, which
-/// only Linux maps.
+#[test]
+fn a_runtime_that_runs_out_of_memory_in_start_up_reports_its_own_diagnosis() {
+    let mut request = request(Vec::new());
+    // The runtime's declared initial memory fits; its start-up does not.
+    request.runtime = RuntimeProfile::SharedRuntime {
+        sdk_version: "0.0.0-test".into(),
+    };
+    request.guest_memory_bytes =
+        Some(isoplane_abi::config::GuestMemoryBytes::new(64 << 20).expect("a page multiple"));
+    let failure = isoplane_prepare::RuntimeBaseline::prepare(
+        &request.baseline(),
+        &isoplane_fixtures::compiled_runtime_cache(),
+    )
+    .err()
+    .expect("the runtime's start-up must not fit in 64 MiB");
+    let detail = format!("{failure:?}");
+    assert!(
+        detail.contains("guest aborted: Garbage collector could not allocate"),
+        "an operator must see the runtime's own diagnosis of a failed start-up: {detail}"
+    );
+}
+
+// Only Linux has whole-module preparation, which a node gives a guest built
+// with the Rust SDK.
 #[cfg(target_os = "linux")]
-mod over_the_runtime_baseline {
-    use super::*;
-    use isoplane_prepare::{PreparedBaseline, RuntimeBaseline};
-
-    #[test]
-    fn a_runtime_that_runs_out_of_memory_in_start_up_reports_its_own_diagnosis() {
-        let runtime = isoplane_fixtures::mono_runtime();
-        let mut request = request(&runtime, Vec::new());
-        // The runtime's declared initial memory fits; its start-up does not.
-        request.runtime = RuntimeProfile::SharedRuntime {
-            sdk_version: "0.0.0-test".into(),
-        };
-        request.guest_memory_bytes =
-            Some(isoplane_abi::config::GuestMemoryBytes::new(64 << 20).expect("a page multiple"));
-        let failure = RuntimeBaseline::prepare(&request.baseline(), Some(&shared_cache()))
-            .err()
-            .expect("the runtime's start-up must not fit in 64 MiB");
-        let detail = format!("{failure:?}");
-        assert!(
-            detail.contains("guest aborted: Garbage collector could not allocate"),
-            "an operator must see the runtime's own diagnosis of a failed start-up: {detail}"
-        );
-    }
-
-    /// The shared runtime prepared once to the end of its own initializer, for
-    /// packages prepared with [`request`].
-    fn runtime_baseline(runtime: &[u8]) -> PreparedBaseline {
-        RuntimeBaseline::prepare(
-            &request(runtime, Vec::new()).baseline(),
-            Some(&shared_cache()),
-        )
-        .unwrap_or_else(|failure| {
-            panic!("the shared runtime must prepare as a baseline: {failure:?}")
-        })
-    }
-
-    /// `files` prepared as a layer over `baseline`, with the baseline, both as a
-    /// cell receives them.
-    async fn layer_over(
-        baseline: &PreparedBaseline,
-        runtime: &[u8],
-        files: Vec<PlatformFile>,
-    ) -> (PreparedTemplate, PreparedTemplate) {
-        let request = request(runtime, files);
-        let source = baseline.baseline.clone();
-        let (layer, request) = tokio::task::spawn_blocking(move || {
-            let layer = source
-                .prepare_application(&request)
-                .unwrap_or_else(|failure| {
-                    panic!("the package must prepare over the baseline: {failure:?}")
-                })
-                .product;
-            (layer, request)
-        })
-        .await
-        .expect("the preparation worker must finish");
-        let engine = IsoplaneEngine::new(request.engine.clone()).expect("the preparation engine");
-        let base_identity = request
-            .baseline()
-            .identity()
-            .expect("the baseline's identity");
-        // SAFETY: LocalPreparation in this process produced these bytes.
-        let base = unsafe {
-            engine.decode_builder_output(baseline.product.prepared_bytes(), base_identity)
-        }
-        .expect("the baseline must decode");
-        let loaded = engine
-            .load_prepared_product_in(&base, &std::env::temp_dir())
-            .expect("the baseline must load");
-        let identity = request.identity().expect("the layer's identity");
-        // SAFETY: LocalPreparation in this process produced these bytes.
-        let layer =
-            unsafe { engine.decode_builder_output_over(&loaded, layer.prepared_bytes(), identity) }
-                .expect("the layer must decode over its baseline");
-        (base, layer)
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn whole_and_layered_preparation_preserve_the_same_initialized_application_state() {
-        let runtime = isoplane_fixtures::mono_runtime();
-        let preparation = LocalPreparation::with_cache(shared_cache()).expect("local preparation");
-        let (whole, request) = prepare(&preparation, &runtime, package("beta"))
+#[tokio::test(start_paused = true)]
+async fn whole_and_layered_preparation_preserve_the_same_initialized_application_state() {
+    use isoplane_prepare::Preparation as _;
+    let request = request(package("beta"));
+    let engine = IsoplaneEngine::new(request.engine.clone()).expect("the preparation engine");
+    let whole =
+        isoplane_prepare::LocalPreparation::with_cache(isoplane_fixtures::compiled_runtime_cache())
+            .expect("local preparation")
+            .prepare(&request, &tokio_util::sync::CancellationToken::new())
             .await
             .expect("beta must prepare whole");
-        let baseline = runtime_baseline(&runtime);
-        let (base, layer) = layer_over(&baseline, &runtime, package("beta")).await;
-        let whole_reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
-        whole_reactor.context.begin_slice(1, 1);
-        let whole = finish_across_a_delta(
-            ReturnedGuest::prepared(decode(&whole, &request), &whole_reactor),
-            &whole_reactor,
-            "/beta",
-        )
-        .await;
-        let layered_reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
-        layered_reactor.context.begin_slice(1, 1);
-        let layered = finish_across_a_delta(
-            ReturnedGuest::layered(base, layer, &layered_reactor),
-            &layered_reactor,
-            "/beta",
-        )
-        .await;
-        assert_eq!(
-            layered, whole,
-            "layered and whole preparation must preserve the same application response across hibernation"
-        );
-        let report: serde_json::Value = serde_json::from_str(&layered)
-            .expect("the captured application must return its JSON report");
-        assert_eq!(
-            report["Warmups"], 1,
-            "both preparation paths must retain exactly one completed initialization warmup"
-        );
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn packages_over_one_runtime_baseline_each_answer_across_a_delta() {
-        let runtime = isoplane_fixtures::mono_runtime();
-        let baseline = runtime_baseline(&runtime);
-        let (alpha_base, alpha) = layer_over(&baseline, &runtime, package("alpha")).await;
-        let (beta_base, beta) = layer_over(&baseline, &runtime, package("beta")).await;
-        let alpha_reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
-        alpha_reactor.context.begin_slice(1, 1);
-        let alpha = finish_across_a_delta(
-            ReturnedGuest::layered(alpha_base, alpha, &alpha_reactor),
-            &alpha_reactor,
-            "/greeting",
-        )
-        .await;
-        let beta_reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
-        beta_reactor.context.begin_slice(1, 1);
-        let beta = finish_across_a_delta(
-            ReturnedGuest::layered(beta_base, beta, &beta_reactor),
-            &beta_reactor,
-            "/beta",
-        )
-        .await;
-        assert_eq!(
-            alpha, "alpha:/greeting",
-            "alpha's layer must answer with its own handler over the shared baseline"
-        );
-        assert!(
-            beta.contains("\"Path\":\"/beta\""),
-            "beta's layer must answer with its own handler over the same baseline: {beta}"
-        );
-    }
+    let identity = request.identity().expect("the preparation identity");
+    // SAFETY: LocalPreparation in this process produced these bytes.
+    let whole = unsafe { engine.decode_builder_output(whole.prepared_bytes(), identity) }
+        .expect("the whole template must decode");
+    let whole_reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
+    whole_reactor.context.begin_slice(1, 1);
+    let whole = finish_across_a_delta(
+        ReturnedGuest::prepared(whole, &whole_reactor),
+        &whole_reactor,
+        "/beta",
+    )
+    .await;
+    let layered = answer_package("beta", "/beta").await;
+    assert_eq!(
+        layered, whole,
+        "layered and whole preparation must preserve the same application response across hibernation"
+    );
+    let report: serde_json::Value = serde_json::from_str(&layered)
+        .expect("the captured application must return its JSON report");
+    assert_eq!(
+        report["Warmups"], 1,
+        "both preparation paths must retain exactly one completed initialization warmup"
+    );
 }
 
 #[tokio::test(start_paused = true)]
 async fn initialization_crypto_draws_are_fresh_while_activations_copy_captured_values() {
-    let runtime = isoplane_fixtures::mono_runtime();
     let files = alpha_files_initialized_by("CaptureRandomnessAsync");
-    let preparation =
-        LocalPreparation::with_cache(shared_cache()).expect("cached local preparation");
     let mut captured_draws = Vec::new();
     let mut expected_identity = None;
     for _ in 0..2 {
-        let (product, request) = prepare(&preparation, &runtime, files.clone())
-            .await
-            .expect("fresh initialization");
+        let request = request(files.clone());
+        let application = shared_runtime::prepare(&request).expect("fresh initialization");
         let identity = request.identity().expect("fixed preparation inputs");
         if let Some(expected) = expected_identity {
             assert_eq!(
@@ -1646,22 +1481,12 @@ async fn initialization_crypto_draws_are_fresh_while_activations_copy_captured_v
         } else {
             expected_identity = Some(identity);
         }
-        assert!(
-            !product.initialized.compiled,
-            "both preparations reuse only the uninitialized compilation"
-        );
         let engine = IsoplaneEngine::new(request.engine.clone()).expect("captured-state engine");
-        let prepared = decode(&product, &request);
-        let captured_memory = engine
-            .load_prepared_product_in(&prepared, &std::env::temp_dir())
-            .expect("restore the captured application without initialization")
-            .memory_image_arc()
-            .to_dense();
+        let captured_memory = application.load(&engine).memory_image_arc().to_dense();
         let mut draws = Vec::new();
         for _ in 0..2 {
             let body = answer_on_an_instance(
-                &product,
-                &request,
+                &application,
                 isoplane_host::InstanceId::alloc(),
                 "/randomness",
             )
@@ -1697,6 +1522,6 @@ async fn initialization_crypto_draws_are_fresh_while_activations_copy_captured_v
     }
     assert_ne!(
         captured_draws[0], captured_draws[1],
-        "fresh initialization requests fresh entropy even when compilation is reused"
+        "fresh initialization requests fresh entropy even when the baseline is reused"
     );
 }

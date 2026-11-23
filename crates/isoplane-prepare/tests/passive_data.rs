@@ -1,6 +1,4 @@
 mod common;
-#[path = "common/guest.rs"]
-mod guest;
 
 use isoplane_engine::{Completion, InstanceOps};
 use isoplane_harness::preparation::{
@@ -15,29 +13,6 @@ fn request(wasm: &[u8]) -> isoplane_prepare::BuildRequest {
 /// Prepares `wasm` the way a node prepares an application on a shared runtime.
 fn prepare(wasm: &[u8]) -> Result<Prepared, PrepareError> {
     preparation::prepare(&request(wasm))
-}
-
-#[test]
-fn an_unused_passive_segment_survives_preparation() {
-    let wasm = guest::guest(r#"(data "retained")"#, "");
-    let output = isoplane_prepare::initialize(&common::engine(), &wasm, &common::request())
-        .expect("passive data is representable");
-    let mut passive = Vec::new();
-    for payload in wasmparser::Parser::new(0).parse_all(&output.wasm) {
-        if let wasmparser::Payload::DataSection(reader) = payload.expect("baked section") {
-            for segment in reader {
-                let segment = segment.expect("baked data");
-                if matches!(segment.kind, wasmparser::DataKind::Passive) {
-                    passive.push(segment.data.to_vec());
-                }
-            }
-        }
-    }
-    assert_eq!(
-        passive,
-        vec![b"retained".to_vec()],
-        "baking must retain unused passive payloads"
-    );
 }
 
 #[test]
