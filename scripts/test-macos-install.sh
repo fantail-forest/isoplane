@@ -8,7 +8,8 @@ manifest() { python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))[sy
 fail() { echo "$1" >&2; exit 1; }
 [[ $(manifest runtimeIdentifier) == osx-arm64 ]] || fail 'The journey requires a macOS arm64 release.'
 version=$(manifest packageVersion)
-runs=$(cd "$(dirname "$0")/.." && pwd)/.test-runs/osx-arm64/installation
+root=$(cd "$(dirname "$0")/.." && pwd)
+runs=$root/.test-runs/osx-arm64/installation
 mkdir -p "$runs"
 workspace=$(mktemp -d "$runs/XXXXXXXX")
 # .NET puts Unix sockets under TMPDIR and macOS caps a socket path at 104 bytes,
@@ -44,7 +45,7 @@ cd "$workspace"
 for file in Directory.Build.props Directory.Build.targets Directory.Packages.props; do
     echo '<Project />' > "$file"
 done
-echo '{"sdk":{"version":"10.0.100","rollForward":"latestFeature","allowPrerelease":false}}' > global.json
+cp "$root/global.json" global.json
 feed=$(python3 -c 'import sys; from xml.sax.saxutils import quoteattr; print(quoteattr(sys.argv[1]))' "$release/packages")
 cat > nuget.config <<EOF
 <configuration>

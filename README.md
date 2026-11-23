@@ -61,19 +61,21 @@ and API references. SDK packages are published as `Isoplane.*` on NuGet.
 ## Building and testing
 
 Task prepares build dependencies and test fixtures; Cargo and MSBuild compile them.
-Install Rust, Python 3 and your platform's C compiler first, then run:
+Install Task, rustup 1.28 or later, Python 3.11 or later and your platform's C compiler, then run:
 
 ```sh
-scripts/setup
+task setup
 task --list
 task build
-task test -- -- --skip a_prepared_release_installs_builds_applications_and_uninstalls
+task test -- -- --skip a_prepared_release_
 ```
 
 Setup installs the pinned .NET SDK and guest tools. Platform runtime builds run
 on Linux; customer applications compile to IL packages for that shared runtime.
-The optional repository toolchain image is available through
-`scripts/dev --container --build`.
+`rust-toolchain.toml` selects the Rust toolchain and `global.json` the
+contributor .NET SDK. [tools.env](tools.env) pins the other development tools,
+and [guest-runtime/manifest.env](guest-runtime/manifest.env) the wasi-sdk
+release.
 
 Task prepares guest modules before starting tests. Fixture helpers load those
 artifacts and fail with the preparation command if an input is missing. The

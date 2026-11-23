@@ -49,19 +49,42 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with: {name: compiler}
       - run: tar -xzf compiler.tar.gz && rm compiler.tar.gz
-      - name: Identify module inputs
-        id: inputs
-        env:
-          COMPILER_KEY: ${{ needs.compiler.outputs.key }}
-        run: |
-          git ls-files --stage -- guest-sdks/dotnet/Abi guest-sdks/dotnet/Runtime guest-sdks/dotnet/Sdk guest-sdks/dotnet/Build guest-sdks/dotnet/Conformance guest-sdks/dotnet/Analyzers guest-sdks/dotnet/Analyzers.CodeFixes guest-sdks/dotnet/AspNetCore guest-sdks/dotnet/native guest-sdks/dotnet/MonoRuntime ':(glob)guest-sdks/dotnet/*.csproj' ':(glob)guest-sdks/dotnet/*.props' ':(glob)guest-sdks/dotnet/*.targets' guest-sdks/dotnet/build-guest.sh tools/BuildProtocol licenses global.json nuget.config 'Directory.Build.*' Isoplane.slnx Isoplane.Runtime.slnf Taskfile.yml taskfiles/setup.yml taskfiles/managed.yml taskfiles/runtime.yml taskfiles/wasi-sdk.yml taskfiles/WasiWorkload Dockerfile .github/actions/toolchain .github/workflows/runtime.yml > "$RUNNER_TEMP/module-inputs"
-          printf '%s\n' "$COMPILER_KEY" >> "$RUNNER_TEMP/module-inputs"
-          digest=$(sha256sum "$RUNNER_TEMP/module-inputs" | cut -d ' ' -f 1)
-          echo "key=modules-linux-v3-$digest" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         id: modules
         with:
-          key: ${{ steps.inputs.outputs.key }}
+          key: >-
+            modules-linux-v3-${{ needs.compiler.outputs.key }}-${{ hashFiles(
+              'guest-sdks/dotnet/Abi/**',
+              'guest-sdks/dotnet/Runtime/**',
+              'guest-sdks/dotnet/Sdk/**',
+              'guest-sdks/dotnet/Build/**',
+              'guest-sdks/dotnet/Conformance/**',
+              'guest-sdks/dotnet/Analyzers/**',
+              'guest-sdks/dotnet/Analyzers.CodeFixes/**',
+              'guest-sdks/dotnet/AspNetCore/**',
+              'guest-sdks/dotnet/native/**',
+              'guest-sdks/dotnet/MonoRuntime/**',
+              'guest-sdks/dotnet/*.csproj',
+              'guest-sdks/dotnet/*.props',
+              'guest-sdks/dotnet/*.targets',
+              'guest-sdks/dotnet/build-guest.sh',
+              'tools/BuildProtocol/**',
+              'licenses/**',
+              'global.json',
+              'nuget.config',
+              'Directory.Build.*',
+              'Isoplane.slnx',
+              'Isoplane.Runtime.slnf',
+              'Taskfile.yml',
+              'tools.env',
+              'taskfiles/setup.yml',
+              'taskfiles/managed.yml',
+              'taskfiles/runtime.yml',
+              'taskfiles/WasiWorkload/**',
+              'guest-runtime/manifest.env',
+              'guest-runtime/build.sh',
+              '.github/actions/toolchain/**',
+              '.github/workflows/runtime.yml') }}
           path: |
             .build/wasm32/runtime-modules/*.wasm
             .build/wasm32/runtime-modules/*.wasm.runtime

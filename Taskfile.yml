@@ -1,5 +1,7 @@
 version: '3'
 
+dotenv: [tools.env]
+
 vars:
   REVISION:
     sh: git rev-parse HEAD

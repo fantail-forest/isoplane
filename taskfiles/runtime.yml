@@ -1,8 +1,5 @@
 version: '3'
 
-includes:
-  toolchains: wasi-sdk.yml
-
 vars:
   SQLITE: '{{.ROOT_DIR}}/.build/wasm32/runtime/sqlite'
 
@@ -146,12 +143,6 @@ tasks:
       - 'bash guest-runtime/build.sh --compile acquire'
 
   toolchain:
-    run: once
-    cmds:
-      - task: '{{if eq OS "darwin"}}toolchains:macos{{else}}toolchain:runtime{{end}}'
-
-  toolchain:runtime:
-    internal: true
     run: once
     label: 'runtime:toolchain:{{.PLATFORM}}'
     sources:

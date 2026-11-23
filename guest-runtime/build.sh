@@ -22,14 +22,28 @@ fi
 shift
 # shellcheck source=manifest.env
 source "$HERE/manifest.env"
-BUILD_HOST=linux
-case "$(uname -s)" in
+SHA256SUM=(sha256sum)
+case "$(uname -s)-$(uname -m)" in
   MINGW*|MSYS*)
-    BUILD_HOST=windows
-    WASI_SDK_URL="$WASI_SDK_WINDOWS_URL"
-    WASI_SDK_SHA256="$WASI_SDK_WINDOWS_SHA256"
+    WASI_SDK_HOST=x86_64-windows
+    WASI_SDK_SHA256="$WASI_SDK_X86_64_WINDOWS_SHA256"
+    ;;
+  Darwin-arm64)
+    WASI_SDK_HOST=arm64-macos
+    WASI_SDK_SHA256="$WASI_SDK_ARM64_MACOS_SHA256"
+    SHA256SUM=(shasum -a 256)
+    ;;
+  Darwin-*)
+    WASI_SDK_HOST=x86_64-macos
+    WASI_SDK_SHA256="$WASI_SDK_X86_64_MACOS_SHA256"
+    SHA256SUM=(shasum -a 256)
+    ;;
+  *)
+    WASI_SDK_HOST=x86_64-linux
+    WASI_SDK_SHA256="$WASI_SDK_X86_64_LINUX_SHA256"
     ;;
 esac
+WASI_SDK_URL="https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_SDK_VERSION%%.*}/wasi-sdk-$WASI_SDK_VERSION-$WASI_SDK_HOST.tar.gz"
 WORK="${ISOPLANE_RUNTIME_WORK//\\//}"
 echo "Runtime build work: $WORK"
 OUT="$HERE/../.build/wasm32/runtime"
@@ -40,21 +54,22 @@ WASI_SDK="$WORK/wasi-sdk"
 ICU="$HERE/../vendor/icu"
 DOWNLOADS="$WORK/downloads"
 LOGS="$WORK/logs"
+WASI_SDK_ARCHIVE="$DOWNLOADS/wasi-sdk-$WASI_SDK_VERSION-$WASI_SDK_HOST.tar.gz"
 mkdir -p "$DOWNLOADS" "$LOGS" "$OUT"
 
 fetch() {
   local url="$1" checksum="$2" destination="$3"
-  if [ -f "$destination" ] && printf '%s  %s\n' "$checksum" "$destination" | sha256sum --check --status; then
+  if [ -f "$destination" ] && printf '%s  %s\n' "$checksum" "$destination" | "${SHA256SUM[@]}" --check --status; then
     return
   fi
   curl --fail --location --retry 3 --output "$destination.part" "$url"
-  printf '%s  %s\n' "$checksum" "$destination.part" | sha256sum --check
+  printf '%s  %s\n' "$checksum" "$destination.part" | "${SHA256SUM[@]}" --check
   mv "$destination.part" "$destination"
 }
 
 verify_archive() {
   local sha="$1" file="$2"
-  printf '%s  %s\n' "$sha" "$file" | sha256sum --check --status || {
+  printf '%s  %s\n' "$sha" "$file" | "${SHA256SUM[@]}" --check --status || {
     echo "archive does not match its pinned SHA256: $file; run guest-runtime/build.sh acquire" >&2
     return 1
   }
@@ -62,7 +77,7 @@ verify_archive() {
 
 stage_acquire() {
   echo "==> acquire"
-  fetch "$WASI_SDK_URL" "$WASI_SDK_SHA256" "$DOWNLOADS/wasi-sdk-$WASI_SDK_VERSION-x86_64-$BUILD_HOST.tar.gz"
+  fetch "$WASI_SDK_URL" "$WASI_SDK_SHA256" "$WASI_SDK_ARCHIVE"
 }
 
 # The toolchain a build directory is configured with. CMake and Configure record
@@ -90,10 +105,10 @@ stage_toolchain() {
   if [ -f "$WASI_SDK/VERSION" ] && [ "$(head -n 1 "$WASI_SDK/VERSION" | tr -d '\r')" = "$WASI_SDK_VERSION" ]; then
     echo "    wasi-sdk $WASI_SDK_VERSION already unpacked"
   else
-    verify_archive "$WASI_SDK_SHA256" "$DOWNLOADS/wasi-sdk-$WASI_SDK_VERSION-x86_64-$BUILD_HOST.tar.gz"
+    verify_archive "$WASI_SDK_SHA256" "$WASI_SDK_ARCHIVE"
     rm -rf "$WASI_SDK"
     mkdir -p "$WASI_SDK"
-    tar --strip-components=1 -xzf - -C "$WASI_SDK" < "$DOWNLOADS/wasi-sdk-$WASI_SDK_VERSION-x86_64-$BUILD_HOST.tar.gz"
+    tar --strip-components=1 -xzf - -C "$WASI_SDK" < "$WASI_SDK_ARCHIVE"
     echo "$WASI_SDK_VERSION" > "$WASI_SDK/wasi-sdk-version.txt"
     touch "$WASI_SDK/WASI-SDK-VERSION-$WASI_SDK_VERSION"
   fi

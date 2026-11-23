@@ -2,9 +2,5 @@
 # Run a command in the worktree's development environment.
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-if [ "${1:-}" = --container ]; then
-  shift
-  exec "$root/scripts/dev-container" "$@"
-fi
 cd "$root"
 exec task exec -- "$@"

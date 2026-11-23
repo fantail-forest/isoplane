@@ -102,10 +102,15 @@ fn a_prepared_release_installs_builds_applications_and_uninstalls() {
 }
 
 #[test]
-fn a_prepared_release_works_with_the_first_dotnet_10_sdk_without_upgrading_it() {
+fn a_prepared_release_works_with_the_pinned_sdk_without_changing_it() {
     let release = prepared_release();
-    let image = customer_image("FROM mcr.microsoft.com/dotnet/sdk:10.0.100");
-    assert_journey(&release, &image, "10.0.100");
+    let selection: serde_json::Value = serde_json::from_str(include_str!("../../../global.json"))
+        .expect("global.json is valid JSON");
+    let sdk = selection["sdk"]["version"]
+        .as_str()
+        .expect("global.json pins the .NET SDK");
+    let image = customer_image(&format!("FROM mcr.microsoft.com/dotnet/sdk:{sdk}"));
+    assert_journey(&release, &image, sdk);
 }
 
 fn assert_journey(release: &Release, image: &str, expected_sdk: &str) {
