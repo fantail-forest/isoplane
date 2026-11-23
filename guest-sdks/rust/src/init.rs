@@ -1,41 +1,13 @@
-//! Host preparation and deferred initialization units.
-//! A unit announces its stable slice index before it runs. A refused unit can be
-//! skipped on a later bounded preparation attempt. Discarding guest state does not
-//! undo earlier allowed external effects. A successful attempt becomes captured
-//! guest state; restoration does not rerun its initialization.
-//! Rust fixtures supply their explicit unit list through `init_units!`.
+//! Template initialization: values an application builds once, before its
+//! memory is captured, and the configuration preparation supplies to it.
 
 use core::cell::{Cell, UnsafeCell};
 
 use crate::abi;
 
-/// One pre-initialization unit. Its id is its index in the app's list, and
-/// that id is what the host records when the unit traps.
-#[derive(Clone, Copy)]
-pub struct InitUnit {
-    pub name: &'static str,
-    pub run: fn(),
-}
-
-/// "No unit in scope". The host represents the sentinel as `u32::MAX`; this is
-/// the same bit pattern as an `i32`, because the import takes `i32`.
-///
-/// Deliberately **not** 0: unit 0 is the first static initializer in every
-/// module, and reserving it would make the most common trap unattributable.
-pub const NO_UNIT: i32 = -1;
-
-/// The id the host will see for the unit at `index`.
-pub const fn unit_id(index: usize) -> i32 {
-    index as i32
-}
-
-/// A value whose initializer may or may not survive the sealed init sandbox.
-///
-/// If it is pure it runs at deploy time and lands in the template, costing
-/// every instance nothing. If it touches a forbidden import it traps, the host
-/// defers it, and it runs here on first touch instead.
+/// A value built on first use. One forced by the application's initializer
+/// lands in the template; any other is built by each instance that touches it.
 pub struct LazyInit<T: 'static> {
-    name: &'static str,
     slot: UnsafeCell<Option<T>>,
     init: fn() -> T,
     /// How many times the initializer has actually executed *in this
@@ -49,17 +21,12 @@ pub struct LazyInit<T: 'static> {
 unsafe impl<T> Sync for LazyInit<T> {}
 
 impl<T: 'static> LazyInit<T> {
-    pub const fn new(name: &'static str, init: fn() -> T) -> LazyInit<T> {
+    pub const fn new(init: fn() -> T) -> LazyInit<T> {
         LazyInit {
-            name,
             slot: UnsafeCell::new(None),
             init,
             runs: Cell::new(0),
         }
-    }
-
-    pub const fn name(&self) -> &'static str {
-        self.name
     }
 
     /// Run the initializer now if it has not run. Returns true if it ran.
@@ -91,14 +58,6 @@ impl<T: 'static> LazyInit<T> {
     pub fn run_count(&self) -> u32 {
         self.runs.get()
     }
-
-    /// Wrap this cell as a pre-init unit.
-    pub const fn unit(&'static self, run: fn()) -> InitUnit {
-        InitUnit {
-            name: self.name,
-            run,
-        }
-    }
 }
 
 impl<T: 'static> core::ops::Deref for LazyInit<T> {
@@ -108,64 +67,30 @@ impl<T: 'static> core::ops::Deref for LazyInit<T> {
     }
 }
 
-/// Declare a value whose initializer may be deferred to first touch.
+/// Declares [`LazyInit`] statics.
 ///
 /// ```ignore
-/// deferred_lazy! {
-///     /// Pure: pre-runs at deploy time and lands in the template.
+/// lazy_init! {
 ///     static ROUTES: Vec<&'static str> = { vec!["/quote", "/memo"] };
-/// }
-/// deferred_lazy! {
-///     /// Impure: reads the clock, so it TRAPS in the sealed init sandbox,
-///     /// the host defers it, and it runs per instance on first touch.
-///     static STARTED_AT: u64 = { isoplane_guest::Clock::now_ms() };
 /// }
 /// ```
 #[macro_export]
-macro_rules! deferred_lazy {
+macro_rules! lazy_init {
     ($( $(#[$m:meta])* $vis:vis static $name:ident : $ty:ty = $init:block $(;)? )*) => {$(
         $(#[$m])*
         $vis static $name: $crate::init::LazyInit<$ty> =
-            $crate::init::LazyInit::new(stringify!($name), || $init);
+            $crate::init::LazyInit::new(|| $init);
     )*};
 }
 
-/// Collect [`deferred_lazy!`] statics into the ordered unit list the pre-init
-/// protocol indexes by. Order is the contract: the host records unit *ids*.
-#[macro_export]
-macro_rules! init_units {
-    ($($name:ident),* $(,)?) => {
-        &[$( $crate::init::InitUnit { name: stringify!($name), run: || { $name.force(); } } ),*]
-    };
-}
-
-/// Runs units in slice order with stable positional IDs, skipping units the host deferred.
-pub fn run_init_units(units: &[InitUnit]) {
-    // `abort` is init-visible precisely so that a failed pre-init reports
-    // usefully.
+/// Runs the application's initializer, then closes the initialization imports.
+pub fn run(initialize: fn()) {
+    // `abort` is available during initialization so a failure there reports usefully.
     #[cfg(target_arch = "wasm32")]
     crate::install_panic_hook();
-    for (index, u) in units.iter().enumerate() {
-        let id = unit_id(index);
-        // Announce BEFORE running: if `run` traps, this id is the only record
-        // of which unit was responsible.
-        unsafe { abi::init_unit_begin(id) };
-        if unsafe { abi::init_unit_deferred(id) } != 0 {
-            // The host already learned this one is impure, and clears its own
-            // current-unit when it answers 1. Skip; it runs lazily, per
-            // instance, on first touch.
-            continue;
-        }
-        (u.run)();
-        // Leave unit scope. Nothing between units can touch a forbidden
-        // import today, but if that ever changes the host must fail the
-        // deploy loudly rather than blame the unit that just succeeded --
-        // which would defer a pure unit forever and never converge.
-        unsafe { abi::init_unit_begin(NO_UNIT) };
-    }
-    // Init-only imports stay DECLARED in the template -- wizer does not strip
-    // the import section -- but the host binds them to traps at runtime as a
-    // tripwire. From here on the SDK must not call any of them.
+    initialize();
+    // The host answers the initialization imports with traps once an instance
+    // serves; the SDK stops calling them here.
     state().init_complete = true;
 }
 
@@ -287,7 +212,7 @@ pub fn config_get(name: &str) -> Option<String> {
 mod tests {
     use super::*;
 
-    static PURE: LazyInit<u32> = LazyInit::new("PURE", || 41 + 1);
+    static PURE: LazyInit<u32> = LazyInit::new(|| 41 + 1);
 
     #[test]
     fn lazy_runs_once_and_counts() {

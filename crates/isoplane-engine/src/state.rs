@@ -306,8 +306,7 @@ pub(crate) struct WallCapExceeded {
     pub wall_ns: u64,
 }
 
-/// An import the init sandbox forbids, which is how an impure static
-/// initialiser is detected.
+/// An import the guest may not call in its current phase.
 #[derive(Debug, thiserror::Error)]
 #[error("capability violation: import `{import}` is not reachable here (sealed init sandbox: {init_sandbox})")]
 pub(crate) struct CapabilityViolation {

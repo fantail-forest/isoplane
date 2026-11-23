@@ -4,7 +4,7 @@
 /// Core-wasm module name that every Isoplane import lives under.
 pub const HOST_MODULE: &str = "isoplane";
 
-/// Capabilities admitted outside initialization units during runtime bring-up.
+/// Capabilities admitted during runtime bring-up.
 pub const RUNTIME_INIT_CAPABILITIES: &[&str] = &["clock_now_coarse"];
 
 pub use crate::exports;
@@ -131,23 +131,6 @@ pub const IMPORTS: &[ImportDef] = &[
     ImportDef { init_visible: true, ..imp!("abort", Core, BUF_TO_VOID, SYNC,
         "guest panic; available at init so a failed pre-initialization reports usefully rather than \
          trapping anonymously") },
-    // The guest announces each init unit before running it; when a unit traps
-    // on a forbidden import, pre-init is replayed with that unit deferred to
-    // ordinary lazy execution.
-    #[cfg(feature = "rust-guests")]
-    ImportDef {
-        init_visible: true,
-        ..ImportDef { buf: BufSpec::None, ..imp!("init_unit_begin", Core, Sig { params: &[I32], results: &[] }, SYNC,
-            "names the init unit about to run, so a trap inside it can be attributed to that unit \
-             and deferred") }
-    },
-    #[cfg(feature = "rust-guests")]
-    ImportDef {
-        init_visible: true,
-        ..ImportDef { buf: BufSpec::None, ..imp!("init_unit_deferred", Core, Sig { params: &[I32], results: &[I32] }, SYNC,
-            "asks whether this unit was deferred on a previous attempt; non-zero means skip it on \
-             the replay") }
-    },
     #[cfg(feature = "rust-guests")]
     ImportDef {
         init_visible: true,
@@ -191,7 +174,6 @@ pub const IMPORTS: &[ImportDef] = &[
         "closes the span with that id; 0 and unknown ids have no effect; the host releases unfinished spans when their dispatch ends") },
 
     // ---- clock & entropy --------------------------------------------------
-    // Not init-visible: a static initialiser that reads the clock is impure.
     ImportDef { buf: BufSpec::None, ..imp!("clock_now_coarse", Clock, Sig { params: &[], results: &[I64] }, SYNC,
         "millisecond wall clock, monotonic per instance and fixed throughout each serving slice; \
          the engine samples the binding at slice entry and after future-returning imports") },

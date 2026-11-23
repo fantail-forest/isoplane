@@ -83,10 +83,6 @@ async fn preserves_application_state(provider: &dyn Preparation) {
         product.initialized.seed_reads, 0,
         "this representation comparison uses no random inputs"
     );
-    assert_eq!(
-        product.initialized.passes, 1,
-        "the provider must run one successful initialization"
-    );
     let identity = request.identity().expect("input identity");
     // SAFETY: this contract receives output only from the local trusted producer below.
     let prepared = unsafe { engine.decode_builder_output(product.prepared_bytes(), identity) }
@@ -169,10 +165,6 @@ async fn layered_preparation_accepts_a_guest_without_an_initializer() {
         .prepare(&wasm, &request, &CancellationToken::new())
         .await
         .expect("a guest without an initializer needs no initialized capture boundary");
-    assert_eq!(
-        product.initialized.passes, 0,
-        "no initializer must mean no initialization passes"
-    );
     let identity = request.identity().expect("identity");
     // SAFETY: the local trusted preparation provider produced these artifact bytes.
     let prepared = unsafe { engine.decode_builder_output(product.prepared_bytes(), identity) }

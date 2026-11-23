@@ -111,7 +111,7 @@ pub trait InitializationBindings: Send + 'static {
     fn permits_entropy(&self) -> bool {
         false
     }
-    /// Whether this context admits asynchronous native capabilities outside init units.
+    /// Whether this context admits asynchronous native capabilities.
     fn permits_io(&self) -> bool {
         false
     }

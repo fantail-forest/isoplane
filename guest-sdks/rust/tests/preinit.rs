@@ -1,41 +1,24 @@
-//! Pre-initialization: which initializers run inside the sealed init sandbox,
-//! and what happens to the ones that cannot.
-//!
-//! The protocol under test is the replay handshake:
-//!
-//! * `isoplane_initialize` announces every unit with `init_unit_begin(id)` BEFORE
-//!   running it, so a trap inside the unit identifies itself;
-//! * on the replay, `init_unit_deferred(id)` tells the guest to skip the unit
-//!   the host learned was impure;
-//! * a skipped unit runs lazily, per instance, on first touch -- ordinary
-//!   .NET lazy-cctor semantics.
+//! Template initialization: what the application's initializer builds, and
+//! what is left for each instance to build on first use.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use isoplane_guest::testing::with_stub_host;
 use isoplane_guest::{Ctx, Handler, Request, Response};
 
-static PURE_RAN: AtomicU32 = AtomicU32::new(0);
-static IMPURE_RAN: AtomicU32 = AtomicU32::new(0);
-static AFTER_RAN: AtomicU32 = AtomicU32::new(0);
+static FORCED_RAN: AtomicU32 = AtomicU32::new(0);
+static UNFORCED_RAN: AtomicU32 = AtomicU32::new(0);
 
-isoplane_guest::deferred_lazy! {
-    /// Unit **0**. Pure: pre-runs into the template.
-    static PURE: u32 = {
-        PURE_RAN.fetch_add(1, Ordering::Relaxed);
+isoplane_guest::lazy_init! {
+    /// Forced by the initializer, so it lands in the template.
+    static FORCED: u32 = {
+        FORCED_RAN.fetch_add(1, Ordering::Relaxed);
         7
     };
-    /// Unit **1**. Stands in for an initializer that touches a forbidden
-    /// import and therefore TRAPS in the sealed init sandbox.
-    static IMPURE: u32 = {
-        IMPURE_RAN.fetch_add(1, Ordering::Relaxed);
+    /// Left to each instance.
+    static UNFORCED: u32 = {
+        UNFORCED_RAN.fetch_add(1, Ordering::Relaxed);
         11
-    };
-    /// Unit **2**. Pure, and declared *after* the impure one, so this fixture
-    /// also proves the loop keeps going past a deferred unit.
-    static AFTER: u32 = {
-        AFTER_RAN.fetch_add(1, Ordering::Relaxed);
-        13
     };
 }
 
@@ -52,89 +35,64 @@ impl Handler for App {
 
 isoplane_guest::export_handler!(
     App,
-    units = isoplane_guest::init_units![PURE, IMPURE, AFTER]
+    initialize = || {
+        FORCED.force();
+    }
 );
 
 #[test]
-fn a_deferred_unit_is_skipped_at_init_and_runs_on_first_touch() {
+fn the_initializer_builds_what_it_forces_and_the_rest_is_built_on_first_touch() {
     with_stub_host(|host| {
-        // The host has already discovered, on a previous pass, that unit 1
-        // traps. This replay must skip it. Ids are the 0-based position in
-        // `init_units!`; the "no unit in scope" sentinel is -1 (`u32::MAX`
-        // host-side), NOT 0 -- 0 is a real unit.
-        host.defer_unit(1);
-
         isoplane_initialize();
 
-        let calls = host.calls();
-        let begins: Vec<i64> = calls
-            .iter()
-            .filter(|(n, _)| *n == "init_unit_begin")
-            .map(|(_, a)| a[0])
-            .collect();
-        // 0 runs (then leaves scope with the -1 sentinel), 1 is skipped (the
-        // host clears its own current-unit on a deferred answer, so no
-        // sentinel is needed there), 2 runs.
         assert_eq!(
-            begins,
-            vec![0, -1, 1, 2, -1],
-            "0-based ids; `begin(NO_UNIT)` only after a unit that actually ran"
-        );
-        assert_eq!(isoplane_guest::init::NO_UNIT, -1);
-
-        assert_eq!(PURE_RAN.load(Ordering::Relaxed), 1, "a pure unit pre-runs");
-        assert_eq!(
-            AFTER_RAN.load(Ordering::Relaxed),
+            FORCED_RAN.load(Ordering::Relaxed),
             1,
-            "a deferred unit must not stop the units after it"
+            "the initializer builds a value it forces"
         );
+        assert!(FORCED.is_initialized());
         assert_eq!(
-            IMPURE_RAN.load(Ordering::Relaxed),
+            UNFORCED_RAN.load(Ordering::Relaxed),
             0,
-            "a deferred unit must NOT run inside the init sandbox"
+            "a value the initializer does not force is not built during initialization"
         );
-        assert!(PURE.is_initialized());
-        assert!(!IMPURE.is_initialized());
+        assert!(!UNFORCED.is_initialized());
 
-        // ...and it runs, per instance, on first touch.
-        assert_eq!(*IMPURE.get(), 11);
-        assert_eq!(IMPURE_RAN.load(Ordering::Relaxed), 1);
-        assert_eq!(IMPURE.run_count(), 1);
-
-        // That cost is paid once per instance, not once per dispatch. Touching it again must not re-run it.
-        assert_eq!(*IMPURE.get(), 11);
-        assert_eq!(IMPURE.run_count(), 1);
-
-        // A pre-run unit reports 0 in-instance runs, because it never ran in
-        // an instance -- it ran at deploy time. `/memo` in `quotes-api`
-        // surfaces exactly this number.
-        assert_eq!(PURE.run_count(), 1, "this test IS the init sandbox pass");
-
-        // Init-only imports stay declared in the template but the runtime
-        // linker binds them to traps. After `isoplane_initialize` the SDK must
-        // serve the captured seed rather than call the import again.
-        let before = host
-            .calls()
-            .iter()
-            .filter(|(n, _)| *n == "init_hash_seed")
-            .count();
-        let _ = isoplane_guest::init::hash_seed();
-        let after = host
-            .calls()
-            .iter()
-            .filter(|(n, _)| *n == "init_hash_seed")
-            .count();
+        assert_eq!(*UNFORCED.get(), 11);
+        assert_eq!(*UNFORCED.get(), 11);
         assert_eq!(
-            before, after,
-            "hash_seed must not touch an init-only import after init"
+            UNFORCED.run_count(),
+            1,
+            "a value is built once, on first touch"
+        );
+        assert_eq!(*FORCED.get(), 7);
+        assert_eq!(
+            FORCED.run_count(),
+            1,
+            "touching a value the initializer built does not rebuild it"
+        );
+
+        // The host answers the initialization imports with traps once an
+        // instance serves, so the SDK serves the captured seed afterwards.
+        let seed_reads = || {
+            host.calls()
+                .iter()
+                .filter(|(n, _)| *n == "init_hash_seed")
+                .count()
+        };
+        let before = seed_reads();
+        let _ = isoplane_guest::init::hash_seed();
+        assert_eq!(
+            before,
+            seed_reads(),
+            "hash_seed must not call its import after initialization"
         );
     });
 }
 
 /// Config parsing is one of the things a template deletes from cold
-/// activation. The blob is tenant-authored deploy input, so parsing it inside
-/// an init unit is safe to pre-run and the *parsed* result is what lands in the
-/// template. This drives the real probe-then-fill idiom against a host stub
+/// activation. The blob is tenant-authored deploy input, so parsing it during
+/// initialization puts the *parsed* result in the template. This drives the real probe-then-fill idiom against a host stub
 /// that mirrors `isoplane_prepare::preinit`.
 #[cfg(feature = "json")]
 #[test]

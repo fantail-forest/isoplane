@@ -99,10 +99,6 @@ async fn layered_preparation_captures_the_completed_async_initializer() {
         .prepare(&wasm, &build, &tokio_util::sync::CancellationToken::new()).await.expect(
         "layered capture and fresh-instance state verification must succeed after the timer wake",
     );
-    assert_eq!(
-        product.initialized.passes, 1,
-        "asynchronous completion must not rerun the initializer"
-    );
     // SAFETY: the local preparation provider above produced this native code.
     let artifact = unsafe {
         engine.decode_builder_output(product.prepared_bytes(), build.identity().unwrap())

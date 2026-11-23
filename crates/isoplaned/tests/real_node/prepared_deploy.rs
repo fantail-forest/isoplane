@@ -97,7 +97,6 @@ async fn prepared_deployment_serves_initialized_state_without_repeating_initiali
         runtime: RuntimeProfile::RawWasm,
         occupancy_ms: 1000,
         wall_ms: 5000,
-        max_passes: 4,
         log_bytes: 1024,
         cancellation: &cancellation,
     };
@@ -117,7 +116,6 @@ async fn prepared_deployment_serves_initialized_state_without_repeating_initiali
         )
         .await
         .expect("prepared deployment through actual cell registration");
-    assert_eq!(deployed.initialized.passes, 1, "producer replay count");
     assert!(deployed
         .stages
         .iter()
@@ -181,7 +179,6 @@ async fn a_preparation_refusal_reaches_the_caller_without_publishing_artifacts()
         runtime: RuntimeProfile::RawWasm,
         occupancy_ms: 1000,
         wall_ms: 5000,
-        max_passes: 4,
         log_bytes: 1024,
         cancellation: &cancellation,
     };
@@ -243,7 +240,6 @@ async fn source_admission_rejects_invalid_input_before_calling_preparation() {
         runtime: RuntimeProfile::RawWasm,
         occupancy_ms: 1000,
         wall_ms: 5000,
-        max_passes: 4,
         log_bytes: 1024,
         cancellation: &cancellation,
     };

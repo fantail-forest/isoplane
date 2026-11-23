@@ -24,10 +24,9 @@ Isoplane runs initialization while creating a template, ahead of requests. In an
 application it runs `Program.cs` up to `RunAsync`, then raises
 [`Template.Initializing`](../reference/sdk/Isoplane.Sdk/Isoplane/Template/Initializing.md).
 When the callbacks have finished it saves the application's memory as the
-template. Preparation can retry initialization to defer a forbidden capability;
-earlier network effects are not rolled back. Make callbacks safe to repeat. An
-unchanged local session can reuse an already prepared template, which runs no
-initialization callbacks.
+template. Each preparation of a template runs the callbacks again, so make
+their external work safe to repeat. An unchanged local session can reuse an
+already prepared template, which runs no initialization callbacks.
 
 ```csharp
 var app = builder.Build();

@@ -7,13 +7,10 @@ use isoplane_abi::{
 };
 use isoplane_engine::{EngineConfig, IsoplaneEngine, ModuleHash, PlatformFiles};
 
-/// Default local initialization occupancy budget across replay passes.
+/// Default local initialization occupancy budget.
 pub const DEFAULT_INITIALIZATION_OCCUPANCY_MS: u32 = 30_000;
-/// Default local initialization wall backstop, including waits and replay passes.
+/// Default local initialization wall backstop, including waits.
 pub const DEFAULT_INITIALIZATION_WALL_MS: u32 = 60_000;
-/// Default local initialization replay limit.
-#[cfg(feature = "rust-guests")]
-pub const DEFAULT_INITIALIZATION_PASSES: u32 = 16;
 /// Default retained initialization log bytes.
 pub const DEFAULT_INITIALIZATION_LOG_BYTES: usize = 64 * 1024;
 
@@ -58,42 +55,19 @@ pub enum PreInitError {
     /// The source has no initialization function.
     #[error("module does not export `{0}`; nothing to pre-initialize")]
     NoInitFunc(&'static str),
-    /// Initialization called an import it may not, outside any unit a host
-    /// built for Rust guests could defer.
-    #[cfg_attr(
-        feature = "rust-guests",
-        error(
-            "pre-init trapped outside any init unit (`{import}`); wrap initialization that may \
-             touch host capabilities in an init unit: {cause}"
-        )
+    /// Initialization called an import it is not permitted.
+    #[error(
+        "initialization called `{import}`, which an application may not call while it \
+         initializes; move that operation out of initialization: {cause}"
     )]
-    #[cfg_attr(
-        not(feature = "rust-guests"),
-        error(
-            "initialization called `{import}`, which an application may not call while it \
-             initializes; move that operation out of initialization: {cause}"
-        )
-    )]
-    Unattributable {
+    ForbiddenCapability {
         import: String,
         cause: anyhow::Error,
     },
-    /// A deferred unit ignored the replay decision.
-    #[cfg(feature = "rust-guests")]
-    #[error(
-        "init unit {unit} trapped on `{import}` again after being deferred; the guest is \
-         ignoring `init_unit_deferred`"
-    )]
-    DeferralIgnored { unit: u32, import: String },
-    /// Initialization exceeded its replay limit.
-    #[cfg(feature = "rust-guests")]
-    #[error("pre-init did not converge in {0} passes")]
-    NoConvergence(u32),
     /// The declared memory exceeds the selected initialization capacity.
     #[error("declared init memory of {bytes} bytes exceeds the init limit of {limit} bytes")]
     MemoryLimit { bytes: u64, limit: u64 },
-    /// A guest `abort`, an `unreachable`, an out-of-memory: not a sealed
-    /// capability, so nothing to defer.
+    /// A guest `abort`, an `unreachable`, an out-of-memory.
     #[error("pre-init trapped: {0}")]
     Trapped(anyhow::Error),
 }
@@ -204,17 +178,13 @@ impl PreInitializer {
 
 fn map_error(error: PrepareError) -> PreInitError {
     match error {
-        PrepareError::Unattributable { import, detail, .. } => PreInitError::Unattributable {
-            import,
-            cause: anyhow::anyhow!(detail),
-        },
-        #[cfg(feature = "rust-guests")]
-        PrepareError::DeferralIgnored { unit, import } => {
-            PreInitError::DeferralIgnored { unit, import }
+        PrepareError::ForbiddenCapability { import, detail, .. } => {
+            PreInitError::ForbiddenCapability {
+                import,
+                cause: anyhow::anyhow!(detail),
+            }
         }
-        #[cfg(feature = "rust-guests")]
-        PrepareError::NoConvergence(passes) => PreInitError::NoConvergence(passes),
-        // Other preparation failures have no more specific local replay classification.
+        // Other preparation failures have no more specific local classification.
         error => PreInitError::Trapped(error.into()),
     }
 }
@@ -281,14 +251,12 @@ mod tests {
             ),
             "the existing default must retain its initialization memory ceiling"
         );
-        let output = PreInitializer::new(InitSandbox::Sealed)
+        PreInitializer::new(InitSandbox::Sealed)
             .with_memory_limit(GuestMemoryBytes::new(1 << 30).unwrap())
             .run(&wasm, &request(&wasm))
-            .unwrap();
-        assert_eq!(
-            output.initialized.passes, 1,
-            "a configured larger engine must initialize a bounded module above the default ceiling"
-        );
+            .expect(
+                "a configured larger engine must initialize a bounded module above the default ceiling",
+            );
     }
 
     #[test]
@@ -297,17 +265,13 @@ mod tests {
             "1 65536",
             "(if (i32.ne (memory.grow (i32.const 1)) (i32.const -1)) (then unreachable))",
         );
-        let output = PreInitializer::new(InitSandbox::Sealed)
+        PreInitializer::new(InitSandbox::Sealed)
             .with_runtime_profile(RuntimeProfile::SharedRuntime {
                 sdk_version: "test".into(),
             })
             .with_memory_limit(GuestMemoryBytes::new(65536).unwrap())
             .run(&wasm, &request(&wasm))
-            .unwrap();
-        assert_eq!(
-            output.initialized.passes, 1,
-            "initialization must deny growth beyond its configured engine capacity"
-        );
+            .expect("initialization must deny growth beyond its configured engine capacity");
     }
 
     #[test]

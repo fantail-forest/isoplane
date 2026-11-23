@@ -10,7 +10,6 @@ const VERDICTS: &[(&str, &[(V, &str)])] = &[
     ("hello", &[]),
     ("quotes-api", &[]),
     ("misbehaver", &[]),
-    ("impure-cctor", &[]),
     (
         "undeclared-import",
         &[(V::V1UndeclaredImport, "isoplane.fs_open")],
@@ -87,15 +86,15 @@ fn render(v: &[String]) -> String {
 }
 
 #[test]
-fn the_impure_cctor_guest_defers_and_converges() {
-    let wasm = isoplane_fixtures::rust("impure-cctor");
+fn a_guest_built_with_the_rust_sdk_is_prepared_into_a_template_without_its_initializer() {
+    let wasm = isoplane_fixtures::rust("quotes-api");
     let report = validator::validate_with_limits(
         &wasm,
         isoplane_abi::config::GuestMemoryBytes::default(),
         None,
         &Default::default(),
     )
-    .expect("impure-cctor must validate");
+    .expect("quotes-api must validate");
     assert!(
         report.has_initialize(),
         "the guest SDK must export isoplane_initialize"
@@ -108,29 +107,12 @@ fn the_impure_cctor_guest_defers_and_converges() {
     };
     let out = PreInitializer::new(isoplane_abi::config::InitSandbox::Sealed)
         .run(&wasm, &req)
-        .expect("pre-init must converge");
+        .expect("pre-init must succeed");
 
     assert_ne!(out.wasm, wasm, "the template must not be the input module");
     assert!(
         !exports_init(&out.wasm),
         "isoplane_initialize must be stripped from the template"
-    );
-    assert!(
-        out.initialized.passes >= 2,
-        "an impure initializer must cost at least one replay"
-    );
-    assert_eq!(
-        out.initialized.deferred.len(),
-        1,
-        "exactly one unit is impure in this fixture"
-    );
-    assert_eq!(
-        out.initialized.deferred_reasons[0].1, "clock_now_coarse",
-        "the deferral reason must name the capability that caused it"
-    );
-    assert_eq!(
-        out.initialized.capability_refusals, 1,
-        "the impure unit is refused once, on the pass that discovers it"
     );
 }
 

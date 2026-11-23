@@ -124,13 +124,6 @@ isoplane_imports! {
     // ---- core -------------------------------------------------------------
     /// Guest panic. `init_visible`, so a failed pre-init reports usefully.
     fn abort(ptr: i32, len: i32);
-    /// Impure-cctor deferral: announce the unit id *before* running it, so
-    /// that if the unit traps on a forbidden import the host knows exactly
-    /// which one to defer when it replays pre-initialization.
-    fn init_unit_begin(id: i32);
-    /// Non-zero => the host has already decided this unit is impure. Skip it;
-    /// it runs lazily, per instance, on first touch.
-    fn init_unit_deferred(id: i32) -> i32;
     /// A fresh string-hash seed, stable within one initialization attempt.
     /// The host writes exactly 16 bytes at `ptr`; guest copies remain in captured state.
     fn init_hash_seed(ptr: i32, len: i32);
@@ -308,8 +301,6 @@ mod tests {
             ("unsafe_to_trap", BufSpec::None),
             ("resp_finish", BufSpec::None),
             ("trace_span_end", BufSpec::None),
-            ("init_unit_begin", BufSpec::None),
-            ("init_unit_deferred", BufSpec::None),
             // Plain postcard payloads.
             ("abort", BufSpec::In(0)),
             ("http_fetch", BufSpec::In(0)),

@@ -59,7 +59,6 @@ fn config(directory: &std::path::Path) -> NodeConfig {
         runtimes: Some(runtimes),
         initialization_occupancy_ms: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_OCCUPANCY_MS,
         initialization_wall_ms: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_WALL_MS,
-        initialization_passes: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_PASSES,
         initialization_log_bytes: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_LOG_BYTES,
     });
     let mut ledger = config.apps[0].clone();

@@ -116,7 +116,7 @@ pub enum Step {
 pub struct FakeBehaviour {
     /// One step per slice; exhausted means `done` with 200.
     pub program: Vec<Step>,
-    /// A deferred lazy initializer: the guest checks a flag in linear memory,
+    /// A lazy initializer: the guest checks a flag in linear memory,
     /// sets it if unset, and reports the value it observed in the body, so a
     /// test can see whether the instance carried residue.
     pub lazy_init_probe: bool,

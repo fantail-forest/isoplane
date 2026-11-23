@@ -21,7 +21,6 @@ pub fn request() -> Initialization {
         sandbox: InitSandbox::Sealed,
         occupancy_ms: 1000,
         wall_ms: 5000,
-        max_passes: 4,
         log_bytes: 1024,
     }
 }

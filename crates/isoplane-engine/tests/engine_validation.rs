@@ -85,9 +85,9 @@ fn a_template_whose_start_function_calls_an_import_is_refused() {
     let e = test_engine();
     let wasm = guest(
         4,
-        &import("init_unit_begin", "(param i32)", ""),
+        &import("future_cancel", "(param i64)", ""),
         r#"
-  (func $start (call $init_unit_begin (i32.const 1)))
+  (func $start (call $future_cancel (i64.const 1)))
   (start $start)"#,
         DONE,
         DONE,

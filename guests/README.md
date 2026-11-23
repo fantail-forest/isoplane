@@ -32,9 +32,8 @@ validator rejects a mutable global the module does not export.
 | Module | Purpose |
 | --- | --- |
 | `hello` | Minimal HTTP handler fixture returning a successful response. |
-| `quotes-api` | `Handler` fixture for host futures, response streaming and initialization units. |
+| `quotes-api` | `Handler` fixture for host futures, response streaming and template initialization. |
 | `misbehaver` | Hostile execution fixtures: loops, sync-over-async, allocation pressure and explicit traps. |
-| `impure-cctor` | Initialization-unit fixture for bounded deferral and retry. |
 | `undeclared-import` | Validator fixtures importing an undeclared field or a foreign module. |
 
 

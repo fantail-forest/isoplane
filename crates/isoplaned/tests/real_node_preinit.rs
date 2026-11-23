@@ -137,16 +137,6 @@ async fn a_real_guests_init_visible_config_is_consumed_at_preinit_not_at_runtime
         "the startup deploy ran the pipeline: {:?}",
         rec.stages
     );
-    let pre = &rec.initialized;
-    assert_eq!(
-        pre.deferred_reasons
-            .iter()
-            .map(|(_, reason)| reason.as_str())
-            .collect::<Vec<_>>(),
-        vec!["clock_now_coarse"],
-        "exactly the clock-reading initializer defers"
-    );
-
     let rig = serve(node, dir).await;
 
     let r = get(rig.proxy, "quotes.isoplane.dev", "/memo").await;

@@ -46,7 +46,7 @@ impl WorkerFailure {
         let completion = match error.downcast_ref::<crate::PrepareError>() {
             Some(
                 crate::PrepareError::Initialization { completion, .. }
-                | crate::PrepareError::Unattributable { completion, .. },
+                | crate::PrepareError::ForbiddenCapability { completion, .. },
             ) => Some(*completion),
             // Other preparation failures have no guest completion outcome.
             _ => None,

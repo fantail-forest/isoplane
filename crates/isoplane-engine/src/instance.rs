@@ -99,8 +99,6 @@ impl Instance {
     }
 
     /// The import that tripped capability policy on the last call, if any.
-    /// Pre-initialisation identifies an impure static initialiser by which
-    /// forbidden import it touched.
     pub fn last_capability_violation(&self) -> Option<&'static str> {
         self.last_violation
     }

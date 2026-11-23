@@ -85,20 +85,20 @@ impl GcPressure {
 ///
 /// ```ignore
 /// isoplane_guest::export_handler!(Api);
-/// isoplane_guest::export_handler!(Api, units = isoplane_guest::init_units![FX_TABLE]);
+/// isoplane_guest::export_handler!(Api, initialize = || { FX_TABLE.force(); });
 /// ```
 #[macro_export]
 macro_rules! export_handler {
     ($ty:ty) => {
-        $crate::export_handler!($ty, units = &[]);
+        $crate::export_handler!($ty, initialize = || {});
     };
-    ($ty:ty, units = $units:expr) => {
+    ($ty:ty, initialize = $initialize:expr) => {
         #[doc(hidden)]
         static __ISOPLANE_APP: $crate::app::Slot<$ty> = $crate::app::Slot::new();
         #[doc(hidden)]
-        static __ISOPLANE_UNITS: &[$crate::init::InitUnit] = $units;
+        static __ISOPLANE_INITIALIZE: fn() = $initialize;
 
-        $crate::__isoplane_common_exports!(__ISOPLANE_UNITS);
+        $crate::__isoplane_common_exports!(__ISOPLANE_INITIALIZE);
 
         /// `isoplane-handle: func(dispatch: dispatch-record) -> poll-status`,
         /// lowered as `(ptr, len) -> u64`.
@@ -127,7 +127,7 @@ macro_rules! export_handler {
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __isoplane_common_exports {
-    ($units:ident) => {
+    ($initialize:ident) => {
         /// Host->guest buffer handoff. The guest frees the buffer when the
         /// host hands it back in `isoplane_handle` / `isoplane_wake`.
         #[no_mangle]
@@ -148,10 +148,10 @@ macro_rules! __isoplane_common_exports {
             $crate::gc_hint(pressure as u8);
         }
 
-        /// Pre-initialization, run once in the sealed init sandbox.
+        /// Template initialization, run once before the template is captured.
         #[no_mangle]
         pub extern "C" fn isoplane_initialize() -> u64 {
-            $crate::init::run_init_units($units);
+            $crate::init::run($initialize);
             0
         }
     };

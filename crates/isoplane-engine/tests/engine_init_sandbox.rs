@@ -34,17 +34,16 @@ fn init_sandbox(rec: Recorder) -> Box<InitializationTestBindings> {
 fn the_init_sandbox_traps_on_a_forbidden_import_and_names_it() {
     let e = test_engine();
     let imports = format!(
-        "{}\n{}\n{}",
+        "{}\n{}",
         import("clock_now_coarse", "", "(result i64)"),
         import("log_emit", "(param i32 i32 i32)", ""),
-        import("init_unit_begin", "(param i32)", ""),
     );
     let wasm = guest(
         4,
         &imports,
         r#"
   (func (export "isoplane_initialize") (result i64)
-    (call $init_unit_begin (i32.const 4))
+    (call $log_emit (i32.const 1) (i32.const 0) (i32.const 0))
     (i64.store (i32.const 0) (call $clock_now_coarse)) i64.const 0)"#,
         DONE,
         DONE,
@@ -60,26 +59,21 @@ fn the_init_sandbox_traps_on_a_forbidden_import_and_names_it() {
     let trap = out
         .trap
         .as_ref()
-        .expect("an impure initializer must trap in the init sandbox");
+        .expect("an initializer that reads the clock must trap in the init sandbox");
     assert_eq!(
         trap.kind,
         TrapKind::CapabilityViolation,
         "reading the clock at init is a capability violation: {trap:?}"
     );
-    assert!(
-        trap.message.contains("clock_now_coarse"),
-        "the trap must name the import: {}",
-        trap.message
-    );
     assert_eq!(
         i.last_capability_violation(),
         Some("clock_now_coarse"),
-        "the violation is recorded for the deferral loop"
+        "the violation is recorded for preparation to report"
     );
 
     let calls = rec.calls.lock().clone();
     assert!(
-        calls.iter().any(|c| c.starts_with("init_unit_begin")),
+        calls.iter().any(|c| c.starts_with("log_emit")),
         "the init-visible import ran: {calls:?}"
     );
     assert!(
@@ -92,21 +86,18 @@ fn the_init_sandbox_traps_on_a_forbidden_import_and_names_it() {
 fn the_init_sandbox_permits_exactly_the_init_visible_set() {
     let e = test_engine();
     let imports = format!(
-        "{}\n{}\n{}",
+        "{}\n{}",
         import("init_hash_seed", "(param i32 i32)", ""),
         import("init_config_get", "(param i32 i32)", "(result i32)"),
-        import("init_unit_deferred", "(param i32)", "(result i32)"),
     );
     let wasm = guest(
         4,
         &imports,
         r#"
   (func (export "isoplane_initialize") (result i64)
-    (if (i32.eqz (call $init_unit_deferred (i32.const 1)))
-      (then
-        (call $init_hash_seed (i32.const 512) (i32.const 16))
-        (i32.store (i32.const 600) (call $init_config_get (i32.const 0) (i32.const 0)))
-        (i32.store (i32.const 604) (call $init_config_get (i32.const 1024) (i32.const 8))))) i64.const 0)"#,
+    (call $init_hash_seed (i32.const 512) (i32.const 16))
+    (i32.store (i32.const 600) (call $init_config_get (i32.const 0) (i32.const 0)))
+    (i32.store (i32.const 604) (call $init_config_get (i32.const 1024) (i32.const 8))) i64.const 0)"#,
         DONE,
         DONE,
     );
@@ -222,7 +213,6 @@ fn runtime_configuration_reaches_the_preparation_binding() {
 struct NativeInitialization {
     bringup: bool,
     permits_io: bool,
-    in_unit: bool,
     calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
@@ -235,7 +225,7 @@ impl isoplane_engine::bindings::InitializationBindings for NativeInitialization 
         1_234
     }
     fn runtime_bringup(&self) -> bool {
-        self.bringup && !self.in_unit
+        self.bringup
     }
     fn native_io(
         &mut self,
@@ -250,14 +240,9 @@ impl isoplane_engine::bindings::InitializationBindings for NativeInitialization 
         &mut self,
         call: isoplane_engine::ImportCall<'_>,
     ) -> Result<i64, isoplane_engine::bindings::BindingError> {
-        if call.import == "init_unit_begin" {
-            self.in_unit = true;
-            Ok(0)
-        } else {
-            Err(isoplane_engine::bindings::BindingError::Unsupported(
-                call.import,
-            ))
-        }
+        Err(isoplane_engine::bindings::BindingError::Unsupported(
+            call.import,
+        ))
     }
     fn call_fill(
         &mut self,
@@ -312,7 +297,6 @@ fn check_offline_clock(function: &str, body: &str, expected: &[i64]) {
             Box::new(NativeInitialization {
                 bringup: true,
                 permits_io: false,
-                in_unit: false,
                 calls: calls.clone(),
             }),
         )
@@ -342,7 +326,7 @@ fn check_offline_clock(function: &str, body: &str, expected: &[i64]) {
     );
 }
 
-fn check_raw_native_initialization(bringup: bool, unit: bool, permits_io: bool, permitted: bool) {
+fn check_raw_native_initialization(bringup: bool, permits_io: bool, permitted: bool) {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     for (module, function, parameters, argument, capability) in [
@@ -369,18 +353,11 @@ fn check_raw_native_initialization(bringup: bool, unit: bool, permits_io: bool, 
         ),
     ] {
         let engine = test_engine();
-        let imports = format!(
-            r#"(import "{module}" "{function}" (func $native {parameters} (result i32)))
-            (import "isoplane" "init_unit_begin" (func $unit (param i32)))"#
-        );
-        let enter_unit = if unit {
-            "(call $unit (i32.const 7))"
-        } else {
-            ""
-        };
+        let imports =
+            format!(r#"(import "{module}" "{function}" (func $native {parameters} (result i32)))"#);
         let body = format!(
             r#"(func (export "isoplane_initialize") (result i64)
-            {enter_unit} (drop (call $native {argument})) i64.const 0)"#
+            (drop (call $native {argument})) i64.const 0)"#
         );
         let wasm = guest(4, &imports, &body, DONE, DONE);
         let template = engine
@@ -393,7 +370,6 @@ fn check_raw_native_initialization(bringup: bool, unit: bool, permits_io: bool, 
                 Box::new(NativeInitialization {
                     bringup,
                     permits_io,
-                    in_unit: false,
                     calls: calls.clone(),
                 }),
             )
@@ -420,7 +396,7 @@ fn check_raw_native_initialization(bringup: bool, unit: bool, permits_io: bool, 
             assert_eq!(
                 instance.last_capability_violation(),
                 Some(capability),
-                "raw native refusals must identify the capability for deferral"
+                "raw native refusals must identify the capability"
             );
             assert_eq!(
                 calls.load(Ordering::SeqCst),
@@ -433,20 +409,15 @@ fn check_raw_native_initialization(bringup: bool, unit: bool, permits_io: bool, 
 
 #[test]
 fn sealed_initialization_refuses_raw_native_capabilities_even_with_network_authority() {
-    check_raw_native_initialization(false, false, true, false);
+    check_raw_native_initialization(false, true, false);
 }
 
 #[test]
-fn initialization_units_refuse_raw_native_capabilities_even_with_network_authority() {
-    check_raw_native_initialization(true, true, true, false);
-}
-
-#[test]
-fn authorized_runtime_bringup_permits_raw_native_capabilities_outside_units() {
-    check_raw_native_initialization(true, false, true, true);
+fn authorized_runtime_bringup_permits_raw_native_capabilities() {
+    check_raw_native_initialization(true, true, true);
 }
 
 #[test]
 fn offline_runtime_bringup_refuses_network_and_timer_capabilities() {
-    check_raw_native_initialization(true, false, false, false);
+    check_raw_native_initialization(true, false, false);
 }

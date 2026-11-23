@@ -337,10 +337,6 @@ impl HostBindings for CellBindings {
                 ctx.latch_trap(TrapCode::Panic);
                 0
             }
-            // At runtime every init unit has already run or been deferred.
-            #[cfg(feature = "rust-guests")]
-            "init_unit_begin" | "init_unit_deferred" => 0,
-
             "log_emit" => self.log_emit(call.payload, call.scalars),
             #[cfg(feature = "rust-guests")]
             "trace_span_begin" => self.trace_span_begin(call.payload),

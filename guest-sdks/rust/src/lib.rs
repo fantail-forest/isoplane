@@ -41,7 +41,7 @@ pub use ctx::Ctx;
 pub use error::{IsoplaneError, Result};
 pub use future::{join2, join3, join_all, select2, Either, HostFuture};
 pub use http::{Request, RequestExt, Response, ResponseStream};
-pub use init::{InitUnit, LazyInit};
+pub use init::LazyInit;
 
 pub use isoplane_abi;
 pub use isoplane_abi::result::FutureError;

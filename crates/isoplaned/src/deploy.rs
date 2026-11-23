@@ -45,14 +45,11 @@ pub struct PreparationContext<'a> {
     pub runtime: isoplane_prepare::RuntimeProfile,
     /// Immutable application content served within this template only.
     pub application_files: isoplane_engine::PlatformFiles,
-    /// Initialization occupancy budget across all replay passes.
+    /// Initialization occupancy budget.
     pub occupancy_ms: u32,
-    /// Total initialization wall backstop, including waits and replay passes.
+    /// Total initialization wall backstop, including waits.
     pub wall_ms: u32,
-    /// Maximum replay passes.
-    #[cfg(feature = "rust-guests")]
-    pub max_passes: u32,
-    /// Retained successful-pass guest log bytes.
+    /// Retained guest log bytes.
     pub log_bytes: usize,
     /// Cancellation of this owned preparation job.
     pub cancellation: &'a tokio_util::sync::CancellationToken,
@@ -311,7 +308,6 @@ impl Deployer {
         #[cfg(feature = "rust-guests")]
         let initialization = isoplane_prepare::Initialization {
             config: serde_json::to_vec(&manifest.init_visible_vars)?,
-            max_passes: context.max_passes,
             ..initialization
         };
         let request = isoplane_prepare::BuildRequest {
