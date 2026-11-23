@@ -8,9 +8,9 @@ member of it. The C# guests reference the SDK in `../guest-sdks/dotnet`.
 ## Building
 
 ```sh
-scripts/dev guests/build.sh                       # Rust guests -> .build/wasm32/rust-guests/*.wasm
+task exec -- guests/build.sh                       # Rust guests -> .build/wasm32/rust-guests/*.wasm
 guests/build-dotnet.sh                # managed probes -> .build/clr-anycpu/probes/*.tar
-scripts/dev guests/build.sh --if-stale            # only when a source is newer
+task exec -- guests/build.sh --if-stale            # only when a source is newer
 guests/build-dotnet.sh --if-stale
 ```
 

@@ -1,0 +1,2 @@
+Task chooses a worktree-local, per-platform Cargo target directory.
+Run `task exec -- cargo ...` or a dedicated Task target such as `task build`.
