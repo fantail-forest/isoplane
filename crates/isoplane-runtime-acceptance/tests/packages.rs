@@ -15,8 +15,8 @@ use isoplane_engine::{CompilationCache, Completion, IsoplaneEngine, PlatformFile
 use isoplane_harness::{engine_configuration, ReturnedGuest};
 use isoplane_prepare::package::PackageLimits;
 use isoplane_prepare::{
-    BuildProduct, BuildRequest, BuildStage, Initialization, InitializationNetwork,
-    LocalPreparation, Preparation, PrepareError, RuntimeProfile,
+    BuildProduct, BuildRequest, Initialization, InitializationNetwork, LocalPreparation,
+    Preparation, PrepareError, RuntimeProfile,
 };
 use isoplane_test_support::hex_bytes as hex;
 use tokio_util::sync::CancellationToken;
@@ -120,7 +120,7 @@ fn request(runtime: &[u8], files: Vec<PlatformFile>) -> BuildRequest {
             network: Some(network()),
             ..Initialization::new(b"{}".to_vec())
         },
-        input_hash: *blake3::hash(runtime).as_bytes(),
+        module: isoplane_prepare::Module::new(runtime),
     }
 }
 
@@ -137,7 +137,7 @@ async fn prepare(
 ) -> Result<(BuildProduct, BuildRequest), PrepareError> {
     let request = request(runtime, files);
     let product = preparation
-        .prepare(runtime, &request, &CancellationToken::new())
+        .prepare(&request, &CancellationToken::new())
         .await?;
     Ok((product, request))
 }
@@ -239,15 +239,13 @@ async fn refusal(files: Vec<PlatformFile>) -> String {
     let preparation = LocalPreparation::with_cache(shared_cache()).expect("local preparation");
     match prepare(&preparation, &runtime, files).await {
         Ok(_) => panic!("preparation must refuse the package"),
-        Err(PrepareError::Rejected(failure)) => {
-            assert_eq!(
-                failure.stage,
-                BuildStage::Initialization,
-                "a package refusal must end initialization, not admission: {failure:?}"
+        Err(error) => {
+            assert!(
+                matches!(error, PrepareError::Initialization { .. }),
+                "a package refusal must end initialization, not admission: {error:?}"
             );
-            failure.detail
+            error.to_string()
         }
-        Err(error) => panic!("the refusal must be the worker's structured one: {error}"),
     }
 }
 
@@ -339,7 +337,7 @@ async fn logged_with(calls: &str) -> Vec<(u8, String)> {
         serde_json::to_vec(&serde_json::json!({ "ConsoleLogging": calls }))
             .expect("the settings serialize");
     let product = preparation
-        .prepare(&runtime, &request, &CancellationToken::new())
+        .prepare(&request, &CancellationToken::new())
         .await
         .unwrap_or_else(|error| panic!("the web package calling {calls} must prepare: {error}"));
     let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
@@ -485,7 +483,7 @@ async fn an_aspnet_request_that_calls_out_through_a_factory_client_leaves_its_in
     let preparation = LocalPreparation::with_cache(shared_cache()).expect("local preparation");
     let request = calling_request(&runtime, peer.address);
     let product = preparation
-        .prepare(&runtime, &request, &CancellationToken::new())
+        .prepare(&request, &CancellationToken::new())
         .await
         .unwrap_or_else(|error| {
             panic!("a route that calls out through a factory client must warm up: {error}")
@@ -586,7 +584,7 @@ impl SessionVisitor {
         request.initialization.runtime_config =
             serde_json::to_vec(&settings).expect("the settings serialize");
         let product = preparation
-            .prepare(&runtime, &request, &CancellationToken::new())
+            .prepare(&request, &CancellationToken::new())
             .await
             .unwrap_or_else(|error| panic!("the session package must prepare: {error}"));
         let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
@@ -1494,10 +1492,9 @@ mod over_the_runtime_baseline {
         };
         request.guest_memory_bytes =
             Some(isoplane_abi::config::GuestMemoryBytes::new(64 << 20).expect("a page multiple"));
-        let failure =
-            RuntimeBaseline::prepare(&runtime, &request.baseline(), Some(&shared_cache()))
-                .err()
-                .expect("the runtime's start-up must not fit in 64 MiB");
+        let failure = RuntimeBaseline::prepare(&request.baseline(), Some(&shared_cache()))
+            .err()
+            .expect("the runtime's start-up must not fit in 64 MiB");
         let detail = format!("{failure:?}");
         assert!(
             detail.contains("guest aborted: Garbage collector could not allocate"),
@@ -1509,7 +1506,6 @@ mod over_the_runtime_baseline {
     /// packages prepared with [`request`].
     fn runtime_baseline(runtime: &[u8]) -> PreparedBaseline {
         RuntimeBaseline::prepare(
-            runtime,
             &request(runtime, Vec::new()).baseline(),
             Some(&shared_cache()),
         )

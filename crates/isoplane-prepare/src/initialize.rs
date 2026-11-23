@@ -685,8 +685,11 @@ struct GuestLog {
     line: String,
 }
 
-/// `detail` followed by `logs`, latest first: worker reports are bounded, so
-/// the latest diagnosis comes before older context.
+/// The most a failure's detail keeps of what a guest logged.
+const DETAIL_CHARACTERS: usize = 4096;
+
+/// `detail` followed by `logs`, latest first: the result is bounded, so the
+/// latest diagnosis comes before older context.
 fn with_guest_logs<'a>(
     mut detail: String,
     logs: impl DoubleEndedIterator<Item = &'a GuestLog>,
@@ -695,7 +698,7 @@ fn with_guest_logs<'a>(
         detail.push_str("\n  guest log: ");
         detail.push_str(log.line.trim_end());
     }
-    detail
+    detail.chars().take(DETAIL_CHARACTERS).collect()
 }
 
 struct Sandbox {

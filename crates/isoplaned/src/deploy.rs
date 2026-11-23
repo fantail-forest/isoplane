@@ -214,7 +214,7 @@ impl Deployer {
                             .contains(&isoplane_abi::imports::exports::INITIALIZE_RUNTIME),
                     "installed runtime needs runtime and application initialization exports"
                 );
-                let held = self.baseline(wasm, &request, context).await?;
+                let held = self.baseline(&request, context).await?;
                 let product = context
                     .provider
                     .prepare_over(&held.published, &request, context.cancellation)
@@ -233,7 +233,7 @@ impl Deployer {
             Producer::SelfContained => {
                 let product = context
                     .provider
-                    .prepare(wasm, &request, context.cancellation)
+                    .prepare(&request, context.cancellation)
                     .await?;
                 // SAFETY: native output comes only from the selected trusted producer, never a bundle.
                 let artifact = unsafe {
@@ -320,7 +320,7 @@ impl Deployer {
             runtime: context.runtime.clone(),
             memory_limit: manifest.memory_limit(),
             initialization,
-            input_hash: *blake3::hash(wasm).as_bytes(),
+            module: isoplane_prepare::Module::new(wasm),
         };
         let identity = request.identity()?;
         Ok((admitted, request, identity))

@@ -35,7 +35,7 @@ fn request(wasm: &[u8]) -> BuildRequest {
         runtime: RuntimeProfile::RawWasm,
         memory_limit: isoplane_abi::config::GuestMemoryBytes::default(),
         initialization: common::request(),
-        input_hash: *blake3::hash(wasm).as_bytes(),
+        module: isoplane_prepare::Module::new(wasm),
     }
 }
 fn files(directory: &Path) -> Vec<PathBuf> {
@@ -59,7 +59,7 @@ async fn compiled_input_is_reused_while_each_initialization_draws_fresh_entropy_
     let mut request = request(&wasm);
     request.initialization.runtime_config = FIRST.to_vec();
     let first = provider
-        .prepare(&wasm, &request, &CancellationToken::new())
+        .prepare(&request, &CancellationToken::new())
         .await
         .expect("first preparation");
     let entries = files(directory.path());
@@ -74,7 +74,7 @@ async fn compiled_input_is_reused_while_each_initialization_draws_fresh_entropy_
         .collect();
     request.initialization.runtime_config = SECOND.to_vec();
     let second = provider
-        .prepare(&wasm, &request, &CancellationToken::new())
+        .prepare(&request, &CancellationToken::new())
         .await
         .expect("new initialization context");
     for (path, inode) in entries.iter().zip(inodes) {
@@ -117,7 +117,7 @@ async fn changed_transformed_input_uses_another_compilation_key() {
     for value in [41, 42] {
         let wasm = wasm(value);
         provider
-            .prepare(&wasm, &request(&wasm), &CancellationToken::new())
+            .prepare(&request(&wasm), &CancellationToken::new())
             .await
             .expect("distinct source preparation");
     }
@@ -134,12 +134,12 @@ async fn changed_engine_configuration_uses_another_compilation_key() {
     let wasm = wasm(42);
     let mut request = request(&wasm);
     provider
-        .prepare(&wasm, &request, &CancellationToken::new())
+        .prepare(&request, &CancellationToken::new())
         .await
         .expect("initial engine");
     request.engine.guard_size_bytes *= 2;
     provider
-        .prepare(&wasm, &request, &CancellationToken::new())
+        .prepare(&request, &CancellationToken::new())
         .await
         .expect("another engine profile");
     assert_eq!(
@@ -155,7 +155,7 @@ async fn a_partial_cache_entry_is_recompiled_before_use() {
     let wasm = wasm(42);
     let request = request(&wasm);
     provider
-        .prepare(&wasm, &request, &CancellationToken::new())
+        .prepare(&request, &CancellationToken::new())
         .await
         .expect("initial cache fill");
     let metadata = files(directory.path())
@@ -164,7 +164,7 @@ async fn a_partial_cache_entry_is_recompiled_before_use() {
         .expect("metadata path");
     std::fs::remove_file(&metadata).expect("simulate incomplete publication");
     let product = provider
-        .prepare(&wasm, &request, &CancellationToken::new())
+        .prepare(&request, &CancellationToken::new())
         .await
         .expect("partial entry repair");
     assert_eq!(
@@ -184,7 +184,7 @@ async fn malformed_cache_metadata_is_refused_without_recompilation() {
     let wasm = wasm(42);
     let request = request(&wasm);
     provider
-        .prepare(&wasm, &request, &CancellationToken::new())
+        .prepare(&request, &CancellationToken::new())
         .await
         .expect("initial cache fill");
     let metadata = files(directory.path())
@@ -194,19 +194,13 @@ async fn malformed_cache_metadata_is_refused_without_recompilation() {
     std::fs::write(&metadata, b"invalid")
         .expect("malformed test metadata, with no live mapped entry");
     let error = provider
-        .prepare(&wasm, &request, &CancellationToken::new())
+        .prepare(&request, &CancellationToken::new())
         .await
         .err()
         .expect("corrupt metadata must fail closed");
     assert!(
-        matches!(
-            error,
-            isoplane_prepare::PrepareError::Rejected(isoplane_prepare::WorkerFailure {
-                stage: isoplane_prepare::BuildStage::Initialization,
-                ..
-            })
-        ),
-        "a malformed cache entry must refuse initialization"
+        matches!(error, isoplane_prepare::PrepareError::State(_)),
+        "a malformed cache entry must refuse initialization: {error}"
     );
     assert_eq!(
         std::fs::read(&metadata).expect("refused entry"),
@@ -242,11 +236,9 @@ async fn preparation_rejects_memory_authorization_above_worker_capacity() {
     input.guest_memory_bytes =
         Some(isoplane_abi::config::GuestMemoryBytes::new(512 << 20).expect("valid budget"));
     let (_directory, provider) = setup();
-    let result = provider
-        .prepare(&wasm, &input, &CancellationToken::new())
-        .await;
+    let result = provider.prepare(&input, &CancellationToken::new()).await;
     assert!(
-        matches!(result, Err(isoplane_prepare::PrepareError::Rejected(ref failure)) if failure.stage == isoplane_prepare::BuildStage::Input),
+        matches!(result, Err(isoplane_prepare::PrepareError::Input(_))),
         "an incompatible worker must refuse preparation before executing the guest"
     );
 }
@@ -263,10 +255,8 @@ async fn structural_admission_policy_binds_preparation_identity_and_is_enforced(
         "changing structural admission policy must invalidate prepared cache identity"
     );
     let (_directory, provider) = setup();
-    let result = provider
-        .prepare(&wasm, &input, &CancellationToken::new())
-        .await;
-    assert!(matches!(result, Err(isoplane_prepare::PrepareError::Rejected(ref failure)) if failure.stage == isoplane_prepare::BuildStage::Input),
+    let result = provider.prepare(&input, &CancellationToken::new()).await;
+    assert!(matches!(result, Err(isoplane_prepare::PrepareError::Input(_))),
         "the preparation worker must reject functions forbidden by the supplied policy before initialization");
 }
 
@@ -289,7 +279,7 @@ async fn initialization_without_a_memory_maximum_obeys_the_application_budget() 
     input.memory_limit = isoplane_abi::config::GuestMemoryBytes::default();
     let (_directory, provider) = setup();
     assert!(
-        provider.prepare(&wasm, &input, &CancellationToken::new()).await.is_ok(),
+        provider.prepare(&input, &CancellationToken::new()).await.is_ok(),
         "initialization must refuse growth past the ceiling of the application's {budget_bytes}-byte budget on an engine allowing twice that"
     );
 }
@@ -323,31 +313,9 @@ async fn cancellation_before_preparation_refuses_to_enter_the_initializer() {
     let cancellation = CancellationToken::new();
     cancellation.cancel();
     let (_directory, provider) = setup();
-    let result = provider
-        .prepare(&wasm, &request(&wasm), &cancellation)
-        .await;
+    let result = provider.prepare(&request(&wasm), &cancellation).await;
     assert!(matches!(
         result,
         Err(isoplane_prepare::PrepareError::Cancelled)
-    ));
-}
-
-#[tokio::test]
-async fn a_mismatched_source_digest_is_refused_before_initialization() {
-    let wasm = common::guest("", "unreachable");
-    let mut input = request(&wasm);
-    input.input_hash = [0; 32];
-    let (_directory, provider) = setup();
-    let result = provider
-        .prepare(&wasm, &input, &CancellationToken::new())
-        .await;
-    assert!(matches!(
-        result,
-        Err(isoplane_prepare::PrepareError::Rejected(
-            isoplane_prepare::WorkerFailure {
-                stage: isoplane_prepare::BuildStage::Input,
-                ..
-            }
-        ))
     ));
 }

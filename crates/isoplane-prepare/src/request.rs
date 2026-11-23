@@ -1,8 +1,32 @@
 //! Application inputs and their preparation identity.
 
+use std::sync::Arc;
+
 use isoplane_engine::EngineConfig;
 
 use crate::{Initialization, RuntimeProfile};
+
+/// A module submitted for preparation, hashed once to identify everything
+/// prepared from it. Clones share it.
+#[derive(Clone)]
+pub struct Module {
+    wasm: Arc<[u8]>,
+    digest: [u8; 32],
+}
+
+impl Module {
+    /// Takes a copy of `wasm` for preparation.
+    pub fn new(wasm: &[u8]) -> Self {
+        Self {
+            wasm: wasm.into(),
+            digest: *blake3::hash(wasm).as_bytes(),
+        }
+    }
+
+    pub(crate) fn wasm(&self) -> &[u8] {
+        &self.wasm
+    }
+}
 
 /// Immutable application inputs and execution policy supplied by the local host.
 #[derive(Clone)]
@@ -21,8 +45,8 @@ pub struct BuildRequest {
     pub validation_limits: isoplane_abi::config::ValidationLimits,
     /// Private initialization inputs and budgets, including deployment secrets.
     pub initialization: Initialization,
-    /// Digest of the submitted portable module.
-    pub input_hash: [u8; 32],
+    /// The module preparation initializes.
+    pub module: Module,
 }
 
 impl BuildRequest {
@@ -33,7 +57,7 @@ impl BuildRequest {
     pub fn identity(&self) -> Result<isoplane_engine::prepared::PreparedIdentity, postcard::Error> {
         let mut hash = blake3::Hasher::new();
         hash.update(b"isoplane.prepared-initialization.v4\0");
-        hash.update(&self.initialization.digest(self.input_hash)?);
+        hash.update(&self.initialization.digest(self.module.digest)?);
         hash.update(&postcard::to_allocvec(&self.memory_limit)?);
         hash.update(&postcard::to_allocvec(&self.guest_memory_bytes)?);
         hash.update(&postcard::to_allocvec(&self.validation_limits)?);
@@ -41,7 +65,7 @@ impl BuildRequest {
         hash.update(&self.engine.platform_files.content_digest());
         hash.update(&self.application_files.content_digest());
         Ok(isoplane_engine::prepared::PreparedIdentity {
-            input_hash: self.input_hash,
+            input_hash: self.module.digest,
             runtime_profile: self.runtime.digest()?,
             initialization_hash: *hash.finalize().as_bytes(),
         })

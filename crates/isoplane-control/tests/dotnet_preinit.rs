@@ -47,10 +47,9 @@ fn a_failed_managed_application_initializer_refuses_pre_initialization() {
     let Err(error) = result else {
         panic!("a failed application initializer must fail deployment");
     };
-    assert_eq!(
-        error.stage,
-        isoplane_prepare::BuildStage::Initialization,
-        "the deployment must fail while initializing the application"
+    assert!(
+        matches!(error, isoplane_prepare::PrepareError::Initialization { .. }),
+        "the deployment must fail while initializing the application: {error}"
     );
 }
 
@@ -68,12 +67,11 @@ fn refusal(
     let Err(error) = result else {
         panic!("a connection left open by initialization must refuse the template");
     };
-    assert_eq!(
-        error.stage,
-        isoplane_prepare::BuildStage::Initialization,
-        "the refusal must come from initialization"
+    assert!(
+        matches!(error, isoplane_prepare::PrepareError::State(_)),
+        "the refusal must come from capturing what initialization left: {error}"
     );
-    error.detail
+    error.to_string()
 }
 
 fn local_network() -> isoplane_prepare::InitializationNetwork {

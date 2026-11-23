@@ -5,7 +5,7 @@ use isoplane_engine::prepared::PreparedIdentity;
 use isoplane_engine::IsoplaneEngine;
 use tokio_util::sync::CancellationToken;
 
-use crate::{BuildRequest, BuildStage, Initialized, PrepareError, WorkerFailure};
+use crate::{BuildRequest, Initialized, PrepareError};
 
 /// Complete preparation output and the actual work recorded by its producer.
 pub struct BuildProduct {
@@ -32,26 +32,25 @@ pub trait Preparation: Send + Sync {
     #[cfg(any(not(target_os = "linux"), feature = "rust-guests"))]
     async fn prepare(
         &self,
-        wasm: &[u8],
         request: &BuildRequest,
         cancellation: &CancellationToken,
     ) -> Result<BuildProduct, PrepareError>;
 
-    /// Initialize only `wasm`'s runtime stage and return it as the baseline
-    /// `request` names. Fails at [`BuildStage::Baseline`] if that stage reads
-    /// entropy or reaches a capability the sandbox refuses.
+    /// Initialize only the runtime stage of `request`'s module and return it
+    /// as the baseline `request` names. Fails with [`PrepareError::Baseline`]
+    /// if that stage reads entropy or reaches a capability the sandbox refuses.
     #[cfg(target_os = "linux")]
     async fn prepare_runtime_baseline(
         &self,
-        wasm: &[u8],
         request: &crate::BaselineRequest,
         cancellation: &CancellationToken,
     ) -> Result<BuildProduct, PrepareError>;
 
     /// Initialize `request`'s application over `baseline` and return only
     /// what it changed, as a layer that loads over that baseline. Nothing is
-    /// compiled. Fails at [`BuildStage::Input`] unless `baseline` has its
-    /// recorded digest and is the baseline `request` derives.
+    /// compiled. Fails with [`PrepareError::Engine`] if `request`'s engine
+    /// cannot be constructed, and with [`PrepareError::Input`] unless
+    /// `baseline` has its recorded digest and is the baseline `request` derives.
     #[cfg(target_os = "linux")]
     async fn prepare_over(
         &self,
@@ -87,9 +86,7 @@ impl LocalPreparation {
     pub(crate) async fn run<T: Send + 'static>(
         &self,
         cancellation: &CancellationToken,
-        job: impl FnOnce(&isoplane_engine::CompilationCache) -> Result<T, WorkerFailure>
-            + Send
-            + 'static,
+        job: impl FnOnce(&isoplane_engine::CompilationCache) -> Result<T, PrepareError> + Send + 'static,
     ) -> Result<T, PrepareError> {
         if cancellation.is_cancelled() {
             return Err(PrepareError::Cancelled);
@@ -98,8 +95,7 @@ impl LocalPreparation {
         let cache = self.cache.clone();
         let result = tokio::task::spawn_blocking(move || pool.install(|| job(&cache)))
             .await
-            .map_err(|error| PrepareError::State(error.into()))?
-            .map_err(PrepareError::Rejected)?;
+            .map_err(|error| PrepareError::State(error.into()))??;
         if cancellation.is_cancelled() {
             return Err(PrepareError::Cancelled);
         }
@@ -112,29 +108,23 @@ impl Preparation for LocalPreparation {
     #[cfg(any(not(target_os = "linux"), feature = "rust-guests"))]
     async fn prepare(
         &self,
-        wasm: &[u8],
         request: &BuildRequest,
         cancellation: &CancellationToken,
     ) -> Result<BuildProduct, PrepareError> {
-        let wasm = wasm.to_vec();
         let request = request.clone();
-        self.run(cancellation, move |cache| {
-            prepare(&wasm, &request, Some(cache))
-        })
-        .await
+        self.run(cancellation, move |cache| prepare(&request, Some(cache)))
+            .await
     }
 
     #[cfg(target_os = "linux")]
     async fn prepare_runtime_baseline(
         &self,
-        wasm: &[u8],
         request: &crate::BaselineRequest,
         cancellation: &CancellationToken,
     ) -> Result<BuildProduct, PrepareError> {
-        let wasm = wasm.to_vec();
         let request = request.clone();
         self.run(cancellation, move |cache| {
-            Ok(crate::RuntimeBaseline::prepare(&wasm, &request, Some(cache))?.product)
+            Ok(crate::RuntimeBaseline::prepare(&request, Some(cache))?.product)
         })
         .await
     }
@@ -149,9 +139,7 @@ impl Preparation for LocalPreparation {
         let baseline = baseline.clone();
         let request = request.clone();
         self.run(cancellation, move |_| {
-            let loaded = baseline
-                .load(&request)
-                .map_err(|error| WorkerFailure::new(BuildStage::Input, error))?;
+            let loaded = baseline.load(&request)?;
             Ok(loaded.prepare_application(&request)?.product)
         })
         .await
@@ -160,14 +148,12 @@ impl Preparation for LocalPreparation {
 
 #[cfg(any(not(target_os = "linux"), feature = "rust-guests"))]
 fn prepare(
-    wasm: &[u8],
     request: &BuildRequest,
     cache: Option<&isoplane_engine::CompilationCache>,
-) -> Result<BuildProduct, WorkerFailure> {
-    let identity =
-        validate(wasm, request).map_err(|error| WorkerFailure::new(BuildStage::Input, error))?;
-    let engine = IsoplaneEngine::new(request.engine.clone())
-        .map_err(|error| WorkerFailure::new(BuildStage::Engine, error))?;
+) -> Result<BuildProduct, PrepareError> {
+    let identity = validate(request)?;
+    let wasm = request.module.wasm();
+    let engine = IsoplaneEngine::new(request.engine.clone()).map_err(PrepareError::Engine)?;
     #[cfg(all(target_os = "linux", feature = "rust-guests"))]
     let capture = crate::initialize::CaptureMode::Layered { wasm, identity };
     #[cfg(not(all(target_os = "linux", feature = "rust-guests")))]
@@ -190,7 +176,7 @@ pub(crate) fn produce(
     )]
     identity: PreparedIdentity,
     capture: crate::initialize::CaptureMode<'_>,
-) -> Result<(BuildProduct, Option<isoplane_engine::Template>), WorkerFailure> {
+) -> Result<(BuildProduct, Option<isoplane_engine::Template>), PrepareError> {
     let start = Instant::now();
     let output = crate::initialize::initialize_with_cache(
         engine,
@@ -202,25 +188,17 @@ pub(crate) fn produce(
             isoplane_abi::config::GuestMemoryBytes::get,
         )),
         capture,
-    )
-    .map_err(|error| {
-        let stage = match error {
-            PrepareError::Baseline(_) => BuildStage::Baseline,
-            // Every other refusal happened while running or preserving initialization.
-            _ => BuildStage::Initialization,
-        };
-        WorkerFailure::new(stage, error.into())
-    })?;
+    )?;
     let preinit_ms = start.elapsed().as_secs_f64() * 1000.0;
     let start = Instant::now();
     let prepared = match output.captured {
         crate::initialize::Captured::Layered { prepared } => prepared
             .encode_builder_output()
-            .map_err(|error| WorkerFailure::new(BuildStage::Artifact, error.into()))?,
+            .map_err(|error| PrepareError::Artifact(error.into()))?,
         #[cfg(any(not(target_os = "linux"), feature = "rust-guests"))]
         crate::initialize::Captured::Portable(module) => {
             encode(engine, &module, identity, request.application_files.clone())
-                .map_err(|error| WorkerFailure::new(BuildStage::Artifact, error))?
+                .map_err(PrepareError::Artifact)?
         }
     };
     let compile_ms = start.elapsed().as_secs_f64() * 1000.0;
@@ -235,28 +213,27 @@ pub(crate) fn produce(
     ))
 }
 
-pub(crate) fn validate(wasm: &[u8], request: &BuildRequest) -> anyhow::Result<PreparedIdentity> {
-    anyhow::ensure!(
-        *blake3::hash(wasm).as_bytes() == request.input_hash,
-        "preparation input identity mismatch"
-    );
-    anyhow::ensure!(
-        request.guest_memory_bytes.is_none_or(|limit| {
-            isoplane_abi::config::memory_ceiling_bytes(limit.get())
-                <= request.engine.max_memory_bytes
-        }),
-        "the guest memory limit's ceiling exceeds the selected worker engine capacity"
-    );
+pub(crate) fn validate(request: &BuildRequest) -> Result<PreparedIdentity, PrepareError> {
+    let ceiling_fits = request.guest_memory_bytes.is_none_or(|limit| {
+        isoplane_abi::config::memory_ceiling_bytes(limit.get()) <= request.engine.max_memory_bytes
+    });
+    if !ceiling_fits {
+        return Err(PrepareError::Input(anyhow::anyhow!(
+            "the guest memory limit's ceiling exceeds the selected worker engine capacity"
+        )));
+    }
     isoplane_runtime::validate_with_limits(
-        wasm,
+        request.module.wasm(),
         request.memory_limit,
         request
             .runtime
             .declared_memory_ceiling(request.guest_memory_bytes),
         &request.validation_limits,
     )
-    .map_err(|violations| anyhow::anyhow!("portable input rejected: {violations:?}"))?;
-    Ok(request.identity()?)
+    .map_err(|violations| {
+        PrepareError::Input(anyhow::anyhow!("portable input rejected: {violations:?}"))
+    })?;
+    request.identity().map_err(PrepareError::Encoding)
 }
 
 #[cfg(any(not(target_os = "linux"), feature = "rust-guests"))]
