@@ -10,7 +10,6 @@ impl isoplane_prepare::Preparation for Refusal {
         Err(isoplane_prepare::PrepareError::Cancelled)
     }
 
-    #[cfg(target_os = "linux")]
     async fn prepare_runtime_baseline(
         &self,
         _wasm: &[u8],
@@ -20,7 +19,6 @@ impl isoplane_prepare::Preparation for Refusal {
         Err(isoplane_prepare::PrepareError::Cancelled)
     }
 
-    #[cfg(target_os = "linux")]
     async fn prepare_over(
         &self,
         _baseline: &isoplane_prepare::PublishedBaseline,

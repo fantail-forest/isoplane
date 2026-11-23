@@ -1,83 +1,46 @@
 //! Foreground local hosting and offline application deployment.
 
+#![forbid(unsafe_code)]
+
 use anyhow::Context;
 use clap::Parser;
 use isoplaned::cli::{Args, Command};
 use isoplaned::config::NodeConfig;
 use isoplaned::node::Node;
-
-/// The process's open-file limits.
-#[cfg(unix)]
-#[derive(Clone, Copy)]
-struct OpenFileLimit {
-    soft: libc::rlim_t,
-    hard: libc::rlim_t,
-}
-
-#[cfg(unix)]
-fn open_file_limit() -> std::io::Result<OpenFileLimit> {
-    let mut limit = libc::rlimit {
-        rlim_cur: 0,
-        rlim_max: 0,
-    };
-    // SAFETY: `getrlimit` with a valid resource and an owned, fully
-    // initialized `rlimit`; it does not retain the pointer.
-    if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) } != 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    Ok(OpenFileLimit {
-        soft: limit.rlim_cur,
-        hard: limit.rlim_max,
-    })
-}
+use rustix::process::{getrlimit, setrlimit, Resource, Rlimit};
 
 /// Raise the open-file soft limit to the hard limit, which needs no
 /// privilege. Every mapped template holds its `.cwasm` open and every
 /// outbound connection holds a socket, so the default soft limit of 1024 is
 /// the first ceiling a dense node meets. The hard limit is the
 /// administrator's and is not touched.
-#[cfg(unix)]
-fn raise_open_file_limit(current: OpenFileLimit) -> std::io::Result<OpenFileLimit> {
-    let limit = libc::rlimit {
-        rlim_cur: current.hard,
-        rlim_max: current.hard,
-    };
-    // SAFETY: `setrlimit` with a valid resource and an owned, fully
-    // initialized `rlimit`; it does not retain the pointer.
-    if unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &limit) } != 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    Ok(OpenFileLimit {
-        soft: current.hard,
-        hard: current.hard,
-    })
-}
-
-#[cfg(unix)]
 fn raise_and_log_open_file_limit() {
-    match open_file_limit() {
-        Err(error) => {
-            tracing::warn!(%error, "could not read RLIMIT_NOFILE; the open-file limit is unknown")
-        }
-        Ok(limit) if limit.soft >= limit.hard => tracing::info!(
-            soft = limit.soft,
-            hard = limit.hard,
+    let limit = getrlimit(Resource::Nofile);
+    if limit.current == limit.maximum {
+        tracing::info!(
+            soft = limit.current,
+            hard = limit.maximum,
             "RLIMIT_NOFILE soft limit is already its hard limit"
+        );
+        return;
+    }
+    let raised = Rlimit {
+        current: limit.maximum,
+        maximum: limit.maximum,
+    };
+    match setrlimit(Resource::Nofile, raised) {
+        Ok(()) => tracing::info!(
+            from = limit.current,
+            soft = raised.current,
+            hard = raised.maximum,
+            "raised RLIMIT_NOFILE soft limit to its hard limit"
         ),
-        Ok(limit) => match raise_open_file_limit(limit) {
-            Ok(raised) => tracing::info!(
-                from = limit.soft,
-                soft = raised.soft,
-                hard = raised.hard,
-                "raised RLIMIT_NOFILE soft limit to its hard limit"
-            ),
-            Err(error) => tracing::warn!(
-                %error,
-                soft = limit.soft,
-                hard = limit.hard,
-                "could not raise RLIMIT_NOFILE soft limit; keeping it"
-            ),
-        },
+        Err(error) => tracing::warn!(
+            %error,
+            soft = limit.current,
+            hard = limit.maximum,
+            "could not raise RLIMIT_NOFILE soft limit; keeping it"
+        ),
     }
 }
 
@@ -155,14 +118,8 @@ async fn run() -> anyhow::Result<()> {
 }
 
 async fn termination() -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        let mut terminate =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-        tokio::select! { result = tokio::signal::ctrl_c() => result, _ = terminate.recv() => Ok(()) }
-    }
-    #[cfg(not(unix))]
-    tokio::signal::ctrl_c().await
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    tokio::select! { result = tokio::signal::ctrl_c() => result, _ = terminate.recv() => Ok(()) }
 }
 
 async fn stop(stdin: bool) -> std::io::Result<()> {
@@ -187,7 +144,6 @@ async fn stop(stdin: bool) -> std::io::Result<()> {
 }
 
 async fn run_node(cfg: NodeConfig, stdin: bool) -> anyhow::Result<()> {
-    #[cfg(unix)]
     raise_and_log_open_file_limit();
     let proxy = tokio::net::TcpListener::bind(cfg.proxy.listen)
         .await

@@ -70,7 +70,6 @@ fn io(operation: &'static str, path: &Path, source: std::io::Error) -> InstallEr
 fn lock_file(path: &Path, wait: bool) -> Result<File, InstallError> {
     let mut options = OpenOptions::new();
     options.read(true).write(true).create(true).truncate(false);
-    #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
@@ -114,7 +113,6 @@ pub(crate) fn new_publication(
     let _transaction = transaction(registry)?;
     let mut builder = tempfile::Builder::new();
     builder.prefix("artifact-");
-    #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         builder.permissions(std::fs::Permissions::from_mode(0o700));
@@ -385,7 +383,7 @@ impl InstalledApplications {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::deploy::ArtifactKey;

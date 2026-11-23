@@ -8,6 +8,7 @@ vars:
 tasks:
   binary:
     desc: Build the optimized isoplaned a node package ships
+    platforms: [linux]
     deps: [':initialize']
     # The directory node:package is given as BINARIES, whatever the caller's environment selects.
     env:

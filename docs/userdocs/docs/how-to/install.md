@@ -10,8 +10,10 @@ Isoplane installs as a .NET tool. You install the .NET 10 SDK, then the
 `isoplane` CLI, then run `isoplane setup` once. Applications fetch the Isoplane
 SDK and runtime from NuGet when they build, so there is nothing else to install.
 
-Isoplane runs on Linux x64, Windows x64 and macOS on Apple silicon. Installing
-needs internet access.
+The SDK and the `isoplane` CLI run on Linux x64, Windows x64 and macOS on Apple
+silicon. The host daemon, `isoplaned`, runs on Linux only, as
+[Deploy an application](deploy-an-application.md#configure-the-host) explains.
+Installing needs internet access.
 
 ## Install the .NET 10 SDK
 

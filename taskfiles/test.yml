@@ -5,7 +5,7 @@ tasks:
     desc: Prepare fixtures, then run the Rust test suite
     deps: [':initialize', ':fixtures', guests]
     cmds:
-      - '{{.DEVELOPMENT_COMMAND}}cargo test --workspace {{.CLI_ARGS}}'
+      - '{{.DEVELOPMENT_COMMAND}}cargo test {{.RUST_WORKSPACE}} {{.CLI_ARGS}}'
 
   guests:
     desc: Run the internal Rust guest SDK unit and integration tests
