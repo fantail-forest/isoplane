@@ -12,6 +12,7 @@ $workspace = Join-Path $runs ([Guid]::NewGuid().ToString('N'))
 $previousCliHome = $env:DOTNET_CLI_HOME
 $previousHome = $env:ISOPLANE_HOME
 $previousPackages = $env:NUGET_PACKAGES
+$previousTelemetryOptOut = $env:ISOPLANE_TELEMETRY_OPTOUT
 $previousTemp = $env:TEMP
 $previousTmp = $env:TMP
 $previousLocation = Get-Location
@@ -23,6 +24,8 @@ $env:TMP = $scratch
 $env:DOTNET_CLI_HOME = $workspace
 $env:ISOPLANE_HOME = Join-Path $workspace 'installation'
 $env:NUGET_PACKAGES = Join-Path $workspace 'packages'
+# The released CLI this installs sends telemetry; the journey's runs stay out of it.
+$env:ISOPLANE_TELEMETRY_OPTOUT = '1'
 $toolDirectory = Join-Path $workspace 'tools'
 $Cli = Join-Path $toolDirectory 'isoplane.exe'
 $customerFile = $null
@@ -123,6 +126,7 @@ finally {
         $env:DOTNET_CLI_HOME = $previousCliHome
         $env:ISOPLANE_HOME = $previousHome
         $env:NUGET_PACKAGES = $previousPackages
+        $env:ISOPLANE_TELEMETRY_OPTOUT = $previousTelemetryOptOut
         $env:TEMP = $previousTemp
         $env:TMP = $previousTmp
         if (!$installationRemoved) {

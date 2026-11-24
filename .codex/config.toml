@@ -1,0 +1,2 @@
+[shell_environment_policy]
+set = { ISOPLANE_TELEMETRY_OPTOUT = "1" }

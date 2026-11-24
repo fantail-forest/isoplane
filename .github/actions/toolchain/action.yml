@@ -31,6 +31,7 @@ runs:
           echo CARGO_PROFILE_TEST_DEBUG=0
           echo RUST_TEST_THREADS=2
           echo DOTNET_CLI_TELEMETRY_OPTOUT=1
+          echo ISOPLANE_TELEMETRY_OPTOUT=1
           echo DOTNET_NOLOGO=1
         } >> "$GITHUB_ENV"
     - name: Install the pinned Rust toolchain
