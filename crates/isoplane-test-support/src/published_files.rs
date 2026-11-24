@@ -1,5 +1,3 @@
-//! Owns disposable published artifacts, on storage that can delete a mapped file.
-
 use std::io;
 use std::path::{Path, PathBuf};
 

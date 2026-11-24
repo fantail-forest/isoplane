@@ -1,6 +1,3 @@
-//! Fault injection into published files a test owns, beneath the mappings
-//! that read them.
-
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::Path;

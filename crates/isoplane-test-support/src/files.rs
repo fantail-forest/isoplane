@@ -1,5 +1,3 @@
-//! File trees tests seed, copy and search.
-
 use std::path::{Path, PathBuf};
 
 /// Gives `destination` each file of `source` that `include` accepts, under
