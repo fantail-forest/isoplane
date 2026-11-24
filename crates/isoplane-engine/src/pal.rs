@@ -41,8 +41,12 @@ impl StoreState {
 }
 
 /// Defines every import in the table on `linker`.
-/// Every adapter entry is synchronous and grace poisoning applies only to
-/// future-returning imports, so an entry keeps answering during grace.
+/// Every adapter entry completes synchronously before control returns to the
+/// guest. An entry that produces a result delivers it as its import's
+/// canonical signature says: as the Wasm result, or written into guest memory
+/// at the return pointer the guest passed.
+/// During grace the bindings behind [`StoreState::native_io`] decide which
+/// native I/O requests a cancelled dispatch may still make.
 pub(crate) fn define_imports(linker: &mut wasmtime::Linker<StoreState>) -> anyhow::Result<()> {
     for def in PAL_IMPORTS {
         define(linker, def)?;

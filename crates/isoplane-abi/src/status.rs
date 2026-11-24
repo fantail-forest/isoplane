@@ -1,3 +1,7 @@
+/// What a guest entrypoint returns, packed into one `u64` by
+/// [`PollStatus::encode`]: the low 32 bits hold the variant's tag and the high
+/// 32 bits its payload, which is the response handle for `Done`, the trap code
+/// for `Trapped` and zero otherwise.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PollStatus {
     /// Dispatch complete. Carries the host response handle, or zero for no response.
@@ -56,6 +60,8 @@ impl PollStatus {
         (tag as u64) | ((payload as u64) << 32)
     }
 
+    /// Reads the word [`PollStatus::encode`] writes. An unknown tag decodes as
+    /// `Trapped`.
     pub fn decode(v: u64) -> Self {
         let tag = (v & 0xFFFF_FFFF) as u32;
         let payload = (v >> 32) as u32;

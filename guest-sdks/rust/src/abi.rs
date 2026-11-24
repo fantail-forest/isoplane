@@ -151,10 +151,16 @@ const I32: Ty = Ty::I32;
 const I64: Ty = Ty::I64;
 
 /// The lowering of the WIT world's guest exports onto a flat core module.
-/// Host-side buffers are handed over by `isoplane_alloc` + copy; every entrypoint
-/// returns a packed [`isoplane_abi::PollStatus`]. Kept separate from
-/// `isoplane_abi::imports::exports::SIGNATURES`, the contract, so that
-/// `exports_match_the_contract` catches drift in what the `export_*!` macros emit.
+/// Host-side buffers are handed over by `isoplane_alloc` + copy.
+/// `isoplane_handle`, `isoplane_wake` and `isoplane_initialize` return a
+/// packed [`isoplane_abi::PollStatus`], `isoplane_alloc` returns the buffer's
+/// address and `isoplane_gc_hint` returns nothing.
+///
+/// This table is written by hand and is not derived from the functions the
+/// `export_*!` macros in `app.rs` emit. `exports_match_the_contract` compares
+/// each entry with `isoplane_abi::imports::exports::SIGNATURES`, so it
+/// catches drift between the two tables and passes when a macro's function
+/// signature changes alone.
 pub const SDK_EXPORTS: &[SdkExport] = &[
     // isoplane-alloc: func(size: u32, align: u32) -> u32
     SdkExport {
@@ -227,9 +233,9 @@ mod tests {
         }
     }
 
-    /// `exports::SIGNATURES` is what the engine's `get_typed_func` is written
-    /// against, so a disagreement here is an instantiation failure at
-    /// activation time.
+    /// Compares each [`SDK_EXPORTS`] entry with `exports::SIGNATURES`, which
+    /// the engine's `get_typed_func` is written against. It reads neither the
+    /// `export_*!` macros nor a built module.
     #[test]
     fn exports_match_the_contract() {
         for e in SDK_EXPORTS {
@@ -239,10 +245,12 @@ mod tests {
         }
     }
 
-    /// The SDK hard-codes the buffer layout at each call site; getting it
-    /// wrong would hand the host a length as a pointer.
+    /// Compares the `assumed` list below, a hand-written record of the buffer
+    /// layout the call sites in `crate::bindings` and `crate::init` use, with
+    /// the contract's `BufSpec`. It does not read those call sites. A call
+    /// site with the wrong layout would hand the host a length as a pointer.
     #[test]
-    fn buffer_layout_matches_every_call_site() {
+    fn the_assumed_buffer_layout_matches_the_contract() {
         // What `crate::bindings` and `crate::init` assume, written out.
         let assumed: &[(&str, BufSpec)] = &[
             // Host writes INTO guest memory: we pass (ptr, capacity) of a

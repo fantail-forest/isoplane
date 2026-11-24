@@ -2,8 +2,13 @@ use isoplane_abi::status::PollStatus;
 
 use crate::Completion;
 
-/// Enforced by best-effort epoch checks: scheduler delays can skip grace or
-/// delay the kill past B+G.
+/// A dispatch's worker-occupancy allowance, counted across all of its slices.
+///
+/// Reaching the occupancy budget (B) requests cancellation once grace can
+/// begin. A check that observes occupancy at or beyond the budget plus its
+/// grace period (B+G) terminates the slice without unwinding. The checks run
+/// on epoch ticks and are best effort: scheduler delays can skip grace or
+/// delay termination past B+G.
 #[derive(Debug, Clone, Copy)]
 pub struct OccupancyBudget {
     pub occupancy_ms: u32,

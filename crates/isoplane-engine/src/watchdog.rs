@@ -8,8 +8,10 @@ use parking_lot::{Condvar, Mutex};
 /// Period of the epoch tick while a dispatch is hot.
 pub(crate) const EPOCH_TICK_US: u64 = 200;
 
-/// Delivers deadline kills only: wasmtime's epoch-yield needs fibers, which
-/// are not compiled in.
+/// Increments the engine's epoch while a dispatch is hot. Each tick requests
+/// the store's budget and deadline checks, which enter grace and continue the
+/// slice or end it. Nothing yields on a tick: wasmtime's epoch-yield needs
+/// fibers, which are not compiled in.
 pub(crate) struct Watchdog {
     shared: Arc<Shared>,
     join: Option<std::thread::JoinHandle<()>>,

@@ -208,8 +208,12 @@ unsafe fn w_drop(_: *const ()) {}
 fn waker_for(id: u32) -> Waker {
     // SAFETY: the data pointer carries a task id and is never dereferenced, and
     // the vtable's functions are sound for any id. A `Waker` also promises
-    // `Send + Sync`, which nothing exercises: the engine builds wasmtime
-    // without threads and the validator rejects a module that declares them.
+    // `Send + Sync`, which nothing exercises. On wasm32 the engine builds
+    // wasmtime without threads and the validator rejects a module that
+    // declares them. On native targets the SDK's tests run this executor:
+    // `with_stub_host` serializes the test cases, but the waker callbacks reach
+    // the global runtime without that lock, so those tests rely on every wake
+    // staying on the test's own thread.
     unsafe { Waker::from_raw(RawWaker::new(id as usize as *const (), &VTABLE)) }
 }
 

@@ -9,8 +9,9 @@ use crate::metrics::ProxyMetrics;
 #[derive(Debug, Clone, Copy)]
 pub struct ShedConfig {
     pub max_in_flight: usize,
-    /// Callers that may wait for a slot before the proxy refuses. Unbounded, an
-    /// overloaded proxy queues requests that each time out holding a thread and a socket.
+    /// Requests that may wait for an in-flight permit at once. While that many
+    /// are waiting, the proxy answers the next arrival 503. Waiting has no
+    /// timeout: a queued request stays pending until a permit frees.
     pub max_queued: usize,
 }
 

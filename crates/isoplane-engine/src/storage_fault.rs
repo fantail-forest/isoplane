@@ -35,10 +35,12 @@ impl Drop for Watch {
     }
 }
 
-/// Installs the handler once per process. Wasmtime's handler passes a fault it
-/// does not claim only to the handler installed before it, so installing this
-/// after the first wasmtime engine exists leaves host-code storage faults
-/// uncontained.
+/// Installs the handler once per process. `sigaction` runs the handler
+/// installed last first, and wasmtime's passes a fault it does not claim to the
+/// one installed before it. Installed before the first wasmtime engine, this
+/// handler sees only the faults wasmtime passes on. Installed after, it would
+/// run first and contain a watched fault that wasmtime should have turned
+/// into a guest trap.
 pub(crate) fn install() -> std::io::Result<()> {
     static INSTALLED: OnceLock<Result<(), i32>> = OnceLock::new();
     let installed = *INSTALLED.get_or_init(|| {
