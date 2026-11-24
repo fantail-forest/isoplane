@@ -1,5 +1,3 @@
-//! Instance-owned native networking resources, independent of the Wasmtime Store.
-
 mod addresses;
 mod buffer_sizes;
 mod keep_alive;
@@ -2008,8 +2006,6 @@ mod timer_tests {
         }
     }
 
-    /// SECURITY: no timer is finer than the clock the guest reads, or timing
-    /// a timer would measure below the clock's quantum.
     #[tokio::test(start_paused = true)]
     async fn a_sub_millisecond_timer_is_rounded_up_to_the_clock_quantum() {
         let (context, _woken) = reactor_bindings();

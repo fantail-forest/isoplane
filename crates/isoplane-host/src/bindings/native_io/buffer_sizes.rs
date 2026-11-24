@@ -1,6 +1,3 @@
-//! Kernel buffer sizes on a guest's outbound socket: the bounds a request is
-//! clamped to, and the record the host applies to its own socket.
-
 use isoplane_abi::native_io::{ByteCount, Error, SocketBuffer};
 use tokio::net::TcpStream;
 

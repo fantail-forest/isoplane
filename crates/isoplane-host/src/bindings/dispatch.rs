@@ -1,7 +1,3 @@
-//! What the host keeps for one dispatch on an instance. An instance can have
-//! several dispatches in progress; each slice runs exactly one of them, and the
-//! imports it calls act on that dispatch's state.
-
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 

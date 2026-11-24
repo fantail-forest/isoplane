@@ -1,5 +1,3 @@
-//! Adapts HTTP requests to cell dispatches.
-
 use async_trait::async_trait;
 use isoplane_abi::dispatch::HttpRequest;
 use isoplane_abi::host::{Dispatcher, HttpExchange, HttpUpload, RouteTarget};

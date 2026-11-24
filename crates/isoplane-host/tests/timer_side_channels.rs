@@ -1,11 +1,3 @@
-//! Hostile modules that drive host timers through the raw `poll_call` import,
-//! bypassing any runtime, through the real engine and cell.
-//!
-//! SECURITY: these guard side-channel mitigations. A timer whose readiness
-//! changed while the guest ran would be a clock finer than the frozen slice
-//! clock, which is what Spectre-class attacks need; and an instance's timers
-//! are capped so a guest cannot multiply the host work it causes.
-
 mod common;
 
 use isoplane_abi::dispatch::HttpRequest;
@@ -101,9 +93,6 @@ fn a_future_import_keeps_the_serving_clock_frozen_until_the_next_slice() {
 
 #[test]
 fn a_timer_polled_in_a_loop_never_fires_within_the_slice_that_armed_it() {
-    // Arms a 1 ns timer and polls it 200,000 times, far longer than the timer
-    // runs; seeing it ready traps. Then it parks, and the wake must find it
-    // ready: the timer fires, only never mid-slice.
     let result = dispatch(
         &format!(
             r#"(i32.store (i32.const 2048)

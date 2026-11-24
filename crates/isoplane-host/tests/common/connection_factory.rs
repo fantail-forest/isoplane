@@ -1,4 +1,3 @@
-//! Records the actual connection origin selected by HTTP and managed TCP.
 use isoplane_host::egress::{ConnectionFactory, ConnectionOwner, LocalConnections};
 use parking_lot::Mutex;
 use std::net::SocketAddr;

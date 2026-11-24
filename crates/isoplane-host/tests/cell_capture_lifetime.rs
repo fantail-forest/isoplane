@@ -1,5 +1,3 @@
-//! Capture cannot execute guest callbacks after the dispatch has completed.
-
 mod common;
 
 use isoplane_abi::dispatch::HttpRequest;

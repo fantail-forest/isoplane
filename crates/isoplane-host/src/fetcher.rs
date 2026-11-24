@@ -1,9 +1,3 @@
-//! Outbound HTTP. [`PinnedHttpFetcher`] connects to the address the egress
-//! policy pinned and uses the URL only for the request line and the `Host`
-//! header; nothing here resolves a name, which is what makes DNS rebinding
-//! impossible after the check. This legacy capability supports plain HTTP only;
-//! HTTPS belongs to the guest socket/TLS implementation.
-
 use crate::egress::{ConnectAttempt, ConnectionPermit};
 use std::net::SocketAddr;
 

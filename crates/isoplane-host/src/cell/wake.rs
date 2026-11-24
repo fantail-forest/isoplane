@@ -1,5 +1,3 @@
-//! The wake sink: routes a completed host future onto the execution pool.
-
 use super::*;
 
 /// Routes completions onto the exec pool. Weak references, so a discarded

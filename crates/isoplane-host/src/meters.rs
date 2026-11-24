@@ -1,6 +1,3 @@
-//! Per-tenant worker occupancy, measured during execution and attributed host
-//! work.
-
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 

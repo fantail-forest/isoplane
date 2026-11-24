@@ -1,5 +1,3 @@
-//! Bounded guest memory cannot be reused to grow unmetered host buffers.
-
 mod common;
 
 use std::mem::size_of;

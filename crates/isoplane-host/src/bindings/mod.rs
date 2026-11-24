@@ -1,19 +1,3 @@
-//! The import vtable routes guest capabilities through host-owned services.
-//! `clock_now_coarse` is frozen within a slice; `entropy_fill` draws from the
-//! host CSPRNG per call.
-//!
-//! `ImportCall::scalars` carries the non-buffer scalar arguments in
-//! declaration order, the `(ptr, len)` pair stripped.
-//!
-//! `call_future` and `call_sync` are routers: each import's arms live in a
-//! module named for the capability it belongs to (`http`,
-//! `sockets`, `observability`); a capability with no state or subrequest to
-//! coordinate (the clock, entropy and `abort`) stays here as a sandbox
-//! primitive.
-//!
-//! The imports only a Rust guest calls are routed with the `rust-guests`
-//! feature, and their modules are compiled only with it.
-
 mod cancellation;
 mod dispatch;
 mod http;

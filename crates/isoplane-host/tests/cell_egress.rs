@@ -1,5 +1,3 @@
-//! A guest cannot reach a private or link-local address through `http_fetch`.
-
 use std::sync::Arc;
 use std::time::Duration;
 

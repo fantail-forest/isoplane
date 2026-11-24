@@ -1,5 +1,3 @@
-//! Request future limits and response-completion handover.
-
 use isoplane_harness::logging::GuestLogs;
 use std::sync::Arc;
 use std::time::Duration;

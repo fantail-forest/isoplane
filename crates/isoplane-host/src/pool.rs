@@ -1,5 +1,3 @@
-//! The activator contract and the per-module pool of Handler instances that draws from it.
-
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 

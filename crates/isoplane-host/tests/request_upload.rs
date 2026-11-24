@@ -1,5 +1,3 @@
-//! Request-body imports through the real WASM engine and dispatch context.
-
 mod common;
 
 use isoplane_abi::dispatch::HttpRequest;

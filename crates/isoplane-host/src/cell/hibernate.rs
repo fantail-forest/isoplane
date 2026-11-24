@@ -1,5 +1,3 @@
-//! The idle trajectory and the forced transitions: capture, wake, discard.
-
 use super::*;
 
 impl Cell {

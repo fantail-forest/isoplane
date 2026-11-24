@@ -1,9 +1,3 @@
-//! The cell: reactor threads that own all I/O, an execution pool that runs
-//! Hot dispatches as synchronous calls into the engine, the instance
-//! registries, and the idle trajectory. There is no scheduler: the kernel
-//! preempts a CPU-bound tenant on its own pool thread, and the cell controls
-//! admission with a bounded lane per worker.
-
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Weak};

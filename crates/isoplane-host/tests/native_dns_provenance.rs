@@ -1,5 +1,3 @@
-//! DNS-derived authority survives exact IPv4-mapped representations only.
-
 use isoplane_abi::native_io::{AddressFamily, Error, Request, ResourceHandle, Response};
 use isoplane_engine::HostBindings;
 use isoplane_harness::Reactor;

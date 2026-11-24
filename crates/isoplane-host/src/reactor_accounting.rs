@@ -1,5 +1,3 @@
-//! Attributes active reactor polls through a shared, transferable execution scope.
-
 use std::future::{poll_fn, Future};
 use std::pin::{pin, Pin};
 use std::sync::{Arc, Weak};

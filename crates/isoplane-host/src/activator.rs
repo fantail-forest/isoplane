@@ -1,8 +1,3 @@
-//! The real [`Activator`]: `isoplane-engine`'s template and instance machinery
-//! behind the seam the cell codes against. The template image is held as the
-//! engine's own `Arc`, shared by every instance of the module, because it is
-//! the baseline for every hibernation page diff.
-
 use std::sync::Arc;
 
 use isoplane_engine::{

@@ -1,9 +1,3 @@
-//! The two-phase kill through a real cell with a real wasm guest,
-//! `guests/misbehaver`: `/cooperative` awaits between chunks of work and
-//! unwinds on the cancellation it sees at its next slice, `/spin` never awaits
-//! and is killed, and `/gc_pin` pins the unsafe-to-trap bit and is
-//! killed anyway.
-
 use isoplane_harness::logging::GuestLogs;
 use std::sync::Arc;
 use std::time::Duration;

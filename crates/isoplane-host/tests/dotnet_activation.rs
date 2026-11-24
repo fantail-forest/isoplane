@@ -1,5 +1,3 @@
-//! Asynchronous managed activation through the production cell and timer reactor.
-
 use isoplane_harness::logging::GuestLogs;
 mod common;
 

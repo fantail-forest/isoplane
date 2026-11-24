@@ -1,5 +1,3 @@
-//! Bounded stream buffers and their reactor ownership.
-
 use super::*;
 use isoplane_abi::native_io::ByteCount;
 use std::future::Future;

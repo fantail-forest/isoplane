@@ -1,4 +1,3 @@
-//! HTTP uses the same injected socket origin as ordinary managed TCP.
 #[path = "common/connection_factory.rs"]
 mod connection_factory;
 

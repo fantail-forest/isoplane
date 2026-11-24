@@ -1,5 +1,3 @@
-//! Explicit endpoint exceptions composed with a host-selected destination policy.
-
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 

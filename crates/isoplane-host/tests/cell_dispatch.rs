@@ -1,5 +1,3 @@
-//! Budget-kill isolation, the hang breaker, shedding, and matching results on a shared channel.
-
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -44,7 +42,6 @@ const T: Duration = Duration::from_secs(10);
 /// instance Parked for as long as a test needs to look at it.
 const PARK_MS: u64 = 600_000;
 
-/// Budget kills release the only worker so another tenant can park and wake.
 #[test]
 fn a_budget_killed_spinner_does_not_block_another_tenants_wake() {
     let r = rig(CellConfig {
@@ -248,8 +245,6 @@ fn the_breaker_fails_a_repeat_offender_fast_without_entering_the_guest() {
     r.cell.shutdown();
 }
 
-/// One slow dispatch is submitted first and fifty fast ones behind it, so
-/// the first result off the shared channel is not the first dispatch in.
 #[test]
 fn many_dispatches_share_one_channel_and_stay_matchable() {
     let r = rig(CellConfig {

@@ -1,5 +1,3 @@
-//! Reuse residue and entropy isolation across clones.
-
 use std::sync::Arc;
 use std::time::Duration;
 

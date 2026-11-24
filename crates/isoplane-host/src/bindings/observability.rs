@@ -1,5 +1,3 @@
-//! The `log_emit` import arm.
-
 use std::sync::atomic::Ordering;
 
 use super::CellBindings;

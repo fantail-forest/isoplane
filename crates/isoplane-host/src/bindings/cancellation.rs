@@ -1,18 +1,3 @@
-//! A dispatch's cancellation, kept so the guest can only see it change between
-//! slices.
-//!
-//! SECURITY: guest-visible cancellation stays fixed within a slice so a guest
-//! cannot time its code by polling for cancellation. Budget exhaustion and a
-//! client disconnect can request cancellation while guest code runs; the guest
-//! observes the request at its next slice.
-//!
-//! So a cancellation is only *requested* when it happens, and the request is
-//! never read by anything the guest can reach. What the guest observes is
-//! copied from the request in exactly one place, [`Cancellation::begin_slice`],
-//! as the engine enters the guest; and the cancellation future that wakes a
-//! parked guest is completed only once its slice has ended. Keep every new
-//! guest-facing check of cancellation on [`Cancellation::observed`].
-
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// One dispatch's cancellation. A new dispatch gets a new one, so a request
@@ -42,6 +27,9 @@ impl Cancellation {
 
     /// The only place what the guest observes changes: as the engine enters
     /// the guest for a slice of this dispatch.
+    ///
+    /// SECURITY: a guest that saw cancellation change within a slice could
+    /// time its code by polling for it.
     pub(crate) fn begin_slice(&self) {
         self.observed
             .store(self.requested.load(Ordering::Acquire), Ordering::Release);

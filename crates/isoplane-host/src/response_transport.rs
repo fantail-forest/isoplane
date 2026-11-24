@@ -1,5 +1,3 @@
-//! Response ownership between one dispatch and its requester.
-
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};

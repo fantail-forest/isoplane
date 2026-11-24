@@ -1,5 +1,3 @@
-//! The import vtable driven one host call at a time.
-
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;

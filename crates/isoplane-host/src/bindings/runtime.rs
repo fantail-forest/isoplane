@@ -1,7 +1,3 @@
-//! The per-cell machinery every instance's bindings share: the services the
-//! vtable routes to, the future table, and the wake path back to a pool
-//! thread.
-
 use std::sync::Arc;
 
 use crate::egress::HostEgressPolicy;

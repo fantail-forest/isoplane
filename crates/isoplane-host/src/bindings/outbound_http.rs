@@ -1,5 +1,3 @@
-//! The `http_fetch` and `http_body_read` import arms.
-
 use std::sync::Arc;
 
 use isoplane_abi::calls::FetchRequest;

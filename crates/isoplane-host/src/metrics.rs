@@ -1,7 +1,3 @@
-//! What one cell exposes to a scrape. The histograms are per lifecycle
-//! transition rather than one blended dispatch timer, so a slow dispatch
-//! decomposes into a named transition.
-
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;

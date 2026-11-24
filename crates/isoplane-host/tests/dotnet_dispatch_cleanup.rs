@@ -1,5 +1,3 @@
-//! Real .NET guest resource cleanup through the production cell's dispatch boundary.
-
 use isoplane_harness::logging::GuestLogs;
 mod common;
 #[path = "common/managed.rs"]

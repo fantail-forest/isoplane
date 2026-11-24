@@ -1,5 +1,3 @@
-//! The `req_body_*` and `resp_*` import arms.
-
 use std::sync::Arc;
 
 use isoplane_abi::result::{FutureError, ResultRecord};

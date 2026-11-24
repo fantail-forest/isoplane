@@ -1,7 +1,3 @@
-//! The runtime-parameterised test macro shared by native I/O tests: runs one
-//! test body under the Mono runtime, on the real reactor from
-//! `isoplane_harness`.
-
 pub use isoplane_fixtures::GuestRuntime;
 pub use isoplane_harness::{Reactor, ReturnedGuest, WAKE_DEADLINE};
 

@@ -1,5 +1,3 @@
-//! The dispatch submission API: what a caller hands the cell and what comes back.
-
 use super::*;
 
 #[derive(Debug, Clone)]
