@@ -1,10 +1,3 @@
-//! The Microsoft.Extensions stack a customer's application is built on,
-//! inside the guest: dependency injection and its scope guards,
-//! configuration from memory and JSON (and its file providers on the empty
-//! disk), options, logging into a sink the route owns, activities and
-//! diagnostic listeners, the generic host's lifecycle, and the process
-//! facts the runtime reports.
-
 #[macro_use]
 mod common;
 
@@ -64,9 +57,6 @@ in_mono_runtime! {
 }
 
 in_mono_runtime! {
-    /// File providers meet the empty read-only disk: a required file fails
-    /// as `FileNotFoundException`, an optional one is skipped, and the
-    /// environment provider sees nothing.
     #[tokio::test]
     async fn file_backed_configuration_on_the_empty_disk_is_absent_or_refused(runtime: GuestRuntime) {
         assert_eq!(
@@ -127,9 +117,6 @@ in_mono_runtime! {
 }
 
 in_mono_runtime! {
-    /// The generic host built without defaults starts and stops its hosted
-    /// service on the one thread, with no console lifetime, file provider
-    /// or signal handler.
     #[tokio::test]
     async fn the_generic_host_without_defaults_runs_a_hosted_service_through_start_and_stop(runtime: GuestRuntime) {
         assert_eq!(
@@ -141,10 +128,6 @@ in_mono_runtime! {
 }
 
 in_mono_runtime! {
-    /// The default application builder wires the console lifetime, the
-    /// physical file provider over the content root, environment variables
-    /// and the console logger: what of that the empty disk and the single
-    /// thread refuse is recorded here.
     #[tokio::test]
     async fn the_default_application_builder_is_refused_by_what_it_assumes_of_the_process(runtime: GuestRuntime) {
         let answer = answer(runtime, 350, "/hosting/host-defaults").await;
@@ -167,8 +150,6 @@ in_mono_runtime! {
 }
 
 in_mono_runtime! {
-    /// One thread, a 32-bit wasm process, an empty environment, no
-    /// arguments, and the runtime identifies itself.
     #[tokio::test]
     async fn the_process_facts_describe_a_single_threaded_wasm_guest(runtime: GuestRuntime) {
         let answer = answer(runtime, 352, "/hosting/environment").await;

@@ -1,5 +1,3 @@
-//! A destination policy admitting exactly the peers a test owns.
-
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 

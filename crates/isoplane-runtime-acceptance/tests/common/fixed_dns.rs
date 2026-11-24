@@ -1,5 +1,3 @@
-//! The resolver that answers every name the same way.
-
 use std::net::SocketAddr;
 
 use isoplane_host::egress::DnsError;

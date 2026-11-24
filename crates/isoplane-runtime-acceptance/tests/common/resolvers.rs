@@ -1,6 +1,3 @@
-//! Scripted resolvers that fail or never answer, and a reactor built
-//! around one; the one that answers is [`fixed_dns`](../fixed_dns.rs).
-
 use std::net::SocketAddr;
 use std::sync::Arc;
 

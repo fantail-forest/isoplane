@@ -1,6 +1,3 @@
-//! Owned TCP peers that put a connection into each state the runtime must
-//! handle, and a reactor that admits exactly them.
-
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;

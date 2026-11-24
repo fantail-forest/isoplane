@@ -1,10 +1,3 @@
-//! Synchronous waits and lock acquisitions on the guest's one thread: a call
-//! that can be satisfied at once succeeds, a zero-timeout try that cannot
-//! returns false, and a call that would have to block throws
-//! `PlatformNotSupportedException` within the invocation that made it. A wait
-//! that parked, trapped or ran into the budget shows as that completion
-//! instead of an answer.
-
 #[macro_use]
 mod common;
 

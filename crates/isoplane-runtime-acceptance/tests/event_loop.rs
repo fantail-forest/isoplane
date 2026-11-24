@@ -1,8 +1,3 @@
-//! The host-driven WASI event loop (runtime patch 006): timers park the guest
-//! on host-owned wake sources, ready work runs before a park, continuations
-//! resume across destroyed Stores, and registrations are held once and
-//! released with their owner.
-
 use isoplane_harness::logging::GuestLogs;
 #[macro_use]
 mod common;
@@ -51,8 +46,6 @@ in_mono_runtime! {
 }
 
 in_mono_runtime! {
-    /// The timer queue arms one host timer for its earliest deadline and re-arms
-    /// it as timers fire, so concurrent delays share a park and a registration.
     #[tokio::test]
     async fn concurrent_delays_share_one_park_and_the_queues_one_host_timer(runtime: GuestRuntime) {
         let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
@@ -95,8 +88,6 @@ in_mono_runtime! {
 }
 
 in_mono_runtime! {
-    /// A parked timer survives hibernation: its continuation runs after the
-    /// guest's memory went through the local snapshot.
     #[tokio::test(start_paused = true)]
     async fn a_parked_delay_survives_a_hibernation_delta_round_trip(runtime: GuestRuntime) {
         let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
@@ -348,9 +339,8 @@ in_mono_runtime! {
 }
 
 in_mono_runtime! {
-    /// Every synchronous wait the BCL offers on work that needs a host wake
-    /// refuses explicitly: the guest has no thread to block and no way to park
-    /// inside a call, so the alternative to an exception is a trap or a hang.
+    /// The guest has no thread to block and no way to park inside a call, so
+    /// the alternative to an exception is a trap or a hang.
     #[tokio::test]
     async fn every_synchronous_wait_on_host_backed_work_fails_explicitly(runtime: GuestRuntime) {
         let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
@@ -390,8 +380,7 @@ in_mono_runtime! {
 }
 
 in_mono_runtime! {
-    /// Waiting on work that is already complete needs no wake and is not
-    /// blocking; refusing it would break ordinary code.
+    /// Refusing a wait on completed work would break ordinary code.
     #[tokio::test]
     async fn waiting_on_completed_work_is_not_blocking(runtime: GuestRuntime) {
         let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());

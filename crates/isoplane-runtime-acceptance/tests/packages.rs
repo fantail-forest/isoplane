@@ -1,9 +1,3 @@
-//! One Mono runtime module, linked and compiled with no application, runs
-//! application packages it was never built with. Each package is served as
-//! application files, loaded by the runtime's fixed loader as a layer over
-//! the runtime's baseline during real preparation, and executed through the
-//! reactor across a park and a hibernation delta.
-
 use isoplane_harness::logging::GuestLogs;
 use std::io::Read;
 use std::sync::{Arc, OnceLock};

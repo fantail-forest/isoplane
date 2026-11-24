@@ -1,5 +1,3 @@
-//! Owned HTTP and WebSocket peers, admitting no outside service.
-
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};

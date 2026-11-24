@@ -1,6 +1,3 @@
-//! Managed HTTP proxy/authentication and ClientWebSocket through real guest
-//! sockets, with a Store destroyed and restored at every asynchronous wait.
-
 use isoplane_harness::logging::GuestLogs;
 #[macro_use]
 mod common;

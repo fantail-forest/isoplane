@@ -1,10 +1,3 @@
-//! Cryptography through the pack's native OpenSSL backend (runtime patch
-//! 009): the standard vectors hold, asymmetric primitives sign, verify and
-//! agree, certificates parse and chain to a custom root, and randomness is
-//! the host's entropy, fresh in every activation. The negatives: tampered
-//! and malformed input is refused the way upstream .NET refuses it, key
-//! material round-trips every format, and a disposed key is unusable.
-
 #[macro_use]
 mod common;
 #[path = "common/crypto_vectors.rs"]
@@ -210,8 +203,6 @@ in_mono_runtime! {
 }
 
 in_mono_runtime! {
-    /// Two activations of one template draw different random bytes: the
-    /// generator draws from the host, never from a warm heap the clone copied.
     #[tokio::test]
     async fn randomness_is_fresh_in_every_activation(runtime: GuestRuntime) {
         let first = answer(runtime, 65, "/crypto/random").await;

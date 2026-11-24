@@ -1,5 +1,3 @@
-//! The source-built Mono acceptance guest on a real reactor, with pack identity verification.
-
 pub use isoplane_fixtures::GuestRuntime;
 use isoplane_harness::{Reactor, ReturnedGuest};
 
