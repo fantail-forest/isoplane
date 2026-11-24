@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Text.Json;
 using Microsoft.Win32.SafeHandles;
 using Isoplane.Native;
 using Isoplane.Native.Interop;
@@ -37,44 +36,55 @@ internal sealed class OwnedProcess : IDisposable
 
     internal static unsafe OwnedProcess Start(ProcessStartInfo child, TimeSpan grace)
     {
-        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS() && !OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Local process ownership is supported on Linux, macOS and Windows.");
         NativeRuntime.EnsureLoaded();
-        var settings = JsonSerializer.SerializeToUtf8Bytes(new
+        NativeProcessStarted started;
+        using (var arguments = new NativeArguments())
         {
-            executable = child.FileName, arguments = child.ArgumentList.ToArray(),
-            directory = string.IsNullOrEmpty(child.WorkingDirectory) ? Environment.CurrentDirectory : child.WorkingDirectory,
-            environment = child.Environment.Where(pair => pair.Value is not null).ToDictionary(pair => pair.Key, pair => pair.Value!),
-            capture_output = child.RedirectStandardOutput, capture_errors = child.RedirectStandardError,
-            cleanup_grace_ms = checked((ulong)grace.TotalMilliseconds),
-        });
-        fixed (byte* data = settings)
+            var argumentList = child.ArgumentList.ToArray();
+            var environment = child.Environment.Where(pair => pair.Value is not null).ToDictionary(pair => pair.Key, pair => pair.Value!);
+            var settings = new NativeProcessStart
+            {
+                executable = arguments.Text(child.FileName),
+                arguments = arguments.Texts(argumentList),
+                arguments_length = (nuint)argumentList.Length,
+                directory = arguments.Text(string.IsNullOrEmpty(child.WorkingDirectory) ? Environment.CurrentDirectory : child.WorkingDirectory),
+                environment = arguments.Settings(environment),
+                environment_length = (nuint)environment.Count,
+                capture_output = child.RedirectStandardOutput,
+                capture_errors = child.RedirectStandardError,
+                cleanup_grace_ms = checked((ulong)grace.TotalMilliseconds),
+            };
+            NativeRuntime.Check(NativeMethods.isoplane_process_start(&settings, &started));
+        }
+        var handle = (nint)started.handle;
+        var inputHandle = new SafeFileHandle((nint)started.stdin, ownsHandle: true);
+        var outputHandle = child.RedirectStandardOutput ? new SafeFileHandle((nint)started.stdout, ownsHandle: true) : null;
+        var errorHandle = child.RedirectStandardError ? new SafeFileHandle((nint)started.stderr, ownsHandle: true) : null;
+        StreamWriter? input = null;
+        StreamReader? output = null;
+        StreamReader? errors = null;
+        try
         {
-            var result = NativeRuntime.Read(NativeMethods.isoplane_process_start(data, (nuint)settings.Length));
-            var handle = (nint)result["handle"]!.GetValue<ulong>();
-            var inputHandle = new SafeFileHandle((nint)result["stdin"]!.GetValue<long>(), ownsHandle: true);
-            var outputHandle = result["stdout"] is { } stdout ? new SafeFileHandle((nint)stdout.GetValue<long>(), ownsHandle: true) : null;
-            var errorHandle = result["stderr"] is { } stderr ? new SafeFileHandle((nint)stderr.GetValue<long>(), ownsHandle: true) : null;
-            StreamWriter? input = null;
-            StreamReader? output = null;
-            StreamReader? errors = null;
-            try
-            {
-                input = new StreamWriter(new FileStream(inputHandle, FileAccess.Write)) { AutoFlush = true };
-                if (outputHandle is not null) output = new StreamReader(new FileStream(outputHandle, FileAccess.Read));
-                if (errorHandle is not null) errors = new StreamReader(new FileStream(errorHandle, FileAccess.Read));
-                return new OwnedProcess(handle, result["pid"]!.GetValue<int>(), input, output, errors, grace);
-            }
-            catch
-            {
-                input?.Dispose(); output?.Dispose(); errors?.Dispose();
-                inputHandle.Dispose(); outputHandle?.Dispose(); errorHandle?.Dispose();
-                NativeMethods.isoplane_process_free((void*)handle);
-                throw;
-            }
+            input = new StreamWriter(new FileStream(inputHandle, FileAccess.Write)) { AutoFlush = true };
+            if (outputHandle is not null) output = new StreamReader(new FileStream(outputHandle, FileAccess.Read));
+            if (errorHandle is not null) errors = new StreamReader(new FileStream(errorHandle, FileAccess.Read));
+            return new OwnedProcess(handle, checked((int)started.pid), input, output, errors, grace);
+        }
+        catch
+        {
+            input?.Dispose(); output?.Dispose(); errors?.Dispose();
+            inputHandle.Dispose(); outputHandle?.Dispose(); errorHandle?.Dispose();
+            NativeMethods.isoplane_process_free((void*)handle);
+            throw;
         }
     }
 
-    private unsafe int Wait() => NativeRuntime.Read(NativeMethods.isoplane_process_wait((void*)handle))["exit_code"]!.GetValue<int>();
+    private unsafe int Wait()
+    {
+        int exitCode;
+        NativeRuntime.Check(NativeMethods.isoplane_process_wait((void*)handle, &exitCode));
+        return exitCode;
+    }
 
     internal async Task WaitForExitAsync(CancellationToken cancellation = default) => await completion.WaitAsync(cancellation);
 
@@ -92,7 +102,7 @@ internal sealed class OwnedProcess : IDisposable
 
     private unsafe void Terminate()
     {
-        if (!disposed) NativeRuntime.Read(NativeMethods.isoplane_process_stop((void*)handle));
+        if (!disposed) NativeRuntime.Check(NativeMethods.isoplane_process_stop((void*)handle));
     }
 
     public unsafe void Dispose()

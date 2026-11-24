@@ -2,6 +2,7 @@ using System.Formats.Tar;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Isoplane.Native;
 
 namespace Isoplane.Cli.Tests;
 
@@ -12,7 +13,7 @@ internal sealed class SessionFixture : IDisposable
     internal string RuntimeCache { get; }
     // A minimal staged runtime isolates native session ownership; installed SDK tests exercise Mono.
     internal static byte[] Module => Convert.FromBase64String("AGFzbQEAAAABHAVgAn9/AX9gAn9/AX5gA35/fwF+YAABfmABfwADBwYAAQIDAwQFBAEBAQEHhAEHBm1lbW9yeQIADmlzb3BsYW5lX2FsbG9jAAAPaXNvcGxhbmVfaGFuZGxlAAENaXNvcGxhbmVfd2FrZQACG2lzb3BsYW5lX2luaXRpYWxpemVfcnVudGltZQADE2lzb3BsYW5lX2luaXRpYWxpemUABBBpc29wbGFuZV9nY19oaW50AAUKHQYEAEEACwQAQgELBABCAQsEAEIACwQAQgALAgAL");
-    internal byte[] Options { get; }
+    internal LocalSessionOptions Options { get; }
 
     /// <param name="runtimeCache">Another project's runtime cache to share, or none for one of this project's own.</param>
     internal SessionFixture(string? runtimeCache = null)
@@ -30,7 +31,7 @@ internal sealed class SessionFixture : IDisposable
                 }
             }));
         }
-        Options = project.SessionOptions(new DevelopmentSettings("session", 0, [], LimitOverrides.None, null,
+        Options = project.SessionOptions(new DevelopmentSettings("session", 0, [], default, null,
             Path.Combine(ProjectDirectory, "obj"), RuntimeCache));
     }
 

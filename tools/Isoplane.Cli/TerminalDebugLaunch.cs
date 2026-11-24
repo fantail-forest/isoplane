@@ -1,17 +1,33 @@
 using System.Net.Sockets;
 using System.Text.Json;
-using System.Text.Json.Nodes;
+using Isoplane.Native;
 
 namespace Isoplane.Cli;
+
+/// <summary>
+/// What an application started in the editor's terminal tells the debug adapter that waits for it: where the
+/// adapter reaches its debugger, and the application that is ready.
+/// </summary>
+internal sealed record DebugLaunchAnnouncement(string Endpoint, string App, string Url)
+{
+    private static readonly JsonSerializerOptions Wire = new(JsonSerializerDefaults.Web) { RespectRequiredConstructorParameters = true, RespectNullableAnnotations = true };
+
+    /// <summary>The announcement as the one line it is sent in.</summary>
+    internal string Line => JsonSerializer.Serialize(this, Wire);
+
+    /// <summary>Reads the line <see cref="Line"/> wrote. Throws <see cref="JsonException"/> when it is anything else.</summary>
+    internal static DebugLaunchAnnouncement Read(string line) =>
+        JsonSerializer.Deserialize<DebugLaunchAnnouncement>(line, Wire) ?? throw new JsonException("The announcement is an object.");
+}
 
 internal sealed class TerminalDebugLaunch(TcpClient client, Task connected, CancellationTokenSource lifetime) : IAsyncDisposable
 {
     private readonly Task monitoring = MonitorAsync(client, connected, lifetime);
 
-    internal async Task AnnounceAsync(string endpoint, JsonObject ready, CancellationToken cancellation)
+    internal async Task AnnounceAsync(string endpoint, SessionEvent.Ready ready, CancellationToken cancellation)
     {
         using (var writer = new StreamWriter(client.GetStream(), leaveOpen: true))
-            await writer.WriteLineAsync(JsonSerializer.Serialize(new { endpoint, app = ready["app"]?.GetValue<string>(), url = ready["url"]?.GetValue<string>() }).AsMemory(), cancellation);
+            await writer.WriteLineAsync(new DebugLaunchAnnouncement(endpoint, ready.App, ready.Url).Line.AsMemory(), cancellation);
         await connected.WaitAsync(cancellation);
         await monitoring;
         client.Dispose();

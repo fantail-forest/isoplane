@@ -218,7 +218,7 @@ async fn an_unchanged_interpreted_run_reuses_its_prepared_template() {
     assert!(
         diagnostics.contains("reusing the local runtime baseline")
             && diagnostics.contains("reusing the prepared application")
-            && diagnostics.contains("\"compiled\":false"),
+            && diagnostics.contains(" compiled=false"),
         "an unchanged run must reuse its prepared application and native compilation:\n{diagnostics}"
     );
     let response = reqwest::get(&second.url)

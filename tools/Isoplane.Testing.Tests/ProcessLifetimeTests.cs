@@ -209,9 +209,9 @@ public sealed class ProcessLifetimeTests
 
     [Theory]
     [InlineData("{not-json}")]
-    [InlineData("{\"event\":\"ready\",\"url\":\"https://127.0.0.1:443\"}")]
-    [InlineData("{\"event\":\"ready\",\"url\":\"http://127.0.0.1:0\"}")]
-    [InlineData("{\"event\":\"ready\",\"url\":\"http://example.com:80\"}")]
+    [InlineData("{\"event\":\"ready\",\"app\":\"fixture\",\"url\":\"https://127.0.0.1:443\"}")]
+    [InlineData("{\"event\":\"ready\",\"app\":\"fixture\",\"url\":\"http://127.0.0.1:0\"}")]
+    [InlineData("{\"event\":\"ready\",\"app\":\"fixture\",\"url\":\"http://example.com:80\"}")]
     public async Task invalid_machine_readiness_is_refused_and_its_process_is_closed(string record)
     {
         using var fixture = new SessionFixture();
@@ -307,7 +307,7 @@ public sealed class ProcessLifetimeTests
             File.WriteAllText(Path.Combine(Directory, "process-fixture.json"), JsonSerializer.Serialize(new
             {
                 scenario,
-                readiness = readiness ?? JsonSerializer.Serialize(new { @event = "ready", url = Address.ToString() })
+                readiness = readiness ?? JsonSerializer.Serialize(new { @event = "ready", app = "fixture", url = Address.ToString() })
             }));
         }
 

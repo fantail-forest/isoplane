@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Text.Json.Nodes;
+using Isoplane.Native;
 using Xunit;
 
 namespace Isoplane.Cli.Tests;
@@ -47,7 +48,7 @@ public sealed class TerminalDebugLaunchTests
         await using var launch = new TerminalDebugLaunch(application, connected.Task, lifetime);
         try
         {
-            var announced = launch.AnnounceAsync("127.0.0.1:1234", new JsonObject { ["app"] = "test", ["url"] = "http://127.0.0.1:5678" }, deadline.Token);
+            var announced = launch.AnnounceAsync("127.0.0.1:1234", new SessionEvent.Ready("test", "http://127.0.0.1:5678"), deadline.Token);
             using (var reader = new StreamReader(editor.GetStream(), leaveOpen: true))
             {
                 var information = JsonNode.Parse((await reader.ReadLineAsync(deadline.Token))!);

@@ -7,35 +7,77 @@ use std::time::UNIX_EPOCH;
 use sha2::Digest;
 
 use crate::error::Error;
+use crate::interop::{NativeManifest, NativeText};
 
-/// Reports the compiled runtimes kept at `directory`, without creating it.
-pub(crate) fn inventory(directory: &[u8]) -> Result<Vec<u8>, Error> {
-    Ok(report(&path(directory)?)?.to_string().into_bytes())
+/// The compiled runtimes kept at `directory`, without creating it.
+pub(crate) fn inventory(directory: &[u8]) -> Result<Inventory, Error> {
+    Inventory::of(&path(directory)?)
+}
+
+/// The compiled runtimes a cache holds.
+pub(crate) struct Inventory {
+    /// The most the cache keeps before it removes the runtimes used least recently.
+    budget_bytes: u64,
+    entries: Vec<CompiledRuntime>,
+}
+
+/// One compiled runtime in the cache.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CompiledRuntime {
+    pub bytes: u64,
+    pub last_used_unix_ms: u64,
+}
+
+/// What clearing a cache did.
+pub(crate) struct Cleared {
+    /// The cache as clearing left it.
+    remaining: Inventory,
+    removed_bytes: u64,
+    /// Why each remaining runtime could not be removed.
+    failures: Vec<String>,
+}
+
+/// The compiled runtimes a cache holds, released with
+/// `isoplane_runtime_cache_inventory_free`.
+#[repr(C)]
+pub struct NativeCacheInventory {
+    /// The most the cache keeps before it removes the runtimes used least recently.
+    pub budget_bytes: u64,
+    pub entries: *mut CompiledRuntime,
+    pub entries_length: usize,
+}
+
+/// What clearing a cache did, released with `isoplane_runtime_cache_cleared_free`.
+#[repr(C)]
+pub struct NativeCacheCleared {
+    /// The cache as clearing left it.
+    pub remaining: NativeCacheInventory,
+    pub removed_bytes: u64,
+    /// Why each remaining runtime could not be removed.
+    pub failures: *mut NativeText,
+    pub failures_length: usize,
 }
 
 /// Removes every compiled runtime kept at `directory`, and reports what was
 /// removed, what could not be and what remains.
-pub(crate) fn clear(directory: &[u8]) -> Result<Vec<u8>, Error> {
+pub(crate) fn clear(directory: &[u8]) -> Result<Cleared, Error> {
     let directory = path(directory)?;
-    let before = report(&directory)?;
+    let before = Inventory::of(&directory)?;
     let failures = match directory.exists() {
         true => cache(&directory)?.clear()?,
         false => Vec::new(),
     };
-    let mut after = report(&directory)?;
-    after["removed_bytes"] = bytes(&before).saturating_sub(bytes(&after)).into();
-    after["failures"] = failures
-        .iter()
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .into();
-    Ok(after.to_string().into_bytes())
+    let remaining = Inventory::of(&directory)?;
+    Ok(Cleared {
+        removed_bytes: before.bytes().saturating_sub(remaining.bytes()),
+        remaining,
+        failures: failures.iter().map(ToString::to_string).collect(),
+    })
 }
 
 /// What a shared runtime is compiled for: the settings a session of an
 /// application package on it would compile it with.
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
 struct Preparation {
     manifest: isoplane_abi::config::AppManifest,
     runtime_library: PathBuf,
@@ -45,17 +87,50 @@ struct Preparation {
     runtime_identity: String,
 }
 
+/// What a shared runtime is compiled for, as the managed caller lends it for the call.
+#[repr(C)]
+pub struct NativeRuntimeOptions {
+    pub manifest: NativeManifest,
+    /// The native library, whose identity the compiled runtime depends on.
+    pub runtime_library: NativeText,
+    /// The absolute directory of the cache to compile into.
+    pub runtime_cache_directory: NativeText,
+    /// The machine's trusted roots exported as PEM, or empty to trust the shipped roots alone.
+    pub machine_roots: NativeText,
+    /// The runtime's `runtime.json`, which names its SDK and the runtime module's digest.
+    pub runtime_identity: NativeText,
+}
+
+impl NativeRuntimeOptions {
+    /// # Safety
+    /// Every text is readable for its length for this call.
+    unsafe fn read(&self) -> Result<Preparation, Error> {
+        // SAFETY: forwarded from the caller.
+        unsafe {
+            Ok(Preparation {
+                manifest: self.manifest.read()?,
+                runtime_library: self.runtime_library.read()?.into(),
+                runtime_cache_directory: self.runtime_cache_directory.read()?.into(),
+                machine_roots: self.machine_roots.optional()?.map(PathBuf::from),
+                runtime_identity: self.runtime_identity.read()?.into(),
+            })
+        }
+    }
+}
+
 /// Compiles the shared runtime `wasm` and its debug build `debug_wasm` into
 /// the runtime cache, and reports whether each had to be compiled.
-pub(crate) fn prepare(wasm: &[u8], debug_wasm: &[u8], options: &[u8]) -> Result<Vec<u8>, Error> {
-    let options: Preparation = serde_json::from_slice(options)?;
-    let prepared = prepare_runtime(wasm, debug_wasm, options).map_err(Error::RuntimePreparation)?;
-    Ok(serde_json::json!({
-        "baseline_compiled": prepared.baseline_compiled,
-        "debug_compiled": prepared.debug_compiled,
-    })
-    .to_string()
-    .into_bytes())
+///
+/// # Safety
+/// As for `NativeRuntimeOptions::read`.
+pub(crate) unsafe fn prepare(
+    wasm: &[u8],
+    debug_wasm: &[u8],
+    options: &NativeRuntimeOptions,
+) -> Result<crate::local::RuntimePreparation, Error> {
+    // SAFETY: forwarded from the caller.
+    let options = unsafe { options.read()? };
+    prepare_runtime(wasm, debug_wasm, options).map_err(Error::RuntimePreparation)
 }
 
 fn prepare_runtime(
@@ -106,36 +181,83 @@ fn cache(directory: &Path) -> Result<isoplane_cache::Cache, Error> {
     )?)
 }
 
-fn report(directory: &Path) -> Result<serde_json::Value, Error> {
-    let entries = match directory.exists() {
-        true => cache(directory)?.entries()?,
-        false => Vec::new(),
-    };
-    Ok(serde_json::json!({
-        "budget_bytes": isoplane_cache::RUNTIME_CACHE_BYTES.0,
-        "entries": entries.iter().map(|entry| serde_json::json!({
-            "bytes": entry.bytes,
-            "last_used_unix_ms": entry.last_used.duration_since(UNIX_EPOCH).map_or(0, |since| since.as_millis() as u64),
-        })).collect::<Vec<_>>(),
-    }))
+impl Inventory {
+    /// The cache at `directory`, which is empty when the directory does not exist.
+    fn of(directory: &Path) -> Result<Self, Error> {
+        let entries = match directory.exists() {
+            true => cache(directory)?.entries()?,
+            false => Vec::new(),
+        };
+        Ok(Self {
+            budget_bytes: isoplane_cache::RUNTIME_CACHE_BYTES.0,
+            entries: entries
+                .iter()
+                .map(|entry| CompiledRuntime {
+                    bytes: entry.bytes,
+                    last_used_unix_ms: entry
+                        .last_used
+                        .duration_since(UNIX_EPOCH)
+                        .map_or(0, |since| since.as_millis() as u64),
+                })
+                .collect(),
+        })
+    }
+
+    fn bytes(&self) -> u64 {
+        self.entries.iter().map(|entry| entry.bytes).sum()
+    }
+
+    /// The inventory as the managed caller receives it.
+    pub(crate) fn native(self) -> NativeCacheInventory {
+        let (entries, entries_length) = crate::interop::owned(self.entries);
+        NativeCacheInventory {
+            budget_bytes: self.budget_bytes,
+            entries,
+            entries_length,
+        }
+    }
 }
 
-fn bytes(report: &serde_json::Value) -> u64 {
-    report["entries"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|entry| entry["bytes"].as_u64())
-        .sum()
+impl NativeCacheInventory {
+    /// # Safety
+    /// `self` came from `Inventory::native` and is released once.
+    pub(crate) unsafe fn release(self) {
+        // SAFETY: forwarded from the caller.
+        drop(unsafe { crate::interop::release(self.entries, self.entries_length) });
+    }
+}
+
+impl Cleared {
+    /// The report as the managed caller receives it.
+    pub(crate) fn native(self) -> NativeCacheCleared {
+        let (failures, failures_length) =
+            crate::interop::owned(self.failures.into_iter().map(NativeText::owned).collect());
+        NativeCacheCleared {
+            remaining: self.remaining.native(),
+            removed_bytes: self.removed_bytes,
+            failures,
+            failures_length,
+        }
+    }
+}
+
+impl NativeCacheCleared {
+    /// # Safety
+    /// `self` came from `Cleared::native` and is released once.
+    pub(crate) unsafe fn release(self) {
+        // SAFETY: forwarded from the caller.
+        unsafe {
+            self.remaining.release();
+            for failure in crate::interop::release(self.failures, self.failures_length) {
+                failure.release();
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn parsed(report: Vec<u8>) -> serde_json::Value {
-        serde_json::from_slice(&report).expect("a report is JSON")
-    }
 
     fn directory(root: &tempfile::TempDir) -> Vec<u8> {
         root.path()
@@ -149,10 +271,9 @@ mod tests {
     #[test]
     fn an_inventory_of_a_cache_no_session_has_filled_is_empty_and_creates_nothing() {
         let root = tempfile::tempdir().expect("directory");
-        let report = parsed(inventory(&directory(&root)).expect("inventory"));
-        assert_eq!(
-            report["entries"],
-            serde_json::json!([]),
+        let report = inventory(&directory(&root)).expect("inventory");
+        assert!(
+            report.entries.is_empty(),
             "a cache that does not exist holds nothing"
         );
         assert!(
@@ -170,23 +291,24 @@ mod tests {
             .expect("lease");
         std::fs::write(lease.directory().join("runtime.cwasm"), [0; 4096]).expect("artifact");
         drop(lease);
-        let before = parsed(inventory(&directory(&root)).expect("inventory"));
+        let before = inventory(&directory(&root)).expect("inventory");
         assert_eq!(
-            before["entries"][0]["bytes"], 4096,
+            before
+                .entries
+                .iter()
+                .map(|entry| entry.bytes)
+                .collect::<Vec<_>>(),
+            [4096],
             "an inventory must size each compiled runtime"
         );
-        let cleared = parsed(clear(&directory(&root)).expect("clear"));
+        let cleared = clear(&directory(&root)).expect("clear");
         assert_eq!(
             (
-                &cleared["removed_bytes"],
-                &cleared["entries"],
-                &cleared["failures"]
+                cleared.removed_bytes,
+                cleared.remaining.entries.len(),
+                cleared.failures.len()
             ),
-            (
-                &serde_json::json!(4096),
-                &serde_json::json!([]),
-                &serde_json::json!([])
-            ),
+            (4096, 0, 0),
             "clearing must remove every compiled runtime and say how much it freed"
         );
     }

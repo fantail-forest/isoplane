@@ -52,7 +52,7 @@ impl LogCapture {
             .filter_map(|(sequence, line)| {
                 let event: serde_json::Value =
                     serde_json::from_str(line).expect("tracing JSON event");
-                if event["target"] != "isoplane_host::bindings::observability"
+                if event["target"] != isoplane_host::bindings::GUEST_LOG_TARGET
                     || event["fields"]["message"] != "guest log"
                 {
                     return None;
@@ -88,7 +88,7 @@ impl LogCapture {
                     .with_ansi(false)
                     .with_writer(capture.clone())
                     .with_filter(tracing_subscriber::filter::filter_fn(|metadata| {
-                        metadata.target() == "isoplane_host::bindings::observability"
+                        metadata.target() == isoplane_host::bindings::GUEST_LOG_TARGET
                     })),
             );
             tracing::subscriber::set_global_default(subscriber)

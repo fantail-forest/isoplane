@@ -1,4 +1,4 @@
-using System.Text.Json;
+using Isoplane.Native;
 using Xunit;
 
 namespace Isoplane.Cli.Tests;
@@ -11,12 +11,8 @@ public sealed class LocalProjectTests : IDisposable
 
     public void Dispose() => directory.Delete(recursive: true);
 
-    private static string Option(LocalProject project, string name)
-    {
-        var settings = new DevelopmentSettings("App", 0, [], LimitOverrides.None, null, Path.Combine(Path.GetTempPath(), "obj"), Path.Combine(Path.GetTempPath(), "runtimes"));
-        using var options = JsonDocument.Parse(project.SessionOptions(settings));
-        return options.RootElement.GetProperty(name).GetString()!;
-    }
+    private static LocalSessionOptions Options(LocalProject project) =>
+        project.SessionOptions(new DevelopmentSettings("App", 0, [], default, null, Path.Combine(Path.GetTempPath(), "obj"), Path.Combine(Path.GetTempPath(), "runtimes")));
 
     [Fact]
     public void a_project_keeps_its_files_in_its_own_directory_and_its_scratch_under_msbuild_intermediates()
@@ -25,9 +21,9 @@ public sealed class LocalProjectTests : IDisposable
         var root = Path.Combine(Project("one"), ".isoplane");
         Assert.Equal(Path.Combine(root, "package", "application.tar"), project.Package);
         Assert.Equal(Path.Combine(root, "local", "trust"), project.Trust);
-        Assert.StartsWith(Path.Combine(root, "local") + Path.DirectorySeparatorChar, Option(project, "state_directory"), StringComparison.Ordinal);
+        Assert.StartsWith(Path.Combine(root, "local") + Path.DirectorySeparatorChar, Options(project).StateDirectory, StringComparison.Ordinal);
         Assert.StartsWith(Path.Combine(root, "debug") + Path.DirectorySeparatorChar, project.Scratch("debug"), StringComparison.Ordinal);
-        Assert.Equal(Path.Combine(Path.GetTempPath(), "obj", "isoplane"), Option(project, "compilation_directory"));
+        Assert.Equal(Path.Combine(Path.GetTempPath(), "obj", "isoplane"), Options(project).CompilationDirectory);
     }
 
     [Fact]
@@ -37,7 +33,7 @@ public sealed class LocalProjectTests : IDisposable
         var folder = Path.GetDirectoryName(Path.GetDirectoryName(project.Package))!;
         Assert.Equal(Target, Path.GetDirectoryName(folder));
         Assert.StartsWith("App-", Path.GetFileName(folder), StringComparison.Ordinal);
-        foreach (var path in new[] { project.Trust, project.Scratch("bundle"), project.Scratch("debug"), Option(project, "state_directory"), Option(project, "compilation_directory") })
+        foreach (var path in new[] { project.Trust, project.Scratch("bundle"), project.Scratch("debug"), Options(project).StateDirectory, Options(project).CompilationDirectory })
             Assert.StartsWith(folder + Path.DirectorySeparatorChar, path, StringComparison.Ordinal);
     }
 

@@ -35,6 +35,7 @@ mod trace_spans;
 pub use http_scope::{Fetcher, OutboundBody, OutboundResponse, ResponseBody};
 pub use instance::{GuestResourceLimits, InstanceCtx, Tenancy};
 pub(crate) use native_io::IdleTimers;
+pub use observability::GUEST_LOG_TARGET;
 pub use preparation::{PreparationIo, PreparationIoConfig};
 pub use runtime::{CellRuntime, Services, WakeSink};
 pub use runtime_configuration::{

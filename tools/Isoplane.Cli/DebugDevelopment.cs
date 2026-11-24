@@ -1,6 +1,4 @@
 using System.Net.Sockets;
-using System.Text.Json;
-using System.Text.Json.Nodes;
 using Isoplane.Native;
 using Isoplane.Build;
 
@@ -62,17 +60,14 @@ internal static class DebugDevelopment
         var settings = await DevelopmentSettings.ResolveAsync(options, cancellation);
         using var publications = new SemaphoreSlim(1, 1);
         bool debugging = true;
-        if (options.Json)
-            Console.WriteLine(JsonSerializer.Serialize(new { @event = "debugger_ready", endpoint = relay.AdapterEndpoint.ToString(), module, package, runtime = "mono" }));
-        else
-            Console.WriteLine($"Debugger target: {relay.AdapterEndpoint}. Connect your editor through isoplane debug-adapter; the connection remains available across HTTP requests.");
-        var ready = new TaskCompletionSource<JsonObject>(TaskCreationOptions.RunContinuationsAsynchronously);
+        LocalEvents.Write(new SessionEvent.DebuggerReady(relay.AdapterEndpoint.ToString(), module, package, "mono"), options.Json);
+        var ready = new TaskCompletionSource<SessionEvent.Ready>(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var host = new LocalSession(await File.ReadAllBytesAsync(module, cancellation),
             new LocalProject(options.Directory).SessionOptions(settings, endpoint, Path.Combine(session, "runtime"), package: package),
             message =>
             {
                 LocalEvents.Write(message, options.Json);
-                if (message["event"]?.GetValue<string>() == "ready") ready.TrySetResult(message);
+                if (message is SessionEvent.Ready announced) ready.TrySetResult(announced);
             });
         relay.PrepareDetach = async token =>
         {
@@ -108,11 +103,11 @@ internal static class DebugDevelopment
                             new LocalProject(options.Directory).SessionOptions(settings, debugging ? endpoint : null, Path.Combine(session, "runtime"), package: package));
                         runtime = replacement;
                         if (debugging) await relay.PackageChangedAsync(token);
-                        LocalEvents.Write(new System.Text.Json.Nodes.JsonObject { ["event"] = "reload_pending" }, options.Json);
+                        LocalEvents.Write(new SessionEvent.ReloadPending(), options.Json);
                     }
                     catch (Exception error) when (error is InvalidOperationException or IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
                     {
-                        LocalEvents.Write(new System.Text.Json.Nodes.JsonObject { ["event"] = "reload_failed", ["detail"] = error.Message }, options.Json);
+                        LocalEvents.Write(new SessionEvent.ReloadFailed(error.Message), options.Json);
                     }
                     finally { publications.Release(); }
                 }, lifetime.Token);

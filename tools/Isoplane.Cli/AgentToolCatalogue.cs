@@ -13,7 +13,7 @@ internal static class AgentToolCatalogue
     internal const string StartSessionDescription = "Builds an Isoplane application project and runs it in the sandbox on this machine, as `isoplane dev` does. Returns the session's id and the address the application answers at. With watching on, a saved source change rebuilds and reloads it. A build that fails returns its errors and starts nothing.";
 
     internal const string SessionEvents = "session_events";
-    internal const string SessionEventsDescription = "Returns what a session has reported since a given event number: ready and reloaded with the application's address, reload_pending, reload_failed and build_failed with their detail, and diagnostic for each line the application logged. Pass the last number seen to read only newer events; a wait of some seconds returns as soon as one arrives.";
+    internal const string SessionEventsDescription = "Returns what a session has reported since a given event number: ready and reloaded with the application's address, reload_pending, reload_failed and build_failed with their detail, application_log for each line the application logged, and diagnostic for each record the host logged. Pass the last number seen to read only newer events; a wait of some seconds returns as soon as one arrives.";
 
     internal const string StopSession = "stop_session";
     internal const string StopSessionDescription = "Stops a session started by start_session and frees its port.";

@@ -96,6 +96,7 @@ impl Prepared {
 }
 
 /// What preparing a shared runtime ahead of its first session did.
+#[repr(C)]
 pub struct RuntimePreparation {
     /// Whether the runtime baseline was compiled, rather than found in the cache.
     pub baseline_compiled: bool,

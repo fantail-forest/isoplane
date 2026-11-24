@@ -7,12 +7,13 @@ use anyhow::Context;
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
 use parking_lot::{Mutex, RwLock};
-use serde::Deserialize;
 use tokio::sync::Notify;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
+use crate::interop::{NativeManifest, NativeSetting, NativeText};
 use crate::local::{Baselines, Inputs, LocalApp, Prepared};
+use crate::session_events::SessionEvent;
 
 thread_local! {
     static SESSION_SUBSCRIBER: std::cell::RefCell<Option<tracing::dispatcher::DefaultGuard>> = const { std::cell::RefCell::new(None) };
@@ -40,8 +41,7 @@ struct Update {
     fallback: Option<(Vec<u8>, Options)>,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
+/// What a local session runs and where it keeps its files.
 pub(crate) struct Options {
     manifest: isoplane_abi::config::AppManifest,
     state_directory: PathBuf,
@@ -50,13 +50,73 @@ pub(crate) struct Options {
     runtime_cache_directory: PathBuf,
     /// The developer machine's trusted roots, exported by the CLI as PEM.
     machine_roots: Option<PathBuf>,
-    #[serde(default)]
     pub(crate) configuration: std::collections::BTreeMap<String, String>,
-    log_filter: Option<String>,
+    log_filter: String,
     port: Option<u16>,
     debug_endpoint: Option<SocketAddr>,
     /// The application package loaded by the shared runtime.
     package: PathBuf,
+}
+
+/// What a local session runs and where it keeps its files, as the managed
+/// owner lends it for a call.
+#[repr(C)]
+pub struct NativeSessionOptions {
+    pub manifest: NativeManifest,
+    /// The absolute directory that holds the session's lock and state.
+    pub state_directory: NativeText,
+    /// The native library, whose identity the compiled runtime depends on.
+    pub runtime_library: NativeText,
+    /// The absolute directory for the project's prepared application.
+    pub compilation_directory: NativeText,
+    /// The absolute directory of the per-user cache of compiled runtimes.
+    pub runtime_cache_directory: NativeText,
+    /// The machine's trusted roots exported as PEM, or empty to trust the shipped roots alone.
+    pub machine_roots: NativeText,
+    /// The application's settings.
+    pub configuration: *const NativeSetting,
+    pub configuration_length: usize,
+    /// The filter that admits host log records, in `RUST_LOG` syntax.
+    pub log_filter: NativeText,
+    /// Whether to listen on `port` rather than the default port.
+    pub port_set: bool,
+    /// The loopback port to listen on, where zero lets the system choose one.
+    pub port: u16,
+    /// Where the guest's debugger agent connects, or empty to run without a debugger.
+    pub debug_endpoint: NativeText,
+    /// The absolute path of the application package the shared runtime loads.
+    pub package: NativeText,
+}
+
+impl NativeSessionOptions {
+    /// # Safety
+    /// Every text and the settings array are readable for their lengths for this call.
+    pub(crate) unsafe fn read(&self) -> Result<Options, crate::error::Error> {
+        // SAFETY: forwarded from the caller.
+        unsafe {
+            Ok(Options {
+                manifest: self.manifest.read()?,
+                state_directory: self.state_directory.read()?.into(),
+                runtime_library: self.runtime_library.read()?.into(),
+                compilation_directory: self.compilation_directory.read()?.into(),
+                runtime_cache_directory: self.runtime_cache_directory.read()?.into(),
+                machine_roots: self.machine_roots.optional()?.map(PathBuf::from),
+                configuration: crate::interop::settings(
+                    self.configuration,
+                    self.configuration_length,
+                )?,
+                log_filter: self.log_filter.read()?.into(),
+                port: self.port_set.then_some(self.port),
+                debug_endpoint: self
+                    .debug_endpoint
+                    .optional()?
+                    .map(str::parse)
+                    .transpose()
+                    .map_err(|_| crate::error::Error::DebugEndpoint)?,
+                package: self.package.read()?.into(),
+            })
+        }
+    }
 }
 
 impl Options {
@@ -146,14 +206,14 @@ impl Session {
         }
     }
 
-    pub fn reload(&self, wasm: &[u8], options: &[u8]) -> anyhow::Result<()> {
+    pub fn reload(&self, wasm: &[u8], options: Options) -> anyhow::Result<()> {
         anyhow::ensure!(
             !self.cancellation.is_cancelled(),
             "local session has stopped"
         );
         let mut update = Update {
             wasm: wasm.to_vec(),
-            options: serde_json::from_slice(options)?,
+            options,
             fallback: None,
         };
         let mut admission = self.admission.lock();
@@ -186,16 +246,15 @@ impl Session {
     pub fn run(
         &self,
         wasm: &[u8],
-        options: &[u8],
+        options: Options,
         events: crate::session_events::Events,
     ) -> anyhow::Result<()> {
         let _events_lifetime = events.lifetime();
-        let options: Options = serde_json::from_slice(options)?;
         anyhow::ensure!(
             !self.started.swap(true, Ordering::AcqRel),
             "local session was already started"
         );
-        let subscriber = events.subscriber(options.log_filter.as_deref().unwrap_or("info"))?;
+        let subscriber = events.subscriber(&options.log_filter)?;
         let worker_subscriber = subscriber.clone();
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(isoplane_host::threads::ThreadAllocation::local().outer)
@@ -248,7 +307,7 @@ impl Session {
         let mut prepared_update: Option<(PendingApp, Options)> = None;
         let result = async {
             if self.cancellation.is_cancelled() { return Ok(()); }
-            events.emit(serde_json::json!({"event":"ready", "app":options.manifest.name, "url":format!("http://{address}")}));
+            events.emit(SessionEvent::Ready { app: options.manifest.name.clone(), url: format!("http://{address}") });
             loop {
                 tokio::select! {
                     biased;
@@ -281,7 +340,7 @@ impl Session {
                             Ok(next) => {
                                 prepared_update = Some((next, update.options));
                                 if detaching {
-                                    events.emit(serde_json::json!({"event":"debugger_detach_prepared"}));
+                                    events.emit(SessionEvent::DebuggerDetachPrepared);
                                 }
                             }
                             Err(error) => {
@@ -293,7 +352,8 @@ impl Session {
                                 admission.queued = prepared_update.is_some() || pending.is_some();
                                 drop(pending);
                                 drop(admission);
-                                events.emit(serde_json::json!({"event":if detaching { "debugger_detach_failed" } else { "reload_failed" }, "detail":format!("{error:#}")}));
+                                let detail = format!("{error:#}");
+                                events.emit(if detaching { SessionEvent::DebuggerDetachFailed { detail } } else { SessionEvent::ReloadFailed { detail } });
                             }
                         }
                     }
@@ -309,7 +369,8 @@ impl Session {
                             admission.debug = options.debug_endpoint.is_some();
                             admission.queued = self.pending.lock().is_some();
                         }
-                        events.emit(serde_json::json!({"event":if detached { "debugger_detached" } else { "reloaded" }, "app":options.manifest.name, "url":format!("http://{address}")}));
+                        let (app, url) = (options.manifest.name.clone(), format!("http://{address}"));
+                        events.emit(if detached { SessionEvent::DebuggerDetached { app, url } } else { SessionEvent::Reloaded { app, url } });
                     }
                     connection = listener.accept() => {
                         let (stream, _peer) = connection?;

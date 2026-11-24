@@ -25,12 +25,9 @@ tasks:
   native-bindings:
     desc: Generate the C# declarations of the native library's C interface
     deps: [':initialize']
-    env:
-      CARGO_TARGET_DIR: '{{.NATIVE_TARGET}}'
-      CARGO_BUILD_BUILD_DIR: '{{.NATIVE_TARGET}}'
-      ISOPLANE_GENERATE_BINDINGS: '1'
     cmds:
-      - '{{.DEVELOPMENT_COMMAND}}cargo build --quiet --locked -p isoplane-native'
+      # This example writes tools/Isoplane.Native/NativeMethods.g.cs itself.
+      - '{{.DEVELOPMENT_COMMAND}}cargo run --quiet --locked -p isoplane-native --example csharp_bindings'
 
   reference:
     desc: Generate the customer reference pages from the SDK, the CLI and the build files

@@ -1,7 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
 using Isoplane.Native;
+using Isoplane.Native.Interop;
 
 namespace Isoplane.Cli;
 
@@ -42,24 +42,21 @@ internal sealed class LocalProject(string directory, string? targetDirectory)
             : throw new InvalidOperationException($"ISOPLANE_TARGET_DIR must be outside the project; '{target}' is inside '{directory}'.");
     }
 
-    internal byte[] SessionOptions(DevelopmentSettings settings, string? debugEndpoint = null, string? debugDirectory = null, string? package = null)
+    internal LocalSessionOptions SessionOptions(DevelopmentSettings settings, string? debugEndpoint = null, string? debugDirectory = null, string? package = null)
     {
         var identity = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(settings.Name)));
-        Dictionary<string, object?> options = new()
-        {
-            ["manifest"] = Manifest(settings.Name, settings.Limits),
-            ["state_directory"] = debugDirectory ?? Path.Combine(Root, "local", identity),
-            ["runtime_library"] = NativeRuntime.LibraryPath,
-            ["compilation_directory"] = targetDirectory is null ? Path.Combine(settings.IntermediateDirectory, "isoplane") : Path.Combine(Root, "obj"),
-            ["runtime_cache_directory"] = settings.RuntimeCacheDirectory,
-            ["configuration"] = settings.Configuration,
-            ["port"] = settings.Port,
-            ["log_filter"] = Environment.GetEnvironmentVariable("RUST_LOG") ?? "info",
-            ["debug_endpoint"] = debugEndpoint,
-            ["package"] = package ?? Package,
-        };
-        if (settings.MachineRoots is { } roots) options["machine_roots"] = roots;
-        return JsonSerializer.SerializeToUtf8Bytes(options);
+        return new(
+            Manifest: Manifest(settings.Name, settings.Limits),
+            StateDirectory: debugDirectory ?? Path.Combine(Root, "local", identity),
+            RuntimeLibrary: NativeRuntime.LibraryPath,
+            CompilationDirectory: targetDirectory is null ? Path.Combine(settings.IntermediateDirectory, "isoplane") : Path.Combine(Root, "obj"),
+            RuntimeCacheDirectory: settings.RuntimeCacheDirectory,
+            MachineRoots: settings.MachineRoots,
+            Configuration: settings.Configuration,
+            LogFilter: Environment.GetEnvironmentVariable("RUST_LOG") ?? "info",
+            Port: settings.Port,
+            DebugEndpoint: debugEndpoint,
+            Package: package ?? Package);
     }
 
     /// <summary>
@@ -67,11 +64,5 @@ internal sealed class LocalProject(string directory, string? targetDirectory)
     /// replace them. The compiled runtime depends on these limits, so <c>isoplane prepare-runtime</c>
     /// uses them too.
     /// </summary>
-    internal static Dictionary<string, object?> Manifest(string name, LimitOverrides overrides)
-    {
-        Dictionary<string, object?> manifest = new() { ["name"] = name };
-        if (overrides.MemoryBytes is { } memory) manifest["guest_memory_bytes"] = memory;
-        if (overrides.ResourceLimits is { Count: > 0 } limits) manifest["resource_limits"] = limits;
-        return manifest;
-    }
+    internal static ApplicationManifest Manifest(string name, LimitOverrides overrides) => new(name, overrides);
 }

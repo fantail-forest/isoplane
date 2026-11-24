@@ -4,6 +4,9 @@ use std::sync::atomic::Ordering;
 
 use super::CellBindings;
 
+/// The tracing target of the record each guest log line becomes.
+pub const GUEST_LOG_TARGET: &str = module_path!();
+
 impl CellBindings {
     /// Log occupancy is already on the dispatch's meter; the byte cap bounds
     /// volume.
@@ -30,6 +33,7 @@ impl CellBindings {
         }
         let fields = String::from_utf8_lossy(payload).to_string();
         tracing::info!(
+            target: GUEST_LOG_TARGET,
             tenant = %self.ctx.tenant,
             app = %self.ctx.module.app,
             version = %self.ctx.module.version,

@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::io;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, IntoRawHandle, OwnedHandle};
 use std::os::windows::process::CommandExt;
@@ -6,7 +5,6 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
-use serde::Deserialize;
 use win32job::{ExtendedLimitInfo, Job};
 use windows_sys::Win32::Foundation::{
     ERROR_NO_MORE_FILES, HANDLE, INVALID_HANDLE_VALUE, WAIT_TIMEOUT,
@@ -23,17 +21,7 @@ use windows_sys::Win32::System::Threading::{
 };
 use windows_sys::Win32::System::IO::{CreateIoCompletionPort, GetQueuedCompletionStatus};
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Start {
-    executable: String,
-    arguments: Vec<String>,
-    directory: String,
-    environment: BTreeMap<String, String>,
-    capture_output: bool,
-    capture_errors: bool,
-    cleanup_grace_ms: u64,
-}
+use crate::process_records::{NativeProcessStarted, Start};
 
 pub(crate) struct OwnedChild {
     child: Mutex<Child>,
@@ -112,8 +100,7 @@ fn resume(pid: u32) -> io::Result<()> {
     }
 }
 
-pub(crate) fn start(settings: &[u8]) -> Result<Vec<u8>, crate::error::Error> {
-    let settings: Start = serde_json::from_slice(settings)?;
+pub(crate) fn start(settings: Start) -> io::Result<NativeProcessStarted> {
     let (job, port) = create_job()?;
     let mut child = Command::new(settings.executable)
         .args(settings.arguments)
@@ -140,21 +127,21 @@ pub(crate) fn start(settings: &[u8]) -> Result<Vec<u8>, crate::error::Error> {
     {
         child.kill()?;
         child.wait()?;
-        return Err(error.into());
+        return Err(error);
     }
     let stdin = child
         .stdin
         .take()
         .ok_or_else(|| io::Error::other("owned child has no stdin pipe"))?
-        .into_raw_handle() as usize;
+        .into_raw_handle() as isize as i64;
     let stdout = child
         .stdout
         .take()
-        .map(|pipe| pipe.into_raw_handle() as usize);
+        .map(|pipe| pipe.into_raw_handle() as isize as i64);
     let stderr = child
         .stderr
         .take()
-        .map(|pipe| pipe.into_raw_handle() as usize);
+        .map(|pipe| pipe.into_raw_handle() as isize as i64);
     let pid = child.id();
     let owner = Box::new(OwnedChild {
         child: Mutex::new(child),
@@ -162,7 +149,13 @@ pub(crate) fn start(settings: &[u8]) -> Result<Vec<u8>, crate::error::Error> {
         port,
         cleanup_grace: Duration::from_millis(settings.cleanup_grace_ms),
     });
-    Ok(serde_json::json!({"handle": Box::into_raw(owner) as usize, "pid": pid, "stdin": stdin, "stdout": stdout, "stderr": stderr}).to_string().into_bytes())
+    Ok(NativeProcessStarted {
+        handle: Box::into_raw(owner).cast(),
+        pid,
+        stdin,
+        stdout: stdout.unwrap_or(-1),
+        stderr: stderr.unwrap_or(-1),
+    })
 }
 
 impl OwnedChild {

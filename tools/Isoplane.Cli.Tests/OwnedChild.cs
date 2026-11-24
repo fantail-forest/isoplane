@@ -44,6 +44,12 @@ internal static class OwnedChild
             Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(MachineTrust.Export(trustDirectory)));
             return 0;
         }
+        if (arguments is ["--write-then-wait-for-input-to-close", .. var lines])
+        {
+            foreach (var line in lines) Console.WriteLine(line);
+            await Console.In.ReadToEndAsync();
+            return 0;
+        }
         if (arguments is not ["--owned-child", var pipeName])
             return 1;
         using var pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.Out, PipeOptions.Asynchronous);

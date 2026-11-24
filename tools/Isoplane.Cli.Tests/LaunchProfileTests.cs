@@ -1,3 +1,5 @@
+using Isoplane.Native;
+using Isoplane.Native.Interop;
 using Xunit;
 
 namespace Isoplane.Cli.Tests;
@@ -45,21 +47,19 @@ public sealed class LaunchProfileTests : IDisposable
         Assert.Equal((ushort)5197, profile.Port);
         Assert.Equal("Development", profile.Environment["ASPNETCORE_ENVIRONMENT"]);
         Assert.Equal("Host=db", profile.Environment["ConnectionStrings__Todos"]);
-        Assert.Equal(LimitOverrides.None.MemoryBytes, profile.Limits.MemoryBytes);
-        Assert.Empty(profile.Limits.ResourceLimits);
+        Assert.Equal(default, profile.Limits);
     }
 
     [Fact]
-    public void a_selected_profile_narrows_limits_by_their_manifest_names()
+    public void a_selected_profile_overrides_the_limits_it_names()
     {
         Settings(TwoProfiles);
         var profile = LaunchProfile.Read(directory.FullName, "tight")!;
         Assert.Null(profile.Port);
-        Assert.Equal(67108864UL, profile.Limits.MemoryBytes);
-        Assert.Equal(new Dictionary<string, ulong>
+        Assert.Equal(new LimitOverrides
         {
-            ["occupancy_ms_per_dispatch"] = 100, ["instance_open_connections"] = 20, ["pending_futures_per_dispatch"] = 6
-        }, profile.Limits.ResourceLimits);
+            guest_memory_bytes = 67108864, occupancy_ms_per_dispatch = 100, instance_open_connections = 20, pending_futures_per_dispatch = 6
+        }, profile.Limits);
     }
 
     [Theory]
@@ -95,18 +95,15 @@ public sealed class LaunchProfileTests : IDisposable
     }
 
     [Fact]
-    public void session_options_request_the_largest_limits_and_apply_the_profile_overrides()
+    public void session_options_carry_the_profile_overrides()
     {
         Settings(TwoProfiles);
-        var settings = new DevelopmentSettings("App", 0, [], LaunchProfile.Read(directory.FullName, "tight")!.Limits, null,
+        var limits = LaunchProfile.Read(directory.FullName, "tight")!.Limits;
+        var settings = new DevelopmentSettings("App", 0, [], limits, null,
             Path.Combine(directory.FullName, "obj"), Path.Combine(directory.FullName, "runtimes"));
-        using var options = System.Text.Json.JsonDocument.Parse(new LocalProject(directory.FullName).SessionOptions(settings));
-        var manifest = options.RootElement.GetProperty("manifest");
-        Assert.Equal("App", manifest.GetProperty("name").GetString());
-        Assert.False(manifest.TryGetProperty("limits", out _));
-        Assert.Equal(67108864UL, manifest.GetProperty("guest_memory_bytes").GetUInt64());
-        Assert.Equal(100UL, manifest.GetProperty("resource_limits").GetProperty("occupancy_ms_per_dispatch").GetUInt64());
-        Assert.False(options.RootElement.TryGetProperty("machine_roots", out _), "A session without exported roots must leave the platform bundle selected.");
+        var options = new LocalProject(directory.FullName).SessionOptions(settings);
+        Assert.Equal(new ApplicationManifest("App", limits), options.Manifest);
+        Assert.True(options.MachineRoots is null, "A session without exported roots must leave the platform bundle selected.");
     }
 
     [Fact]
