@@ -1,5 +1,8 @@
 namespace Isoplane.Cli;
 
+/// <summary>A tool the agent server offers, by the name an agent calls it with.</summary>
+internal sealed record AgentTool(string Name, string Description);
+
 /// <summary>
 /// The tools the agent server offers, by name and description. The tool methods take their text from
 /// here, and the CLI reference lists them from here, so the two cannot differ.
@@ -21,9 +24,9 @@ internal static class AgentToolCatalogue
     internal const string ListSessions = "list_sessions";
     internal const string ListSessionsDescription = "Lists the sessions started by start_session that are still running, with the project and address of each.";
 
-    internal static readonly (string Name, string Description)[] All =
+    internal static readonly AgentTool[] All =
     [
-        (CheckMachine, CheckMachineDescription), (StartSession, StartSessionDescription), (SessionEvents, SessionEventsDescription),
-        (StopSession, StopSessionDescription), (ListSessions, ListSessionsDescription),
+        new(CheckMachine, CheckMachineDescription), new(StartSession, StartSessionDescription), new(SessionEvents, SessionEventsDescription),
+        new(StopSession, StopSessionDescription), new(ListSessions, ListSessionsDescription),
     ];
 }

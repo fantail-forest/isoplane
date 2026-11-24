@@ -20,8 +20,8 @@ internal static class StatementFlow
     internal static Body Capture(MethodBodyMirror body) => new(
         body.Instructions.Select(instruction =>
         {
-            var (pop, push) = StackEffect(body.Method, instruction);
-            return new Node(instruction.Offset, instruction.OpCode, pop, push, instruction.Operand switch
+            var effect = StackEffectOf(body.Method, instruction);
+            return new Node(instruction.Offset, instruction.OpCode, effect.Pop, effect.Push, instruction.Operand switch
             {
                 ILInstruction target => [target.Offset],
                 ILInstruction[] targets => targets.Select(target => target.Offset).ToArray(),
@@ -114,17 +114,20 @@ internal static class StatementFlow
 
     private static bool InRegion(int offset, int start, int end) => offset >= start && offset < end;
 
-    private static (int Pop, int Push) StackEffect(MethodMirror method, ILInstruction instruction)
+    /// <summary>How many values an instruction takes from the evaluation stack and leaves on it; -1 for each when that is not known.</summary>
+    private readonly record struct StackEffect(int Pop, int Push);
+
+    private static StackEffect StackEffectOf(MethodMirror method, ILInstruction instruction)
     {
-        if (instruction.OpCode.Code == Code.Ret) return (method.ReturnType.FullName == "System.Void" ? 0 : 1, 0);
+        if (instruction.OpCode.Code == Code.Ret) return new(method.ReturnType.FullName == "System.Void" ? 0 : 1, 0);
         if (instruction.OpCode.Code is Code.Call or Code.Callvirt or Code.Newobj)
         {
-            if (instruction.Operand is not MethodMirror called || called.HasVariableArguments) return (-1, -1);
+            if (instruction.Operand is not MethodMirror called || called.HasVariableArguments) return new(-1, -1);
             bool constructor = instruction.OpCode.Code == Code.Newobj;
-            return (called.GetParameters().Length + (!constructor && !called.IsStatic ? 1 : 0),
+            return new(called.GetParameters().Length + (!constructor && !called.IsStatic ? 1 : 0),
                 constructor || called.ReturnType.FullName != "System.Void" ? 1 : 0);
         }
-        return (Count(instruction.OpCode.StackBehaviourPop), Count(instruction.OpCode.StackBehaviourPush));
+        return new(Count(instruction.OpCode.StackBehaviourPop), Count(instruction.OpCode.StackBehaviourPush));
     }
 
     private static int Count(StackBehaviour behavior) => behavior switch

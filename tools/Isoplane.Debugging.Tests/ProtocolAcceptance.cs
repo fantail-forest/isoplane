@@ -36,7 +36,7 @@ internal static class ProtocolAcceptance
         using var cancelTransport = deadline.Token.Register(socket.Dispose);
         using var http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
         await using var owner = new Isoplane.Debugging.GuestSession();
-        var (transportEndpoint, _) = await owner.ConnectAsync(IPEndPoint.Parse(endpoint)).WaitAsync(deadline.Token);
+        var transportEndpoint = (await owner.ConnectAsync(IPEndPoint.Parse(endpoint)).WaitAsync(deadline.Token)).Guests;
         var connecting = Task.Run(() => VirtualMachineManager.ConnectInternalAsync(socket, null, transportEndpoint, null), deadline.Token);
         var response = http.GetStringAsync(url, deadline.Token);
         var machine = await WaitForConnectionAsync(connecting, response, deadline.Token);

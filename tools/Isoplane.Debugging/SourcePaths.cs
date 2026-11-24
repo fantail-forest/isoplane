@@ -5,14 +5,17 @@ namespace Isoplane.Debugging;
 
 internal sealed class SourcePaths
 {
-    private KeyValuePair<string, string>[] mappings = [];
+    /// <summary>A directory the build recorded in symbols, and the local directory that holds its sources.</summary>
+    private sealed record Mapping(string Remote, string Local);
+
+    private Mapping[] mappings = [];
 
     internal void Configure(JToken? value)
     {
         if (value is null) { mappings = []; return; }
         if (value is not JObject entries)
             throw new ProtocolException("sourceFileMap must map build source directories to absolute local directories.");
-        var parsed = new List<KeyValuePair<string, string>>();
+        var parsed = new List<Mapping>();
         foreach (var entry in entries.Properties())
         {
             var remote = entry.Name.Replace('\\', '/');
@@ -23,7 +26,7 @@ internal sealed class SourcePaths
                 throw new ProtocolException("sourceFileMap requires absolute build and local source directories.");
             parsed.Add(new(remote, Path.GetFullPath(local)));
         }
-        mappings = parsed.OrderByDescending(pair => pair.Key.Length).ToArray();
+        mappings = parsed.OrderByDescending(mapping => mapping.Remote.Length).ToArray();
     }
 
     internal string ToClient(string path)
