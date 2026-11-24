@@ -1,5 +1,3 @@
-//! Handler fixture for initialization, host timer parking and streamed responses.
-
 use core::cell::Cell;
 
 use isoplane_guest::{Clock, Ctx, Handler, Request, RequestExt, Response};

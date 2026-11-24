@@ -1,7 +1,3 @@
-//! `hello` — the smallest complete Handler: every request gets a 200 and a
-//! short body. A test that needs a real registered module, and nothing about
-//! what it does, deploys this one.
-
 use core::future::Future;
 
 use isoplane_guest::{Ctx, Handler, Request, Response};
