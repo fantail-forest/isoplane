@@ -7,12 +7,6 @@ using System.Threading.Tasks;
 
 namespace Acceptance;
 
-/// <summary>
-/// Cryptography through the pack's native OpenSSL backend: digests, MACs and
-/// key derivation match their standard vectors, symmetric and asymmetric
-/// primitives round-trip and verify fixed signatures, certificates parse and
-/// chain, and randomness is the host's entropy.
-/// </summary>
 internal sealed partial class Cryptography
 {
     public Task<string> RunAsync(string[] path) => Task.FromResult(Run(path));

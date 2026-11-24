@@ -4,10 +4,6 @@ using System.Text;
 
 namespace Acceptance;
 
-/// <summary>
-/// The authenticated ciphers and AES-CBC: known answers, and what a
-/// tampered input, a wrong length and an invalid padding produce.
-/// </summary>
 internal sealed partial class Cryptography
 {
     private delegate void Seal(ReadOnlySpan<byte> nonce, ReadOnlySpan<byte> plaintext, Span<byte> ciphertext, Span<byte> tag, ReadOnlySpan<byte> associatedData);

@@ -6,10 +6,6 @@ using Isoplane;
 
 namespace Native;
 
-/// <summary>
-/// Attempts one native transition per request path, before and after a host
-/// timer, and answers the outcome of each: the exception type, or <c>called</c>.
-/// </summary>
 public static class Handler
 {
     /// <summary>Answers <c>before/after</c> for the transition the path names.</summary>

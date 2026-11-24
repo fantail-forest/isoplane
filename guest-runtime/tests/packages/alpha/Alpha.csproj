@@ -1,6 +1,5 @@
 <Project>
   <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
-  <!-- The smallest package: a handler and nothing else. -->
   <Import Project="../Package.props" />
   <PropertyGroup>
     <AssemblyName>Alpha</AssemblyName>

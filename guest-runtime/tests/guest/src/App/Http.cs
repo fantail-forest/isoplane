@@ -10,16 +10,6 @@ using System.Threading.Tasks;
 
 namespace Acceptance;
 
-/// <summary>
-/// Outbound HTTP through the runtime's own <see cref="SocketsHttpHandler"/>
-/// over the delegated sockets: connections and reads park on socket
-/// readiness, bodies stream both ways in guest memory, TLS is the guest's
-/// <c>SslStream</c> with a root the application supplies, and every failure
-/// reaches the ordinary <see cref="HttpRequestException"/>. A leading
-/// <c>h2</c>, <c>h3</c> or <c>higher</c> segment selects the HTTP version
-/// the client asks for and how strictly; every behaviour then runs under it
-/// and reports the version the response came on.
-/// </summary>
 internal sealed class Http
 {
     /// <summary>The version a run asks for and its policy; the client's defaults when unset.</summary>
@@ -30,6 +20,11 @@ internal sealed class Http
         public bool IsExplicit => Version is not null;
     }
 
+    /// <summary>
+    /// A leading <c>h2</c>, <c>h3</c> or <c>higher</c> segment selects the HTTP version the client
+    /// asks for and how strictly; the behaviour the rest of the path names runs under it and
+    /// reports the version the response came on.
+    /// </summary>
     public async Task<string> RunAsync(string[] path)
     {
         Selection selection = path[0] switch

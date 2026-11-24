@@ -7,11 +7,6 @@ using Isoplane;
 
 namespace Diagnostics;
 
-/// <summary>
-/// Each path makes the Mono runtime report through its own logger, writes to
-/// its native console, or asks it for more memory than a limited instance may
-/// have.
-/// </summary>
 public static class Handler
 {
     /// <summary>Runs the report the request path names.</summary>

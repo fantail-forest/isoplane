@@ -8,12 +8,6 @@ using System.Threading.Tasks;
 
 namespace Acceptance;
 
-/// <summary>
-/// Outbound TCP through the source-built socket engine: readiness comes from
-/// the pollables libc registers for a socket, a failed connection is an
-/// inline error, and every state the peer can put the connection in reaches
-/// the ordinary managed exception.
-/// </summary>
 internal sealed class Sockets
 {
     public async Task<string> RunAsync(string[] path)
