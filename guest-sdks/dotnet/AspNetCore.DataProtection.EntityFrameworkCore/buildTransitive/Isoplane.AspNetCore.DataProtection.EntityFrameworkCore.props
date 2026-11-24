@@ -1,6 +1,6 @@
 <Project>
-  <!-- The agent skill part for this package; the Isoplane SDK writes it into the project's skill. -->
+  <!-- The agent skill part for this package; `isoplane skills install` reads it from the project's evaluation. -->
   <ItemGroup>
-    <IsoplaneAgentSkillPart Include="$(MSBuildThisFileDirectory)../tools/skill/references/dataprotection-efcore" Name="dataprotection-efcore" />
+    <IsoplaneAgentSkillPart Include="$(MSBuildThisFileDirectory)../tools/skill/dataprotection-efcore.md" />
   </ItemGroup>
 </Project>

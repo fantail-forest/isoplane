@@ -12,9 +12,4 @@
     <RepositoryUrl>https://github.com/fantail-forest/isoplane</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
   </PropertyGroup>
-  <!-- Probes, fixtures and prepared template projects built anywhere in this checkout, .build included,
-       would otherwise write the agent skill into this repository. -->
-  <PropertyGroup>
-    <IsoplaneWriteAgentSkill>false</IsoplaneWriteAgentSkill>
-  </PropertyGroup>
 </Project>

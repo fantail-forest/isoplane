@@ -30,7 +30,7 @@ vars:
   MANAGED: '{{.ROOT_DIR}}/.build/clr-anycpu/managed'
   HOT_RELOAD_ARTIFACTS: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/hotreload-fixture'
   PACKAGES: '{{.ROOT_DIR}}/.build/clr-anycpu/packages'
-  SKILL: '{{.ROOT_DIR}}/.build/clr-anycpu/skill'
+  TEMPLATE_SKILLS: '{{.ROOT_DIR}}/.build/clr-anycpu/template-skills'
   CLI: '{{.MANAGED}}/bin/Isoplane.Cli/release/Isoplane.Cli.dll'
   NATIVE_TARGET: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/native'
   # A workflow passes the Windows checkout path with backslashes, which a source glob reads as escapes.

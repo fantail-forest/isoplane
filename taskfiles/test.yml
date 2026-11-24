@@ -285,7 +285,7 @@ tasks:
   managed:inputs:
     internal: true
     run: once
-    deps: [managed:host:prepared, ':managed:template-package:prepared', ':runtime:toolchain', process-fixture, managed-bundle-fixture, source-changes-fixture]
+    deps: [managed:host:prepared, ':runtime:toolchain', process-fixture, managed-bundle-fixture, source-changes-fixture]
 
   managed:host:prepared:
     internal: true

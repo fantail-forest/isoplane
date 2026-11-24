@@ -66,6 +66,7 @@ dotnet test
 | `src/Sample-Api/Migrations/` | Entity Framework Core migrations |
 | `src/Sample-Api/Sample-Api.http` | A request for each endpoint |
 | `.vscode/launch.json` | Debugging the application in VS Code |
+| `.agents/skills/isoplane/`, `.claude/skills/isoplane/` | The `isoplane` skill for AI coding agents, in each skills directory the project was created with; https://isoplane.dev/docs/how-to/work-with-an-ai-coding-agent says how to update it |
 | `tests/Sample-Api.Tests/` | Unit tests and sandbox tests |
 
 ## How it differs from an ordinary ASP.NET application

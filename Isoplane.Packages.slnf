@@ -9,8 +9,7 @@
       "guest-sdks/dotnet/Templates/Isoplane.Templates.csproj",
       "tools/Isoplane.Cli/Isoplane.Cli.csproj",
       "tools/Isoplane.Native/Isoplane.Native.csproj",
-      "tools/Isoplane.Testing/Isoplane.Testing.csproj",
-      "tools/ApiReference/ApiReference.csproj"
+      "tools/Isoplane.Testing/Isoplane.Testing.csproj"
     ]
   }
 }

@@ -4,28 +4,26 @@ namespace Isoplane.Cli.Tests;
 
 public sealed class CommandCancellationTests
 {
-    [Theory]
-    [InlineData("setup")]
-    [InlineData("uninstall-sdk")]
-    public void Cancelled_sdk_changes_report_failure_and_a_retry_command(string command)
+    private static Task<int> Cancelled(CancellationToken _) => throw new OperationCanceledException(new CancellationToken(canceled: true));
+
+    [Fact]
+    public async Task A_cancelled_change_to_the_machine_says_how_to_retry_and_ends_in_its_cancellation()
     {
         using var error = new StringWriter();
-        var status = CommandCancellation.Report(command, error);
-        Assert.True(status == 130, "Cancelled SDK changes must not report success.");
-        Assert.True(error.ToString().Contains($"Run isoplane {command} again", StringComparison.Ordinal),
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => CommandCancellation.RunOrRetryAsync("setup", Cancelled, error));
+        Assert.True(error.ToString().Contains("Run isoplane setup again", StringComparison.Ordinal),
             "Cancellation must tell the user how to retry the incomplete operation.");
     }
 
-    [Theory]
-    [InlineData("dev", 0)]
-    [InlineData("bundle", 130)]
-    [InlineData("prepare-runtime", 130)]
-    [InlineData("deploy", 130)]
-    [InlineData("daemon", 0)]
-    public void Other_commands_preserve_their_shutdown_status(string command, int expected)
+    [Fact]
+    public async Task A_command_that_cancellation_stops_as_intended_ends_with_status_zero()
     {
-        using var error = new StringWriter();
-        Assert.True(CommandCancellation.Report(command, error) == expected,
-            "Development shutdown and interrupted build commands must preserve their exit semantics.");
+        Assert.Equal(0, await CommandCancellation.RunUntilStoppedAsync(Cancelled, CommandTelemetry.Begin(["complete"])));
+    }
+
+    [Fact]
+    public async Task Another_cancelled_command_ends_in_its_cancellation()
+    {
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => CommandCancellation.RunAsync(Cancelled));
     }
 }

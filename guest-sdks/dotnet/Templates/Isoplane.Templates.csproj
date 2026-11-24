@@ -38,5 +38,22 @@
       <Content Include="@(_StampedTemplateProject)" Pack="true" />
     </ItemGroup>
   </Target>
+  <!-- Each application template ships the isoplane agent skill for the packages its projects reference,
+       in .template.config/skills/isoplane, which its template.json copies into the skills directories the
+       creator chooses. task managed:packages writes the skill with isoplane skills install for a project
+       created from each template and passes the directory to pack. -->
+  <PropertyGroup>
+    <TargetsForTfmSpecificContentInPackage>$(TargetsForTfmSpecificContentInPackage);PackTemplateSkills</TargetsForTfmSpecificContentInPackage>
+  </PropertyGroup>
+  <Target Name="PackTemplateSkills">
+    <ItemGroup>
+      <_TemplateSkillFile Include="$(IsoplaneTemplateSkillDirectory)/**" Condition="'$(IsoplaneTemplateSkillDirectory)' != ''" />
+    </ItemGroup>
+    <Error Condition="'@(_TemplateSkillFile)' == ''"
+           Text="Pack with -p:IsoplaneTemplateSkillDirectory naming the directory task managed:packages writes, which holds each template's agent skill; without it a project created from a template has no skill." />
+    <ItemGroup>
+      <TfmSpecificPackageFile Include="@(_TemplateSkillFile)" PackagePath="content/content/%(RecursiveDir)%(Filename)%(Extension)" />
+    </ItemGroup>
+  </Target>
   <Import Project="../../../licenses/SdkPackage.props" />
 </Project>

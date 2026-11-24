@@ -11,7 +11,7 @@ pub use compiled_runtime::{
 
 pub use dotnet_projects::{
     gated_project, handler_project, managed_cli, release_version, template_project,
-    testing_consumer,
+    template_without, testing_consumer,
 };
 
 use std::path::{Path, PathBuf};

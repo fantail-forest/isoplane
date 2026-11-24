@@ -40,9 +40,10 @@ for and how to make common changes; read it before changing the project.
 
 - A build diagnostic whose code starts with `ISOPLANE` is explained at
   `https://isoplane.dev/docs/reference/error-codes#<code in lower case>`.
-- The Isoplane SDK writes skills for the SDK version in use into
-  `.agents/skills/` when the project builds. They hold the detailed rules and
-  the reference pages. Commit them.
+- The `isoplane` skill holds the detailed rules for the SDK version the
+  project was created with, and links to the documentation pages for its
+  Isoplane packages. `dotnet new` wrote it into
+  `.agents/skills/` and `.claude/skills/`, each unless it was switched off.
 - `isoplane agent init --harness <name>` registers Isoplane's MCP server with
   a coding agent, so that it can run the application and read its logs through
   tools; `isoplane agent init --help` names the agents it knows.

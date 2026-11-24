@@ -1,3 +1,4 @@
+using System.CommandLine;
 using Isoplane.Cli;
 using Isoplane.Native;
 
@@ -8,7 +9,7 @@ try
 }
 catch (OperationCanceledException error) when (error.CancellationToken.IsCancellationRequested)
 {
-    return telemetry.Cancelled(CommandCancellation.Report(args.Length > 0 ? args[0] : "", Console.Error));
+    return telemetry.Cancelled(130);
 }
 catch (Exception error) when (error is System.Text.Json.JsonException or ArgumentException or InvalidOperationException or IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
 {
@@ -29,47 +30,53 @@ async Task<int> RunAsync()
         Console.WriteLine($"isoplane {identity.Version}+{identity.SourceRevision}");
         return 0;
     }
-    var parsed = CliCommandLine.Create().Parse(args.Length == 0 ? ["--help"] : args);
-    if (parsed.Action is System.CommandLine.Help.HelpAction)
-        return await parsed.InvokeAsync();
-    if (parsed.Errors.Count > 0)
+    var parsed = CliCommandLine.Create(Actions()).Parse(args.Length == 0 ? ["--help"] : args);
+    if (parsed.Action is not System.CommandLine.Help.HelpAction && parsed.Errors.Count > 0)
         throw new ArgumentException(string.Join(Environment.NewLine, parsed.Errors.Select(error => error.Message)));
-    if (args[0] == "completions")
-    {
-        Console.WriteLine(ShellCompletions.Script(Enum.Parse<CompletionShell>(parsed.GetValue<string>("shell")!, ignoreCase: true)));
-        return 0;
-    }
-    if (args[0] == "complete")
-    {
-        foreach (var candidate in ShellCompletions.Candidates(parsed.GetValue<string>("line")!)) Console.WriteLine(candidate);
-        return 0;
-    }
-    if (args[0] == "telemetry") return TelemetryCommands.Run(args, TelemetryHost.OfRunningCli(), Console.Out);
-    if (args[0] == "cache") return CacheCommands.Run(args, CliPaths.RuntimeCache, Console.Out);
-    if (args[0] == "prepare-runtime") return RuntimePreparationCommand.Run(args, CliPaths.RuntimeCache, Console.Out);
-    using var cancellation = new CommandCancellation();
-    if (args[0] is "daemon" or "deploy") return await HostCommands.RunAsync(parsed, cancellation.Token);
-    if (args is ["debug-adapter"]) return await Isoplane.Debugging.AdapterCommand.RunAsync(CliPaths.Home, cancellation.Token, new LocalDebugLauncher());
-    if (args[0] == "setup")
+    // Each action handles Ctrl+C itself, and errors reach the handlers above.
+    return await parsed.InvokeAsync(new InvocationConfiguration { ProcessTerminationTimeout = null, EnableDefaultExceptionHandler = false });
+}
+
+CliActions Actions() => new()
+{
+    Dev = _ => CommandCancellation.RunUntilStoppedAsync(token => Development.RunAsync(DevelopmentOptions.Parse(args[1..]), token), telemetry),
+    DebugAdapter = _ => CommandCancellation.RunUntilStoppedAsync(token => Isoplane.Debugging.AdapterCommand.RunAsync(CliPaths.Home, token, new LocalDebugLauncher()), telemetry),
+    Setup = parsed => CommandCancellation.RunOrRetryAsync(parsed.CommandResult.Command.Name, async token =>
     {
         using var client = new HttpClient(CertificateTrust.CreateHandler(allowAutoRedirect: true)) { Timeout = Timeout.InfiniteTimeSpan };
         client.DefaultRequestHeaders.UserAgent.ParseAdd($"isoplane/{ReleaseIdentity.OfRunningCli().Version}");
-        return await Setup.RunAsync(SetupOptions.Parse(args), ReleaseIdentity.OfRunningCli(), CliPaths.Home, SetupMachine.Production(), client, cancellation.Token);
-    }
-    if (args is ["uninstall-sdk"])
-        return await SdkRemoval.RunAsync(CliPaths.Home, dotnet => new DotnetRegistrations(dotnet, CliPaths.Home), cancellation.Token);
-    if (args is ["doctor"]) return await EnvironmentDoctor.RunAsync(cancellation.Token);
-    if (args[0] == "agent") return await AgentCommands.RunAsync(args, telemetry, cancellation.Token);
-    if (args[0] == "bundle")
+        return await Setup.RunAsync(SetupOptions.Parse(args), ReleaseIdentity.OfRunningCli(), CliPaths.Home, SetupMachine.Production(), client, token);
+    }, Console.Error),
+    UninstallSdk = parsed => CommandCancellation.RunOrRetryAsync(parsed.CommandResult.Command.Name,
+        token => SdkRemoval.RunAsync(CliPaths.Home, dotnet => new DotnetRegistrations(dotnet, CliPaths.Home), token), Console.Error),
+    CacheInfo = _ => Task.FromResult(CacheCommands.Info(CliPaths.RuntimeCache, Console.Out)),
+    CacheClean = _ => Task.FromResult(CacheCommands.Clean(CliPaths.RuntimeCache, Console.Out)),
+    PrepareRuntime = _ => Task.FromResult(RuntimePreparationCommand.Run(args, CliPaths.RuntimeCache, Console.Out)),
+    Doctor = _ => CommandCancellation.RunUntilStoppedAsync(EnvironmentDoctor.RunAsync, telemetry),
+    AgentInit = parsed => Task.FromResult(AgentCommands.Init(parsed)),
+    AgentMcp = _ => CommandCancellation.RunUntilStoppedAsync(token => AgentServer.RunAsync(telemetry, token), telemetry),
+    SkillsInstall = parsed => CommandCancellation.RunAsync(token =>
+        SkillsCommands.InstallAsync(parsed, Console.Out, Console.IsInputRedirected ? null : SetupMachine.ConfirmOnTerminal, token)),
+    Bundle = _ => CommandCancellation.RunAsync(async token =>
     {
         var options = BundleOptions.Parse(args[1..]);
-        await ManagedBundle.CreateAsync(options, cancellation.Token);
+        await ManagedBundle.CreateAsync(options, token);
         Console.WriteLine(options.Output);
         return 0;
-    }
-    return args[0] switch
+    }),
+    Daemon = parsed => CommandCancellation.RunUntilStoppedAsync(token => HostCommands.RunAsync(parsed, token), telemetry),
+    Deploy = parsed => CommandCancellation.RunAsync(token => HostCommands.RunAsync(parsed, token)),
+    TelemetryStatus = _ => Task.FromResult(TelemetryCommands.Status(TelemetryHost.OfRunningCli(), Console.Out)),
+    TelemetryEnable = _ => Task.FromResult(TelemetryCommands.Enable(TelemetryHost.OfRunningCli(), Console.Out)),
+    TelemetryDisable = _ => Task.FromResult(TelemetryCommands.Disable(TelemetryHost.OfRunningCli(), Console.Out)),
+    Completions = parsed =>
     {
-        "dev" => await Development.RunAsync(DevelopmentOptions.Parse(args[1..]), cancellation.Token),
-        _ => throw new ArgumentException($"Unknown command '{args[0]}'. Run isoplane --help.")
-    };
-}
+        Console.WriteLine(ShellCompletions.Script(Enum.Parse<CompletionShell>(parsed.GetValue<string>("shell")!, ignoreCase: true)));
+        return Task.FromResult(0);
+    },
+    Complete = parsed =>
+    {
+        foreach (var candidate in ShellCompletions.Candidates(parsed.GetValue<string>("line")!)) Console.WriteLine(candidate);
+        return Task.FromResult(0);
+    },
+};

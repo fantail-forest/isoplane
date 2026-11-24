@@ -45,11 +45,13 @@ public sealed class SdkRegistrationsTests
     public async Task Sdk_registrations_remain_visible_under_a_localized_sdk(string scenario, string language)
     {
         using var directory = new FileSystemTestDirectory("isoplane-sdk-registrations-");
-        var feed = Environment.GetEnvironmentVariable("ISOPLANE_TEST_PACKAGE_FEED")
-            ?? throw new InvalidOperationException("Run task managed:template-package and run this test through task exec.");
         var version = ReleaseIdentity.OfRunningCli().Version;
-        var package = Path.Combine(feed, $"Isoplane.Templates.{version}.nupkg");
-        Assert.True(File.Exists(package), $"Missing {package}. Run task managed:template-package.");
+        // The registrations are the SDK's, so a template package with one template stands in for the shipped one.
+        var package = TestPackage.Write(directory.Path, "Isoplane.Templates", version, "Template", new()
+        {
+            ["content/stand-in/.template.config/template.json"] = """{"author":"test","classifications":["Test"],"identity":"Isoplane.Templates.StandIn","name":"Stand-in","shortName":"isoplane-stand-in","tags":{"language":"C#","type":"item"}}""",
+            ["content/stand-in/stand-in.txt"] = "stand-in\n",
+        });
         var start = new ProcessStartInfo(DotnetRegistrations.BootstrapDotnet())
         {
             WorkingDirectory = directory.Path,

@@ -20,7 +20,6 @@
       "guest-runtime/tests/packages/sqlite-pclraw3/SqlitePclRaw3.csproj",
       "guest-runtime/tests/packages/sqlite/Sqlite.csproj",
       "guest-runtime/tests/packages/web/Web.csproj",
-      "tools/ApiReference/ApiReference.csproj",
       "tools/Isoplane.Cli.Tests/Isoplane.Cli.Tests.csproj",
       "tools/Isoplane.Testing.Tests/Isoplane.Testing.Tests.csproj",
       "tools/Isoplane.Debugging.Tests/Isoplane.Debugging.Tests.csproj"

@@ -2,9 +2,8 @@
   <PropertyGroup>
     <_IsoplaneSdkPropsImported>true</_IsoplaneSdkPropsImported>
   </PropertyGroup>
-  <!-- The agent skill this package carries: its base, and the part for the SDK itself. -->
+  <!-- The agent skill this package carries; `isoplane skills install` reads it from the project's evaluation. -->
   <ItemGroup>
     <IsoplaneAgentSkillBase Include="$(MSBuildThisFileDirectory)../tools/skill/SKILL.md" />
-    <IsoplaneAgentSkillPart Include="$(MSBuildThisFileDirectory)../tools/skill/references/sdk" Name="sdk" />
   </ItemGroup>
 </Project>

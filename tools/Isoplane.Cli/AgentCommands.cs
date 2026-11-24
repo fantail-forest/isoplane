@@ -1,12 +1,12 @@
+using System.CommandLine;
+
 namespace Isoplane.Cli;
 
-/// <summary>The `agent` command group: `mcp` serves the agent server; `init` registers it with coding agents.</summary>
+/// <summary>The `agent init` command, which registers the agent server with coding agents.</summary>
 internal static class AgentCommands
 {
-    internal static async Task<int> RunAsync(string[] args, CommandTelemetry telemetry, CancellationToken cancellation)
+    internal static int Init(ParseResult parsed)
     {
-        if (args is ["agent", "mcp"]) return await AgentServer.RunAsync(telemetry, cancellation);
-        var parsed = CliCommandLine.Parse(args);
         var directory = Path.GetFullPath(parsed.GetValue<string>("--directory") ?? Environment.CurrentDirectory);
         if (!Directory.Exists(directory)) throw new ArgumentException($"Directory does not exist: {directory}");
         foreach (var name in parsed.GetValue<string[]>("--harness") ?? [])

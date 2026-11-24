@@ -353,7 +353,7 @@ tasks:
     cmds:
       # NuGet never extracts an id and version it already holds, and the local packages are
       # rebuilt under one version, so their earlier contents are removed first.
-      - rm -rf "{{.TEST_DOTNET}}/tool" "{{.TEST_DOTNET}}/hive" "{{.TEST_DOTNET}}/fixtures" "{{.TEST_DOTNET}}/templates" "{{.TEST_DOTNET}}/prepared" "{{.TEST_DOTNET}}"/packages/isoplane.*
+      - rm -rf "{{.TEST_DOTNET}}/tool" "{{.TEST_DOTNET}}/hive" "{{.TEST_DOTNET}}/fixtures" "{{.TEST_DOTNET}}/templates" "{{.TEST_DOTNET}}/templates-without" "{{.TEST_DOTNET}}/prepared" "{{.TEST_DOTNET}}"/packages/isoplane.*
       - mkdir -p "{{.TEST_DOTNET}}"
       - |
         cat > "{{.TEST_DOTNET}}/global.json" <<EOF
@@ -421,6 +421,12 @@ tasks:
       # from the inside out, so such a reference finds the folder's namespace instead of the root.
       - for: ['isoplane-web:Template-App', 'isoplane-handler:Tests.Template-App', 'isoplane-mcpserver:Tools.Template-App', 'isoplane-webapi:Todos.Template-App', 'isoplane-webapp:Notes.Template-App']
         cmd: '"{{.DOTNET}}" new {{index (splitList ":" .ITEM) 0}} --name {{index (splitList ":" .ITEM) 1}} --output "{{.TEST_DOTNET}}/templates/{{index (splitList ":" .ITEM) 0}}" --debug:custom-hive "{{.TEST_DOTNET}}/hive"'
+      # Each template again with one of its skills directories switched off. Nothing builds these,
+      # so they are not restored.
+      - for: [isoplane-web, isoplane-handler, isoplane-mcpserver, isoplane-webapi, isoplane-webapp]
+        cmd: |
+          "{{.DOTNET}}" new {{.ITEM}} --name App --dot-claude false --output "{{.TEST_DOTNET}}/templates-without/dot-claude/{{.ITEM}}" --debug:custom-hive "{{.TEST_DOTNET}}/hive"
+          "{{.DOTNET}}" new {{.ITEM}} --name App --dot-agents false --output "{{.TEST_DOTNET}}/templates-without/dot-agents/{{.ITEM}}" --debug:custom-hive "{{.TEST_DOTNET}}/hive"
       # The template test builds these itself, so they are only restored here.
       - for: [isoplane-web, isoplane-handler, isoplane-mcpserver, isoplane-webapi, isoplane-webapp]
         task: projects:build

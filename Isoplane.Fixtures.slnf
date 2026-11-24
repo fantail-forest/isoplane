@@ -27,8 +27,7 @@
       "guest-runtime/tests/packages/session/Session.csproj",
       "guest-runtime/tests/packages/sqlite-pclraw3/SqlitePclRaw3.csproj",
       "guest-runtime/tests/packages/sqlite/Sqlite.csproj",
-      "guest-runtime/tests/packages/web/Web.csproj",
-      "tools/ApiReference/ApiReference.csproj"
+      "guest-runtime/tests/packages/web/Web.csproj"
     ]
   }
 }

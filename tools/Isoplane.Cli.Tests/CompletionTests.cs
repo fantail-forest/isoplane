@@ -18,6 +18,7 @@ public sealed class CompletionTests
     [InlineData("isoplane cache ", "clean")]
     [InlineData("isoplane agent ", "init")]
     [InlineData("isoplane agent init --harness c", "claude-code")]
+    [InlineData("isoplane skills install --dot", "--dot-claude")]
     [InlineData("isoplane telemetry ", "status")]
     [InlineData("isoplane setup --so", "--source")]
     [InlineData("isoplane completions p", "powershell")]

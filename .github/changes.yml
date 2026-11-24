@@ -63,5 +63,3 @@ integration:
   - 'deploy/local/**'
   - 'scenario-tests/**'
   - 'scripts/**'
-  # These guides are included in SDK packages as agent skill references.
-  - 'docs/userdocs/docs/**'

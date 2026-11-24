@@ -125,7 +125,7 @@ public sealed class TelemetryTests : IDisposable
         await disabling.Upload.WaitAsync(TimeSpan.FromSeconds(30));
         Assert.Equal(0, clients);
         Assert.Equal(0, contextReads);
-        Assert.Equal(0, disabling.Ended(TelemetryCommands.Run(args, host, TextWriter.Null)));
+        Assert.Equal(0, disabling.Ended(TelemetryCommands.Disable(host, TextWriter.Null)));
         await disabling.Upload;
         Assert.Equal(0, clients);
         Assert.Empty(service.Requests);
@@ -138,7 +138,7 @@ public sealed class TelemetryTests : IDisposable
         Assert.Empty(Pending());
         Assert.Empty(service.Requests);
 
-        Assert.Equal(0, TelemetryCommands.Run(["telemetry", "enable"], Host(), TextWriter.Null));
+        Assert.Equal(0, TelemetryCommands.Enable(Host(), TextWriter.Null));
         CommandTelemetry.Begin(["dev"], Host()).Ended(0);
         Assert.NotEqual(identifier, Host().State.Load()!.InstallId);
         Assert.Equal(["command", "installation"], Pending().Select(Kind).Order());
@@ -167,7 +167,7 @@ public sealed class TelemetryTests : IDisposable
         Assert.Equal(0, clients);
         Assert.Equal(0, contextReads);
         var output = new StringWriter();
-        Assert.Equal(0, run.Ended(TelemetryCommands.Run(args, host, output)));
+        Assert.Equal(0, run.Ended(command == "status" ? TelemetryCommands.Status(host, output) : TelemetryCommands.Enable(host, output)));
         await run.Upload;
         Assert.Equal(0, clients);
         Assert.Empty(service.Requests);
@@ -286,7 +286,7 @@ public sealed class TelemetryTests : IDisposable
         Assert.Empty(service.Requests);
         Assert.Single(Pending());
         Assert.StartsWith("Telemetry is off because", Status());
-        TelemetryCommands.Run(["telemetry", "enable"], Host(), TextWriter.Null);
+        TelemetryCommands.Enable(Host(), TextWriter.Null);
         Assert.StartsWith("Telemetry is enabled.", Status());
     }
 
@@ -463,7 +463,7 @@ public sealed class TelemetryTests : IDisposable
     private string Status(TelemetryHost? host = null)
     {
         var output = new StringWriter();
-        TelemetryCommands.Run(["telemetry", "status"], host ?? Host(), output);
+        TelemetryCommands.Status(host ?? Host(), output);
         return output.ToString().TrimEnd();
     }
 
