@@ -20,15 +20,15 @@ their content. Add documentation when it serves a real need, not to fill a categ
 
 ## Generate reference docs from doc comments in code
 
-Follow the [reference-documentation guidance](../../../AGENTS.md#comments--documentation): generate API references, config references and capability tables from code as a prerequisite of the documentation build, or drift-check deliberately retained generated copies on the stable toolchain. Generation at build time removes the need to synchronize a stored copy; generator behavior can still need tests. Write guides and tutorials by hand and update them when the behavior they explain changes.
+Follow the [reference-documentation guidance](../../../AGENTS.md#comments--documentation): generate API references, config references and capability tables from code. Generated pages may be committed, which puts a change to them in front of a reviewer. The pre-commit hook regenerates them, and a workflow that publishes the site generates them immediately before publishing, so no test compares them with the code. Generator behavior can still need tests. Write guides and tutorials by hand and update them when the behavior they explain changes.
 
-**Not this:** Keeping a generated copy solely to give a drift test something to compare, or making a test runner build the documentation prerequisites.
+**Not this:** Testing a committed generated page for drift, or making a test runner build the documentation prerequisites.
 
-**Exception:** Repository readers or consumers that cannot run the generator may benefit from retained generated pages. Check those copies for drift rather than requiring every consumer to generate them.
+**Exception:** None.
 
 ## Snapshot customer docs per release line
 
-Keep customer documentation aligned with supported releases so readers can find the behavior of the version they use. See the [release procedure](../../userdocs/README.md) for snapshot mechanics.
+Keep customer documentation aligned with supported releases so readers can find the behavior of the version they use. `docs/userdocs/scripts/snapshot.mjs` generates a line's snapshot under `versioned_docs/` at release, and the snapshot is committed with the release. See the [release procedure](../../userdocs/README.md) for snapshot mechanics.
 
 ## Describe supported behavior and its limits
 

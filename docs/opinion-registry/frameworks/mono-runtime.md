@@ -3,7 +3,7 @@
 ## Bind an import only with a wrapper and a test
 
 Add an ABI import together with its SDK consumer and a real guest test. Generate
-representations from the host contract, or drift-test them against it.
+representations from the host contract.
 
 **Not this:** Unused capability declarations or hand-maintained copies.
 
