@@ -1,6 +1,3 @@
-//! Preparation, inspection and clearing of the per-user runtime cache local
-//! sessions fill.
-
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 

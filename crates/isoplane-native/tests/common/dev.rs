@@ -1,5 +1,3 @@
-//! A local development process, observed through its output and HTTP listener.
-
 use std::io::Write;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;

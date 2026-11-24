@@ -1,5 +1,3 @@
-//! One project's guest execution and local bindings, with no node control plane.
-
 mod baseline;
 
 pub use baseline::Baselines;

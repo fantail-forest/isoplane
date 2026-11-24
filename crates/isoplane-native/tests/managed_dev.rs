@@ -1,5 +1,3 @@
-//! The installed managed CLI contains publication failures and cancels abandoned builds.
-
 #[path = "common/dev.rs"]
 pub mod common;
 

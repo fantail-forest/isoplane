@@ -1,5 +1,3 @@
-//! Installed Isoplane development and debugging journeys.
-
 #[path = "common/dev.rs"]
 pub mod common;
 #[path = "common/debugger.rs"]

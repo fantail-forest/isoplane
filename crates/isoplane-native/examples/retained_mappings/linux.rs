@@ -1,4 +1,3 @@
-//! Internal mapping microbenchmark: unique overlays over one shared baseline.
 #![forbid(unsafe_code)]
 use anyhow::{ensure, Context, Result};
 

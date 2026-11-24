@@ -1,5 +1,3 @@
-//! Native platform operations consumed by managed local development tooling.
-
 mod error;
 mod interop;
 mod local;

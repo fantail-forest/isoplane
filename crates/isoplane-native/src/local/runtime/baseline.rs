@@ -1,9 +1,3 @@
-//! A runtime baseline, prepared once per runtime, engine and limits into the
-//! user's runtime cache, and reused by every preparation of an application
-//! package on it, whichever project the package comes from. The application
-//! is prepared as a layer over it into the project's own cache, and reused
-//! while its identity holds.
-
 use isoplane_engine::Compilation;
 
 use super::Project;

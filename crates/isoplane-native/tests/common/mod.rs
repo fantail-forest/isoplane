@@ -1,5 +1,3 @@
-//! Shared harness for driving the managed Isoplane CLI as a user would.
-
 use std::process::Command;
 
 fn cli() -> &'static std::path::Path {

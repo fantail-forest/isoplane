@@ -1,5 +1,3 @@
-//! Coordinate the DAP driver with the development process's shutdown control.
-
 use std::io::{Read, Seek, Write};
 use std::process::{Command, Output, Stdio};
 use std::sync::mpsc::{channel, RecvTimeoutError};

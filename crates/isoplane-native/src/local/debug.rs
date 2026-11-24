@@ -1,5 +1,3 @@
-//! One local request through a fresh debug guest and the ordinary host services.
-
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 /// Refuses a debugger endpoint that is not a bound IPv4 loopback port: the
