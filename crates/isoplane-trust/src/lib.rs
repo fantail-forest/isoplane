@@ -1,10 +1,3 @@
-//! The platform-managed public TLS root bundle: the bytes every guest reads
-//! at [`GUEST_PATH`], checked against the manifest ingested with them.
-//!
-//! The bundle is embedded at build time from `trust/`, so rotating it is a
-//! node release and a node cannot start without one. An operator may serve a
-//! different bundle by path, but only together with the hash it must match.
-
 #![forbid(unsafe_code)]
 
 use std::path::{Path, PathBuf};
