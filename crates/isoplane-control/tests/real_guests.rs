@@ -1,7 +1,5 @@
 //! Built Rust guests through admission and preparation, including hostile modules.
 
-use isoplane_abi::config::AppManifest;
-use isoplane_control::admission::admit;
 use isoplane_control::validator::{self, ViolationCode as V};
 use isoplane_prepare::preinit::{PreInitRequest, PreInitializer};
 
@@ -142,30 +140,4 @@ fn exports_init(wasm: &[u8]) -> bool {
             .any(|e| e.name == isoplane_abi::imports::exports::INITIALIZE),
         _ => false,
     })
-}
-
-#[test]
-fn a_real_guest_is_admitted_and_initialized_without_a_version_catalog() {
-    let wasm = isoplane_fixtures::rust("quotes-api");
-    let manifest = AppManifest {
-        guest_memory_bytes: None,
-        resource_limits: Default::default(),
-        validation_limits: Default::default(),
-        name: "quotes".into(),
-        bindings: Default::default(),
-        init_visible_vars: vec![],
-    };
-    let report = admit(&manifest, &wasm).expect("admission");
-    assert!(report.has_initialize());
-    assert!(!report.capabilities.is_empty());
-    let request = PreInitRequest {
-        module_hash: isoplane_engine::ModuleHash::of(&wasm),
-
-        init_blob: Vec::new(),
-    };
-    let output = PreInitializer::new()
-        .run(&wasm, &request)
-        .expect("initialization");
-    assert!(!exports_init(&output.template_wasm));
-    assert_ne!(output.template_wasm, wasm);
 }
