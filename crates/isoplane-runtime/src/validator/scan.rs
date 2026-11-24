@@ -4,17 +4,24 @@ use std::collections::BTreeMap;
 
 use isoplane_abi::imports::{Sig, Ty};
 use wasmparser::{
-    CompositeInnerType, ExternalKind, KnownCustom, MemoryType, Name, Parser, Payload, TypeRef,
-    ValType,
+    CompositeInnerType, Export, ExternalKind, FuncType, Import, KnownCustom, MemoryType, Name,
+    Parser, Payload, TypeRef, ValType,
 };
 
+/// A custom section's name and the size of its data.
 #[derive(Default)]
-pub(super) struct Scan {
+pub(super) struct CustomSection<'a> {
+    pub(super) name: &'a str,
+    pub(super) bytes: u64,
+}
+
+#[derive(Default)]
+pub(super) struct Scan<'a> {
     /// Function types by type index; `None` for non-function composite types.
-    pub(super) func_types: Vec<Option<(Vec<ValType>, Vec<ValType>)>>,
-    pub(super) imports: Vec<(String, String, TypeRef)>,
+    pub(super) func_types: Vec<Option<FuncType>>,
+    pub(super) imports: Vec<Import<'a>>,
     pub(super) memories: Vec<MemoryType>,
-    pub(super) exports: Vec<(String, ExternalKind, u32)>,
+    pub(super) exports: Vec<Export<'a>>,
     /// Type index of every function in index-space order, imports first, so
     /// an export named by index can be type-checked.
     pub(super) func_type_of: Vec<u32>,
@@ -30,7 +37,7 @@ pub(super) struct Scan {
     pub(super) max_locals_fn: u32,
     pub(super) code_entries: u32,
     pub(super) custom_section_bytes: u64,
-    pub(super) largest_custom: (String, u64),
+    pub(super) largest_custom: CustomSection<'a>,
     pub(super) type_count: u32,
     pub(super) element_segments: u32,
     pub(super) data_segments: u32,
@@ -38,7 +45,7 @@ pub(super) struct Scan {
     pub(super) local_debug: bool,
 }
 
-pub(super) fn scan(wasm: &[u8]) -> anyhow::Result<Scan> {
+pub(super) fn scan(wasm: &[u8]) -> anyhow::Result<Scan<'_>> {
     let mut s = Scan::default();
     for payload in Parser::new(0).parse_all(wasm) {
         match payload? {
@@ -52,9 +59,7 @@ pub(super) fn scan(wasm: &[u8]) -> anyhow::Result<Scan> {
                     for sub in group?.into_types() {
                         s.type_count += 1;
                         match sub.composite_type.inner {
-                            CompositeInnerType::Func(ft) => s
-                                .func_types
-                                .push(Some((ft.params().to_vec(), ft.results().to_vec()))),
+                            CompositeInnerType::Func(ft) => s.func_types.push(Some(ft)),
                             _ => s.func_types.push(None),
                         }
                     }
@@ -75,8 +80,7 @@ pub(super) fn scan(wasm: &[u8]) -> anyhow::Result<Scan> {
                         TypeRef::Global(g) => s.global_mutable.push(g.mutable),
                         _ => {}
                     }
-                    s.imports
-                        .push((imp.module.to_string(), imp.name.to_string(), imp.ty));
+                    s.imports.push(imp);
                 }
             }
             Payload::FunctionSection(r) => {
@@ -104,7 +108,7 @@ pub(super) fn scan(wasm: &[u8]) -> anyhow::Result<Scan> {
             Payload::ExportSection(r) => {
                 for e in r {
                     let e = e?;
-                    s.exports.push((e.name.to_string(), e.kind, e.index));
+                    s.exports.push(e);
                 }
             }
             Payload::ElementSection(r) => s.element_segments = r.count(),
@@ -127,8 +131,11 @@ pub(super) fn scan(wasm: &[u8]) -> anyhow::Result<Scan> {
                     s.global_names = global_names(names);
                 }
                 s.custom_section_bytes += c.data().len() as u64;
-                if c.data().len() as u64 > s.largest_custom.1 {
-                    s.largest_custom = (c.name().to_string(), c.data().len() as u64);
+                if c.data().len() as u64 > s.largest_custom.bytes {
+                    s.largest_custom = CustomSection {
+                        name: c.name(),
+                        bytes: c.data().len() as u64,
+                    };
                 }
             }
             Payload::ModuleSection { .. } | Payload::ComponentSection { .. } => s.nested = true,
@@ -181,7 +188,8 @@ fn ty_matches(want: Ty, got: ValType) -> bool {
     )
 }
 
-pub(super) fn sig_matches(want: &Sig, params: &[ValType], results: &[ValType]) -> bool {
+pub(super) fn sig_matches(want: &Sig, got: &FuncType) -> bool {
+    let (params, results) = (got.params(), got.results());
     want.params.len() == params.len()
         && want.results.len() == results.len()
         && want
@@ -196,7 +204,7 @@ pub(super) fn sig_matches(want: &Sig, params: &[ValType], results: &[ValType]) -
             .all(|(a, b)| ty_matches(*a, *b))
 }
 
-pub(super) fn render_sig(params: &[ValType], results: &[ValType]) -> String {
+pub(super) fn render_sig(signature: &FuncType) -> String {
     let f = |v: &[ValType]| {
         v.iter()
             .map(|t| match t {
@@ -210,7 +218,11 @@ pub(super) fn render_sig(params: &[ValType], results: &[ValType]) -> String {
             .collect::<Vec<_>>()
             .join(", ")
     };
-    format!("({}) -> ({})", f(params), f(results))
+    format!(
+        "({}) -> ({})",
+        f(signature.params()),
+        f(signature.results())
+    )
 }
 
 pub(super) fn render_want(sig: &Sig) -> String {

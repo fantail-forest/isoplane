@@ -5,14 +5,14 @@ use std::collections::BTreeSet;
 
 use isoplane_abi::pal::{self, PalDef};
 use isoplane_abi::{config::ValidationLimits, imports};
-use wasmparser::{ExternalKind, TypeRef};
+use wasmparser::{Export, ExternalKind, Import, TypeRef};
 
 use super::report::{ValidationReport, Violation, ViolationCode};
 use super::scan::{
     func_type_index, kind_label, kind_matches, render_sig, render_want, sig_matches, Scan,
 };
 
-pub(super) fn check_imports(s: &Scan, v: &mut Vec<Violation>, policy: &ValidationLimits) {
+pub(super) fn check_imports(s: &Scan<'_>, v: &mut Vec<Violation>, policy: &ValidationLimits) {
     if s.nested {
         v.push(Violation::new(
             ViolationCode::V1UndeclaredImport,
@@ -31,8 +31,13 @@ pub(super) fn check_imports(s: &Scan, v: &mut Vec<Violation>, policy: &Validatio
         ));
     }
 
-    for (module, field, ty) in &s.imports {
-        let Some(def) = (if module == imports::HOST_MODULE {
+    for Import {
+        module,
+        name: field,
+        ty,
+    } in &s.imports
+    {
+        let Some(def) = (if *module == imports::HOST_MODULE {
             imports::lookup(field)
         } else {
             None
@@ -70,15 +75,15 @@ pub(super) fn check_imports(s: &Scan, v: &mut Vec<Violation>, policy: &Validatio
 
         match func_type_index(ty) {
             Some(idx) => match s.func_types.get(idx as usize) {
-                Some(Some((params, results))) => {
-                    if !sig_matches(&def.sig, params, results) {
+                Some(Some(got)) => {
+                    if !sig_matches(&def.sig, got) {
                         v.push(Violation::about(
                             ViolationCode::V1SignatureMismatch,
                             def.name,
                             format!(
                                 "import `isoplane`.`{}` has signature {}, world declares {}",
                                 def.name,
-                                render_sig(params, results),
+                                render_sig(got),
                                 render_want(&def.sig)
                             ),
                         ));
@@ -108,7 +113,7 @@ pub(super) fn check_imports(s: &Scan, v: &mut Vec<Violation>, policy: &Validatio
 
 /// An adapter entry runs a body against its declared type, so its signature
 /// is checked.
-fn check_pal_import(p: &'static PalDef, ty: &TypeRef, s: &Scan, v: &mut Vec<Violation>) {
+fn check_pal_import(p: &'static PalDef, ty: &TypeRef, s: &Scan<'_>, v: &mut Vec<Violation>) {
     let Some(idx) = func_type_index(ty) else {
         v.push(Violation::about(
             ViolationCode::V1SignatureMismatch,
@@ -124,8 +129,8 @@ fn check_pal_import(p: &'static PalDef, ty: &TypeRef, s: &Scan, v: &mut Vec<Viol
 
     let want = p.sig();
     match s.func_types.get(idx as usize) {
-        Some(Some((params, results))) if sig_matches(&want, params, results) => {}
-        Some(Some((params, results))) => {
+        Some(Some(got)) if sig_matches(&want, got) => {}
+        Some(Some(got)) => {
             v.push(Violation::about(
                 ViolationCode::V1SignatureMismatch,
                 p.full_name(),
@@ -134,7 +139,7 @@ fn check_pal_import(p: &'static PalDef, ty: &TypeRef, s: &Scan, v: &mut Vec<Viol
                      delegated import runs a real body against its declared type, so half \
                      a type check is not a type check",
                     p.full_name(),
-                    render_sig(params, results),
+                    render_sig(got),
                     render_want(&want)
                 ),
             ));
@@ -149,7 +154,7 @@ fn check_pal_import(p: &'static PalDef, ty: &TypeRef, s: &Scan, v: &mut Vec<Viol
 }
 
 pub(super) fn check_exports(
-    s: &Scan,
+    s: &Scan<'_>,
     report: &mut ValidationReport,
     v: &mut Vec<Violation>,
     policy: &ValidationLimits,
@@ -163,23 +168,22 @@ pub(super) fn check_exports(
         } else {
             ExternalKind::Func
         };
-        match s.exports.iter().find(|(n, _, _)| n == name) {
-            Some((_, k, idx)) if kind_matches(*k, want_kind) => {
+        match s.exports.iter().find(|export| export.name == *name) {
+            Some(Export { kind, index, .. }) if kind_matches(*kind, want_kind) => {
                 if want_kind == ExternalKind::Func {
                     if let Some(want) = imports::exports::signature(name) {
                         match s
                             .func_type_of
-                            .get(*idx as usize)
+                            .get(*index as usize)
                             .and_then(|t| s.func_types.get(*t as usize))
                         {
-                            Some(Some((params, results)))
-                                if sig_matches(&want, params, results) => {}
-                            Some(Some((params, results))) => v.push(Violation::about(
+                            Some(Some(got)) if sig_matches(&want, got) => {}
+                            Some(Some(got)) => v.push(Violation::about(
                                 ViolationCode::V1SignatureMismatch,
                                 *name,
                                 format!(
                                     "export `{name}` has signature {}, world declares {}",
-                                    render_sig(params, results),
+                                    render_sig(got),
                                     render_want(&want)
                                 ),
                             )),
@@ -191,9 +195,9 @@ pub(super) fn check_exports(
                     }
                 }
             }
-            Some((_, k, _)) => v.push(Violation::new(
+            Some(Export { kind, .. }) => v.push(Violation::new(
                 ViolationCode::V1MissingExport,
-                format!("export `{name}` is a {k:?}, expected {want_kind:?}"),
+                format!("export `{name}` is a {kind:?}, expected {want_kind:?}"),
             )),
             None if imports::exports::OPTIONAL.contains(name) => {}
             None => v.push(Violation::about(
@@ -212,7 +216,7 @@ pub(super) fn check_exports(
         .filter(|o| {
             s.exports
                 .iter()
-                .any(|(n, k, _)| n == o && kind_matches(*k, ExternalKind::Func))
+                .any(|export| export.name == *o && kind_matches(export.kind, ExternalKind::Func))
         })
         .collect();
 
@@ -231,12 +235,12 @@ pub(super) fn check_exports(
 /// The host captures globals only through exports, both into a template after
 /// initialization and from a hibernating instance, so an unexported mutable
 /// global would lose its value in either while the memory beside it kept its own.
-pub(super) fn check_globals(s: &Scan, v: &mut Vec<Violation>) {
+pub(super) fn check_globals(s: &Scan<'_>, v: &mut Vec<Violation>) {
     let exported: BTreeSet<u32> = s
         .exports
         .iter()
-        .filter(|(_, kind, _)| *kind == ExternalKind::Global)
-        .map(|(_, _, index)| *index)
+        .filter(|export| export.kind == ExternalKind::Global)
+        .map(|export| export.index)
         .collect();
     for (index, _) in (0u32..)
         .zip(&s.global_mutable)
@@ -259,7 +263,7 @@ pub(super) fn check_globals(s: &Scan, v: &mut Vec<Violation>) {
 }
 
 pub(super) fn check_memory(
-    s: &Scan,
+    s: &Scan<'_>,
     ceiling_bytes: u64,
     require_maximum: bool,
     v: &mut Vec<Violation>,
@@ -324,7 +328,7 @@ pub(super) fn check_memory(
     }
 }
 
-pub(super) fn check_bombs(s: &Scan, v: &mut Vec<Violation>, policy: &ValidationLimits) {
+pub(super) fn check_bombs(s: &Scan<'_>, v: &mut Vec<Violation>, policy: &ValidationLimits) {
     let function_count = s.imported_funcs.saturating_add(s.defined_funcs);
 
     let mut bomb = |cond: bool, detail: String| {
@@ -361,8 +365,8 @@ pub(super) fn check_bombs(s: &Scan, v: &mut Vec<Violation>, policy: &ValidationL
              {} bytes)",
             s.custom_section_bytes,
             policy.max_custom_section_bytes,
-            s.largest_custom.0,
-            s.largest_custom.1
+            s.largest_custom.name,
+            s.largest_custom.bytes
         ),
     );
     bomb(
