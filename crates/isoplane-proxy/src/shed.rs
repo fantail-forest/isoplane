@@ -1,9 +1,3 @@
-//! Admission control: `max_in_flight` dispatches may be hot in the cells at
-//! once, and `max_queued` callers may wait for a slot before the proxy
-//! refuses. Without the second knob an overloaded proxy turns a CPU shortage
-//! into an unbounded queue where every request times out having held a
-//! thread and a socket.
-
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -15,6 +9,8 @@ use crate::metrics::ProxyMetrics;
 #[derive(Debug, Clone, Copy)]
 pub struct ShedConfig {
     pub max_in_flight: usize,
+    /// Callers that may wait for a slot before the proxy refuses. Unbounded, an
+    /// overloaded proxy queues requests that each time out holding a thread and a socket.
     pub max_queued: usize,
 }
 

@@ -1,5 +1,3 @@
-//! End-to-end proxy tests over real TCP, driven as a browser or `curl` would.
-
 mod common;
 
 use std::sync::Arc;

@@ -1,7 +1,3 @@
-//! Proxy-side meters: the outermost layer of a request's latency
-//! decomposition, since only the proxy knows how long a request waited behind
-//! the admission queue, and which code tier served it.
-
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 
 use isoplane_abi::host::CodeTier;

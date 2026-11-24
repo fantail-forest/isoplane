@@ -1,5 +1,3 @@
-//! HTTP dispatcher double for proxy tests.
-
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 
