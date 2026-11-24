@@ -1,9 +1,6 @@
 namespace Isoplane.Cli;
 
-/// <summary>
-/// What a Linux machine's os-release file says about its distribution: the <c>ID</c> and <c>VERSION_ID</c>
-/// fields, each null when nothing states it.
-/// </summary>
+/// <summary>The Linux distribution identifier and optional version from os-release.</summary>
 internal sealed record LinuxDistribution(string? Id, string? VersionId)
 {
     // The os-release specification's order: the second is read only when the first is missing.

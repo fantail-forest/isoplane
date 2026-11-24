@@ -3,12 +3,8 @@ using Xunit;
 
 namespace Isoplane.Cli.Tests;
 
-public sealed class LinuxDistributionTests : IDisposable
+public sealed class LinuxDistributionTests
 {
-    private readonly FileSystemTestDirectory directory = new("isoplane-os-release-");
-
-    public void Dispose() => directory.Dispose();
-
     [Fact]
     public void The_identifier_and_version_are_the_unquoted_values_os_release_assigns()
     {
@@ -31,6 +27,7 @@ public sealed class LinuxDistributionTests : IDisposable
     [Fact]
     public void A_distribution_comes_from_the_second_os_release_file_only_when_the_first_is_missing()
     {
+        using var directory = new FileSystemTestDirectory("isoplane-os-release-");
         var usr = Path.Combine(directory.Path, "usr-os-release");
         File.WriteAllLines(usr, ["ID=fedora", "VERSION_ID=42"]);
         var missing = Path.Combine(directory.Path, "missing-os-release");
@@ -45,6 +42,7 @@ public sealed class LinuxDistributionTests : IDisposable
     [Fact]
     public void An_os_release_file_that_cannot_be_read_leaves_the_distribution_unknown()
     {
+        using var directory = new FileSystemTestDirectory("isoplane-os-release-");
         var usr = Path.Combine(directory.Path, "usr-os-release");
         File.WriteAllLines(usr, ["ID=fedora", "VERSION_ID=42"]);
         // Reading a directory as a file is refused on every platform, whoever runs the test.
