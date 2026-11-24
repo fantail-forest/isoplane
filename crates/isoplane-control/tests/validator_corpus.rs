@@ -1,16 +1,9 @@
-//! Admission fixtures for host capabilities, execution features and structural limits.
-//! A rejected fixture can report more than one violation code.
-
 use isoplane_abi::config::ValidationLimits;
 use isoplane_control::validator::{self, ViolationCode as V};
 
 #[path = "common/validate.rs"]
 mod validate;
 use validate::{assert_violates, codes, parse, REQUIRED_EXPORTS};
-
-// ---------------------------------------------------------------------------
-// fixture construction
-// ---------------------------------------------------------------------------
 
 /// A well-formed module that asks for a realistic slice of the capability
 /// table with correct signatures.
@@ -29,10 +22,6 @@ fn clean_wat() -> String {
     )
 }
 
-// ---------------------------------------------------------------------------
-// the corpus
-// ---------------------------------------------------------------------------
-
 #[test]
 fn a_clean_module_validates_and_reports_its_optional_exports() {
     let wasm = parse(&clean_wat());
@@ -46,7 +35,6 @@ fn a_clean_module_validates_and_reports_its_optional_exports() {
     assert!(!report.has_initialize());
 }
 
-/// Unlisted imports are rejected during admission.
 #[test]
 fn v1_undeclared_import() {
     assert_violates(
@@ -83,7 +71,6 @@ fn v1_undeclared_import() {
     );
 }
 
-/// Declared imports must match the canonical host signature.
 #[test]
 fn v1_right_name_wrong_signature() {
     assert_violates(
@@ -120,7 +107,6 @@ fn v1_right_name_wrong_signature() {
     );
 }
 
-/// **V1.** Missing required exports: the host has no way in.
 #[test]
 fn v1_missing_exports() {
     let wat = r#"(module
@@ -170,7 +156,6 @@ fn v1_hidden_mutable_global() {
     );
 }
 
-/// Required exports must have the declared host-interface types.
 #[test]
 fn v1_export_with_the_wrong_signature() {
     assert_violates(
@@ -193,7 +178,6 @@ fn v1_export_with_the_wrong_signature() {
     );
 }
 
-/// Atomic operations require a proposal excluded by the execution profile.
 #[test]
 fn v2_atomics_and_threads() {
     assert_violates(
@@ -231,7 +215,6 @@ fn v2_atomics_and_threads() {
     );
 }
 
-/// The execution profile excludes relaxed SIMD and exceptions.
 #[test]
 fn v2_relaxed_simd_and_exceptions() {
     assert_violates(
@@ -275,7 +258,6 @@ fn v2_relaxed_simd_and_exceptions() {
     );
 }
 
-/// Tail calls and stack switching are outside this execution profile.
 #[test]
 fn v2_tail_calls_and_stack_switching_are_off() {
     assert_violates(
@@ -290,7 +272,6 @@ fn v2_tail_calls_and_stack_switching_are_off() {
     );
 }
 
-/// One unshared linear memory must fit the configured memory ceiling.
 #[test]
 fn v3_memory_shape() {
     assert_violates(
@@ -358,7 +339,6 @@ fn v3_memory_shape() {
     );
 }
 
-/// Structural limits reject excessive compilation inputs.
 #[test]
 fn v4_function_count_bomb() {
     let n = ValidationLimits::DEFAULT.max_functions + 1;
@@ -452,7 +432,6 @@ fn leb128(out: &mut Vec<u8>, mut v: u64) {
     }
 }
 
-/// Component binaries are not admitted as core WebAssembly modules.
 #[test]
 fn v1_component_upload_is_rejected() {
     let component = wat::parse_str(r#"(component)"#).unwrap();
@@ -464,7 +443,6 @@ fn v1_component_upload_is_rejected() {
     assert_eq!(got, vec![V::V1UndeclaredImport], "got {got:?}");
 }
 
-/// Malformed binary input is reported separately from unsupported proposals.
 #[test]
 fn malformed_binary_is_rejected_as_malformed() {
     let mut wasm = parse(&clean_wat());
@@ -490,7 +468,6 @@ fn malformed_binary_is_rejected_as_malformed() {
     }
 }
 
-/// Capability validation uses the configured execution profile.
 #[test]
 fn engine_profile_has_the_dangerous_proposals_off() {
     let f = validator::ENGINE_FEATURES;

@@ -1,5 +1,3 @@
-//! The retained Mono runtime through both capability admission boundaries.
-
 use isoplane_abi::config::GuestMemoryBytes;
 use isoplane_control::validator::{self, ViolationCode};
 use isoplane_engine::IsoplaneEngine;

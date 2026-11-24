@@ -1,7 +1,3 @@
-//! The shipped .NET guest through pre-initialization: the template answers
-//! its first call with the managed runtime already up and no init entry left
-//! to run.
-
 use isoplane_abi::config::GuestMemoryBytes;
 use isoplane_control::validator;
 #[path = "common/managed.rs"]

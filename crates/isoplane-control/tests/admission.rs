@@ -1,5 +1,3 @@
-//! Local admission enforces sandbox capabilities and operator-supplied limits.
-
 use isoplane_abi::config::AppManifest;
 use isoplane_control::admission::{admit, admit_shared_runtime};
 use isoplane_control::AdmissionError;

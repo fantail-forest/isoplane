@@ -1,5 +1,3 @@
-//! Owner-only local files used by application settings and selected deployment state.
-
 #[cfg(unix)]
 use std::fs::File;
 #[cfg(unix)]

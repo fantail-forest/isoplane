@@ -1,14 +1,3 @@
-//! A template warmed at deploy-time preparation observes a trust-bundle
-//! rotation. Local initialization prepares the .NET guest with bundle A
-//! served, so the template carries the machine root store's cache of A; a
-//! node serving bundle B activates that template, and the store lists B once
-//! the guest clock passes the store's recheck interval, A until then.
-//!
-//! The guest clock is the harness's: pre-initialisation freezes it at zero,
-//! and the reactor's slice clock is what the activated guest's stopwatch
-//! reads, so "five seconds of guest time since the store was loaded" is
-//! exactly the slice clock the test begins the dispatch at.
-
 use isoplane_harness::logging::GuestLogs;
 use std::path::Path;
 use std::process::Command;
