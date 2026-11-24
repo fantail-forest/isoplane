@@ -1,5 +1,3 @@
-//! Operator health and metrics listener.
-
 use std::convert::Infallible;
 use std::sync::Arc;
 

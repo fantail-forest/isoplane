@@ -1,5 +1,3 @@
-//! Node configuration and startup validation.
-
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
 

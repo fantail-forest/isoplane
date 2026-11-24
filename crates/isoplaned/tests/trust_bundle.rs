@@ -1,6 +1,3 @@
-//! The shipped root bundle, as X.509: every entry decodes and is a
-//! self-signed root, and there are enough of them to be a public store.
-
 use isoplane_test_support::{repository_root, run_successfully};
 use rustls_pki_types::pem::PemObject;
 use rustls_pki_types::CertificateDer;

@@ -1,5 +1,3 @@
-//! Foreground local hosting and offline application deployment.
-
 #![forbid(unsafe_code)]
 
 use anyhow::Context;

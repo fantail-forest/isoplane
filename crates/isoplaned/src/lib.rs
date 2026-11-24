@@ -1,5 +1,3 @@
-//! Local multi-application host and deployment pipeline.
-
 pub mod admin;
 pub mod cli;
 pub mod config;

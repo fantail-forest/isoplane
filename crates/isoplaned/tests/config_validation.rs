@@ -1,5 +1,3 @@
-//! Configuration validation through the daemon's command-line interface.
-
 use std::path::Path;
 use std::process::Output;
 

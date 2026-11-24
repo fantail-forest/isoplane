@@ -1,5 +1,3 @@
-//! `/metrics`: the node's meters as Prometheus text.
-
 use isoplane_proxy::ProxyMetrics;
 use prometheus::{proto, TextEncoder};
 

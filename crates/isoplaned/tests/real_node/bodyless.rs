@@ -1,5 +1,3 @@
-//! No-body framing suppresses payload bytes while preserving work left by the guest.
-
 use std::time::Duration;
 
 use bytes::Bytes;

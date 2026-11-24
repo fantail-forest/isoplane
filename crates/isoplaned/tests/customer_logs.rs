@@ -1,5 +1,3 @@
-//! Managed guest logs through real cells and the JSON output writer.
-
 pub mod common;
 
 use isoplane_harness::logging::LogCapture;

@@ -1,7 +1,3 @@
-//! The local data plane behind the proxy's `Dispatcher`.
-//!
-//! Connects configured application versions to the shared engine and execution pool.
-
 mod admin;
 
 use std::collections::{HashMap, HashSet};

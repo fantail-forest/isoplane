@@ -1,5 +1,3 @@
-//! Bounded, whole-trace admission before the maintained OTLP transport.
-
 use std::collections::HashMap;
 use std::num::{NonZeroU64, NonZeroUsize};
 use std::sync::mpsc;

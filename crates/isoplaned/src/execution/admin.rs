@@ -1,5 +1,3 @@
-//! `NodeAdmin` over the node's execution cells.
-
 use std::sync::Arc;
 
 use super::NodeCells;

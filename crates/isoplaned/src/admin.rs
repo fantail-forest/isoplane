@@ -1,5 +1,3 @@
-//! Read-only local host measurements.
-
 use serde::{Deserialize, Serialize};
 
 /// Read-only measurements of the local execution pool.
