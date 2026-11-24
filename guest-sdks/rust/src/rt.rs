@@ -206,8 +206,10 @@ unsafe fn w_wake_ref(p: *const ()) {
 unsafe fn w_drop(_: *const ()) {}
 
 fn waker_for(id: u32) -> Waker {
-    // SAFETY: the vtable is trivially thread-safe because there is exactly one
-    // thread; see the module note above.
+    // SAFETY: the data pointer carries a task id and is never dereferenced, and
+    // the vtable's functions are sound for any id. A `Waker` also promises
+    // `Send + Sync`, which nothing exercises: the engine builds wasmtime
+    // without threads and the validator rejects a module that declares them.
     unsafe { Waker::from_raw(RawWaker::new(id as usize as *const (), &VTABLE)) }
 }
 

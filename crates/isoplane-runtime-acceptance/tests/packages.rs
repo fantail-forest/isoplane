@@ -911,8 +911,7 @@ fn alpha_initialized_by(initializer: &str) -> Application {
 }
 
 /// A cell serving `application` as module `module`, whose instances stop after
-/// `background_idle_limit_ms` without a request, and which shows guests'
-/// the configured idle stop.
+/// `background_idle_limit_ms` without a request. Its resolver answers every name with no address.
 fn serving_cell(
     application: &Application,
     module: &isoplane_host::ModuleId,

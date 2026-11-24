@@ -173,8 +173,6 @@ pub struct Cell {
         Mutex<HashMap<registry::ApplicationKey, Weak<crate::admission::ApplicationInstances>>>,
     residents: Mutex<HashMap<InstanceId, Resident>>,
     active: ShardedMap<InstanceId, registry::ActiveDispatches>,
-    /// Dispatches that joined an instance while another dispatch's slice ran,
-    /// waiting to begin between slices.
     /// Dispatches that joined an instance while a slice ran, with when they
     /// began waiting for its thread.
     starts: ShardedMap<InstanceId, VecDeque<(Instant, DispatchJob)>>,

@@ -177,12 +177,6 @@ internal sealed partial class Cryptography
     private static string Hex(byte[] bytes) => Convert.ToHexString(bytes).ToLowerInvariant();
 
     /// <summary>
-    /// The nearest public type of the exception <paramref name="action"/>
-    /// throws, the one a caller can catch (OpenSSL failures surface as an
-    /// internal subclass of CryptographicException); the answer a test
-    /// asserts on.
-    /// </summary>
-    /// <summary>
     /// An RSA key exported under a password as DER and as PEM, imported
     /// back and proven by a signature, and the wrong password refused.
     /// </summary>
@@ -214,6 +208,11 @@ internal sealed partial class Cryptography
         return "der=" + derOk + " pem=" + pemOk + " wrong-password=" + wrong;
     }
 
+    /// <summary>
+    /// The nearest public type of the exception <paramref name="action"/>
+    /// throws, the one a caller can catch (OpenSSL failures surface as an
+    /// internal subclass of CryptographicException), or "no exception".
+    /// </summary>
     private static string Failure(Action action)
     {
         try

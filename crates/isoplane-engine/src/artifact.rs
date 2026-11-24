@@ -528,7 +528,7 @@ impl CompilationCache {
         Ok(())
     }
 
-    /// Encapsulates the ownership obligation of the legacy local compilation cache.
+    /// Opens `directory` as a compilation cache, creating it when absent.
     /// Refuses symlinks, non-directory roots and, on Unix, group/other write permissions.
     /// These checks do not establish compiler provenance; the caller still supplies it.
     ///

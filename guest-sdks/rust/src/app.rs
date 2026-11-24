@@ -38,10 +38,9 @@ pub trait Handler: Sized + 'static {
     fn handle(&'static self, req: Request, ctx: Ctx) -> impl Future<Output = Response> + 'static;
 }
 
-/// Guest GC pressure levels for `isoplane_gc_hint`.
-///
-/// CONTRACT GAP: `isoplane-abi` types this as a bare `u8` with no enum, so these
-/// values are the SDK's proposal. See guests/README.md.
+/// How this SDK reads the pressure argument of `isoplane_gc_hint`.
+/// `isoplane-abi` declares the argument as a bare integer and names no
+/// levels, so the numbering is this SDK's own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum GcPressure {
