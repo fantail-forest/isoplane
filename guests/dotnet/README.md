@@ -8,7 +8,7 @@ and `Node` pack several probes and route a request by its first path segment,
 so `/dns/example.test` reaches the DNS probe with the path `/example.test`.
 
 ```bash
-task exec -- guests/build-dotnet.sh --if-stale
+task fixtures:dotnet
 ```
 
 Customer starting points are the project templates in

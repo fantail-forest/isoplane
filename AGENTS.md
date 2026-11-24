@@ -76,8 +76,8 @@ task test:rust -- -p isoplane-host --test cell_dispatch # One integration test b
 task test:managed:standard -- --filter "FullyQualifiedName~NativeSessionTests" # Selected managed tests
 task exec -- cargo <args>                          # Any other Cargo command; plain cargo fails by design
 
-task exec -- guests/build.sh                       # Rust guests -> .build/wasm32/rust-guests/*.wasm
-task exec -- guests/build-dotnet.sh --if-stale     # managed probes -> .build/clr-anycpu/probes/*.tar
+task fixtures:rust                                 # Rust guests -> .build/wasm32/rust-guests/*.wasm
+task fixtures:dotnet                               # managed probes -> .build/clr-anycpu/probes/*.tar
 
 task daemon -- serve --config isoplaned.toml            # Run a node
 task daemon -- serve --config isoplaned.toml --check    # Validate a config without running

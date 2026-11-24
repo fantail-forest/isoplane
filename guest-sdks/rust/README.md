@@ -20,18 +20,11 @@ isoplane_guest::export_handler!(Api);
 
 ## Build and test
 
-Guests are built by [`../../guests/build.sh`](../../guests/build.sh), which is
-the single definition of how they are built; call it rather than reproducing the
-cargo line.
+From the repository root, build the guest modules and run the Rust guest SDK tests:
 
-```bash
-task exec -- guests/build.sh
-
-# The SDK's own tests, including the assertion that its import names and order
-# have not drifted from `crates/isoplane-abi`. The `json` feature is required:
-# the preinit tests use `init::config_vars`, which is gated behind it.
-task exec -- cargo test --manifest-path guests/Cargo.toml -p isoplane-guest --features json \
-    --target x86_64-unknown-linux-gnu
+```sh
+task fixtures:rust
+task test:guests
 ```
 
 ## Workspace

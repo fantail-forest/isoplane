@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build the C# test fixtures.
-# Usage: guests/build-dotnet.sh [--if-stale] [--fixture name]
+# Run task fixtures:dotnet, or task fixtures:dotnet:<fixture> for a single probe.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

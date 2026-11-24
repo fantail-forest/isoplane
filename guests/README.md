@@ -8,17 +8,14 @@ member of it. The C# guests reference the SDK in `../guest-sdks/dotnet`.
 ## Building
 
 ```sh
-task exec -- guests/build.sh                       # Rust guests -> .build/wasm32/rust-guests/*.wasm
-guests/build-dotnet.sh                # managed probes -> .build/clr-anycpu/probes/*.tar
-task exec -- guests/build.sh --if-stale            # only when a source is newer
-guests/build-dotnet.sh --if-stale
+task fixtures:rust    # .build/wasm32/rust-guests/*.wasm
+task fixtures:dotnet  # .build/clr-anycpu/probes/*.tar
 ```
 
-Task prepares fixtures before running tests:
+The test task prepares its fixtures before running the suite. To skip the release installation journeys:
 
 ```sh
-task fixtures
-task test -- -- --skip a_prepared_release_installs_builds_applications_and_uninstalls
+task test -- -- --skip a_prepared_release_
 ```
 
 Tests read those artifacts through `isoplane-fixtures`; they do not invoke builds.
