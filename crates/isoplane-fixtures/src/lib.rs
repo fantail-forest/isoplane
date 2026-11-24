@@ -1,6 +1,3 @@
-//! Readers for fixtures prepared by Task before the test suite starts.
-//! This crate is for test dependencies and panics when required artifacts are absent.
-
 mod compiled_runtime;
 mod dotnet_projects;
 

@@ -1,7 +1,3 @@
-//! .NET projects built with the installed SDK, and the installed CLI, which
-//! `task fixtures:projects` prepares in `ISOPLANE_TEST_DOTNET`. A test copies the project it
-//! uses, because running or building a project writes into it.
-
 use std::path::{Path, PathBuf};
 
 use isoplane_test_support::copy_tree;
