@@ -106,8 +106,8 @@ which assembles the unsigned SDK release on all three platforms. Linux builds
 the packages every platform shares and its own release. Windows and macOS pack
 theirs from a copy of those shared inputs, and each then installs its release
 and builds an application with it. A last job packs one feed holding all three
-native libraries. It checks the platform package checksums and compares their
-combined contents with the packages that will be published to NuGet. The jobs
+native libraries. It verifies byte-for-byte copies of the shared packages and checks that
+the CLI and native packages contain the combined platform payloads. The jobs
 exchange their outputs as workflow artifacts.
 
 [Release](.github/workflows/release.yml) runs by manual dispatch. It runs the

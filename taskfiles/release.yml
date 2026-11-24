@@ -35,6 +35,7 @@ tasks:
   shared:validate:
     internal: true
     label: 'release:shared:validate:{{.MODE}}'
+    deps: [':initialize']
     requires:
       vars: [MODE]
     vars:

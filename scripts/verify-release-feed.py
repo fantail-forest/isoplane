@@ -26,29 +26,36 @@ def package_payload(path):
 
 def verify_packages(packages, releases, descriptions, version):
     """Require canonical payloads to match the union of verified platform packages."""
-    expected = {}
     expected_ids = {*SHARED_PACKAGES, 'Isoplane.Native', 'Isoplane.Cli'}
+    feed = {path.name.removesuffix(f'.{version}.nupkg'): path for path in packages}
+    if feed.keys() != expected_ids:
+        raise ValueError(f'Combined feed lacks {sorted(expected_ids - feed.keys())} '
+                         f'and has unexpected {sorted(feed.keys() - expected_ids)}')
+    shared_hashes = {name: digest(feed[name]) for name in SHARED_PACKAGES}
+    repacked_payloads = {}
     for release, description in zip(releases, descriptions):
         for package in description['packages']:
             package_id = package['id']
             path = release / package['file']
             if digest(path) != package['sha256']:
                 raise ValueError(f'{path}: content differs from its release manifest')
+            if package_id in shared_hashes:
+                if shared_hashes[package_id] != package['sha256']:
+                    raise ValueError(f'{feed[package_id]}: archive differs from {path}')
+                continue
             payload = package_payload(path)
-            combined = expected.setdefault(package_id, {})
+            combined = repacked_payloads.setdefault(package_id, {})
             for name, entry_hash in payload.items():
                 if name in combined and combined[name] != entry_hash:
                     raise ValueError(f'{package_id}: platform releases disagree on {name}')
                 combined[name] = entry_hash
         if {package['id'] for package in description['packages']} != expected_ids:
             raise ValueError(f'{release}: unexpected platform package set')
-    actual_ids = {p.name.removesuffix(f'.{version}.nupkg') for p in packages}
-    if actual_ids != set(expected):
-        raise ValueError('Canonical and unexpected platform package set')
-    for package in packages:
-        package_id = package.name.removesuffix(f'.{version}.nupkg')
+    for package_id, package in feed.items():
         verify_nuspec(package, package_id, version, descriptions[0]['sourceRevision'])
-        if package_payload(package) != expected[package_id]:
+    for package_id, expected in repacked_payloads.items():
+        package = feed[package_id]
+        if package_payload(package) != expected:
             raise ValueError(f'{package}: payload differs from the verified platform releases; rebuild matching releases before publication')
 
 
