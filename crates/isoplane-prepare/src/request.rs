@@ -1,5 +1,3 @@
-//! Application inputs and their preparation identity.
-
 use std::sync::Arc;
 
 use isoplane_engine::EngineConfig;

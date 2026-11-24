@@ -1,5 +1,3 @@
-//! Preparation as a provider a node selects, run on a thread of its own.
-
 use std::sync::Arc;
 
 use tokio_util::sync::CancellationToken;

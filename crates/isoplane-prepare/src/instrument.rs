@@ -1,6 +1,3 @@
-//! Exports a module's mutable globals and tables, so that what its
-//! initializer leaves in them can be captured.
-
 use anyhow::{bail, ensure};
 use wasm_encoder::{ExportKind, Module, RawSection};
 use wasmparser::{ExternalKind, Parser, Payload, ValType};

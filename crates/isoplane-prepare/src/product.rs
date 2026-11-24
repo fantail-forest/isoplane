@@ -1,6 +1,3 @@
-//! Preparation output, and the admission and capture every way of
-//! preparing shares.
-
 use std::time::Instant;
 
 use isoplane_engine::prepared::PreparedIdentity;

@@ -1,7 +1,3 @@
-//! WAT functions that reach filesystem and native I/O operations the way the
-//! SDK's native wrappers do: a packet of scalar arguments through an
-//! `isoplane` import.
-
 use isoplane_abi::imports::{Sig, Ty};
 
 /// Where the functions lay out a packet. The guests these tests build keep

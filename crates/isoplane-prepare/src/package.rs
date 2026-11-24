@@ -1,8 +1,3 @@
-//! Application packages as `isoplane bundle` writes them, mapped to the files
-//! the host serves the shared runtime: `application.json` and `assemblies/`
-//! beneath the package root, `assets/` at the application's content root.
-//! Its `runtime.json` names the runtime it was built against and is not served.
-
 use isoplane_abi::filesystem::{APPLICATION_PACKAGE_ROOT, HOST_ROOT};
 use isoplane_engine::{PlatformFile, PlatformFiles, PlatformFilesError};
 
