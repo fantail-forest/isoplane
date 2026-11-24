@@ -14,13 +14,13 @@ function providerOf(...isoplaneProjects) {
 }
 
 /**
- * What the editor launches for `configuration`: the first hook's answer when that is another
- * debugger's launch, and otherwise the second hook's answer for the editor's copy.
+ * What the editor launches for `configuration`: the first hook's answer when that names another
+ * debugger, whose providers take over, and otherwise the second hook's answer for the editor's copy.
  */
 async function launched(provider, folder, configuration) {
     const first = await provider.resolveDebugConfiguration(folder, configuration);
-    if (first !== configuration) return first;
-    return provider.resolveDebugConfigurationWithSubstitutedVariables(folder, { ...configuration });
+    if (first.type !== configuration.type) return first;
+    return provider.resolveDebugConfigurationWithSubstitutedVariables(folder, { ...first });
 }
 
 test('a C# launch of an Isoplane project file becomes an Isoplane launch of its directory', async t => {
@@ -63,9 +63,7 @@ test('running without debugging and attaching keep the C# configuration', async 
     const attach = { ...csharp, request: 'attach' };
 
     assert.equal((await launched(provider, undefined, csharp)).type, 'isoplane');
-    assert.equal(await provider.resolveDebugConfiguration(undefined, withoutDebugging), withoutDebugging);
     assert.deepEqual(await launched(provider, undefined, withoutDebugging), withoutDebugging);
-    assert.equal(await provider.resolveDebugConfiguration(undefined, attach), attach);
     assert.deepEqual(await launched(provider, undefined, attach), attach);
     assert.deepEqual(asked, [file]);
 });
@@ -92,7 +90,7 @@ test('a launch classifies its project once across both hooks, and the next launc
     const provider = csharpLaunchProvider(async project => { asked.push(project); return answers[asked.length - 1]; });
     const csharp = { type: 'dotnet', request: 'launch', name: 'Debug', projectPath: file };
 
-    assert.equal(await provider.resolveDebugConfiguration(undefined, csharp), csharp);
+    assert.deepEqual(await provider.resolveDebugConfiguration(undefined, csharp), csharp);
     assert.deepEqual(await provider.resolveDebugConfigurationWithSubstitutedVariables(undefined, { ...csharp }), csharp);
     assert.deepEqual(asked, [file]);
 
@@ -105,7 +103,7 @@ test('a project path the editor has yet to substitute is classified by the later
     const { provider, asked } = providerOf(file);
     const csharp = { type: 'dotnet', request: 'launch', name: 'Debug', projectPath: '${input:directory}/App.csproj' };
 
-    assert.equal(await provider.resolveDebugConfiguration(undefined, csharp), csharp);
+    assert.deepEqual(await provider.resolveDebugConfiguration(undefined, csharp), csharp);
     assert.deepEqual(asked, []);
     assert.deepEqual(await provider.resolveDebugConfigurationWithSubstitutedVariables(undefined, { ...csharp, projectPath: file }),
         { type: 'isoplane', request: 'launch', name: 'Debug', project: path.dirname(file), configuration: 'Debug' });
@@ -120,8 +118,8 @@ test('a variable followed by a parent directory still leaves the project to the 
     const csharp = { type: 'dotnet', request: 'launch', name: 'Debug', projectPath: '${fileDirname}/../App.csproj' };
     const substituted = { ...csharp, projectPath: path.join(workspace, 'services', 'views', '..', 'App.csproj') };
 
-    assert.equal(await provider.resolveDebugConfiguration(folder, csharp), csharp);
+    assert.deepEqual(await provider.resolveDebugConfiguration(folder, csharp), csharp);
     assert.deepEqual(asked, []);
-    assert.equal(await provider.resolveDebugConfigurationWithSubstitutedVariables(folder, substituted), substituted);
+    assert.deepEqual(await provider.resolveDebugConfigurationWithSubstitutedVariables(folder, substituted), substituted);
     assert.deepEqual(asked, [ordinary]);
 });
