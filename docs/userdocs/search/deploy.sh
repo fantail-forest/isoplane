@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 # Deploy the search server to Fly and the site, with the matching index
 # version, to Cloudflare. Run after `pnpm run build` and `pnpm run search:index`.
-# Creates the Fly app on first use and sets both platforms' secrets from
-# search/.env without passing one on a command line. Authenticate the
-# Fly and Wrangler CLIs before running this script.
+# Authenticate the Fly and Wrangler CLIs before running this script.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 

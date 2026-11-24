@@ -1,7 +1,3 @@
-// Renders a page's Markdown source as plain Markdown for readers outside the
-// site: imports, components and directives become text or go, and links
-// become absolute. The source is parsed as Docusaurus parses it, so the
-// output follows the published page rather than the HTML.
 import {readFileSync} from 'node:fs';
 import {dirname, resolve} from 'node:path';
 import {unified} from 'unified';

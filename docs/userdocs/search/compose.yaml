@@ -1,6 +1,3 @@
-# The index build: a throwaway Typesense, the built site served the way
-# Cloudflare serves it, and the scraper that crawls one into the other.
-# build-index.sh drives it; nothing here is reachable from outside this host.
 services:
   typesense:
     image: typesense/typesense:30.2
