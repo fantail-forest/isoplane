@@ -1,5 +1,3 @@
-//! Application lifecycle, local resource budgets and initialization inputs.
-
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

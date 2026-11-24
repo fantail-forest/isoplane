@@ -1,5 +1,3 @@
-//! Typed requests between the canonical socket adapter and host-owned resources.
-
 pub mod canonical;
 pub mod network_error;
 

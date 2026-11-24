@@ -1,5 +1,3 @@
-//! The result record: how a host future completes.
-
 use serde::{Deserialize, Serialize};
 
 /// What `isoplane_wake(future_id, record)` delivers: a completed future's

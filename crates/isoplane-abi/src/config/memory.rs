@@ -1,4 +1,3 @@
-//! Validated per-application linear-memory ceilings.
 use serde::{Deserialize, Serialize};
 
 /// Largest addressable wasm32 linear memory.

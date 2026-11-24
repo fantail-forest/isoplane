@@ -1,5 +1,3 @@
-//! Per-application resource budgets and operator overrides.
-
 use serde::{Deserialize, Serialize};
 
 /// Default maximum outbound connections held by one instance.

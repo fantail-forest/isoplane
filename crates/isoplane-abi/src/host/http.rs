@@ -1,5 +1,3 @@
-//! Host-only HTTP body ownership; these types are not serialized into guests.
-
 use async_trait::async_trait;
 
 use super::Result;

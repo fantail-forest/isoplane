@@ -1,5 +1,3 @@
-//! Postcard-encoded argument payloads for the buffer-passing imports.
-
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

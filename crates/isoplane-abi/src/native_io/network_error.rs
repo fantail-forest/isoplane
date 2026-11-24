@@ -1,5 +1,3 @@
-//! The wasi:sockets network error codes the host reports to a guest.
-
 /// The wasi:sockets/network@0.2.0 error codes the host reports, with that
 /// interface's discriminants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

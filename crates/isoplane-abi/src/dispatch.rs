@@ -1,5 +1,3 @@
-//! The dispatch record: one envelope for every trigger a guest receives.
-
 use serde::{Deserialize, Serialize};
 
 /// One unit of work handed to a guest via `isoplane_handle`.

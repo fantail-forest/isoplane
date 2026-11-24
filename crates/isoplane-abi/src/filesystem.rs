@@ -1,6 +1,3 @@
-//! Read-only filesystem adapter operations and their canonical signatures.
-//! The root is empty but for a host-declared set of read-only regular files,
-//! readable only through `descriptor.read`.
 use crate::imports::{Sig, Ty};
 
 /// The directory the host reserves for files it serves on an application's

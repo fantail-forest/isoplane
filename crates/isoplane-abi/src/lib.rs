@@ -1,11 +1,3 @@
-//! The Isoplane contract: the guest ABI ([`status`], [`dispatch`], [`result`],
-//! [`calls`]), the capability table ([`imports`], [`pal`]), the app manifest
-//! and resource limits ([`config`]), and HTTP dispatch interfaces ([`host`], behind the
-//! `host` feature).
-//!
-//! Builds for `wasm32-unknown-unknown` so a guest SDK can share these types
-//! with the host instead of re-implementing the encoding.
-
 #[cfg(feature = "rust-guests")]
 pub mod calls;
 pub mod config;
