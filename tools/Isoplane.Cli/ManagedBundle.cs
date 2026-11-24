@@ -7,6 +7,12 @@ namespace Isoplane.Cli;
 
 internal sealed record BundleOptions(string Directory, string Configuration, string Output, bool NoBuild = false)
 {
+    /// <summary>
+    /// Directories whose files a development session layers, in order, over the project's content.
+    /// <c>isoplane bundle</c> never sets them, so a package built for deployment holds only what the project declares.
+    /// </summary>
+    internal IReadOnlyList<string> SessionContent { get; init; } = [];
+
     internal static BundleOptions Parse(string[] arguments)
     {
         var parsed = CliCommandLine.Parse(["bundle", .. arguments]);
@@ -64,7 +70,7 @@ internal static class ManagedBundle
             var exit = await Processes.RunAsync("dotnet", arguments.ToArray(), options.Directory, cancellation, redirectOutput: true);
             if (exit != 0) throw new InvalidOperationException($"Managed application compilation failed (exit {exit}); resolve the build diagnostics before submitting.");
             using var document = JsonDocument.Parse(await File.ReadAllBytesAsync(metadata, cancellation));
-            await WriteAsync(document.RootElement, options.Output, SourceDate.FromEnvironment(), cancellation);
+            await WriteAsync(document.RootElement, options.Output, SourceDate.FromEnvironment(), cancellation, options.SessionContent);
             return new(document.RootElement.GetProperty("Properties").GetProperty("IsoplaneRuntimeDirectory").GetString() ?? "");
         }
         finally { temporary.Delete(recursive: true); }
@@ -80,13 +86,16 @@ internal static class ManagedBundle
     /// <summary>
     /// Writes the package. Each file is dated as its source is, or as
     /// <paramref name="sourceDate"/> when one is given, and carries no owner or
-    /// permissions of the machine it was built on.
+    /// permissions of the machine it was built on. Each file under a directory of
+    /// <paramref name="sessionContent"/> becomes content at its path relative to
+    /// that directory, in place of the project's file and an earlier directory's
+    /// at that path.
     /// </summary>
-    internal static async Task WriteAsync(JsonElement metadata, string output, DateTimeOffset? sourceDate, CancellationToken cancellation)
+    internal static async Task WriteAsync(JsonElement metadata, string output, DateTimeOffset? sourceDate, CancellationToken cancellation, IReadOnlyList<string>? sessionContent = null)
     {
         var properties = metadata.GetProperty("Properties");
         var items = metadata.GetProperty("Items");
-        var assets = ReadAssets(items);
+        var assets = sessionContent is { Count: > 0 } ? Layer(ReadAssets(items), sessionContent) : ReadAssets(items);
         var assemblies = ReadAssemblies(Paths(items, "IsoplaneBundleAssembly"));
         var platform = ReadAssemblies(Paths(items, "IsoplaneBundlePlatformReference"), platform: true);
         var symbols = Paths(items, "IsoplaneBundleSymbol").ToHashSet(StringComparer.Ordinal);
@@ -169,6 +178,22 @@ internal static class ManagedBundle
             result.Add((source, target));
         }
         return result.OrderBy(asset => asset.Target, StringComparer.Ordinal).ToArray();
+    }
+
+    private static (string Source, string Target)[] Layer((string Source, string Target)[] assets, IReadOnlyList<string> sessionContent)
+    {
+        var layered = assets.ToDictionary(asset => asset.Target, asset => asset.Source, StringComparer.Ordinal);
+        foreach (var directory in sessionContent)
+            foreach (var source in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
+            {
+                RequireRegularFile(source);
+                layered[Path.GetRelativePath(directory, source).Replace(Path.DirectorySeparatorChar, '/')] = source;
+            }
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var target in layered.Keys)
+            if (!AssetPaths.TryAdd(names, target))
+                throw new InvalidOperationException($"Session content gives the bundle asset '{target}', which is not a unique relative file path beside the project's content.");
+        return layered.Select(asset => (asset.Value, asset.Key)).OrderBy(asset => asset.Key, StringComparer.Ordinal).ToArray();
     }
 
     private static void ValidateSymbols(string path)

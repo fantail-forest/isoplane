@@ -20,6 +20,10 @@ response.EnsureSuccessStatusCode();
 - `ApplicationOptions.Settings` supplies configuration for the session, such as
   the connection string of a database the test started. It overrides the
   project's launch profile and User Secrets.
+- `ApplicationOptions.Content` supplies files for the session, as a
+  `ContentDirectory` or a `ContentFile`. The application reads them with the
+  content its project bundles, and a file at the same path replaces the
+  project's.
 - `DiagnosticOutput` holds the session's recent output, for the message of a
   failed assertion.
 - Use a separate project directory for each session that runs at the same time.

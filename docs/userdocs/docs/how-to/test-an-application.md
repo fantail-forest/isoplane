@@ -89,6 +89,50 @@ new ApplicationOptions
 
 Settings override the project's launch profile and User Secrets for that session.
 
+## Give the application files for the test
+
+An application's content is the files its project bundles for it to read, such
+as those in `wwwroot` and those the project declares as `Content`. A test can
+supply content of its own, so that what it expects does not depend on the files
+the project holds. Pass the files in the options:
+
+```csharp
+new ApplicationOptions
+{
+    Content =
+    [
+        new ContentDirectory(Path.Combine(AppContext.BaseDirectory, "Content")),
+        new ContentFile("Knowledge/Articles/expenses.md", articlePath)
+    ]
+}
+```
+
+A `ContentDirectory` supplies every file in a directory, each at its path
+beneath that directory. A `ContentFile` supplies one file at the path you give
+it. Both paths are relative to the application's content root, the directory the
+project's own content is read from. A supplied file replaces the project's file
+at the same path, and the project's other files stay as they are. The list takes
+any number of entries, so a test can supply several directories, as a project
+can bundle content from several. When two entries supply the same path, the
+later one is used. A `ContentFile` whose path leaves the content root, such as
+one that contains `..`, throws `ContentPathException`.
+
+To keep the files in the test project, copy them to its output directory, where
+`AppContext.BaseDirectory` finds them:
+
+```xml
+<ItemGroup>
+  <None Update="Content/**" CopyToOutputDirectory="PreserveNewest" />
+</ItemGroup>
+```
+
+The files reach only the application that test starts, and the project's own
+files are left as they are. The application reads them as it reads the rest of
+its package, so they are read-only and count toward the
+[application package limit](../concepts/resource-limits.md#local-defaults). The
+package is built from them as the application starts, so a later change to a
+file does not reach an application that is already running.
+
 Use a separate application directory for each concurrent session. The fixture
 owns a session, not a shared global application. These tests exercise an
 application as a client; they do not inject mocks into a running guest or run

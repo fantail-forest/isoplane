@@ -12,6 +12,7 @@
   <ItemGroup>
     <ProjectReference Include="../Isoplane.Native/Isoplane.Native.csproj" />
     <Compile Include="../Isoplane.Cli/TelemetryVariables.cs" Link="TelemetryVariables.cs" />
+    <Compile Include="../BuildProtocol/AssetPaths.cs" Link="AssetPaths.cs" />
     <None Include="PackageReadme.md" Pack="true" PackagePath="/" />
   </ItemGroup>
   <ItemGroup>

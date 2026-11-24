@@ -17,6 +17,7 @@ internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool W
         var launchProfile = parsed.GetValue<string>("--launch-profile");
         var useLaunchProfile = !parsed.GetValue<bool>("--no-launch-profile");
         var settings = ParseSettings(parsed.GetValue<string>("--settings"));
+        var content = (parsed.GetValue<string[]>("--content") ?? []).Select(Path.GetFullPath).ToArray();
         ushort? port = null;
         if (parsed.GetValue<string>("--port") is { } portText)
             port = ushort.TryParse(portText, out var parsedPort) ? parsedPort
@@ -32,15 +33,28 @@ internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool W
             throw new ArgumentException("--no-build requires --no-watch; compile changes explicitly before running again.");
         if (!System.IO.Directory.Exists(directory))
             throw new ArgumentException($"Project directory does not exist: {directory}");
+        if (content.FirstOrDefault(given => !System.IO.Directory.Exists(given)) is { } absent)
+            throw new ArgumentException($"Content directory does not exist: {absent}");
         if (launchProfile is not null && !useLaunchProfile)
             throw new ArgumentException("Use either --launch-profile NAME or --no-launch-profile, not both.");
         if (System.IO.Directory.GetFiles(directory, "*.csproj").Length != 1)
             throw new ArgumentException($"Expected exactly one .NET project in {directory}; create one with dotnet new, or select its directory with --project.");
         return new(directory, port, watch, json, shutdownOnInputClose, debug, configuration, noBuild, debugLaunchEndpoint, launchProfile, useLaunchProfile)
         {
-            Settings = settings
+            Settings = settings,
+            Content = content
         };
     }
+
+    /// <summary>
+    /// Directories whose files the session adds to the application's content, each at its path relative
+    /// to its directory. A file replaces the project's file and an earlier directory's at that path.
+    /// Isoplane.Testing passes a test's content here.
+    /// </summary>
+    internal IReadOnlyList<string> Content { get; init; } = [];
+
+    /// <summary>How the session builds the project's package into <paramref name="package"/>.</summary>
+    internal BundleOptions Bundle(string package) => new(Directory, Configuration, package, NoBuild) { SessionContent = Content };
 
     /// <summary>
     /// Application settings for this session, keyed in ASP.NET's <c>Section:Key</c> form. They override

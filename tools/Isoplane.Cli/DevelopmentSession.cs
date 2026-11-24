@@ -95,7 +95,7 @@ internal sealed class DevelopmentSession : IAsyncDisposable
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(package)!);
-                runtime = (await ManagedBundle.CreateAsync(new(options.Directory, options.Configuration, package, options.NoBuild), cancellation)).Module;
+                runtime = (await ManagedBundle.CreateAsync(options.Bundle(package), cancellation)).Module;
             }
             catch (Exception error) when (error is InvalidOperationException or IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
             {

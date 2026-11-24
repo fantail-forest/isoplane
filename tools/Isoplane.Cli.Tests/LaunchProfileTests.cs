@@ -156,6 +156,17 @@ public sealed class LaunchProfileTests : IDisposable
         Assert.StartsWith("--settings must be a JSON object of string values", failure.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void the_content_option_names_existing_directories_in_order()
+    {
+        Project();
+        var first = directory.CreateSubdirectory("first").FullName;
+        var second = directory.CreateSubdirectory("second").FullName;
+        Assert.Equal([second, first], DevelopmentOptions.Parse(["--project", directory.FullName, "--content", second, "--content", first]).Content);
+        Assert.Empty(DevelopmentOptions.Parse(["--project", directory.FullName]).Content);
+        Assert.Throws<ArgumentException>(() => DevelopmentOptions.Parse(["--project", directory.FullName, "--content", first, "--content", Path.Combine(directory.FullName, "absent")]));
+    }
+
     private void Project() => File.WriteAllText(Path.Combine(directory.FullName, "App.csproj"), "<Project />");
 
     private static Dictionary<string, string> Secrets() => new(StringComparer.OrdinalIgnoreCase)

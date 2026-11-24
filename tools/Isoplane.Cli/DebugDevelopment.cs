@@ -52,7 +52,7 @@ internal static class DebugDevelopment
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         using var changes = options.Watch ? await SourceChanges.CreateAsync(options, lifetime.Token) : null;
         SharedRuntime runtime;
-        try { runtime = await ManagedBundle.CreateAsync(new(options.Directory, options.Configuration, package, options.NoBuild), cancellation); }
+        try { runtime = await ManagedBundle.CreateAsync(options.Bundle(package), cancellation); }
         catch (InvalidOperationException error)
         {
             Console.Error.WriteLine($"isoplane: package build failed: {error.Message}");
@@ -103,7 +103,7 @@ internal static class DebugDevelopment
                     await publications.WaitAsync(token);
                     try
                     {
-                        var replacement = await ManagedBundle.CreateAsync(new(options.Directory, options.Configuration, package, options.NoBuild), token);
+                        var replacement = await ManagedBundle.CreateAsync(options.Bundle(package), token);
                         host.Reload(await File.ReadAllBytesAsync(debugging ? replacement.DebugModule : replacement.Module, token),
                             new LocalProject(options.Directory).SessionOptions(settings, debugging ? endpoint : null, Path.Combine(session, "runtime"), package: package));
                         runtime = replacement;

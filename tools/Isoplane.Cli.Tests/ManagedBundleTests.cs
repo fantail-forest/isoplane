@@ -230,6 +230,63 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
         Assert.True(found, "Application assets must be uploaded at their declared output path without changing their bytes.");
     }
 
+    [Fact]
+    public async Task session_content_joins_the_projects_assets_and_a_later_directory_replaces_the_file_at_its_path()
+    {
+        using var directory = new BundleDirectory();
+        var asset = Path.Combine(directory.Path, "project-data.json");
+        await File.WriteAllTextAsync(asset, "the project's data");
+        var first = Directory.CreateDirectory(Path.Combine(directory.Path, "first"));
+        var second = Directory.CreateDirectory(Path.Combine(directory.Path, "second"));
+        first.CreateSubdirectory("config");
+        first.CreateSubdirectory("added/nested");
+        second.CreateSubdirectory("config");
+        await File.WriteAllTextAsync(Path.Combine(first.FullName, "config", "data.json"), "the first directory's data");
+        await File.WriteAllTextAsync(Path.Combine(first.FullName, "added", "nested", "file.txt"), "the first directory's file");
+        await File.WriteAllTextAsync(Path.Combine(first.FullName, "Case.txt"), "the first directory's case");
+        await File.WriteAllTextAsync(Path.Combine(second.FullName, "config", "data.json"), "the second directory's data");
+        await File.WriteAllTextAsync(Path.Combine(second.FullName, "case.txt"), "the second directory's case");
+        var output = Path.Combine(directory.Path, "application.tar");
+        await ManagedBundle.WriteAsync(fixture.Metadata(asset: asset, assetTarget: "config/data.json"), output, null, default, [first.FullName, second.FullName]);
+        Assert.Equal(new SortedDictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["assets/Case.txt"] = "the first directory's case",
+            ["assets/added/nested/file.txt"] = "the first directory's file",
+            ["assets/case.txt"] = "the second directory's case",
+            ["assets/config/data.json"] = "the second directory's data"
+        }, await AssetsAsync(output));
+        Assert.Equal("the project's data", await File.ReadAllTextAsync(asset));
+    }
+
+    /// <summary>The text of each asset in the package at <paramref name="package"/>, by its entry name.</summary>
+    private static async Task<SortedDictionary<string, string>> AssetsAsync(string package)
+    {
+        using var stream = File.OpenRead(package);
+        using var archive = new TarReader(stream);
+        var assets = new SortedDictionary<string, string>(StringComparer.Ordinal);
+        while (archive.GetNextEntry() is { } entry)
+            if (entry.Name.StartsWith("assets/", StringComparison.Ordinal))
+                assets.Add(entry.Name, await new StreamReader(entry.DataStream!).ReadToEndAsync());
+        return assets;
+    }
+
+    [Theory]
+    [InlineData("config")]
+    [InlineData("config/data.json/inner")]
+    public async Task session_content_cannot_put_a_file_where_the_project_needs_a_directory_or_the_reverse(string path)
+    {
+        using var directory = new BundleDirectory();
+        var asset = Path.Combine(directory.Path, "project-data.json");
+        await File.WriteAllTextAsync(asset, "the project's data");
+        var content = Directory.CreateDirectory(Path.Combine(directory.Path, "content"));
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(content.FullName, path))!);
+        await File.WriteAllTextAsync(Path.Combine(content.FullName, path), "the session's data");
+        var output = Path.Combine(directory.Path, "application.tar");
+        await Assert.ThrowsAsync<InvalidOperationException>(() => ManagedBundle.WriteAsync(
+            fixture.Metadata(asset: asset, assetTarget: "config/data.json"), output, null, default, [content.FullName]));
+        Assert.False(File.Exists(output), "Content that cannot be served must not produce a package.");
+    }
+
     [Theory]
     [InlineData("../escape")]
     [InlineData("/absolute")]

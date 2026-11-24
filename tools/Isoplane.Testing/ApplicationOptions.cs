@@ -2,7 +2,7 @@ namespace Isoplane.Testing;
 
 /// <summary>
 /// Optional settings for <see cref="IsoplaneApplication.StartAsync"/>: which build of the application
-/// to run, what settings to give it, and how the <c>isoplane</c> command is found and stopped.
+/// to run, what settings and content files to give it, and how the <c>isoplane</c> command is found and stopped.
 /// </summary>
 /// <remarks>
 /// Every property has a default that suits most tests, so set only what a test needs, in an object
@@ -70,4 +70,36 @@ public sealed record ApplicationOptions
     /// profile and User Secrets, and apply only to the application this test starts.
     /// </remarks>
     public IReadOnlyDictionary<string, string> Settings { get; init; } = new Dictionary<string, string>();
+
+    /// <summary>
+    /// Files to give the application for this run, such as the templates or data files a test's
+    /// expectations are written against. Empty by default.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The files join the content the application's project bundles, and the application reads them the
+    /// same way. A file at the path of one of the project's replaces it, and of two sources that give the
+    /// same path the later one wins.
+    /// Nothing is written to the application's project directory, and the files apply only to the
+    /// application this test starts.
+    /// </para>
+    /// <para>
+    /// The files count toward the application's package size and file limits, as the project's own do.
+    /// <see cref="IsoplaneApplication.StartAsync"/> builds the application's package from them, so a
+    /// later change to a source file does not reach the running application.
+    /// </para>
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// var options = new ApplicationOptions
+    /// {
+    ///     Content =
+    ///     [
+    ///         new ContentDirectory(Path.Combine(AppContext.BaseDirectory, "Content")),
+    ///         new ContentFile("Knowledge/Articles/expenses.md", articlePath)
+    ///     ]
+    /// };
+    /// </code>
+    /// </example>
+    public IReadOnlyList<ContentSource> Content { get; init; } = [];
 }
