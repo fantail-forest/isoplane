@@ -96,7 +96,7 @@ tasks:
         printf '%s\n' '<configuration><packageSources><clear /></packageSources></configuration>' > "{{.DIRECTORY}}/nuget.config"
         docker run --rm --network none --user "$(id -u):$(id -g)" \
           -v "{{.DIRECTORY}}:/fixture" -w /fixture \
-          -e DOTNET_CLI_HOME=/tmp/dotnet -e NUGET_PACKAGES=/tmp/nuget \
+          -e HOME=/tmp -e DOTNET_CLI_HOME=/tmp/dotnet -e NUGET_PACKAGES=/tmp/nuget \
           -e DOTNET_NOLOGO=1 -e DOTNET_CLI_TELEMETRY_OPTOUT=1 \
           mcr.microsoft.com/dotnet/sdk:{{.SDK_VERSION}} bash -euc '
             dotnet build hotreload/HotReloadFixture.csproj -c Release --artifacts-path /fixture/artifacts

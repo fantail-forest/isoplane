@@ -61,7 +61,12 @@ and API references. SDK packages are published as `Isoplane.*` on NuGet.
 ## Building and testing
 
 Task prepares build dependencies and test fixtures; Cargo and MSBuild compile them.
-Install Task, rustup 1.28 or later, Python 3.11 or later and your platform's C compiler, then run:
+Install Task, rustup 1.28 or later, Python 3.11 or later and your platform's C compiler.
+On Windows, install MSYS2 at `C:\msys64` and the Visual Studio C++ Build Tools
+with x64/x86 tools, ATL, CMake and the C++ redistributable. The exact Visual
+Studio component IDs are in [windows-build-components.json](scripts/windows-build-components.json).
+
+From the repository root, run
 
 ```sh
 task setup

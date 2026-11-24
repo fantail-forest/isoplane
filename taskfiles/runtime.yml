@@ -103,7 +103,7 @@ tasks:
   compiler:
     desc: Build the Mono compiler packages on Linux
     run: once
-    deps: [":initialize", ":setup:workload"]
+    deps: [':initialize', ':setup:workload', dependencies]
     sources:
       - '{{.ROOT_DIR}}/vendor/dotnet-runtime/src/**/*'
       - '{{.ROOT_DIR}}/vendor/dotnet-runtime/eng/**/*'
@@ -129,8 +129,6 @@ tasks:
       - '{{.ROOT_DIR}}/.build/wasm32/runtime/packs/wasi-sdk/Sdk/Sdk.targets'
     cmds:
       - 'test "{{OS}}" = linux || { echo "Run task runtime:compiler on Linux first." >&2; exit 1; }'
-      - task: toolchain
-      - task: dependencies
       - 'ISOPLANE_RUNTIME_INPUTS="{{.CHECKSUM}}" bash guest-runtime/build.sh --compile runtime feed'
 
   dependencies:
@@ -177,7 +175,7 @@ tasks:
       - '{{.ROOT_DIR}}/vendor/icu/**/*'
       - '{{.ROOT_DIR}}/vendor/dotnet-runtime/eng/isoplane/{build-icu.sh,manifest.env}'
       - '{{.ROOT_DIR}}/guest-runtime/build.sh'
-      - '{{.ROOT_DIR}}/guest-runtime/manifest.env'
+      - '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/development/runtime-work/toolchain-identity'
       - exclude: 'vendor/icu/.git'
     generates:
       - '{{.ROOT_DIR}}/.build/wasm32/runtime/icu/mono/runtimes/wasi-wasm/native/lib/icudt.dat'
