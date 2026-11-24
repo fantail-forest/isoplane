@@ -1,5 +1,3 @@
-//! Template compilation and the on-disk artifact cache.
-
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 

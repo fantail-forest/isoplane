@@ -1,6 +1,3 @@
-//! Guest-call mechanics: the ABI handoff into `isoplane_handle`/`isoplane_wake`, and
-//! classifying what a trapped call or `Result` means.
-
 use wasmtime::error::Context as WtContext;
 
 use isoplane_abi::status::{PollStatus, TrapCode};

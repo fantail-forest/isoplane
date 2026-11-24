@@ -1,7 +1,3 @@
-//! Monotonic worker-occupancy accounting across a dispatch's active intervals.
-//! Parked intervals are outside the meter; OS preemption and synchronous host
-//! work remain inside the occupied worker interval.
-
 use std::sync::OnceLock;
 use std::time::Instant;
 

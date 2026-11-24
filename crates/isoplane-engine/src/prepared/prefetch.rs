@@ -1,7 +1,3 @@
-//! Warming the page cache with the initialization working set of verified
-//! template files, so a new instance's first faults on the mapped template
-//! hit memory rather than storage.
-
 use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};

@@ -1,4 +1,3 @@
-//! Prepared templates execute through the same activation/capture interface as portable input.
 mod common;
 use isoplane_test_support::published_files;
 

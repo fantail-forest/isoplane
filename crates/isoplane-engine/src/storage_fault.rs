@@ -1,15 +1,3 @@
-//! Contains a failed page-in of mapped template storage that host code hits.
-//!
-//! Reading a file-backed page whose storage fails raises SIGBUS at the reading
-//! instruction. Wasmtime traps the guest when that instruction is wasm code.
-//! Anywhere else (a wasmtime libcall, a host function copying a guest buffer,
-//! hibernation comparing pages) the reader is host code, which cannot unwind
-//! from a signal. For a fault inside a watched range, the handler maps a zero
-//! page over the failed one so the read completes, and records the fault for
-//! the watch's owner to report when its operation ends. Wasmtime's handler
-//! passes every fault it does not claim to the handler installed before it, so
-//! this one is installed before the engine creates its first wasmtime engine.
-
 use std::ops::Range;
 use std::sync::atomic::{fence, AtomicBool, AtomicPtr, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -47,8 +35,10 @@ impl Drop for Watch {
     }
 }
 
-/// Installs the handler once per process, ahead of any wasmtime engine the
-/// caller is about to create.
+/// Installs the handler once per process. Wasmtime's handler passes a fault it
+/// does not claim only to the handler installed before it, so installing this
+/// after the first wasmtime engine exists leaves host-code storage faults
+/// uncontained.
 pub(crate) fn install() -> std::io::Result<()> {
     static INSTALLED: OnceLock<Result<(), i32>> = OnceLock::new();
     let installed = *INSTALLED.get_or_init(|| {

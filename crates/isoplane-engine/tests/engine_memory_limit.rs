@@ -1,5 +1,3 @@
-//! The memory query reports the instance's memory limit, and initialization
-//! cannot grow past it.
 #[path = "common/bindings.rs"]
 mod bindings;
 #[path = "common/dispatch.rs"]

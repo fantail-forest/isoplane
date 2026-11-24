@@ -1,26 +1,9 @@
-//! Worker occupancy budgets and the two-phase kill.
-//!
-//! ```text
-//!   0                                B                 B+G
-//!   |--------- normal execution ------|---- grace ------|
-//!                                     ^                 ^
-//!                                     |                 `- kill: no unwinding,
-//!                                     |                    instance discarded
-//!                                     `- cancellation requested: from the
-//!                                        guest's next slice its imports
-//!                                        answer `Cancelled` and its
-//!                                        cancellation future completes
-//! ```
-//!
-//! `G = max(2 ms, 10% of B)`. A dispatch that returns inside the grace window
-//! exits: the dispatch fails, the instance is consistent and stays, and its
-//! overage is recorded. A check observing B+G or more kills it. Checks are best effort;
-//! scheduler delays can skip grace or delay termination.
-
 use isoplane_abi::status::PollStatus;
 
 use crate::Completion;
 
+/// Enforced by best-effort epoch checks: scheduler delays can skip grace or
+/// delay the kill past B+G.
 #[derive(Debug, Clone, Copy)]
 pub struct OccupancyBudget {
     pub occupancy_ms: u32,

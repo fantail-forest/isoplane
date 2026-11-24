@@ -1,8 +1,3 @@
-//! The import vtable seam. The engine copies guest buffers out before calling
-//! the host and copies results back in through `isoplane_alloc`, so no host
-//! pointer enters guest memory and the host never holds a pointer into a
-//! linear memory the guest could grow underneath it.
-
 /// One invocation of a declared import.
 #[derive(Debug)]
 pub struct ImportCall<'a> {

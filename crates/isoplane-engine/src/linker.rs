@@ -1,9 +1,3 @@
-//! The import vtable. The linker defines exactly [`isoplane_abi::imports::IMPORTS`]
-//! under module `isoplane`, so a module importing anything else fails to
-//! instantiate. Guest buffers are copied out before the binding is called and
-//! host results are copied in afterwards; in neither direction does a host
-//! pointer enter guest memory.
-
 use isoplane_abi::imports::{
     ImportDef, ImportKind, Ty, HOST_MODULE, IMPORTS, MAX_OUT_BUFFER_BYTES,
 };

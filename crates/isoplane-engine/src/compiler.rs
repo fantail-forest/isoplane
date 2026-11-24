@@ -1,5 +1,3 @@
-//! Native compiler workers, separate from guest execution workers.
-
 use std::collections::BTreeMap;
 use std::sync::Arc;
 

@@ -1,4 +1,3 @@
-//! Application templates captured as layers over a shared runtime baseline.
 mod common;
 #[path = "common/dispatch.rs"]
 mod dispatch;

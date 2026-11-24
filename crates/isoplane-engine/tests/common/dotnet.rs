@@ -1,7 +1,3 @@
-//! The harness for the C# behaviour fixtures: one engine and compiled runtime per
-//! binary, a template per fixture, activation with recording bindings, and the HTTP dispatch the probes
-//! answer. `in_mono_runtime!` names the shared Mono runtime in test results.
-
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 

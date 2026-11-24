@@ -1,5 +1,3 @@
-//! Initialization capture against an unchanged compiled module.
-
 use std::sync::Arc;
 
 use super::{

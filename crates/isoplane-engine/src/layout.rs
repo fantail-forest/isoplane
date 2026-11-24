@@ -1,7 +1,3 @@
-//! Lowering an import's core-wasm parameters onto [`crate::ImportCall`].
-//! Where the buffer is comes from `BufSpec` on the import definition; this
-//! module only packs the remaining parameters into the scalar array.
-
 use isoplane_abi::imports::{BufSpec, ImportDef};
 
 /// Non-buffer parameters, in declaration order, widened to `u64`.

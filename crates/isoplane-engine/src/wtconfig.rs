@@ -1,5 +1,3 @@
-//! Configure Wasmtime sandbox engines and pooling allocations.
-
 use std::hash::Hash;
 
 use anyhow::{bail, Context, Result};

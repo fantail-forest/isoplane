@@ -1,6 +1,3 @@
-//! The init sandbox: the capability restriction pre-initialisation runs
-//! `isoplane_initialize` under.
-
 mod common;
 #[path = "common/initialization_bindings.rs"]
 mod initialization_bindings;

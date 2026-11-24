@@ -1,6 +1,3 @@
-//! The two-phase kill (grace and the hard deadline) and the wall-clock
-//! independent per-slice wall-clock backstop.
-
 mod common;
 #[path = "common/dispatch.rs"]
 mod dispatch;
@@ -28,12 +25,6 @@ fn import(name: &str, params: &str, results: &str) -> String {
     format!(r#"(import "isoplane" "{name}" (func ${name} {params} {results}))"#)
 }
 
-// ---------------------------------------------------------------------------
-// the two-phase kill
-// ---------------------------------------------------------------------------
-
-/// The guest marks memory before it spins and would mark it again on the way
-/// out; a kill is not unwound, so the second marker never appears.
 #[test]
 fn an_uncooperative_spinner_is_hard_killed_and_discarded() {
     let e = test_engine();
@@ -258,10 +249,6 @@ fn a_failed_isoplane_alloc_is_out_of_memory() {
         out.trap
     );
 }
-
-// ---------------------------------------------------------------------------
-// the wall-clock backstop
-// ---------------------------------------------------------------------------
 
 #[test]
 fn the_wall_clock_backstop_trips_independently_of_occupancy_measurement() {

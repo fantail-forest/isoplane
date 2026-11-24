@@ -1,6 +1,3 @@
-//! Rejected and pending host response writes are observed through the real
-//! managed SDK.
-
 use std::sync::atomic::Ordering;
 
 use crate::dotnet::{budget, fixture, Fixture, GuestRuntime, Request};

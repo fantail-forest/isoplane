@@ -1,7 +1,3 @@
-//! Hand-written `.wat` fixtures and a test `HostBindings`. The engine's tests
-//! do not use a guest SDK, so a guest-SDK bug is never mistakable for an
-//! engine bug and each fixture expresses one behaviour.
-
 use isoplane_engine::{EngineConfig, Instance, IsoplaneEngine, Template};
 
 mod bindings;

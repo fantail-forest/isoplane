@@ -1,5 +1,3 @@
-//! Canonical scalar and memory conversion for host-owned native resources.
-
 use anyhow::{bail, ensure, Context, Result};
 use isoplane_abi::native_io::canonical::{
     Action, Definition, KeepAliveSetting, DEFINITIONS, MAX_ARGUMENTS,

@@ -1,10 +1,3 @@
-//! Activation: generators seeded before the template snapshot are reseeded
-//! when an instance activates, so two activations of the template draw apart.
-//! The runtime reseeds every generator that chose its own seed; an app
-//! recreates the ones it seeded itself in the SDK's activation hook. Request
-//! identifiers, which ASP.NET numbers from a counter the snapshot copies,
-//! must likewise differ between activations.
-
 use crate::bindings::Recorder;
 use crate::dotnet::{budget, fixture, Fixture, GuestRuntime, Request};
 use isoplane_engine::{Completion, Instance, InstanceOps};
