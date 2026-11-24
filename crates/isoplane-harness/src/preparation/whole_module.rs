@@ -1,6 +1,3 @@
-//! A module that carries its whole application, prepared through the
-//! provider a node selects.
-
 use std::sync::Arc;
 
 use isoplane_engine::IsoplaneEngine;
