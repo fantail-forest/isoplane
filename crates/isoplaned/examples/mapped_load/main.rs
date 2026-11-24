@@ -77,9 +77,9 @@ fn main() -> anyhow::Result<()> {
                 } else {
                     linux::evict(path)?;
                 }
-                let (resident, pages) = linux::resident_pages(path)?;
-                resident_pages_before += resident;
-                payload_pages += pages;
+                let residency = linux::residency(path)?;
+                resident_pages_before += residency.resident_pages;
+                payload_pages += residency.file_pages;
             }
             anyhow::ensure!(
                 mode == "warm" || resident_pages_before == 0,

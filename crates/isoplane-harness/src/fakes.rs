@@ -156,9 +156,9 @@ const LAZY_INIT_FLAG: usize = 0;
 const LAZY_INIT_RUNS: usize = 8;
 
 pub struct FakeInstance {
-    /// Every `(future, result)` this instance was woken with, shared with the
+    /// Every wake this instance received, shared with the
     /// [`FakeActivator`] so a test asserts what the guest observed.
-    pub wakes_seen: Arc<Mutex<Vec<(u64, ResultRecord)>>>,
+    pub wakes_seen: Arc<Mutex<Vec<Wake>>>,
     bindings: Box<dyn HostBindings>,
     memory: Vec<u8>,
     program: VecDeque<Step>,
@@ -471,7 +471,10 @@ impl InstanceOps for FakeInstance {
         res: &ResultRecord,
         budget: OccupancyBudget,
     ) -> DispatchOutcome {
-        self.wakes_seen.lock().push((future, res.clone()));
+        self.wakes_seen.lock().push(Wake {
+            future,
+            result: res.clone(),
+        });
         self.slice(budget, None)
     }
     fn gc_hint(&mut self, _pressure: u8) -> DispatchOutcome {
@@ -530,8 +533,15 @@ pub struct FakeActivator {
     pub activations: AtomicU64,
     /// How many times the host asked to warm the template's page cache.
     pub warmed: AtomicU64,
-    pub wakes_seen: Arc<Mutex<Vec<(u64, ResultRecord)>>>,
+    pub wakes_seen: Arc<Mutex<Vec<Wake>>>,
     pub entropy: Arc<Mutex<Vec<Vec<u8>>>>,
+}
+
+/// A completed future a [`FakeInstance`] was woken with.
+#[derive(Clone, Debug)]
+pub struct Wake {
+    pub future: u64,
+    pub result: ResultRecord,
 }
 
 impl FakeActivator {
@@ -562,7 +572,7 @@ impl FakeActivator {
             entropy: Arc::new(Mutex::new(Vec::new())),
         }
     }
-    pub fn wakes(&self) -> Vec<(u64, ResultRecord)> {
+    pub fn wakes(&self) -> Vec<Wake> {
         self.wakes_seen.lock().clone()
     }
     pub fn activation_count(&self) -> u64 {

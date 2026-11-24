@@ -88,6 +88,14 @@ pub(super) enum Join {
     },
 }
 
+/// What [`Cell::remove_active`] removed.
+pub(super) struct RemovedDispatch {
+    /// The dispatch, when it was still active.
+    pub(super) dispatch: Option<ActiveDispatch>,
+    /// How many dispatches remain on the instance.
+    pub(super) remaining: usize,
+}
+
 impl Cell {
     /// Starts tracking a dispatch on its instance; `joined` releases the place
     /// [`Cell::join_shared`] reserved for it.
@@ -258,13 +266,8 @@ impl Cell {
             .unwrap_or_default()
     }
 
-    /// Removes a dispatch, and returns it with how many remain on the
-    /// instance.
-    pub(super) fn remove_active(
-        &self,
-        instance: InstanceId,
-        dispatch: u64,
-    ) -> (Option<ActiveDispatch>, usize) {
+    /// Removes a dispatch from its instance.
+    pub(super) fn remove_active(&self, instance: InstanceId, dispatch: u64) -> RemovedDispatch {
         self.active
             .with_mut_or_remove(
                 &instance,
@@ -279,11 +282,17 @@ impl Cell {
                     {
                         active.held = false;
                     }
-                    (removed, active.count())
+                    RemovedDispatch {
+                        dispatch: removed,
+                        remaining: active.count(),
+                    }
                 },
                 |active| active.count() == 0,
             )
-            .unwrap_or((None, 0))
+            .unwrap_or(RemovedDispatch {
+                dispatch: None,
+                remaining: 0,
+            })
     }
 
     /// Sets activation configuration for a registered module owned by `tenant`.

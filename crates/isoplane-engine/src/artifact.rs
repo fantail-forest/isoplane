@@ -14,6 +14,38 @@ use crate::state::StoreState;
 use crate::template::{self, ModuleHash, Template, TemplateInner};
 use crate::{IsoplaneEngine, Result};
 
+/// A template's compiled artifact, as [`IsoplaneEngine::precompile`] produces it.
+pub struct PrecompiledTemplate {
+    /// The encoded metadata sidecar that identifies and vouches for `cwasm`.
+    pub meta: Vec<u8>,
+    /// The serialized native module, bare so that it can be mapped from byte 0.
+    pub cwasm: Vec<u8>,
+}
+
+/// How a compilation cache supplied a template.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Compilation {
+    /// The cache held no artifact for the module, so one was compiled.
+    Compiled,
+    /// The artifact an earlier load compiled was mapped.
+    Reused,
+}
+
+impl Compilation {
+    /// Whether the compiler ran.
+    pub fn compiled(self) -> bool {
+        self == Self::Compiled
+    }
+}
+
+/// A template loaded through a compilation cache.
+pub struct LoadedTemplate {
+    /// The loaded template.
+    pub template: Template,
+    /// Whether loading it compiled the module or mapped an earlier compilation.
+    pub compilation: Compilation,
+}
+
 impl IsoplaneEngine {
     /// Compiles portable WASM locally after checking its structural declarations.
     /// Compilation runs in the host process; this does not provide process isolation.
@@ -41,7 +73,7 @@ impl IsoplaneEngine {
     /// Compiling with a differently configured engine produces a `.cwasm` the
     /// load path refuses. Two files because `Module::deserialize_file` maps a
     /// path and needs the `.cwasm` to start at byte 0.
-    pub fn precompile(&self, template_wasm: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
+    pub fn precompile(&self, template_wasm: &[u8]) -> Result<PrecompiledTemplate> {
         let t = self.load_template(template_wasm)?;
         let cwasm = t
             .inner
@@ -56,11 +88,21 @@ impl IsoplaneEngine {
             module_hash: t.hash.0,
             engine_fingerprint: self.inner.fingerprint.clone(),
             cwasm_hash: *blake3::hash(&cwasm).as_bytes(),
-            mut_global_names: t.inner.mut_globals.iter().map(|(n, _)| n.clone()).collect(),
-            table_names: t.inner.tables.iter().map(|(n, _)| n.clone()).collect(),
+            mut_global_names: t
+                .inner
+                .mut_globals
+                .iter()
+                .map(|global| global.name.clone())
+                .collect(),
+            table_names: t
+                .inner
+                .tables
+                .iter()
+                .map(|table| table.name.clone())
+                .collect(),
         };
         let meta = postcard::to_allocvec(&meta).context("encoding artifact metadata")?;
-        Ok((meta, cwasm))
+        Ok(PrecompiledTemplate { meta, cwasm })
     }
 
     /// Load a template by mapping its compiled artifact, so the code and the
@@ -162,15 +204,15 @@ impl IsoplaneEngine {
         dir: &std::path::Path,
     ) -> Result<ArtifactPaths> {
         let paths = ArtifactPaths::new(dir, &self.artifact_key(template_wasm));
-        let (meta, cwasm) = self.precompile(template_wasm)?;
+        let artifact = self.precompile(template_wasm)?;
         CompilationCache::create_directory(dir)?;
-        write_atomic(&paths.meta, &meta)?;
-        write_atomic(&paths.cwasm, &cwasm)?;
+        write_atomic(&paths.meta, &artifact.meta)?;
+        write_atomic(&paths.cwasm, &artifact.cwasm)?;
         Ok(paths)
     }
 
     /// Load a template by mapping its artifact, compiling one first only when
-    /// the cache does not have it. Returns whether a compile happened.
+    /// the cache does not have it.
     ///
     /// # Safety
     /// `dir` must be written only by this process through
@@ -180,13 +222,14 @@ impl IsoplaneEngine {
         &self,
         template_wasm: &[u8],
         dir: &std::path::Path,
-    ) -> Result<(Template, bool)> {
+    ) -> Result<LoadedTemplate> {
         let paths = ArtifactPaths::new(dir, &self.artifact_key(template_wasm));
-        let mut compiled = false;
-        if !(paths.meta.exists() && paths.cwasm.exists()) {
+        let compilation = if paths.meta.exists() && paths.cwasm.exists() {
+            Compilation::Reused
+        } else {
             self.precompile_to_files(template_wasm, dir)?;
-            compiled = true;
-        }
+            Compilation::Compiled
+        };
         let meta = std::fs::read(&paths.meta)
             .with_context(|| format!("reading {}", paths.meta.display()))?;
         let identity: template::ArtifactMeta =
@@ -195,8 +238,11 @@ impl IsoplaneEngine {
             bail!("compiled cache entry does not match the requested portable input");
         }
         // SAFETY: the caller vouches for `dir`, which is where `meta` came from.
-        let t = unsafe { self.deserialize_file(&meta, &paths.cwasm) }?;
-        Ok((t, compiled))
+        let template = unsafe { self.deserialize_file(&meta, &paths.cwasm) }?;
+        Ok(LoadedTemplate {
+            template,
+            compilation,
+        })
     }
 
     pub(crate) fn finish_template(
@@ -246,7 +292,10 @@ impl IsoplaneEngine {
                 .get_global(&mut store, name)
                 .with_context(|| format!("exported mutable global `{name}` vanished"))?;
             let v = g.get(&mut store);
-            mut_globals.push((name.clone(), snapshot::GlobalValue::of(v, &store)?));
+            mut_globals.push(template::TemplateGlobal {
+                name: name.clone(),
+                value: snapshot::GlobalValue::of(v, &store)?,
+            });
         }
 
         let mut tables = Vec::with_capacity(table_names.len());
@@ -265,7 +314,10 @@ impl IsoplaneEngine {
                     None => false,
                 });
             }
-            tables.push((name.clone(), size));
+            tables.push(template::TemplateTable {
+                name: name.clone(),
+                elements: size,
+            });
             table_nullness.push(nulls);
         }
 
@@ -498,8 +550,8 @@ impl CompilationCache {
         })
     }
 
-    /// Load a compiled input, compiling it on a miss. Returns whether compilation was needed.
-    pub fn load(&self, engine: &IsoplaneEngine, wasm: &[u8]) -> Result<(Template, bool)> {
+    /// Load a compiled input, compiling it on a miss.
+    pub fn load(&self, engine: &IsoplaneEngine, wasm: &[u8]) -> Result<LoadedTemplate> {
         check_cache_path(&self.directory, true)?;
         let paths = ArtifactPaths::new(&self.directory, &engine.artifact_key(wasm));
         for path in [&paths.meta, &paths.cwasm] {
@@ -561,8 +613,11 @@ mod tests {
         .expect("test engine");
         let wasm = wat::parse_str("(module (memory (export \"memory\") 1))")
             .expect("portable test module");
-        let (metadata, native) = engine.precompile(&wasm).expect("local compilation");
-        let mut metadata: template::ArtifactMeta = postcard::from_bytes(&metadata).unwrap();
+        let PrecompiledTemplate {
+            meta,
+            cwasm: native,
+        } = engine.precompile(&wasm).expect("local compilation");
+        let mut metadata: template::ArtifactMeta = postcard::from_bytes(&meta).unwrap();
         metadata.abi_rev = isoplane_abi::ABI_REV - 1;
         let previous = postcard::to_allocvec(&metadata).unwrap();
         let unversioned_key = format!(
@@ -577,15 +632,20 @@ mod tests {
         // only its compatibility metadata is deliberately marked obsolete.
         let cache = unsafe { CompilationCache::from_trusted_directory(cache_directory) }
             .expect("owned cache");
-        let (_, compiled) = cache
-            .load(&engine, &wasm)
-            .expect("compile for the current ABI");
-        assert!(compiled, "the obsolete entry must not be selected");
-        assert!(
-            !cache
+        assert_eq!(
+            cache
+                .load(&engine, &wasm)
+                .expect("compile for the current ABI")
+                .compilation,
+            Compilation::Compiled,
+            "the obsolete entry must not be selected"
+        );
+        assert_eq!(
+            cache
                 .load(&engine, &wasm)
                 .expect("reuse the current entry")
-                .1,
+                .compilation,
+            Compilation::Reused,
             "the replacement compilation must remain reusable"
         );
         assert_eq!(std::fs::read(old.meta).unwrap(), previous);

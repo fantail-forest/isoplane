@@ -85,16 +85,28 @@ impl Drop for HotSlice<'_> {
     }
 }
 
+/// How many times initialization called one runtime capability.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PalCallCount {
+    /// The import's name.
+    pub import: String,
+    /// The number of calls the engine answered.
+    pub calls: u32,
+}
+
 impl Instance {
     /// Runtime capabilities answered during initialization, counted at the engine boundary.
-    pub fn initialization_pal_calls(&self) -> Result<Vec<(String, u32)>> {
+    pub fn initialization_pal_calls(&self) -> Result<Vec<PalCallCount>> {
         Ok(self
             .live
             .store
             .data()
             .init_pal_calls
             .iter()
-            .map(|(name, count)| (name.to_string(), *count))
+            .map(|(import, calls)| PalCallCount {
+                import: import.to_string(),
+                calls: *calls,
+            })
             .collect())
     }
 

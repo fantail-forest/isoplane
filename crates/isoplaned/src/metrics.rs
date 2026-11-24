@@ -58,8 +58,26 @@ fn latency_family(node: &str, name: &str, help: &str, latency: Latency) -> proto
         help,
         latency.count,
         latency.sum_us,
-        &[(0.5, latency.p50_us as f64), (0.99, latency.p99_us as f64)],
+        vec![
+            quantile(0.5, latency.p50_us as f64),
+            quantile(0.99, latency.p99_us as f64),
+        ],
     )
+}
+
+fn quantile(quantile: f64, value: f64) -> proto::Quantile {
+    let mut sample = proto::Quantile::default();
+    sample.set_quantile(quantile);
+    sample.set_value(value);
+    sample
+}
+
+fn summary(count: u64, sum: f64, quantiles: Vec<proto::Quantile>) -> proto::Summary {
+    let mut summary = proto::Summary::default();
+    summary.set_sample_count(count);
+    summary.set_sample_sum(sum);
+    summary.set_quantile(quantiles);
+    summary
 }
 
 fn summary_family(
@@ -68,24 +86,10 @@ fn summary_family(
     help: &str,
     count: u64,
     sum: f64,
-    quantiles: &[(f64, f64)],
+    quantiles: Vec<proto::Quantile>,
 ) -> proto::MetricFamily {
-    let mut summary = proto::Summary::default();
-    summary.set_sample_count(count);
-    summary.set_sample_sum(sum);
-    summary.set_quantile(
-        quantiles
-            .iter()
-            .map(|&(quantile, value)| {
-                let mut sample = proto::Quantile::default();
-                sample.set_quantile(quantile);
-                sample.set_value(value);
-                sample
-            })
-            .collect(),
-    );
     let mut metric = metric(&[("node", node)]);
-    metric.set_summary(summary);
+    metric.set_summary(summary(count, sum, quantiles));
     family(name, help, proto::MetricType::SUMMARY, vec![metric])
 }
 
@@ -152,9 +156,9 @@ pub fn render(node: &str, proxy: &ProxyMetrics, snap: NodeSnapshot) -> String {
             "Dirty bytes per completed local capture",
             snap.dirty_set.count,
             snap.dirty_set.sum_bytes,
-            &[
-                (0.5, snap.dirty_set.p50_bytes as f64),
-                (0.99, snap.dirty_set.p99_bytes as f64),
+            vec![
+                quantile(0.5, snap.dirty_set.p50_bytes as f64),
+                quantile(0.99, snap.dirty_set.p99_bytes as f64),
             ],
         ),
         family(
@@ -241,22 +245,15 @@ pub fn render(node: &str, proxy: &ProxyMetrics, snap: NodeSnapshot) -> String {
             &proxy.admission_wait,
         ),
     ] {
-        let mut summary = proto::Summary::default();
-        summary.set_sample_count(histogram.count());
-        summary.set_sample_sum(histogram.sum_us() as f64);
-        summary.set_quantile(
-            [(0.5, histogram.p50_us()), (0.99, histogram.p99_us())]
-                .into_iter()
-                .map(|(quantile, value)| {
-                    let mut sample = proto::Quantile::default();
-                    sample.set_quantile(quantile);
-                    sample.set_value(value);
-                    sample
-                })
-                .collect(),
-        );
         let mut metric = metric(&node_labels);
-        metric.set_summary(summary);
+        metric.set_summary(summary(
+            histogram.count(),
+            histogram.sum_us() as f64,
+            vec![
+                quantile(0.5, histogram.p50_us()),
+                quantile(0.99, histogram.p99_us()),
+            ],
+        ));
         families.push(family(name, help, proto::MetricType::SUMMARY, vec![metric]));
     }
     TextEncoder::new().encode_to_string(&families).expect(

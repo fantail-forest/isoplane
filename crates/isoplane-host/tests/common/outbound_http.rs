@@ -185,17 +185,12 @@ impl Rig {
 
     pub async fn result<T: serde::de::DeserializeOwned>(&self, id: u64) -> Result<T, FutureError> {
         loop {
-            if let Some((received, result)) = self
-                .runtime
-                .futures
-                .take_ready(self.ctx.instance)
-                .map(isoplane_host::futures::Ready::into_pair)
-            {
+            if let Some(ready) = self.runtime.futures.take_ready(self.ctx.instance) {
                 assert_eq!(
-                    received, id,
+                    ready.future, id,
                     "the host must deliver the requested operation's result"
                 );
-                return match result {
+                return match ready.result {
                     ResultRecord::Ok(bytes) => {
                         Ok(postcard::from_bytes(&bytes).expect("the guest result must decode"))
                     }

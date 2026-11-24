@@ -22,7 +22,10 @@ fn active_instances_keep_their_compilation_storage_leased() {
     let compilation =
         unsafe { isoplane_engine::CompilationCache::from_trusted_directory(directory.clone()) }
             .expect("compilation cache");
-    let (mut template, _) = compilation.load(&engine, &echo_guest()).expect("compile");
+    let mut template = compilation
+        .load(&engine, &echo_guest())
+        .expect("compile")
+        .template;
     template.retain_storage(lease);
     let instance = activate(&engine, &template);
     drop(template);
@@ -122,16 +125,20 @@ fn a_mapped_artifact_is_equivalent_to_the_compiled_template() {
     let t = e.load_template(&wasm).expect("template");
 
     // SAFETY: a fresh directory this test owns, written only by this engine.
-    let (a, compiled_a) = unsafe { e.load_mapped(&wasm, dir.path()) }.expect("first load");
-    let (b, compiled_b) = unsafe { e.load_mapped(&wasm, dir.path()) }.expect("second load");
-    assert!(
-        compiled_a,
+    let first = unsafe { e.load_mapped(&wasm, dir.path()) }.expect("first load");
+    // SAFETY: as above; the directory now holds what the first load wrote.
+    let second = unsafe { e.load_mapped(&wasm, dir.path()) }.expect("second load");
+    assert_eq!(
+        first.compilation,
+        isoplane_engine::Compilation::Compiled,
         "the first load has nothing to map and must compile"
     );
-    assert!(
-        !compiled_b,
+    assert_eq!(
+        second.compilation,
+        isoplane_engine::Compilation::Reused,
         "the second load must map the artifact the first wrote"
     );
+    let (a, b) = (first.template, second.template);
 
     for m in [&a, &b] {
         assert_eq!(m.hash, t.hash, "the mapped template is the same module");

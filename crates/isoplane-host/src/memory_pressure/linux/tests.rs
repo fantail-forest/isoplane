@@ -184,10 +184,10 @@ fn mount_roots_and_escaped_paths_resolve_the_process_directory() {
             "1 0 0:1 /tenant /cgroup\\040mount rw - cgroup2 cgroup rw"
         )
         .unwrap(),
-        (
-            PathBuf::from("/cgroup mount"),
-            PathBuf::from("/cgroup mount/app")
-        ),
+        CgroupLocation {
+            mount: PathBuf::from("/cgroup mount"),
+            directory: PathBuf::from("/cgroup mount/app")
+        },
         "a subtree mount must resolve membership relative to its root"
     );
 }
@@ -207,7 +207,7 @@ fn a_namespaced_root_limit_is_included_in_the_sample() {
 
 #[test]
 fn the_widest_mount_preserves_visible_ancestor_limits() {
-    assert_eq!(locate_cgroup(Path::new("/tenant/app"), "1 0 0:1 /tenant /short rw - cgroup2 cgroup rw\n2 0 0:1 / /long/mount rw - cgroup2 cgroup rw").unwrap(), (PathBuf::from("/long/mount"), PathBuf::from("/long/mount/tenant/app")), "mount selection must prefer ancestor visibility over a short mount path");
+    assert_eq!(locate_cgroup(Path::new("/tenant/app"), "1 0 0:1 /tenant /short rw - cgroup2 cgroup rw\n2 0 0:1 / /long/mount rw - cgroup2 cgroup rw").unwrap(), CgroupLocation { mount: PathBuf::from("/long/mount"), directory: PathBuf::from("/long/mount/tenant/app") }, "mount selection must prefer ancestor visibility over a short mount path");
 }
 
 #[test]

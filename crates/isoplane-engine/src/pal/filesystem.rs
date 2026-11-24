@@ -252,20 +252,50 @@ fn read_file(
     Ok(())
 }
 
-fn result_layout(operation: Operation) -> (usize, usize) {
+/// Where a call's result record puts its payload.
+struct ResultLayout {
+    /// The record's size in bytes.
+    size: usize,
+    /// The payload's offset in the record, after the discriminant and its padding.
+    offset: usize,
+}
+
+fn result_layout(operation: Operation) -> ResultLayout {
     use Operation::*;
     match operation {
-        Stat | StatAt => (104, 8),
-        Hash | HashAt => (24, 8),
-        Write => (16, 8),
-        Read => (16, 4),
-        ReadlinkAt => (12, 4),
-        DirectoryEntry => (20, 4),
-        OpenAt | ReadDirectory | ReadViaStream | WriteViaStream | AppendViaStream => (8, 4),
-        Directories => (8, 4),
-        DropDescriptor | DropDirectoryStream => (0, 0),
+        Stat | StatAt => ResultLayout {
+            size: 104,
+            offset: 8,
+        },
+        Hash | HashAt => ResultLayout {
+            size: 24,
+            offset: 8,
+        },
+        Write => ResultLayout {
+            size: 16,
+            offset: 8,
+        },
+        Read => ResultLayout {
+            size: 16,
+            offset: 4,
+        },
+        ReadlinkAt => ResultLayout {
+            size: 12,
+            offset: 4,
+        },
+        DirectoryEntry => ResultLayout {
+            size: 20,
+            offset: 4,
+        },
+        OpenAt | ReadDirectory | ReadViaStream | WriteViaStream | AppendViaStream => {
+            ResultLayout { size: 8, offset: 4 }
+        }
+        Directories => ResultLayout { size: 8, offset: 4 },
+        DropDescriptor | DropDirectoryStream => ResultLayout { size: 0, offset: 0 },
         Advise | Flags | Type | SetSize | SetTimes | SetTimesAt | Sync | CreateDirectoryAt
-        | RemoveDirectoryAt | RenameAt | SymlinkAt | LinkAt | UnlinkFileAt => (2, 1),
+        | RemoveDirectoryAt | RenameAt | SymlinkAt | LinkAt | UnlinkFileAt => {
+            ResultLayout { size: 2, offset: 1 }
+        }
     }
 }
 
@@ -306,7 +336,7 @@ fn call(
         return memory.free(arg(0), RECORD_BYTES);
     }
     let retptr = arg(arguments.len() - 1);
-    let (size, offset) = result_layout(operation);
+    let ResultLayout { size, offset } = result_layout(operation);
     let Some(Record { node, cursor }) = record_of else {
         return error(memory, retptr, offset, BAD_DESCRIPTOR);
     };

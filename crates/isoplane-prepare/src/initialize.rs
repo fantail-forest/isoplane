@@ -4,7 +4,10 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use isoplane_engine::{Completion, ImportCall, InstanceOps, IsoplaneEngine, OccupancyBudget};
+use isoplane_engine::{
+    Compilation, Completion, ImportCall, InstanceOps, IsoplaneEngine, LoadedTemplate,
+    OccupancyBudget,
+};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
@@ -58,7 +61,7 @@ pub struct Initialized {
     /// Preparation occupancy across compilation, initialization and verification, excluding idle I/O waits.
     pub preparation_occupancy_ns: u64,
     /// Runtime capabilities initialization was answered.
-    pub pal_calls: Vec<(String, u32)>,
+    pub pal_calls: Vec<isoplane_engine::PalCallCount>,
     /// Bounded log output from initialization.
     pub logs: Vec<String>,
     /// Whether preparation compiled the submitted module rather than reusing the supplied cache's compilation.
@@ -165,8 +168,8 @@ fn run_stage(
         // Initialization is not a dispatch.
         outcome = instance.wake(
             0,
-            completion.0,
-            &completion.1,
+            completion.future,
+            &completion.result,
             initialization_budget(request, usage.occupancy_ns, start.elapsed())?,
         );
         usage.occupancy_ns = usage.occupancy_ns.saturating_add(outcome.occupancy_ns);
@@ -218,7 +221,11 @@ pub(crate) fn initialize(
         ));
     }
     let occupancy_start_ns = preparation_occupancy()?;
-    let (template, compiled) = load(engine, application_files, &capture)?;
+    let LoadedTemplate {
+        template,
+        compilation,
+    } = load(engine, application_files, &capture)?;
+    let compiled = compilation.compiled();
     let reactor = request
         .network
         .as_ref()
@@ -461,7 +468,7 @@ fn load(
     engine: &IsoplaneEngine,
     application_files: &isoplane_engine::PlatformFiles,
     capture: &CaptureMode<'_>,
-) -> Result<(isoplane_engine::Template, bool), PrepareError> {
+) -> Result<LoadedTemplate, PrepareError> {
     let (wasm, cache) = match capture {
         #[cfg(all(target_os = "linux", feature = "rust-guests"))]
         CaptureMode::Layered { wasm, cache, .. } => (wasm, cache),
@@ -471,17 +478,24 @@ fn load(
                 .clone()
                 .with_application_files(application_files.clone())
                 .map_err(PrepareError::State)?;
-            return Ok((template, false));
+            return Ok(LoadedTemplate {
+                template,
+                compilation: Compilation::Reused,
+            });
         }
     };
     let instrumented = instrument::instrument(wasm).map_err(PrepareError::State)?;
-    let (template, compiled) = cache
+    let loaded = cache
         .load(engine, &instrumented)
         .map_err(PrepareError::State)?;
-    let template = template
+    let template = loaded
+        .template
         .with_application_files(application_files.clone())
         .map_err(PrepareError::State)?;
-    Ok((template, compiled))
+    Ok(LoadedTemplate {
+        template,
+        compilation: loaded.compilation,
+    })
 }
 
 /// `log_emit` severities run from trace at 0 to error at 4.

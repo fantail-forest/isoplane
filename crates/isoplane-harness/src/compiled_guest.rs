@@ -8,7 +8,8 @@ use parking_lot::Mutex;
 
 use isoplane_cache::{Cache, CacheKey, PROJECT_CACHE_BYTES};
 use isoplane_engine::{
-    CompilationCache, EngineConfig, IsoplaneEngine, ModuleHash, PlatformFiles, Template,
+    CompilationCache, EngineConfig, IsoplaneEngine, LoadedTemplate, ModuleHash, PlatformFiles,
+    Template,
 };
 
 struct CompiledGuests(Cache);
@@ -35,7 +36,7 @@ impl CompiledGuests {
         )
     }
 
-    fn load(&self, engine: &IsoplaneEngine, module: &[u8]) -> (Template, bool) {
+    fn load(&self, engine: &IsoplaneEngine, module: &[u8]) -> LoadedTemplate {
         let lease = Arc::new(
             self.0
                 .lease(CacheKey(ModuleHash::of(module).0))
@@ -56,11 +57,11 @@ impl CompiledGuests {
         // SAFETY: only the compiler writes into this private, leased fixture directory.
         let cache = unsafe { CompilationCache::from_trusted_directory(path.into()) }
             .expect("open compiled guest cache");
-        let (mut template, compiled) = cache
+        let mut loaded = cache
             .load(engine, module)
             .expect("compile the guest fixture");
-        template.retain_storage(lease);
-        (template, compiled)
+        loaded.template.retain_storage(lease);
+        loaded
     }
 }
 
@@ -89,7 +90,7 @@ pub(super) fn engine_serving(module: &[u8], files: PlatformFiles) -> (IsoplaneEn
     let cache = COMPILED.get_or_init(|| {
         CompiledGuests::new(isoplane_fixtures::cache_directory().join("compiled-tests"))
     });
-    let template = cache.load(&engine, module).0;
+    let template = cache.load(&engine, module).template;
     (engine, template)
 }
 
@@ -122,8 +123,8 @@ mod tests {
                     let cache = CompiledGuests::new(directory.path().join("cache"));
                     let engine =
                         IsoplaneEngine::new(EngineConfig::default()).expect("fixture engine");
-                    let (_, did_compile) = cache.load(&engine, &module);
-                    compiled.fetch_add(usize::from(did_compile), Ordering::Relaxed);
+                    let compilation = cache.load(&engine, &module).compilation;
+                    compiled.fetch_add(usize::from(compilation.compiled()), Ordering::Relaxed);
                 });
             }
         });

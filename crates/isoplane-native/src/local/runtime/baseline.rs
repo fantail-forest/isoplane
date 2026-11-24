@@ -4,7 +4,22 @@
 //! is prepared as a layer over it into the project's own cache, and reused
 //! while its identity holds.
 
+use isoplane_engine::Compilation;
+
 use super::Project;
+
+/// A runtime baseline, and whether obtaining it compiled the runtime.
+struct CachedBaseline {
+    baseline: isoplane_prepare::RuntimeBaseline,
+    compilation: Compilation,
+}
+
+/// A project's application as a template over its runtime baseline.
+struct LayeredApplication {
+    template: isoplane_engine::Template,
+    /// Whether an earlier preparation's published layer was loaded, rather than one prepared now.
+    reused: bool,
+}
 
 /// The runtime baseline a session's package preparations reuse. Clones share it.
 #[derive(Clone, Default)]
@@ -31,19 +46,28 @@ impl Baselines {
         let wanted = request.baseline();
         let identity = wanted.identity()?;
         let mut current = self.current.lock();
-        let (baseline, compiled) = match current.as_ref() {
-            Some(held) if held.identity() == identity => (held.clone(), false),
+        let CachedBaseline {
+            baseline,
+            compilation,
+        } = match current.as_ref() {
+            Some(held) if held.identity() == identity => CachedBaseline {
+                baseline: held.clone(),
+                compilation: Compilation::Reused,
+            },
             _ => {
-                let (baseline, compiled) = published(project, &wanted, admit)?;
-                *current = Some(baseline.clone());
-                (baseline, compiled)
+                let published = published(project, &wanted, admit)?;
+                *current = Some(published.baseline.clone());
+                published
             }
         };
         drop(current);
-        let (mut template, reused) = application(project, &baseline, &request)?;
+        let LayeredApplication {
+            mut template,
+            reused,
+        } = application(project, &baseline, &request)?;
         template.retain_storage(std::sync::Arc::new(baseline.clone()));
         tracing::info!(
-            compiled,
+            compiled = compilation.compiled(),
             reused,
             "local preparation over the runtime baseline ready"
         );
@@ -64,28 +88,27 @@ impl Baselines {
 
 /// Publishes the runtime baseline for `wasm` in the runtime cache, as the
 /// first preparation of a package on it would, and returns whether that
-/// compiled the runtime. `admit` runs only when it does.
+/// compiled the runtime. `admit` runs only when it did.
 pub(super) fn prepare_runtime(
     project: &Project,
     wasm: &[u8],
     admit: impl FnOnce() -> anyhow::Result<()>,
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<Compilation> {
     // A baseline's identity leaves out the application's settings and version.
     let request = request(project, wasm, b"{}")?;
-    let (_, compiled) = published(project, &request.baseline(), admit)?;
-    Ok(compiled)
+    Ok(published(project, &request.baseline(), admit)?.compilation)
 }
 
 /// The project's application, loaded over `baseline` from the layer a
 /// previous preparation published for the same identity, or prepared now and
-/// published for the next one. Returns whether it was reused. Every other
+/// published for the next one. Every other
 /// layer of the project is removed: one with another identity holds an
 /// application, or settings, the project no longer has.
 fn application(
     project: &Project,
     baseline: &isoplane_prepare::RuntimeBaseline,
     request: &isoplane_prepare::BuildRequest,
-) -> anyhow::Result<(isoplane_engine::Template, bool)> {
+) -> anyhow::Result<LayeredApplication> {
     let layers = application_layers(project)?;
     let identity = request.identity()?;
     let name = identity_name(&identity);
@@ -120,7 +143,7 @@ fn application(
     };
     remove_other_layers(layers.directory(), &name);
     template.retain_storage(layers);
-    Ok((template, reused))
+    Ok(LayeredApplication { template, reused })
 }
 
 /// Publishes a freshly prepared layer for the next preparation. A failure
@@ -230,7 +253,7 @@ fn published(
     project: &Project,
     wanted: &isoplane_prepare::BaselineRequest,
     admit: impl FnOnce() -> anyhow::Result<()>,
-) -> anyhow::Result<(isoplane_prepare::RuntimeBaseline, bool)> {
+) -> anyhow::Result<CachedBaseline> {
     use isoplane_prepare::RuntimeBaseline;
     let identity = wanted.identity()?;
     let mut name = blake3::Hasher::new();
@@ -250,7 +273,10 @@ fn published(
         Ok(mut template) => {
             template.retain_storage(cache.lease.clone());
             tracing::info!(path = %directory.display(), "reusing the local runtime baseline");
-            return Ok((RuntimeBaseline::loaded(engine, template, wanted)?, false));
+            return Ok(CachedBaseline {
+                baseline: RuntimeBaseline::loaded(engine, template, wanted)?,
+                compilation: Compilation::Reused,
+            });
         }
         Err(error) if directory.exists() => {
             tracing::warn!(path = %directory.display(), %error, "preparing the local runtime baseline again");
@@ -281,7 +307,13 @@ fn published(
     if let Err(error) = std::fs::remove_dir_all(&compilation) {
         tracing::warn!(path = %compilation.display(), %error, "the runtime's compilation scratch is not removed yet");
     }
-    Ok((RuntimeBaseline::loaded(engine, template, wanted)?, compiled))
+    Ok(CachedBaseline {
+        baseline: RuntimeBaseline::loaded(engine, template, wanted)?,
+        compilation: match compiled {
+            true => Compilation::Compiled,
+            false => Compilation::Reused,
+        },
+    })
 }
 
 fn load(

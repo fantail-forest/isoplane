@@ -105,7 +105,7 @@ impl TableBaseline {
                 .0
                 .get(index)
                 .context("table baseline missing from its live store")?;
-            let name = &template.tables[index].0;
+            let name = &template.tables[index].name;
             let size = table.size(&*store);
             if size as usize != baseline.len() {
                 return Err(crate::snapshot::SnapshotError::TableMutation {

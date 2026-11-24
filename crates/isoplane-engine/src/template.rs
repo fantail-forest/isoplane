@@ -8,6 +8,24 @@ use wasmtime::Module;
 
 use crate::snapshot::GlobalValue;
 
+/// An exported mutable global and the value its template holds.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct TemplateGlobal {
+    /// The global's export name.
+    pub name: String,
+    /// The value an instance of the template starts with.
+    pub value: GlobalValue,
+}
+
+/// An exported table and its size once the template is instantiated.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct TemplateTable {
+    /// The table's export name.
+    pub name: String,
+    /// The number of elements the instantiated table holds.
+    pub elements: u64,
+}
+
 /// Identity of a module and its immutable application content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ModuleHash(pub [u8; 32]);
@@ -49,9 +67,9 @@ pub(crate) struct TemplateInner {
     /// Exported mutable globals in module index order, with their template
     /// values, so capture and restore agree on an ordering without names in
     /// the delta.
-    pub mut_globals: Vec<(String, GlobalValue)>,
+    pub mut_globals: Vec<TemplateGlobal>,
     /// Exported tables, in export order, with their instantiated sizes.
-    pub tables: Vec<(String, u64)>,
+    pub tables: Vec<TemplateTable>,
     /// Per exported table, whether each slot held a non-null reference, so
     /// capture can detect a table mutation.
     pub table_nullness: Vec<Vec<bool>>,

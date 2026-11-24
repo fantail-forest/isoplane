@@ -70,7 +70,7 @@ fn a_guest_cannot_fetch_a_private_address() {
         wait_for(|| !act.wakes().is_empty(), Duration::from_secs(5)),
         "the guest was never told what happened to its fetch"
     );
-    let (_, res) = act.wakes()[0].clone();
+    let res = act.wakes()[0].result.clone();
     match res {
         ResultRecord::Err(FutureError::Denied(m)) => {
             assert!(m.contains("169.254.169.254"), "{m}");
@@ -134,19 +134,19 @@ fn an_endpoint_exception_lets_only_its_own_application_reach_a_private_peer() {
     }
     assert!(
         !matches!(
-            excepted.wakes()[0].1,
+            excepted.wakes()[0].result,
             ResultRecord::Err(FutureError::Denied(_))
         ),
         "the application granted the exception must reach its private peer: {:?}",
-        excepted.wakes()[0].1
+        excepted.wakes()[0].result
     );
     assert!(
         matches!(
-            other.wakes()[0].1,
+            other.wakes()[0].result,
             ResultRecord::Err(FutureError::Denied(_))
         ),
         "another application on the same cell must not inherit the exception: {:?}",
-        other.wakes()[0].1
+        other.wakes()[0].result
     );
     drop(pending);
     r.cell.shutdown();

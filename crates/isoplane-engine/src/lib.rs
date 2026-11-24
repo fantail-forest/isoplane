@@ -35,14 +35,17 @@ mod storage_fault;
 mod watchdog;
 mod wtconfig;
 
-pub use artifact::{publish_staged_artifact, ArtifactPaths, CompilationCache};
+pub use artifact::{
+    publish_staged_artifact, ArtifactPaths, Compilation, CompilationCache, LoadedTemplate,
+    PrecompiledTemplate,
+};
 pub use bindings::{HostBindings, ImportCall};
 pub use budget::{
     DispatchOutcome, ExecutionLimit, GraceEnd, OccupancyBudget, OccupancyMeasurement, TrapInfo,
     TrapKind,
 };
 pub use image::{MemoryImage, PAGE};
-pub use instance::{Completion, Instance, InstanceOps};
+pub use instance::{Completion, Instance, InstanceOps, PalCallCount};
 pub use mapped::DormantInstance;
 pub use meter::try_occupancy_nanos;
 pub use pal::platform_files::{PlatformFile, PlatformFiles, PlatformFilesError};
