@@ -7,6 +7,9 @@ inputs:
   dotnet:
     description: Install the pinned .NET SDK
     default: 'false'
+  nuget-cache:
+    description: Name of this job's cache of downloaded NuGet packages; jobs that restore different projects use different names. Empty caches nothing.
+    default: ''
   wasm:
     description: Install wasm-tools for managed runtime preparation
     default: 'false'
@@ -46,6 +49,22 @@ runs:
       uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6
       with:
         global-json-file: global.json
+    - name: Read the debugger fork's pinned commit, whose projects restore packages too
+      id: debugger
+      if: inputs.nuget-cache != ''
+      shell: bash
+      run: echo "commit=$(git rev-parse HEAD:tools/debugger-libs)" >> "$GITHUB_OUTPUT"
+    - name: Cache downloaded NuGet packages
+      if: inputs.nuget-cache != ''
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      with:
+        key: nuget-${{ runner.os }}-${{ inputs.nuget-cache }}-${{ steps.debugger.outputs.commit }}-${{ hashFiles('global.json', 'Taskfile.yml', 'taskfiles/**', '**/nuget.config', '**/*.sln', '**/*.slnx', '**/*.slnf', '**/*.csproj', '**/*.proj', '**/*.props', '**/*.targets') }}
+        restore-keys: nuget-${{ runner.os }}-${{ inputs.nuget-cache }}-
+        # This checkout packs and restores its own packages under one version, and NuGet uses a
+        # package folder it already holds instead of extracting a later build of the same version.
+        path: |
+          ~/.nuget/packages/*
+          !~/.nuget/packages/isoplane.*
     - name: Install wasm-tools
       if: inputs.wasm == 'true'
       shell: bash
