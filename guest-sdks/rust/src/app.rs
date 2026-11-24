@@ -1,12 +1,3 @@
-//! The entrypoint traits and the macros that emit the guest exports.
-//!
-//! Every method takes `&'static self`: there is exactly one instance of the
-//! app type per wasm instance, it lives for as long as linear memory does, and
-//! the host refuses to start a slice while another is running. App state that
-//! must change goes in a `Cell`/`RefCell` field -- which is also an honest
-//! reminder that those fields are a best-effort per-instance cache, never a
-//! store: the instance can be reset, evicted or replaced at any time.
-
 use core::cell::UnsafeCell;
 use core::future::Future;
 
@@ -76,10 +67,6 @@ impl GcPressure {
         !matches!(self, GcPressure::Idle)
     }
 }
-
-// ---------------------------------------------------------------------------
-// Export macros
-// ---------------------------------------------------------------------------
 
 /// Emit the host exports for a [`Handler`].
 ///

@@ -1,19 +1,3 @@
-//! The raw import surface.
-//!
-//! The SDK's capabilities are a subset of [`isoplane_abi::imports::IMPORTS`],
-//! under module `"isoplane"` with the canonical signatures. Nothing else is declared, because
-//! the import list *is* the capability manifest: the validator rejects a module
-//! that imports anything else at deploy time.
-//!
-//! The [`isoplane_imports!`] macro emits three things from one list:
-//!
-//! * the `unsafe extern "C"` block, on `wasm32` only;
-//! * host stubs, so the SDK's own tests can run on the development machine;
-//! * [`SDK_IMPORTS`], a descriptor table which
-//!   [`tests::sdk_matches_the_contract`] checks against the canonical names
-//!   and signatures. Drift is a compile-and-test
-//!   failure rather than a mysterious instantiation error in production.
-
 use isoplane_abi::imports::{Sig, Ty};
 
 /// One entry of [`SDK_IMPORTS`]: the SDK's own view of an import's shape.
@@ -121,7 +105,6 @@ pub(crate) fn host_stub_hook(name: &'static str, args: &[i64]) -> i64 {
 }
 
 isoplane_imports! {
-    // ---- core -------------------------------------------------------------
     /// Guest panic. `init_visible`, so a failed pre-init reports usefully.
     fn abort(ptr: i32, len: i32);
     /// The deployment's settings as a JSON object of string values. The host
@@ -130,14 +113,12 @@ isoplane_imports! {
     /// and what initialization keeps of them is captured in the template.
     fn runtime_config_get(ptr: i32, cap: i32) -> i32;
 
-    // ---- observability ----------------------------------------------------
     /// `(level, ptr, len)`. Counts against the dispatch occupancy budget, which is
     /// what stops log-as-compute abuse.
     fn log_emit(level: i32, ptr: i32, len: i32);
     fn trace_span_begin(ptr: i32, len: i32) -> i32;
     fn trace_span_end(span: i32);
 
-    // ---- clock & entropy --------------------------------------------------
     /// The serving slice's fixed coarse time, in milliseconds since the Unix epoch.
     fn clock_now_coarse() -> i64;
     /// Returns a host timer future; awaiting it returns control to the host.
@@ -145,12 +126,10 @@ isoplane_imports! {
     /// Requests bytes through the host entropy interface; captured guest values remain captured.
     fn entropy_fill(ptr: i32, len: i32);
 
-    // ---- outbound HTTP ----------------------------------
     fn http_fetch(ptr: i32, len: i32) -> i64;
     /// Read at most `max` bytes from the response body handle.
     fn http_body_read(handle: i32, max: i32) -> i64;
 
-    // ---- inbound response -------------------------------------------------
     fn resp_new(ptr: i32, len: i32) -> i32;
     fn resp_write(handle: i32, ptr: i32, len: i32) -> i64;
     fn resp_finish(handle: i32);
@@ -160,16 +139,6 @@ isoplane_imports! {
     /// set; the hard deadline at B+G ignores it.
     fn unsafe_to_trap(on: i32);
 }
-
-// ---------------------------------------------------------------------------
-// The guest exports.
-//
-// `isoplane_abi::imports::exports::SIGNATURES` is the contract (it was not when
-// this SDK was first written -- see guests/README.md gap G1, resolved). The
-// table below is what the `export_*!` macros actually emit, kept separate so
-// that `exports_match_the_contract` can catch drift rather than have the two
-// definitions be the same line of code.
-// ---------------------------------------------------------------------------
 
 /// One guest export, as this SDK lowers it to core wasm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -183,7 +152,9 @@ const I64: Ty = Ty::I64;
 
 /// The lowering of the WIT world's guest exports onto a flat core module.
 /// Host-side buffers are handed over by `isoplane_alloc` + copy; every entrypoint
-/// returns a packed [`isoplane_abi::PollStatus`].
+/// returns a packed [`isoplane_abi::PollStatus`]. Kept separate from
+/// `isoplane_abi::imports::exports::SIGNATURES`, the contract, so that
+/// `exports_match_the_contract` catches drift in what the `export_*!` macros emit.
 pub const SDK_EXPORTS: &[SdkExport] = &[
     // isoplane-alloc: func(size: u32, align: u32) -> u32
     SdkExport {
@@ -234,8 +205,6 @@ mod tests {
     use super::*;
     use isoplane_abi::imports::{self, BufSpec, IMPORTS};
 
-    /// Every capability this SDK declares must link against the canonical host
-    /// interface; capabilities the SDK does not expose need no declaration.
     #[test]
     fn sdk_matches_the_contract() {
         for s in SDK_IMPORTS {
@@ -244,9 +213,6 @@ mod tests {
         }
     }
 
-    /// "Suspension implies an empty stack" is structural, but it is worth
-    /// asserting that nothing in the surface we declare *could* wait: every
-    /// non-`Sync` import hands back a future id and returns.
     #[test]
     fn no_declared_import_can_block() {
         for i in IMPORTS {
@@ -261,9 +227,9 @@ mod tests {
         }
     }
 
-    /// The export half of `sdk_matches_the_contract`. `exports::SIGNATURES`
-    /// is what the engine's `get_typed_func` is written against, so a
-    /// disagreement here is an instantiation failure at activation time.
+    /// `exports::SIGNATURES` is what the engine's `get_typed_func` is written
+    /// against, so a disagreement here is an instantiation failure at
+    /// activation time.
     #[test]
     fn exports_match_the_contract() {
         for e in SDK_EXPORTS {
@@ -273,10 +239,7 @@ mod tests {
         }
     }
 
-    /// `BufSpec` resolves an ambiguity the raw signature cannot: which
-    /// `(i32, i32)` pairs are buffers, which way the bytes flow, and where the
-    /// pair sits among the scalars. The SDK hard-codes that at each call site,
-    /// so this asserts the hard-coding still matches the contract. Getting it
+    /// The SDK hard-codes the buffer layout at each call site; getting it
     /// wrong would hand the host a length as a pointer.
     #[test]
     fn buffer_layout_matches_every_call_site() {

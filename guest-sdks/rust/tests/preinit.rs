@@ -1,6 +1,3 @@
-//! Template initialization: what the application's initializer builds, and
-//! what is left for each instance to build on first use.
-
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use isoplane_guest::testing::with_stub_host;

@@ -384,10 +384,6 @@ fn sys_grow(_h: &mut Heap, _need: usize) -> bool {
     false
 }
 
-// ---------------------------------------------------------------------------
-// The global allocator, installed on wasm only.
-// ---------------------------------------------------------------------------
-
 struct HeapCell(UnsafeCell<Heap>);
 // Single logical thread by construction: the engine builds wasmtime without
 // threads, shared memory or atomics, and the validator rejects a module that
@@ -470,8 +466,6 @@ mod tests {
         assert_eq!(h.stats().live_bytes, 0);
     }
 
-    /// The only compaction toward low addresses a non-moving allocator can
-    /// offer: a free run touching the top gives the bump pointer back.
     #[test]
     fn gc_hint_rolls_back_a_free_tail() {
         let mut h = Heap::over(region());

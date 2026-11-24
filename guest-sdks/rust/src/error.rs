@@ -1,4 +1,3 @@
-//! Typed guest-side errors.
 use core::fmt;
 
 use isoplane_abi::result::FutureError;

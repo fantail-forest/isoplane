@@ -165,17 +165,12 @@ impl Runtime {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Single-threaded global access.
-//
 // The engine builds wasmtime without threads, shared memory or atomics and the
 // validator rejects a module that declares them, so the module cannot express a
 // second thread; and both `isoplane-host` and the engine refuse to start a
 // slice in an instance while another is running. Together those make an
 // `UnsafeCell` global the honest representation. The one hazard left is
 // *self*-nesting, so `with` refuses it in debug builds.
-// ---------------------------------------------------------------------------
-
 struct Cell<T>(UnsafeCell<T>);
 unsafe impl<T> Sync for Cell<T> {}
 
@@ -197,10 +192,6 @@ pub(crate) fn with<R>(f: impl FnOnce(&mut Runtime) -> R) -> R {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Wakers
-// ---------------------------------------------------------------------------
-
 static VTABLE: RawWakerVTable = RawWakerVTable::new(w_clone, w_wake, w_wake_ref, w_drop);
 
 unsafe fn w_clone(p: *const ()) -> RawWaker {
@@ -219,10 +210,6 @@ fn waker_for(id: u32) -> Waker {
     // thread; see the module note above.
     unsafe { Waker::from_raw(RawWaker::new(id as usize as *const (), &VTABLE)) }
 }
-
-// ---------------------------------------------------------------------------
-// The loop
-// ---------------------------------------------------------------------------
 
 /// Drive every ready task of `dispatch` to its next await point, then return
 /// that dispatch's status.
@@ -275,10 +262,6 @@ pub fn spawn(fut: impl Future<Output = ()> + 'static) {
 pub(crate) fn spawn_main(dispatch: u64, fut: BoxTask) {
     with(|rt| rt.insert_task(Task { fut, dispatch }));
 }
-
-// ---------------------------------------------------------------------------
-// The future table
-// ---------------------------------------------------------------------------
 
 /// The host caps a dispatch's simultaneous pending futures at its record's
 /// `pending_futures_limit` and refuses the one past it; this SDK keeps no
@@ -336,11 +319,6 @@ pub fn poll_count() -> u64 {
 pub fn park_count() -> u64 {
     with(|rt| rt.parks)
 }
-
-// ---------------------------------------------------------------------------
-// Export bodies. The `export_*!` macros emit thin `#[no_mangle]` wrappers in
-// the guest crate that call straight into these.
-// ---------------------------------------------------------------------------
 
 /// `isoplane_alloc(size, align) -> ptr`: the host->guest buffer handoff. No host
 /// pointer ever enters guest memory; the host copies into this buffer, and the
@@ -441,9 +419,6 @@ mod tests {
     use crate::future::HostFuture;
     use crate::testing;
 
-    /// **The park test.** A dispatch that awaits a host future must cost
-    /// exactly one poll and then RETURN. If parking were implemented by
-    /// waiting, this would either never return or the poll count would climb.
     #[test]
     fn parking_is_one_poll_and_a_return() {
         testing::with_stub_host(|host| {
@@ -465,8 +440,6 @@ mod tests {
         });
     }
 
-    /// The other half: a wake is a *new* slice, and it completes
-    /// the dispatch on a fresh stack.
     #[test]
     fn a_wake_resumes_and_completes() {
         testing::with_stub_host(|host| {
@@ -487,9 +460,6 @@ mod tests {
         });
     }
 
-    /// Two concurrent host futures awaited together, ZERO threads. Both
-    /// register on the first poll; the task parks once and is re-polled once
-    /// per wake.
     #[test]
     fn two_concurrent_futures_park_once_and_join() {
         testing::with_stub_host(|host| {
@@ -523,8 +493,6 @@ mod tests {
         });
     }
 
-    /// A future dropped without completing must not leave a slot behind, and a
-    /// late wake for it must be inert rather than a trap.
     #[test]
     fn dropping_a_future_deregisters_it() {
         testing::with_stub_host(|host| {
@@ -550,8 +518,6 @@ mod tests {
         });
     }
 
-    /// Two dispatches in progress at once: each slice runs and reports only
-    /// its own dispatch, so the second can finish while the first waits.
     #[test]
     fn dispatches_in_progress_finish_independently() {
         testing::with_stub_host(|host| {
