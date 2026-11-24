@@ -124,7 +124,6 @@ public sealed class EntryMethodFixTests
         Assert.Empty(await Application.AnalyzeAsync(changed!, OutputKind.ConsoleApplication));
     }
 
-    /// <summary>Methods with more than one reasonable repair, or none that keeps their code compiling.</summary>
     [Theory]
     [InlineData("[HttpHandler] public static ValueTask<Response> HandleAsync(Request request) => new(Response.Text(\"ok\"));", "ISOPLANE1011")]
     [InlineData("[HttpHandler] public static Task<Response> HandleAsync(Request request, string extra) => Task.FromResult(Response.Text(\"ok\"));", "ISOPLANE1012")]

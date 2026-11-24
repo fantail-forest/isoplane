@@ -7,12 +7,6 @@
   <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
   <Import Project="../../Build/Isoplane.SourceReferences.props" />
 
-  <!--
-    The application-independent Mono runtime: the interpreter, the BCL and the
-    SDK behind a fixed entry that loads whichever application package the host
-    serves. Its managed/native bridges come from those assemblies alone, so one
-    linked and compiled module serves every interpreted application.
-  -->
   <Import Project="../../Isoplane.Guest.props" />
   <Import Project="../../../../tools/BuildProtocol/WasmMemory.props" />
 

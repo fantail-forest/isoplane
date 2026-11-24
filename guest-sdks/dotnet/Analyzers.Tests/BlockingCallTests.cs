@@ -150,7 +150,6 @@ public sealed class BlockingCallTests
         Assert.Empty(await Application.AnalyzeAsync(changed!, OutputKind.ConsoleApplication));
     }
 
-    /// <summary>Waits with no asynchronous counterpart of the same meaning, and code where an await cannot simply be written.</summary>
     [Theory]
     [InlineData("task.Wait(TimeSpan.FromSeconds(1));")]
     [InlineData("int first = Task.WaitAny(task, task);")]
