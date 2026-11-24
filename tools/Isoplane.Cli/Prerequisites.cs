@@ -9,11 +9,6 @@ namespace Isoplane.Cli;
 /// </summary>
 internal sealed record NativePrerequisite(string Name, string[] Sonames, string Purpose, string UbuntuPackage);
 
-internal sealed record OperatingSystemRelease(string Id, string VersionId)
-{
-    internal bool IsSupportedUbuntu => Id == "ubuntu" && VersionId == "24.04";
-}
-
 /// <summary>
 /// What the machine must already provide for the toolchain to run: the loader must find these libraries,
 /// and .NET must find certificate authorities to trust.
@@ -52,21 +47,9 @@ internal static class Prerequisites
         return true;
     }
 
-    /// <summary>Reads <c>/etc/os-release</c>; an unreadable file is an unknown distribution.</summary>
-    internal static OperatingSystemRelease Detect(string path = "/etc/os-release")
-    {
-        if (!File.Exists(path))
-            return new("unknown", "");
-        var fields = File.ReadLines(path)
-            .Select(line => line.Split('=', 2))
-            .Where(parts => parts.Length == 2)
-            .ToDictionary(parts => parts[0].Trim(), parts => parts[1].Trim().Trim('"'), StringComparer.Ordinal);
-        return new(fields.GetValueOrDefault("ID", "unknown"), fields.GetValueOrDefault("VERSION_ID", ""));
-    }
-
     /// <summary>The one command that installs the missing prerequisites, when this distribution is supported.</summary>
-    internal static string? InstallCommand(OperatingSystemRelease release, IEnumerable<NativePrerequisite> missing) =>
-        release.IsSupportedUbuntu ? "sudo apt-get install -y " + string.Join(' ', missing.Select(library => library.UbuntuPackage)) : null;
+    internal static string? InstallCommand(LinuxDistribution distribution, IEnumerable<NativePrerequisite> missing) =>
+        distribution is { Id: "ubuntu", VersionId: "24.04" } ? "sudo apt-get install -y " + string.Join(' ', missing.Select(library => library.UbuntuPackage)) : null;
 
     internal static string Describe(IEnumerable<NativePrerequisite> missing) =>
         string.Join(", ", missing.Select(library => library.Sonames.Length == 0 ? $"{library.Name} (none in the machine's certificate store, for {library.Purpose})" : $"{library.Name} ({library.Sonames[^1]}, for {library.Purpose})"));

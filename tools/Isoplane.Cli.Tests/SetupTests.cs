@@ -173,7 +173,7 @@ public sealed class SetupTests
         var machine = Machines.Ready(fixture, new FakeRegistrations()) with
         {
             CanLoad = soname => soname != "libstdc++.so.6",
-            LinuxDistribution = new OperatingSystemRelease("fedora", "41"),
+            LinuxDistribution = new LinuxDistribution("fedora", "41"),
         };
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() => RunAsync(fixture, machine));
         Assert.Contains("libstdc++.so.6", error.Message);

@@ -29,24 +29,9 @@ public sealed class PrerequisitesTests
     public void The_install_command_names_the_ubuntu_packages_only_on_ubuntu_24_04()
     {
         var missing = Prerequisites.Missing(soname => soname is not ("libz.so.1" or "libssl.so.3"), () => true);
-        Assert.Equal("sudo apt-get install -y libssl3t64 zlib1g", Prerequisites.InstallCommand(new OperatingSystemRelease("ubuntu", "24.04"), missing));
-        Assert.Null(Prerequisites.InstallCommand(new OperatingSystemRelease("ubuntu", "22.04"), missing));
-        Assert.Null(Prerequisites.InstallCommand(new OperatingSystemRelease("debian", "12"), missing));
-    }
-
-    [Fact]
-    public void The_distribution_is_read_from_os_release()
-    {
-        var path = Path.Combine(Directory.CreateTempSubdirectory("isoplane-os-release-").FullName, "os-release");
-        try
-        {
-            File.WriteAllText(path, "PRETTY_NAME=\"Ubuntu 24.04.2 LTS\"\nNAME=\"Ubuntu\"\nVERSION_ID=\"24.04\"\nID=ubuntu\nID_LIKE=debian\n");
-            Assert.Equal(new OperatingSystemRelease("ubuntu", "24.04"), Prerequisites.Detect(path));
-            Assert.Equal(new OperatingSystemRelease("unknown", ""), Prerequisites.Detect(path + ".missing"));
-        }
-        finally
-        {
-            Directory.Delete(Path.GetDirectoryName(path)!, recursive: true);
-        }
+        Assert.Equal("sudo apt-get install -y libssl3t64 zlib1g", Prerequisites.InstallCommand(new LinuxDistribution("ubuntu", "24.04"), missing));
+        Assert.Null(Prerequisites.InstallCommand(new LinuxDistribution("ubuntu", "22.04"), missing));
+        Assert.Null(Prerequisites.InstallCommand(new LinuxDistribution("debian", "12"), missing));
+        Assert.Null(Prerequisites.InstallCommand(LinuxDistribution.Unknown, missing));
     }
 }
