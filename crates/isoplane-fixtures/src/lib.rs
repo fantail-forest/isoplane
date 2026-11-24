@@ -223,33 +223,6 @@ pub fn feed_runtime_identity(runtime: GuestRuntime) -> String {
     )
 }
 
-/// The ids of the packages the local feed offers, from the package file
-/// names (`<id>.<version>.nupkg`, the version being the first dotted
-/// segment that starts with a digit), for a consumer that maps package ids
-/// to sources.
-pub fn feed_package_ids() -> Vec<String> {
-    package_ids(&guest_runtime_feed())
-}
-
-fn package_ids(feed: &Path) -> Vec<String> {
-    let mut ids: Vec<String> = std::fs::read_dir(feed)
-        .unwrap_or_else(|e| panic!("{} is unreadable ({e})", feed.display()))
-        .map(|entry| entry.expect("read a package feed entry"))
-        .filter_map(|entry| {
-            let name = entry.file_name().to_string_lossy().to_string();
-            let stem = name.strip_suffix(".nupkg")?.to_string();
-            let version_at = stem
-                .match_indices('.')
-                .find(|(at, _)| stem[at + 1..].starts_with(|c: char| c.is_ascii_digit()))
-                .map(|(at, _)| at)?;
-            Some(stem[..version_at].to_string())
-        })
-        .collect();
-    ids.sort();
-    ids.dedup();
-    ids
-}
-
 fn identity_beside(module: &Path) -> String {
     let sidecar = module.with_extension("wasm.runtime");
     let text = read(&sidecar);
