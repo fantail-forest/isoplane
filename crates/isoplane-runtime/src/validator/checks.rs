@@ -1,6 +1,3 @@
-//! The V1-V4 checks: imports, exports, global visibility, memory shape, and structural
-//! resource-bomb limits.
-
 use std::collections::BTreeSet;
 
 use isoplane_abi::pal::{self, PalDef};

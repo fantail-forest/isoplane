@@ -1,5 +1,3 @@
-//! One pass over the wasm binary that every V1-V4 check reads from.
-
 use std::collections::BTreeMap;
 
 use isoplane_abi::imports::{Sig, Ty};

@@ -1,5 +1,3 @@
-//! Violation codes and what admission learned about an accepted module.
-
 use isoplane_abi::imports;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

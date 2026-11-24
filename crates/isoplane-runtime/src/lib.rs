@@ -1,5 +1,3 @@
-//! Guest admission and host bindings shared by local development and the daemon.
-
 #![forbid(unsafe_code)]
 
 pub mod validator;
