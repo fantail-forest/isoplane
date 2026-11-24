@@ -4,10 +4,7 @@ namespace Isoplane.Cli;
 
 /// <summary>
 /// A local application built from its project and running in the sandbox: what <c>isoplane dev</c>
-/// owns for the terminal and the agent server owns for a coding agent. Session events, the ones
-/// <see cref="LocalEvents"/> renders, go to one sink; with watching on, a source change rebuilds the
-/// project and reloads the application, and a failed rebuild is reported as a <c>build_failed</c> event
-/// while the last working application keeps serving.
+/// owns for the terminal and the agent server owns for a coding agent.
 /// </summary>
 internal sealed class DevelopmentSession : IAsyncDisposable
 {
