@@ -31,9 +31,16 @@ impl Serving {
         self.node.shutdown();
         self.task.await.unwrap().unwrap();
         self.node.wait_for_shutdown().await.unwrap();
-        tokio::task::spawn_blocking(move || drop(self.node))
-            .await
-            .unwrap();
+        tokio::task::spawn_blocking(move || {
+            // A cell thread finishing a job holds its cell, and with it the
+            // artifacts the next node pins, until the thread ends.
+            for cell in self.node.execution.cells() {
+                cell.shutdown();
+            }
+            drop(self.node);
+        })
+        .await
+        .unwrap();
     }
 }
 
