@@ -13,6 +13,7 @@ tasks:
     desc: Generate the C headers and the C# types the SDK takes from the host interface
     deps: [':initialize']
     cmds:
+      - '{{.DEVELOPMENT_COMMAND}}cargo run --quiet --locked -p isoplane-abi --example clock_header'
       - '{{.DEVELOPMENT_COMMAND}}cargo run --quiet --locked -p isoplane-abi --example csharp_contract'
       - '{{.DEVELOPMENT_COMMAND}}cargo run --quiet --locked -p isoplane-abi --example filesystem_header'
       - '{{.DEVELOPMENT_COMMAND}}cargo run --quiet --locked -p isoplane-abi --example imports_header'

@@ -1,8 +1,7 @@
 #include <stdint.h>
 
+#include "isoplane_clock_quantum.h"
 #include "isoplane_imports.h"
-
-#define ISOPLANE_CLOCK_QUANTUM_NS 1000000LL
 
 /* ---- live: monotonic clock ---------------------------------------------- */
 
