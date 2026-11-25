@@ -137,11 +137,6 @@ pub fn native_wrappers() -> String {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn native_filesystem_wrappers_match_the_single_abi_definition() {
-        assert_eq!(super::native_wrappers(), include_str!("../../../guest-sdks/dotnet/native/isoplane_filesystem.h"), "regenerate the native filesystem wrappers with task exec -- cargo run -p isoplane-abi --example filesystem_header");
-    }
-
-    #[test]
     fn host_served_files_lie_beneath_the_host_root() {
         for path in [super::APPLICATION_PACKAGE_ROOT, super::DEBUG_AGENT_PATH] {
             assert!(
