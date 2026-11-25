@@ -66,6 +66,27 @@ public static class Application
             context.RequestServices.GetRequiredService<RequestScope>();
             await Task.Delay(Timeout.Infinite, context.RequestAborted);
         });
+        app.MapGet("/departed/write", async context =>
+        {
+            await AwaitDepartureAsync(context);
+            await context.Response.Body.WriteAsync("late"u8.ToArray());
+            await context.Response.BodyWriter.WriteAsync("r"u8.ToArray());
+            await context.Response.Body.FlushAsync();
+            Departure.Observed += ";written";
+        });
+        app.MapGet("/departed/write-cancelled", async context =>
+        {
+            await AwaitDepartureAsync(context);
+            try { await context.Response.Body.WriteAsync("late"u8.ToArray(), context.RequestAborted); }
+            catch (OperationCanceledException error) { Departure.Observed += ";" + error.GetType().Name; }
+        });
+        app.MapGet("/departed/return", async context =>
+        {
+            await AwaitDepartureAsync(context);
+            context.Response.StatusCode = 202;
+            Departure.Observed += ";returned";
+        });
+        app.MapGet("/departure", () => Departure.Observed);
         app.MapGet("/stream", async context =>
         {
             await context.Response.Body.WriteAsync("A"u8.ToArray());
@@ -85,6 +106,19 @@ public static class Application
         };
         await app.RunAsync();
     }
+
+    private static async Task AwaitDepartureAsync(HttpContext context)
+    {
+        var departed = new TaskCompletionSource();
+        using (context.RequestAborted.Register(() => departed.SetResult())) await departed.Task;
+        Departure.Observed = "aborted";
+    }
+}
+
+internal static class Departure
+{
+    /// <summary>What the last departed request saw, for the next request on this instance to report.</summary>
+    internal static string Observed = "";
 }
 
 internal sealed class RequestScope : IAsyncDisposable

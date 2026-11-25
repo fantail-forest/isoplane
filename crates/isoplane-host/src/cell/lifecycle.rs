@@ -1082,8 +1082,18 @@ impl Cell {
                 abandoned_guest_work = self.rt.futures.end_dispatch(slot.id, did);
             }
             #[cfg(any(test, feature = "test-util"))]
-            if let Some(total_wall_ns) = r.completion.total_wall_ns() {
-                self.metrics.dispatch_us.record(total_wall_ns / 1_000);
+            {
+                if let Some(outcome) = r.completion.outcome() {
+                    *self
+                        .metrics
+                        .dispatch_outcomes
+                        .lock()
+                        .entry(outcome)
+                        .or_default() += 1;
+                }
+                if let Some(total_wall_ns) = r.completion.total_wall_ns() {
+                    self.metrics.dispatch_us.record(total_wall_ns / 1_000);
+                }
             }
         }
         (req, remaining, abandoned_guest_work)
@@ -1251,6 +1261,57 @@ mod tests {
             records[0]["outcome"], "request_cancelled",
             "the requester's departure ended the dispatch before the trap"
         );
+    }
+
+    #[test]
+    fn a_guest_that_answers_a_departed_requester_keeps_its_instance() {
+        use crate::cell::completion::test_events::Events;
+        let events = Events::default();
+        let _trace = events.install();
+        let cell = cell(CellConfig {
+            exec_threads: 0,
+            ..crate::fakes::cell_config("departed-requester-answer")
+        });
+        let module = app(
+            &cell,
+            "departed-requester-answer",
+            FakeBehaviour {
+                response_streaming: true,
+                ..FakeBehaviour::program([
+                    Step::Park { imports: vec![] },
+                    Step::Done {
+                        status: 499,
+                        body: b"cancelled".to_vec(),
+                    },
+                ])
+            },
+        );
+        let (slot, response) = wake_after_the_requester_leaves(&cell, &module);
+
+        assert_eq!(
+            response
+                .try_recv()
+                .expect("the requester is answered")
+                .status,
+            499,
+            "the departed requester is answered for its own departure"
+        );
+        assert_eq!(
+            slot.state(),
+            LifecycleTier::Parked,
+            "the instance did nothing wrong and stays"
+        );
+        assert_eq!(
+            cell.idle_instances(&module),
+            Some(1),
+            "and serves the next dispatch"
+        );
+        assert_eq!(cell.metrics().traps, 0, "no trap is counted");
+        assert_eq!(cell.futures().live_futures(), 0);
+        cell.shutdown();
+        let records = events.records();
+        assert_eq!(records.len(), 1, "one completion for the one dispatch");
+        assert_eq!(records[0]["outcome"], "request_cancelled");
     }
 
     /// Runs a dispatch on its own thread up to the slice `entered` reports,

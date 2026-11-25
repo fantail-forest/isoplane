@@ -264,26 +264,34 @@ impl CellBindings {
                 .get(handle)
                 .expect("the response was inserted above while holding the table lock");
             if response.head.streaming {
-                if let Err(error) = stream.start(&response.head) {
-                    responses.take(handle);
-                    tracing::warn!(instance = %self.ctx.instance, ?error, "response start refused");
-                    self.ctx
-                        .latch_trap(isoplane_abi::status::TrapCode::Protocol);
-                    return 0;
-                }
-                let body = responses
-                    .take_body(handle)
-                    .expect("the response remains inserted while holding the table lock");
-                if !body.is_empty() {
-                    let write = stream.prepare(body);
-                    if let Some(rt) = self.rt() {
-                        let owner = stream.clone();
-                        let task = self.ctx.spawn(&rt.reactor, async move {
-                            if let Err(error) = write.send().await {
-                                stream.fail(format!("initial response body: {error:?}"));
+                match stream.start(&response.head) {
+                    Ok(()) => {
+                        let body = responses
+                            .take_body(handle)
+                            .expect("the response remains inserted while holding the table lock");
+                        if !body.is_empty() {
+                            let write = stream.prepare(body);
+                            if let Some(rt) = self.rt() {
+                                let owner = stream.clone();
+                                let task = self.ctx.spawn(&rt.reactor, async move {
+                                    if let Err(error) = write.send().await {
+                                        stream.fail(format!("initial response body: {error:?}"));
+                                    }
+                                });
+                                owner.own_initial_write(task.abort_handle());
                             }
-                        });
-                        owner.own_initial_write(task.abort_handle());
+                        }
+                    }
+                    // The requester left first, which a guest cannot know
+                    // when it answers: the response goes nowhere and its
+                    // writes are answered as cancelled.
+                    Err(FutureError::Cancelled) => {}
+                    Err(error) => {
+                        responses.take(handle);
+                        tracing::warn!(instance = %self.ctx.instance, ?error, "response start refused");
+                        self.ctx
+                            .latch_trap(isoplane_abi::status::TrapCode::Protocol);
+                        return 0;
                     }
                 }
             }
@@ -357,6 +365,76 @@ mod tests {
         assert_eq!(
             context.take_trap(),
             Some(isoplane_abi::status::TrapCode::OutOfMemory)
+        );
+    }
+
+    #[test]
+    fn a_streaming_response_begun_after_the_requester_left_is_not_a_guest_fault() {
+        use futures::FutureExt;
+        let context = ctx();
+        context.begin_dispatch(1, 1);
+        let transport = crate::response_transport::ResponseTransport::new(1024);
+        *context.current().transport.lock() = Some(transport.clone());
+        assert!(
+            transport.exchange().now_or_never().is_none(),
+            "no response headers exist for the requester to receive"
+        );
+        assert!(
+            transport.is_cancelled(),
+            "the requester left before headers"
+        );
+        let mut bindings = CellBindings::new(context.clone());
+        let head = ResponseHead {
+            status: 499,
+            headers: vec![],
+            body: b"cancelled".to_vec(),
+            streaming: true,
+        };
+        let handle = bindings.call_sync(call(
+            "resp_new",
+            &postcard::to_allocvec(&head).expect("encode"),
+            [0; 3],
+        ));
+        assert_ne!(handle, 0, "the guest gets a response to finish");
+        assert_eq!(
+            context.take_trap(),
+            None,
+            "answering a requester that has left is not a protocol violation"
+        );
+        assert!(
+            !transport.has_started(),
+            "nothing is sent to the departed requester"
+        );
+        assert_eq!(
+            bindings.call_sync(call("resp_finish", &[], [handle as u64, 0, 0])),
+            0,
+            "and the guest can finish it"
+        );
+    }
+
+    #[test]
+    fn a_second_streaming_response_for_one_dispatch_is_a_protocol_trap() {
+        let context = ctx();
+        context.begin_dispatch(1, 1);
+        let transport = crate::response_transport::ResponseTransport::new(1024);
+        *context.current().transport.lock() = Some(transport.clone());
+        let mut bindings = CellBindings::new(context.clone());
+        let head = postcard::to_allocvec(&ResponseHead {
+            status: 200,
+            headers: vec![],
+            body: vec![],
+            streaming: true,
+        })
+        .expect("encode");
+        assert_ne!(bindings.call_sync(call("resp_new", &head, [0; 3])), 0);
+        assert_eq!(
+            bindings.call_sync(call("resp_new", &head, [0; 3])),
+            0,
+            "a dispatch has one response to start"
+        );
+        assert_eq!(
+            context.take_trap(),
+            Some(isoplane_abi::status::TrapCode::Protocol)
         );
     }
 

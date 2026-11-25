@@ -396,6 +396,14 @@ impl DispatchCompletion {
         self.state.lock().instance
     }
 
+    #[cfg(any(test, feature = "test-util"))]
+    pub(super) fn outcome(&self) -> Option<(&'static str, u16)> {
+        self.state
+            .lock()
+            .outcome
+            .map(|(reason, status)| (reason.label(), status))
+    }
+
     pub(super) fn total_wall_ns(&self) -> Option<u64> {
         self.started_ns
             .zip((self.clock)())

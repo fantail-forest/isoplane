@@ -158,6 +158,9 @@ occupying a worker thread.
   [`RequestHead.Aborted`](../reference/sdk/Isoplane.Sdk/Isoplane/RequestHead/Aborted.md),
   when the client goes away before it has the whole response, or the request
   has used its [running time](dotnet-runtime-differences.md#running-time).
+- Discards whatever the request writes or returns after its client has gone
+  away. A write still completes, unless the token passed to it is cancelled,
+  and then it throws `OperationCanceledException`.
 - Enforces the [resource limits](resource-limits.md). It stops an instance
   whose request has not
   [finished 5 seconds after its token was cancelled](resource-limits.md#running-time),

@@ -1,5 +1,6 @@
 //! Customer-visible response streaming through the managed adapter, real cell and proxy.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -8,6 +9,7 @@ use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use hyper::{Request, Response, StatusCode};
 use isoplane_abi::config::InitSandbox;
+use isoplane_host::{InstanceId, LifecycleTier};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
@@ -216,6 +218,25 @@ async fn an_open_http_response_cannot_be_captured_while_waiting_on_guest_io() {
     rig.shutdown().await;
 }
 
+/// Waits for an instance whose dispatch has run and parked waiting on nothing but its
+/// requester leaving. A slot is Parked from creation, so only its count of parks tells a
+/// finished slice from one that has not started.
+async fn awaiting_departure(cell: &isoplane_host::Cell) -> InstanceId {
+    let futures = cell.futures();
+    loop {
+        if let Some(id) = cell.resident_ids().into_iter().find(|id| {
+            cell.slot(*id)
+                .is_some_and(|slot| slot.parks() > 0 && slot.state() == LifecycleTier::Parked)
+                && !futures.has_runnable(*id)
+                && futures.pending_total(*id) == 1
+                && futures.pending_for_import(*id, "ctx_cancel") == 1
+        }) {
+            return id;
+        }
+        tokio::task::yield_now().await;
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn dropping_a_requester_before_headers_cancels_the_parked_dispatch() {
     let (rig, _gate) = start().await;
@@ -226,15 +247,7 @@ async fn dropping_a_requester_before_headers_cancels_the_parked_dispatch() {
                 async move { common::get(address, "quotes.isoplane.dev", "/cancel").await },
             );
         let cell = &rig.node.execution.as_ref().cells()[0];
-        loop {
-            if cell.resident_ids().iter().any(|id| {
-                cell.slot(*id)
-                    .is_some_and(|slot| slot.state() == isoplane_host::slot::LifecycleTier::Parked)
-            }) {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
+        awaiting_departure(cell).await;
         request.abort();
         assert!(
             matches!(request.await, Err(error) if error.is_cancelled()),
@@ -252,4 +265,94 @@ async fn dropping_a_requester_before_headers_cancels_the_parked_dispatch() {
     .await
     .expect("pre-header disconnect must end the dispatch");
     rig.shutdown().await;
+}
+
+/// What a handler saw after its requester left, as the next request on its instance reports
+/// it, and the outcomes the cell recorded for the departed dispatch.
+struct Departure {
+    seen: String,
+    outcomes: BTreeMap<(&'static str, u16), u64>,
+}
+
+/// Sends `path`, leaves once its dispatch parks, and reports the departure.
+async fn depart(rig: &common::Rig, path: &'static str) -> Departure {
+    let address = rig.proxy;
+    let request =
+        tokio::spawn(async move { common::get(address, "quotes.isoplane.dev", path).await });
+    let cell = &rig.node.execution.as_ref().cells()[0];
+    let parked = awaiting_departure(cell).await;
+    request.abort();
+    assert!(
+        matches!(request.await, Err(error) if error.is_cancelled()),
+        "the requester must leave before headers arrive"
+    );
+    while cell.metrics_raw().dispatch_outcomes.lock().is_empty()
+        || cell.futures().live_futures() != 0
+    {
+        tokio::task::yield_now().await;
+    }
+    let outcomes = cell.metrics_raw().dispatch_outcomes.lock().clone();
+    let report = common::get(address, "quotes.isoplane.dev", "/departure").await;
+    assert_eq!(report.status, StatusCode::OK, "{}", report.body);
+    assert_eq!(
+        cell.resident_ids(),
+        [parked],
+        "the instance that served the departed requester serves the next one"
+    );
+    assert_eq!(cell.metrics().traps, 0, "no trap is counted");
+    Departure {
+        seen: report.body,
+        outcomes,
+    }
+}
+
+async fn departure(rig: common::Rig, path: &'static str) -> Departure {
+    let departure = tokio::time::timeout(Duration::from_secs(30), depart(&rig, path))
+        .await
+        .expect("the departed dispatch must end");
+    rig.shutdown().await;
+    assert_eq!(
+        departure.outcomes,
+        BTreeMap::from([(("request_cancelled", 499), 1)]),
+        "the departed dispatch is recorded as its requester leaving, not as failed"
+    );
+    departure
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_body_written_after_its_requester_left_is_discarded_without_failing_the_dispatch() {
+    let departure = departure(start().await.0, "/departed/write").await;
+    assert_eq!(departure.seen, "aborted;written");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_write_given_the_cancelled_request_token_throws_operation_cancelled() {
+    let departure = departure(start().await.0, "/departed/write-cancelled").await;
+    assert_eq!(departure.seen, "aborted;OperationCanceledException");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_response_returned_after_its_requester_left_is_discarded() {
+    let departure = departure(start().await.0, "/departed/return").await;
+    assert_eq!(departure.seen, "aborted;returned");
+}
+
+async fn start_plain() -> common::Rig {
+    common::start_with(
+        common::preparation::Guest::from("isoplane_guest_dotnet_node"),
+        InitSandbox::RuntimeBringUp,
+    )
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_plain_handler_buffered_response_after_its_requester_left_is_discarded() {
+    let departure = departure(start_plain().await, "/departed/return").await;
+    assert_eq!(departure.seen, "aborted;returned");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_plain_handler_stream_drops_untokened_writes_and_cancels_tokened_ones_after_departure() {
+    let departure = departure(start_plain().await, "/departed/stream").await;
+    assert_eq!(departure.seen, "aborted;written;OperationCanceledException");
 }

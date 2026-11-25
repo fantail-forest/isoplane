@@ -10,7 +10,7 @@ internal sealed class IsoplaneServer : IServer
 {
     private readonly Func<ResponseTransport> createTransport;
     private readonly IServiceProvider services;
-    private Func<IFeatureCollection, Task>? dispatch;
+    private Func<IFeatureCollection, RequestLifetime, Task>? dispatch;
 
     public IsoplaneServer(Func<ResponseTransport> createTransport, IServiceProvider services, IHostApplicationLifetime lifetime, ApplicationStartup? startup = null)
     {
@@ -34,7 +34,7 @@ internal sealed class IsoplaneServer : IServer
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (dispatch is not null) throw new InvalidOperationException("The Isoplane server has already started.");
-        dispatch = async features =>
+        dispatch = async (features, lifetime) =>
         {
             var context = application.CreateContext(features);
             Exception? failure = null;
@@ -44,7 +44,10 @@ internal sealed class IsoplaneServer : IServer
                 try
                 {
                     await application.ProcessRequestAsync(context);
-                    features.Get<IHttpRequestLifetimeFeature>()!.RequestAborted.ThrowIfCancellationRequested();
+                    // An application that aborts its own request breaks the response off. One whose
+                    // requester has gone completes as usual, and the host discards what it sends.
+                    if (lifetime.AbortedByApplication)
+                        throw new OperationCanceledException("The application aborted the request.");
                     await features.Get<IHttpResponseBodyFeature>()!.CompleteAsync();
                 }
                 catch (Exception error) { failure = error; }
@@ -100,7 +103,7 @@ internal sealed class IsoplaneServer : IServer
         features.Set<IHttpRequestLifetimeFeature>(lifetime);
         features.Set<IHttpResponseFeature>(response);
         features.Set<IHttpResponseBodyFeature>(response);
-        await handler(features);
+        await handler(features, lifetime);
         return response.ToResponse();
     }
 
@@ -136,7 +139,12 @@ internal sealed class IsoplaneServer : IServer
             get => overridden ?? cancellation.Token;
             set => overridden = value;
         }
-        public void Abort() => cancellation.Cancel();
+        public bool AbortedByApplication { get; private set; }
+        public void Abort()
+        {
+            AbortedByApplication = true;
+            cancellation.Cancel();
+        }
         public void Dispose() => cancellation.Dispose();
     }
 }

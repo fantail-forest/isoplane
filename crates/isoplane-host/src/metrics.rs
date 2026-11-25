@@ -163,6 +163,9 @@ pub struct Metrics {
     /// Admission to final response.
     #[cfg(any(test, feature = "test-util"))]
     pub dispatch_us: Histogram,
+    /// Ended dispatches by the outcome and status their completion events carry.
+    #[cfg(any(test, feature = "test-util"))]
+    pub dispatch_outcomes: Mutex<BTreeMap<(&'static str, u16), u64>>,
 }
 
 #[derive(Debug, Default)]

@@ -43,7 +43,10 @@ internal sealed class ResponseHandle
                     return H.RespWrite(response, pointer, bytes.Length);
             }
         }).Completion.ConfigureAwait(true);
-        if (!result.IsOk) throw new IOException($"The response body could not be sent: the host reported {result.Error}.");
+        // Cancelled: the requester has gone, so the bytes go nowhere and the write completes, as
+        // ASP.NET Core's own servers complete a write to an aborted response.
+        if (result.IsOk || result.Error == FutureError.Cancelled) return;
+        throw new IOException($"The response body could not be sent: the host reported {result.Error}.");
     }
 
     internal int Finish()

@@ -231,6 +231,31 @@ public sealed class HostingTests
     }
 
     [Fact]
+    public async Task a_handler_that_returns_after_host_cancellation_completes_its_response()
+    {
+        var dispatch = Isoplane.Runtime.GuestDispatch.Begin(new DispatchRecord { DispatchId = 1, CancelFuture = 42 });
+        var starting = false;
+        var builder = Builder();
+        await using var app = builder.Build();
+        app.MapGet("/", async context =>
+        {
+            context.Response.OnStarting(() => { starting = true; return Task.CompletedTask; });
+            var cancelled = new TaskCompletionSource();
+            using var registration = context.RequestAborted.Register(() => cancelled.SetResult());
+            Isoplane.Runtime.FutureTable.Complete(42, new ResultRecord { Error = FutureError.Cancelled });
+            await cancelled.Task;
+            context.Response.StatusCode = 202;
+        });
+        try
+        {
+            var response = await app.HandleAsync(Request());
+            Assert.True(response.Status == 202 && starting,
+                "a handler that returns after its requester left completes as usual, running its OnStarting callbacks");
+        }
+        finally { dispatch.End(); }
+    }
+
+    [Fact]
     public async Task response_start_freezes_status_and_headers()
     {
         var builder = Builder();
