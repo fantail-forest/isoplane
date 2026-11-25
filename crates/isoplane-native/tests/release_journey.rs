@@ -102,15 +102,12 @@ fn a_prepared_release_installs_builds_applications_and_uninstalls() {
 }
 
 #[test]
-fn a_prepared_release_works_with_the_pinned_sdk_without_changing_it() {
+fn a_prepared_release_works_with_the_oldest_supported_sdk_without_changing_it() {
     let release = prepared_release();
-    let selection: serde_json::Value = serde_json::from_str(include_str!("../../../global.json"))
-        .expect("global.json is valid JSON");
-    let sdk = selection["sdk"]["version"]
-        .as_str()
-        .expect("global.json pins the .NET SDK");
+    let sdk = std::env::var("MINIMUM_DOTNET_SDK_VERSION")
+        .expect("Task loads the oldest supported customer SDK from tools.env");
     let image = customer_image(&format!("FROM mcr.microsoft.com/dotnet/sdk:{sdk}"));
-    assert_journey(&release, &image, sdk);
+    assert_journey(&release, &image, &sdk);
 }
 
 fn assert_journey(release: &Release, image: &str, expected_sdk: &str) {

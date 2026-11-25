@@ -80,7 +80,8 @@ on Linux; customer applications compile to IL packages for that shared runtime.
 `rust-toolchain.toml` selects the Rust toolchain and `global.json` the
 contributor .NET SDK. [tools.env](tools.env) pins the other development tools,
 and [guest-runtime/manifest.env](guest-runtime/manifest.env) the wasi-sdk
-release.
+release. The `MINIMUM_DOTNET_SDK_VERSION` pin in `tools.env` selects the oldest
+supported customer SDK for the Linux Hot Reload and release installation checks.
 
 Task prepares guest modules before starting tests. Fixture helpers load those
 artifacts and fail with the preparation command if an input is missing. The

@@ -52,7 +52,7 @@ jobs:
         run: git submodule update --init --depth 1 vendor/dotnet-runtime vendor/openssl vendor/icu
       - name: Prepare SDK compatibility container
         if: matrix.suite == 'sdk'
-        run: docker pull "mcr.microsoft.com/dotnet/sdk:$(jq -r .sdk.version global.json)"
+        run: docker pull "mcr.microsoft.com/dotnet/sdk:$MINIMUM_DOTNET_SDK_VERSION"
       - run: task ci:integration:${{ matrix.suite }}
       - name: Record disk consumption
         if: always()

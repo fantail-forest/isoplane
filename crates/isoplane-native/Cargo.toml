@@ -65,4 +65,3 @@ isoplane-test-support.workspace = true
 reqwest.workspace = true
 portable-pty.workspace = true
 strip-ansi-escapes.workspace = true
-toml.workspace = true

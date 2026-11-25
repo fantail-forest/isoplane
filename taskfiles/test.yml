@@ -62,7 +62,7 @@ tasks:
       - task: managed:prepared
 
   managed:sdk-compatibility:
-    desc: Exercise Hot Reload with the pinned .NET 10 SDK and runtime
+    desc: Exercise Hot Reload with the oldest supported .NET SDK and runtime
     cmds:
       - task: ':managed:tests'
       - task: managed:sdk-compatibility:prepared
@@ -74,10 +74,9 @@ tasks:
     deps: [':initialize']
     vars: &sdk_compatibility_vars
       DIRECTORY: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/sdk-compatibility'
-      SDK_VERSION:
-        sh: '"{{.DOTNET}}" --version'
+      SDK_VERSION: '{{.MINIMUM_DOTNET_SDK_VERSION}}'
     sources:
-      - global.json
+      - tools.env
       - tools/Isoplane.Debugging.Tests/fixtures/SdkCompatibility/*
       - guest-runtime/tests/packages/debugger/hotreload/*.cs
       - guest-runtime/tests/packages/debugger/hotreload.cs
@@ -92,7 +91,7 @@ tasks:
         cp guest-runtime/tests/packages/debugger/hotreload/*.cs "{{.DIRECTORY}}/hotreload/"
         cp guest-runtime/tests/packages/debugger/hotreload.cs "{{.DIRECTORY}}/"
         cp tools/Isoplane.Debugging.Tests/fixtures/SdkCompatibility/HotReloadFixture.csproj.in "{{.DIRECTORY}}/hotreload/HotReloadFixture.csproj"
-        cp global.json "{{.DIRECTORY}}/global.json"
+        printf '%s\n' '{"sdk":{"version":"{{.SDK_VERSION}}","rollForward":"disable"}}' > "{{.DIRECTORY}}/global.json"
         printf '%s\n' '<configuration><packageSources><clear /></packageSources></configuration>' > "{{.DIRECTORY}}/nuget.config"
         docker run --rm --network none --user "$(id -u):$(id -g)" \
           -v "{{.DIRECTORY}}:/fixture" -w /fixture \
@@ -269,7 +268,7 @@ tasks:
 
   managed:sdk-compatibility:prepared:
     internal: true
-    desc: Exercise Hot Reload with the pinned .NET 10 SDK and runtime
+    desc: Exercise Hot Reload with the oldest supported .NET SDK and runtime
     platforms: [linux]
     deps: [sdk-compatibility-fixture]
     vars: *sdk_compatibility_vars
