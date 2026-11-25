@@ -15,6 +15,7 @@ tasks:
     cmds:
       - '{{.DEVELOPMENT_COMMAND}}cargo run --quiet --locked -p isoplane-abi --example csharp_contract'
       - '{{.DEVELOPMENT_COMMAND}}cargo run --quiet --locked -p isoplane-abi --example filesystem_header'
+      - '{{.DEVELOPMENT_COMMAND}}cargo run --quiet --locked -p isoplane-abi --example imports_header'
       - '{{.DEVELOPMENT_COMMAND}}cargo run --quiet --locked -p isoplane-abi --example local_debug_header'
       - '{{.DEVELOPMENT_COMMAND}}cargo run --quiet --locked -p isoplane-abi --example native_io_header'
 

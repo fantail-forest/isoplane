@@ -15,13 +15,7 @@
 #include <string.h>
 #include "pal_isoplane_sockets.h"
 
-/* ---- the Isoplane imports this PAL is built from --------------------------- */
-
-__attribute__((import_module("isoplane"), import_name("abort")))
-extern void isoplane_abort(const uint8_t *msg, int32_t len);
-
-__attribute__((import_module("isoplane"), import_name("entropy_fill")))
-extern void isoplane_entropy_fill(uint8_t *buf, int32_t len);
+#include "isoplane_imports.h"
 
 /* A dead PAL entry was reached: abort naming it. */
 #define ISOPLANE_PAL_DEAD(name)                                                    \

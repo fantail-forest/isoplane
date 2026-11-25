@@ -1,4 +1,5 @@
 #include "mono_assembly.h"
+#include "isoplane_imports.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,8 +16,6 @@ extern void *mono_object_unbox(void *);
 extern void *mono_object_get_class(void *);
 extern const char *mono_class_get_name(void *);
 extern const char *mono_class_get_namespace(void *);
-__attribute__((import_module("isoplane"), import_name("abort"))) extern void host_abort(uint8_t *, int32_t);
-__attribute__((import_module("isoplane"), import_name("log_emit"))) extern void host_log(int32_t, const char *, int32_t);
 typedef void (*MonoPrintCallback)(const char *, int32_t);
 extern void mono_trace_set_print_handler(MonoPrintCallback);
 extern void mono_trace_set_printerr_handler(MonoPrintCallback);
@@ -30,7 +29,7 @@ extern int mono_wasm_add_assembly(const char *, const unsigned char *, unsigned 
 static void *klass;
 static void fail(const char *message)
 {
-    host_abort((uint8_t *)message, (int32_t)strlen(message));
+    isoplane_abort(message, (int32_t)strlen(message));
     __builtin_trap();
 }
 // The host log's levels, trace 0 to error 4.
@@ -46,7 +45,7 @@ static int32_t log_level(const char *level)
 void mono_runtime_log(int32_t level, const char *text, size_t length)
 {
     while (length > 0 && text[length - 1] == '\n') length--;
-    if (length > 0) host_log(level, text, (int32_t)length);
+    if (length > 0) isoplane_log_emit(level, text, (int32_t)length);
 }
 
 // The runtime's own diagnostics go to the guest log; a fatal one ends the

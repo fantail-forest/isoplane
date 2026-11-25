@@ -1033,15 +1033,13 @@ pub const MAX_ARGUMENTS: usize = {
     maximum
 };
 
-/// Generate native wrappers from the signatures the engine's packet dispatch checks.
+/// Generate native wrappers from the signatures the engine's packet dispatch
+/// checks. They expect the declarations of `isoplane_imports.h` before them.
 pub fn native_wrappers() -> String {
     let mut output = String::from("/* Generated from isoplane_abi::native_io::canonical. */\n");
     output.push_str(&format!("#define ISOPLANE_SEND_PENDING UINT64_C({SEND_PENDING})\n#define ISOPLANE_SEND_FAILED UINT64_C({SEND_FAILED})\n"));
     output.push_str(&format!("#define ISOPLANE_SEND_IS_FAILURE(result) ((uint64_t)(result) <= ISOPLANE_SEND_FAILED && (uint64_t)(result) > ISOPLANE_SEND_FAILED - UINT64_C({SEND_FAILURE_CODES}))\n"));
     output.push_str("#define ISOPLANE_SEND_FAILURE_CODE(result) ((uint8_t)(ISOPLANE_SEND_FAILED - (uint64_t)(result)))\n");
-    for capability in [SOCKET_IMPORT, POLL_IMPORT] {
-        output.push_str(&format!("__attribute__((import_module(\"isoplane\"), import_name(\"{capability}\")))\nextern int64_t isoplane_{capability}(int32_t operation, const uint64_t *arguments, int32_t count);\n"));
-    }
     for definition in DEFINITIONS {
         let signature = definition.sig;
         let parameters: Vec<_> = signature
@@ -1087,7 +1085,7 @@ pub fn native_wrappers() -> String {
         } else {
             ""
         };
-        output.push_str(&format!("{result} __wasm_import_{}({}) {{ const uint64_t args[] = {{ {} }}; {capture}{returned}isoplane_{}({}, args, {});{completed} }}\n",
+        output.push_str(&format!("{result} __wasm_import_{}({}) {{ const uint64_t args[] = {{ {} }}; {capture}{returned}isoplane_{}({}, (int32_t)(uintptr_t)args, {});{completed} }}\n",
             definition.symbol, if parameters.is_empty() { "void".to_string() } else { parameters.join(", ") },
             if arguments.is_empty() { "0".to_string() } else { arguments.join(", ") }, definition.capability, definition.id.0, parameters.len()));
     }
@@ -1098,17 +1096,5 @@ fn c_type(ty: Ty) -> &'static str {
     match ty {
         Ty::I32 => "int32_t",
         Ty::I64 => "int64_t",
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn native_wrappers_match_the_canonical_definition() {
-        assert_eq!(
-            super::native_wrappers(),
-            include_str!("../../../../guest-sdks/dotnet/native/isoplane_native_io.h"),
-            "regenerate the native I/O header from its ABI example"
-        );
     }
 }

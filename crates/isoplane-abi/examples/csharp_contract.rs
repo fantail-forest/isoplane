@@ -1,8 +1,8 @@
 //! Writes the managed SDK's copies of the host interface into
 //! `guest-sdks/dotnet/Abi/Generated`, from the definitions this crate
-//! compiles: the enums a host encodes and the codecs of the records the
-//! host and the SDK exchange. The directory holds nothing else, and each run
-//! replaces it.
+//! compiles: the enums a host encodes, the codecs of the records the host and
+//! the SDK exchange and the declarations of the imports managed code calls.
+//! The directory holds nothing else, and each run replaces it.
 
 #![forbid(unsafe_code)]
 
@@ -12,6 +12,7 @@ use std::path::Path;
 
 use heck::{ToLowerCamelCase, ToUpperCamelCase};
 use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, ResponseHead};
+use isoplane_abi::imports::{self, BufSpec, ImportDef, Ty};
 use isoplane_abi::result::{FutureError, ResultRecord, WakeRecord};
 use isoplane_abi::status::{PollTag, TrapCode, PAYLOAD_SHIFT};
 use serde::de::DeserializeOwned;
@@ -29,7 +30,7 @@ const DECODED: [&str; 3] = ["DispatchRecord", "WakeRecord", "ResultRecord"];
 fn main() -> Generated<()> {
     if cfg!(feature = "rust-guests") {
         return Err(
-            "this build has the rust-guests feature, whose variants no shipped host has; run task generate:abi"
+            "this build has the rust-guests feature, whose variants and imports no shipped host has; run task generate:abi"
                 .into(),
         );
     }
@@ -69,6 +70,7 @@ fn main() -> Generated<()> {
             decoder(&registry, "ResultRecord", "internal", false)?,
         ),
         ("ResponseHead.g.cs", encoder(&registry, "ResponseHead")?),
+        ("Imports.g.cs", managed_imports()?),
     ];
     let directory =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../guest-sdks/dotnet/Abi/Generated");
@@ -457,4 +459,72 @@ fn encoder(registry: &Registry, name: &str) -> Generated<String> {
         parameters.join(", ")
     )?;
     Ok(text)
+}
+
+/// The `DllImport` declaration of each import the table marks as called by
+/// managed code, with its signature taken from the table.
+fn managed_imports() -> Generated<String> {
+    let mut text = header("`imports::IMPORTS`");
+    write!(
+        text,
+        "using System.Runtime.InteropServices;\n\nnamespace Isoplane.Abi;\n\n\
+         /// <summary>\n\
+         /// The managed declarations of the host imports managed code calls, taken from\n\
+         /// wasm module <c>\"{module}\"</c>. A <c>(ptr, len)</c> pair addresses a buffer in guest\n\
+         /// memory; any other parameter is named for its position.\n\
+         /// </summary>\n\
+         internal static unsafe partial class H\n{{\n",
+        module = imports::HOST_MODULE
+    )?;
+    let managed = imports::IMPORTS.iter().filter(|import| import.managed);
+    for (index, import) in managed.enumerate() {
+        let name = import.name;
+        if index > 0 {
+            text.push('\n');
+        }
+        write!(
+            text,
+            "    [WasmImportLinkage]\n    [DllImport(\"{module}\", EntryPoint = \"{name}\")]\n    \
+             internal static extern {result} {method}({parameters});\n",
+            module = imports::HOST_MODULE,
+            result = result(import)?,
+            method = name.to_upper_camel_case(),
+            parameters = parameters(import).join(", "),
+        )?;
+    }
+    text.push_str("}\n");
+    Ok(text)
+}
+
+fn scalar(ty: Ty) -> &'static str {
+    match ty {
+        Ty::I32 => "int",
+        Ty::I64 => "long",
+    }
+}
+
+fn result(import: &ImportDef) -> Generated<&'static str> {
+    match import.sig.results {
+        [] => Ok("void"),
+        [ty] => Ok(scalar(*ty)),
+        _ => Err(format!("{} returns more than one value", import.name).into()),
+    }
+}
+
+fn parameters(import: &ImportDef) -> Vec<String> {
+    let buffer = match import.buf {
+        BufSpec::None => None,
+        BufSpec::In(index) | BufSpec::Out(index) => Some(usize::from(index)),
+    };
+    import
+        .sig
+        .params
+        .iter()
+        .enumerate()
+        .map(|(index, ty)| match buffer {
+            Some(pointer) if index == pointer => "byte* ptr".to_owned(),
+            Some(pointer) if index == pointer + 1 => "int len".to_owned(),
+            _ => format!("{} a{index}", scalar(*ty)),
+        })
+        .collect()
 }

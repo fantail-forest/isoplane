@@ -92,11 +92,11 @@ pub const MAX_ARGUMENTS: usize = {
     maximum
 };
 
-/// Generate the C wrappers which route wasi-libc calls through the Isoplane adapter.
+/// Generate the C wrappers which route wasi-libc calls through the Isoplane
+/// adapter. They expect the declarations of `isoplane_imports.h` before them.
 pub fn native_wrappers() -> String {
     use std::fmt::Write;
     let mut output = String::from("/* Generated from isoplane_abi::filesystem::IMPORTS. */\n");
-    output.push_str("__attribute__((import_module(\"isoplane\"), import_name(\"filesystem_call\")))\nextern void isoplane_filesystem_call(int32_t operation, const uint64_t *arguments, int32_t count);\n");
     output.push_str(&format!("__attribute__((export_name(\"{}\")))\nuint32_t isoplane_fs_alloc(uint32_t size) {{ return (uint32_t)(uintptr_t)malloc(size); }}\n", crate::exports::FS_ALLOC));
     output.push_str(&format!("__attribute__((export_name(\"{}\")))\nvoid isoplane_fs_free(uint32_t pointer) {{ free((void *)(uintptr_t)pointer); }}\n", crate::exports::FS_FREE));
     for definition in IMPORTS {
@@ -129,7 +129,7 @@ pub fn native_wrappers() -> String {
                 )
             })
             .collect();
-        writeln!(output, "void __wasm_import_{}({}) {{ const uint64_t args[] = {{ {} }}; isoplane_filesystem_call({}, args, {}); }}", definition.symbol, parameters.join(", "), arguments.join(", "), definition.operation as u32, parameters.len()).expect("writing a String cannot fail");
+        writeln!(output, "void __wasm_import_{}({}) {{ const uint64_t args[] = {{ {} }}; isoplane_filesystem_call({}, (int32_t)(uintptr_t)args, {}); }}", definition.symbol, parameters.join(", "), arguments.join(", "), definition.operation as u32, parameters.len()).expect("writing a String cannot fail");
     }
     output
 }
