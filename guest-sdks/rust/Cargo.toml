@@ -22,6 +22,9 @@ serde    = { workspace = true }
 postcard = { workspace = true }
 serde_json = { workspace = true, optional = true }
 
+[build-dependencies]
+isoplane-abi = { workspace = true }
+
 [features]
 default = []
 json = ["dep:serde_json"]
