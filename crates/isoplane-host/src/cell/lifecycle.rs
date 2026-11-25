@@ -475,7 +475,10 @@ impl Cell {
         // on its way out, and its slot is consistent.
         let latched = slot.ctx.take_trap();
         let mut latched_msg = None;
-        let completion = match latched {
+        // What the response boundary below is told the slice did. A latched
+        // trap has already cost the slice its instance, so a response the
+        // front end ended cannot finish the dispatch as though it remained.
+        let slice_completion = match latched {
             Some(code)
                 if matches!(
                     out.completion,
@@ -497,24 +500,24 @@ impl Cell {
             .dispatch(did)
             .filter(|dispatch| dispatch.transport.lock().is_some())
             .and_then(|_| slot.ctx.responses.lock().finished_stream(did));
-        let completion = if completion == Completion::Cancelled
+        let completion = if slice_completion == Completion::Cancelled
             && !slot
                 .ctx
                 .dispatch(did)
                 .is_some_and(|dispatch| dispatch.cancellation_requested())
         {
             Completion::Failed
-        } else if completion == Completion::Parked && closed_response.is_some() {
+        } else if slice_completion == Completion::Parked && closed_response.is_some() {
             Completion::Done
         } else {
-            completion
+            slice_completion
         };
 
         let (module, route) = self
             .with_active(slot.id, did, |req| (req.module.clone(), req.route.clone()))
             .unwrap_or_else(|| (entry.activator.module().clone(), String::new()));
         let breaker_key = BreakerKey { module, route };
-        if self.end_stream_at_boundary(slot, entry, did, Some(out.completion)) {
+        if self.end_stream_at_boundary(slot, entry, did, Some(slice_completion)) {
             return true;
         }
 
@@ -1164,6 +1167,90 @@ mod tests {
             completion: owner.clone(),
         };
         (job, response, owner)
+    }
+
+    /// Runs a dispatch to its park, has its requester leave before any
+    /// response headers, and runs the wake that tells the guest.
+    fn wake_after_the_requester_leaves(cell: &Arc<Cell>, module: &ModuleId) -> (Arc<Slot>, Answer) {
+        use futures::FutureExt;
+        let stream = crate::response_transport::ResponseTransport::new(1);
+        let (job, response, owner) = job(cell, module, 1, Some(stream.clone()));
+        cell.run_dispatch(job);
+        let slot = cell
+            .slot(owner.instance().expect("instance acquired"))
+            .expect("resident");
+        assert_eq!(slot.state(), LifecycleTier::Parked, "the dispatch parked");
+        assert!(
+            stream.exchange().now_or_never().is_none(),
+            "no response headers exist for the requester to receive"
+        );
+        assert!(stream.is_cancelled(), "the requester left before headers");
+        let Job::Wake(wake) = cell.queue.pop(0).expect("the departure wakes the instance") else {
+            panic!("wake expected")
+        };
+        cell.run_wake(wake.slot);
+        (slot, response)
+    }
+
+    #[test]
+    fn a_trap_in_the_slice_that_stops_for_a_departed_requester_discards_the_instance_once() {
+        use crate::cell::completion::test_events::Events;
+        let events = Events::default();
+        let _trace = events.install();
+        let cell = cell(CellConfig {
+            exec_threads: 0,
+            ..crate::fakes::cell_config("departed-requester-trap")
+        });
+        let module = app(
+            &cell,
+            "departed-requester-trap",
+            FakeBehaviour::program([
+                Step::Park { imports: vec![] },
+                // Told its requester has gone, the guest answers, and calls
+                // an import the host does not offer on its way.
+                Step::RespondLeaving {
+                    imports: vec![("not_an_import", 0)],
+                },
+            ]),
+        );
+        let (slot, response) = wake_after_the_requester_leaves(&cell, &module);
+
+        assert_eq!(
+            response
+                .try_recv()
+                .expect("the requester is answered")
+                .status,
+            499,
+            "the departed requester is answered for its own departure"
+        );
+        assert_eq!(
+            slot.state(),
+            LifecycleTier::Discarded,
+            "an instance whose slice latched a trap is not kept"
+        );
+        assert!(
+            cell.slot(slot.id).is_none(),
+            "the discarded instance leaves the cell"
+        );
+        assert_eq!(cell.idle_instances(&module), Some(0), "and its pool");
+        assert_eq!(
+            cell.futures().live_futures(),
+            0,
+            "nothing of the dispatch outlives it"
+        );
+        assert_eq!(cell.metrics().traps, 1, "the trap is counted");
+        assert_eq!(
+            cell.metrics().refused_transitions,
+            0,
+            "nothing tried to park the discarded instance"
+        );
+        cell.shutdown();
+        let records = events.records();
+        assert_eq!(records.len(), 1, "one completion for the one dispatch");
+        assert_eq!(
+            records[0]["outcome"], "request_cancelled",
+            "the requester's departure ended the dispatch before the trap"
+        );
     }
 
     /// Runs a dispatch on its own thread up to the slice `entered` reports,
