@@ -217,7 +217,7 @@ public sealed class HostingTests
             context.RequestServices.GetRequiredService<Scope>();
             var cancelled = new TaskCompletionSource();
             using var registration = context.RequestAborted.Register(() => cancelled.SetResult());
-            Isoplane.Runtime.FutureTable.Complete(42, new ResultRecord { Error = FutureError.Cancelled });
+            Isoplane.Runtime.FutureTable.Complete(42, new ResultRecord { Kind = ResultKind.Err, Err = FutureError.Cancelled });
             await cancelled.Task;
             context.RequestAborted.ThrowIfCancellationRequested();
         });
@@ -242,7 +242,7 @@ public sealed class HostingTests
             context.Response.OnStarting(() => { starting = true; return Task.CompletedTask; });
             var cancelled = new TaskCompletionSource();
             using var registration = context.RequestAborted.Register(() => cancelled.SetResult());
-            Isoplane.Runtime.FutureTable.Complete(42, new ResultRecord { Error = FutureError.Cancelled });
+            Isoplane.Runtime.FutureTable.Complete(42, new ResultRecord { Kind = ResultKind.Err, Err = FutureError.Cancelled });
             await cancelled.Task;
             context.Response.StatusCode = 202;
         });

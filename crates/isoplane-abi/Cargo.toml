@@ -27,6 +27,7 @@ rust-guests = []
 [dev-dependencies]
 serde_json.workspace = true
 serde-reflection.workspace = true
+heck.workspace = true
 
 [build-dependencies]
 roxmltree.workspace = true

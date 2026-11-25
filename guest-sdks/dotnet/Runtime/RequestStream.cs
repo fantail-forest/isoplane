@@ -55,9 +55,9 @@ internal sealed class RequestStream(bool canHaveBody) : Stream
             pending ??= FutureTable.Start(() => H.ReqBodyRead(length));
             ResultRecord result = await pending.Completion.WaitAsync(cancellationToken);
             pending = null;
-            if (!result.IsOk) throw new IOException($"The request body could not be read: the host reported {result.Error}.");
+            if (result.Kind != ResultKind.Ok) throw new IOException($"The request body could not be read: the host reported {result.Err}.");
             ObjectDisposedException.ThrowIf(disposed, this);
-            remaining = result.Payload;
+            remaining = result.Ok;
             eof = remaining.IsEmpty;
             cancellationToken.ThrowIfCancellationRequested();
             int count = Math.Min(buffer.Length, remaining.Length);

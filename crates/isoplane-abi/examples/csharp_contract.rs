@@ -1,7 +1,8 @@
 //! Writes the managed SDK's copies of the host interface into
 //! `guest-sdks/dotnet/Abi/Generated`, from the definitions this crate
-//! compiles: the enums a host encodes. The directory holds nothing else, and
-//! each run replaces it.
+//! compiles: the enums a host encodes and the codecs of the records the
+//! host and the SDK exchange. The directory holds nothing else, and each run
+//! replaces it.
 
 #![forbid(unsafe_code)]
 
@@ -9,14 +10,21 @@ use std::error::Error;
 use std::fmt::Write;
 use std::path::Path;
 
-use isoplane_abi::dispatch::DispatchKind;
-use isoplane_abi::result::{FutureError, ResultRecord};
+use heck::{ToLowerCamelCase, ToUpperCamelCase};
+use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, ResponseHead};
+use isoplane_abi::result::{FutureError, ResultRecord, WakeRecord};
 use isoplane_abi::status::{PollTag, TrapCode, PAYLOAD_SHIFT};
 use serde::de::DeserializeOwned;
-use serde_reflection::{ContainerFormat, Registry, Tracer, TracerConfig};
+use serde_reflection::{
+    ContainerFormat, Format, Named, Registry, Tracer, TracerConfig, VariantFormat,
+};
 use strum::{EnumMessage, VariantArray};
 
 type Generated<T> = Result<T, Box<dyn Error>>;
+
+/// The records the SDK decodes into classes of their own. A record that holds
+/// one of them reads it with that class's `Decode`.
+const DECODED: [&str; 3] = ["DispatchRecord", "WakeRecord", "ResultRecord"];
 
 fn main() -> Generated<()> {
     if cfg!(feature = "rust-guests") {
@@ -29,15 +37,15 @@ fn main() -> Generated<()> {
     let files = [
         (
             "DispatchKind.g.cs",
-            postcard_enum::<DispatchKind>(&registry, "DispatchKind", "DispatchKind", "public")?,
+            postcard_enum::<DispatchKind>(&registry, "DispatchKind", "public")?,
         ),
         (
             "FutureError.g.cs",
-            postcard_enum::<FutureError>(&registry, "FutureError", "FutureError", "internal")?,
+            postcard_enum::<FutureError>(&registry, "FutureError", "internal")?,
         ),
         (
             "ResultKind.g.cs",
-            postcard_enum::<ResultRecord>(&registry, "ResultRecord", "ResultKind", "internal")?,
+            postcard_enum::<ResultRecord>(&registry, "ResultRecord", "internal")?,
         ),
         (
             "TrapCode.g.cs",
@@ -48,6 +56,19 @@ fn main() -> Generated<()> {
             numbered_enum("PollTag", PollTag::VARIANTS, |tag| tag as u32)?,
         ),
         ("PollStatus.g.cs", poll_status()),
+        (
+            "DispatchRecord.g.cs",
+            decoder(&registry, "DispatchRecord", "public", true)?,
+        ),
+        (
+            "WakeRecord.g.cs",
+            decoder(&registry, "WakeRecord", "internal", true)?,
+        ),
+        (
+            "ResultRecord.g.cs",
+            decoder(&registry, "ResultRecord", "internal", false)?,
+        ),
+        ("ResponseHead.g.cs", encoder(&registry, "ResponseHead")?),
     ];
     let directory =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../guest-sdks/dotnet/Abi/Generated");
@@ -62,13 +83,27 @@ fn main() -> Generated<()> {
     Ok(())
 }
 
-/// The layouts Serde gives the enums postcard encodes.
+/// The layouts Serde gives the records and enums postcard encodes.
 fn registry() -> Generated<Registry> {
     let mut tracer = Tracer::new(TracerConfig::default());
     tracer.trace_simple_type::<DispatchKind>()?;
+    tracer.trace_simple_type::<DispatchRecord>()?;
     tracer.trace_simple_type::<FutureError>()?;
     tracer.trace_simple_type::<ResultRecord>()?;
+    tracer.trace_simple_type::<WakeRecord>()?;
+    tracer.trace_simple_type::<ResponseHead>()?;
     Ok(tracer.registry()?)
+}
+
+/// The C# enum that holds the variants of the Rust enum `name`. The class of
+/// a decoded record that is an enum takes the record's name, so its variants
+/// are a `Kind`: `ResultRecord`'s are `ResultKind`.
+fn csharp_enum_name(name: &str) -> String {
+    if DECODED.contains(&name) {
+        format!("{}Kind", name.trim_end_matches("Record"))
+    } else {
+        name.to_owned()
+    }
 }
 
 fn header(source: &str) -> String {
@@ -86,15 +121,9 @@ struct Member {
     summary: Option<String>,
 }
 
-/// The C# enum `csharp_name` of the Rust enum `T`, which postcard encodes and
-/// Serde calls `name`: numbered as Serde numbers its variants and documented
-/// as they are.
-fn postcard_enum<T>(
-    registry: &Registry,
-    name: &str,
-    csharp_name: &str,
-    visibility: &str,
-) -> Generated<String>
+/// The C# enum of the Rust enum `T`, which postcard encodes and Serde calls
+/// `name`: numbered as Serde numbers its variants and documented as they are.
+fn postcard_enum<T>(registry: &Registry, name: &str, visibility: &str) -> Generated<String>
 where
     T: DeserializeOwned + EnumMessage,
     for<'a> &'a T: Into<&'static str>,
@@ -115,7 +144,7 @@ where
                 .map(str::to_owned),
         })
         .collect::<Vec<_>>();
-    csharp_enum(csharp_name, visibility, &members)
+    csharp_enum(&csharp_enum_name(name), visibility, &members)
 }
 
 /// A value of each variant of `T`, through which a variant's documentation is
@@ -180,4 +209,252 @@ fn xml(documentation: &str) -> String {
         .replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+}
+
+fn is_string_pairs(format: &Format) -> bool {
+    *format
+        == Format::Seq(Box::new(Format::TupleArray {
+            content: Box::new(Format::Str),
+            size: 2,
+        }))
+}
+
+/// How the SDK's `PostcardReader` reads a value into a C# field.
+struct Reader {
+    csharp_type: &'static str,
+    initializer: &'static str,
+    read: &'static str,
+}
+
+fn reader(format: &Format) -> Generated<Reader> {
+    Ok(match format {
+        Format::U32 => Reader {
+            csharp_type: "uint",
+            initializer: "",
+            read: "r.U32()",
+        },
+        Format::U64 => Reader {
+            csharp_type: "ulong",
+            initializer: "",
+            read: "r.U64()",
+        },
+        Format::Str => Reader {
+            csharp_type: "string",
+            initializer: " = \"\"",
+            read: "r.Str()",
+        },
+        Format::Bytes => Reader {
+            csharp_type: "byte[]",
+            initializer: " = Array.Empty<byte>()",
+            read: "r.Bytes().ToArray()",
+        },
+        format if is_string_pairs(format) => Reader {
+            csharp_type: "KeyValuePair<string, string>[]",
+            initializer: " = Array.Empty<KeyValuePair<string, string>>()",
+            read: "r.StringPairs()",
+        },
+        other => return Err(format!("PostcardReader has no method that reads {other:?}").into()),
+    })
+}
+
+/// A class's fields and the statements of its `Decode`.
+#[derive(Default)]
+struct Class {
+    fields: String,
+    decode: String,
+}
+
+/// The generated half of a decoded record's C# class: a field for each value
+/// postcard writes and a `Decode` that reads them in the order Serde gives.
+/// An enum becomes a field holding its discriminant, and the payload of each
+/// of its variants is read into the class itself: a record's fields under
+/// their own names, any other value under the variant's name. A record that
+/// is itself an enum holds its discriminant in `Kind`. A guest entry point
+/// decodes a `from_buffer` record from the bytes the host wrote; any other
+/// record is read from the reader of the record holding it.
+fn decoder(
+    registry: &Registry,
+    name: &str,
+    visibility: &str,
+    from_buffer: bool,
+) -> Generated<String> {
+    let mut class = Class::default();
+    match registry.get(name) {
+        Some(ContainerFormat::Struct(fields)) => {
+            for field in fields {
+                decode_value(
+                    registry,
+                    &field.name.to_upper_camel_case(),
+                    &field.value,
+                    2,
+                    &mut class,
+                )?;
+            }
+        }
+        Some(ContainerFormat::Enum(_)) => decode_variants(registry, "Kind", name, 2, &mut class)?,
+        _ => return Err(format!("{name} is not a record Serde describes").into()),
+    }
+    let Class { fields, decode } = class;
+    let mut text = header(&format!("`{name}`"));
+    text.push_str("using System;\nusing System.Collections.Generic;\n");
+    write!(
+        text,
+        "\nnamespace Isoplane.Abi;\n\n{visibility} sealed partial class {name}\n{{\n{fields}\n"
+    )?;
+    let (parameter, reader) = if from_buffer {
+        (
+            "ReadOnlySpan<byte> bytes",
+            "        var r = new PostcardReader(bytes);\n",
+        )
+    } else {
+        ("ref PostcardReader r", "")
+    };
+    write!(
+        text,
+        "    internal static {name} Decode({parameter})\n    {{\n{reader}        \
+         var d = new {name}();\n{decode}        \
+         return d;\n    }}\n}}\n"
+    )?;
+    Ok(text)
+}
+
+fn structure<'a>(registry: &'a Registry, name: &str) -> Generated<&'a [Named<Format>]> {
+    match registry.get(name) {
+        Some(ContainerFormat::Struct(fields)) => Ok(fields),
+        _ => Err(format!("{name} is not a record with named fields").into()),
+    }
+}
+
+fn decode_value(
+    registry: &Registry,
+    name: &str,
+    format: &Format,
+    depth: usize,
+    class: &mut Class,
+) -> Generated<()> {
+    let indent = "    ".repeat(depth);
+    match format {
+        Format::TypeName(record) if DECODED.contains(&record.as_str()) => {
+            writeln!(class.fields, "    internal {record} {name} = new();")?;
+            writeln!(class.decode, "{indent}d.{name} = {record}.Decode(ref r);")?;
+        }
+        Format::TypeName(type_name) => match registry.get(type_name) {
+            Some(ContainerFormat::Struct(fields)) => {
+                for field in fields {
+                    decode_value(
+                        registry,
+                        &field.name.to_upper_camel_case(),
+                        &field.value,
+                        depth,
+                        class,
+                    )?;
+                }
+            }
+            Some(ContainerFormat::Enum(_)) => {
+                decode_variants(registry, name, type_name, depth, class)?
+            }
+            _ => return Err(format!("{type_name} is not a type Serde describes").into()),
+        },
+        other => {
+            let reader = reader(other)?;
+            writeln!(
+                class.fields,
+                "    internal {} {name}{};",
+                reader.csharp_type, reader.initializer
+            )?;
+            writeln!(class.decode, "{indent}d.{name} = {};", reader.read)?;
+        }
+    }
+    Ok(())
+}
+
+fn decode_variants(
+    registry: &Registry,
+    name: &str,
+    enum_name: &str,
+    depth: usize,
+    class: &mut Class,
+) -> Generated<()> {
+    let Some(ContainerFormat::Enum(variants)) = registry.get(enum_name) else {
+        return Err(format!("{enum_name} is not an enum Serde describes").into());
+    };
+    let kind = csharp_enum_name(enum_name);
+    let indent = "    ".repeat(depth);
+    writeln!(class.fields, "    internal {kind} {name};")?;
+    writeln!(
+        class.decode,
+        "{indent}d.{name} = ({kind})r.Varint();\n{indent}switch (d.{name})\n{indent}{{"
+    )?;
+    for variant in variants.values() {
+        writeln!(class.decode, "{indent}    case {kind}.{}:", variant.name)?;
+        match &variant.value {
+            VariantFormat::Unit => {}
+            VariantFormat::NewType(payload) => {
+                decode_value(registry, &variant.name, payload, depth + 2, class)?
+            }
+            other => {
+                return Err(format!(
+                    "{enum_name}::{} holds {other:?}, which no decoder is generated for",
+                    variant.name
+                )
+                .into())
+            }
+        }
+        writeln!(class.decode, "{indent}        break;")?;
+    }
+    writeln!(
+        class.decode,
+        "{indent}    default:\n{indent}        throw new PostcardException();\n{indent}}}"
+    )?;
+    Ok(())
+}
+
+/// How the SDK's `PostcardWriter` writes a C# parameter.
+struct Writer {
+    csharp_type: &'static str,
+    write: &'static str,
+}
+
+fn writer(format: &Format) -> Generated<Writer> {
+    Ok(match format {
+        Format::Bool => Writer {
+            csharp_type: "bool",
+            write: "Bool",
+        },
+        Format::U16 => Writer {
+            csharp_type: "ushort",
+            write: "Varint",
+        },
+        Format::Bytes => Writer {
+            csharp_type: "ReadOnlySpan<byte>",
+            write: "Bytes",
+        },
+        format if is_string_pairs(format) => Writer {
+            csharp_type: "IReadOnlyList<KeyValuePair<string, string>>",
+            write: "StringPairs",
+        },
+        other => return Err(format!("PostcardWriter has no method that writes {other:?}").into()),
+    })
+}
+
+/// The C# encoder of a record the SDK sends: an `Encode` that takes each field
+/// as a parameter and writes them in the order Serde gives.
+fn encoder(registry: &Registry, name: &str) -> Generated<String> {
+    let mut parameters = Vec::new();
+    let mut body = String::new();
+    for field in structure(registry, name)? {
+        let writer = writer(&field.value)?;
+        let parameter = field.name.to_lower_camel_case();
+        parameters.push(format!("{} {parameter}", writer.csharp_type));
+        writeln!(body, "        w.{}({parameter});", writer.write)?;
+    }
+    let mut text = header(&format!("`{name}`"));
+    write!(
+        text,
+        "using System;\nusing System.Collections.Generic;\n\nnamespace Isoplane.Abi;\n\n\
+         internal static class {name}\n{{\n    \
+         internal static void Encode(PostcardWriter w, {})\n    {{\n{body}    }}\n}}\n",
+        parameters.join(", ")
+    )?;
+    Ok(text)
 }
