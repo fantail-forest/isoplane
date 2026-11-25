@@ -105,7 +105,7 @@ impl Cell {
             Err(error) => {
                 tracing::error!(instance = %slot.id, %error, "background execution could not acquire accounting");
                 if !self.active.contains_key(&slot.id) {
-                    entry.pool.release(slot.clone(), warm());
+                    self.release_to_pool(&entry, slot);
                 }
                 return false;
             }
@@ -141,7 +141,6 @@ impl Cell {
                 Err(_) => {
                     self.fail_instance(
                         slot,
-                        &entry,
                         TerminalReason::EntryRefused,
                         409,
                         "background_entry_refused",
@@ -197,7 +196,7 @@ impl Cell {
                     self.metrics.traps.fetch_add(1, Ordering::Relaxed);
                     TerminalReason::GuestTrap
                 };
-                self.fail_instance(slot, &entry, reason, 500, "background_execution_failed");
+                self.fail_instance(slot, reason, 500, "background_execution_failed");
             } else {
                 self.retire_past_memory_limit(slot, &entry, guard.instance().memory_len());
                 drop(guard);

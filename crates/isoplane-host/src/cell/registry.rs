@@ -520,7 +520,7 @@ impl Cell {
                 }) {
                     self.rt.futures.release_instance(slot.id);
                     self.forget(&slot);
-                    sibling.pool.release(idle, evict());
+                    idle.discard();
                     return true;
                 }
             }
@@ -631,10 +631,12 @@ mod tests {
         assert!(cell.acquire_handler(&independent).is_ok());
         let retained_context = first.ctx.clone();
         cell.forget(&first);
-        old.pool.release(first, evict());
+        old.pool.release(first, evict()).expect("evict");
         let (replacement, _) = cell.acquire_handler(&new).expect("discard frees capacity");
         assert_ne!(replacement.id, retained_context.instance);
-        new.pool.release(replacement.clone(), warm());
+        new.pool
+            .release(replacement.clone(), warm())
+            .expect("release warm");
         let (reused, source) = cell
             .acquire_handler(&new)
             .expect("warm reuse needs no reservation");
@@ -642,7 +644,7 @@ mod tests {
         assert_eq!(reused.id, replacement.id);
         assert!(cell.acquire_handler(&new).is_err());
         cell.forget(&second);
-        old.pool.release(second, evict());
+        old.pool.release(second, evict()).expect("evict");
         assert!(cell.acquire_handler(&new).is_ok());
         cell.shutdown();
     }
@@ -669,7 +671,9 @@ mod tests {
             cell.acquire_handler(&new).is_err(),
             "an acquired slot is not idle"
         );
-        old.pool.release(first.clone(), warm());
+        old.pool
+            .release(first.clone(), warm())
+            .expect("release warm");
         let (second, _) = cell.acquire_handler(&new).expect("replace idle sibling");
         assert_ne!(first.id, second.id);
         assert_eq!(first.state(), LifecycleTier::Discarded);

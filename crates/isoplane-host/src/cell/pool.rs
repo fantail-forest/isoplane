@@ -440,7 +440,8 @@ pub(super) mod cell_tests {
         let (candidate, _) = cell.acquire_handler(&entry).expect("initial activation");
         entry
             .pool
-            .release(candidate.clone(), crate::disposition::warm());
+            .release(candidate.clone(), crate::disposition::warm())
+            .expect("release");
         candidate.discard();
         let (replacement, source) = cell.acquire_handler(&entry).expect("fallback activation");
         assert_eq!(

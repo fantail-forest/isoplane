@@ -8,7 +8,7 @@ use parking_lot::Mutex;
 
 use crate::bindings::InstanceCtx;
 use crate::disposition::{Disposition, DispositionKind};
-use crate::slot::Slot;
+use crate::slot::{Slot, TransitionError};
 use crate::{InstanceId, ModuleId};
 
 /// What the cell needs from a compiled, pre-initialized module. A produced
@@ -296,11 +296,16 @@ impl InstancePool {
         Ok((Arc::new(Slot::new(id, ctx, inst)), AcquireSource::Activated))
     }
 
-    /// The only way back into the pool.
-    pub fn release(&self, slot: Arc<Slot>, d: Disposition) {
+    /// The only way back into the pool. An instance that cannot park is
+    /// discarded, and the refusal is returned so its owner can drop what it
+    /// still holds for it.
+    pub fn release(&self, slot: Arc<Slot>, d: Disposition) -> Result<(), TransitionError> {
         match d.kind() {
             DispositionKind::Warm => {
-                slot.park();
+                if let Err(refused) = slot.park() {
+                    slot.discard();
+                    return Err(refused);
+                }
                 let mut w = self.warm.lock();
                 if !self.retired.load(Ordering::Acquire)
                     && w.slots.len() + w.claimed < self.max_idle
@@ -311,10 +316,9 @@ impl InstancePool {
                     slot.discard();
                 }
             }
-            DispositionKind::Discard => {
-                slot.discard();
-            }
+            DispositionKind::Discard => slot.discard(),
         }
+        Ok(())
     }
 
     /// Discards available idle entries and invalidates outstanding idle claims.
@@ -362,7 +366,7 @@ mod tests {
         let DispatchEnd::Disposed(disposition) = decide(Completion::Done, false) else {
             panic!("a completed dispatch must dispose of its instance");
         };
-        p.release(slot.clone(), disposition);
+        p.release(slot.clone(), disposition).expect("release");
         assert_eq!(
             p.idle(),
             0,
@@ -376,6 +380,26 @@ mod tests {
     }
 
     #[test]
+    fn an_instance_that_cannot_park_is_refused_and_leaves_the_pool() {
+        let p = pool();
+        let (slot, _) = p.acquire(ctx_for).expect("acquire");
+        slot.discard();
+        let DispatchEnd::Disposed(warm) = decide(Completion::Done, false) else {
+            panic!("a completed dispatch stays warm");
+        };
+        assert_eq!(
+            p.release(slot.clone(), warm),
+            Err(crate::slot::TransitionError {
+                instance: slot.id,
+                from: crate::slot::LifecycleTier::Discarded,
+                to: crate::slot::LifecycleTier::Parked,
+            }),
+            "a discarded instance cannot return warm"
+        );
+        assert_eq!(p.idle(), 0, "it is not offered to the next dispatch");
+    }
+
+    #[test]
     fn acquisition_prefers_warm_then_activate() {
         let p = pool();
         let (a, src) = p.acquire(ctx_for).expect("acquire");
@@ -384,7 +408,7 @@ mod tests {
         let DispatchEnd::Disposed(warm) = decide(Completion::Done, false) else {
             panic!("a completed dispatch stays warm");
         };
-        p.release(a, warm);
+        p.release(a, warm).expect("release");
 
         let (got, src) = p.acquire(ctx_for).expect("acquire");
         assert_eq!(src, AcquireSource::WarmParked, "warm first");
@@ -401,7 +425,7 @@ mod tests {
         let DispatchEnd::Disposed(d) = decide(Completion::BudgetKill, false) else {
             panic!("a kill is terminal")
         };
-        p.release(a, d);
+        p.release(a, d).expect("release");
         assert_eq!(p.idle(), 0, "a killed instance is not pooled");
     }
 }

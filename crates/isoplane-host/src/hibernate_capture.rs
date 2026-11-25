@@ -338,7 +338,7 @@ mod tests {
             ))
             .expect("reserve the fixture's snapshot");
         *slot.ctx.snapshot.lock() = Some(reservation);
-        slot.park();
+        slot.park().expect("park");
         assert!(
             slot.is_capture_eligible(),
             "the fixture must start capturable"
@@ -465,7 +465,7 @@ mod tests {
                 storage_failed: true,
             }),
         ));
-        slot.park();
+        slot.park().expect("park");
         assert_eq!(
             try_capture(&slot, &act).err(),
             Some(CaptureRefused::StorageFailed),
@@ -568,7 +568,7 @@ mod tests {
                 storage_failed: false,
             }),
         ));
-        slot.park();
+        slot.park().expect("park");
         assert_eq!(
             try_capture(&slot, &act).err(),
             Some(CaptureRefused::OpenRequest),

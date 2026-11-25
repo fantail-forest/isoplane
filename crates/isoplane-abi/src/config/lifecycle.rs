@@ -18,6 +18,13 @@ pub enum LifecycleTier {
 }
 
 impl LifecycleTier {
+    pub const ALL: &'static [LifecycleTier] = &[
+        LifecycleTier::Hot,
+        LifecycleTier::Parked,
+        LifecycleTier::Hibernated,
+        LifecycleTier::Discarded,
+    ];
+
     pub fn as_str(self) -> &'static str {
         match self {
             LifecycleTier::Hot => "hot",
@@ -27,19 +34,14 @@ impl LifecycleTier {
         }
     }
 
-    /// The legal transitions. `Hibernated -> Parked` is absent because the
-    /// only exit from `Hibernated` is a wake, which makes the instance `Hot`;
-    /// nothing leaves `Discarded` because a fresh activation is a new instance.
-    pub fn may_transition_to(self, next: Self) -> bool {
-        use LifecycleTier::*;
-        matches!(
-            (self, next),
-            (Hot, Parked)
-                | (Hot, Discarded)
-                | (Parked, Hot)
-                | (Parked, Hibernated)
-                | (Parked, Discarded)
-                | (Hibernated, Hot)
-        )
+    /// Whether an instance in this tier occupies linear memory.
+    pub fn is_resident(self) -> bool {
+        matches!(self, LifecycleTier::Hot | LifecycleTier::Parked)
+    }
+}
+
+impl std::fmt::Display for LifecycleTier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
     }
 }

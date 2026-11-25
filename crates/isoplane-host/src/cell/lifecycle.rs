@@ -98,29 +98,19 @@ impl Cell {
         let did = job.rec.dispatch_id;
         let joined = src == AcquireSource::Shared;
         if joined && !self.ready_to_join(slot, entry) {
-            self.release_reservation(slot.id);
-            job.completion
-                .select(TerminalReason::InstanceDiscarded, 503);
-            let _completion = job.completion.settlement();
-            job.completion.answer(
-                &job.responder,
-                DispatchResult {
-                    status: 503,
-                    body: b"instance_discarded".to_vec(),
-                    ..DispatchResult::shed(did)
-                },
-            );
+            self.refuse_joined_start(slot.id, job);
+            self.refuse_queued_starts(slot.id);
             return;
         }
         if joined && !slot.has_memory_for_join() {
             if self.release_reservation(slot.id) == 0 {
                 if slot.is_retiring() {
-                    self.forget(slot);
-                    self.rt.futures.release_instance(slot.id);
-                    entry.pool.release(slot.clone(), evict());
+                    self.evict_instance(slot);
                 } else {
-                    entry.pool.release(slot.clone(), warm());
-                    self.watch_idle_timers(slot, entry);
+                    self.release_to_pool(entry, slot);
+                    if slot.state() != LifecycleTier::Discarded {
+                        self.watch_idle_timers(slot, entry);
+                    }
                 }
             }
             self.queue_dispatch(Box::new(job));
@@ -370,7 +360,6 @@ impl Cell {
                 Err(EnterError::NotResident(_)) => {
                     self.fail_instance(
                         &slot,
-                        &entry,
                         TerminalReason::EntryRefused,
                         409,
                         "instance_unavailable",
@@ -424,13 +413,7 @@ impl Cell {
                 );
                 self.respond(slot, dispatch, result);
             }
-            self.fail_instance(
-                slot,
-                entry,
-                TerminalReason::RestoreFailed,
-                500,
-                "restore_failed",
-            );
+            self.fail_instance(slot, TerminalReason::RestoreFailed, 500, "restore_failed");
             return false;
         }
         self.metrics
@@ -542,11 +525,11 @@ impl Cell {
                 .dispatch(did)
                 .is_some_and(|dispatch| dispatch.cancellation_requested())
         {
-            return self.park_after_slice(slot);
+            return self.park_after_slice(slot, entry);
         }
 
         match completion {
-            Completion::Parked => self.park_after_slice(slot),
+            Completion::Parked => self.park_after_slice(slot, entry),
             Completion::Cancelled | Completion::Failed => {
                 let (status, reason) = if completion == Completion::Cancelled {
                     (499, "request_cancelled")
@@ -600,15 +583,12 @@ impl Cell {
                 }
 
                 match decide(completion, streaming_open) {
-                    DispatchEnd::RetainedForStreaming => {
-                        slot.park();
-                        !self.has_runnable(slot)
-                    }
+                    DispatchEnd::RetainedForStreaming => self.park_after_slice(slot, entry),
                     DispatchEnd::Disposed(d) => {
                         self.breaker.record_success(&breaker_key);
                         self.finish_with_instance_work_handover(slot, entry, did, d)
                     }
-                    DispatchEnd::Parked => self.park_after_slice(slot),
+                    DispatchEnd::Parked => self.park_after_slice(slot, entry),
                 }
             }
             // The dispatch still fails with `budget_exceeded`, but nothing was
@@ -651,7 +631,7 @@ impl Cell {
                         self.finish_with_instance_work_handover(slot, entry, did, d)
                     }
                     DispatchEnd::Parked | DispatchEnd::RetainedForStreaming => {
-                        self.park_after_slice(slot)
+                        self.park_after_slice(slot, entry)
                     }
                 }
             }
@@ -764,8 +744,11 @@ impl Cell {
 
     /// The instance parks between slices. Returns whether the wake loop is
     /// done with it.
-    fn park_after_slice(&self, slot: &Arc<Slot>) -> bool {
-        slot.park();
+    fn park_after_slice(self: &Arc<Self>, slot: &Arc<Slot>, entry: &Arc<ModuleEntry>) -> bool {
+        if let Err(refused) = slot.park() {
+            self.end_unparkable_instance(slot, entry, refused);
+            return true;
+        }
         // A completion that landed while Hot is drained now.
         !self.has_runnable(slot)
     }
@@ -1000,25 +983,47 @@ impl Cell {
     }
 
     /// Fails every dispatch in progress on an instance that cannot continue,
-    /// then evicts it.
+    /// then evicts it. An instance with no dispatch in progress and no place
+    /// reserved is idle: its pool holds it, and whoever took it from there
+    /// ends it.
     pub(super) fn fail_instance(
         self: &Arc<Self>,
         slot: &Arc<Slot>,
-        entry: &Arc<ModuleEntry>,
         reason: TerminalReason,
         status: u16,
         code: &'static str,
     ) {
-        let dispatches = self.active_dispatch_ids(slot.id);
-        let Some((&last, others)) = dispatches.split_last() else {
-            return;
-        };
-        for &dispatch in others {
+        if self.active.contains_key(&slot.id) {
+            self.end_instance(slot, reason, status, code);
+        }
+    }
+
+    /// Ends an instance the cell holds outside its pool, once: its dispatches
+    /// in progress fail with `reason`, the starts queued for it are refused,
+    /// and it leaves the cell and its pool. A place reserved by a dispatch
+    /// that has not queued its start yet stays on the books until that
+    /// dispatch finds the instance gone and gives the place up.
+    pub(super) fn end_instance(
+        self: &Arc<Self>,
+        slot: &Arc<Slot>,
+        reason: TerminalReason,
+        status: u16,
+        code: &'static str,
+    ) {
+        for dispatch in self.active_dispatch_ids(slot.id) {
             self.fail_dispatch(slot, dispatch, reason, status, code);
             self.end_dispatch_books(slot, dispatch);
         }
-        self.fail_dispatch(slot, last, reason, status, code);
-        self.finish_and_release(slot, entry, last, evict());
+        self.evict_instance(slot);
+    }
+
+    /// Takes an instance with no dispatch left in progress out of the cell
+    /// and its pool, refusing the starts still queued for it.
+    fn evict_instance(&self, slot: &Arc<Slot>) {
+        self.refuse_queued_starts(slot.id);
+        self.forget(slot);
+        self.rt.futures.release_instance(slot.id);
+        slot.discard();
     }
 
     fn fail_dispatch(
@@ -1101,7 +1106,7 @@ impl Cell {
         let keeps_instance = d.is_warm();
         if remaining > 0 {
             if keeps_instance {
-                return self.park_after_slice(slot);
+                return self.park_after_slice(slot, entry);
             }
             for dispatch in self.active_dispatch_ids(slot.id) {
                 self.fail_dispatch(
@@ -1115,17 +1120,15 @@ impl Cell {
             }
         }
 
-        if keeps_instance {
-            self.rt.futures.release_idle(slot.id);
-        } else {
-            self.forget(slot);
-            self.rt.futures.release_instance(slot.id);
+        if !keeps_instance {
+            self.evict_instance(slot);
+            return true;
         }
-        let warm = d.is_warm();
-        entry.pool.release(slot.clone(), d);
+        self.rt.futures.release_idle(slot.id);
+        self.release_to_pool(entry, slot);
         if slot.state() == LifecycleTier::Discarded {
             self.forget(slot);
-        } else if warm {
+        } else {
             self.watch_idle_timers(slot, entry);
             self.schedule_remaining(slot);
         }
@@ -1139,6 +1142,354 @@ mod tests {
     use crate::cell::pool::cell_tests::{app, cell, http};
     use crate::fakes::{FakeBehaviour, Step};
     use isoplane_test_support::wait_for;
+
+    type Answer = std::sync::mpsc::Receiver<DispatchResult>;
+
+    fn job(
+        cell: &Arc<Cell>,
+        module: &ModuleId,
+        did: u64,
+        stream: Option<Arc<crate::response_transport::ResponseTransport>>,
+    ) -> (DispatchJob, Answer, Arc<DispatchCompletion>) {
+        let rec = http(did);
+        let owner = cell.completion_owner(module, &rec).expect("owner");
+        let (sender, response) = std::sync::mpsc::sync_channel(1);
+        let job = DispatchJob {
+            module: module.clone(),
+            target: Target::Handler { route: "/".into() }.into(),
+            rec,
+            responder: sender.into(),
+            stream,
+            upload: None,
+            completion: owner.clone(),
+        };
+        (job, response, owner)
+    }
+
+    /// Runs a dispatch on its own thread up to the slice `entered` reports,
+    /// which stays open until the test lets go of the step's `release`.
+    fn hold_the_last_slice(
+        cell: &Arc<Cell>,
+        module: &ModuleId,
+        did: u64,
+        entered: &std::sync::mpsc::Receiver<()>,
+    ) -> (std::thread::JoinHandle<()>, Arc<Slot>, Answer) {
+        let (job, response, owner) = job(cell, module, did, None);
+        let running = {
+            let cell = cell.clone();
+            let subscriber = tracing::dispatcher::get_default(Clone::clone);
+            std::thread::spawn(move || {
+                tracing::dispatcher::with_default(&subscriber, || cell.run_dispatch(job))
+            })
+        };
+        entered
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the slice must start");
+        let slot = cell
+            .slot(owner.instance().expect("instance acquired"))
+            .expect("resident");
+        (running, slot, response)
+    }
+
+    /// Holds a dispatch's last slice open while `discard` ends its instance
+    /// from outside, then lets the slice return.
+    fn discard_during_the_last_slice(
+        cell: &Arc<Cell>,
+        module: &ModuleId,
+        did: u64,
+        entered: &std::sync::mpsc::Receiver<()>,
+        release: std::sync::mpsc::Sender<()>,
+    ) -> (Arc<Slot>, DispatchResult) {
+        let (running, slot, response) = hold_the_last_slice(cell, module, did, entered);
+        slot.discard();
+        drop(release);
+        running.join().expect("the worker must not panic");
+        let result = response.try_recv().expect("the dispatch is answered");
+        (slot, result)
+    }
+
+    /// Asserts that a dispatch which never began on its instance was told the
+    /// instance is gone.
+    fn assert_refused_for_a_discarded_instance(response: &Answer, did: u64) {
+        let refused = response
+            .try_recv()
+            .unwrap_or_else(|_| panic!("dispatch {did} must be answered"));
+        assert_eq!(
+            (refused.status, refused.body.as_slice()),
+            (503, b"instance_discarded".as_slice()),
+            "dispatch {did} is refused for the instance it could not start on"
+        );
+    }
+
+    /// Runs the one wake queued for `slot`.
+    fn run_the_queued_wake(cell: &Arc<Cell>, slot: &Arc<Slot>) {
+        assert_eq!(cell.queue.depth(), 1, "the queued starts share one wake");
+        let Job::Wake(wake) = cell.queue.pop(0).expect("a wake is queued") else {
+            panic!("wake expected")
+        };
+        assert_eq!(wake.slot.id, slot.id, "the wake is the instance's");
+        cell.run_wake(wake.slot);
+    }
+
+    /// Asserts that nothing of an ended instance remains in the cell or its
+    /// pool.
+    fn assert_instance_fully_released(cell: &Arc<Cell>, module: &ModuleId, slot: &Arc<Slot>) {
+        assert!(
+            !cell.active.contains_key(&slot.id),
+            "no dispatch or reserved place stays on the lost instance"
+        );
+        assert!(!cell.has_starts(slot.id), "no start stays queued for it");
+        assert!(
+            cell.slot(slot.id).is_none(),
+            "the discarded instance leaves the cell"
+        );
+        assert_eq!(cell.idle_instances(module), Some(0), "and its pool");
+        assert_eq!(cell.futures().live_futures(), 0);
+    }
+
+    #[test]
+    fn joins_queued_behind_the_last_slice_of_a_discarded_instance_are_all_refused() {
+        use crate::cell::completion::test_events::Events;
+        use crate::cell::pool::cell_tests::manifest;
+        use crate::fakes::FakeActivator;
+        let events = Events::default();
+        let _trace = events.install();
+        let cell = cell(CellConfig {
+            exec_threads: 0,
+            ..crate::fakes::cell_config("discarded-with-joins")
+        });
+        let (step, entered, release) = hold();
+        let module = ModuleId::new("discarded-with-joins", "v1");
+        // One instance at most, so the second join queues behind the first
+        // rather than activating an instance of its own.
+        let mut manifest = manifest("discarded-with-joins");
+        manifest.resource_limits.instances_per_application = Some(1);
+        cell.register_module(
+            "acme",
+            Arc::new(FakeActivator::named(
+                module.clone(),
+                FakeBehaviour::program([step]),
+            )),
+            manifest,
+        )
+        .expect("register");
+
+        let (running, slot, last) = hold_the_last_slice(&cell, &module, 1, &entered);
+        let joins = [2, 3].map(|did| {
+            let (job, response, _) = job(&cell, &module, did, None);
+            cell.run_dispatch(job);
+            (did, response)
+        });
+        assert_eq!(
+            cell.starts.with(&slot.id, VecDeque::len),
+            Some(2),
+            "both joins wait on the instance for its running slice"
+        );
+        slot.discard();
+        drop(release);
+        running.join().expect("the worker must not panic");
+
+        assert_eq!(
+            last.try_recv().expect("the dispatch is answered").status,
+            200,
+            "the finished dispatch keeps its answer"
+        );
+        for (did, response) in &joins {
+            assert_refused_for_a_discarded_instance(response, *did);
+        }
+        assert_eq!(
+            cell.metrics().refused_transitions,
+            1,
+            "the refused park is counted once"
+        );
+        assert_instance_fully_released(&cell, &module, &slot);
+        run_the_queued_wake(&cell, &slot);
+        assert_instance_fully_released(&cell, &module, &slot);
+        cell.shutdown();
+        let mut outcomes: Vec<_> = events
+            .records()
+            .iter()
+            .map(|record| record["outcome"].as_str().expect("outcome").to_owned())
+            .collect();
+        outcomes.sort();
+        assert_eq!(
+            outcomes,
+            ["instance_discarded", "instance_discarded", "success"],
+            "each dispatch completes exactly once"
+        );
+    }
+
+    #[test]
+    fn starts_queued_after_their_instance_ended_are_all_refused_by_its_next_wake() {
+        let cell = cell(CellConfig {
+            exec_threads: 0,
+            ..crate::fakes::cell_config("late-joins")
+        });
+        let (step, entered, release) = hold();
+        let module = app(&cell, "late-joins", FakeBehaviour::program([step]));
+        let entry = cell.modules.read()[&module].clone();
+
+        let (running, slot, last) = hold_the_last_slice(&cell, &module, 1, &entered);
+        let late = [2, 3].map(|did| {
+            assert!(
+                matches!(
+                    cell.join_shared(&entry, true),
+                    registry::Join::Joined(joined) if joined.id == slot.id
+                ),
+                "dispatch {did} reserves a place on the running instance"
+            );
+            let (job, response, _) = job(&cell, &module, did, None);
+            (did, job, response)
+        });
+        slot.discard();
+        drop(release);
+        running.join().expect("the worker must not panic");
+        assert_eq!(
+            last.try_recv().expect("the dispatch is answered").status,
+            200,
+            "the finished dispatch keeps its answer"
+        );
+        assert!(
+            cell.slot(slot.id).is_none(),
+            "the instance does not wait for the places still reserved on it"
+        );
+
+        // Both starts find the instance busy, as they would behind the slice
+        // that ended it, and so share one wake.
+        let answers = {
+            let _execution = slot.lock_execution();
+            late.map(|(did, job, response)| {
+                cell.start_shared(&slot, &entry, job);
+                (did, response)
+            })
+        };
+        run_the_queued_wake(&cell, &slot);
+        for (did, response) in &answers {
+            assert_refused_for_a_discarded_instance(response, *did);
+        }
+        assert_instance_fully_released(&cell, &module, &slot);
+        cell.shutdown();
+    }
+
+    fn hold() -> (
+        Step,
+        std::sync::mpsc::Receiver<()>,
+        std::sync::mpsc::Sender<()>,
+    ) {
+        let (entered, started) = std::sync::mpsc::channel();
+        let (release, held) = std::sync::mpsc::channel();
+        let step = Step::Hold {
+            entered,
+            release: Arc::new(Mutex::new(held)),
+        };
+        (step, started, release)
+    }
+
+    #[test]
+    fn an_instance_discarded_during_its_last_slice_is_not_pooled() {
+        use crate::cell::completion::test_events::Events;
+        let events = Events::default();
+        let _trace = events.install();
+        let cell = cell(CellConfig {
+            exec_threads: 0,
+            ..crate::fakes::cell_config("discarded-mid-slice")
+        });
+        let (step, entered, release) = hold();
+        let module = app(&cell, "discarded-mid-slice", FakeBehaviour::program([step]));
+        let (slot, result) = discard_during_the_last_slice(&cell, &module, 1, &entered, release);
+
+        assert_eq!(result.status, 200, "the finished dispatch keeps its answer");
+        assert_eq!(
+            slot.state(),
+            LifecycleTier::Discarded,
+            "the returning slice must not revive the instance"
+        );
+        assert_eq!(
+            cell.metrics().refused_transitions,
+            1,
+            "the refused park is counted"
+        );
+        assert_eq!(
+            cell.idle_instances(&module),
+            Some(0),
+            "a discarded instance is not offered to the next dispatch"
+        );
+        assert!(
+            cell.slot(slot.id).is_none(),
+            "the discarded instance leaves the cell"
+        );
+        assert_eq!(cell.futures().live_futures(), 0);
+        cell.shutdown();
+        let records = events.records();
+        assert_eq!(records.len(), 1, "one completion for the one dispatch");
+        assert_eq!(records[0]["outcome"], "success");
+    }
+
+    #[test]
+    fn a_refused_park_fails_the_dispatches_still_on_the_instance() {
+        use crate::cell::completion::test_events::Events;
+        let events = Events::default();
+        let _trace = events.install();
+        let cell = cell(CellConfig {
+            exec_threads: 0,
+            ..crate::fakes::cell_config("refused-park")
+        });
+        let (step, entered, release) = hold();
+        let module = app(
+            &cell,
+            "refused-park",
+            FakeBehaviour::program([
+                Step::Park {
+                    imports: vec![("clock_deadline_in", 600_000)],
+                },
+                step,
+            ]),
+        );
+        let (waiting, waiting_response, waiting_owner) = job(&cell, &module, 1, None);
+        cell.run_dispatch(waiting);
+        let (slot, result) = discard_during_the_last_slice(&cell, &module, 2, &entered, release);
+        assert_eq!(
+            waiting_owner.instance(),
+            Some(slot.id),
+            "both dispatches must share the instance"
+        );
+
+        assert_eq!(result.status, 200, "the finished dispatch keeps its answer");
+        let failed = waiting_response
+            .try_recv()
+            .expect("the waiting dispatch is answered");
+        assert_eq!(
+            (failed.status, failed.trap.as_deref()),
+            (503, Some("instance_discarded")),
+            "a dispatch waiting on the lost instance fails with it"
+        );
+        assert_eq!(
+            cell.metrics().refused_transitions,
+            1,
+            "the refused park is counted once"
+        );
+        assert!(
+            !cell.active.contains_key(&slot.id),
+            "no dispatch stays on the lost instance"
+        );
+        assert!(
+            cell.slot(slot.id).is_none(),
+            "the discarded instance leaves the cell"
+        );
+        assert_eq!(cell.futures().live_futures(), 0);
+        cell.shutdown();
+        let mut outcomes: Vec<_> = events
+            .records()
+            .iter()
+            .map(|record| record["outcome"].as_str().expect("outcome").to_owned())
+            .collect();
+        outcomes.sort();
+        assert_eq!(
+            outcomes,
+            ["instance_discarded", "success"],
+            "each dispatch completes exactly once"
+        );
+    }
 
     #[test]
     fn queued_instances_are_joined_only_when_activation_cannot_serve() {

@@ -30,6 +30,74 @@ impl Cell {
         );
     }
 
+    /// Counts and reports a lifecycle transition a slot refused.
+    pub(super) fn note_refused_transition(&self, tenant: &str, refused: TransitionError) {
+        self.metrics
+            .refused_transitions
+            .fetch_add(1, Ordering::Relaxed);
+        tracing::warn!(
+            cell = %self.cfg.name, tenant, instance = %refused.instance,
+            from = %refused.from, to = %refused.to,
+            "an instance refused a lifecycle transition"
+        );
+    }
+
+    /// Returns an instance to its pool warm. An instance the pool could not
+    /// park was discarded there, so the cell lets go of it as well.
+    pub(super) fn release_to_pool(&self, entry: &ModuleEntry, slot: &Arc<Slot>) {
+        if let Err(refused) = entry.pool.release(slot.clone(), warm()) {
+            self.note_refused_transition(&entry.tenant, refused);
+            self.rt.futures.release_instance(slot.id);
+            self.forget(slot);
+        }
+    }
+
+    /// Ends an instance that refused to park after a slice: the dispatches
+    /// still on it and the starts queued for it fail, and it leaves the cell
+    /// and its pool.
+    pub(super) fn end_unparkable_instance(
+        self: &Arc<Self>,
+        slot: &Arc<Slot>,
+        entry: &Arc<ModuleEntry>,
+        refused: TransitionError,
+    ) {
+        self.note_refused_transition(&entry.tenant, refused);
+        self.end_instance(
+            slot,
+            TerminalReason::InstanceDiscarded,
+            503,
+            "instance_discarded",
+        );
+    }
+
+    /// Refuses every start queued for an instance that has ended, each
+    /// giving up the place it held there. A queued start is otherwise begun
+    /// by a wake, and an ended instance is not woken again.
+    pub(super) fn refuse_queued_starts(&self, instance: InstanceId) {
+        for (queued, job) in self.starts.remove(&instance).unwrap_or_default() {
+            let owner = job.completion.clone();
+            self.waited_for_thread(&owner, queued.elapsed());
+            owner.in_scope(|| self.refuse_joined_start(instance, job));
+        }
+    }
+
+    /// Answers a dispatch that reserved a place on an instance which ended
+    /// before the dispatch began there, and gives the place up.
+    pub(super) fn refuse_joined_start(&self, instance: InstanceId, job: DispatchJob) {
+        self.release_reservation(instance);
+        job.completion
+            .select(TerminalReason::InstanceDiscarded, 503);
+        let _completion = job.completion.settlement();
+        job.completion.answer(
+            &job.responder,
+            DispatchResult {
+                status: 503,
+                body: b"instance_discarded".to_vec(),
+                ..DispatchResult::shed(job.rec.dispatch_id)
+            },
+        );
+    }
+
     /// Finalizes only the owner whose slice unwound. Pointer identity
     /// also protects a reused slot when callers repeat dispatch identifiers.
     pub(super) fn answer_after_panic(&self, holding: Option<Arc<DispatchCompletion>>) {
