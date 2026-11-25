@@ -1,8 +1,9 @@
 //! Writes the managed SDK's copies of the host interface into
 //! `guest-sdks/dotnet/Abi/Generated`, from the definitions this crate
 //! compiles: the enums a host encodes, the codecs of the records the host and
-//! the SDK exchange and the declarations of the imports managed code calls.
-//! The directory holds nothing else, and each run replaces it.
+//! the SDK exchange, the declarations of the imports managed code calls and
+//! the paths of host-served files. The directory holds nothing else, and each
+//! run replaces it.
 
 #![forbid(unsafe_code)]
 
@@ -12,6 +13,7 @@ use std::path::Path;
 
 use heck::{ToLowerCamelCase, ToUpperCamelCase};
 use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, ResponseHead};
+use isoplane_abi::filesystem;
 use isoplane_abi::imports::{self, BufSpec, ImportDef, Ty};
 use isoplane_abi::result::{FutureError, ResultRecord, WakeRecord};
 use isoplane_abi::status::{PollTag, TrapCode, PAYLOAD_SHIFT};
@@ -71,6 +73,7 @@ fn main() -> Generated<()> {
         ),
         ("ResponseHead.g.cs", encoder(&registry, "ResponseHead")?),
         ("Imports.g.cs", managed_imports()?),
+        ("HostFiles.g.cs", host_files()),
     ];
     let directory =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../guest-sdks/dotnet/Abi/Generated");
@@ -459,6 +462,19 @@ fn encoder(registry: &Registry, name: &str) -> Generated<String> {
         parameters.join(", ")
     )?;
     Ok(text)
+}
+
+/// The paths of the files the host serves that managed code opens.
+fn host_files() -> String {
+    format!(
+        "{}namespace Isoplane.Abi;\n\n\
+         /// <summary>Where the host serves the files it provides on an application's behalf.</summary>\n\
+         internal static class HostFiles\n{{\n    \
+         /// <summary>The root of an interpreted application's package.</summary>\n    \
+         internal const string ApplicationPackageRoot = \"{}\";\n}}\n",
+        header("`filesystem::APPLICATION_PACKAGE_ROOT`"),
+        filesystem::APPLICATION_PACKAGE_ROOT
+    )
 }
 
 /// The `DllImport` declaration of each import the table marks as called by
