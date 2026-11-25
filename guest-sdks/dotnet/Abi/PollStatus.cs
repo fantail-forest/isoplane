@@ -5,36 +5,32 @@ using System.Runtime.CompilerServices;
 namespace Isoplane.Abi;
 
 /// <summary>
-/// The packed <c>u64</c> that every guest entrypoint returns; mirrors
-/// <c>isoplane-abi::status::PollStatus</c>.
+/// The packed <c>u64</c> that every guest entrypoint returns, as
+/// <c>isoplane-abi::status::PollStatus</c> encodes it.
 ///
 /// <code>
-///   bits  0..32   tag      0 = done, 1 = pending, 2 = trapped, 3 = cancelled, 4 = failed
-///   bits 32..64   payload  done -> response handle (0 = none)
-///                          trapped -> trap code
+///   low bits    tag      a <see cref="PollTag"/>
+///   high bits   payload  done -> response handle (0 = none)
+///                        trapped -> a <see cref="TrapCode"/>
 /// </code>
+///
+/// How a tag and its payload are packed is generated from the Rust definition.
 ///
 /// <see cref="Pending"/> is a return value, not a yield: producing it unwinds
 /// the wasm stack back to the host, which is what leaves a parked instance
 /// with nothing on any stack.
 /// </summary>
-internal static class PollStatus
+internal static partial class PollStatus
 {
-    private const uint TagDone = 0;
-    private const uint TagPending = 1;
-    private const uint TagTrapped = 2;
-    private const uint TagCancelled = 3;
-    private const uint TagFailed = 4;
-
-    internal static long Done(uint responseHandle) => Pack(TagDone, responseHandle);
-    internal static long Pending() => Pack(TagPending, 0);
-    internal static long Cancelled() => Pack(TagCancelled, 0);
+    internal static long Done(uint responseHandle) => Pack(PollTag.Done, responseHandle);
+    internal static long Pending() => Pack(PollTag.Pending, 0);
+    internal static long Cancelled() => Pack(PollTag.Cancelled, 0);
     internal static long Failed(Exception error)
     {
         NotifyUnhandled(error);
-        return Pack(TagFailed, 0);
+        return Pack(PollTag.Failed, 0);
     }
-    internal static long Trapped(TrapCode code) => Pack(TagTrapped, (uint)code);
+    internal static long Trapped(TrapCode code) => Pack(PollTag.Trapped, (uint)code);
 
     internal static long Unhandled(Exception error)
     {
@@ -49,17 +45,4 @@ internal static class PollStatus
         if (Debugger.IsAttached) Debugger.Break();
         GC.KeepAlive(error);
     }
-
-    private static long Pack(uint tag, uint payload) => (long)((ulong)tag | ((ulong)payload << 32));
-}
-
-/// <summary>Mirrors <c>isoplane-abi::status::TrapCode</c>.</summary>
-internal enum TrapCode : uint
-{
-    Unknown = 0,
-    Panic = 1,
-    OutOfMemory = 2,
-    CapabilityViolation = 3,
-    /// <summary>Malformed dispatch/result encoding.</summary>
-    Protocol = 4,
 }

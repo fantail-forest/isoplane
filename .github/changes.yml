@@ -8,12 +8,6 @@ rust:
   - 'guest-sdks/dotnet/{Abi,native}/**'
   - 'scripts/windows-build-components.json'
   - 'tools/Isoplane.Native/**'
-abi:
-  - *build
-  - *root
-  - *cargo
-  - 'crates/{isoplane-abi,isoplane-test-support}/**'
-  - 'guest-sdks/dotnet/**'
 managed:
   - *build
   - *root

@@ -10,17 +10,13 @@ tasks:
       - task: reference
 
   abi:
-    desc: Generate the C headers and the C# enum the SDK takes from the host interface
+    desc: Generate the C headers and the C# types the SDK takes from the host interface
     deps: [':initialize']
     cmds:
-      # Compiling first leaves the committed files alone when the crate does not build.
-      - '{{.DEVELOPMENT_COMMAND}}cargo build --quiet --locked -p isoplane-abi --example filesystem_header --example future_error_csharp --example local_debug_header --example native_io_header'
-      - '{{.DEVELOPMENT_COMMAND}}cargo run --quiet --locked -p isoplane-abi --example filesystem_header > guest-sdks/dotnet/native/isoplane_filesystem.h'
-      # This example writes guest-sdks/dotnet/Abi/FutureError.g.cs itself.
-      - '{{.DEVELOPMENT_COMMAND}}cargo run --quiet --locked -p isoplane-abi --example future_error_csharp'
-      # This example writes guest-sdks/dotnet/native/isoplane_local_debug.h itself.
+      - '{{.DEVELOPMENT_COMMAND}}cargo run --quiet --locked -p isoplane-abi --example csharp_contract'
+      - '{{.DEVELOPMENT_COMMAND}}cargo run --quiet --locked -p isoplane-abi --example filesystem_header'
       - '{{.DEVELOPMENT_COMMAND}}cargo run --quiet --locked -p isoplane-abi --example local_debug_header'
-      - '{{.DEVELOPMENT_COMMAND}}cargo run --quiet --locked -p isoplane-abi --example native_io_header > guest-sdks/dotnet/native/isoplane_native_io.h'
+      - '{{.DEVELOPMENT_COMMAND}}cargo run --quiet --locked -p isoplane-abi --example native_io_header'
 
   native-bindings:
     desc: Generate the C# declarations of the native library's C interface

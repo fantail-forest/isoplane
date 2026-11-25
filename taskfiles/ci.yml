@@ -14,12 +14,6 @@ tasks:
       - '{{.DEVELOPMENT_COMMAND}}cargo test --locked -p isoplane-control --test validator_corpus --test validator_wasi_pal --test real_guests'
       - '{{.DEVELOPMENT_COMMAND}}cargo test --locked -p isoplane-engine --test engine_validation --test engine_init_sandbox --test engine_budget --test engine_memory_limit'
 
-  abi:
-    desc: Check the SDK's wire-format mirrors against the host interface
-    deps: [':initialize']
-    cmds:
-      - '{{.DEVELOPMENT_COMMAND}}cargo test --locked -p isoplane-abi --test dotnet_sdk_drift'
-
   managed:
     desc: Check SDK behavior and build targets without native/installed-tool journeys
     deps: [':runtime:toolchain']

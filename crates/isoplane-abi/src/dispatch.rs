@@ -18,8 +18,10 @@ pub struct DispatchRecord {
     pub now_ms: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// What a dispatch delivers to a guest.
+#[derive(Debug, Clone, Serialize, Deserialize, strum::EnumMessage, strum::IntoStaticStr)]
 pub enum DispatchKind {
+    /// An inbound HTTP request. The only trigger a Handler receives.
     Http(HttpRequest),
     /// Instance work consuming its background allowance, separate from HTTP requests.
     Background,

@@ -59,17 +59,6 @@ public sealed class DispatchRecord
 
 }
 
-/// <summary>Mirrors <c>isoplane-abi::dispatch::DispatchKind</c>.</summary>
-public enum DispatchKind : uint
-{
-    /// <summary>
-    /// An inbound HTTP request. The only trigger a Handler receives.
-    /// </summary>
-    Http = 0,
-    /// <summary>Instance work metered against the background allowance.</summary>
-    Background = 1,
-}
-
 /// <summary>
 /// <c>isoplane-abi::result::ResultRecord</c> as delivered by <c>isoplane_wake</c>.
 /// </summary>
@@ -81,8 +70,8 @@ internal sealed class ResultRecord
 
     internal static ResultRecord Decode(ref PostcardReader r)
     {
-        uint tag = r.U32();
-        if (tag == 0) return new ResultRecord { IsOk = true, Payload = r.Bytes().ToArray() };
+        var kind = (ResultKind)r.Varint();
+        if (kind == ResultKind.Ok) return new ResultRecord { IsOk = true, Payload = r.Bytes().ToArray() };
         return new ResultRecord { IsOk = false, Error = (FutureError)r.Varint() };
     }
 }
