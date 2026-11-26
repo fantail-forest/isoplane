@@ -1,8 +1,6 @@
 /* Generated from isoplane_abi::filesystem::IMPORTS. */
-__attribute__((export_name("isoplane_fs_alloc")))
-uint32_t isoplane_fs_alloc(uint32_t size) { return (uint32_t)(uintptr_t)malloc(size); }
-__attribute__((export_name("isoplane_fs_free")))
-void isoplane_fs_free(uint32_t pointer) { free((void *)(uintptr_t)pointer); }
+int32_t isoplane_fs_alloc(int32_t size) { return (int32_t)(uintptr_t)malloc((uint32_t)size); }
+void isoplane_fs_free(int32_t pointer) { free((void *)(uintptr_t)(uint32_t)pointer); }
 void __wasm_import_filesystem_preopens_get_directories(int32_t a0) { const uint64_t args[] = { (uint32_t)a0 }; isoplane_filesystem_call(0, (int32_t)(uintptr_t)args, 1); }
 void __wasm_import_filesystem_descriptor_drop(int32_t a0) { const uint64_t args[] = { (uint32_t)a0 }; isoplane_filesystem_call(1, (int32_t)(uintptr_t)args, 1); }
 void __wasm_import_filesystem_directory_entry_stream_drop(int32_t a0) { const uint64_t args[] = { (uint32_t)a0 }; isoplane_filesystem_call(2, (int32_t)(uintptr_t)args, 1); }

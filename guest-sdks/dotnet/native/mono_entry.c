@@ -1,4 +1,5 @@
 #include "mono_assembly.h"
+#include "isoplane_exports.h"
 #include "isoplane_imports.h"
 #include <stdint.h>
 #include <stdio.h>

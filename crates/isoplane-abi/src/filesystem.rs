@@ -93,12 +93,19 @@ pub const MAX_ARGUMENTS: usize = {
 };
 
 /// Generate the C wrappers which route wasi-libc calls through the Isoplane
-/// adapter. They expect the declarations of `isoplane_imports.h` before them.
+/// adapter, and the guest allocator's filesystem record exports. They expect the
+/// declarations of `isoplane_imports.h` and `isoplane_exports.h` before them.
 pub fn native_wrappers() -> String {
     use std::fmt::Write;
     let mut output = String::from("/* Generated from isoplane_abi::filesystem::IMPORTS. */\n");
-    output.push_str(&format!("__attribute__((export_name(\"{}\")))\nuint32_t isoplane_fs_alloc(uint32_t size) {{ return (uint32_t)(uintptr_t)malloc(size); }}\n", crate::exports::FS_ALLOC));
-    output.push_str(&format!("__attribute__((export_name(\"{}\")))\nvoid isoplane_fs_free(uint32_t pointer) {{ free((void *)(uintptr_t)pointer); }}\n", crate::exports::FS_FREE));
+    output.push_str(&format!(
+        "int32_t {}(int32_t size) {{ return (int32_t)(uintptr_t)malloc((uint32_t)size); }}\n",
+        crate::exports::FS_ALLOC
+    ));
+    output.push_str(&format!(
+        "void {}(int32_t pointer) {{ free((void *)(uintptr_t)(uint32_t)pointer); }}\n",
+        crate::exports::FS_FREE
+    ));
     for definition in IMPORTS {
         let signature = definition.sig;
         let parameters: Vec<String> = signature

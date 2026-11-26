@@ -15,6 +15,7 @@
 #include <string.h>
 #include "pal_isoplane_sockets.h"
 
+#include "isoplane_exports.h"
 #include "isoplane_imports.h"
 
 /* A dead PAL entry was reached: abort naming it. */
