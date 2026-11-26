@@ -1,16 +1,24 @@
 use isoplane_engine::{EngineConfig, IsoplaneEngine};
 use isoplane_prepare::Initialization;
 
-pub fn engine() -> IsoplaneEngine {
-    IsoplaneEngine::new(EngineConfig {
+pub fn engine_config() -> EngineConfig {
+    EngineConfig {
         max_instances: 4,
         // The ceiling of a 4 MiB memory limit.
         max_memory_bytes: isoplane_abi::config::memory_ceiling_bytes(4 << 20),
         guard_size_bytes: 2 << 20,
         ..EngineConfig::default()
-    })
-    .expect("the preparation engine must initialize")
+    }
 }
+
+#[allow(
+    dead_code,
+    reason = "the platform-file tests build requests from the configuration alone"
+)]
+pub fn engine() -> IsoplaneEngine {
+    IsoplaneEngine::new(engine_config()).expect("the preparation engine must initialize")
+}
+
 pub fn request() -> Initialization {
     Initialization {
         network: None,
@@ -19,23 +27,4 @@ pub fn request() -> Initialization {
         wall_ms: 5000,
         log_bytes: 1024,
     }
-}
-pub fn guest(imports: &str, init: &str) -> Vec<u8> {
-    guest_with_handle(imports, init, "(i64.const 0)")
-}
-
-pub fn guest_with_handle(imports: &str, init: &str, handle: &str) -> Vec<u8> {
-    wat::parse_str(format!(
-        r#"(module {imports}
-      (memory (export "memory") 1 64)
-      (global $state (export "state") (mut i32) (i32.const 1))
-      (table (export "table") 1 funcref)
-      (elem (i32.const 0) $function)
-      (func $function)
-      (func (export "isoplane_alloc") (param i32 i32) (result i32) (i32.const 2048))
-      (func (export "isoplane_handle") (param i32 i32) (result i64) {handle})
-      (func (export "isoplane_wake") (param i64 i32 i32) (result i64) (i64.const 0))
-      (func (export "isoplane_initialize") (result i64) {init} i64.const 0))"#
-    ))
-    .expect("the test guest must assemble")
 }

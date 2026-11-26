@@ -5,7 +5,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Test support for returned guest execution, host resources and injected networking"
+description = "Test support for returned guest execution, host resources, injected networking and templates prepared the way the product prepares them"
 
 [dependencies]
 tracing.workspace = true
@@ -21,11 +21,11 @@ isoplane-engine = { workspace = true, features = ["test-util", "rust-guests"] }
 isoplane-host = { workspace = true, features = ["test-util", "rust-guests"] }
 isoplane-runtime = { workspace = true, features = ["rust-guests"] }
 isoplane-hibernate = { workspace = true }
+isoplane-prepare = { workspace = true, features = ["rust-guests"] }
+tempfile = { workspace = true }
+tokio-util = { workspace = true }
+wat = { workspace = true }
 tokio = { workspace = true }
 fs4 = { workspace = true }
 parking_lot.workspace = true
 serde_json = { workspace = true }
-
-[dev-dependencies]
-wat = { workspace = true }
-tempfile = { workspace = true }

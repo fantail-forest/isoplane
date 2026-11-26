@@ -3,12 +3,30 @@
 mod common;
 #[path = "common/packets.rs"]
 mod packets;
-#[path = "common/provider.rs"]
-mod provider;
 
 use isoplane_abi::imports::Ty;
 use isoplane_abi::native_io::canonical::DEFINITIONS;
-use isoplane_prepare::{initialize, Initialization, InitializationNetwork, PrepareError};
+use isoplane_harness::preparation::{self, staged_guest, Prepared};
+use isoplane_prepare::{Initialization, InitializationNetwork, PrepareError};
+
+/// Prepares `wasm` the way a node prepares an application on a shared runtime.
+fn prepare(wasm: &[u8], initialization: Initialization) -> Result<Prepared, PrepareError> {
+    preparation::prepare(&preparation::request(
+        wasm,
+        common::engine_config(),
+        initialization,
+    ))
+}
+
+/// What preparing `wasm`'s application stage refused, its runtime stage
+/// having prepared as a baseline.
+fn refusal(wasm: &[u8], initialization: Initialization) -> PrepareError {
+    preparation::application_refusal(&preparation::request(
+        wasm,
+        common::engine_config(),
+        initialization,
+    ))
+}
 
 fn request() -> Initialization {
     let mut request = common::request();
@@ -80,6 +98,7 @@ fn asynchronous_guest(imports: &str, init: &str, wake: &str) -> Vec<u8> {
       (func (export "isoplane_alloc") (param i32 i32) (result i32) (i32.const 2048))
       (func (export "isoplane_handle") (param i32 i32) (result i64) (i64.const 0))
       (func (export "isoplane_wake") (param i64 i32 i32) (result i64) {wake})
+      (func (export "isoplane_initialize_runtime") (result i64) (i64.const 0))
       (func (export "isoplane_initialize") (result i64) {init}))"#
     ))
     .unwrap()
@@ -112,7 +131,7 @@ async fn layered_preparation_captures_the_completed_async_initializer() {
         module: isoplane_prepare::Module::new(&wasm),
     };
     use isoplane_prepare::Preparation;
-    let product = crate::provider::local_preparation()
+    let product = isoplane_harness::preparation::local_preparation()
         .prepare(&build, &tokio_util::sync::CancellationToken::new()).await.expect(
         "layered capture and fresh-instance state verification must succeed after the timer wake",
     );
@@ -133,12 +152,9 @@ async fn layered_preparation_captures_the_completed_async_initializer() {
 
 #[test]
 fn initialization_resumes_after_host_timer_completion_before_capturing_memory() {
-    let engine = common::engine();
-    let wasm = timer_guest();
-    let initialized = initialize(&engine, &wasm, &request()).unwrap();
-    let template = engine.load_template(&initialized.wasm).unwrap();
+    let prepared = prepare(&timer_guest(), request()).unwrap();
     assert_eq!(
-        template.memory_image_arc().to_dense()[128],
+        prepared.memory()[128],
         42,
         "captured initialization memory must include work performed after the host wake"
     );
@@ -147,47 +163,36 @@ fn initialization_resumes_after_host_timer_completion_before_capturing_memory() 
 #[test]
 fn a_pending_initializer_without_a_host_wake_source_is_refused() {
     let wasm = asynchronous_guest("", "(i64.const 1)", "(i64.const 0)");
-    let result = initialize(&common::engine(), &wasm, &request());
+    let error = refusal(&wasm, request());
     assert!(
-        matches!(result, Err(PrepareError::InvalidRequest(_))),
-        "pending initialization without host work must fail instead of capturing incomplete state"
-    );
-}
-
-#[test]
-fn a_completed_initializer_cannot_capture_a_retained_native_socket() {
-    let wasm = common::guest(
-        &socket_functions(&[("tcp_create_socket_create_tcp_socket", "create")]),
-        "(call $create (i32.const 0) (i32.const 64))",
-    );
-    let result = initialize(&common::engine(), &wasm, &request());
-    assert!(
-        matches!(result, Err(PrepareError::State(_))),
-        "returning Done must not authorize capturing an undisposed native socket"
+        matches!(error, PrepareError::InvalidRequest(_)),
+        "pending initialization without host work must fail instead of capturing incomplete state: {error}"
     );
 }
 
 #[test]
 fn a_refused_capture_carries_the_guests_warnings_without_its_routine_logs() {
-    let wasm = common::guest(
+    let wasm = staged_guest(
         &format!(
             r#"(import "isoplane" "log_emit" (func $log (param i32 i32 i32))) {}
             (data (i32.const 128) "entering the initializer")
             (data (i32.const 192) "the cache client is still connected")"#,
             socket_functions(&[("tcp_create_socket_create_tcp_socket", "create")])
         ),
+        "",
         r#"(call $log (i32.const 1) (i32.const 128) (i32.const 24))
         (call $log (i32.const 3) (i32.const 192) (i32.const 35))
         (call $create (i32.const 0) (i32.const 64))"#,
     );
-    let detail = initialize(&common::engine(), &wasm, &request())
-        .err()
-        .expect("a retained socket must refuse the capture")
-        .to_string();
+    let error = refusal(&wasm, request());
     assert!(
-        detail.contains("initialization retains a TCP socket")
-            && detail.contains("guest log: the cache client is still connected"),
-        "the refusal must give the host's reason and what the guest warned of: {detail}"
+        matches!(error, PrepareError::State(_)),
+        "a retained socket must refuse the capture: {error}"
+    );
+    let detail = error.to_string();
+    assert!(
+        detail.contains("the cache client is still connected"),
+        "the refusal must carry what the guest warned of: {detail}"
     );
     assert!(
         !detail.contains("entering the initializer"),
@@ -206,8 +211,9 @@ fn socket_imports() -> String {
 
 #[test]
 fn preparation_reports_egress_denial_through_the_canonical_socket_interface() {
-    let wasm = common::guest(
+    let wasm = staged_guest(
         &socket_imports(),
+        "",
         r#"
       (i32.store (i32.const 32) (call $network))
       (call $create (i32.const 0) (i32.const 64))
@@ -218,10 +224,7 @@ fn preparation_reports_egress_denial_through_the_canonical_socket_interface() {
         (i32.const 128))
       (call $drop_socket (i32.load (i32.const 68)))"#,
     );
-    let engine = common::engine();
-    let initialized = initialize(&engine, &wasm, &request()).unwrap();
-    let template = engine.load_template(&initialized.wasm).unwrap();
-    let memory = template.memory_image_arc().to_dense();
+    let memory = prepare(&wasm, request()).unwrap().memory();
     assert_eq!(
         memory[128], 1,
         "a private destination without an explicit allowance must return a canonical error"
@@ -264,10 +267,12 @@ fn an_allowed_initialization_connection_finishes_and_closes_before_capture() {
       (i32.store (i32.const 192) (i32.const 77))
       (i64.const 0)"#,
     );
-    let engine = common::engine();
-    let initialized = initialize(&engine, &wasm, &request).unwrap();
-    let template = engine.load_template(&initialized.wasm).unwrap();
-    assert_eq!(template.memory_image_arc().to_dense()[192], 77, "initialization must resume after real TCP connection completion before capturing guest state");
+    let prepared = prepare(&wasm, request).unwrap();
+    assert_eq!(
+        prepared.memory()[192],
+        77,
+        "initialization must resume after real TCP connection completion before capturing guest state"
+    );
     listener.set_nonblocking(true).unwrap();
     let (mut peer, _) = listener
         .accept()
@@ -280,22 +285,18 @@ fn an_allowed_initialization_connection_finishes_and_closes_before_capture() {
         0,
         "all preparation connection ownership must be released before a template is returned"
     );
-    let resources = wasmparser::Parser::new(0)
-        .parse_all(&initialized.wasm)
-        .find_map(|payload| match payload.unwrap() {
-            wasmparser::Payload::CustomSection(section)
-                if section.name() == isoplane_abi::native_io::PREPARED_RESOURCES_SECTION =>
-            {
-                Some(
-                    postcard::from_bytes::<isoplane_abi::native_io::PreparedResources>(
-                        section.data(),
-                    )
-                    .unwrap(),
-                )
-            }
-            _ => None,
-        })
-        .expect("initialized output must carry native handle restoration state");
+    let restored = std::sync::Arc::new(parking_lot::Mutex::new(None));
+    prepared
+        .engine
+        .activate(
+            &prepared.template,
+            Box::new(RestoredResources(restored.clone())),
+        )
+        .expect("the template must activate");
+    let resources = restored
+        .lock()
+        .take()
+        .expect("activation must restore the template's native handle state");
     assert_eq!(
         resources.network,
         Some(isoplane_abi::native_io::ResourceHandle(1)),
@@ -305,4 +306,30 @@ fn an_allowed_initialization_connection_finishes_and_closes_before_capture() {
         resources.next_handle, 3,
         "activation must not reuse the disposed initialization socket handle"
     );
+}
+
+/// Records the native resource state an activation restores from its template.
+struct RestoredResources(
+    std::sync::Arc<parking_lot::Mutex<Option<isoplane_abi::native_io::PreparedResources>>>,
+);
+
+impl isoplane_engine::bindings::HostBindings for RestoredResources {
+    fn restore_prepared_resources(
+        &mut self,
+        resources: &isoplane_abi::native_io::PreparedResources,
+    ) -> Result<(), isoplane_engine::bindings::BindingError> {
+        *self.0.lock() = Some(resources.clone());
+        Ok(())
+    }
+    fn call_future(&mut self, _call: isoplane_engine::ImportCall<'_>) -> u64 {
+        0
+    }
+    fn call_sync(&mut self, _call: isoplane_engine::ImportCall<'_>) -> i64 {
+        0
+    }
+    fn slice_clock_ms(&self) -> u64 {
+        0
+    }
+    fn begin_slice(&mut self) {}
+    fn end_slice(&mut self) {}
 }

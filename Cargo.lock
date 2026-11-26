@@ -1506,7 +1506,6 @@ dependencies = [
  "tokio",
  "tokio-util",
  "wasmparser 0.244.0",
- "wasmtime",
  "wat",
  "zstd",
 ]
@@ -1564,6 +1563,7 @@ dependencies = [
  "isoplane-fixtures",
  "isoplane-hibernate",
  "isoplane-host",
+ "isoplane-prepare",
  "isoplane-runtime",
  "parking_lot",
  "postcard",
@@ -1571,6 +1571,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
  "wat",
@@ -1690,6 +1691,7 @@ dependencies = [
  "isoplane-abi",
  "isoplane-engine",
  "isoplane-fixtures",
+ "isoplane-harness",
  "isoplane-host",
  "isoplane-prepare",
  "isoplane-runtime",
@@ -1705,7 +1707,6 @@ dependencies = [
  "tokio-util",
  "wasm-encoder 0.244.0",
  "wasmparser 0.244.0",
- "wasmtime",
  "wat",
 ]
 

@@ -27,7 +27,6 @@ isoplane-engine = { workspace = true, features = ["test-util", "rust-guests"] }
 blake3.workspace = true
 isoplane-prepare = { workspace = true, features = ["rust-guests"] }
 tokio-util.workspace = true
-wasmtime.workspace = true
 wasmparser = { workspace = true }
 wat = { workspace = true }
 tokio = { workspace = true }

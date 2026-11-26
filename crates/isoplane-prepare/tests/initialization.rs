@@ -1,40 +1,54 @@
 mod common;
-use common::{engine, guest, request};
-use isoplane_prepare::{initialize, PrepareError};
+use common::{engine, engine_config, request};
+use isoplane_harness::preparation::{self, staged_guest, staged_guest_with_handle, Prepared};
+use isoplane_prepare::{Initialization, PrepareError};
 use std::collections::BTreeMap;
+
+/// Prepares `wasm` the way a node prepares an application on a shared runtime.
+fn prepare(wasm: &[u8], initialization: Initialization) -> Result<Prepared, PrepareError> {
+    preparation::prepare(&preparation::request(wasm, engine_config(), initialization))
+}
+
+/// What preparing `wasm`'s runtime stage as a baseline refused. A module
+/// whose state preparation cannot capture is refused there.
+fn baseline_refusal(wasm: &[u8]) -> PrepareError {
+    preparation::baseline_refusal(&preparation::request(wasm, engine_config(), request()))
+}
+
+/// What preparing `wasm`'s application stage refused, its runtime stage
+/// having prepared as a baseline.
+fn refusal(wasm: &[u8], initialization: Initialization) -> PrepareError {
+    preparation::application_refusal(&preparation::request(wasm, engine_config(), initialization))
+}
 
 #[test]
 fn initialization_receives_fresh_entropy() {
-    let wasm = guest(
+    let wasm = staged_guest(
         r#"(import "isoplane" "entropy_fill" (func $entropy (param i32 i32)))"#,
+        "",
         "(call $entropy (i32.const 96) (i32.const 32))",
     );
-    let engine = engine();
-    let first = initialize(&engine, &wasm, &request()).unwrap();
-    let second = initialize(&engine, &wasm, &request()).unwrap();
-    let memory = |prepared: &isoplane_prepare::InitializedModule| {
-        engine
-            .load_template(&prepared.wasm)
-            .unwrap()
-            .memory_image_arc()
-            .to_dense()
-    };
-    assert_ne!(&memory(&first)[96..128], &memory(&second)[96..128]);
+    let first = prepare(&wasm, request()).unwrap().memory();
+    let second = prepare(&wasm, request()).unwrap().memory();
+    assert_ne!(&first[96..128], &second[96..128]);
 }
 
 #[test]
 fn initialization_failure_preserves_the_diagnosis_before_a_generic_final_log() {
-    let wasm = guest(
+    let wasm = staged_guest(
         r#"(import "isoplane" "log_emit" (func $log (param i32 i32 i32)))
         (data (i32.const 64) "missing application setting")
         (data (i32.const 128) "initialization failed")"#,
+        "",
         r#"(call $log (i32.const 3) (i32.const 64) (i32.const 27))
         (call $log (i32.const 3) (i32.const 128) (i32.const 21)) unreachable"#,
     );
-    let error = initialize(&engine(), &wasm, &request())
-        .err()
-        .expect("the initializer traps");
-    let PrepareError::Initialization { detail, .. } = error else {
+    let error = refusal(&wasm, request());
+    let PrepareError::Initialization {
+        completion: isoplane_engine::Completion::Trapped,
+        detail,
+    } = error
+    else {
         panic!("a logged guest trap must remain an initialization failure: {error}");
     };
     assert!(
@@ -44,38 +58,68 @@ fn initialization_failure_preserves_the_diagnosis_before_a_generic_final_log() {
 }
 
 #[test]
-fn baking_preserves_grown_memory_hidden_globals_and_static_tables() {
-    let wasm = guest("", "(drop (memory.grow (i32.const 1))) (i32.store (i32.const 70000) (i32.const 123)) (global.set $state (i32.const 42))");
-    let prepared = initialize(&engine(), &wasm, &request())
-        .expect("complete initialized state must round-trip through the bake oracle");
-    let template = engine()
-        .load_template(&prepared.wasm)
-        .expect("baked WASM must be loadable");
+fn a_template_carries_the_memory_its_initializer_grew_and_the_globals_it_set() {
+    let wasm = staged_guest_with_handle(
+        "",
+        "",
+        "(drop (memory.grow (i32.const 1))) (i32.store (i32.const 140000) (i32.const 123)) (global.set $state (i32.const 42))",
+        "(i32.store (i32.const 512) (global.get $runtime_booted)) (i32.store (i32.const 516) (global.get $state)) (i64.const 0)",
+    );
+    let prepared = prepare(&wasm, request()).expect("grown memory and set globals are capturable");
     assert_eq!(
-        template.memory_pages(),
-        2,
-        "baked memory must include initialization growth"
+        prepared.template.memory_pages(),
+        3,
+        "the template's memory must include initialization growth"
     );
     assert!(
-        !template.has_initialize(),
+        !prepared.template.has_initialize(),
         "activation must not be able to repeat initialization"
     );
     assert_eq!(
-        &template.memory_image_arc().to_dense()[70000..70004],
+        &prepared.memory()[140000..140004],
         &123_i32.to_le_bytes(),
-        "baked memory must preserve initialization writes"
+        "the template's memory must preserve initialization writes to the grown page"
+    );
+    assert_eq!(
+        &prepared.memory_after_dispatch()[512..520],
+        [1_i32.to_le_bytes(), 42_i32.to_le_bytes()].as_flattened(),
+        "an instance must read `runtime_booted` and `state` as initialization left them"
+    );
+}
+
+#[test]
+fn an_application_on_a_shared_runtime_is_held_to_its_memory_limit_during_initialization() {
+    let wasm = staged_guest(
+        "",
+        "",
+        "(if (i32.ne (memory.grow (i32.const 2)) (i32.const -1)) (then unreachable))
+        (if (i32.ne (memory.grow (i32.const 1)) (i32.const 2)) (then unreachable))",
+    );
+    let three_pages = 3 * isoplane_abi::WASM_PAGE_SIZE as u64;
+    let request = isoplane_prepare::BuildRequest {
+        guest_memory_bytes: Some(
+            isoplane_abi::config::GuestMemoryBytes::new(three_pages).expect("a memory limit"),
+        ),
+        ..preparation::request(&wasm, engine_config(), request())
+    };
+    let prepared = preparation::prepare(&request).expect(
+        "a runtime may declare more memory than its application's limit, and growth past that limit must be refused without a trap",
+    );
+    assert_eq!(
+        prepared.template.memory_pages(),
+        3,
+        "initialization must be able to grow to its application's limit"
     );
 }
 
 #[test]
 fn a_forbidden_import_ends_initialization_with_the_guests_trap_and_is_named() {
-    let wasm = guest(
+    let wasm = staged_guest(
         r#"(import "isoplane" "future_cancel" (func $cancel (param i64)))"#,
+        "",
         "(call $cancel (i64.const 1))",
     );
-    let error = initialize(&engine(), &wasm, &request())
-        .err()
-        .expect("a serving capability must fail initialization");
+    let error = refusal(&wasm, request());
     assert!(
         matches!(
             error,
@@ -91,12 +135,12 @@ fn a_forbidden_import_ends_initialization_with_the_guests_trap_and_is_named() {
 
 #[test]
 fn initialization_answers_and_counts_the_clock() {
-    let wasm = guest(
+    let wasm = staged_guest(
         r#"(import "isoplane" "clock_now_coarse" (func $clock (result i64)))"#,
+        "",
         "(i64.store (i32.const 64) (call $clock))",
     );
-    let request = request();
-    let result = initialize(&engine(), &wasm, &request).expect("clock admission");
+    let result = prepare(&wasm, request()).expect("clock admission");
     assert_eq!(
         result.initialized.pal_calls,
         vec![("clock_now_coarse".to_string(), 1)],
@@ -106,39 +150,47 @@ fn initialization_answers_and_counts_the_clock() {
 
 #[test]
 fn an_infinite_initializer_is_killed_by_the_shared_engine_budget() {
-    let wasm = guest("", "(loop $forever (br $forever))");
+    let wasm = staged_guest("", "", "(loop $forever (br $forever))");
     let mut request = request();
     request.occupancy_ms = 1;
-    let error = initialize(&engine(), &wasm, &request)
-        .err()
-        .expect("unbounded initialization must fail");
+    let error = refusal(&wasm, request);
     assert!(
-        matches!(error, PrepareError::Initialization { .. }),
-        "engine budget failure must end the initialization job"
+        matches!(
+            error,
+            PrepareError::Initialization {
+                completion: isoplane_engine::Completion::BudgetKill,
+                ..
+            }
+        ),
+        "an initializer still running past its budget must be killed, not left to trap or finish: {error}"
     );
 }
 
 #[test]
 fn a_table_mutation_is_refused_before_preparation_can_lose_it() {
-    let wasm = guest("", "(table.set (i32.const 0) (ref.null func))");
+    let wasm = staged_guest(
+        r#"(table (export "table") 1 funcref)"#,
+        "",
+        "(table.set (i32.const 0) (ref.null func))",
+    );
+    let error = baseline_refusal(&wasm);
     assert!(
-        matches!(
-            initialize(&engine(), &wasm, &request()),
-            Err(PrepareError::State(_))
-        ),
-        "mutable table state must not be silently omitted from a template"
+        matches!(error, PrepareError::State(_)),
+        "mutable table state must not be silently omitted from a template: {error}"
     );
 }
 
 #[test]
 fn wasm_start_code_cannot_execute_before_the_initializer_budget_is_armed() {
-    let wasm = wat::parse_str("(module (memory (export \"memory\") 1) (func $start (loop $forever (br $forever))) (start $start))").expect("the start fixture must assemble");
+    let wasm = staged_guest(
+        "(func $start (loop $forever (br $forever))) (start $start)",
+        "",
+        "",
+    );
+    let error = baseline_refusal(&wasm);
     assert!(
-        matches!(
-            initialize(&engine(), &wasm, &request()),
-            Err(PrepareError::State(_))
-        ),
-        "unbudgeted wasm start functions must be refused before instantiation"
+        matches!(error, PrepareError::State(_)),
+        "unbudgeted wasm start functions must be refused before instantiation: {error}"
     );
 }
 
@@ -166,8 +218,9 @@ fn a_future_import_traps_before_calling_an_initialization_provider() {
             Err(BindingError::Unsupported(call.import))
         }
     }
-    let wasm = guest(
+    let wasm = staged_guest(
         r#"(import "isoplane" "http_body_read" (func $read (param i32 i32) (result i64)))"#,
+        "",
         "(drop (call $read (i32.const 1) (i32.const 32)))",
     );
     let engine = engine();
@@ -202,7 +255,7 @@ fn a_future_import_traps_before_calling_an_initialization_provider() {
 
 #[test]
 fn engine_configuration_preserves_only_declared_platform_files() {
-    let mut configuration = engine().configuration();
+    let mut configuration = engine_config();
     configuration.platform_files =
         isoplane_engine::PlatformFiles::new(vec![isoplane_engine::PlatformFile {
             path: "/etc/ssl/certs/ca-certificates.crt".into(),
@@ -235,7 +288,7 @@ fn engine_configuration_preserves_only_declared_platform_files() {
 
 #[test]
 fn engine_configuration_rejects_unvalidated_platform_file_paths() {
-    let configuration = engine().configuration();
+    let configuration = engine_config();
     let mut encoded = serde_json::to_value(configuration).expect("engine configuration");
     encoded["platform_files"] =
         serde_json::json!([{"path":"/etc/../secret", "bytes":[], "modified_ns":0}]);
@@ -247,12 +300,12 @@ fn engine_configuration_rejects_unvalidated_platform_file_paths() {
 
 #[test]
 fn initialization_identity_changes_with_the_declared_trust_snapshot() {
-    let wasm = guest("", "");
+    let wasm = staged_guest("", "", "");
     let mut request = isoplane_prepare::BuildRequest {
         guest_memory_bytes: None,
         validation_limits: Default::default(),
         application_files: isoplane_engine::PlatformFiles::default(),
-        engine: engine().configuration(),
+        engine: engine_config(),
         runtime: isoplane_prepare::RuntimeProfile::RawWasm,
         memory_limit: isoplane_abi::config::GuestMemoryBytes::default(),
         initialization: request(),
@@ -279,12 +332,12 @@ fn initialization_identity_changes_with_the_declared_trust_snapshot() {
 
 #[test]
 fn initialization_identity_binds_application_content_independently_of_the_runtime() {
-    let wasm = guest("", "");
+    let wasm = staged_guest("", "", "");
     let mut request = isoplane_prepare::BuildRequest {
         guest_memory_bytes: None,
         validation_limits: Default::default(),
         application_files: isoplane_engine::PlatformFiles::default(),
-        engine: engine().configuration(),
+        engine: engine_config(),
         runtime: isoplane_prepare::RuntimeProfile::RawWasm,
         memory_limit: isoplane_abi::config::GuestMemoryBytes::default(),
         initialization: request(),
@@ -309,30 +362,43 @@ fn initialization_identity_binds_application_content_independently_of_the_runtim
     );
 }
 
-#[test]
-fn a_module_without_initialization_retains_its_runtime_table_operations() {
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_module_without_initialization_retains_its_runtime_table_operations() {
     let wasm = wat::parse_str(
         r#"(module
+        (type $mark (func))
         (memory (export "memory") 1 1)
-        (table (export "table") 1 funcref)
-        (func (export "isoplane_alloc") (param i32 i32) (result i32) (i32.const 0))
+        (table (export "table") 2 funcref)
+        (elem (i32.const 1) $mark)
+        (func $mark (i32.store8 (i32.const 256) (i32.const 42)))
+        (func (export "isoplane_alloc") (param i32 i32) (result i32) (i32.const 2048))
         (func (export "isoplane_handle") (param i32 i32) (result i64)
-            (table.set (i32.const 0) (ref.null func)) (i64.const 0))
+            (table.set (i32.const 0) (table.get (i32.const 1)))
+            (call_indirect (type $mark) (i32.const 0))
+            (i64.const 0))
         (func (export "isoplane_wake") (param i64 i32 i32) (result i64) (i64.const 0)))"#,
     )
     .expect("valid runtime table mutation");
-    let result = initialize(&engine(), &wasm, &request())
+    let request = isoplane_prepare::BuildRequest {
+        runtime: isoplane_prepare::RuntimeProfile::RawWasm,
+        ..preparation::request(&wasm, engine_config(), request())
+    };
+    let prepared = preparation::prepare_whole_module(&request)
+        .await
         .expect("a module without initialization must retain supported runtime capabilities");
     assert_eq!(
-        result.wasm, wasm,
-        "no initializer means no portable module rewrite"
+        prepared.memory_after_dispatch()[256],
+        42,
+        "the dispatch must call the function it stored in the table"
     );
 }
 
 #[test]
 fn preparation_captures_its_settings_and_changes_identity_when_they_change() {
-    let wasm = guest(
+    let wasm = staged_guest(
         r#"(import "isoplane" "runtime_config_get" (func $settings (param i32 i32) (result i32)))"#,
+        "",
         "(drop (call $settings (i32.const 128) (i32.const 64)))",
     );
     let mut inputs = request();
@@ -348,13 +414,10 @@ fn preparation_captures_its_settings_and_changes_identity_when_they_change() {
                 .digest(*blake3::hash(&wasm).as_bytes())
                 .expect("settings identity"),
         );
-        let output = initialize(&engine(), &wasm, &inputs)
-            .expect("settings must be readable during preparation");
-        let template = engine()
-            .load_template(&output.wasm)
-            .expect("captured settings template");
+        let prepared =
+            prepare(&wasm, inputs.clone()).expect("settings must be readable during preparation");
         assert_eq!(
-            &template.memory_image_arc().to_dense()[128..128 + settings.len()],
+            &prepared.memory()[128..128 + settings.len()],
             settings,
             "each template must retain its own configuration revision"
         );
@@ -385,12 +448,10 @@ fn oversized_preparation_settings_are_refused_without_exposing_values() {
 fn assert_refused_without_exposing_private_value(settings: Vec<u8>) {
     let mut inputs = request();
     inputs.runtime_config = settings;
-    let Err(error) = initialize(&engine(), &guest("", ""), &inputs) else {
-        panic!("the settings must be refused before guest execution");
-    };
+    let error = refusal(&staged_guest("", "", "unreachable"), inputs);
     assert!(
         matches!(error, PrepareError::InvalidRequest(_)),
-        "refused settings are an invalid request: {error:?}"
+        "the settings must be refused before the application's initializer runs: {error:?}"
     );
     let reported = format!("{error} {error:?}");
     assert!(
