@@ -69,6 +69,7 @@ impl Cell {
                     cell.watch_idle_timers(&slot, &entry);
                     return;
                 }
+                let shared = entry.shared.lock();
                 let Some(idle) = entry.pool.take_idle(slot.id, |slot| {
                     matches!(
                         slot.state(),
@@ -78,9 +79,13 @@ impl Cell {
                     return;
                 };
                 match step {
-                    IdleStep::Stop { .. } => cell.stop_idle(&entry, idle),
+                    IdleStep::Stop { .. } => {
+                        drop(shared);
+                        cell.stop_idle(&entry, idle);
+                    }
                     IdleStep::Wake { .. } => {
                         cell.release_to_pool(&entry, &idle);
+                        drop(shared);
                         slot.ctx.background.requested.store(true, Ordering::Release);
                         cell.schedule_remaining(&slot);
                     }

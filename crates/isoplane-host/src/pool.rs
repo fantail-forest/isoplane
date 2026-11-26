@@ -176,6 +176,11 @@ impl InstancePool {
         })
     }
 
+    /// Takes the warm instance acquisition would try first.
+    pub(crate) fn pop_idle(&self) -> Option<Arc<Slot>> {
+        self.warm.lock().slots.pop()
+    }
+
     /// Takes this warm instance for a dispatch, if it is still idle and
     /// `eligible`; [`InstancePool::release`] returns it.
     pub(crate) fn take_idle(
@@ -213,14 +218,18 @@ impl InstancePool {
         D: FnMut(&Arc<Slot>),
     {
         self.acquire_reserved(
+            None,
             |id| Ok(make_ctx(id)),
             &mut discard,
             |_| anyhow::bail!("this pool acquisition has no snapshot restoration provider"),
         )
     }
 
+    /// Reuses a warm instance, trying `first`, one already taken from the
+    /// pool, before the others, or activates one.
     pub(crate) fn acquire_reserved<F, D, R>(
         &self,
+        mut first: Option<Arc<Slot>>,
         make_ctx: F,
         mut discard: D,
         mut restore: R,
@@ -230,11 +239,11 @@ impl InstancePool {
         D: FnMut(&Arc<Slot>),
         R: FnMut(&Arc<Slot>) -> anyhow::Result<()>,
     {
-        let candidates = self.warm.lock().slots.len();
+        let candidates = self.warm.lock().slots.len() + usize::from(first.is_some());
         let mut restore_error = None;
         let mut unavailable = Vec::new();
         for _ in 0..candidates {
-            let candidate = self.warm.lock().slots.pop();
+            let candidate = first.take().or_else(|| self.pop_idle());
             let Some(slot) = candidate else { break };
             let source = {
                 let _execution = slot.lock_execution();

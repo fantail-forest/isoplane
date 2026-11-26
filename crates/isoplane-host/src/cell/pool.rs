@@ -434,13 +434,17 @@ pub(super) mod cell_tests {
         cell.register_module("acme", act, manifest("discarded-idle-cleanup"))
             .expect("register");
         let entry = cell.modules.read().get(&module).cloned().unwrap();
-        let (candidate, _) = cell.acquire_handler(&entry).expect("initial activation");
+        let (candidate, _) = cell
+            .acquire_handler(&entry, None)
+            .expect("initial activation");
         entry
             .pool
             .release(candidate.clone(), crate::disposition::warm())
             .expect("release");
         candidate.discard();
-        let (replacement, source) = cell.acquire_handler(&entry).expect("fallback activation");
+        let (replacement, source) = cell
+            .acquire_handler(&entry, None)
+            .expect("fallback activation");
         assert_eq!(
             source,
             AcquireSource::Activated,

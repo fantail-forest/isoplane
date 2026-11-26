@@ -22,18 +22,15 @@ impl Cell {
         let entry = job.completion.entry.clone();
 
         let t0 = Instant::now();
-        let mut held = false;
-        if matches!(job.target, Delivery::Handler { .. }) {
-            match self.join_shared(&entry, false) {
-                registry::Join::Unavailable { held: h } => held = h,
-                registry::Join::Joined(slot) => {
-                    self.start_shared(&slot, &entry, job);
-                    return;
-                }
+        let (idle, held) = match self.place(&entry) {
+            registry::Placement::Acquire { idle, held } => (idle, held),
+            registry::Placement::Joined(slot) => {
+                self.start_shared(&slot, &entry, job);
+                return;
             }
-        }
+        };
         let acquired = tracing::info_span!("acquire").in_scope(|| match &job.target {
-            Delivery::Handler { .. } => self.acquire_handler(&entry),
+            Delivery::Handler { .. } => self.acquire_handler(&entry, idle),
         });
         let (slot, src) = match acquired {
             Ok(v) => v,
@@ -111,11 +108,14 @@ impl Cell {
             return;
         }
         if joined && !slot.has_memory_for_join() {
+            let shared = entry.shared.lock();
             if self.release_reservation(slot.id) == 0 {
                 if slot.is_retiring() {
+                    drop(shared);
                     self.evict_instance(slot);
                 } else {
                     self.release_to_pool(entry, slot);
+                    drop(shared);
                     if slot.state() != LifecycleTier::Discarded {
                         self.watch_idle_timers(slot, entry);
                     }
@@ -1119,6 +1119,7 @@ impl Cell {
         did: u64,
         d: crate::disposition::Disposition,
     ) -> bool {
+        let shared = entry.shared.lock();
         let EndedDispatch {
             dispatch: _ended,
             remaining,
@@ -1130,6 +1131,19 @@ impl Cell {
             d
         };
         let keeps_instance = d.is_warm();
+        if remaining == 0 && keeps_instance {
+            self.rt.futures.release_idle(slot.id);
+            self.release_to_pool(entry, slot);
+            drop(shared);
+            if slot.state() == LifecycleTier::Discarded {
+                self.forget(slot);
+            } else {
+                self.watch_idle_timers(slot, entry);
+                self.schedule_remaining(slot);
+            }
+            return true;
+        }
+        drop(shared);
         if remaining > 0 {
             if keeps_instance {
                 return self.park_after_slice(slot, entry);
@@ -1146,18 +1160,7 @@ impl Cell {
             }
         }
 
-        if !keeps_instance {
-            self.evict_instance(slot);
-            return true;
-        }
-        self.rt.futures.release_idle(slot.id);
-        self.release_to_pool(entry, slot);
-        if slot.state() == LifecycleTier::Discarded {
-            self.forget(slot);
-        } else {
-            self.watch_idle_timers(slot, entry);
-            self.schedule_remaining(slot);
-        }
+        self.evict_instance(slot);
         true
     }
 }

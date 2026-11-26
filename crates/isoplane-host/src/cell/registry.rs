@@ -10,7 +10,11 @@ pub(super) struct ApplicationKey {
 pub(super) struct ModuleEntry {
     pub(super) instances: Arc<crate::admission::ApplicationInstances>,
     /// Instances that have had dispatches in progress, which a new dispatch
-    /// may join; pruned as they are found to have none.
+    /// may join; pruned as they are found to have none. Background work takes
+    /// an instance from the idle pool and lists it here under this lock,
+    /// finished work returns it under it, and a dispatch searches both under
+    /// it, so a dispatch arriving meanwhile finds the instance instead of
+    /// activating another.
     pub(super) shared: Mutex<Vec<Weak<Slot>>>,
     pub(super) tenant: String,
     pub(super) debug_occupancy_ms: Option<u32>,
@@ -86,6 +90,17 @@ pub(super) enum Join {
     },
 }
 
+/// Where a Handler dispatch begins.
+pub(super) enum Placement {
+    Joined(Arc<Slot>),
+    /// None had room. `idle` is an instance taken from the pool for
+    /// acquisition to try first; `held` is as for [`Join::Unavailable`].
+    Acquire {
+        idle: Option<Arc<Slot>>,
+        held: bool,
+    },
+}
+
 /// What [`Cell::remove_active`] removed.
 pub(super) struct RemovedDispatch {
     /// The dispatch, when it was still active.
@@ -129,7 +144,23 @@ impl Cell {
     /// for another, with a place reserved for it, so the instance is not
     /// released before the dispatch begins. Instances are tried oldest first.
     pub(super) fn join_shared(&self, entry: &ModuleEntry, allow_queued: bool) -> Join {
+        self.join_listed(&mut entry.shared.lock(), allow_queued)
+    }
+
+    /// An instance to join, as [`Cell::join_shared`] finds one, or else an
+    /// idle instance taken from the pool in the same step.
+    pub(super) fn place(&self, entry: &ModuleEntry) -> Placement {
         let mut shared = entry.shared.lock();
+        match self.join_listed(&mut shared, false) {
+            Join::Joined(slot) => Placement::Joined(slot),
+            Join::Unavailable { held } => Placement::Acquire {
+                idle: entry.pool.pop_idle(),
+                held,
+            },
+        }
+    }
+
+    fn join_listed(&self, shared: &mut Vec<Weak<Slot>>, allow_queued: bool) -> Join {
         let mut joined = None;
         let mut held = false;
         shared.retain(|candidate| {
@@ -213,7 +244,10 @@ impl Cell {
 
     /// Offers an instance that has begun a dispatch to later dispatches.
     pub(super) fn share(&self, entry: &ModuleEntry, slot: &Arc<Slot>) {
-        let mut shared = entry.shared.lock();
+        Self::list_shared(&mut entry.shared.lock(), slot);
+    }
+
+    pub(super) fn list_shared(shared: &mut Vec<Weak<Slot>>, slot: &Arc<Slot>) {
         if !shared
             .iter()
             .any(|candidate| std::ptr::eq(candidate.as_ptr(), Arc::as_ptr(slot)))
@@ -441,11 +475,14 @@ impl Cell {
         Arc::new(context)
     }
 
+    /// Reuses an idle instance, trying `idle` first, or activates one.
     pub(super) fn acquire_handler(
         self: &Arc<Self>,
         entry: &Arc<ModuleEntry>,
+        idle: Option<Arc<Slot>>,
     ) -> crate::Result<(Arc<Slot>, AcquireSource)> {
         let (slot, src) = entry.pool.acquire_reserved(
+            idle,
             |id| {
                 let limit = crate::admission::InstanceLimit(
                     entry.manifest.effective_limits().instances_per_application,
@@ -618,33 +655,35 @@ mod tests {
             entry
         };
         let old = register("tenant", "app", "v1");
-        let (first, _) = cell.acquire_handler(&old).expect("first activation");
-        let (second, _) = cell.acquire_handler(&old).expect("second activation");
+        let (first, _) = cell.acquire_handler(&old, None).expect("first activation");
+        let (second, _) = cell.acquire_handler(&old, None).expect("second activation");
         let new = register("tenant", "app", "v2");
         let failure = cell
-            .acquire_handler(&new)
+            .acquire_handler(&new, None)
             .err()
             .expect("another version's instances count");
         assert!(failure.is::<crate::admission::InstanceLimitReached>());
         let independent = register("other-tenant", "other-app", "v1");
-        assert!(cell.acquire_handler(&independent).is_ok());
+        assert!(cell.acquire_handler(&independent, None).is_ok());
         let retained_context = first.ctx.clone();
         cell.forget(&first);
         old.pool.release(first, evict()).expect("evict");
-        let (replacement, _) = cell.acquire_handler(&new).expect("discard frees capacity");
+        let (replacement, _) = cell
+            .acquire_handler(&new, None)
+            .expect("discard frees capacity");
         assert_ne!(replacement.id, retained_context.instance);
         new.pool
             .release(replacement.clone(), warm())
             .expect("release warm");
         let (reused, source) = cell
-            .acquire_handler(&new)
+            .acquire_handler(&new, None)
             .expect("warm reuse needs no reservation");
         assert_eq!(source, AcquireSource::WarmParked);
         assert_eq!(reused.id, replacement.id);
-        assert!(cell.acquire_handler(&new).is_err());
+        assert!(cell.acquire_handler(&new, None).is_err());
         cell.forget(&second);
         old.pool.release(second, evict()).expect("evict");
-        assert!(cell.acquire_handler(&new).is_ok());
+        assert!(cell.acquire_handler(&new, None).is_ok());
         cell.shutdown();
     }
 
@@ -665,18 +704,23 @@ mod tests {
         };
         let old = register("v1");
         let new = register("v2");
-        let (first, _) = cell.acquire_handler(&old).expect("first activation");
+        let (first, _) = cell.acquire_handler(&old, None).expect("first activation");
         assert!(
-            cell.acquire_handler(&new).is_err(),
+            cell.acquire_handler(&new, None).is_err(),
             "an acquired slot is not idle"
         );
         old.pool
             .release(first.clone(), warm())
             .expect("release warm");
-        let (second, _) = cell.acquire_handler(&new).expect("replace idle sibling");
+        let (second, _) = cell
+            .acquire_handler(&new, None)
+            .expect("replace idle sibling");
         assert_ne!(first.id, second.id);
         assert_eq!(first.state(), LifecycleTier::Discarded);
-        assert!(cell.acquire_handler(&old).is_err(), "the cap still applies");
+        assert!(
+            cell.acquire_handler(&old, None).is_err(),
+            "the cap still applies"
+        );
         cell.shutdown();
     }
 
