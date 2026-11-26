@@ -8,7 +8,7 @@ import semver from 'semver';
 
 const site = join(dirname(fileURLToPath(import.meta.url)), '..');
 const repository = join(site, '..', '..');
-const version = process.argv[2] ?? readFileSync(join(repository, 'Directory.Build.props'), 'utf8').match(/<Version>([^<]+)<\/Version>/)?.[1];
+const version = process.argv[2] ?? execFileSync('dotnet', ['msbuild', join(repository, 'Directory.Build.props'), '-nologo', '-getProperty:Version'], {encoding: 'utf8'}).trim();
 if (!semver.valid(version)) throw new Error(`"${version}" is not a release version.`);
 // A line is what a breaking release starts: each 0.x minor, then each major.
 const line = semver.major(version) < 1 ? `0.${semver.minor(version)}` : `${semver.major(version)}`;

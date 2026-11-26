@@ -23,16 +23,7 @@ fn prepared() -> PathBuf {
 /// The release version `Directory.Build.props` declares: the version every
 /// first-party package packs as unless a build overrides it.
 pub fn release_version() -> String {
-    let path = super::repo_root().join("Directory.Build.props");
-    let props = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("{} declares the release version: {e}", path.display()));
-    let (_, rest) = props
-        .split_once("<Version>")
-        .expect("Directory.Build.props declares <Version>");
-    let (version, _) = rest
-        .split_once("</Version>")
-        .expect("Directory.Build.props closes its <Version> element");
-    version.trim().to_owned()
+    super::msbuild_property(&super::repo_root().join("Directory.Build.props"), "Version")
 }
 
 /// A copy in `destination/app` of the handler application in

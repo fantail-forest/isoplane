@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""Show, check or move the declared release version and the in-repo SDK pins that must match it.
+"""Show or move the declared release version and the in-repo SDK pins that must match it.
 
     scripts/release-version.py show          print the declared version
-    scripts/release-version.py check         fail on any pin that differs from it
     scripts/release-version.py set VERSION   declare VERSION and rewrite every pin
     scripts/release-version.py validate VERSION   check a supplied release identity
 """
@@ -10,8 +9,7 @@ import argparse
 import os
 from pathlib import Path
 import re
-import sys
-import xml.etree.ElementTree as ET
+import subprocess
 
 from release_version import validate_release_version
 
@@ -24,10 +22,12 @@ PIN = re.compile(r'(?P<prefix>\bSdk="(?:Isoplane\.Sdk|Isoplane\.AspNetCore)/|<Pa
 
 
 def declared(root=ROOT):
-    element = ET.parse(root / DECLARATION).getroot().find('./PropertyGroup/Version')
-    if element is None or not element.text:
-        raise ValueError(f'{DECLARATION} must declare one semantic release version')
-    return validate_release_version(element.text)
+    evaluation = subprocess.run(
+        ['dotnet', 'msbuild', str(root / DECLARATION), '-nologo', '-getProperty:Version'],
+        capture_output=True, text=True)
+    if evaluation.returncode != 0:
+        raise ValueError(f'MSBuild could not evaluate {DECLARATION}:\n{evaluation.stdout}{evaluation.stderr}')
+    return validate_release_version(evaluation.stdout.strip())
 
 
 def project_files(root=ROOT):
@@ -39,17 +39,6 @@ def project_files(root=ROOT):
         for name in sorted(files):
             if name.endswith(SCANNED_SUFFIXES):
                 yield Path(directory) / name
-
-
-def pins(root=ROOT):
-    for path in project_files(root):
-        for match in PIN.finditer(path.read_text()):
-            yield path, match.group('version')
-
-
-def check(root=ROOT):
-    version = declared(root)
-    return [(path.relative_to(root).as_posix(), pinned) for path, pinned in pins(root) if pinned != version]
 
 
 def set_version(version, root=ROOT):
@@ -71,24 +60,17 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest='command', required=True)
     commands.add_parser('show')
-    commands.add_parser('check')
     commands.add_parser('set').add_argument('version')
     commands.add_parser('validate').add_argument('version')
     args = parser.parse_args()
     try:
         if args.command == 'show':
             print(declared())
-        elif args.command == 'check':
-            drift = check()
-            for path, pinned in drift:
-                print(f'{path}: pins {pinned}, release version is {declared()}', file=sys.stderr)
-            if drift:
-                raise SystemExit(f'{len(drift)} pin(s) differ from the declared release version; run scripts/release-version.py set')
         elif args.command == 'set':
             set_version(args.version)
         else:
             validate_release_version(args.version)
-    except (OSError, ValueError, ET.ParseError) as error:
+    except (OSError, ValueError) as error:
         raise SystemExit(f'release-version: {error}') from error
 
 

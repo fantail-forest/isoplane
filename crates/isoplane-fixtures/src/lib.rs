@@ -23,6 +23,24 @@ pub(crate) fn repo_root() -> PathBuf {
     repository_root(env!("CARGO_MANIFEST_DIR"))
 }
 
+/// The value MSBuild evaluates for `property` in `project`.
+pub(crate) fn msbuild_property(project: &Path, property: &str) -> String {
+    let output = std::process::Command::new("dotnet")
+        .arg("msbuild")
+        .arg(project)
+        .args(["-nologo", &format!("-getProperty:{property}")])
+        .output()
+        .unwrap_or_else(|e| panic!("run dotnet msbuild on {}: {e}", project.display()));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "MSBuild could not evaluate {}: {stdout}{}",
+        project.display(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    stdout.trim().to_owned()
+}
+
 /// The debugger test interpreter prepared by Task.
 pub fn debugger_python() -> PathBuf {
     prepared_path(
@@ -198,28 +216,13 @@ pub fn runtime_cache() -> PathBuf {
 /// same form a publish records beside its module.
 pub fn feed_runtime_identity(runtime: GuestRuntime) -> String {
     let props = guest_runtime_feed().join("Isoplane.GuestRuntime.props");
-    let text = std::fs::read_to_string(&props).unwrap_or_else(|e| {
-        panic!(
-            "{} is missing ({e}); build the runtime packs with guest-runtime/build.sh",
-            props.display()
-        )
-    });
-    let field = |name: &str| {
-        text.split(&format!("<{name}>"))
-            .nth(1)
-            .and_then(|rest| rest.split('<').next())
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| panic!("{} names no {name}", props.display()))
-            .to_string()
-    };
     let prefix = match runtime {
         GuestRuntime::Mono => "IsoplaneGuestRuntimePack",
     };
     format!(
         "{}@sha512:{}",
-        field(&format!("{prefix}Version")),
-        field(&format!("{prefix}Sha512"))
+        msbuild_property(&props, &format!("{prefix}Version")),
+        msbuild_property(&props, &format!("{prefix}Sha512"))
     )
 }
 

@@ -1,11 +1,7 @@
 version: '3'
 
 vars:
-  VERSION_SOURCE:
-    sh: cat Directory.Build.props
-  VERSION: '{{regexFind "<Version>[^<]+" .VERSION_SOURCE | trimPrefix "<Version>"}}'
   RELEASES: '{{.ROOT_DIR}}/.build/releases'
-  RELEASE: '{{.RELEASES}}/isoplane-{{.PLATFORM}}-{{.VERSION}}'
   NOTICES: '{{.ROOT_DIR}}/.build/clr-anycpu/notices'
   NATIVE_PACKAGES: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/release-packages'
 
@@ -42,6 +38,9 @@ tasks:
     deps: [':setup:release-python']
     requires:
       vars: [MODE]
+    vars:
+      VERSION: &version
+        sh: '"{{.DOTNET}}" msbuild Directory.Build.props -nologo -getProperty:Version'
     cmds:
       - '"{{.RELEASE_PYTHON}}" -B scripts/release-manifest.py shared "{{.ROOT_DIR}}" --packages "{{.PACKAGES}}" --managed "{{.MANAGED}}" --notices "{{.NOTICES}}" --version {{.VERSION}} --revision {{.REVISION}} {{if eq .MODE "write"}}--write{{end}}'
 
@@ -49,6 +48,9 @@ tasks:
     label: 'release:{{.PLATFORM}}:{{.VERSION}}:{{.RELEASES}}'
     desc: Assemble this platform's prepared NuGet packages
     deps: [shared, native-packages]
+    vars:
+      VERSION: *version
+      RELEASE: '{{.RELEASES}}/isoplane-{{.PLATFORM}}-{{.VERSION}}'
     sources:
       - '{{.PACKAGES}}/*.{{.VERSION}}.nupkg'
       - '{{.NATIVE_PACKAGES}}/*.{{.VERSION}}.nupkg'
@@ -63,7 +65,10 @@ tasks:
     cmds:
       - '"{{.DOTNET}}" msbuild taskfiles/Release.proj -nologo -t:StageRelease -p:Version={{.VERSION}} -p:SharedPackages="{{.PACKAGES}}" -p:NativePackages="{{.NATIVE_PACKAGES}}" -p:ReleaseDirectory="{{.RELEASE}}"'
       - '{{.PYTHON}} scripts/release-manifest.py release "{{.RELEASE}}" --platform {{.PLATFORM}} --version {{.VERSION}} --revision {{.REVISION}}'
-      - task: readme
+      - |
+        sed -e 's/@PACKAGE_VERSION@/{{.VERSION}}/g' -e 's/@RUNTIME_IDENTIFIER@/{{.PLATFORM}}/g' \
+          -e 's|@SDK_PREREQUISITES@|Install the .NET 10 SDK. On Ubuntu 24.04:\n\nsudo apt-get install -y dotnet-sdk-10.0|' \
+          scripts/developer-preview-readme.md > "{{.RELEASE}}/README.md"
 
   native-packages:
     internal: true
@@ -92,14 +97,6 @@ tasks:
       - sh: test -f "{{.RELEASE_NATIVE_LIBRARY}}"
         msg: 'ISOPLANE_RELEASE_NATIVE_ROOT is set, so the native library is packed as provided and not built, but {{.RELEASE_NATIVE_LIBRARY}} does not exist.'
 
-  readme:
-    internal: true
-    cmds:
-      - |
-        sed -e 's/@PACKAGE_VERSION@/{{.VERSION}}/g' -e 's/@RUNTIME_IDENTIFIER@/{{.PLATFORM}}/g' \
-          -e 's|@SDK_PREREQUISITES@|Install the .NET 10 SDK. On Ubuntu 24.04:\n\nsudo apt-get install -y dotnet-sdk-10.0|' \
-          scripts/developer-preview-readme.md > "{{.RELEASE}}/README.md"
-
   forks:
     desc: Check that each pinned fork commit has a release holding its build outputs
     cmds:
@@ -115,6 +112,7 @@ tasks:
     desc: Pack one package feed with native libraries from all three platforms
     deps: [shared]
     vars:
+      VERSION: *version
       PUBLICATION: '{{.RELEASES}}/publication-{{.VERSION}}'
     sources:
       - '{{.RELEASES}}/isoplane-*-{{.VERSION}}/release.json'
