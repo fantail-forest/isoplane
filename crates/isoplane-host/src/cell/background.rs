@@ -218,7 +218,6 @@ impl Cell {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cell::completion::test_events::Events;
     use crate::cell::pool::cell_tests::{app, cell, http};
     use crate::fakes::{FakeBehaviour, Step};
     use isoplane_abi::status::PollStatus;
@@ -229,8 +228,6 @@ mod tests {
             (PollStatus::Failed, "background_failed", 500),
             (PollStatus::Cancelled, "background_cancelled", 499),
         ] {
-            let events = Events::default();
-            let _trace = events.install();
             let cell = cell(CellConfig {
                 exec_threads: 0,
                 ..crate::fakes::cell_config("background-outcome")
@@ -260,11 +257,11 @@ mod tests {
             slot.ctx.background.requested.store(true, Ordering::Release);
             let _execution = slot.lock_execution();
             assert!(cell.run_background(&slot));
-            let records = events.records();
-            assert_eq!(records.len(), 2);
-            assert_eq!(records[1]["dispatch_kind"], "background");
-            assert_eq!(records[1]["outcome"], reason);
-            assert_eq!(records[1]["status"], status);
+            assert_eq!(
+                *cell.metrics_raw().dispatch_outcomes.lock(),
+                std::collections::BTreeMap::from([(("success", 200), 1), ((reason, status), 1)]),
+                "the request and the background work each end once, the work with its failure"
+            );
             assert_eq!(slot.state(), LifecycleTier::Parked);
             drop(_execution);
             cell.shutdown();

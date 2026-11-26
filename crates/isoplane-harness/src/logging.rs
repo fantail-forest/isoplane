@@ -63,18 +63,6 @@ impl LogCapture {
             .collect()
     }
 
-    /// An isolated JSON subscriber for a test that drives imports on its own thread.
-    pub fn dispatch(&self) -> tracing::Dispatch {
-        tracing::Dispatch::new(
-            tracing_subscriber::fmt()
-                .json()
-                .with_ansi(false)
-                .with_max_level(tracing::Level::TRACE)
-                .with_writer(self.clone())
-                .finish(),
-        )
-    }
-
     /// Installs one guest-event writer for tests whose cells run on other threads.
     pub fn global() -> &'static Self {
         static CAPTURE: OnceLock<LogCapture> = OnceLock::new();

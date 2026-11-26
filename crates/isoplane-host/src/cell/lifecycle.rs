@@ -1168,6 +1168,7 @@ mod tests {
     use crate::cell::pool::cell_tests::{app, cell, http};
     use crate::fakes::{FakeBehaviour, Step};
     use isoplane_test_support::wait_for;
+    use std::collections::BTreeMap;
 
     type Answer = std::sync::mpsc::Receiver<DispatchResult>;
 
@@ -1217,9 +1218,6 @@ mod tests {
 
     #[test]
     fn a_trap_in_the_slice_that_stops_for_a_departed_requester_discards_the_instance_once() {
-        use crate::cell::completion::test_events::Events;
-        let events = Events::default();
-        let _trace = events.install();
         let cell = cell(CellConfig {
             exec_threads: 0,
             ..crate::fakes::cell_config("departed-requester-trap")
@@ -1268,19 +1266,15 @@ mod tests {
             "nothing tried to park the discarded instance"
         );
         cell.shutdown();
-        let records = events.records();
-        assert_eq!(records.len(), 1, "one completion for the one dispatch");
         assert_eq!(
-            records[0]["outcome"], "request_cancelled",
-            "the requester's departure ended the dispatch before the trap"
+            *cell.metrics_raw().dispatch_outcomes.lock(),
+            BTreeMap::from([(("request_cancelled", 499), 1)]),
+            "the requester's departure ended the one dispatch before the trap"
         );
     }
 
     #[test]
     fn a_guest_that_answers_a_departed_requester_keeps_its_instance() {
-        use crate::cell::completion::test_events::Events;
-        let events = Events::default();
-        let _trace = events.install();
         let cell = cell(CellConfig {
             exec_threads: 0,
             ..crate::fakes::cell_config("departed-requester-answer")
@@ -1322,9 +1316,11 @@ mod tests {
         assert_eq!(cell.metrics().traps, 0, "no trap is counted");
         assert_eq!(cell.futures().live_futures(), 0);
         cell.shutdown();
-        let records = events.records();
-        assert_eq!(records.len(), 1, "one completion for the one dispatch");
-        assert_eq!(records[0]["outcome"], "request_cancelled");
+        assert_eq!(
+            *cell.metrics_raw().dispatch_outcomes.lock(),
+            BTreeMap::from([(("request_cancelled", 499), 1)]),
+            "one completion for the one dispatch"
+        );
     }
 
     /// Runs a dispatch on its own thread up to the slice `entered` reports,
@@ -1410,17 +1406,15 @@ mod tests {
 
     #[test]
     fn joins_queued_behind_the_last_slice_of_a_discarded_instance_are_all_refused() {
-        use crate::cell::completion::test_events::Events;
         use crate::cell::pool::cell_tests::manifest;
         use crate::fakes::FakeActivator;
-        let events = Events::default();
-        let _trace = events.install();
+        let events = crate::test_events::Events::new("discarded-with-joins");
         let cell = cell(CellConfig {
             exec_threads: 0,
             ..crate::fakes::cell_config("discarded-with-joins")
         });
         let (step, entered, release) = hold();
-        let module = ModuleId::new("discarded-with-joins", "v1");
+        let module = ModuleId::new(events.app(), "v1");
         // One instance at most, so the second join queues behind the first
         // rather than activating an instance of its own.
         let mut manifest = manifest("discarded-with-joins");
@@ -1548,9 +1542,6 @@ mod tests {
 
     #[test]
     fn an_instance_discarded_during_its_last_slice_is_not_pooled() {
-        use crate::cell::completion::test_events::Events;
-        let events = Events::default();
-        let _trace = events.install();
         let cell = cell(CellConfig {
             exec_threads: 0,
             ..crate::fakes::cell_config("discarded-mid-slice")
@@ -1581,16 +1572,15 @@ mod tests {
         );
         assert_eq!(cell.futures().live_futures(), 0);
         cell.shutdown();
-        let records = events.records();
-        assert_eq!(records.len(), 1, "one completion for the one dispatch");
-        assert_eq!(records[0]["outcome"], "success");
+        assert_eq!(
+            *cell.metrics_raw().dispatch_outcomes.lock(),
+            BTreeMap::from([(("success", 200), 1)]),
+            "one completion for the one dispatch"
+        );
     }
 
     #[test]
     fn a_refused_park_fails_the_dispatches_still_on_the_instance() {
-        use crate::cell::completion::test_events::Events;
-        let events = Events::default();
-        let _trace = events.install();
         let cell = cell(CellConfig {
             exec_threads: 0,
             ..crate::fakes::cell_config("refused-park")
@@ -1639,15 +1629,9 @@ mod tests {
         );
         assert_eq!(cell.futures().live_futures(), 0);
         cell.shutdown();
-        let mut outcomes: Vec<_> = events
-            .records()
-            .iter()
-            .map(|record| record["outcome"].as_str().expect("outcome").to_owned())
-            .collect();
-        outcomes.sort();
         assert_eq!(
-            outcomes,
-            ["instance_discarded", "success"],
+            *cell.metrics_raw().dispatch_outcomes.lock(),
+            BTreeMap::from([(("instance_discarded", 503), 1), (("success", 200), 1)]),
             "each dispatch completes exactly once"
         );
     }

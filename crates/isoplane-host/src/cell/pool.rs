@@ -178,9 +178,9 @@ impl Cell {
 /// Cell-level tests: what survives a host panic.
 #[cfg(test)]
 pub(super) mod cell_tests {
-    use super::super::completion::test_events::Events;
     use super::*;
     use crate::fakes::*;
+    use crate::test_events::Events;
     use isoplane_abi::config::{AppManifest, Bindings};
     use isoplane_test_support::wait_for;
 
@@ -292,7 +292,8 @@ pub(super) mod cell_tests {
             ..crate::fakes::cell_config("panic-dispatch")
         });
 
-        let bad = ModuleId::new("bad", "v1");
+        let events = Events::new("bad");
+        let bad = ModuleId::new(events.app(), "v1");
         cell.register_module(
             "acme",
             super::super::completion::tests::panic_activator(bad.clone()),
@@ -303,9 +304,8 @@ pub(super) mod cell_tests {
         let good = app(&cell, "good", FakeBehaviour::done());
 
         let route = |p: &str| Target::Handler { route: p.into() };
-        let events = Events::default();
-        let failed = events
-            .scope(|| cell.dispatch_blocking(&bad, route("/go"), http(1), Duration::from_secs(10)))
+        let failed = cell
+            .dispatch_blocking(&bad, route("/go"), http(1), Duration::from_secs(10))
             .expect("the caller must be answered, not left waiting");
         assert_eq!(failed.status, 500, "a host fault is a 500: {failed:?}");
         assert_eq!(
@@ -356,14 +356,16 @@ pub(super) mod cell_tests {
 
     #[test]
     fn a_refused_slot_entry_closes_its_attached_upload_scope() {
-        let events = Events::default();
-        let _trace = events.install();
         use crate::bindings::request_body::RequestBodyScope;
+        let events = Events::new("busy-upload");
         let cell = cell(CellConfig {
             exec_threads: 0,
             ..crate::fakes::cell_config("busy-upload")
         });
-        let act = Arc::new(FakeActivator::new(FakeBehaviour::done()));
+        let act = Arc::new(FakeActivator::named(
+            ModuleId::new(events.app(), "v1"),
+            FakeBehaviour::done(),
+        ));
         let module = act.module().clone();
         cell.register_module("acme", act, manifest("busy-upload"))
             .expect("register reusable guest");
@@ -499,8 +501,9 @@ pub(super) mod cell_tests {
 
     fn hibernated_dispatch(
         cell: &Arc<Cell>,
+        app: &str,
     ) -> (Arc<Slot>, std::sync::mpsc::Receiver<DispatchResult>, u64) {
-        let module = ModuleId::new("sleeping-io", "v1");
+        let module = ModuleId::new(app, "v1");
         let activator = Arc::new(ResumingActivator {
             initial: FakeActivator::named(
                 module.clone(),
@@ -556,11 +559,11 @@ pub(super) mod cell_tests {
             exec_threads: 0,
             ..crate::fakes::cell_config("restoring-io")
         });
-        let events = super::super::completion::test_events::Events::default();
+        let events = Events::new("restoring-io");
         let clock = Arc::new(AtomicU64::new(100));
         let observed = clock.clone();
         *cell.completion_clock.write() = Arc::new(move || Some(observed.load(Ordering::Relaxed)));
-        let (slot, response, future) = events.scope(|| hibernated_dispatch(&cell));
+        let (slot, response, future) = hibernated_dispatch(&cell, events.app());
         assert!(
             events.records().is_empty(),
             "capture must not complete a parked dispatch"
@@ -616,13 +619,12 @@ pub(super) mod cell_tests {
 
     #[test]
     fn a_missing_checkpoint_ends_its_pending_dispatch_and_releases_owned_work() {
-        let events = Events::default();
-        let _trace = events.install();
+        let events = Events::new("missing-checkpoint");
         let cell = cell(CellConfig {
             exec_threads: 0,
             ..crate::fakes::cell_config("missing-checkpoint")
         });
-        let (slot, response, future) = hibernated_dispatch(&cell);
+        let (slot, response, future) = hibernated_dispatch(&cell, events.app());
         slot.ctx.snapshot.lock().take();
         cell.futures()
             .complete(future, isoplane_abi::result::ResultRecord::Ok(vec![]));
@@ -735,7 +737,7 @@ pub(super) mod cell_tests {
 
     #[tokio::test]
     async fn a_streaming_dispatch_records_every_hot_slice_once_at_final_completion() {
-        let events = Events::default();
+        let events = Events::new("stream-occupancy");
         let cell = cell(crate::fakes::cell_config("stream-occupancy"));
         let mut behaviour = FakeBehaviour::program([
             Step::Park {
@@ -751,25 +753,22 @@ pub(super) mod cell_tests {
         ]);
         behaviour.slice_occupancy = Some(Duration::from_nanos(11));
         behaviour.response_streaming = true;
-        let module = app(&cell, "stream-occupancy", behaviour);
+        let module = app(&cell, events.app(), behaviour);
         let stream = crate::response_transport::ResponseTransport::new(1);
         let dispatch = {
             let cell = cell.clone();
             let module = module.clone();
             let stream = stream.clone();
-            let events = events.clone();
             tokio::task::spawn_blocking(move || {
-                events.scope(|| {
-                    cell.dispatch_with_stream(
-                        &module,
-                        Target::Handler {
-                            route: "/go".into(),
-                        },
-                        http(1),
-                        Duration::from_secs(10),
-                        Some(stream),
-                    )
-                })
+                cell.dispatch_with_stream(
+                    &module,
+                    Target::Handler {
+                        route: "/go".into(),
+                    },
+                    http(1),
+                    Duration::from_secs(10),
+                    Some(stream),
+                )
             })
         };
         let mut exchange = stream.exchange().await.expect("stream headers");
@@ -930,10 +929,11 @@ pub(super) mod cell_tests {
 
     #[test]
     fn a_dispatch_joins_only_an_instance_with_nothing_waiting_for_its_thread() {
+        let events = Events::new("join-rule");
         let cell = cell(crate::fakes::cell_config("join-rule"));
         let module = app(
             &cell,
-            "join-rule",
+            events.app(),
             FakeBehaviour::program([Step::Park {
                 imports: vec![("clock_deadline_in", 60_000)],
             }]),
@@ -961,9 +961,6 @@ pub(super) mod cell_tests {
         let slot = parked().expect("parked instance");
         let entry = cell.modules.read().get(&module).cloned().expect("entry");
 
-        // The dispatches made from here report their completions to this thread.
-        let events = Events::default();
-        let _trace = events.install();
         let job = |id: u64| {
             let (responder, answer) = std::sync::mpsc::sync_channel(1);
             let job = DispatchJob {

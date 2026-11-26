@@ -33,6 +33,8 @@ pub mod response;
 mod response_transport;
 mod sharded_map;
 pub mod slot;
+#[cfg(test)]
+mod test_events;
 pub mod threads;
 pub use activator::{EngineActivator, ReloadedTemplateDiffers, TemplateReload};
 pub use bindings::{CellBindings, InstanceCtx};

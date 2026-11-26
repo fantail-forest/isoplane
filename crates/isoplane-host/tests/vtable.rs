@@ -8,6 +8,7 @@ use isoplane_abi::result::{FetchResponse, FutureError, ResultRecord};
 use isoplane_engine::{HostBindings, ImportCall};
 
 use isoplane_harness::fakes::*;
+use isoplane_harness::logging::GuestLogs;
 use isoplane_host::bindings::{CellBindings, CellRuntime, InstanceCtx, Services, Tenancy};
 use isoplane_host::egress::HostEgressPolicy;
 use isoplane_host::futures::{FutureTable, INVALID_FUTURE};
@@ -190,9 +191,7 @@ async fn a_host_off_the_allowlist_is_refused() {
 
 #[tokio::test]
 async fn logging_enforces_the_dispatch_byte_limit() {
-    let capture = isoplane_harness::logging::LogCapture::default();
-    let dispatch = capture.dispatch();
-    let _subscriber = tracing::dispatcher::set_default(&dispatch);
+    isoplane_harness::logging::LogCapture::global();
     let mut v = vtable(
         isoplane_abi::config::Limits::default(),
         "93.184.216.34:80",
@@ -206,8 +205,8 @@ async fn logging_enforces_the_dispatch_byte_limit() {
             scalars: [2, 0, 0],
         });
     }
-    assert_eq!(capture.records().len(), 200);
-    let before = capture.records().len();
+    assert_eq!(v.ctx.logs().len(), 200);
+    let before = v.ctx.logs().len();
     let big = vec![b'y'; 256 * 1024];
     for _ in 0..4 {
         v.bindings.call_sync(ImportCall {
@@ -217,7 +216,7 @@ async fn logging_enforces_the_dispatch_byte_limit() {
         });
     }
     assert!(
-        capture.records().len() <= before + 1,
+        v.ctx.logs().len() <= before + 1,
         "the per-dispatch log byte cap did not bite"
     );
 }

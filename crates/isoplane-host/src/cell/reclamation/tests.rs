@@ -4,6 +4,7 @@ use crate::fakes::{FakeActivator, FakeBehaviour, Step};
 use crate::memory_pressure::{
     MemoryBytes, MemoryPressureError, MemoryPressureSource, MemorySample,
 };
+use crate::test_events::{Events, Recorded};
 use isoplane_hibernate::snapshot::{
     SnapshotBytes, SnapshotError, SnapshotReservation, SnapshotStorage,
 };
@@ -451,11 +452,10 @@ fn a_snapshot_write_failure_keeps_the_source_guest_resident() {
 
 #[test]
 fn storage_pressure_evicts_an_idle_snapshot_before_admitting_another_handler() {
-    let journal = TransitionJournal::default();
-    let _journal = journal.install();
+    let events = Events::new("cached");
     let storage = Storage::new(1);
     let cell = test_cell(storage.clone(), 0);
-    let cached = idle(&cell, "cached", 1);
+    let cached = idle(&cell, events.app(), 1);
     assert!(
         cell.reclaim_candidate(candidate(&cell, cached.id))
             .expect("cached capture"),
@@ -481,20 +481,20 @@ fn storage_pressure_evicts_an_idle_snapshot_before_admitting_another_handler() {
         1,
         "the new handler must own the reclaimed capacity"
     );
-    let evictions = journal.evictions();
+    let evictions = evictions(&events);
     assert_eq!(
         evictions.len(),
         1,
         "one successful idle eviction must emit one transition"
     );
     assert_eq!(
-        evictions[0]["target"], "isoplane_host::cell::transition",
+        evictions[0].target, "isoplane_host::cell::transition",
         "evictions must use the exported lifecycle target"
     );
     assert_eq!(
-        evictions[0]["fields"],
+        serde_json::Value::Object(evictions[0].fields.clone()),
         serde_json::json!({
-            "event": "instance_transition", "tenant": "acme", "app": "cached", "version": "v1",
+            "event": "instance_transition", "tenant": "acme", "app": events.app(), "version": "v1",
             "instance": cached.id.0, "previous": "hibernated", "current": "discarded", "cause": "storage_pressure",
         }),
         "eviction must report the established owner, actual resulting tier and cause"
@@ -503,11 +503,10 @@ fn storage_pressure_evicts_an_idle_snapshot_before_admitting_another_handler() {
 
 #[test]
 fn storage_pressure_cannot_evict_an_active_dispatch_snapshot() {
-    let journal = TransitionJournal::default();
-    let _journal = journal.install();
+    let events = Events::new("protected");
     let storage = Storage::new(1);
     let cell = test_cell(storage.clone(), 0);
-    let (active, response) = active(&cell, "protected", 1);
+    let (active, response) = active(&cell, events.app(), 1);
     assert!(
         cell.reclaim_candidate(candidate(&cell, active.id))
             .expect("active capture"),
@@ -533,7 +532,7 @@ fn storage_pressure_cannot_evict_an_active_dispatch_snapshot() {
         "storage pressure must preserve active ownership"
     );
     assert!(
-        journal.evictions().is_empty(),
+        evictions(&events).is_empty(),
         "refusing to evict an active snapshot must not emit a discarded transition"
     );
     assert!(
@@ -645,48 +644,16 @@ fn a_node_coordinator_exclusively_owns_handler_pressure_sampling() {
     );
 }
 
-#[derive(Clone, Default)]
-struct TransitionJournal(Arc<std::sync::Mutex<Vec<u8>>>);
-
-impl std::io::Write for TransitionJournal {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0
-            .lock()
-            .expect("journal lock")
-            .extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-impl TransitionJournal {
-    fn install(&self) -> tracing::dispatcher::DefaultGuard {
-        let journal = self.clone();
-        let subscriber = tracing_subscriber::fmt()
-            .json()
-            .with_writer(move || journal.clone())
-            .finish();
-        tracing::dispatcher::set_default(&tracing::Dispatch::new(subscriber))
-    }
-
-    fn evictions(&self) -> Vec<serde_json::Value> {
-        self.0
-            .lock()
-            .expect("journal lock")
-            .split(|byte| *byte == b'\n')
-            .filter(|line| !line.is_empty())
-            .map(|line| {
-                serde_json::from_slice::<serde_json::Value>(line).expect("structured journal")
-            })
-            .filter(|event| {
-                event["fields"]["event"] == "instance_transition"
-                    && event["fields"]["cause"] == "storage_pressure"
-            })
-            .collect()
-    }
+fn evictions(events: &Events) -> Vec<Recorded> {
+    events
+        .recorded()
+        .into_iter()
+        .filter(|event| {
+            let field = |name| event.fields.get(name).and_then(serde_json::Value::as_str);
+            field("event") == Some("instance_transition")
+                && field("cause") == Some("storage_pressure")
+        })
+        .collect()
 }
 
 #[test]

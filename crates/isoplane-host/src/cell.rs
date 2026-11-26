@@ -223,6 +223,8 @@ impl Cell {
         services: Arc<Services>,
         snapshots: Arc<dyn isoplane_hibernate::snapshot::SnapshotStorage>,
     ) -> crate::Result<Arc<Self>> {
+        #[cfg(test)]
+        crate::test_events::install();
         cfg.hibernate.validate()?;
         anyhow::ensure!(
             cfg.response_queue_bytes > 0,
