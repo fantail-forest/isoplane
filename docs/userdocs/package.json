@@ -15,9 +15,8 @@
     "search:deploy": "search/deploy.sh",
     "clear": "docusaurus clear",
     "generate:reference": "task --dir ../.. managed:reference",
-    "check:reference": "task --dir ../.. managed:reference -- --check",
     "prestart": "task --dir ../.. docs:limits",
-    "prebuild": "task --dir ../.. docs:limits && pnpm run check:reference",
+    "prebuild": "task --dir ../.. docs:limits && pnpm run generate:reference",
     "snapshot": "node scripts/snapshot.mjs"
   },
   "dependencies": {

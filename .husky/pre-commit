@@ -1,0 +1,2 @@
+# Husky runs this before each commit. lint-staged.config.mjs says what happens to the staged files.
+lint-staged --concurrent false --hide-all

@@ -73,3 +73,6 @@ docs/userdocs/search/.work/
 docs/userdocs/search/snapshot/
 docs/userdocs/search/.env
 docs/userdocs/.dev.vars
+
+# The root package holds the Git hooks.
+/node_modules/

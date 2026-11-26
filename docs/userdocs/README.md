@@ -25,7 +25,8 @@ leaves GTM out. The file is ignored by Git. Rebuild after changing the value.
 The site is served at `https://isoplane.dev/docs/` by its own Cloudflare Worker,
 `isoplane-docs`. `pnpm run deploy:prod` builds the site, builds its search index
 (`pnpm run search:index`), and deploys the search server and then the site
-(`pnpm run search:deploy`). Authenticate the Fly and Wrangler CLIs before deploying.
+(`pnpm run search:deploy`). The deployment stops before it reaches Fly if the working
+tree differs from its commit, as it does when the build regenerated a stale reference page. Authenticate the Fly and Wrangler CLIs before deploying.
 
 The site permits indexing and generates a sitemap at `/docs/sitemap.xml`.
 
@@ -58,7 +59,7 @@ internal paths, repository build steps and unvalidated future commands out of
 the guide. Both links and anchors are checked by the static build.
 
 Starting or building the site generates the local limits table through Task and
-Cargo. Building also checks the retained SDK reference against the .NET assemblies.
+Cargo. Building also regenerates the SDK reference from the .NET assemblies.
 
 ## Versions
 

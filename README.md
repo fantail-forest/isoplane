@@ -61,7 +61,9 @@ and API references. SDK packages are published as `Isoplane.*` on NuGet.
 ## Building and testing
 
 Task prepares build dependencies and test fixtures; Cargo and MSBuild compile them.
-Install Task, rustup 1.28 or later, Python 3.11 or later and your platform's C compiler.
+Install Task, rustup 1.28 or later, Python 3.11 or later, your platform's C compiler,
+Node.js 26 and Corepack. Node.js 26 is the current LTS release and does not include
+Corepack; install it with `npm install --global corepack`.
 On Windows, install MSYS2 at `C:\msys64` and the Visual Studio C++ Build Tools
 with x64/x86 tools, ATL, CMake and the C++ redistributable. The exact Visual
 Studio component IDs are in [windows-build-components.json](scripts/windows-build-components.json).
@@ -75,10 +77,11 @@ task build
 task test -- -- --skip a_prepared_release_
 ```
 
-Setup installs the pinned .NET SDK and guest tools. Platform runtime builds run
+Setup installs the pinned .NET SDK and guest tools. Running any Task target uses
+Corepack to register the repository's Git hooks. Platform runtime builds run
 on Linux; customer applications compile to IL packages for that shared runtime.
-`rust-toolchain.toml` selects the Rust toolchain and `global.json` the
-contributor .NET SDK. [tools.env](tools.env) pins the other development tools,
+`rust-toolchain.toml` selects the Rust toolchain, `global.json` the
+contributor .NET SDK and `.node-version` the Node.js release. [tools.env](tools.env) pins the other development tools,
 and [guest-runtime/manifest.env](guest-runtime/manifest.env) the wasi-sdk
 release. The `MINIMUM_DOTNET_SDK_VERSION` pin in `tools.env` selects the oldest
 supported customer SDK for the Linux Hot Reload and release installation checks.

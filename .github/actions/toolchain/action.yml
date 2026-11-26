@@ -34,6 +34,17 @@ runs:
           echo ISOPLANE_TELEMETRY_OPTOUT=1
           echo DOTNET_NOLOGO=1
         } >> "$GITHUB_ENV"
+    - name: Install Node
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+      with: {node-version-file: .node-version}
+    - name: Provide the pnpm that package.json pins, which every Task run uses to register the Git hooks
+      shell: bash
+      run: |
+        # Node.js 25 and later do not include Corepack. Its package also declares yarn, which the
+        # Windows image already has in npm's global directory, so Corepack is installed in a
+        # directory of its own and links pnpm alone into the tools directory.
+        npm install --prefix "$RUNNER_TEMP/corepack" "corepack@$COREPACK_VERSION"
+        "$RUNNER_TEMP/corepack/node_modules/.bin/corepack" enable --install-directory "$RUNNER_TEMP/isoplane-tools" pnpm
     - name: Install the pinned Rust toolchain
       if: inputs.rust == 'true'
       shell: bash

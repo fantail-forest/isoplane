@@ -1,0 +1,16 @@
+{
+  "name": "isoplane-repository",
+  "private": true,
+  "description": "Git hooks for the Isoplane repository",
+  "scripts": {
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "husky": "9.1.7",
+    "lint-staged": "17.6.2"
+  },
+  "engines": {
+    "node": ">=22.22.1"
+  },
+  "packageManager": "pnpm@12.11.2"
+}

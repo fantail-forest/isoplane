@@ -10,6 +10,12 @@ vars:
   USER_HOME: '{{env "HOME" | default (env "USERPROFILE")}}'
   DOTNET: '{{env "DOTNET_ROOT" | default (printf "%s/.dotnet" .USER_HOME)}}/dotnet{{if eq OS "windows"}}.exe{{end}}'
   PATH_SEPARATOR: '{{if eq OS "windows"}};{{else}}:{{end}}'
+  # Task evaluates this on every run, so running any task registers the Git hooks: installing the
+  # root package runs Husky.
+  GIT_HOOKS:
+    sh: |
+      command -v pnpm >/dev/null || { mkdir -p "{{.USER_HOME}}/.local/bin" && corepack enable --install-directory "{{.USER_HOME}}/.local/bin" pnpm; } &&
+      pnpm install --frozen-lockfile
   DEFAULT_PYTHON:
     # MSYS2's Python uses a POSIX virtualenv layout; the Windows launcher selects native Python.
     sh: '{{if and (eq OS "windows") (not .ISOPLANE_PYTHON)}}py -3 -c "import pathlib, sys; print(pathlib.Path(sys.executable).as_posix())"{{else}}printf python3{{end}}'
@@ -45,7 +51,8 @@ vars:
   FEED: '{{.ISOPLANE_TEST_RUNTIME_FEED | default (printf "%s/.build/wasm32/runtime/feed" .ROOT_DIR)}}'
 
 env:
-  PATH: '{{.USER_HOME}}/.dotnet{{.PATH_SEPARATOR}}{{.USER_HOME}}/.cargo/bin{{.PATH_SEPARATOR}}{{.USER_HOME}}/.local/bin{{.PATH_SEPARATOR}}{{if eq OS "windows"}}C:/msys64/mingw64/bin;C:/msys64/usr/bin;{{end}}{{env "PATH"}}'
+  # Task also gives this to the shell that evaluates the variables above, before they have values, so it names none of them.
+  PATH: '{{env "HOME" | default (env "USERPROFILE")}}/.dotnet{{if eq OS "windows"}};{{else}}:{{end}}{{env "HOME" | default (env "USERPROFILE")}}/.cargo/bin{{if eq OS "windows"}};{{else}}:{{end}}{{env "HOME" | default (env "USERPROFILE")}}/.local/bin{{if eq OS "windows"}};{{else}}:{{end}}{{if eq OS "windows"}}C:/msys64/mingw64/bin;C:/msys64/usr/bin;{{end}}{{env "PATH"}}'
   DOTNET_ROOT: '{{env "DOTNET_ROOT" | default (printf "%s/.dotnet" .USER_HOME)}}'
   # A Release build of the CLI sends telemetry, and tests run one; every task and development shell opts out.
   ISOPLANE_TELEMETRY_OPTOUT: '1'
@@ -82,6 +89,7 @@ includes:
   clean: taskfiles/clean.yml
   managed: taskfiles/managed.yml
   fixtures: taskfiles/fixtures.yml
+  generate: taskfiles/generate.yml
   runtime: taskfiles/runtime.yml
   native: taskfiles/native.yml
   test: taskfiles/test.yml

@@ -50,6 +50,8 @@ cargo metadata --no-deps --format-version 1 \
 | **wasi-sdk, wasm-tools** | `guest-runtime/manifest.env`, `tools.env`                       | The C# guest linker and the wasm inspection tool.                                                                                                |
 | **Lint**                 | `task lint:gate`                                        | Full Rust gate before merging or releasing code changes; lint affected packages (`task lint -- -p <name>`) during development. See the validation workflow. |
 | **Format**               | `rustfmt.toml` (root and `guests/`)                     | Check affected workspaces during development; `task format:check` is the full format gate. Default rustfmt settings, without `#[rustfmt::skip]`. |
+| **Generated files**      | `taskfiles/generate.yml`                                 | One task per generator of a committed file. `task generate` runs them all. |
+| **Git hooks**            | `.husky/`, `lint-staged.config.mjs`, `package.json`      | Husky runs lint-staged before each commit. `lint-staged.config.mjs` says what runs: `rustfmt` on staged Rust sources, then `task generate`, whose changes join the commit. Change hook behaviour there. Husky is the only thing that manages this repository's Git hooks. Running any Task target registers them, and fails while Node or Corepack is missing. Corepack supplies the pinned pnpm. |
 | **Tests**                | `task test`, `task test:unit`, `task test:rust`         | The test tasks prepare their prerequisites before running `cargo test`. Fixture helpers resolve and load prepared artifacts. |
 | **Database**             | PostgreSQL for relational integrations | Use the PostgreSQL protocol. Local PostgreSQL containers are suitable for tests. See the relational-storage opinion. |
 | **HTTP**                 | hyper 1, tokio                                          |                                                                                                                                                  |
@@ -69,6 +71,7 @@ task build                                         # Build crates, tests, exampl
 task lint:gate                                     # The Rust lint gate
 task lint -- -p <name>                             # Lint one package
 task format                                        # Format both workspaces; task format:check is the gate
+task generate                                      # Regenerate every committed generated file
 
 task test -- -- --skip a_prepared_release_ # Rust suite without the installation journey
 task test                                          # Requires a prepared release for the installation journey

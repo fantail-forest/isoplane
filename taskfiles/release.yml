@@ -21,10 +21,29 @@ tasks:
   shared:build:
     internal: true
     cmds:
+      # The packages compile and carry generated files, so generate them first. Building the
+      # native library writes its C# declarations.
+      - task: native-library
+      - task: ':generate:abi'
+      - task: ':generate:reference'
       - task: ':managed:packages'
       - task: ':notices:prepared'
       - task: shared:validate
         vars: {MODE: write}
+
+  unmodified:
+    desc: Fail if the working tree differs from its commit, as it does once code generation has found stale files
+    silent: true
+    cmds:
+      # The flags fix what status reports whatever the user's Git configuration says. A submodule
+      # counts when it is at another commit than the pinned one, not for files a build left in it.
+      - |
+        changed="$(git status --porcelain --untracked-files=all --ignore-submodules=dirty)"
+        if [ -n "$changed" ]; then
+          echo "The working tree differs from its commit after code generation, so the commit's generated files were stale or the tree was not clean to begin with. Run 'task generate', commit the result and release that commit." >&2
+          echo "$changed" >&2
+          exit 1
+        fi
 
   shared:available:
     internal: true

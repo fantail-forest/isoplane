@@ -17,6 +17,10 @@ fi
 app="$(sed -n 's/^app = "\(.*\)"$/\1/p' fly.toml)"
 version="$(cat snapshot/VERSION)" || { echo "no snapshot; run pnpm run search:index first" >&2; exit 1; }
 
+# Nothing is deployed from a tree that differs from its commit, as it does when the site build
+# regenerated a stale reference page.
+task --dir "$(git rev-parse --show-toplevel)" release:unmodified
+
 fly apps list --quiet | grep -qx "$app" || fly apps create "$app" --yes
 
 # The admin key is generated once and never read by anything in this repo;
