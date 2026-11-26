@@ -32,7 +32,7 @@ tasks:
   pins:
     desc: Check that every pinned fork commit is on its fork's isoplane-revisions branch
     cmds:
-      - bash scripts/check-fork-pins
+      - bash scripts/check-fork-pins {{.CLI_ARGS}}
 
   native:
     desc: Compile and test native SDK support on the current operating system
