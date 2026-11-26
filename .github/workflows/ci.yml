@@ -159,22 +159,35 @@ jobs:
       suites: ${{ (needs.changes.outputs.managed == 'true' || needs.changes.outputs.editor == 'true' || needs.changes.outputs.journeys == 'true' || github.event_name == 'workflow_dispatch') && '["sdk"]' || '[]' }}
 
   pins:
-    name: Fork pins have landed
+    name: Fork pin status
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read
+      statuses: write
     steps:
       # A pull request's checkout merges it into its base, which is the merge's first parent.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with: {persist-credentials: false, fetch-depth: 2}
       - uses: ./.github/actions/toolchain
         with: {rust: 'false'}
-      - env:
+      # An unlanded pin leaves the fork-pins status pending rather than failing the job.
+      - name: Post the fork-pins status
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: task ci:pins -- --base HEAD^1 --status ${{ github.event.pull_request.head.sha }}
+      # A pull request from a fork of Isoplane gets a read-only token, and pushes and manual runs
+      # have no pull request, so neither can post the status; the job fails while a pin has not landed.
+      - name: Check that the fork pins have landed
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+        env:
           GH_TOKEN: ${{ github.token }}
         run: task ci:pins ${{ github.event_name == 'pull_request' && '-- --base HEAD^1' || '' }}
 
   required:
     name: CI passed
-    needs: [changes, tooling, rust, native, managed, docs, editor, runtime, integration, pins]
+    needs: [changes, tooling, rust, native, managed, docs, editor, runtime, integration]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5

@@ -144,10 +144,14 @@ The debugger builds on a fork of Mono's `debugger-libs`, pinned by the
 `tools/debugger-libs` submodule. The managed build compiles it from source, so
 that fork has no build or release of its own.
 
-**Fork pins have landed** fails until every pinned fork commit is on its fork's
-`isoplane-revisions` branch, so the suites run against unlanded commits and the
-merge waits for them. A fork pull request is squash merged, which gives its
-change a new commit on `isoplane-revisions`. The fork then notifies Isoplane.
+The `fork-pins` commit status on a pull request stays pending until every
+pinned fork commit is on its fork's `isoplane-revisions` branch, and its
+description names the forks whose pins are not. The suites run against unlanded
+commits meanwhile, and **CI passed** does not wait for the pins. A pull request
+from a fork of Isoplane cannot post the status, so there, as on pushes and
+manual runs, the **Fork pin status** job fails instead while a pin has not
+landed. A fork pull request is squash merged, which gives its change a new
+commit on `isoplane-revisions`. The fork then notifies Isoplane.
 [Move fork pins](.github/workflows/move-fork-pins.yml) runs
 `scripts/move-fork-pins` on every open Isoplane pull request. It commits a move
 to the new commit wherever a pin is the head commit of a merged fork pull
@@ -158,9 +162,9 @@ show that. A pin the pull request did not move stays. An OpenSSL move also needs
 as its `OPENSSL_REVISION`, which the script reports and does not do.
 
 In a stack of pull requests, only the pull request that changed a pin gets
-the move. Those above it take the pin from their base branch, and their
-**Fork pins have landed** check says that the pin comes from the base. They
-pick up the move when the stack is rebased, with `gh stack rebase` and
+the move. Those above it take the pin from their base branch, and the run
+linked from their `fork-pins` status says that the pin comes from the base.
+They pick up the move when the stack is rebased, with `gh stack rebase` and
 `gh stack push`, or by GitHub after the pull request below merges. A rebase
 replaces each commit, so the original signatures do not carry over.
 `gh stack rebase` signs the new commits as the Git configuration of whoever
