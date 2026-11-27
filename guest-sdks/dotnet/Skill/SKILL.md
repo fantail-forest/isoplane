@@ -27,7 +27,7 @@ packages this project uses.
 3. **Template initialization prepares shared state; instance start runs in every instance.**
    `Template.Initializing` or a `[TemplateInitializer]` method runs before the
    template is captured, so what it leaves in memory is in every instance.
-   Preparation may retry initialization; reusing a prepared template skips it.
+   Each preparation runs it again; reusing a prepared template skips it.
    `Instance.Starting` or an `[InstanceStart]` method runs as each instance
    starts: an open connection or a value that must differ between instances
    belongs there.

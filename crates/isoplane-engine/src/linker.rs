@@ -86,8 +86,7 @@ fn define(l: &mut Linker<StoreState>, def: &'static ImportDef) -> Result<()> {
 }
 
 fn invoke(c: &mut Caller<'_, StoreState>, def: &'static ImportDef, raw: &[u64]) -> Result<u64> {
-    // Refuse this call before its side effect. Earlier permitted initialization
-    // I/O is not undone when preparation retries a deferred unit.
+    // Refuse this call before its side effect.
     if c.data().is_init_sandbox()
         && !def.init_visible
         && !c.data().init_runtime_capability(def.name)

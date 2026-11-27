@@ -34,8 +34,6 @@ impl BuildRequest {
                 sandbox: initialization.sandbox,
                 occupancy_ms: initialization.occupancy_ms,
                 wall_ms: initialization.wall_ms,
-                #[cfg(feature = "rust-guests")]
-                max_passes: 1,
                 log_bytes: initialization.log_bytes,
             },
             input_hash: self.input_hash,

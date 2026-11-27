@@ -12,8 +12,6 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 
 thread_local! {
     static NEXT_ID: Cell<u64> = const { Cell::new(1) };
-    /// Unit ids the "host" has already learned are impure.
-    static DEFERRED: RefCell<Vec<i64>> = const { RefCell::new(Vec::new()) };
     /// The init-visible config blob this deploy supplies.
     static CONFIG: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
     /// Bytes an `Out(_)` import "wrote into guest memory". Host builds cannot
@@ -44,11 +42,6 @@ impl StubHost {
             v
         })
     }
-    /// Mark a pre-init unit as one the host discovered was impure on a
-    /// previous pass, so the replay must skip it.
-    pub fn defer_unit(&self, id: i64) {
-        DEFERRED.with(|d| d.borrow_mut().push(id));
-    }
 
     /// Supply the init-visible config blob the sealed init sandbox will
     /// serve. Local preparation encodes it as JSON `[(name, value), ..]`.
@@ -76,7 +69,6 @@ pub fn with_stub_host<R>(f: impl FnOnce(&StubHost) -> R) -> R {
     let guard = lock().lock().unwrap_or_else(|e| e.into_inner());
     CALLS.with(|c| c.borrow_mut().clear());
     NEXT_ID.with(|c| c.set(1));
-    DEFERRED.with(|d| d.borrow_mut().clear());
     CONFIG.with(|c| c.borrow_mut().clear());
     OUT.with(|o| o.borrow_mut().clear());
     // The executor and the pre-init state are module-globals; start every
@@ -105,10 +97,6 @@ pub(crate) fn stub_call(name: &'static str, args: &[i64]) -> i64 {
     // about: it is the response handle `PollStatus::Done` carries.
     if name == "resp_new" {
         return RESP_HANDLE;
-    }
-    // Pre-init replay: non-zero means "this unit is deferred, skip it".
-    if name == "init_unit_deferred" {
-        return DEFERRED.with(|d| i64::from(d.borrow().contains(&args[0])));
     }
     // Config blob: write up to `cap` bytes, return the FULL length so a
     // zero-length probe sizes the buffer. Mirrors the host in

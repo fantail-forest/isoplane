@@ -1,6 +1,6 @@
 //! Runs the initialization contract through the same engine used by workers.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -23,14 +23,11 @@ pub struct Initialization {
     pub runtime_config: Vec<u8>,
     /// Policy selected by the caller; it is never widened by preparation.
     pub sandbox: InitSandbox,
-    /// Total initialization occupancy budget across replay passes.
+    /// Total initialization occupancy budget.
     pub occupancy_ms: u32,
-    /// Total initialization wall backstop, including asynchronous waits and replay passes.
+    /// Total initialization wall backstop, including asynchronous waits.
     pub wall_ms: u32,
-    /// Maximum replay passes before refusal.
-    #[cfg(feature = "rust-guests")]
-    pub max_passes: u32,
-    /// Maximum retained guest log bytes across a successful pass.
+    /// Maximum retained guest log bytes.
     pub log_bytes: usize,
 }
 
@@ -47,8 +44,6 @@ impl Initialization {
             sandbox,
             occupancy_ms: crate::preinit::DEFAULT_INITIALIZATION_OCCUPANCY_MS,
             wall_ms: crate::preinit::DEFAULT_INITIALIZATION_WALL_MS,
-            #[cfg(feature = "rust-guests")]
-            max_passes: crate::preinit::DEFAULT_INITIALIZATION_PASSES,
             log_bytes: crate::preinit::DEFAULT_INITIALIZATION_LOG_BYTES,
         }
     }
@@ -76,24 +71,16 @@ impl Initialization {
     }
 }
 
-/// What initialization observed and the replay state it leaves.
+/// What initialization observed.
 #[derive(Serialize, Deserialize)]
 pub struct Initialized {
-    /// Units deferred because they requested forbidden capabilities.
-    pub deferred: Vec<u32>,
-    /// Preparation occupancy across compilation, replay and verification, excluding idle I/O waits.
+    /// Preparation occupancy across compilation, initialization and verification, excluding idle I/O waits.
     pub preparation_occupancy_ns: u64,
-    /// The capability each deferred unit attempted.
-    pub deferred_reasons: Vec<(u32, String)>,
-    /// Forbidden capability attempts across replay passes.
-    pub capability_refusals: u32,
-    /// Runtime capabilities answered on the successful pass.
+    /// Runtime capabilities initialization was answered.
     pub pal_calls: Vec<(String, u32)>,
-    /// Seed reads on the successful pass.
+    /// Seed reads during initialization.
     pub seed_reads: u32,
-    /// Number of passes executed.
-    pub passes: u32,
-    /// Bounded log output from the successful pass.
+    /// Bounded log output from initialization.
     pub logs: Vec<String>,
     /// Whether preparation compiled the submitted module rather than reusing the supplied cache's compilation.
     pub compiled: bool,
@@ -104,7 +91,7 @@ pub struct Initialized {
 pub struct InitializedModule {
     /// Portable initialized module; its init export is removed.
     pub wasm: Vec<u8>,
-    /// What initialization observed and the replay state it leaves.
+    /// What initialization observed.
     pub initialized: Initialized,
 }
 
@@ -296,12 +283,6 @@ pub(crate) fn initialize_with_cache(
             "initialization limits must be positive",
         ));
     }
-    #[cfg(feature = "rust-guests")]
-    if request.max_passes == 0 {
-        return Err(PrepareError::InvalidRequest(
-            "initialization limits must be positive",
-        ));
-    }
     let occupancy_start_ns = preparation_occupancy()?;
     let (template, instrumented, compiled) = load(engine, cache, application_files, &capture)?;
     let reactor = request
@@ -317,352 +298,283 @@ pub(crate) fn initialize_with_cache(
     let initialization_start = Instant::now();
     let mut usage = InitializationUsage::default();
     let permits_entropy = !matches!(capture, CaptureMode::RuntimeBaseline { .. });
-    let mut run_pass = |pass: u32, replay: &mut Replay| -> Result<Pass, PrepareError> {
-        let io = match (&request.network, &reactor) {
-            (Some(network), Some(reactor)) => {
-                let _entered = reactor.enter();
-                Some(Arc::new(network.start(reactor.handle().clone())?))
-            }
-            _ => None,
-        };
-        let state = Arc::new(Mutex::new(Sandbox::new(
-            request,
-            #[cfg(feature = "rust-guests")]
-            replay.deferred.clone(),
-        )));
-        let mut instance = engine
-            .activate_initialization(
-                &template,
-                Box::new(Bindings {
-                    state: state.clone(),
-                    io: io.clone(),
-                    memory_limit_bytes,
-                    permits_entropy,
-                }),
-            )
-            .map_err(PrepareError::State)?;
-        if matches!(capture, CaptureMode::RuntimeBaseline { .. })
-            && (!template.has_initialize() || !instance.has_initialize_runtime())
-        {
-            return Err(PrepareError::InvalidRequest(
-                "a runtime baseline requires both initialization exports",
-            ));
+    let io = match (&request.network, &reactor) {
+        (Some(network), Some(reactor)) => {
+            let _entered = reactor.enter();
+            Some(Arc::new(network.start(reactor.handle().clone())?))
         }
-        if template.has_initialize() {
-            let host = io.as_deref().zip(reactor.as_ref());
-            let (first, then) = capture.stages();
-            let mut outcome = run_stage(
+        _ => None,
+    };
+    let state = Arc::new(Mutex::new(Sandbox::new(request)));
+    let mut instance = engine
+        .activate_initialization(
+            &template,
+            Box::new(Bindings {
+                state: state.clone(),
+                io: io.clone(),
+                memory_limit_bytes,
+                permits_entropy,
+            }),
+        )
+        .map_err(PrepareError::State)?;
+    if matches!(capture, CaptureMode::RuntimeBaseline { .. })
+        && (!template.has_initialize() || !instance.has_initialize_runtime())
+    {
+        return Err(PrepareError::InvalidRequest(
+            "a runtime baseline requires both initialization exports",
+        ));
+    }
+    if template.has_initialize() {
+        let host = io.as_deref().zip(reactor.as_ref());
+        let (first, then) = capture.stages();
+        let mut outcome = run_stage(
+            &mut instance,
+            first,
+            request,
+            host,
+            initialization_start,
+            &mut usage,
+        )?;
+        if let Some(then) = then.filter(|_| outcome.completion == Completion::Done) {
+            outcome = run_stage(
                 &mut instance,
-                first,
+                then,
                 request,
                 host,
                 initialization_start,
                 &mut usage,
             )?;
-            if let Some(then) = then.filter(|_| outcome.completion == Completion::Done) {
-                outcome = run_stage(
-                    &mut instance,
-                    then,
-                    request,
-                    host,
-                    initialization_start,
-                    &mut usage,
-                )?;
+        }
+        initialization_budget(request, usage.occupancy_ns, initialization_start.elapsed())?;
+        if outcome.completion != Completion::Done {
+            if matches!(capture, CaptureMode::RuntimeBaseline { .. })
+                && (instance.last_capability_violation().is_some() || state.lock().seed_reads > 0)
+            {
+                return Err(PrepareError::Baseline("reached a forbidden capability"));
             }
-            initialization_budget(request, usage.occupancy_ns, initialization_start.elapsed())?;
-            if outcome.completion != Completion::Done {
-                if matches!(capture, CaptureMode::RuntimeBaseline { .. })
-                    && (instance.last_capability_violation().is_some()
-                        || state.lock().seed_reads > 0)
-                {
-                    return Err(PrepareError::Baseline("reached a forbidden capability"));
-                }
-                if let Some(import) = instance.last_capability_violation() {
-                    #[cfg(feature = "rust-guests")]
-                    {
-                        replay.capability_refusals += 1;
-                        let unit = {
-                            let state = state.lock();
-                            state.unit.or(state.last_deferred)
-                        };
-                        if let Some(unit) = unit {
-                            if !replay.deferred.insert(unit) {
-                                return Err(PrepareError::DeferralIgnored {
-                                    unit,
-                                    import: import.into(),
-                                });
-                            }
-                            replay.reasons.push((unit, import.to_string()));
-                            return Ok(Pass::Deferred);
-                        }
-                    }
-                    return Err(PrepareError::Unattributable {
-                        completion: outcome.completion,
-                        import: import.to_string(),
-                        detail: outcome
-                            .trap
-                            .map(|trap| trap.message)
-                            .unwrap_or_else(|| "forbidden initialization capability".into()),
-                    });
-                }
-                let detail = outcome
-                    .trap
-                    .map(|trap| trap.message)
-                    .unwrap_or_else(|| "initializer did not return successfully".into());
-                return Err(PrepareError::Initialization {
+            if let Some(import) = instance.last_capability_violation() {
+                return Err(PrepareError::ForbiddenCapability {
                     completion: outcome.completion,
-                    detail: with_guest_logs(detail, state.lock().logs.iter()),
+                    import: import.to_string(),
+                    detail: outcome
+                        .trap
+                        .map(|trap| trap.message)
+                        .unwrap_or_else(|| "forbidden initialization capability".into()),
                 });
             }
-        } else {
-            let captured = match capture {
-                CaptureMode::Portable { wasm } => Captured::Portable(wasm.to_vec()),
-                #[cfg(target_os = "linux")]
-                CaptureMode::Layered { wasm, identity } => Captured::Layered {
-                    prepared: Box::new(
-                        engine
-                            .prepare_template_with_files(wasm, identity, application_files.clone())
-                            .map_err(|error| PrepareError::State(error.into()))?,
-                    ),
-                },
-                CaptureMode::RuntimeBaseline { .. } | CaptureMode::Over { .. } => {
-                    return Err(PrepareError::InvalidRequest(
-                        "a runtime baseline needs a module with an initializer",
-                    ))
-                }
-            };
-            return Ok(Pass::Captured(Box::new(InitializationOutput {
-                captured,
-                restored: None,
-                initialized: Initialized {
-                    deferred: Vec::new(),
-                    preparation_occupancy_ns: preparation_occupancy()?
-                        .saturating_sub(occupancy_start_ns)
-                        .saturating_sub(usage.unoccupied_ns),
-                    deferred_reasons: replay.reasons.clone(),
-                    capability_refusals: replay.capability_refusals,
-                    pal_calls: instance
-                        .initialization_pal_calls()
-                        .map_err(PrepareError::State)?,
-                    seed_reads: state.lock().seed_reads,
-                    passes: 0,
-                    logs: Vec::new(),
-                    // Without an initializer the original module is compiled for the template.
-                    compiled: true,
-                },
-            })));
+            let detail = outcome
+                .trap
+                .map(|trap| trap.message)
+                .unwrap_or_else(|| "initializer did not return successfully".into());
+            return Err(PrepareError::Initialization {
+                completion: outcome.completion,
+                detail: with_guest_logs(detail, state.lock().logs.iter()),
+            });
         }
-        let prepared_resources = io
-            .as_ref()
-            .map(|io| io.finish())
-            .transpose()
-            .map_err(|error| {
-                // The initializer returned successfully, so of what it logged
-                // only its warnings bear on why its state cannot be captured.
-                let state = state.lock();
-                let warnings = state.logs.iter().filter(|log| log.level >= WARNING);
-                PrepareError::State(anyhow::anyhow!(with_guest_logs(
-                    format!("initialization retained native state: {error}"),
-                    warnings,
-                )))
-            })?
-            .unwrap_or_default();
-        let prepared_resources = isoplane_abi::native_io::PreparedResources {
-            ..prepared_resources
-        };
-        let deferred: Vec<_> = replay.deferred.iter().copied().collect();
-        if matches!(capture, CaptureMode::RuntimeBaseline { .. }) {
-            let state = state.lock();
-            if state.seed_reads > 0 || state.draws > 0 {
-                return Err(PrepareError::Baseline("read initialization entropy"));
-            }
-        }
-        // Reinstantiation verifies captured state without invoking the initializer again.
-        let (restored_template, captured, representation) = match capture {
-            CaptureMode::Portable { .. } => {
-                let instrumented = instrumented.as_ref().ok_or(PrepareError::InvalidRequest(
-                    "a portable capture needs the instrumented module",
-                ))?;
-                let captured = instance
-                    .capture_mutable_state()
-                    .map_err(PrepareError::State)?;
-                let module = portable_module(
-                    instrumented,
-                    instance.memory(),
-                    &captured.globals,
-                    &prepared_resources,
-                )?;
-                let template = engine
-                    .load_template(&module)
-                    .and_then(|template| template.with_application_files(application_files.clone()))
-                    .map_err(PrepareError::State)?;
-                (template, captured, Captured::Portable(module))
-            }
+    } else {
+        let captured = match capture {
+            CaptureMode::Portable { wasm } => Captured::Portable(wasm.to_vec()),
             #[cfg(target_os = "linux")]
-            CaptureMode::Layered { identity, .. } => {
-                let prepared = engine
-                    .prepare_initialized_template(
-                        &template,
-                        &mut instance,
-                        identity,
-                        prepared_resources.clone(),
-                    )
-                    .map_err(|error| PrepareError::State(error.into()))?;
-                let captured = instance
-                    .capture_mutable_state()
-                    .map_err(PrepareError::State)?;
-                let template = engine
-                    .load_prepared_product_in(
-                        &prepared,
-                        cache.map_or(std::env::temp_dir().as_path(), |cache| cache.directory()),
-                    )
-                    .map_err(|error| PrepareError::State(error.into()))?;
-                (
-                    template,
-                    captured,
-                    Captured::Layered {
-                        prepared: Box::new(prepared),
-                    },
-                )
-            }
-            CaptureMode::RuntimeBaseline { identity, .. } => {
-                let prepared = engine
-                    .prepare_runtime_baseline(
-                        &template,
-                        &mut instance,
-                        identity,
-                        prepared_resources.clone(),
-                    )
-                    .map_err(|error| PrepareError::State(error.into()))?;
-                let captured = instance
-                    .capture_mutable_state()
-                    .map_err(PrepareError::State)?;
-                let template = engine
-                    .load_prepared_product_in(
-                        &prepared,
-                        cache.map_or(std::env::temp_dir().as_path(), |cache| cache.directory()),
-                    )
-                    .map_err(|error| PrepareError::State(error.into()))?;
-                (
-                    template,
-                    captured,
-                    Captured::Layered {
-                        prepared: Box::new(prepared),
-                    },
-                )
-            }
-            CaptureMode::Over {
-                ref base,
-                identity,
-                storage,
-            } => {
-                let prepared = engine
-                    .prepare_initialized_template_over(
-                        &template,
-                        &mut instance,
-                        identity,
-                        prepared_resources.clone(),
-                    )
-                    .map_err(|error| PrepareError::State(error.into()))?;
-                let captured = instance
-                    .capture_mutable_state()
-                    .map_err(PrepareError::State)?;
-                let template = engine
-                    .load_prepared_product_over_in(base, &prepared, storage)
-                    .map_err(|error| PrepareError::State(error.into()))?;
-                (
-                    template,
-                    captured,
-                    Captured::Layered {
-                        prepared: Box::new(prepared),
-                    },
-                )
+            CaptureMode::Layered { wasm, identity } => Captured::Layered {
+                prepared: Box::new(
+                    engine
+                        .prepare_template_with_files(wasm, identity, application_files.clone())
+                        .map_err(|error| PrepareError::State(error.into()))?,
+                ),
+            },
+            CaptureMode::RuntimeBaseline { .. } | CaptureMode::Over { .. } => {
+                return Err(PrepareError::InvalidRequest(
+                    "a runtime baseline needs a module with an initializer",
+                ))
             }
         };
-        let mut restored = engine
-            .activate_initialization(
-                &restored_template,
-                Box::new(Bindings {
-                    state: state.clone(),
-                    io: io.clone(),
-                    memory_limit_bytes,
-                    permits_entropy,
-                }),
-            )
-            .map_err(PrepareError::State)?;
-        if restored.memory() != instance.memory() {
-            return Err(PrepareError::InvalidRequest(
-                "captured initial memory differs from initialized memory",
-            ));
-        }
-        let restored_state = restored
-            .capture_mutable_state()
-            .map_err(PrepareError::State)?;
-        if postcard::to_allocvec(&captured).map_err(PrepareError::Encoding)?
-            != postcard::to_allocvec(&restored_state).map_err(PrepareError::Encoding)?
-        {
-            return Err(PrepareError::InvalidRequest(
-                "captured mutable state differs from initialized state",
-            ));
-        }
-        let pal_calls = instance
-            .initialization_pal_calls()
-            .map_err(PrepareError::State)?;
-        let state = state.lock();
-        let logs = state.logs.iter().map(|log| log.line.clone()).collect();
-        Ok(Pass::Captured(Box::new(InitializationOutput {
-            captured: representation,
-            restored: Some(restored_template),
+        return Ok(InitializationOutput {
+            captured,
+            restored: None,
             initialized: Initialized {
-                deferred,
                 preparation_occupancy_ns: preparation_occupancy()?
                     .saturating_sub(occupancy_start_ns)
                     .saturating_sub(usage.unoccupied_ns),
-                deferred_reasons: replay.reasons.clone(),
-                capability_refusals: replay.capability_refusals,
-                pal_calls,
-                seed_reads: state.seed_reads,
-                passes: pass,
-                logs,
-                compiled,
+                pal_calls: instance
+                    .initialization_pal_calls()
+                    .map_err(PrepareError::State)?,
+                seed_reads: state.lock().seed_reads,
+                logs: Vec::new(),
+                // Without an initializer the original module is compiled for the template.
+                compiled: true,
             },
-        })))
+        });
+    }
+    let prepared_resources = io
+        .as_ref()
+        .map(|io| io.finish())
+        .transpose()
+        .map_err(|error| {
+            // The initializer returned successfully, so of what it logged
+            // only its warnings bear on why its state cannot be captured.
+            let state = state.lock();
+            let warnings = state.logs.iter().filter(|log| log.level >= WARNING);
+            PrepareError::State(anyhow::anyhow!(with_guest_logs(
+                format!("initialization retained native state: {error}"),
+                warnings,
+            )))
+        })?
+        .unwrap_or_default();
+    let prepared_resources = isoplane_abi::native_io::PreparedResources {
+        ..prepared_resources
     };
-    let mut replay = Replay::default();
-    #[cfg(feature = "rust-guests")]
-    {
-        for pass in 1..=request.max_passes {
-            match run_pass(pass, &mut replay)? {
-                Pass::Captured(output) => return Ok(*output),
-                Pass::Deferred => {}
-            }
+    if matches!(capture, CaptureMode::RuntimeBaseline { .. }) {
+        let state = state.lock();
+        if state.seed_reads > 0 || state.draws > 0 {
+            return Err(PrepareError::Baseline("read initialization entropy"));
         }
-        Err(PrepareError::NoConvergence(request.max_passes))
     }
-    #[cfg(not(feature = "rust-guests"))]
+    // Reinstantiation verifies captured state without invoking the initializer again.
+    let (restored_template, captured, representation) = match capture {
+        CaptureMode::Portable { .. } => {
+            let instrumented = instrumented.as_ref().ok_or(PrepareError::InvalidRequest(
+                "a portable capture needs the instrumented module",
+            ))?;
+            let captured = instance
+                .capture_mutable_state()
+                .map_err(PrepareError::State)?;
+            let module = portable_module(
+                instrumented,
+                instance.memory(),
+                &captured.globals,
+                &prepared_resources,
+            )?;
+            let template = engine
+                .load_template(&module)
+                .and_then(|template| template.with_application_files(application_files.clone()))
+                .map_err(PrepareError::State)?;
+            (template, captured, Captured::Portable(module))
+        }
+        #[cfg(target_os = "linux")]
+        CaptureMode::Layered { identity, .. } => {
+            let prepared = engine
+                .prepare_initialized_template(
+                    &template,
+                    &mut instance,
+                    identity,
+                    prepared_resources.clone(),
+                )
+                .map_err(|error| PrepareError::State(error.into()))?;
+            let captured = instance
+                .capture_mutable_state()
+                .map_err(PrepareError::State)?;
+            let template = engine
+                .load_prepared_product_in(
+                    &prepared,
+                    cache.map_or(std::env::temp_dir().as_path(), |cache| cache.directory()),
+                )
+                .map_err(|error| PrepareError::State(error.into()))?;
+            (
+                template,
+                captured,
+                Captured::Layered {
+                    prepared: Box::new(prepared),
+                },
+            )
+        }
+        CaptureMode::RuntimeBaseline { identity, .. } => {
+            let prepared = engine
+                .prepare_runtime_baseline(
+                    &template,
+                    &mut instance,
+                    identity,
+                    prepared_resources.clone(),
+                )
+                .map_err(|error| PrepareError::State(error.into()))?;
+            let captured = instance
+                .capture_mutable_state()
+                .map_err(PrepareError::State)?;
+            let template = engine
+                .load_prepared_product_in(
+                    &prepared,
+                    cache.map_or(std::env::temp_dir().as_path(), |cache| cache.directory()),
+                )
+                .map_err(|error| PrepareError::State(error.into()))?;
+            (
+                template,
+                captured,
+                Captured::Layered {
+                    prepared: Box::new(prepared),
+                },
+            )
+        }
+        CaptureMode::Over {
+            ref base,
+            identity,
+            storage,
+        } => {
+            let prepared = engine
+                .prepare_initialized_template_over(
+                    &template,
+                    &mut instance,
+                    identity,
+                    prepared_resources.clone(),
+                )
+                .map_err(|error| PrepareError::State(error.into()))?;
+            let captured = instance
+                .capture_mutable_state()
+                .map_err(PrepareError::State)?;
+            let template = engine
+                .load_prepared_product_over_in(base, &prepared, storage)
+                .map_err(|error| PrepareError::State(error.into()))?;
+            (
+                template,
+                captured,
+                Captured::Layered {
+                    prepared: Box::new(prepared),
+                },
+            )
+        }
+    };
+    let mut restored = engine
+        .activate_initialization(
+            &restored_template,
+            Box::new(Bindings {
+                state: state.clone(),
+                io: io.clone(),
+                memory_limit_bytes,
+                permits_entropy,
+            }),
+        )
+        .map_err(PrepareError::State)?;
+    if restored.memory() != instance.memory() {
+        return Err(PrepareError::InvalidRequest(
+            "captured initial memory differs from initialized memory",
+        ));
+    }
+    let restored_state = restored
+        .capture_mutable_state()
+        .map_err(PrepareError::State)?;
+    if postcard::to_allocvec(&captured).map_err(PrepareError::Encoding)?
+        != postcard::to_allocvec(&restored_state).map_err(PrepareError::Encoding)?
     {
-        let Pass::Captured(output) = run_pass(1, &mut replay)?;
-        Ok(*output)
+        return Err(PrepareError::InvalidRequest(
+            "captured mutable state differs from initialized state",
+        ));
     }
-}
-
-/// How one run of the initializer from the template ended.
-enum Pass {
-    /// Its state was captured and verified against a restored instance.
-    Captured(Box<InitializationOutput>),
-    /// An init unit reached a forbidden capability and is now deferred, so
-    /// the initializer runs again without it.
-    #[cfg(feature = "rust-guests")]
-    Deferred,
-}
-
-/// What the passes so far deferred. Only a Rust guest's init units defer, so
-/// a host not built for them leaves this empty.
-#[derive(Default)]
-struct Replay {
-    deferred: BTreeSet<u32>,
-    reasons: Vec<(u32, String)>,
-    capability_refusals: u32,
+    let pal_calls = instance
+        .initialization_pal_calls()
+        .map_err(PrepareError::State)?;
+    let state = state.lock();
+    let logs = state.logs.iter().map(|log| log.line.clone()).collect();
+    Ok(InitializationOutput {
+        captured: representation,
+        restored: Some(restored_template),
+        initialized: Initialized {
+            preparation_occupancy_ns: preparation_occupancy()?
+                .saturating_sub(occupancy_start_ns)
+                .saturating_sub(usage.unoccupied_ns),
+            pal_calls,
+            seed_reads: state.seed_reads,
+            logs,
+            compiled,
+        },
+    })
 }
 
 /// The template initialization runs on, with the application's files bound;
@@ -788,12 +700,6 @@ struct Sandbox {
     #[cfg(feature = "rust-guests")]
     config: Vec<u8>,
     runtime_config: Vec<u8>,
-    #[cfg(feature = "rust-guests")]
-    deferred: BTreeSet<u32>,
-    #[cfg(feature = "rust-guests")]
-    unit: Option<u32>,
-    #[cfg(feature = "rust-guests")]
-    last_deferred: Option<u32>,
     bringup: bool,
     draws: u64,
     logs: Vec<GuestLog>,
@@ -802,22 +708,13 @@ struct Sandbox {
 }
 
 impl Sandbox {
-    fn new(
-        request: &Initialization,
-        #[cfg(feature = "rust-guests")] deferred: BTreeSet<u32>,
-    ) -> Self {
+    fn new(request: &Initialization) -> Self {
         Self {
             #[cfg(feature = "rust-guests")]
             seed: None,
             #[cfg(feature = "rust-guests")]
             config: request.config.clone(),
             runtime_config: request.runtime_config.clone(),
-            #[cfg(feature = "rust-guests")]
-            deferred,
-            #[cfg(feature = "rust-guests")]
-            unit: None,
-            #[cfg(feature = "rust-guests")]
-            last_deferred: None,
             bringup: request.sandbox == InitSandbox::RuntimeBringUp,
             draws: 0,
             logs: Vec::new(),
@@ -871,12 +768,7 @@ impl isoplane_engine::bindings::InitializationBindings for Bindings {
     }
 
     fn runtime_bringup(&self) -> bool {
-        let state = self.state.lock();
-        #[cfg(feature = "rust-guests")]
-        if state.unit.is_some() || state.last_deferred.is_some() {
-            return false;
-        }
-        state.bringup
+        self.state.lock().bringup
     }
     fn call_sync(
         &mut self,
@@ -884,23 +776,6 @@ impl isoplane_engine::bindings::InitializationBindings for Bindings {
     ) -> Result<i64, isoplane_engine::bindings::BindingError> {
         let mut state = self.state.lock();
         match call.import {
-            #[cfg(feature = "rust-guests")]
-            "init_unit_begin" => {
-                let unit = call.scalars[0] as u32;
-                state.unit = (!matches!(unit, 0 | u32::MAX)).then_some(unit);
-                state.last_deferred = None;
-                Ok(0)
-            }
-            #[cfg(feature = "rust-guests")]
-            "init_unit_deferred" => {
-                let unit = call.scalars[0] as u32;
-                let deferred = state.deferred.contains(&unit);
-                if deferred {
-                    state.unit = None;
-                    state.last_deferred = Some(unit);
-                }
-                Ok(i64::from(deferred))
-            }
             "log_emit" => {
                 let length = call.payload.len().min(state.remaining_log_bytes);
                 if length > 0 {
@@ -1017,13 +892,12 @@ mod budget_tests {
             sandbox: InitSandbox::Sealed,
             occupancy_ms: 50,
             wall_ms: 100,
-            max_passes: 2,
             log_bytes: 0,
         }
     }
 
     #[test]
-    fn wakes_and_replays_receive_only_the_remaining_initialization_budget() {
+    fn a_wake_receives_only_the_remaining_initialization_budget() {
         let request = request();
         let initial = initialization_budget(&request, 0, Duration::ZERO).unwrap();
         let wake = initialization_budget(&request, 7_000_000, Duration::from_millis(75)).unwrap();
@@ -1033,7 +907,7 @@ mod budget_tests {
         );
         assert_eq!(
             wake.slice_wall_ms_cap, 25,
-            "host waits and earlier passes must reduce the next wall budget"
+            "host waits must reduce the next wall budget"
         );
         assert_eq!(
             wake.spent_ns, 7_000_000,

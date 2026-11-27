@@ -6,16 +6,12 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PreparationConfig {
-    /// Initialization occupancy budget across replay attempts.
+    /// Initialization occupancy budget.
     #[serde(default = "default_occupancy_ms")]
     pub initialization_occupancy_ms: u32,
-    /// Total initialization wall deadline, including waits and replay passes.
+    /// Total initialization wall deadline, including waits.
     #[serde(default = "default_wall_ms")]
     pub initialization_wall_ms: u32,
-    /// Maximum impurity-deferral replay attempts.
-    #[cfg(feature = "rust-guests")]
-    #[serde(default = "default_passes")]
-    pub initialization_passes: u32,
     /// Maximum retained successful initialization log bytes.
     #[serde(default = "default_log_bytes")]
     pub initialization_log_bytes: usize,
@@ -34,11 +30,6 @@ impl PreparationConfig {
             self.initialization_occupancy_ms > 0
                 && self.initialization_wall_ms > 0
                 && self.initialization_log_bytes > 0,
-            "preparation initialization limits must be positive"
-        );
-        #[cfg(feature = "rust-guests")]
-        anyhow::ensure!(
-            self.initialization_passes > 0,
             "preparation initialization limits must be positive"
         );
         Ok(())
@@ -100,8 +91,6 @@ pub(crate) async fn prepare(
         application_files: package.files,
         occupancy_ms: policy.initialization_occupancy_ms,
         wall_ms: policy.initialization_wall_ms,
-        #[cfg(feature = "rust-guests")]
-        max_passes: policy.initialization_passes,
         log_bytes: policy.initialization_log_bytes,
         cancellation,
     };
@@ -120,10 +109,6 @@ fn default_occupancy_ms() -> u32 {
 }
 fn default_wall_ms() -> u32 {
     isoplane_prepare::preinit::DEFAULT_INITIALIZATION_WALL_MS
-}
-#[cfg(feature = "rust-guests")]
-fn default_passes() -> u32 {
-    isoplane_prepare::preinit::DEFAULT_INITIALIZATION_PASSES
 }
 fn default_log_bytes() -> usize {
     isoplane_prepare::preinit::DEFAULT_INITIALIZATION_LOG_BYTES

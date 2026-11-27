@@ -34,9 +34,8 @@ public static class Template
     /// They are awaited one at a time, in the order they subscribed.
     /// </para>
     /// <para>
-    /// Preparation can retry initialization to defer a forbidden capability, so callbacks and
-    /// earlier external effects can repeat. Reusing an existing prepared template runs no callbacks.
-    /// Make external work safe to repeat; retries do not roll back a peer's changes.
+    /// Each preparation of a template runs the callbacks again, so make external work safe to
+    /// repeat. Reusing an existing prepared template runs no callbacks.
     /// A callback may make network calls, for example to load data or apply database migrations.
     /// Await network work and dispose connections and streams before the callback returns: an open
     /// connection cannot be saved in the template. Timers may remain registered; their countdown

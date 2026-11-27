@@ -1,65 +1,28 @@
-//! Pre-initialization in the sealed init sandbox.
-//!
-//! The guest fixture below is a stand-in for the .NET shape: a
-//! `isoplane_initialize` that runs a sequence of *init units* (static
-//! constructors), some pure and some not, announcing each one through the
-//! interposer so the host can attribute a trap and defer the offender.
+//! Initialization in the init sandbox, and the template it leaves.
 //!
 //! What is asserted here:
-//!  * the sandbox is sealed — a unit that touches a non-init-visible import
-//!    traps rather than reading a zero;
+//!  * a forbidden import traps rather than reading a zero;
 //!  * initialization hash seeds and entropy come from the host;
-//!  * deferral converges by replay, with the right units deferred and the
-//!    pure ones still pre-run;
-//!  * the template really carries post-init memory, verified by
-//!    re-instantiating it under the *runtime* engine (wasmtime 48) with the
-//!    init-only imports bound to traps;
+//!  * the template carries post-init memory, verified by re-instantiating it
+//!    under the runtime engine with its imports bound to traps;
 //!  * input identities permit intentional captured-state reuse without forcing random draws to repeat.
 
 use isoplane_abi::config::InitSandbox;
 use isoplane_engine::ModuleHash;
 use isoplane_prepare::preinit::{PreInitError, PreInitRequest, PreInitializer};
 
-/// Four explicit guest units build a seed-derived table, request a clock,
-/// write a high-memory marker and draw application entropy. The clock defers;
-/// the allowed state and entropy remain in the successful captured template.
-///
-/// `impure` controls whether units 2 and 4 exist at all, so the same fixture
-/// gives us both the clean and the deferring case.
-fn guest_wat(impure: bool) -> String {
-    let unit2 = if impure {
-        r#"
-    ;; ---- unit 2: IMPURE (clock) ----
-    (call $unit_begin (i32.const 2))
-    (if (i32.eqz (call $unit_deferred (i32.const 2)))
-      (then (global.set $clock_at_init (call $now))))"#
-    } else {
-        ""
-    };
-    let unit4 = if impure {
-        r#"
-    ;; ---- unit 4: application entropy ----
-    (call $unit_begin (i32.const 4))
-    (if (i32.eqz (call $unit_deferred (i32.const 4)))
-      (then (call $entropy (i32.const 1024) (i32.const 16))
-            (global.set $entropy_at_init (i32.const 1))))"#
-    } else {
-        ""
-    };
-    format!(
-        r#"(module
+/// Builds a seed-derived table, writes a high-memory marker and draws
+/// application entropy during initialization.
+fn guest_wat() -> String {
+    r#"(module
   (import "isoplane" "init_hash_seed"     (func $seed_in     (param i32 i32)))
-  (import "isoplane" "init_unit_begin"    (func $unit_begin  (param i32)))
-  (import "isoplane" "init_unit_deferred" (func $unit_deferred (param i32) (result i32)))
   (import "isoplane" "log_emit"           (func $log         (param i32 i32 i32)))
-  (import "isoplane" "clock_now_coarse"   (func $now         (result i64)))
   (import "isoplane" "entropy_fill"       (func $entropy     (param i32 i32)))
 
   (memory (export "memory") 512 2048)   ;; 32 MiB initial, 128 MiB ceiling
 
   (global $seed_lo        (mut i64) (i64.const 0))
   (global $table_built    (mut i32) (i32.const 0))
-  (global $clock_at_init  (mut i64) (i64.const 0))
   (global $entropy_at_init(mut i32) (i32.const 0))
   (global $high_marker    (mut i32) (i32.const 0))
 
@@ -72,29 +35,22 @@ fn guest_wat(impure: bool) -> String {
     (global.set $seed_lo (i64.load (i32.const 0)))
     (call $log (i32.const 1) (i32.const 2048) (i32.const 12))
 
-    ;; ---- unit 1: PURE (build a seed-derived table) ----
-    (call $unit_begin (i32.const 1))
-    (if (i32.eqz (call $unit_deferred (i32.const 1)))
-      (then
-        (local.set $i (i32.const 65536))
-        (block $done (loop $l
-          (br_if $done (i32.ge_u (local.get $i) (i32.const 327680)))
-          (i64.store (local.get $i)
-            (i64.add (global.get $seed_lo) (i64.extend_i32_u (local.get $i))))
-          (local.set $i (i32.add (local.get $i) (i32.const 8)))
-          (br $l)))
-        (global.set $table_built (i32.const 1))))
-{unit2}
+    (local.set $i (i32.const 65536))
+    (block $done (loop $l
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 327680)))
+      (i64.store (local.get $i)
+        (i64.add (global.get $seed_lo) (i64.extend_i32_u (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 8)))
+      (br $l)))
+    (global.set $table_built (i32.const 1))
 
-    ;; ---- unit 3: PURE (a marker 20 MiB up) ----
-    (call $unit_begin (i32.const 3))
-    (if (i32.eqz (call $unit_deferred (i32.const 3)))
-      (then (i64.store (i32.const 20971520) (i64.const 0x1234567890abcdef))
-            (global.set $high_marker (i32.const 1))))
-{unit4}
+    ;; A marker 20 MiB up.
+    (i64.store (i32.const 20971520) (i64.const 0x1234567890abcdef))
+    (global.set $high_marker (i32.const 1))
 
-    ;; Leave unit scope (NO_UNIT = -1): a trap here is nobody's cctor.
-    (call $unit_begin (i32.const -1)) i64.const 0)
+    (call $entropy (i32.const 1024) (i32.const 16))
+    (global.set $entropy_at_init (i32.const 1))
+    i64.const 0)
 
   ;; ---- runtime exports ----
   (func (export "isoplane_alloc") (param i32 i32) (result i32) (i32.const 0))
@@ -105,15 +61,10 @@ fn guest_wat(impure: bool) -> String {
   (func (export "probe") (param i32) (result i64) (i64.load (local.get 0)))
   (func (export "get_seed_lo") (result i64) (global.get $seed_lo))
   (func (export "get_table_built") (result i32) (global.get $table_built))
-  (func (export "get_clock_at_init") (result i64) (global.get $clock_at_init))
   (func (export "get_entropy_at_init") (result i32) (global.get $entropy_at_init))
   (func (export "get_high_marker") (result i32) (global.get $high_marker))
-  ;; Keep an init-only capability callable from a runtime export so the
-  ;; test observes runtime-phase refusal. This does not hide values already
-  ;; captured in guest memory.
-  (func (export "runtime_reread_seed") (call $seed_in (i32.const 32) (i32.const 16)))
 )"#
-    )
+    .to_string()
 }
 
 fn req(wasm: &[u8]) -> PreInitRequest {
@@ -125,25 +76,15 @@ fn req(wasm: &[u8]) -> PreInitRequest {
 }
 
 #[test]
-fn pure_module_pre_inits_in_one_pass() {
-    let wasm = wat::parse_str(guest_wat(false)).unwrap();
+fn initialization_reports_its_seed_read_and_logs_and_captures_what_it_built() {
+    let wasm = wat::parse_str(guest_wat()).unwrap();
     let out = PreInitializer::new(InitSandbox::Sealed)
         .run(&wasm, &req(&wasm))
         .expect("pre-init must succeed");
 
-    println!(
-        "pure module: {} bytes in -> {} bytes template, {} pass(es), {} refusals",
-        wasm.len(),
-        out.wasm.len(),
-        out.initialized.passes,
-        out.initialized.capability_refusals
-    );
-    assert_eq!(out.initialized.passes, 1);
-    assert!(out.initialized.deferred.is_empty());
-    assert_eq!(out.initialized.capability_refusals, 0);
     assert_eq!(
         out.initialized.seed_reads, 1,
-        "the initializer reads its per-attempt hash seed once"
+        "the initializer reads its hash seed once"
     );
     assert!(
         out.initialized
@@ -153,65 +94,34 @@ fn pure_module_pre_inits_in_one_pass() {
         "{:?}",
         out.initialized.logs
     );
-}
-
-/// A refused clock defers its explicit guest unit; the successful attempt
-/// still captures the other units and application entropy.
-#[test]
-fn impure_units_are_deferred_and_pre_init_converges() {
-    let wasm = wat::parse_str(guest_wat(true)).unwrap();
-    let out = PreInitializer::new(InitSandbox::Sealed)
-        .run(&wasm, &req(&wasm))
-        .expect("pre-init must converge");
-
-    println!(
-        "impure module: {} passes, deferred {:?}, reasons {:?}, {} refusals",
-        out.initialized.passes,
-        out.initialized.deferred,
-        out.initialized.deferred_reasons,
-        out.initialized.capability_refusals
-    );
-    // The clock is deferred, then a fresh attempt completes.
     assert_eq!(
-        out.initialized.passes, 2,
-        "one pass per discovered impure unit, plus one clean pass"
+        out.initialized.pal_calls,
+        vec![("entropy_fill".into(), 1)],
+        "initialization records the entropy it was answered"
     );
-    assert_eq!(out.initialized.deferred, vec![2]);
-    assert_eq!(
-        out.initialized.deferred_reasons,
-        vec![(2, "clock_now_coarse".into())],
-        "each deferred unit must retain the capability that caused its refusal"
-    );
-    assert_eq!(out.initialized.capability_refusals, 1);
 
-    // Allowed state and entropy are captured; the refused clock assignment is not.
     let mut probe = Template::load(&out.wasm);
     assert_eq!(
         probe.i32("get_table_built"),
         1,
-        "pure unit 1 must have pre-run"
+        "the table built during initialization is captured"
     );
     assert_eq!(
         probe.i32("get_high_marker"),
         1,
-        "pure unit 3 must have pre-run"
-    );
-    assert_eq!(
-        probe.i64("get_clock_at_init"),
-        0,
-        "impure unit 2 must be left un-run"
+        "the high-memory marker is captured"
     );
     assert_eq!(
         probe.i32("get_entropy_at_init"),
         1,
-        "entropy is available inside application initialization units"
+        "entropy is available to application initialization"
     );
 }
 
 /// Loads captured memory and globals in the runtime engine.
 #[test]
 fn template_carries_post_init_memory_into_the_runtime_engine() {
-    let wasm = wat::parse_str(guest_wat(false)).unwrap();
+    let wasm = wat::parse_str(guest_wat()).unwrap();
     let out = PreInitializer::new(InitSandbox::Sealed)
         .run(&wasm, &req(&wasm))
         .unwrap();
@@ -242,7 +152,7 @@ fn template_carries_post_init_memory_into_the_runtime_engine() {
 
 #[test]
 fn fresh_initializations_of_the_same_input_draw_fresh_seeds() {
-    let wasm = wat::parse_str(guest_wat(true)).unwrap();
+    let wasm = wat::parse_str(guest_wat()).unwrap();
     let a = PreInitializer::new(InitSandbox::Sealed)
         .run(&wasm, &req(&wasm))
         .unwrap();
@@ -250,20 +160,17 @@ fn fresh_initializations_of_the_same_input_draw_fresh_seeds() {
         .run(&wasm, &req(&wasm))
         .unwrap();
     assert_ne!(a.wasm, b.wasm, "new initialization must draw fresh entropy");
-    assert_eq!(a.initialized.deferred, b.initialized.deferred);
 }
 
-/// A trap with no init unit in scope cannot be attributed, and guessing would
-/// silently change program behaviour. Fail the deploy instead.
+/// A forbidden import traps instead of returning zero, which would put a
+/// wrong value, such as a fixed clock, in every instance.
 #[test]
-fn unattributable_traps_fail_the_deploy() {
+fn a_forbidden_import_fails_the_deploy_and_is_named() {
     let wat = r#"(module
-  (import "isoplane" "init_unit_begin" (func $unit_begin (param i32)))
   (import "isoplane" "clock_now_coarse" (func $now (result i64)))
   (memory (export "memory") 1 16)
   (global $g (mut i64) (i64.const 0))
   (func (export "isoplane_initialize") (result i64)
-    (call $unit_begin (i32.const -1))   ;; explicitly outside any unit
     (global.set $g (call $now)) i64.const 0)
   (func (export "isoplane_alloc") (param i32 i32) (result i32) (i32.const 0))
   (func (export "isoplane_handle") (param i32 i32) (result i64) (i64.const 1))
@@ -277,108 +184,23 @@ fn unattributable_traps_fail_the_deploy() {
     assert!(
         matches!(
             err,
-            PreInitError::Unattributable {
+            PreInitError::ForbiddenCapability {
                 ref import,
                 ..
             } if import == "clock_now_coarse"
         ),
-        "a trap outside any unit names the capability and fails the deploy: {err}"
+        "a forbidden import names the capability and fails the deploy: {err}"
     );
 }
 
-/// The failure mode this whole file exists to avoid: a sealed import must
-/// TRAP, not quietly return zero. A zero-returning stub would bake a wrong
-/// value (a fixed clock, a fixed "random" number) into every instance.
+/// Bring-up mode supplies the fixed clock and fresh entropy.
 #[test]
-fn sealed_imports_trap_rather_than_returning_zero() {
-    // Unit 2 reads the clock but ignores `init_unit_deferred`, so it traps
-    // again on the replay pass — and the host says exactly that rather than
-    // looping.
-    let wat = r#"(module
-  (import "isoplane" "init_unit_begin"    (func $unit_begin (param i32)))
-  (import "isoplane" "init_unit_deferred" (func $unit_deferred (param i32) (result i32)))
-  (import "isoplane" "clock_now_coarse"   (func $now (result i64)))
-  (memory (export "memory") 1 16)
-  (global $g (mut i64) (i64.const 0))
-  (func (export "isoplane_initialize") (result i64)
-    (call $unit_begin (i32.const 7))
-    (drop (call $unit_deferred (i32.const 7)))   ;; asks, then ignores the answer
-    (global.set $g (call $now)) i64.const 0)
-  (func (export "isoplane_alloc") (param i32 i32) (result i32) (i32.const 0))
-  (func (export "isoplane_handle") (param i32 i32) (result i64) (i64.const 1))
-  (func (export "isoplane_wake") (param i64 i32 i32) (result i64) (i64.const 1))
-)"#;
-    let wasm = wat::parse_str(wat).unwrap();
-    let err = PreInitializer::new(InitSandbox::Sealed)
-        .run(&wasm, &req(&wasm))
-        .err()
-        .expect("initialization must be refused");
-    assert!(
-        matches!(err, PreInitError::DeferralIgnored { unit: 7, .. }),
-        "a unit that runs after being told to skip is reported, not replayed forever: {err}"
-    );
-}
-
-/// Initialization-only imports remain unavailable to an activated instance.
-#[test]
-fn a_template_cannot_re_read_the_hash_seed_at_runtime() {
-    let wasm = wat::parse_str(guest_wat(false)).unwrap();
-    let out = PreInitializer::new(InitSandbox::Sealed)
-        .run(&wasm, &req(&wasm))
-        .unwrap();
-    let mut t = Template::load(&out.wasm);
-
-    let captured = t.probe(0);
-    assert_eq!(
-        t.i64("get_seed_lo"),
-        captured,
-        "the hash seed is captured in guest state"
-    );
-
-    // ...but the live instance cannot ask for it again.
-    let err = t
-        .instance
-        .get_typed_func::<(), ()>(&mut t.store, "runtime_reread_seed")
-        .unwrap()
-        .call(&mut t.store, ())
-        .expect_err("re-reading the seed at runtime must trap");
-    // The host error is the trap's *cause*, so look at the whole chain.
-    let chain = format!("{err:?}");
-    println!("{chain}");
-    assert!(
-        chain.contains("called at RUNTIME"),
-        "the trap must name the violation, got: {chain}"
-    );
-}
-
-/// Bring-up mode defers a unit clock while capturing allowed entropy.
-#[test]
-fn runtime_bringup_keeps_clock_deferral_while_entropy_is_available_in_application_units() {
-    let wasm = wat::parse_str(guest_wat(true)).unwrap();
-    let out = PreInitializer::new(InitSandbox::RuntimeBringUp)
-        .run(&wasm, &req(&wasm))
-        .unwrap();
-    assert_eq!(out.initialized.deferred, vec![2]);
-    assert_eq!(
-        out.initialized.deferred_reasons,
-        vec![(2, "clock_now_coarse".into())]
-    );
-    assert_eq!(out.initialized.pal_calls, vec![("entropy_fill".into(), 1)]);
-    let mut template = Template::load(&out.wasm);
-    assert_eq!(template.i64("get_clock_at_init"), 0);
-    assert_eq!(template.i32("get_entropy_at_init"), 1);
-}
-
-/// Bring-up mode supplies the fixed clock and fresh entropy outside a unit.
-#[test]
-fn the_runtime_pal_lets_a_runtime_come_up_outside_any_init_unit() {
+fn runtime_bring_up_answers_the_clock_and_entropy_that_the_sealed_sandbox_refuses() {
     let wat = r#"(module
   (import "isoplane" "clock_now_coarse" (func $now (result i64)))
   (import "isoplane" "entropy_fill"     (func $entropy (param i32 i32)))
   (memory (export "memory") 1 16)
   (global $t (mut i64) (i64.const -1))
-  ;; No init_unit_begin at all: this is a runtime bringing itself up, which is
-  ;; exactly what a .NET module does before any tenant cctor runs.
   (func (export "isoplane_initialize") (result i64)
     (global.set $t (call $now))
     (call $entropy (i32.const 0) (i32.const 32)) i64.const 0)
@@ -395,8 +217,8 @@ fn the_runtime_pal_lets_a_runtime_come_up_outside_any_init_unit() {
         .err()
         .expect("initialization must be refused");
     assert!(
-        matches!(err, PreInitError::Unattributable { .. }),
-        "sealed, a runtime coming up outside any unit fails the deploy: {err}"
+        matches!(err, PreInitError::ForbiddenCapability { .. }),
+        "sealed, a runtime reading the clock fails the deploy: {err}"
     );
 
     // The clock policy remains frozen; each entropy request uses the live host source.
@@ -429,36 +251,34 @@ fn the_runtime_pal_lets_a_runtime_come_up_outside_any_init_unit() {
     assert_ne!(Template::load(&again.wasm).probe(0), entropy);
 }
 
-/// A runtime-only operation defers the active guest unit before its state assignment.
+/// A timer is a serving capability in either initialization mode.
 #[test]
-fn a_runtime_timer_defers_its_active_initialization_unit() {
+fn a_timer_during_runtime_bring_up_fails_the_deploy_and_is_named() {
     let wat = r#"(module
-  (import "isoplane" "init_unit_begin"    (func $unit_begin (param i32)))
-  (import "isoplane" "init_unit_deferred" (func $unit_deferred (param i32) (result i32)))
   (import "isoplane" "clock_deadline_in" (func $deadline (param i64) (result i64)))
   (memory (export "memory") 1 16)
   (global $g (mut i64) (i64.const 0))
   (func (export "isoplane_initialize") (result i64)
-    (call $unit_begin (i32.const 9))
-    (if (i32.eqz (call $unit_deferred (i32.const 9)))
-      (then (global.set $g (call $deadline (i64.const 1)))))
-    (call $unit_begin (i32.const -1)) i64.const 0)
+    (global.set $g (call $deadline (i64.const 1))) i64.const 0)
   (func (export "isoplane_alloc") (param i32 i32) (result i32) (i32.const 0))
   (func (export "isoplane_handle") (param i32 i32) (result i64) (i64.const 1))
   (func (export "isoplane_wake") (param i64 i32 i32) (result i64) (i64.const 1))
-  (func (export "get_g") (result i64) (global.get $g))
 )"#;
     let wasm = wat::parse_str(wat).unwrap();
-    let out = PreInitializer::new(InitSandbox::Sealed)
+    let err = PreInitializer::new(InitSandbox::RuntimeBringUp)
         .run(&wasm, &req(&wasm))
-        .unwrap();
-    assert_eq!(out.initialized.deferred, vec![9]);
-    assert_eq!(
-        out.initialized.deferred_reasons,
-        vec![(9, "clock_deadline_in".into())]
+        .err()
+        .expect("initialization must be refused");
+    assert!(
+        matches!(
+            err,
+            PreInitError::ForbiddenCapability {
+                ref import,
+                ..
+            } if import == "clock_deadline_in"
+        ),
+        "a timer during initialization names the capability and fails the deploy: {err}"
     );
-    // The refused capability defers unit 9 before it can assign the global.
-    assert_eq!(Template::load(&out.wasm).i64("get_g"), 0);
 }
 
 /// The declared-memory gate refuses before a single guest instruction runs.
@@ -511,52 +331,11 @@ impl Template {
         let module = wasmtime::Module::new(&engine, template_wasm).expect("template must compile");
         let mut store = wasmtime::Store::new(&engine, ());
         let mut linker: wasmtime::Linker<()> = wasmtime::Linker::new(&engine);
-        // Wizer does not strip the import section, so init-only imports are
-        // still *declared* in the template. Bind them to traps: if anything
-        // at runtime calls one, the test finds out loudly instead of the
-        // template quietly not being sealed.
-        for def in isoplane_abi::imports::IMPORTS {
-            let name = def.name;
-            let ty = func_type(&engine, def);
-            linker
-                .func_new(
-                    isoplane_abi::imports::HOST_MODULE,
-                    name,
-                    ty,
-                    move |_c, _a, rets| {
-                        if name.starts_with("init_") {
-                            wasmtime::bail!("init-only import `{name}` called at RUNTIME");
-                        }
-                        // These state probes do not execute runtime I/O.
-                        for r in rets.iter_mut() {
-                            *r = match r {
-                                wasmtime::Val::I64(_) => wasmtime::Val::I64(0),
-                                _ => wasmtime::Val::I32(0),
-                            };
-                        }
-                        Ok(())
-                    },
-                )
-                .unwrap();
-        }
-        for import in module
-            .imports()
-            .filter(|import| import.module() != isoplane_abi::imports::HOST_MODULE)
-        {
-            let wasmtime::ExternType::Func(signature) = import.ty() else {
-                panic!("template has a non-function foreign import");
-            };
-            linker
-                .func_new(
-                    import.module(),
-                    import.name(),
-                    signature,
-                    |_caller, _arguments, _results| {
-                        wasmtime::bail!("a template inspection must not execute a foreign import")
-                    },
-                )
-                .expect("bind template inspection guard");
-        }
+        // Wizer keeps the import section, so the template still declares its
+        // imports. The probes these tests call only read guest state.
+        linker
+            .define_unknown_imports_as_traps(&module)
+            .expect("bind template inspection guard");
         let instance = linker
             .instantiate(&mut store, &module)
             .expect("template must instantiate");
@@ -584,22 +363,6 @@ impl Template {
             .call(&mut self.store, addr)
             .unwrap()
     }
-}
-
-fn func_type(
-    engine: &wasmtime::Engine,
-    def: &isoplane_abi::imports::ImportDef,
-) -> wasmtime::FuncType {
-    use isoplane_abi::imports::Ty;
-    let cvt = |t: &Ty| match t {
-        Ty::I32 => wasmtime::ValType::I32,
-        Ty::I64 => wasmtime::ValType::I64,
-    };
-    wasmtime::FuncType::new(
-        engine,
-        def.sig.params.iter().map(cvt),
-        def.sig.results.iter().map(cvt),
-    )
 }
 
 #[test]
@@ -656,7 +419,7 @@ fn the_sealed_initializer_preserves_both_filesystem_adapter_routes() {
 }
 
 fn pal_init_guest(module: &str, function: &str, body: &str) -> Vec<u8> {
-    let source = guest_wat(false)
+    let source = guest_wat()
         .replacen(
             "(module",
             &format!(r#"(module (import "{module}" "{function}" (func $pal_probe (param i32)))"#),
@@ -680,13 +443,12 @@ fn sealed_initialization_receives_an_empty_launch_argument_list() {
         .run(&wasm, &req(&wasm))
         .expect("argument absence must also be supported during sealed initialization");
     assert_eq!(
-        output.initialized.passes, 1,
-        "empty launch arguments must not defer initialization"
-    );
-    assert_eq!(
         output.initialized.pal_calls,
-        vec![(isoplane_abi::pal::CLI_ENV.to_owned(), 1)],
-        "the initialization ledger must record the delegated launch argument call"
+        vec![
+            ("entropy_fill".to_owned(), 1),
+            (isoplane_abi::pal::CLI_ENV.to_owned(), 1)
+        ],
+        "the initialization ledger must record the delegated launch argument call beside the fixture's entropy draw"
     );
 }
 

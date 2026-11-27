@@ -42,35 +42,20 @@ pub enum PrepareError {
         completion: isoplane_engine::Completion,
         detail: String,
     },
-    /// A forbidden capability was reached outside any deferrable initialization unit.
-    #[cfg_attr(
-        feature = "rust-guests",
-        error("initialization reached {import} outside any unit: {detail}")
+    /// Initialization called an import it is not permitted.
+    #[error(
+        "initialization called {import}, which an application may not call while it \
+         initializes; move that operation out of initialization: {detail}"
     )]
-    #[cfg_attr(
-        not(feature = "rust-guests"),
-        error(
-            "initialization called {import}, which an application may not call while it \
-             initializes; move that operation out of initialization: {detail}"
-        )
-    )]
-    Unattributable {
+    ForbiddenCapability {
         import: String,
         detail: String,
         completion: isoplane_engine::Completion,
     },
-    /// A guest reran a unit that the sandbox told it to defer.
-    #[cfg(feature = "rust-guests")]
-    #[error("initialization unit {unit} ignored deferral and called {import}")]
-    DeferralIgnored { unit: u32, import: String },
     /// A runtime's own initialization did what a baseline shared by every
     /// application on that runtime must not.
     #[error("runtime baseline {0}")]
     Baseline(&'static str),
-    /// Replays exhausted their configured pass limit.
-    #[cfg(feature = "rust-guests")]
-    #[error("initialization did not converge within {0} passes")]
-    NoConvergence(u32),
     /// Prepared state could not be encoded.
     #[error("encoding preparation state: {0}")]
     Encoding(#[source] postcard::Error),

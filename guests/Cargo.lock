@@ -75,16 +75,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "impure-cctor"
-version = "0.1.0"
-dependencies = [
- "isoplane-abi",
- "isoplane-guest",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "isoplane-abi"
 version = "0.1.0"
 dependencies = [

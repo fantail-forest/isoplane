@@ -1,7 +1,7 @@
 # `guest-sdks/rust` — the Rust Isoplane guest SDK
 
 Internal Rust helpers for guest fixtures: async execution, typed host
-capabilities, arena allocation and initialization units.
+capabilities, arena allocation and template initialization.
 
 The [C# SDK](../dotnet) is the customer SDK. These Rust helpers support
 fixtures, hostile guests and benchmarks, and evolve with those tests.

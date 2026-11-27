@@ -5,13 +5,11 @@ use isoplane_prepare::{initialize, PrepareError};
 use std::collections::BTreeMap;
 
 #[test]
-fn application_units_receive_fresh_entropy_and_a_stable_hash_seed_within_each_attempt() {
+fn initialization_receives_fresh_entropy_and_a_hash_seed_that_is_stable_within_it() {
     let wasm = guest(
-        r#"(import "isoplane" "init_unit_begin" (func $unit (param i32)))
-        (import "isoplane" "init_hash_seed" (func $seed (param i32 i32)))
+        r#"(import "isoplane" "init_hash_seed" (func $seed (param i32 i32)))
         (import "isoplane" "entropy_fill" (func $entropy (param i32 i32)))"#,
-        r#"(call $unit (i32.const 1))
-        (call $seed (i32.const 64) (i32.const 16))
+        r#"(call $seed (i32.const 64) (i32.const 16))
         (call $seed (i32.const 80) (i32.const 16))
         (call $entropy (i32.const 96) (i32.const 32))"#,
     );
@@ -29,7 +27,6 @@ fn application_units_receive_fresh_entropy_and_a_stable_hash_seed_within_each_at
     let second_memory = memory(&second);
     for (prepared, memory) in [(&first, &first_memory), (&second, &second_memory)] {
         assert_eq!(prepared.initialized.seed_reads, 2);
-        assert!(prepared.initialized.deferred.is_empty());
         assert_eq!(&memory[64..80], &memory[80..96]);
     }
     assert_ne!(&first_memory[64..80], &second_memory[64..80]);
@@ -62,14 +59,6 @@ fn baking_preserves_grown_memory_hidden_globals_and_static_tables() {
     let wasm = guest("", "(drop (memory.grow (i32.const 1))) (i32.store (i32.const 70000) (i32.const 123)) (global.set $state (i32.const 42))");
     let prepared = initialize(&engine(), &wasm, &request())
         .expect("complete initialized state must round-trip through the bake oracle");
-    assert_eq!(
-        prepared.initialized.passes, 1,
-        "pure initialization must finish in one pass"
-    );
-    assert!(
-        prepared.initialized.deferred.is_empty(),
-        "pure initialization must not defer units"
-    );
     let template = engine()
         .load_template(&prepared.wasm)
         .expect("baked WASM must be loadable");
@@ -99,7 +88,7 @@ fn a_sealed_initializer_clock_attempt_fails_before_a_host_effect() {
         .err()
         .expect("sealed clock access must fail");
     assert!(
-        matches!(error, PrepareError::Unattributable { ref import, .. } if import == "clock_now_coarse"),
+        matches!(error, PrepareError::ForbiddenCapability { ref import, .. } if import == "clock_now_coarse"),
         "forbidden capabilities must terminate initialization"
     );
     let failure = isoplane_prepare::WorkerFailure::new(
@@ -114,7 +103,7 @@ fn a_sealed_initializer_clock_attempt_fails_before_a_host_effect() {
 }
 
 #[test]
-fn runtime_bringup_answers_deterministic_clock_without_widening_unit_policy() {
+fn runtime_bringup_answers_and_counts_the_clock() {
     let wasm = guest(
         r#"(import "isoplane" "clock_now_coarse" (func $clock (result i64)))"#,
         "(i64.store (i32.const 64) (call $clock))",
@@ -152,48 +141,6 @@ fn a_table_mutation_is_refused_before_preparation_can_lose_it() {
             Err(PrepareError::State(_))
         ),
         "mutable table state must not be silently omitted from a template"
-    );
-}
-
-#[test]
-fn a_forbidden_unit_replays_from_pristine_state_and_is_deferred() {
-    let wasm = guest(
-        r#"(import "isoplane" "init_unit_begin" (func $begin (param i32)))
-        (import "isoplane" "init_unit_deferred" (func $deferred (param i32) (result i32)))
-        (import "isoplane" "clock_now_coarse" (func $clock (result i64)))"#,
-        r#"(call $begin (i32.const 7))
-        (if (i32.eqz (call $deferred (i32.const 7)))
-          (then (i32.store (i32.const 64) (i32.const 99)) (drop (call $clock))))"#,
-    );
-    let mut request = request();
-    request.sandbox = InitSandbox::RuntimeBringUp;
-    let result = initialize(&engine(), &wasm, &request)
-        .expect("a forbidden unit must defer with a pristine replay");
-    assert_eq!(
-        result.initialized.deferred,
-        vec![7],
-        "the forbidden unit must be recorded explicitly"
-    );
-    assert_eq!(
-        result.initialized.capability_refusals, 1,
-        "the report must retain the rejected pass's refusal"
-    );
-    assert_eq!(
-        result.initialized.deferred_reasons,
-        vec![(7, "clock_now_coarse".to_string())],
-        "the report must identify why the unit was deferred"
-    );
-    assert_eq!(
-        result.initialized.passes, 2,
-        "deferring a unit must replay initialization"
-    );
-    let template = engine()
-        .load_template(&result.wasm)
-        .expect("the replayed template must load");
-    assert_eq!(
-        &template.memory_image_arc().to_dense()[64..68],
-        &[0; 4],
-        "writes preceding the forbidden call must not leak into the template"
     );
 }
 
@@ -282,27 +229,6 @@ fn a_future_import_traps_before_calling_an_initialization_provider() {
         calls.load(Ordering::Relaxed),
         0,
         "the capability gate must fire before invoking the initialization provider"
-    );
-}
-
-#[test]
-fn ignoring_a_deferred_unit_does_not_reenter_runtime_bringup() {
-    let wasm = guest(
-        r#"(import "isoplane" "init_unit_begin" (func $begin (param i32)))
-        (import "isoplane" "init_unit_deferred" (func $deferred (param i32) (result i32)))
-        (import "isoplane" "clock_now_coarse" (func $clock (result i64)))"#,
-        r#"(call $begin (i32.const 7))
-        (drop (call $deferred (i32.const 7)))
-        (drop (call $clock))"#,
-    );
-    let mut request = request();
-    request.sandbox = InitSandbox::RuntimeBringUp;
-    assert!(
-        matches!(
-            initialize(&engine(), &wasm, &request),
-            Err(PrepareError::DeferralIgnored { unit: 7, .. })
-        ),
-        "a unit that ignores deferral must fail instead of acquiring runtime-only capabilities"
     );
 }
 
@@ -432,10 +358,6 @@ fn a_module_without_initialization_retains_its_runtime_table_operations() {
     assert_eq!(
         result.wasm, wasm,
         "no initializer means no portable module rewrite"
-    );
-    assert_eq!(
-        result.initialized.passes, 0,
-        "a module without an initializer cannot execute preparation passes"
     );
 }
 

@@ -16,7 +16,7 @@ pub struct ApiConfig {
     pub var_count: usize,
 }
 
-isoplane_guest::deferred_lazy! {
+isoplane_guest::lazy_init! {
     /// Routes handled by this fixture.
     static ROUTES: Vec<&'static str> = { vec!["/memo", "/park", "/stream"] };
 
@@ -139,5 +139,8 @@ impl Handler for Api {
 
 isoplane_guest::export_handler!(
     Api,
-    units = isoplane_guest::init_units![ROUTES, BOOT_MS, CONFIG]
+    initialize = || {
+        ROUTES.force();
+        CONFIG.force();
+    }
 );

@@ -29,7 +29,7 @@ pub struct AppManifest {
 #[cfg_attr(feature = "rust-guests", derive(Default))]
 #[serde(rename_all = "kebab-case")]
 pub enum InitSandbox {
-    /// Permits additional runtime imports when the host records no active initialization unit.
+    /// Permits the clock and, where the deployment grants them, sockets and polling during initialization.
     #[serde(rename = "runtime-bringup", alias = "runtime-bring-up")]
     RuntimeBringUp,
     /// Uses the default initialization capability policy, which is what a

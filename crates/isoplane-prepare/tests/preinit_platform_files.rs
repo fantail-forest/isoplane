@@ -107,17 +107,9 @@ fn template_memory(template: &[u8]) -> Vec<u8> {
     let engine = wt::Engine::default();
     let module = wt::Module::new(&engine, template).expect("the template is a valid module");
     let mut linker: wt::Linker<()> = wt::Linker::new(&engine);
-    for import in module.imports() {
-        let wt::ExternType::Func(ty) = import.ty() else {
-            panic!("the template imports only functions");
-        };
-        let name = format!("{}::{}", import.module(), import.name());
-        linker
-            .func_new(import.module(), import.name(), ty, move |_, _, _| {
-                wt::bail!("the template must not call `{name}` while instantiating")
-            })
-            .expect("a trap stub links");
-    }
+    linker
+        .define_unknown_imports_as_traps(&module)
+        .expect("a trap stub links");
     let mut store = wt::Store::new(&engine, ());
     let instance = linker
         .instantiate(&mut store, &module)
