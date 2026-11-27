@@ -13,6 +13,7 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
+#include "pal_isoplane_sockets.h"
 
 /* ---- the Isoplane imports this PAL is built from --------------------------- */
 

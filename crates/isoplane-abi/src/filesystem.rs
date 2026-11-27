@@ -150,7 +150,7 @@ pub fn native_wrappers() -> String {
 mod tests {
     #[test]
     fn native_filesystem_wrappers_match_the_single_abi_definition() {
-        assert_eq!(super::native_wrappers(), include_str!("../../../guest-sdks/dotnet/native/isoplane_filesystem.h"), "regenerate the native filesystem wrappers with cargo run -p isoplane-abi --example filesystem_header");
+        assert_eq!(super::native_wrappers(), include_str!("../../../guest-sdks/dotnet/native/isoplane_filesystem.h"), "regenerate the native filesystem wrappers with task exec -- cargo run -p isoplane-abi --example filesystem_header");
     }
 
     #[test]

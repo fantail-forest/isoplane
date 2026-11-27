@@ -43,7 +43,8 @@ public sealed class IsoplaneMonoDebugSymbols : Microsoft.Build.Utilities.Task
                 .Append(", sizeof(").Append(identifier).AppendLine("));");
         }
         header.AppendLine("static void isoplane_register_debug_symbols(void) {").Append(registrations).AppendLine("}");
-        File.WriteAllText(Output, header.ToString());
+        string text = header.ToString();
+        if (!File.Exists(Output) || File.ReadAllText(Output) != text) File.WriteAllText(Output, text);
         return true;
     }
 

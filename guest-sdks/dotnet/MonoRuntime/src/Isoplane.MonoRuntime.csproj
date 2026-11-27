@@ -41,7 +41,8 @@
   <ItemGroup>
     <NativeFileReference Include="$(IsoplaneSqliteDirectory)e_sqlite3.a" />
     <IsoplanePInvokeModule Include="e_sqlite3" />
-    <NativeFileReference Include="$(MSBuildThisFileDirectory)../sqlite/sqlite_callbacks.c" />
+    <_IsoplaneSqliteHeader Include="$(MSBuildThisFileDirectory)../sqlite/*.h" />
+    <WasiNativeSource Include="$(MSBuildThisFileDirectory)../sqlite/sqlite_callbacks.c" Dependencies="@(_IsoplaneSqliteHeader)" />
     <Compile Include="$(IsoplaneSqliteDirectory)SqliteImports.g.cs" />
     <WasiAfterRuntimeLoadedDeclarations Include="void isoplane_install_sqlite_callbacks(void)%3B" />
     <WasiAfterRuntimeLoadedCalls Include="isoplane_install_sqlite_callbacks()%3B" />
