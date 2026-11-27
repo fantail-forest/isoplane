@@ -1,10 +1,14 @@
 //! Preserve initialized state in active segments so native compilation retains CoW.
 
+#[cfg(any(not(target_os = "linux"), feature = "rust-guests"))]
 use std::collections::BTreeMap;
 
 use anyhow::{bail, ensure};
+#[cfg(any(not(target_os = "linux"), feature = "rust-guests"))]
 use isoplane_engine::snapshot::GlobalValue;
-use wasm_encoder::{ConstExpr, ExportKind, Module, RawSection};
+#[cfg(any(not(target_os = "linux"), feature = "rust-guests"))]
+use wasm_encoder::ConstExpr;
+use wasm_encoder::{ExportKind, Module, RawSection};
 use wasmparser::{ExternalKind, Parser, Payload, ValType};
 
 const GLOBAL_PREFIX: &str = "isoplane.prepare.global.";
@@ -12,6 +16,7 @@ const TABLE_PREFIX: &str = "isoplane.prepare.table.";
 
 pub(crate) struct Instrumented {
     pub wasm: Vec<u8>,
+    #[cfg(any(not(target_os = "linux"), feature = "rust-guests"))]
     pub globals: Vec<(u32, String)>,
 }
 
@@ -19,6 +24,7 @@ pub(crate) fn instrument(wasm: &[u8]) -> anyhow::Result<Instrumented> {
     if !has_initializer(wasm)? {
         return Ok(Instrumented {
             wasm: wasm.to_vec(),
+            #[cfg(any(not(target_os = "linux"), feature = "rust-guests"))]
             globals: Vec::new(),
         });
     }
@@ -101,6 +107,7 @@ pub(crate) fn instrument(wasm: &[u8]) -> anyhow::Result<Instrumented> {
     }
     Ok(Instrumented {
         wasm: output.finish(),
+        #[cfg(any(not(target_os = "linux"), feature = "rust-guests"))]
         globals,
     })
 }
@@ -125,6 +132,7 @@ fn has_initializer(wasm: &[u8]) -> anyhow::Result<bool> {
     Ok(found)
 }
 
+#[cfg(any(not(target_os = "linux"), feature = "rust-guests"))]
 pub(crate) fn bake(
     wasm: &[u8],
     memory: &[u8],
@@ -205,6 +213,7 @@ pub(crate) fn bake(
     Ok(output.finish())
 }
 
+#[cfg(any(not(target_os = "linux"), feature = "rust-guests"))]
 fn baked_data(wasm: &[u8], memory: &[u8]) -> anyhow::Result<wasm_encoder::DataSection> {
     let mut data = wasm_encoder::DataSection::new();
     for payload in Parser::new(0).parse_all(wasm) {

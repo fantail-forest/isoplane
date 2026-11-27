@@ -12,7 +12,9 @@ pub const DEFAULT_INLINE_RESPONSE_BYTES: usize = 1 << 20;
 /// Effective per-application resource budgets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
-    /// Maximum zstd-compressed module bytes at admission.
+    /// Maximum zstd-compressed bytes of a module that carries its whole
+    /// application, at admission.
+    #[cfg(feature = "rust-guests")]
     pub module_bytes_compressed: u64,
     /// Maximum size of an application package: the uncompressed bytes of
     /// every file it holds.
@@ -33,6 +35,7 @@ impl Default for Limits {
     fn default() -> Self {
         Self {
             instances_per_application: 16,
+            #[cfg(feature = "rust-guests")]
             module_bytes_compressed: 50 << 20,
             package_bytes: 50 << 20,
             instance_memory_max: super::GuestMemoryBytes::default().get(),
@@ -50,7 +53,11 @@ impl Default for Limits {
 pub struct ResourceLimitOverrides {
     /// Maximum live application instances; zero refuses new activations.
     pub instances_per_application: Option<u32>,
-    /// Maximum compressed module size admitted for preparation.
+    /// Maximum compressed size of a module that carries its whole application,
+    /// admitted for preparation. Left out when unset, so the overrides
+    /// serialize the same with and without the feature.
+    #[cfg(feature = "rust-guests")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub module_bytes_compressed: Option<u64>,
     /// Maximum uncompressed application package size admitted for preparation.
     pub package_bytes: Option<u64>,
@@ -70,6 +77,7 @@ impl ResourceLimitOverrides {
             instances_per_application: self
                 .instances_per_application
                 .unwrap_or(defaults.instances_per_application),
+            #[cfg(feature = "rust-guests")]
             module_bytes_compressed: self
                 .module_bytes_compressed
                 .unwrap_or(defaults.module_bytes_compressed),

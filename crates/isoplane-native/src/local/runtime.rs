@@ -1,8 +1,6 @@
 //! One project's guest execution and local bindings, with no node control plane.
 
 mod baseline;
-mod compressed_module;
-mod preparation_cache;
 
 pub use baseline::Baselines;
 
@@ -31,8 +29,8 @@ pub struct Prepared {
 }
 
 impl Prepared {
-    /// Validates and pre-initializes an ordinary local application. An
-    /// application package is prepared over the runtime baseline `baselines`
+    /// Validates and pre-initializes an ordinary local application: its
+    /// application package, prepared over the runtime baseline `baselines`
     /// holds.
     pub fn build(
         project: &Project,
@@ -40,6 +38,9 @@ impl Prepared {
         configuration: &isoplane_host::bindings::RuntimeConfiguration,
         baselines: &Baselines,
     ) -> Result<Self, super::Error> {
+        if project.application_files.files().is_empty() {
+            return Err(super::Error::EmptyPackage);
+        }
         Self::prepare(project, wasm, configuration, baselines).map_err(super::Error::Preparation)
     }
 
@@ -49,41 +50,15 @@ impl Prepared {
         configuration: &isoplane_host::bindings::RuntimeConfiguration,
         baselines: &Baselines,
     ) -> anyhow::Result<Self> {
-        let manifest = project.manifest.clone();
         let mut settings = Vec::new();
         configuration.write_json(&mut settings)?;
         let mut identity = blake3::Hasher::new();
         identity.update(blake3::hash(wasm).as_bytes());
         identity.update(&settings);
-        preparation_cache::hash_files(&mut identity, &project.application_files);
+        hash_files(&mut identity, &project.application_files);
         let version = identity.finalize().to_hex().to_string();
         let admit = || validate_runtime(project, wasm).map(drop);
-        if let Some(prepared) = baselines.prepare(project, wasm, &settings, &version, admit) {
-            return prepared;
-        }
-        let report = validate_runtime(project, wasm)?;
-        let template = if report.has_initialize() {
-            preparation_cache::template(project, wasm, &settings, || {
-                preinitialize(project, wasm, &settings)
-            })?
-        } else {
-            wasm.to_vec()
-        };
-        let engine = Arc::new(isoplane_engine::IsoplaneEngine::new(engine_configuration(
-            project,
-        ))?);
-        let (template, compiled) = compilation_cache(project, blake3::hash(&template).as_bytes())?
-            .load(&engine, &template)?;
-        let template = template.with_application_files(project.application_files.clone())?;
-        tracing::info!(compiled, "local native compilation ready");
-        let module = ModuleId::new(&manifest.name, &version);
-        let activator = Arc::new(EngineActivator::new(engine, template, module));
-        Ok(Self {
-            activator: PreparedActivator::Ordinary(activator),
-            manifest,
-            tenant: project.tenant(),
-            version,
-        })
+        baselines.prepare(project, wasm, &settings, &version, admit)
     }
     /// Validates a marked debug module and compiles it, or reuses its
     /// compilation from the runtime cache, without pre-initialization.
@@ -96,7 +71,7 @@ impl Prepared {
         let manifest = project.manifest.clone();
         let mut identity = blake3::Hasher::new();
         identity.update(blake3::hash(wasm).as_bytes());
-        preparation_cache::hash_files(&mut identity, &project.application_files);
+        hash_files(&mut identity, &project.application_files);
         let version = identity.finalize().to_hex().to_string();
         let engine = debug_engine(project)?;
         let (template, compiled) =
@@ -143,6 +118,17 @@ pub fn prepare_runtime(
     })
 }
 
+/// Hashes a file set by its content, so that a file moving between sets
+/// changes the result and a file's time does not.
+fn hash_files(hash: &mut blake3::Hasher, files: &isoplane_engine::PlatformFiles) {
+    hash_part(hash, &files.content_digest());
+}
+
+fn hash_part(hash: &mut blake3::Hasher, bytes: &[u8]) {
+    hash.update(&(bytes.len() as u64).to_le_bytes());
+    hash.update(bytes);
+}
+
 fn debug_engine(project: &Project) -> anyhow::Result<Arc<isoplane_engine::IsoplaneEngine>> {
     Ok(Arc::new(isoplane_engine::IsoplaneEngine::new(
         isoplane_engine::EngineConfig {
@@ -185,18 +171,6 @@ impl LocalCompilation {
     }
 }
 
-/// Storage for what is compiled or prepared from this project alone.
-fn compilation_cache(
-    project: &Project,
-    artifact_identity: &[u8],
-) -> anyhow::Result<LocalCompilation> {
-    let storage = isoplane_cache::Cache::new(
-        project.compilation_directory.clone(),
-        isoplane_cache::PROJECT_CACHE_BYTES,
-    )?;
-    local_compilation(project, storage, artifact_identity)
-}
-
 /// Storage for a compiled shared runtime, which holds nothing of the
 /// project's and is reused by every project of the user on that runtime.
 fn runtime_cache(project: &Project, runtime_identity: &[u8]) -> anyhow::Result<LocalCompilation> {
@@ -221,25 +195,6 @@ fn local_compilation(
         isoplane_engine::CompilationCache::from_trusted_directory(lease.directory().into())
     }?;
     Ok(LocalCompilation { cache, lease })
-}
-
-fn preinitialize(project: &Project, wasm: &[u8], configuration: &[u8]) -> anyhow::Result<Vec<u8>> {
-    let files = project.served_files()?;
-    Ok(isoplane_prepare::PreInitializer::new()
-        .with_runtime_profile(project.runtime_profile.clone())
-        .with_memory_limit(isoplane_abi::config::GuestMemoryBytes::new(
-            project.manifest.memory_max_bytes(),
-        )?)
-        .with_engine_config(isoplane_engine::EngineConfig {
-            platform_files: files.clone(),
-            ..engine_configuration(project)
-        })
-        .with_network(initialization_network(project))
-        .with_runtime_configuration(configuration.to_vec())
-        .with_platform_files(files)
-        .run(wasm)
-        .map_err(|e| anyhow::anyhow!("pre-initializing {}: {e}", project.manifest.name))?
-        .wasm)
 }
 
 fn initialization_network(project: &Project) -> isoplane_prepare::InitializationNetwork {
@@ -303,7 +258,7 @@ fn validate(
             &manifest.validation_limits,
         )
     };
-    let report = admission.map_err(|violations| {
+    admission.map_err(|violations| {
         anyhow::anyhow!(
             "module rejected:\n{}",
             violations
@@ -312,15 +267,7 @@ fn validate(
                 .collect::<Vec<_>>()
                 .join("\n")
         )
-    })?;
-    // A package is measured when it is read; the shared runtime it runs on is
-    // the platform's, not part of the application's size.
-    if project.application_files.files().is_empty() {
-        let compressed_bytes = compressed_module::size(&project.state_directory, wasm)?;
-        let limit = manifest.effective_limits().module_bytes_compressed;
-        anyhow::ensure!(compressed_bytes <= limit, "module is {compressed_bytes} compressed bytes, exceeding the configured {limit} byte limit");
-    }
-    Ok(report)
+    })
 }
 
 /// A local application using the shared cell, proxy and persistent host services.
@@ -447,7 +394,9 @@ mod storage_tests {
             runtime_cache_directory: directory.path().join("runtimes"),
             platform_files: Default::default(),
             application_files: Default::default(),
-            runtime_profile: isoplane_prepare::RuntimeProfile::RawWasm,
+            runtime_profile: isoplane_prepare::RuntimeProfile::SharedRuntime {
+                sdk_version: "test-sdk".into(),
+            },
         };
         (directory, project)
     }
@@ -455,16 +404,19 @@ mod storage_tests {
     #[test]
     fn an_active_rebuild_does_not_pin_previous_compilation_entries() {
         let (_directory, project) = project();
-        let previous = compilation_cache(&project, b"previous").unwrap();
+        let previous = runtime_cache(&project, b"previous").unwrap();
         let old = previous.lease.directory().to_path_buf();
         std::fs::write(old.join("artifact"), b"compiled").unwrap();
-        let current = compilation_cache(&project, b"current").unwrap();
+        let current = runtime_cache(&project, b"current").unwrap();
         std::fs::write(current.lease.directory().join("artifact"), b"compiled").unwrap();
         drop(previous);
-        isoplane_cache::Cache::new(project.compilation_directory, isoplane_cache::CacheBytes(0))
-            .unwrap()
-            .prune()
-            .unwrap();
+        isoplane_cache::Cache::new(
+            project.runtime_cache_directory,
+            isoplane_cache::CacheBytes(0),
+        )
+        .unwrap()
+        .prune()
+        .unwrap();
         assert!(
             !old.exists(),
             "the active rebuild must not pin an obsolete artifact from the same runtime"

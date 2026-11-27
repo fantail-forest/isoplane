@@ -15,11 +15,11 @@ isoplane-runtime = { workspace = true }
 rustix.workspace = true
 libc.workspace = true
 tempfile.workspace = true
-zstd = { workspace = true }
+zstd = { workspace = true, optional = true }
 
 [features]
 # Experimental: Rust guests are not a supported guest language yet.
-rust-guests = ["isoplane-abi/rust-guests", "isoplane-runtime/rust-guests"]
+rust-guests = ["isoplane-abi/rust-guests", "isoplane-runtime/rust-guests", "dep:zstd"]
 
 [dev-dependencies]
 isoplane-control = { workspace = true, features = ["rust-guests"] }

@@ -208,16 +208,21 @@ impl NodeCells {
         self.preparation.as_ref().ok_or_else(|| {
             anyhow::anyhow!("restoration requires installed runtime configuration")
         })?;
-        match &receipt.runtime_profile {
-            isoplane_prepare::RuntimeProfile::SharedRuntime { sdk_version } => anyhow::ensure!(
-                self.runtimes
-                    .as_ref()
-                    .is_some_and(|runtimes| runtimes.supports(sdk_version)),
-                "installed deployment {} was prepared on SDK {sdk_version}'s runtime, which this node does not install",
-                receipt.version
-            ),
-            isoplane_prepare::RuntimeProfile::RawWasm => anyhow::bail!("installed deployments must be prepared from an application package on an installed shared runtime"),
-        }
+        let sdk_version = receipt
+            .runtime_profile
+            .shared_runtime_sdk_version()
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "installed deployments must be prepared from an application package on an installed shared runtime"
+                )
+            })?;
+        anyhow::ensure!(
+            self.runtimes
+                .as_ref()
+                .is_some_and(|runtimes| runtimes.supports(sdk_version)),
+            "installed deployment {} was prepared on SDK {sdk_version}'s runtime, which this node does not install",
+            receipt.version
+        );
         self.install_application(tenant, installed).await
     }
 

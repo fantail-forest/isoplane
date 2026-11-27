@@ -18,22 +18,8 @@ impl Baselines {
     /// runtime, engine and limits, else the one published in the runtime
     /// cache, else prepared and published now. `admit` runs only in that
     /// last case, since any other baseline came from the same admitted
-    /// module. `None` for a module that carries its application.
+    /// module.
     pub(super) fn prepare(
-        &self,
-        project: &Project,
-        wasm: &[u8],
-        settings: &[u8],
-        version: &str,
-        admit: impl FnOnce() -> anyhow::Result<()>,
-    ) -> Option<anyhow::Result<super::Prepared>> {
-        if project.application_files.files().is_empty() {
-            return None;
-        }
-        Some(self.prepare_package(project, wasm, settings, version, admit))
-    }
-
-    fn prepare_package(
         &self,
         project: &Project,
         wasm: &[u8],

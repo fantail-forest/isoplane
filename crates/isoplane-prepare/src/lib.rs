@@ -11,7 +11,9 @@ pub mod package;
 pub use network::{InitializationDestinations, InitializationNetwork};
 pub use ownership::PreparationOwner;
 
-pub use initialize::{initialize, Initialization, Initialized, InitializedModule};
+#[cfg(feature = "rust-guests")]
+pub use initialize::{initialize, InitializedModule};
+pub use initialize::{Initialization, Initialized};
 
 /// Preparation failures classified independently of guest error text.
 #[derive(Debug, thiserror::Error)]
@@ -85,4 +87,5 @@ pub use baseline::PublishedBaseline;
 pub use baseline::{BaselineRequest, PreparedApplication, PreparedBaseline, RuntimeBaseline};
 
 pub mod preinit;
+#[cfg(feature = "rust-guests")]
 pub use preinit::{PreInitError, PreInitializer};

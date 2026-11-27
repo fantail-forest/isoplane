@@ -26,6 +26,7 @@ pub enum AdmissionError {
             .0.iter().map(|v| format!("  - {v}")).collect::<Vec<_>>().join("\n"))]
     Rejected(Vec<Violation>),
     /// The compressed application exceeds its operator-supplied budget.
+    #[cfg(feature = "rust-guests")]
     #[error("module is {size} bytes compressed, over the configured limit of {limit}")]
     TooLarge {
         /// Compressed module size in bytes.
@@ -34,11 +35,14 @@ pub enum AdmissionError {
         limit: u64,
     },
     /// Compression failed while measuring the module.
+    #[cfg(feature = "rust-guests")]
     #[error("compressing the module: {0}")]
     Compress(#[source] std::io::Error),
 }
 
-/// Validate a module and enforce its compressed-size budget before preparation.
+/// Validate a module that carries its whole application and enforce its
+/// compressed-size budget before preparation.
+#[cfg(feature = "rust-guests")]
 pub fn admit(manifest: &AppManifest, wasm: &[u8]) -> Result<ValidationReport, AdmissionError> {
     let report = validator::validate_with_limits(
         wasm,
