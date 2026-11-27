@@ -374,6 +374,3 @@ impl Default for PreparedResources {
         }
     }
 }
-
-/// Portable template section carrying preparation's closed native-resource state.
-pub const PREPARED_RESOURCES_SECTION: &str = "isoplane.prepared-resources";

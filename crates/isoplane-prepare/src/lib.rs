@@ -3,22 +3,21 @@
 // On Linux, preparation loads a published runtime baseline's native code.
 #![cfg_attr(not(target_os = "linux"), forbid(unsafe_code))]
 
-mod bake;
 mod initialize;
+mod instrument;
 mod network;
 mod ownership;
 pub mod package;
 pub use network::{InitializationDestinations, InitializationNetwork};
 pub use ownership::PreparationOwner;
 
-#[cfg(feature = "rust-guests")]
-pub use initialize::{initialize, InitializedModule};
 pub use initialize::{Initialization, Initialized};
 
 /// Preparation failures classified independently of guest error text.
 #[derive(Debug, thiserror::Error)]
 pub enum PrepareError {
     /// Preparation was explicitly cancelled.
+    #[cfg(target_os = "linux")]
     #[error("preparation cancelled")]
     Cancelled,
     /// A configured initialization backstop was exceeded.
@@ -74,14 +73,19 @@ mod request;
 pub use request::{BuildRequest, Module};
 
 mod product;
-pub use product::{BuildProduct, LocalPreparation, Preparation};
+pub use product::BuildProduct;
+
+#[cfg(target_os = "linux")]
+mod provider;
+#[cfg(target_os = "linux")]
+pub use provider::{LocalPreparation, Preparation};
 
 /// The module preparation compiles for `wasm`: `wasm` itself, or, when it has an initializer,
 /// `wasm` rewritten so that what initialization leaves can be captured. A compile of this module
 /// in a node's compilation cache is what that node's preparations reuse.
 #[cfg(any(test, feature = "test-util"))]
 pub fn compiled_module(wasm: &[u8]) -> anyhow::Result<Vec<u8>> {
-    Ok(bake::instrument(wasm)?.wasm)
+    instrument::instrument(wasm)
 }
 
 mod baseline;
@@ -90,5 +94,3 @@ pub use baseline::PublishedBaseline;
 pub use baseline::{BaselineRequest, PreparedApplication, PreparedBaseline, RuntimeBaseline};
 
 pub mod preinit;
-#[cfg(feature = "rust-guests")]
-pub use preinit::{PreInitError, PreInitializer};

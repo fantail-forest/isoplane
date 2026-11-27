@@ -24,9 +24,7 @@ rust-guests = ["isoplane-abi/rust-guests", "isoplane-runtime/rust-guests", "dep:
 [dev-dependencies]
 isoplane-control = { workspace = true, features = ["rust-guests"] }
 isoplane-engine = { workspace = true, features = ["test-util", "rust-guests"] }
-blake3.workspace = true
 isoplane-prepare = { workspace = true, features = ["rust-guests"] }
-tokio-util.workspace = true
 wasmparser = { workspace = true }
 wat = { workspace = true }
 tokio = { workspace = true }

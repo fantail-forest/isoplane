@@ -263,7 +263,7 @@ fn published(
     // SAFETY: only the compiler writes into this private, leased directory.
     let compiler =
         unsafe { isoplane_engine::CompilationCache::from_trusted_directory(compilation.clone()) }?;
-    let prepared = RuntimeBaseline::prepare(wanted, Some(&compiler))?;
+    let prepared = RuntimeBaseline::prepare(wanted, &compiler)?;
     let engine = std::sync::Arc::clone(prepared.baseline.engine());
     let compiled = prepared.product.initialized.compiled;
     // SAFETY: RuntimeBaseline::prepare produced these bytes in this process.

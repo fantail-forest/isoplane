@@ -117,22 +117,25 @@ pub struct PreparedApplication {
 }
 
 impl RuntimeBaseline {
-    /// Initialize only the runtime of `request`'s module, through its
-    /// `isoplane_initialize_runtime` export, in the caller's thread, compiling
-    /// through `cache` when given.
+    /// Initialize only `wasm`'s runtime, through its `isoplane_initialize_runtime`
+    /// export, in the caller's thread, compiling through `cache`.
     /// Fails with [`PrepareError::Baseline`] if that initialization reads entropy
     /// or reaches a capability the sandbox refuses, since every application
     /// over the baseline would then share its result.
     pub fn prepare(
         request: &BaselineRequest,
-        cache: Option<&isoplane_engine::CompilationCache>,
+        cache: &isoplane_engine::CompilationCache,
     ) -> Result<PreparedBaseline, PrepareError> {
         let request = &request.0;
         let identity = validate(request)?;
         let wasm = request.module.wasm();
         let engine = IsoplaneEngine::new(request.engine.clone()).map_err(PrepareError::Engine)?;
-        let capture = crate::initialize::CaptureMode::RuntimeBaseline { wasm, identity };
-        let (product, template) = produce(&engine, request, cache, identity, capture)?;
+        let capture = crate::initialize::CaptureMode::RuntimeBaseline {
+            wasm,
+            cache,
+            identity,
+        };
+        let (product, template) = produce(&engine, request, capture)?;
         let template = template.ok_or_else(|| {
             PrepareError::InvalidRequest("a runtime baseline needs a module with an initializer")
         })?;
@@ -169,19 +172,10 @@ impl RuntimeBaseline {
     }
 
     /// Initialize `request`'s application on this baseline in the caller's
-    /// thread and capture only what it changed, as a layer over it. Runs no
-    /// compilation. Fails with [`PrepareError::Input`] unless this baseline was
-    /// prepared from `request.baseline()`, or if the request asks for a
-    /// portable module, which a layer does not have.
-    pub fn prepare_application(
-        &self,
-        request: &BuildRequest,
-    ) -> Result<PreparedApplication, PrepareError> {
-        self.prepare_application_in(request, &std::env::temp_dir())
-    }
-
-    /// Prepare an application with temporary captured state confined to `storage`.
-    /// The directory must already exist and be owned by the caller.
+    /// thread and capture only what it changed, as a layer over it, keeping
+    /// temporary captured state in `storage`, an existing directory the
+    /// caller owns. Runs no compilation. Fails with [`PrepareError::Input`]
+    /// unless this baseline was prepared from `request.baseline()`.
     pub fn prepare_application_in(
         &self,
         request: &BuildRequest,
@@ -193,7 +187,7 @@ impl RuntimeBaseline {
             storage,
             identity,
         };
-        let (product, template) = produce(&self.0.engine, request, None, identity, capture)?;
+        let (product, template) = produce(&self.0.engine, request, capture)?;
         let template = template.ok_or_else(|| {
             PrepareError::InvalidRequest(
                 "an application over a runtime baseline needs its initializer",

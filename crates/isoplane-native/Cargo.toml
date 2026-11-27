@@ -66,6 +66,7 @@ csbindgen.workspace = true
 
 [dev-dependencies]
 isoplane-native = { path = ".", features = ["rust-guests"] }
+isoplane-engine = { workspace = true, features = ["test-util"] }
 postcard = { workspace = true }
 http-body-util.workspace = true
 wat.workspace = true

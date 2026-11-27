@@ -1,6 +1,6 @@
-use isoplane_engine::{EngineConfig, PlatformFile, PlatformFiles};
-use isoplane_prepare::Preparation as _;
-use isoplane_prepare::{BuildProduct, BuildRequest, Initialization, PrepareError, RuntimeProfile};
+use isoplane_engine::{PlatformFile, PlatformFiles};
+use isoplane_harness::preparation::shared_runtime::{self, Application};
+use isoplane_prepare::PrepareError;
 
 pub fn files(name: &str) -> PlatformFiles {
     PlatformFiles::new(
@@ -16,22 +16,7 @@ pub fn files(name: &str) -> PlatformFiles {
     .expect("valid managed application files")
 }
 
-pub struct Prepared {
-    pub product: BuildProduct,
-    configuration: EngineConfig,
-    identity: isoplane_engine::prepared::PreparedIdentity,
-}
-
-impl Prepared {
-    pub fn artifact(&self) -> isoplane_engine::prepared::PreparedTemplate {
-        let engine = isoplane_engine::IsoplaneEngine::new(self.configuration.clone()).unwrap();
-        // SAFETY: only the local preparation provider in prepare constructs this record's product.
-        unsafe { engine.decode_builder_output(self.product.prepared_bytes(), self.identity) }
-            .expect("trusted prepared application")
-    }
-}
-
-pub fn prepare(name: &str, platform_files: PlatformFiles) -> Result<Prepared, PrepareError> {
+pub fn prepare(name: &str, platform_files: PlatformFiles) -> Result<Application, PrepareError> {
     prepare_configured(name, platform_files, b"{}", None)
 }
 
@@ -42,50 +27,9 @@ pub fn prepare_configured(
     platform_files: PlatformFiles,
     runtime_config: &[u8],
     network: Option<isoplane_prepare::InitializationNetwork>,
-) -> Result<Prepared, PrepareError> {
-    let wasm = isoplane_fixtures::mono_runtime();
-    let request = BuildRequest {
-        engine: EngineConfig {
-            platform_files,
-            ..isoplane_fixtures::engine_config(2)
-        },
-        application_files: files(name),
-        runtime: RuntimeProfile::SharedRuntime {
-            sdk_version: isoplane_fixtures::release_version(),
-        },
-        memory_limit: isoplane_abi::config::GuestMemoryBytes::new(
-            isoplane_abi::config::DEFAULT_MEMORY_LIMIT_BYTES,
-        )
-        .expect("the fixture engine memory limit"),
-        guest_memory_bytes: None,
-        validation_limits: Default::default(),
-        module: isoplane_prepare::Module::new(&wasm),
-        initialization: Initialization {
-            network,
-            ..Initialization::new(runtime_config.to_vec())
-        },
-    };
-    let preparation =
-        isoplane_prepare::LocalPreparation::with_cache(isoplane_fixtures::compiled_runtime_cache())
-            .expect("local preparation");
-    // Its own thread, so the async tests that call this can wait for it too.
-    let prepared = std::thread::scope(|scope| {
-        scope
-            .spawn(|| {
-                tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("preparation runtime")
-                    .block_on(
-                        preparation.prepare(&request, &tokio_util::sync::CancellationToken::new()),
-                    )
-            })
-            .join()
-            .expect("preparation does not panic")
-    });
-    prepared.map(|product| Prepared {
-        product,
-        configuration: request.engine.clone(),
-        identity: request.identity().unwrap(),
-    })
+) -> Result<Application, PrepareError> {
+    let mut request = shared_runtime::request(files(name), platform_files);
+    request.initialization.network = network;
+    request.initialization.runtime_config = runtime_config.to_vec();
+    shared_runtime::prepare(&request)
 }

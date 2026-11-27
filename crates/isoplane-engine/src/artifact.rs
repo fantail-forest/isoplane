@@ -31,7 +31,6 @@ impl IsoplaneEngine {
         self.finish_template(
             module,
             ModuleHash::of(template_wasm),
-            template::read_prepared_resources(template_wasm)?,
             mut_names,
             table_names,
         )
@@ -57,7 +56,6 @@ impl IsoplaneEngine {
             module_hash: t.hash.0,
             engine_fingerprint: self.inner.fingerprint.clone(),
             cwasm_hash: *blake3::hash(&cwasm).as_bytes(),
-            prepared_resources: t.inner.prepared_resources.clone(),
             mut_global_names: t.inner.mut_globals.iter().map(|(n, _)| n.clone()).collect(),
             table_names: t.inner.tables.iter().map(|(n, _)| n.clone()).collect(),
         };
@@ -108,7 +106,6 @@ impl IsoplaneEngine {
         self.finish_template(
             module,
             ModuleHash(meta.module_hash),
-            meta.prepared_resources,
             meta.mut_global_names,
             meta.table_names,
         )
@@ -206,7 +203,6 @@ impl IsoplaneEngine {
         &self,
         module: wasmtime::Module,
         hash: ModuleHash,
-        prepared_resources: isoplane_abi::native_io::PreparedResources,
         mut_names: Vec<String>,
         table_names: Vec<String>,
     ) -> Result<Template> {
@@ -291,7 +287,7 @@ impl IsoplaneEngine {
                 native: Arc::new(crate::prepared::native::SharedNative { module }),
                 image,
                 memory_pages,
-                prepared_resources,
+                prepared_resources: Default::default(),
                 mut_globals,
                 tables,
                 table_nullness,

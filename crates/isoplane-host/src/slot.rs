@@ -410,7 +410,6 @@ mod tests {
             network: Some(isoplane_abi::native_io::ResourceHandle(3)),
             next_handle: 5,
         };
-        let bytes = isoplane_test_support::wat_bytes(&postcard::to_allocvec(&prepared).unwrap());
         let network = isoplane_abi::native_io::canonical::DEFINITIONS
             .iter()
             .find(|definition| {
@@ -423,7 +422,6 @@ mod tests {
             .id
             .0;
         let wasm = wat::parse_str(format!(r#"(module
-          (@custom "{}" "{bytes}")
           (import "isoplane" "socket_call" (func $socket (param i32 i32 i32) (result i64)))
           (memory (export "memory") 1 64)
           (func (export "isoplane_gc_hint") (param i32)
@@ -431,7 +429,8 @@ mod tests {
             (if (i64.ne (i64.load (i32.const 64)) (i64.const 3)) (then unreachable)))
           (func (export "isoplane_alloc") (param i32 i32) (result i32) (i32.const 2048))
           (func (export "isoplane_handle") (param i32 i32) (result i64) (i64.const 0))
-          (func (export "isoplane_wake") (param i64 i32 i32) (result i64) (i64.const 0)))"#, isoplane_abi::native_io::PREPARED_RESOURCES_SECTION)).unwrap();
+          (func (export "isoplane_initialize") (result i64) (i64.const 0))
+          (func (export "isoplane_wake") (param i64 i32 i32) (result i64) (i64.const 0)))"#)).unwrap();
         let engine = isoplane_engine::IsoplaneEngine::new(isoplane_engine::EngineConfig {
             max_instances: 4,
             max_memory_bytes: 4 << 20,
@@ -439,7 +438,32 @@ mod tests {
             ..Default::default()
         })
         .unwrap();
-        let template = engine.load_template(&wasm).unwrap();
+        let source = engine.load_layer_source(&wasm).unwrap();
+        let mut initializing = engine
+            .activate(
+                &source,
+                crate::bindings::CellBindings::boxed(ctx_for(InstanceId(2))),
+            )
+            .unwrap();
+        assert_eq!(
+            initializing
+                .run_initialize(isoplane_engine::OccupancyBudget::default())
+                .completion,
+            isoplane_engine::Completion::Done,
+            "the initializer must complete before its capture"
+        );
+        let identity = isoplane_engine::prepared::PreparedIdentity {
+            input_hash: [1; 32],
+            runtime_profile: [2; 32],
+            initialization_hash: [3; 32],
+        };
+        let captured = engine
+            .prepare_initialized_template(&source, &mut initializing, identity, prepared)
+            .expect("a completed initializer is capturable with the resources it retains");
+        drop(initializing);
+        let template = engine
+            .load_prepared_product_in(&captured, &std::env::temp_dir())
+            .unwrap();
         let ctx = ctx_for(InstanceId(1));
         let instance = engine
             .activate(&template, crate::bindings::CellBindings::boxed(ctx.clone()))
@@ -452,6 +476,10 @@ mod tests {
         let (engine, template, ctx, instance) = prepared_native_instance();
         let slot = Slot::new(ctx.instance, ctx.clone(), Box::new(instance));
         let retained = pollable(&slot);
+        assert_eq!(
+            retained.0, 5,
+            "a slot must allocate after the handles its template retains"
+        );
         let replacement = engine
             .activate(&template, crate::bindings::CellBindings::boxed(ctx.clone()))
             .expect("a hibernation wake must bind the already-owned native state");

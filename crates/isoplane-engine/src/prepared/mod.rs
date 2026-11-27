@@ -131,8 +131,8 @@ mod byte_payloads {
 }
 
 impl IsoplaneEngine {
-    /// Compiles already initialized portable WASM and captures its complete baseline once,
-    /// with immutable application files recorded in the artifact.
+    /// Compiles a module and captures the baseline it instantiates to, without running an
+    /// initializer, with immutable application files recorded in the artifact.
     pub fn prepare_template_with_files(
         &self,
         template_wasm: &[u8],

@@ -10,8 +10,6 @@ description = "Local sandbox initialization and prepared application production"
 [dependencies]
 fs4.workspace = true
 anyhow.workspace = true
-async-trait.workspace = true
-rayon.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -25,9 +23,13 @@ isoplane-runtime.workspace = true
 wasmparser.workspace = true
 wasm-encoder.workspace = true
 tokio.workspace = true
-tokio-util.workspace = true
 tar.workspace = true
 hex.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+async-trait.workspace = true
+rayon.workspace = true
+tokio-util.workspace = true
 
 [features]
 # What the tool that precompiles the test runtime calls. No shipped build enables it.

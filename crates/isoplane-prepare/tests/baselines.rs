@@ -4,12 +4,12 @@ mod common;
 #[path = "common/guest.rs"]
 mod guest;
 
-use isoplane_engine::{IsoplaneEngine, Template};
-use isoplane_harness::preparation::{load, load_in, staged_guest};
+use isoplane_engine::{CompilationCache, Template};
+use isoplane_harness::preparation::{load, staged_guest};
 use isoplane_prepare::{
-    BuildRequest, Preparation, PrepareError, PreparedBaseline, RuntimeBaseline, RuntimeProfile,
+    BuildRequest, PrepareError, PreparedApplication, PreparedBaseline, RuntimeBaseline,
+    RuntimeProfile,
 };
-use tokio_util::sync::CancellationToken;
 
 const ENTROPY: &str = r#"(import "isoplane" "entropy_fill" (func $entropy (param i32 i32)))"#;
 
@@ -33,32 +33,63 @@ fn request(wasm: &[u8]) -> BuildRequest {
     }
 }
 
-async fn baseline(request: &BuildRequest) -> Result<PreparedBaseline, PrepareError> {
-    RuntimeBaseline::prepare(&request.baseline(), None)
+/// A runtime baseline prepared through an empty compilation cache of its
+/// own, with the directory holding that cache, which its template maps code
+/// from and its applications keep captured state in.
+struct Baseline {
+    prepared: PreparedBaseline,
+    directory: tempfile::TempDir,
 }
 
-fn refusal_of(result: Result<PreparedBaseline, PrepareError>) -> PrepareError {
+impl Baseline {
+    fn application(&self, request: &BuildRequest) -> Result<PreparedApplication, PrepareError> {
+        self.prepared
+            .baseline
+            .prepare_application_in(request, self.directory.path())
+    }
+}
+
+fn temporary_cache() -> (tempfile::TempDir, CompilationCache) {
+    let directory = tempfile::tempdir().expect("an isolated compilation cache");
+    // SAFETY: the cache creates this directory privately, empty, for this test,
+    // and only CompilationCache's compiler path writes to it.
+    let cache = unsafe { CompilationCache::from_trusted_directory(directory.path().join("cache")) }
+        .expect("create the compilation cache");
+    (directory, cache)
+}
+
+async fn baseline(request: &BuildRequest) -> Result<Baseline, PrepareError> {
+    let (directory, cache) = temporary_cache();
+    let prepared = RuntimeBaseline::prepare(&request.baseline(), &cache)?;
+    Ok(Baseline {
+        prepared,
+        directory,
+    })
+}
+
+fn refusal_of(result: Result<Baseline, PrepareError>) -> PrepareError {
     match result {
         Ok(_) => panic!("the runtime baseline must be refused"),
         Err(error) => error,
     }
 }
 
+#[cfg(target_os = "linux")]
 #[tokio::test]
 async fn an_application_over_a_baseline_loads_to_the_memory_its_whole_initialization_leaves() {
+    use isoplane_prepare::Preparation;
     let wasm = staged_guest(ENTROPY, RUNTIME, APPLICATION);
     let request = request(&wasm);
     let preparation = isoplane_harness::preparation::local_preparation();
     let whole = preparation
-        .prepare(&request, &CancellationToken::new())
+        .prepare(&request, &tokio_util::sync::CancellationToken::new())
         .await
         .expect("the whole initialization must prepare");
     let runtime = baseline(&request)
         .await
         .expect("the runtime stage must prepare as a baseline");
     let layer = runtime
-        .baseline
-        .prepare_application(&request)
+        .application(&request)
         .expect("the application must prepare over its baseline")
         .product;
     let engine = common::engine();
@@ -66,7 +97,7 @@ async fn an_application_over_a_baseline_loads_to_the_memory_its_whole_initializa
     let whole = load(&engine, &whole, identity, None);
     let base = load(
         &engine,
-        &runtime.product,
+        &runtime.prepared.product,
         request
             .baseline()
             .identity()
@@ -119,8 +150,27 @@ async fn a_runtime_stage_that_draws_entropy_is_refused_as_a_baseline() {
     );
 }
 
-async fn layer_refusal(runtime: &RuntimeBaseline, request: &BuildRequest) -> PrepareError {
-    match runtime.prepare_application(request) {
+#[test]
+fn a_second_baseline_reuses_the_compilation_the_first_left_in_its_cache() {
+    let wasm = staged_guest(ENTROPY, RUNTIME, APPLICATION);
+    let request = request(&wasm).baseline();
+    let (_directory, cache) = temporary_cache();
+    let compiled = || {
+        RuntimeBaseline::prepare(&request, &cache)
+            .expect("the runtime stage must prepare as a baseline")
+            .product
+            .initialized
+            .compiled
+    };
+    assert_eq!(
+        (compiled(), compiled()),
+        (true, false),
+        "the first baseline must compile the runtime into the cache it is given and the second must reuse that"
+    );
+}
+
+async fn layer_refusal(runtime: &Baseline, request: &BuildRequest) -> PrepareError {
+    match runtime.application(request) {
         Ok(_) => panic!("the layer must be refused"),
         Err(error) => error,
     }
@@ -137,7 +187,7 @@ async fn an_application_is_refused_over_a_baseline_prepared_for_other_limits() {
         ),
         ..request
     };
-    let refusal = layer_refusal(&runtime.baseline, &other).await;
+    let refusal = layer_refusal(&runtime, &other).await;
     assert!(
         matches!(refusal, PrepareError::Input(_)),
         "a layer must be prepared over the baseline its own runtime, engine and limits derive: {refusal}"
@@ -147,7 +197,10 @@ async fn an_application_is_refused_over_a_baseline_prepared_for_other_limits() {
 /// Local preparation over a published runtime baseline and its manifest receipt.
 #[cfg(target_os = "linux")]
 mod published {
-    use isoplane_prepare::{PrepareError, PublishedBaseline};
+    use isoplane_engine::IsoplaneEngine;
+    use isoplane_harness::preparation::load_in;
+    use isoplane_prepare::{Preparation, PublishedBaseline};
+    use tokio_util::sync::CancellationToken;
 
     use super::*;
 
@@ -339,14 +392,13 @@ async fn baseline_and_layer(wasm: &[u8]) -> (Template, Template) {
         .await
         .expect("the runtime stage must prepare as a baseline");
     let layer = runtime
-        .baseline
-        .prepare_application(&request)
+        .application(&request)
         .expect("the application must prepare over its baseline")
         .product;
     let engine = common::engine();
     let base = load(
         &engine,
-        &runtime.product,
+        &runtime.prepared.product,
         request
             .baseline()
             .identity()

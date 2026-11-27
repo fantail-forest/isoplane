@@ -21,22 +21,19 @@ async fn the_dotnet_template_activates_without_running_the_runtime_start_up() {
     let out = managed::prepare("isoplane_guest_dotnet_bcl", Default::default())
         .expect("pre-init must succeed on the managed application");
     assert!(
-        !out.product.initialized.pal_calls.is_empty(),
+        !out.runtime_initialized().pal_calls.is_empty(),
         "the runtime reaches the PAL while coming up; nothing reached means no runtime start-up \
          was captured"
     );
 
-    let artifact = out.artifact();
     let engine = isoplane_engine::IsoplaneEngine::new(isoplane_fixtures::engine_config(2)).unwrap();
-    let template = engine
-        .load_prepared_product_in(&artifact, &std::env::temp_dir())
-        .expect("prepared template");
+    let template = out.load(&engine);
     assert!(
         !template.has_initialize(),
         "prepared activation must have no initializer to rerun"
     );
     let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId(1));
-    let mut guest = isoplane_harness::ReturnedGuest::prepared(artifact, &reactor);
+    let mut guest = isoplane_harness::ReturnedGuest::application(&out, &reactor);
     assert_eq!(guest.answer(&reactor, "/trust/at-boot", 4).await, "roots=0 ",
         "the first dispatch must observe application state already captured with an empty trust bundle");
 }
