@@ -68,6 +68,15 @@ pub fn template_project(destination: &Path, template: &str) -> PathBuf {
     )
 }
 
+/// The packaged template `template` as generated with `--<option> false`, where `option` is
+/// `dot-agents` or `dot-claude`. It is not restored, and a test reads it in place.
+pub fn template_without(template: &str, option: &str) -> PathBuf {
+    prepared()
+        .join("templates-without")
+        .join(option)
+        .join(template)
+}
+
 /// The `isoplane` command installed from the packaged CLI, shared by every test.
 pub fn managed_cli() -> PathBuf {
     prepared()

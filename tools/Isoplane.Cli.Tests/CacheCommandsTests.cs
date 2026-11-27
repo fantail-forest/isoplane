@@ -5,10 +5,10 @@ namespace Isoplane.Cli.Tests;
 
 public sealed class CacheCommandsTests
 {
-    private static (int Exit, string Output) Run(string directory, params string[] arguments)
+    private static (int Exit, string Output) Run(Func<string, TextWriter, int> command, string directory)
     {
         using var output = new StringWriter();
-        return (CacheCommands.Run(arguments, directory, output), output.ToString());
+        return (command(directory, output), output.ToString());
     }
 
     private static async Task CompileRuntimeAsync(SessionFixture fixture)
@@ -26,7 +26,7 @@ public sealed class CacheCommandsTests
     public void info_reports_a_cache_no_session_has_filled_without_creating_it()
     {
         var directory = Path.Combine(Path.GetTempPath(), "isoplane-cache-" + Guid.NewGuid().ToString("N"));
-        var (exit, output) = Run(directory, "cache", "info");
+        var (exit, output) = Run(CacheCommands.Info, directory);
         Assert.Equal(0, exit);
         Assert.Contains(directory, output, StringComparison.Ordinal);
         Assert.Contains("Empty.", output, StringComparison.Ordinal);
@@ -39,26 +39,16 @@ public sealed class CacheCommandsTests
         using var fixture = new SessionFixture();
         await CompileRuntimeAsync(fixture);
 
-        var before = Run(fixture.RuntimeCache, "cache", "info");
+        var before = Run(CacheCommands.Info, fixture.RuntimeCache);
         Assert.Equal(0, before.Exit);
         Assert.Contains("1 compiled runtime,", before.Output, StringComparison.Ordinal);
         Assert.Contains("last used", before.Output, StringComparison.Ordinal);
 
-        var cleaned = Run(fixture.RuntimeCache, "cache", "clean");
+        var cleaned = Run(CacheCommands.Clean, fixture.RuntimeCache);
         Assert.Equal(0, cleaned.Exit);
         Assert.StartsWith("Removed ", cleaned.Output, StringComparison.Ordinal);
         Assert.Empty(Directory.GetFiles(fixture.RuntimeCache, "*.cwasm", SearchOption.AllDirectories));
 
-        Assert.Contains("Empty.", Run(fixture.RuntimeCache, "cache", "info").Output, StringComparison.Ordinal);
-    }
-
-    [Theory]
-    [InlineData("cache")]
-    [InlineData("cache", "purge")]
-    [InlineData("cache", "clean", "--all")]
-    public void an_unknown_cache_command_names_the_two_that_exist(params string[] arguments)
-    {
-        var error = Assert.Throws<ArgumentException>(() => Run(Path.GetTempPath(), arguments));
-        Assert.Equal("Use isoplane cache info or isoplane cache clean.", error.Message);
+        Assert.Contains("Empty.", Run(CacheCommands.Info, fixture.RuntimeCache).Output, StringComparison.Ordinal);
     }
 }

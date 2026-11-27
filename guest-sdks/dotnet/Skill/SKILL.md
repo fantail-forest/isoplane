@@ -8,8 +8,8 @@ description: Rules, commands and reference for an Isoplane application, which ru
 An Isoplane application is ordinary .NET code that runs in a sandbox instead
 of a process. The project references an Isoplane SDK package, and the
 `isoplane` CLI runs it locally. The rules below are what differs from a server
-process. The files under `references/` are the customer documentation pages
-for the packages this project uses, as of the SDK version that wrote them.
+process. The documentation pages listed at the end are the ones for the
+packages this project uses.
 
 ## Rules
 
@@ -53,7 +53,7 @@ for the packages this project uses, as of the SDK version that wrote them.
   writes one JSON event per line for a program reading the output.
 - `isoplane dev --debug` starts a session a debugger can attach to.
 - `dotnet build` runs the sandbox's checks. A diagnostic whose code starts with
-  `ISOPLANE` is explained in `references/sdk/reference/error-codes.md` and at
+  `ISOPLANE` is explained at
   `https://isoplane.dev/docs/reference/error-codes#<code in lower case>`.
 - `dotnet test` runs unit tests and, in a test project that uses
   `Isoplane.Testing`, tests that start the application in the real sandbox.
@@ -64,33 +64,51 @@ for the packages this project uses, as of the SDK version that wrote them.
 - `isoplane agent init --harness <name>` registers Isoplane's MCP server with
   a coding agent, which then runs, watches and stops the application and reads
   its events through tools instead of a terminal.
-- `references/sdk/reference/cli.md` lists every command and option.
+- https://isoplane.dev/docs/reference/cli.md lists every command and option.
+
+## This skill
+
+This skill matches the SDK version and the Isoplane packages the project had
+when it was written. It is replaced when it is written again, so put guidance
+of your own in a skill beside this one.
 
 ## Documentation
 
 The customer documentation is at https://isoplane.dev/docs/. Every page there
 is available as markdown by appending `.md` to its URL or by sending
-`Accept: text/markdown`. The references below are copies of its pages for the
-SDK version this project uses.
+`Accept: text/markdown`, and the links below are to that form. The site
+describes the newest Isoplane release, and its version menu lists earlier
+ones.
 
-## This skill
+### Isoplane.Sdk
 
-The Isoplane SDK writes this directory when the project builds, from the
-packages the project references, so that it matches the SDK version in use.
-Edits are overwritten on the next build, and a package added to or removed
-from the project adds or removes its references. Put guidance of your own in a
-skill beside this one. Commit the directory so that an agent working from a
-clone sees it.
+The sandbox, the SDK's entry points and types, local development, testing and
+the tooling. Read the first page below before changing code that touches
+threads, the file system, time, networking or process APIs, and the
+application lifecycle before deciding where state lives or when work runs. A
+test project uses the `Isoplane.Testing` package to start the application in
+the sandbox.
 
-Three MSBuild properties in the project file control the writing:
-
-- `IsoplaneWriteAgentSkill`: `false` turns it off.
-- `IsoplaneAgentSkillDirectories`: the directories the skill is written to,
-  separated by semicolons; the default is `.agents/skills;.claude/skills`.
-  The first holds the files and each other one links to it, or holds a copy
-  where links are unavailable.
-- `IsoplaneAgentSkillRoot`: the directory those are created under. Without
-  it, the nearest directory above the project holding a `.git` entry or a
-  solution file, else the project directory.
-
-## References
+- [How .NET differs on Isoplane](https://isoplane.dev/docs/concepts/dotnet-runtime-differences.md)
+- [The application lifecycle](https://isoplane.dev/docs/concepts/application-lifecycle.md)
+- [Library compatibility](https://isoplane.dev/docs/concepts/library-compatibility.md)
+- [Resource limits](https://isoplane.dev/docs/concepts/resource-limits.md)
+- [Install the SDK](https://isoplane.dev/docs/how-to/install.md)
+- [Handle requests without ASP.NET](https://isoplane.dev/docs/how-to/handle-requests-without-aspnet.md)
+- [Build and run](https://isoplane.dev/docs/how-to/run-and-rebuild.md)
+- [Debug an application](https://isoplane.dev/docs/how-to/debug-an-application.md)
+- [Supply local development settings](https://isoplane.dev/docs/how-to/local-settings.md)
+- [Find and fix blocking calls](https://isoplane.dev/docs/how-to/find-and-fix-blocking-calls.md)
+- [Handle uploads and generated files](https://isoplane.dev/docs/how-to/handle-uploads-and-generated-files.md)
+- [Test an application](https://isoplane.dev/docs/how-to/test-an-application.md)
+- [Troubleshoot local development](https://isoplane.dev/docs/how-to/troubleshooting.md)
+- [Error codes](https://isoplane.dev/docs/reference/error-codes.md)
+- [Project settings](https://isoplane.dev/docs/reference/project-settings.md)
+- [launchSettings.json](https://isoplane.dev/docs/reference/launch-settings.md)
+- [launch.json for VS Code](https://isoplane.dev/docs/reference/vscode-launch.md)
+- [Project templates](https://isoplane.dev/docs/reference/project-templates.md)
+- [Telemetry](https://isoplane.dev/docs/reference/telemetry.md)
+- [CLI commands](https://isoplane.dev/docs/reference/cli.md)
+- [SDK API reference](https://isoplane.dev/docs/reference/sdk.md)
+- [Isoplane.Sdk API](https://isoplane.dev/docs/reference/sdk/Isoplane.Sdk.md)
+- [Isoplane.Testing API](https://isoplane.dev/docs/reference/sdk/Isoplane.Testing.md)

@@ -7,14 +7,8 @@ namespace Isoplane.Cli;
 /// <summary><c>isoplane cache info</c> and <c>isoplane cache clean</c>, over the per-user cache of compiled runtimes.</summary>
 internal static class CacheCommands
 {
-    internal static int Run(string[] arguments, string directory, TextWriter output) => arguments switch
-    {
-        ["cache", "info"] => Info(directory, output),
-        ["cache", "clean"] => Clean(directory, output),
-        _ => throw new ArgumentException("Use isoplane cache info or isoplane cache clean."),
-    };
-
-    private static int Info(string directory, TextWriter output)
+    /// <summary><c>isoplane cache info</c>: what <paramref name="directory"/> holds, without creating it.</summary>
+    internal static int Info(string directory, TextWriter output)
     {
         var report = RuntimeCache.Inventory(directory);
         var entries = report["entries"]!.AsArray();
@@ -30,7 +24,8 @@ internal static class CacheCommands
         return 0;
     }
 
-    private static int Clean(string directory, TextWriter output)
+    /// <summary><c>isoplane cache clean</c>: removes the compiled runtimes in <paramref name="directory"/> that no session is using.</summary>
+    internal static int Clean(string directory, TextWriter output)
     {
         var report = RuntimeCache.Clear(directory);
         var remaining = report["entries"]!.AsArray();

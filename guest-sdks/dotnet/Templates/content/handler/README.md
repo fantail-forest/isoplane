@@ -45,6 +45,7 @@ dotnet test
 | `src/Sample-Handler/Greeter.cs` | Application logic kept apart from Isoplane, and JSON serialization |
 | `src/Sample-Handler/Properties/launchSettings.json` | The local port and the settings a local session supplies |
 | `.vscode/launch.json` | Debugging the application in VS Code |
+| `.agents/skills/isoplane/`, `.claude/skills/isoplane/` | The `isoplane` skill for AI coding agents, in each skills directory the project was created with; https://isoplane.dev/docs/how-to/work-with-an-ai-coding-agent says how to update it |
 | `tests/Sample-Handler.Tests/SandboxFixture.cs` | Starting the application in the sandbox for a test run |
 
 ## How it works

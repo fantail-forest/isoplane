@@ -72,6 +72,7 @@ dotnet test
 | `src/Sample-McpServer/appsettings.json`, `appsettings.Development.json` | Settings for every environment, and for development |
 | `src/Sample-McpServer/Properties/launchSettings.json` | The local port and the settings a local session supplies |
 | `.vscode/launch.json` | Debugging the application in VS Code |
+| `.agents/skills/isoplane/`, `.claude/skills/isoplane/` | The `isoplane` skill for AI coding agents, in each skills directory the project was created with; https://isoplane.dev/docs/how-to/work-with-an-ai-coding-agent says how to update it |
 | `tests/Sample-McpServer.Tests/SandboxFixture.cs` | Starting the server in the sandbox and connecting an MCP client to it |
 
 ## How it works

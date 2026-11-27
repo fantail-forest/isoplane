@@ -20,13 +20,13 @@
     <ProjectReference Include="../Isoplane.Testing/Isoplane.Testing.csproj" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <EmbeddedResource Include="../../guest-sdks/dotnet/Build/Isoplane.Conformance.targets" LogicalName="Isoplane.Conformance.targets" />
-    <EmbeddedResource Include="../../guest-sdks/dotnet/Build/Isoplane.AgentSkill.targets" LogicalName="Isoplane.AgentSkill.targets" />
     <EmbeddedResource Include="../vscode-isoplane/package.json" LogicalName="vscode-isoplane.package.json" />
     <Compile Include="../Isoplane.Cli/LaunchProfileKeys.cs" Link="LaunchProfileKeys.cs" />
     <Compile Include="../BuildProtocol/BuildDiagnostics.cs" Link="BuildDiagnostics.cs" />
     <Compile Include="../Isoplane.Cli/TelemetryVariables.cs" Link="TelemetryVariables.cs" />
     <Compile Include="../Isoplane.Cli/CliCommandLine.cs" Link="CliCommandLine.cs" />
     <Compile Include="../Isoplane.Cli/AgentHarness.cs" Link="AgentHarness.cs" />
+    <Compile Include="../Isoplane.Cli/AgentSkill.cs" Link="AgentSkill.cs" />
     <Compile Include="../Isoplane.Cli/AgentToolCatalogue.cs" Link="AgentToolCatalogue.cs" />
     <Compile Include="../Isoplane.Cli/ShellCompletions.cs" Link="ShellCompletions.cs" />
     <EmbeddedResource Include="../TelemetryProtocol/command-event.schema.json" LogicalName="command-event.schema.json" />

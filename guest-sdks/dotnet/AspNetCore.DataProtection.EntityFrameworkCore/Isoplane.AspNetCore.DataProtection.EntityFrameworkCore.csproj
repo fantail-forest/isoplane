@@ -17,6 +17,6 @@
     <None Include="buildTransitive/**" Pack="true" PackagePath="buildTransitive/" />
   </ItemGroup>
   <Import Project="../../../licenses/SdkPackage.props" />
-  <PropertyGroup><IsoplaneSkillPart>dataprotection-efcore</IsoplaneSkillPart></PropertyGroup>
-  <Import Project="../Skill/Pack.targets" />
+  <!-- This package's section of the isoplane agent skill. -->
+  <ItemGroup><None Include="../Skill/sections/dataprotection-efcore.md" Pack="true" PackagePath="tools/skill/" /></ItemGroup>
 </Project>

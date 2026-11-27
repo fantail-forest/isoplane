@@ -10,5 +10,4 @@
   <Import Project="../tools/Build/Isoplane.Run.targets" />
   <Import Project="../tools/Build/Isoplane.ManagedBundle.targets" />
   <Import Project="../tools/Build/Isoplane.Conformance.targets" />
-  <Import Project="../tools/Build/Isoplane.AgentSkill.targets" />
 </Project>

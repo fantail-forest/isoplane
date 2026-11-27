@@ -63,28 +63,6 @@ tasks:
         vars: {FILTER: Isoplane.Docs.slnf}
       - 'cd docs/userdocs && "{{.DOTNET}}" "{{.MANAGED}}/bin/ApiReference/release/ApiReference.dll" docs/reference --since since.json {{.CLI_ARGS}}'
 
-  skill:
-    run: once
-    desc: Lay out the isoplane agent skill the SDK packages carry, from the customer docs
-    cmds:
-      - task: compile
-        vars: {FILTER: Isoplane.Docs.slnf}
-      - task: skill:prepared
-
-  skill:prepared:
-    internal: true
-    run: once
-    sources:
-      - '{{.ROOT_DIR}}/docs/userdocs/docs/**/*'
-      - '{{.ROOT_DIR}}/guest-sdks/dotnet/Skill/**/*'
-      - '{{.ROOT_DIR}}/tools/ApiReference/**/*.cs'
-      - '{{.MANAGED}}/bin/ApiReference/release/**/*'
-      - exclude: 'docs/userdocs/docs/**/{obj,bin}/**/*'
-    generates:
-      - '{{.SKILL}}/SKILL.md'
-    cmds:
-      - '"{{.DOTNET}}" "{{.MANAGED}}/bin/ApiReference/release/ApiReference.dll" skill-references --docs docs/userdocs/docs --skill guest-sdks/dotnet/Skill --out "{{.SKILL}}"'
-
   packages:
     run: once
     desc: Pack the prepared managed assemblies and shared runtime
@@ -98,22 +76,25 @@ tasks:
   packages:prepared:
     internal: true
     run: once
-    deps: [skill:prepared, template-package:prepared]
+    deps: [template-package:prepared]
+
+  sdk-packages:prepared:
+    internal: true
+    run: once
+    deps: [':runtime']
     sources:
-      - '{{.SKILL}}/**/*'
-      - '{{.MANAGED}}/bin/{Isoplane.Sdk,Isoplane.AspNetCore,Isoplane.AspNetCore.DataProtection.EntityFrameworkCore,Isoplane.OpenTelemetry,Isoplane.Templates,Isoplane.Testing,Conformance,Isoplane.Analyzers,Isoplane.Analyzers.CodeFixes}/release/*'
+      - '{{.MANAGED}}/bin/{Isoplane.Sdk,Isoplane.AspNetCore,Isoplane.AspNetCore.DataProtection.EntityFrameworkCore,Isoplane.OpenTelemetry,Isoplane.Testing,Conformance,Isoplane.Analyzers,Isoplane.Analyzers.CodeFixes}/release/*'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/Build/**/*'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/{Analyzers,Conformance}/Pack.targets'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/MSBuild/**/*'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/{AspNetCore,OpenTelemetry,AspNetCore.DataProtection.EntityFrameworkCore}/buildTransitive/**/*'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/{buildTransitive,Skill}/**/*'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/AspNetCore/Sdk/**/*'
-      - '{{.ROOT_DIR}}/guest-sdks/dotnet/{Isoplane.Sdk,AspNetCore/Isoplane.AspNetCore,AspNetCore.DataProtection.EntityFrameworkCore/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore,OpenTelemetry/Isoplane.OpenTelemetry,Templates/Isoplane.Templates}.csproj'
+      - '{{.ROOT_DIR}}/guest-sdks/dotnet/{Isoplane.Sdk,AspNetCore/Isoplane.AspNetCore,AspNetCore.DataProtection.EntityFrameworkCore/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore,OpenTelemetry/Isoplane.OpenTelemetry}.csproj'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/{PackageReadme.md,AspNetCore/PackageReadme.md,AspNetCore.DataProtection.EntityFrameworkCore/PackageReadme.md,OpenTelemetry/PackageReadme.md}'
       - '{{.ROOT_DIR}}/tools/Isoplane.Testing/{Isoplane.Testing.csproj,PackageReadme.md}'
       - '{{.ROOT_DIR}}/licenses/SdkPackage.props'
       - '{{.ROOT_DIR}}/licenses/Isoplane-SDK-LICENSE.txt'
-      - '{{.ROOT_DIR}}/guest-sdks/dotnet/Templates/content/**/*'
       - '{{.ROOT_DIR}}/Directory.Build.props'
       - '{{.ROOT_DIR}}/taskfiles/managed.yml'
       - '{{.ROOT_DIR}}/taskfiles/NativeAssets.props'
@@ -125,7 +106,6 @@ tasks:
       - '{{.PACKAGES}}/Isoplane.AspNetCore.*.nupkg'
       - '{{.PACKAGES}}/Isoplane.AspNetCore.DataProtection.EntityFrameworkCore.*.nupkg'
       - '{{.PACKAGES}}/Isoplane.OpenTelemetry.*.nupkg'
-      - '{{.PACKAGES}}/Isoplane.Templates.*.nupkg'
       - '{{.PACKAGES}}/Isoplane.Testing.*.nupkg'
     cmds:
       - 'test "{{OS}}" = linux || { echo "Run task managed:packages on Linux first." >&2; exit 1; }'
@@ -144,18 +124,16 @@ tasks:
         vars:
           PROJECT: '{{.ITEM}}'
 
-  template-package:
-    run: once
-    desc: Pack the prepared application templates without building the guest runtime
-    cmds:
-      - task: build
-      - task: template-package:prepared
-
   template-package:prepared:
     internal: true
     run: once
+    deps: [sdk-packages:prepared, ':cli:stage']
+    vars:
+      WORK: '{{.ROOT_DIR}}/.build/clr-anycpu/template-skills-work'
     sources:
       - '{{.SOURCE_REF}}'
+      - '{{.PACKAGES}}/Isoplane.{Sdk,AspNetCore,AspNetCore.DataProtection.EntityFrameworkCore,OpenTelemetry}.*.nupkg'
+      - '{{.MANAGED}}/bin/Isoplane.Cli/release/*'
       - '{{.MANAGED}}/bin/Isoplane.Templates/release/*'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/Templates/**/*'
       - '{{.ROOT_DIR}}/Directory.Build.props'
@@ -165,6 +143,41 @@ tasks:
     generates:
       - '{{.PACKAGES}}/Isoplane.Templates.*.nupkg'
     cmds:
+      - rm -rf "{{.TEMPLATE_SKILLS}}" "{{.WORK}}"
+      - mkdir -p "{{.WORK}}"
+      # Isoplane packages come only from this build: nuget.org carries the same version.
+      - |
+        cat > "{{.WORK}}/nuget.config" <<EOF
+        <?xml version="1.0" encoding="utf-8"?>
+        <configuration>
+          <packageSources>
+            <clear />
+            <add key="nuget" value="https://api.nuget.org/v3/index.json" />
+            <add key="isoplane" value="{{.PACKAGES}}" />
+          </packageSources>
+          <packageSourceMapping>
+            <packageSource key="isoplane"><package pattern="Isoplane.*" /></packageSource>
+            <packageSource key="nuget"><package pattern="*" /></packageSource>
+          </packageSourceMapping>
+        </configuration>
+        EOF
+      # Each template ships the skill `isoplane skills install` writes for the project it creates.
+      # The template is created as DIRECTORY:NAME from a copy that holds the empty skill directory
+      # its definition names, and the packages are extracted afresh, because NuGet never extracts
+      # an id and version it already holds.
+      - for: ['web:isoplane-web', 'handler:isoplane-handler', 'mcpserver:isoplane-mcpserver', 'webapi:isoplane-webapi', 'webapp:isoplane-webapp']
+        cmd: |
+          set -e
+          content="{{.WORK}}/content/{{index (splitList ":" .ITEM) 0}}"
+          project="{{.WORK}}/projects/{{index (splitList ":" .ITEM) 0}}"
+          mkdir -p "{{.WORK}}/content"
+          cp -R "guest-sdks/dotnet/Templates/content/{{index (splitList ":" .ITEM) 0}}" "$content"
+          find "$content" \( -name bin -o -name obj -o -name .isoplane \) -prune -exec rm -rf {} +
+          mkdir -p "$content/.template.config/skills/isoplane"
+          "{{.DOTNET}}" new install "$content" --debug:custom-hive "{{.WORK}}/hive"
+          "{{.DOTNET}}" new {{index (splitList ":" .ITEM) 1}} --name App --dot-agents false --dot-claude false --output "$project" --debug:custom-hive "{{.WORK}}/hive"
+          cp "{{.WORK}}/nuget.config" "$project/"
+          NUGET_PACKAGES="{{.WORK}}/packages" "{{.DOTNET}}" "{{.CLI}}" skills install --project "$(dirname "$(find "$project" -name App.csproj)")" --skills-path "{{.TEMPLATE_SKILLS}}/{{index (splitList ":" .ITEM) 0}}/.template.config/skills"
       - task: pack
         vars:
           PROJECT: guest-sdks/dotnet/Templates/Isoplane.Templates.csproj
@@ -173,7 +186,7 @@ tasks:
     internal: true
     label: 'pack:{{.PROJECT}}'
     cmds:
-      - '"{{.DOTNET}}" pack "{{.PROJECT}}" -c Release --no-build --artifacts-path "{{.MANAGED}}" -o "{{.PACKAGES}}" -p:IsoplaneManagedOnly=true -p:UseAppHost=false -p:IsoplaneRuntimeModuleDirectory="{{.MODULES}}" -p:IsoplaneSkillDirectory="{{.SKILL}}"'
+      - '"{{.DOTNET}}" pack "{{.PROJECT}}" -c Release --no-build --artifacts-path "{{.MANAGED}}" -o "{{.PACKAGES}}" -p:IsoplaneManagedOnly=true -p:UseAppHost=false -p:IsoplaneRuntimeModuleDirectory="{{.MODULES}}" -p:IsoplaneTemplateSkillDirectory="{{.TEMPLATE_SKILLS}}"'
 
 
   native-packages:

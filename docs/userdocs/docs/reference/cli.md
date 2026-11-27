@@ -20,6 +20,7 @@ The commands of the `isoplane` CLI, with the arguments and options of each. They
 | [`isoplane prepare-runtime`](cli/prepare-runtime.md) | Compile a shared runtime into the local cache. |
 | [`isoplane doctor`](cli/doctor.md) | Scans for and reports common install and configuration issues. |
 | [`isoplane agent`](cli/agent.md) :since[next] | Connect a coding agent to this machine's Isoplane tools. |
+| [`isoplane skills`](cli/skills.md) :since[next] | Give a coding agent the isoplane skill for a project. |
 | [`isoplane bundle`](cli/bundle.md) :since[next] | Build a managed application archive. |
 | [`isoplane daemon`](cli/daemon.md) :since[next] | Run the local multi-application host in the foreground. Requires isoplaned on PATH. |
 | [`isoplane deploy`](cli/deploy.md) :since[next] | Prepare a bundle on this machine and select it for the next daemon start. Requires isoplaned on PATH. |

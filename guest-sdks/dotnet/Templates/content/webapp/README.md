@@ -63,6 +63,7 @@ dotnet test
 | `src/Sample-WebApp/Migrations/` | Entity Framework Core migrations |
 | `src/Sample-WebApp/wwwroot/` | Files served as they are, such as the stylesheet |
 | `.vscode/launch.json` | Debugging the application in VS Code |
+| `.agents/skills/isoplane/`, `.claude/skills/isoplane/` | The `isoplane` skill for AI coding agents, in each skills directory the project was created with; https://isoplane.dev/docs/how-to/work-with-an-ai-coding-agent says how to update it |
 | `tests/Sample-WebApp.Tests/` | Unit tests and sandbox tests |
 
 ## How it differs from an ordinary ASP.NET application

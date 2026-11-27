@@ -2,26 +2,29 @@ namespace Isoplane.Cli;
 
 internal static class TelemetryCommands
 {
-    internal static int Run(string[] args, TelemetryHost host, TextWriter output)
+    /// <summary><c>isoplane telemetry status</c>.</summary>
+    internal static int Status(TelemetryHost host, TextWriter output)
     {
-        switch (args)
-        {
-            case ["telemetry", "status"]:
-                output.WriteLine(Describe(host));
-                return 0;
-            case ["telemetry", "disable"]:
-                // The identity goes too, so enabling again later starts as a new installation.
-                host.State.Save(new(Enabled: false, InstallId: null, NoticeShown: true));
-                host.Outbox.Clear();
-                output.WriteLine("Telemetry is disabled. Events that had not been sent were deleted.");
-                return 0;
-            case ["telemetry", "enable"]:
-                host.State.Save((host.State.Load() ?? new()) with { Enabled = true, NoticeShown = true });
-                output.WriteLine(Describe(host));
-                return 0;
-            default:
-                throw new ArgumentException("Use isoplane telemetry status, telemetry enable or telemetry disable.");
-        }
+        output.WriteLine(Describe(host));
+        return 0;
+    }
+
+    /// <summary><c>isoplane telemetry disable</c>.</summary>
+    internal static int Disable(TelemetryHost host, TextWriter output)
+    {
+        // The identity goes too, so enabling again later starts as a new installation.
+        host.State.Save(new(Enabled: false, InstallId: null, NoticeShown: true));
+        host.Outbox.Clear();
+        output.WriteLine("Telemetry is disabled. Events that had not been sent were deleted.");
+        return 0;
+    }
+
+    /// <summary><c>isoplane telemetry enable</c>.</summary>
+    internal static int Enable(TelemetryHost host, TextWriter output)
+    {
+        host.State.Save((host.State.Load() ?? new()) with { Enabled = true, NoticeShown = true });
+        output.WriteLine(Describe(host));
+        return 0;
     }
 
     private static string Describe(TelemetryHost host)

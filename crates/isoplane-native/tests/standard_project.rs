@@ -4,6 +4,8 @@
 pub mod common;
 
 use isoplane_test_support::{directories_under, run_successfully};
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[test]
@@ -23,6 +25,122 @@ fn templates_build_under_names_that_are_not_identifiers() {
             Command::new("dotnet").arg("build").current_dir(&solution),
             &format!("build {template} under its prepared name, which its files carry and its namespaces derive from"),
         );
+    }
+}
+
+/// The files below `directory`, by their path relative to it.
+fn files_under(directory: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+    let mut directories = directories_under(directory);
+    directories.push(directory.to_owned());
+    directories
+        .iter()
+        .flat_map(|directory| std::fs::read_dir(directory).expect("list a skill directory"))
+        .map(|entry| entry.expect("read a skill directory entry").path())
+        .filter(|path| path.is_file())
+        .map(|path| {
+            let relative = path
+                .strip_prefix(directory)
+                .expect("the file is below the directory")
+                .to_owned();
+            (relative, std::fs::read(&path).expect("read a skill file"))
+        })
+        .collect()
+}
+
+/// Fails unless `actual` holds the files of `expected` with the same content. `what` states
+/// the equality, and a failure names the files or the first file that break it.
+fn assert_same_files(
+    actual: &BTreeMap<PathBuf, Vec<u8>>,
+    expected: &BTreeMap<PathBuf, Vec<u8>>,
+    what: &str,
+) {
+    assert_eq!(
+        actual.keys().collect::<Vec<_>>(),
+        expected.keys().collect::<Vec<_>>(),
+        "{what}: the files differ"
+    );
+    for (file, content) in expected {
+        assert!(
+            actual[file] == *content,
+            "{what}: {} differs",
+            file.display()
+        );
+    }
+}
+
+#[test]
+fn a_template_project_carries_the_skill_install_writes_for_its_packages() {
+    for (template, application) in [
+        ("isoplane-web", ""),
+        ("isoplane-handler", "src/Tests.Template-App"),
+        ("isoplane-mcpserver", "src/Tools.Template-App"),
+        ("isoplane-webapi", "src/Todos.Template-App"),
+        ("isoplane-webapp", "src/Notes.Template-App"),
+    ] {
+        let directory = tempfile::tempdir().expect("isolate the template project");
+        let solution = isoplane_fixtures::template_project(directory.path(), template);
+        let agents = solution.join(".agents/skills/isoplane");
+        let shipped = files_under(&solution.join(".claude/skills/isoplane"));
+        assert_same_files(
+            &files_under(&agents),
+            &shipped,
+            &format!("{template} ships in .agents/skills what it ships in .claude/skills"),
+        );
+
+        // The project sits below the root of a repository, where the command would install a
+        // skill of its own, and has lost what its restore wrote.
+        std::fs::create_dir(directory.path().join(".git")).expect("mark the repository's root");
+        std::fs::remove_dir_all(solution.join(application).join("obj"))
+            .expect("remove what the restore wrote");
+        std::fs::remove_dir_all(&agents).expect("remove one shipped skill's files");
+        std::fs::create_dir(&agents).expect("keep the directory that says where the skill is");
+        run_successfully(
+            Command::new(isoplane_fixtures::managed_cli())
+                .args(["skills", "install", "--dot-agents", "--project"])
+                .arg(solution.join(application))
+                .env("ISOPLANE_TELEMETRY_OPTOUT", "1"),
+            &format!("install the skill for {template}'s packages"),
+        );
+        assert_same_files(
+            &files_under(&agents),
+            &shipped,
+            &format!(
+                "isoplane skills install restores {template} and writes beside the skill it ships what it ships"
+            ),
+        );
+        assert!(
+            !directory.path().join(".agents").exists(),
+            "{template}'s skill is written where the template put it, not again at the repository's root"
+        );
+    }
+}
+
+#[test]
+fn a_template_leaves_out_the_skills_directory_its_creator_switched_off() {
+    for template in [
+        "isoplane-web",
+        "isoplane-handler",
+        "isoplane-mcpserver",
+        "isoplane-webapi",
+        "isoplane-webapp",
+    ] {
+        for (option, kept, left_out) in [
+            ("dot-claude", ".agents", ".claude"),
+            ("dot-agents", ".claude", ".agents"),
+        ] {
+            let project = isoplane_fixtures::template_without(template, option);
+            assert!(
+                project
+                    .join(kept)
+                    .join("skills/isoplane/SKILL.md")
+                    .is_file(),
+                "{template} created with --{option} false keeps the skill in {kept}"
+            );
+            assert!(
+                !project.join(left_out).exists(),
+                "{template} created with --{option} false has no {left_out}"
+            );
+        }
     }
 }
 

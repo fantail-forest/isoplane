@@ -4,6 +4,14 @@
     "UseControllers": {
       "longName": "use-controllers",
       "shortName": "controllers"
+    },
+    "DotAgents": {
+      "longName": "dot-agents",
+      "shortName": ""
+    },
+    "DotClaude": {
+      "longName": "dot-claude",
+      "shortName": ""
     }
   }
 }

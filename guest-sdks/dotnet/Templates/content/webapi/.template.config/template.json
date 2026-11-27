@@ -25,6 +25,18 @@
       "datatype": "integer",
       "description": "Port number to use for the HTTP endpoint in launchSettings.json."
     },
+    "DotAgents": {
+      "type": "parameter",
+      "datatype": "bool",
+      "defaultValue": "true",
+      "description": "Whether to include the isoplane skill for AI coding agents in .agents/skills, for agents that follow the Agent Skills convention."
+    },
+    "DotClaude": {
+      "type": "parameter",
+      "datatype": "bool",
+      "defaultValue": "true",
+      "description": "Whether to include the isoplane skill for AI coding agents in .claude/skills, for Claude Code."
+    },
     "HttpPortGenerated": {
       "type": "generated",
       "generator": "port",
@@ -43,6 +55,18 @@
         { "condition": "(UseControllers)", "exclude": ["src/Sample-Api/Todos/TodoEndpoints.cs"] },
         { "condition": "(!UseControllers)", "exclude": ["src/Sample-Api/Todos/TodosController.cs"] }
       ]
+    },
+    {
+      "source": "./.template.config/skills/isoplane/",
+      "target": "./.agents/skills/isoplane/",
+      "condition": "(DotAgents)",
+      "copyOnly": ["**"]
+    },
+    {
+      "source": "./.template.config/skills/isoplane/",
+      "target": "./.claude/skills/isoplane/",
+      "condition": "(DotClaude)",
+      "copyOnly": ["**"]
     }
   ],
   "primaryOutputs": [
