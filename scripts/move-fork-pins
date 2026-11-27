@@ -57,7 +57,7 @@ move_pin() {
 
 # The runtime fork builds against one OpenSSL revision, so moving this pin alone leaves the two disagreeing.
 openssl_follow_up() {
-  echo "isoplane-openssl: the runtime fork names the OpenSSL revision it builds against as OPENSSL_REVISION in eng/isoplane/manifest.env, and the feed check requires that to equal this pin. Commit OPENSSL_REVISION=$1 in $fork_owner/isoplane-dotnet-runtime, land it, and pin that runtime commit."
+  echo "isoplane-openssl: the runtime fork names the OpenSSL revision it builds against as OPENSSL_REVISION in eng/isoplane/manifest.env. Commit OPENSSL_REVISION=$1 in $fork_owner/isoplane-dotnet-runtime, land it, and pin that runtime commit."
 }
 
 pins=$(fork_pins)

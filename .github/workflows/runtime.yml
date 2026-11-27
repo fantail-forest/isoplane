@@ -22,8 +22,6 @@ jobs:
         run: |
           revision=$(git rev-parse HEAD:vendor/dotnet-runtime)
           echo "key=compiler-$revision" >> "$GITHUB_OUTPUT"
-      - uses: ./.github/actions/toolchain
-        with: {rust: 'false', dotnet: 'true'}
       - name: Download and verify the fork's compiler feed
         env:
           GH_TOKEN: ${{ github.token }}

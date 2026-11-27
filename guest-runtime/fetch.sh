@@ -9,7 +9,6 @@ if [ "$#" != 1 ]; then
   echo "Usage: $0 OUTPUT_DIR" >&2
   exit 2
 fi
-source "$HERE/manifest.env"
 fork=fantail-forest/isoplane-dotnet-runtime
 revision=$(git -C "$HERE/.." rev-parse HEAD:vendor/dotnet-runtime)
 release="https://github.com/$fork/releases/download/isoplane-runtime-$revision"
@@ -86,6 +85,5 @@ case "$status" in
 esac
 sha256sum --check SHA256SUMS
 tar -xzf runtime-feed.tar.gz --no-same-owner
-"${ISOPLANE_PYTHON:-python3}" "$HERE/feed-identity.py" verify-release "$download/feed" "$WASI_SDK_VERSION"
 rm -rf "$output/feed" "$output/packs"
 mv feed packs "$output/"

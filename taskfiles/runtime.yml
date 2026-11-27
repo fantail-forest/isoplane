@@ -7,8 +7,6 @@ tasks:
   fetch:
     desc: Download the compiler feed the runtime fork built for the committed pins
     run: once
-    env:
-      ISOPLANE_PYTHON: '{{.PYTHON}}'
     cmds:
       - 'bash guest-runtime/fetch.sh "{{.ROOT_DIR}}/.build/wasm32/runtime"'
 

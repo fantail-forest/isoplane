@@ -136,7 +136,7 @@ branch and keep the result as a workflow artifact for 90 days. The runtime
 fork's build consumes the OpenSSL build for its pinned revision and produces a
 portable compiler feed. Isoplane downloads the feed for its committed runtime
 submodule revision, waiting for a fork build that is still running, and checks
-the feed's OpenSSL, ICU and WASI SDK identities. A fork revision can also have
+it against the checksums published with it. A fork revision can also have
 a release, which keeps its build with no expiry. A download uses the release
 when the revision has one and the workflow artifact otherwise.
 
