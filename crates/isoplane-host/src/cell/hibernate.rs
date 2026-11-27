@@ -87,13 +87,7 @@ impl Cell {
             Err(_) => {
                 self.note_caught_panic("capture");
                 if owner.is_some() {
-                    self.fail_instance(
-                        slot,
-                        entry,
-                        TerminalReason::HostPanic,
-                        500,
-                        "capture_failed",
-                    );
+                    self.fail_instance(slot, TerminalReason::HostPanic, 500, "capture_failed");
                 } else if slot.state() == LifecycleTier::Discarded {
                     self.forget(slot);
                 }
@@ -130,7 +124,6 @@ impl Cell {
                         self.record_offpath_kill(slot, entry, c);
                         self.fail_instance(
                             slot,
-                            entry,
                             TerminalReason::CaptureFailed,
                             500,
                             "capture_failed",
@@ -142,8 +135,10 @@ impl Cell {
         };
 
         let bytes = res.bytes;
-        slot.hibernate()
-            .map_err(|e| hibernate_policy::CaptureRefused::Failed(format!("{e:?}")))?;
+        slot.hibernate().map_err(|refused| {
+            self.note_refused_transition(&entry.tenant, refused);
+            hibernate_policy::CaptureRefused::Failed(refused.to_string())
+        })?;
 
         self.metrics.delta_bytes.fetch_add(bytes, Ordering::Relaxed);
         self.metrics.dirty_pages.record(res.changed_pages as u64);
@@ -218,7 +213,9 @@ impl Cell {
             }
         };
         let inst = restored?;
-        slot.rehydrate(inst);
+        slot.rehydrate(inst).inspect_err(|refused| {
+            self.note_refused_transition(&entry.tenant, *refused);
+        })?;
         tracing::info!(target: "isoplane_host::cell::transition",
             event = "instance_transition", tenant = %entry.tenant,
             app = %entry.activator.module().app, version = %entry.activator.module().version,

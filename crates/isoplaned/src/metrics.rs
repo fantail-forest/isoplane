@@ -184,6 +184,12 @@ pub fn render(node: &str, proxy: &ProxyMetrics, snap: NodeSnapshot) -> String {
             proto::MetricType::COUNTER,
             vec![counter(&node_labels, snap.breaker_rejections as f64)],
         ),
+        family(
+            "isoplane_instance_transitions_refused_total",
+            "Lifecycle transitions an instance slot refused. Any count is a host defect.",
+            proto::MetricType::COUNTER,
+            vec![counter(&node_labels, snap.refused_transitions as f64)],
+        ),
     ];
     for (name, help, value) in [
         (
@@ -291,6 +297,7 @@ mod tests {
             snapshot_written_bytes: 5 << 20,
             traps_total: 1,
             breaker_rejections: 0,
+            refused_transitions: 0,
         }
     }
 

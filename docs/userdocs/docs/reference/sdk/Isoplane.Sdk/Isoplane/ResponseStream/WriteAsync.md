@@ -24,11 +24,13 @@ public ValueTask WriteAsync(ReadOnlyMemory<byte> bytes,
 | --- | --- |
 | InvalidOperationException | [`Complete`](./Complete.md) has been called, or the previous write has not finished. |
 | OperationCanceledException | The token was cancelled. |
-| IOException | The piece could not be sent, for example because the request was cancelled. |
+| IOException | Isoplane could not accept the piece. |
 
 ## Remarks
 
 Await each write before starting the next. Awaiting is what keeps the handler from producing output faster than it can be sent.
+
+Once the client has gone away, a write discards its piece and completes, unless its token is cancelled.
 
 ## See Also
 

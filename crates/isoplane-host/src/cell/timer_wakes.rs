@@ -81,7 +81,7 @@ impl Cell {
                 match step {
                     IdleStep::Stop { .. } => cell.stop_idle(&entry, idle),
                     IdleStep::Wake { .. } => {
-                        entry.pool.release(idle, warm());
+                        cell.release_to_pool(&entry, &idle);
                         slot.ctx.background.requested.store(true, Ordering::Release);
                         cell.schedule_remaining(&slot);
                     }
@@ -100,7 +100,7 @@ impl Cell {
             cause = "no_request_for_background");
         self.rt.futures.release_instance(slot.id);
         self.forget(&slot);
-        entry.pool.release(slot, evict());
+        slot.discard();
     }
 }
 

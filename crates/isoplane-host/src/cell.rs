@@ -27,7 +27,7 @@ use crate::meters::Meters;
 use crate::metrics::{Metrics, MetricsSnapshot};
 use crate::pool::{AcquireSource, Activator, InstancePool};
 use crate::sharded_map::ShardedMap;
-use crate::slot::{EnterError, LifecycleTier, Slot};
+use crate::slot::{EnterError, LifecycleTier, Slot, TransitionError};
 
 mod background;
 mod completion;

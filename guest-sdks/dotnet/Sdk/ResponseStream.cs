@@ -40,14 +40,20 @@ public sealed class ResponseStream
     /// interrupted.
     /// </param>
     /// <remarks>
+    /// <para>
     /// Await each write before starting the next. Awaiting is what keeps the handler from producing
     /// output faster than it can be sent.
+    /// </para>
+    /// <para>
+    /// Once the client has gone away, a write discards its piece and completes, unless its token
+    /// is cancelled.
+    /// </para>
     /// </remarks>
     /// <exception cref="InvalidOperationException">
     /// <see cref="Complete"/> has been called, or the previous write has not finished.
     /// </exception>
     /// <exception cref="OperationCanceledException">The token was cancelled.</exception>
-    /// <exception cref="System.IO.IOException">The piece could not be sent, for example because the request was cancelled.</exception>
+    /// <exception cref="System.IO.IOException">Isoplane could not accept the piece.</exception>
     public async ValueTask WriteAsync(ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken = default)
     {
         if (complete) throw new InvalidOperationException("The streaming response is complete.");

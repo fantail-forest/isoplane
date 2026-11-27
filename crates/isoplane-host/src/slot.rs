@@ -80,6 +80,9 @@ impl Drop for CallGuard<'_> {
                 g.resident = None;
                 self.slot.ctx.snapshot.lock().take();
             }
+            // Discarded under this call by another owner, such as a stopping
+            // cell: nothing leaves Discarded, so the instance is dropped.
+            Some(_) if g.state == LifecycleTier::Discarded => {}
             Some(i) => {
                 g.resident = Some(i);
                 // Back to the tier it came from, so a host-initiated call such
@@ -254,26 +257,37 @@ impl Slot {
         }
     }
 
-    pub fn park(&self) {
-        self.parks.fetch_add(1, Ordering::Relaxed);
-        let mut g = self.inner.lock();
-        debug_assert!(
-            g.state.may_transition_to(LifecycleTier::Parked) || g.state == LifecycleTier::Parked,
-            "illegal transition {:?} -> Parked",
-            g.state
-        );
-        g.state = LifecycleTier::Parked;
-        self.publish(&g);
+    fn refused(&self, from: LifecycleTier, to: LifecycleTier) -> TransitionError {
+        TransitionError {
+            instance: self.id,
+            from,
+            to,
+        }
     }
 
-    /// Releases guest pages after saving a local snapshot, retaining mappings when supported.
-    pub fn hibernate(&self) -> Result<(), HibernateRefused> {
+    /// Records an empty-stack boundary on a resident instance. Refused, with
+    /// the slot unchanged, for an instance that holds no memory: a hibernated
+    /// one returns through [`Slot::rehydrate`] and a discarded one never does.
+    /// Refused too while a call is in flight, whose [`CallGuard`] owns the
+    /// instance until it drops and returns the slot to its tier itself.
+    pub fn park(&self) -> Result<(), TransitionError> {
         let mut g = self.inner.lock();
-        if g.in_call {
-            return Err(HibernateRefused::Hot);
+        if !g.state.is_resident() || g.in_call {
+            return Err(self.refused(g.state, LifecycleTier::Parked));
         }
-        if g.state != LifecycleTier::Parked {
-            return Err(HibernateRefused::NotParked(g.state));
+        self.parks.fetch_add(1, Ordering::Relaxed);
+        g.state = LifecycleTier::Parked;
+        self.publish(&g);
+        Ok(())
+    }
+
+    /// Releases guest pages after saving a local snapshot, retaining mappings
+    /// when supported. Refused, with the slot unchanged, unless the instance
+    /// is Parked with no call in flight.
+    pub fn hibernate(&self) -> Result<(), TransitionError> {
+        let mut g = self.inner.lock();
+        if !g.state.is_resident() || g.in_call {
+            return Err(self.refused(g.state, LifecycleTier::Hibernated));
         }
         g.dormant = g.resident.take().and_then(|instance| instance.evict());
         g.state = LifecycleTier::Hibernated;
@@ -290,16 +304,24 @@ impl Slot {
         }
     }
 
-    /// Install the caller's restored instance and return the slot to parked.
-    pub fn rehydrate(&self, inst: Box<dyn InstanceOps + Send>) {
+    /// Installs the caller's restored instance and returns the slot to
+    /// Parked. Refused, dropping `inst` and leaving the slot unchanged, unless
+    /// the slot is Hibernated.
+    pub fn rehydrate(&self, inst: Box<dyn InstanceOps + Send>) -> Result<(), TransitionError> {
         let mut g = self.inner.lock();
-        debug_assert_eq!(g.state, LifecycleTier::Hibernated);
+        if g.state != LifecycleTier::Hibernated {
+            return Err(self.refused(g.state, LifecycleTier::Parked));
+        }
         g.resident = Some(inst);
         g.state = LifecycleTier::Parked;
         g.dormant = None;
         self.publish(&g);
+        Ok(())
     }
 
+    /// Ends the instance and releases what the host holds for it. Every tier
+    /// may be discarded and discarding again changes nothing, so this is the
+    /// one transition that is never refused.
     pub fn discard(&self) {
         let mut g = self.inner.lock();
         g.resident = None;
@@ -313,12 +335,26 @@ impl Slot {
     }
 }
 
+/// A lifecycle transition the slot refused; the slot is unchanged. A call
+/// in flight refuses from [`LifecycleTier::Hot`], the tier entering it set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HibernateRefused {
-    /// A call is in flight, so the stack is not empty.
-    Hot,
-    NotParked(LifecycleTier),
+pub struct TransitionError {
+    /// The instance that refused.
+    pub instance: InstanceId,
+    /// The tier the instance was in.
+    pub from: LifecycleTier,
+    /// The tier that was asked for.
+    pub to: LifecycleTier,
 }
+
+impl std::fmt::Display for TransitionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self { instance, from, to } = self;
+        write!(f, "instance {instance} cannot become {to} from {from}")
+    }
+}
+
+impl std::error::Error for TransitionError {}
 
 #[cfg(test)]
 mod tests {
@@ -434,33 +470,175 @@ mod tests {
         assert_pollable_released(&slot, handle);
     }
 
-    #[test]
-    fn lifecycle_transitions_match_the_spec_table() {
-        use LifecycleTier::*;
-        let legal = [
-            (Hot, Parked),
-            (Hot, Discarded),
-            (Parked, Hot),
-            (Parked, Hibernated),
-            (Parked, Discarded),
-            (Hibernated, Hot),
-        ];
-        for a in [Hot, Parked, Hibernated, Discarded] {
-            for b in [Hot, Parked, Hibernated, Discarded] {
-                assert_eq!(
-                    a.may_transition_to(b),
-                    legal.contains(&(a, b)),
-                    "{a:?} -> {b:?} disagrees with the tier table"
-                );
-            }
+    /// A slot in `tier`. A Hot one is returned Parked: only the guard its
+    /// caller takes by entering it keeps it Hot.
+    fn slot_in(pool: &InstancePool, tier: LifecycleTier) -> Arc<Slot> {
+        let (slot, _) = pool.acquire(ctx_for).expect("acquire");
+        match tier {
+            LifecycleTier::Parked | LifecycleTier::Hot => {}
+            LifecycleTier::Hibernated => slot.hibernate().expect("a parked slot hibernates"),
+            LifecycleTier::Discarded => slot.discard(),
         }
+        slot
+    }
+
+    fn fresh_instance(slot: &Slot) -> Box<dyn InstanceOps + Send> {
+        use crate::pool::Activator;
+        FakeActivator::new(FakeBehaviour::default())
+            .activate(crate::bindings::CellBindings::boxed(slot.ctx.clone()))
+            .expect("the fake activates")
+    }
+
+    #[test]
+    fn only_a_hibernated_instance_is_restored() {
+        let pool = pool();
+        let parked = slot_in(&pool, LifecycleTier::Parked);
+        assert_eq!(
+            parked.rehydrate(fresh_instance(&parked)),
+            Err(TransitionError {
+                instance: parked.id,
+                from: LifecycleTier::Parked,
+                to: LifecycleTier::Parked,
+            }),
+            "a resident instance has nothing to restore"
+        );
+
+        let hibernated = slot_in(&pool, LifecycleTier::Hibernated);
+        assert_eq!(hibernated.rehydrate(fresh_instance(&hibernated)), Ok(()));
+        assert_eq!(hibernated.state(), LifecycleTier::Parked);
         assert!(
-            !Hibernated.may_transition_to(Parked),
-            "a wake makes an instance Hot, never Parked"
+            hibernated.enter().is_ok(),
+            "a restored instance can be called into"
+        );
+    }
+
+    #[test]
+    fn parking_is_refused_while_a_call_holds_the_instance() {
+        let pool = pool();
+        let slot = slot_in(&pool, LifecycleTier::Parked);
+        let guard = slot.enter().expect("enter");
+        assert_eq!(
+            slot.park(),
+            Err(TransitionError {
+                instance: slot.id,
+                from: LifecycleTier::Hot,
+                to: LifecycleTier::Parked,
+            }),
+            "the call still owns the instance"
+        );
+        assert_eq!(
+            slot.state(),
+            LifecycleTier::Hot,
+            "a refused park must not publish Parked under the call"
+        );
+        assert_eq!(slot.parks(), 0, "a refused park is not a boundary");
+        assert_eq!(
+            slot.enter().err(),
+            Some(EnterError::Busy),
+            "the instance is still the call's alone"
+        );
+        drop(guard);
+        assert_eq!(
+            slot.state(),
+            LifecycleTier::Parked,
+            "the returning call parks the instance"
+        );
+        assert_eq!(slot.park(), Ok(()), "and an empty stack can be recorded");
+        assert_eq!(slot.parks(), 1);
+    }
+
+    #[test]
+    fn a_refused_transition_names_the_instance_and_both_tiers() {
+        let pool = pool();
+        let discarded = slot_in(&pool, LifecycleTier::Discarded);
+        assert_eq!(
+            discarded.park(),
+            Err(TransitionError {
+                instance: discarded.id,
+                from: LifecycleTier::Discarded,
+                to: LifecycleTier::Parked,
+            }),
+            "a discarded instance cannot be parked"
+        );
+        assert_eq!(discarded.parks(), 0, "a refused park is not a boundary");
+        assert_eq!(
+            discarded.rehydrate(fresh_instance(&discarded)),
+            Err(TransitionError {
+                instance: discarded.id,
+                from: LifecycleTier::Discarded,
+                to: LifecycleTier::Parked,
+            }),
+            "a discarded instance cannot be restored"
         );
         assert!(
-            !Discarded.may_transition_to(Hot),
-            "the only exit from Discarded is a fresh activation, a new slot"
+            matches!(
+                discarded.enter().err(),
+                Some(EnterError::NotResident(LifecycleTier::Discarded))
+            ),
+            "a refused restore must not leave an instance to call into"
+        );
+
+        let hibernated = slot_in(&pool, LifecycleTier::Hibernated);
+        assert_eq!(
+            hibernated.park(),
+            Err(TransitionError {
+                instance: hibernated.id,
+                from: LifecycleTier::Hibernated,
+                to: LifecycleTier::Parked,
+            }),
+            "parking cannot stand in for restoring a hibernated instance"
+        );
+        assert_eq!(
+            hibernated.hibernate(),
+            Err(TransitionError {
+                instance: hibernated.id,
+                from: LifecycleTier::Hibernated,
+                to: LifecycleTier::Hibernated,
+            }),
+            "a hibernated instance has nothing left to capture"
+        );
+    }
+
+    #[test]
+    fn an_instance_discarded_during_a_call_stays_discarded_when_the_call_returns() {
+        let pool = pool();
+        let slot = slot_in(&pool, LifecycleTier::Parked);
+        let guard = slot.enter().expect("enter");
+        slot.discard();
+        let refused = |to| {
+            Err(TransitionError {
+                instance: slot.id,
+                from: LifecycleTier::Discarded,
+                to,
+            })
+        };
+        assert_eq!(
+            slot.hibernate(),
+            refused(LifecycleTier::Hibernated),
+            "a hibernation refused under the call names the tier the instance is in"
+        );
+        assert_eq!(
+            slot.park(),
+            refused(LifecycleTier::Parked),
+            "a park refused under the call names the tier the instance is in"
+        );
+        assert_eq!(
+            slot.rehydrate(fresh_instance(&slot)),
+            refused(LifecycleTier::Parked),
+            "a restore refused under the call names the tier the instance is in"
+        );
+        drop(guard);
+        assert_eq!(
+            slot.state(),
+            LifecycleTier::Discarded,
+            "a returning call must not revive a discarded instance"
+        );
+        assert!(
+            matches!(
+                slot.enter().err(),
+                Some(EnterError::NotResident(LifecycleTier::Discarded))
+            ),
+            "and it leaves nothing to call into"
         );
     }
 
@@ -486,7 +664,6 @@ mod tests {
     fn a_hibernated_slot_has_nothing_to_call_into() {
         let p = pool();
         let (slot, _) = p.acquire(ctx_for).expect("acquire");
-        slot.park();
         slot.hibernate().expect("hibernate");
         assert_eq!(
             slot.enter().err(),
@@ -506,11 +683,14 @@ mod tests {
         );
         assert_eq!(
             slot.hibernate(),
-            Err(HibernateRefused::Hot),
+            Err(TransitionError {
+                instance: slot.id,
+                from: LifecycleTier::Hot,
+                to: LifecycleTier::Hibernated,
+            }),
             "hibernating a Hot slot is refused"
         );
         drop(guard);
-        slot.park();
         assert!(slot.is_capture_eligible(), "a parked slot is capturable");
         assert!(
             slot.hibernate().is_ok(),

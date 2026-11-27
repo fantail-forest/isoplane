@@ -18,6 +18,8 @@ public static class NodeProbe
     {
         ("filesystem", var path) => FilesystemProbe.HandleAsync(path),
         ("logs", var path) => LogProbe.HandleAsync(path),
+        ("departed", var path) => DepartureProbe.HandleAsync(path, request),
+        ("departure", _) => DepartureProbe.ReportAsync(),
         _ => RequestProbe.HandleAsync(request),
     };
 }

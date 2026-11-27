@@ -27,6 +27,7 @@ impl CellMetrics {
                     a.dispatches += s.dispatches;
                     a.traps += s.traps;
                     a.breaker_rejections += s.breaker_rejections;
+                    a.refused_transitions += s.refused_transitions;
                     a.parked += s.parked;
                     a.hibernated += s.hibernated;
                     a.hot += s.hot;
@@ -108,6 +109,7 @@ impl crate::admin::NodeAdmin for CellMetrics {
             snapshot_written_bytes: m.delta_bytes,
             traps_total: m.traps,
             breaker_rejections: m.breaker_rejections,
+            refused_transitions: m.refused_transitions,
         }
     }
 }
@@ -222,6 +224,52 @@ mod tests {
             "retirement and replacement must retain lifetime usage and late reactor polls: {text}"
         );
         cell.shutdown();
+    }
+
+    #[test]
+    fn the_public_scrape_counts_a_refused_instance_transition() {
+        let (_directory, cells) = node();
+        let cell = cells.cells()[0].clone();
+        let (entered, started) = std::sync::mpsc::channel();
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let module = register(
+            &cell,
+            FakeBehaviour::program([Step::Hold {
+                entered,
+                release: Arc::new(parking_lot::Mutex::new(held)),
+            }]),
+        );
+        let refused = "isoplane_instance_transitions_refused_total{node=\"node\"}";
+        let text = scrape(cells.clone());
+        assert!(
+            text.lines().any(|line| line == format!("{refused} 0")),
+            "the series exists before any refusal: {text}"
+        );
+        let running = {
+            let cell = cell.clone();
+            std::thread::spawn(move || dispatch(&cell, &module))
+        };
+        started
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the slice must start");
+        cell.slot(cell.resident_ids()[0])
+            .expect("the running instance")
+            .discard();
+        drop(release);
+        assert_eq!(
+            running.join().expect("dispatch thread").status,
+            200,
+            "the dispatch whose instance was lost is still answered"
+        );
+        // The cell answers a dispatch before it returns the instance to its
+        // pool, which is where the park is refused. Stopping the cell joins
+        // the thread doing that.
+        cell.shutdown();
+        let text = scrape(cells.clone());
+        assert!(
+            text.lines().any(|line| line == format!("{refused} 1")),
+            "the refused park of the discarded instance is counted: {text}"
+        );
     }
 
     #[test]

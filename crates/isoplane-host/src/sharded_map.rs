@@ -56,7 +56,6 @@ impl<K: ShardKey + Hash + Eq, V> ShardedMap<K, V> {
         self.shard(&k).lock().insert(k, v)
     }
 
-    #[cfg(test)]
     pub(crate) fn remove(&self, k: &K) -> Option<V> {
         self.shard(k).lock().remove(k)
     }

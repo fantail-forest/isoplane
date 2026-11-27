@@ -198,7 +198,7 @@ fn idle(cell: &Arc<Cell>, name: &str, last_used_ms: u64) -> Arc<Slot> {
     let mut request = http(2);
     request.now_ms = last_used_ms;
     slot.record_dispatch(&request);
-    slot.park();
+    slot.park().expect("park");
     slot
 }
 
@@ -228,7 +228,7 @@ fn active(
     let mut request = http(2);
     request.now_ms = last_used_ms;
     slot.record_dispatch(&request);
-    slot.park();
+    slot.park().expect("park");
     (slot, response)
 }
 
@@ -284,7 +284,7 @@ fn activity_in_the_millisecond_a_candidate_was_listed_still_invalidates_it() {
     let cell = test_cell(Storage::new(1), 0);
     let slot = idle(&cell, "same-millisecond", 10);
     let stale = candidate(&cell, slot.id);
-    slot.park();
+    slot.park().expect("park");
     assert!(
         !cell
             .reclaim_candidate(stale)
@@ -299,7 +299,7 @@ fn a_candidate_observed_before_recent_activity_cannot_reclaim_the_slot() {
     let cell = test_cell(Storage::new(1), 0);
     let slot = idle(&cell, "recent", 10);
     let stale = candidate(&cell, slot.id);
-    slot.park();
+    slot.park().expect("park");
     assert!(
         !cell
             .reclaim_candidate(stale)
@@ -698,7 +698,7 @@ fn background_boundaries_invalidate_capture_without_refreshing_request_recency()
     timer.kind = DispatchKind::Background;
     timer.now_ms = 105;
     slot.record_dispatch(&timer);
-    slot.park();
+    slot.park().expect("park");
     assert_eq!(slot.last_used_ms(), 10);
     assert!(!cell
         .reclaim_candidate(stale)
@@ -766,7 +766,7 @@ fn an_unreadable_snapshot_does_not_block_other_capacity() {
         .take_idle(replacement.instance, |_| true)
         .expect("replacement idle");
     cell.forget(&slot);
-    entry.pool.release(slot, evict());
+    entry.pool.release(slot, evict()).expect("release");
     storage.state.fail_read.store(false, Ordering::Relaxed);
     let restored = completed(&cell, &module, 4);
     assert_eq!(restored.status, 200);

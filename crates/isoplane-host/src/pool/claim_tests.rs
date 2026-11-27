@@ -30,7 +30,7 @@ fn warm() -> Disposition {
 }
 
 fn release(pool: &InstancePool, slot: Arc<Slot>) {
-    pool.release(slot, warm());
+    pool.release(slot, warm()).expect("release");
 }
 
 #[test]
@@ -38,7 +38,7 @@ fn an_idle_claim_prevents_acquisition_without_holding_the_pool_lock() {
     let disposition = warm();
     let pool = pool();
     let slot = acquire(&pool);
-    pool.release(slot.clone(), disposition);
+    pool.release(slot.clone(), disposition).expect("release");
     std::thread::scope(|scope| {
         let claim = pool
             .claim_idle(slot.id)
@@ -49,7 +49,7 @@ fn an_idle_claim_prevents_acquisition_without_holding_the_pool_lock() {
             let other = acquire(pool_ref);
             send.send(other.id)
                 .expect("acquisition observer must remain connected");
-            pool_ref.release(other, disposition);
+            pool_ref.release(other, disposition).expect("release");
         });
         let other = receive
             .recv_timeout(Duration::from_secs(10))
@@ -73,9 +73,9 @@ fn claims_reserve_idle_capacity_until_they_are_returned() {
     let pool = pool();
     let first = acquire(&pool);
     let second = acquire(&pool);
-    pool.release(first.clone(), disposition);
+    pool.release(first.clone(), disposition).expect("release");
     let claim = pool.claim_idle(first.id).expect("first idle slot");
-    pool.release(second.clone(), disposition);
+    pool.release(second.clone(), disposition).expect("release");
     assert_eq!(
         second.state(),
         LifecycleTier::Discarded,
@@ -94,7 +94,7 @@ fn a_claim_returns_a_hibernated_entry_to_the_idle_list() {
     let disposition = warm();
     let pool = pool();
     let slot = acquire(&pool);
-    pool.release(slot.clone(), disposition);
+    pool.release(slot.clone(), disposition).expect("release");
     let claim = pool.claim_idle(slot.id).expect("idle slot");
     claim.slot().hibernate().expect("idle capture boundary");
     drop(claim);

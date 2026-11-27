@@ -94,6 +94,10 @@ pub struct Metrics {
     pub traps: AtomicU64,
 
     pub breaker_rejections: AtomicU64,
+    /// Lifecycle transitions slots refused. A refusal is a host path acting
+    /// on an instance another path already moved, so any count is a host
+    /// defect.
+    pub refused_transitions: AtomicU64,
 
     pub parked: AtomicU64,
     pub hibernated: AtomicU64,
@@ -159,6 +163,9 @@ pub struct Metrics {
     /// Admission to final response.
     #[cfg(any(test, feature = "test-util"))]
     pub dispatch_us: Histogram,
+    /// Ended dispatches by the outcome and status their completion events carry.
+    #[cfg(any(test, feature = "test-util"))]
+    pub dispatch_outcomes: Mutex<BTreeMap<(&'static str, u16), u64>>,
 }
 
 #[derive(Debug, Default)]
@@ -195,6 +202,7 @@ impl Metrics {
             dispatches: l(&self.dispatches),
             traps: l(&self.traps),
             breaker_rejections: l(&self.breaker_rejections),
+            refused_transitions: l(&self.refused_transitions),
             parked: l(&self.parked),
             hibernated: l(&self.hibernated),
             hot: l(&self.hot),
@@ -248,6 +256,7 @@ pub struct MetricsSnapshot {
     pub dispatches: u64,
     pub traps: u64,
     pub breaker_rejections: u64,
+    pub refused_transitions: u64,
     pub parked: u64,
     pub hibernated: u64,
     pub hot: u64,

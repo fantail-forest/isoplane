@@ -48,4 +48,6 @@ pub struct NodeSnapshot {
     pub traps_total: u64,
     /// Requests refused by the hang breaker, including retained-path capacity refusals.
     pub breaker_rejections: u64,
+    /// Lifecycle transitions instance slots refused.
+    pub refused_transitions: u64,
 }
