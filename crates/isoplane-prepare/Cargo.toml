@@ -45,5 +45,5 @@ isoplane-prepare = { workspace = true, features = ["test-util", "rust-guests"] }
 isoplane-engine = { workspace = true, features = ["test-util"] }
 tempfile.workspace = true
 isoplane-fixtures.workspace = true
-wasmtime.workspace = true
+isoplane-harness.workspace = true
 wat.workspace = true

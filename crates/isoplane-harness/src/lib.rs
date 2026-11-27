@@ -9,6 +9,7 @@
 mod compiled_guest;
 pub mod fakes;
 pub mod logging;
+pub mod preparation;
 use logging::GuestLogs;
 
 pub use compiled_guest::engine_configuration;

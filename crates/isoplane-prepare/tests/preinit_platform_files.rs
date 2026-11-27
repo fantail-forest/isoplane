@@ -1,15 +1,15 @@
 #![forbid(unsafe_code)]
-//! A declared platform file is visible inside the init sandbox: a
-//! static initialiser that reads it bakes its bytes into the template,
-//! through the same `filesystem_call` packets the native wrappers send.
+//! A declared platform file is visible inside the init sandbox: an
+//! initialiser that reads it leaves its bytes in the template, through the
+//! same `filesystem_call` packets the native wrappers send.
 
 use std::sync::Arc;
 
 use isoplane_abi::filesystem::{Operation, IMPORTS};
 use isoplane_engine::{PlatformFile, PlatformFiles};
-use isoplane_prepare::PreInitializer;
-use wasmtime as wt;
+use isoplane_harness::preparation;
 
+mod common;
 #[path = "common/packets.rs"]
 mod packets;
 
@@ -50,7 +50,7 @@ fn guest() -> Vec<u8> {
         r#"(module
   {imports}
   (memory (export "memory") 4 4)
-  (global $heap (mut i32) (i32.const 40000))
+  (global $heap (export "heap") (mut i32) (i32.const 40000))
   (data (i32.const 2000) "{PATH}")
   {operations}
   (func (export "cabi_realloc") (param i32 i32 i32) (param $size i32) (result i32)
@@ -60,6 +60,7 @@ fn guest() -> Vec<u8> {
       (i32.and (i32.add (i32.add (global.get $heap) (local.get $size)) (i32.const 15))
                (i32.const -16)))
     (local.get $p))
+  (func (export "isoplane_initialize_runtime") (result i64) (i64.const 0))
   (func (export "isoplane_initialize") (result i64)
     (call $fs{directories} (i32.const 1000))
     (i32.store (i32.const 1010) (i32.load (i32.load (i32.const 1000))))
@@ -88,35 +89,19 @@ fn guest() -> Vec<u8> {
     wat::parse_str(source).expect("the fixture assembles")
 }
 
-/// The template's linear memory after instantiation, with every import bound
-/// to a trap: a template that reached one here would be baking a host
-/// answer.
-fn template_memory(template: &[u8]) -> Vec<u8> {
-    let engine = wt::Engine::default();
-    let module = wt::Module::new(&engine, template).expect("the template is a valid module");
-    let mut linker: wt::Linker<()> = wt::Linker::new(&engine);
-    linker
-        .define_unknown_imports_as_traps(&module)
-        .expect("a trap stub links");
-    let mut store = wt::Store::new(&engine, ());
-    let instance = linker
-        .instantiate(&mut store, &module)
-        .expect("the template instantiates without reaching an import");
-    instance
-        .get_memory(&mut store, "memory")
-        .expect("the template exports its memory")
-        .data(&store)
-        .to_vec()
+/// The memory of the template `guest` prepares to on a node that declares `files`.
+fn template_memory(files: PlatformFiles) -> Vec<u8> {
+    let wasm = guest();
+    let mut engine = common::engine_config();
+    engine.platform_files = files;
+    preparation::prepare(&preparation::request(&wasm, engine, common::request()))
+        .expect("the initializer completes")
+        .memory()
 }
 
 #[test]
-fn a_declared_file_read_during_pre_init_is_baked_into_the_template() {
-    let wasm = guest();
-    let outcome = PreInitializer::new()
-        .with_platform_files(declared())
-        .run(&wasm)
-        .expect("pre-init converges");
-    let memory = template_memory(&outcome.wasm);
+fn a_declared_file_read_during_initialization_is_captured_in_the_template() {
+    let memory = template_memory(declared());
     assert_eq!(
         memory[OPEN_AT],
         0,
@@ -130,17 +115,13 @@ fn a_declared_file_read_during_pre_init_is_baked_into_the_template() {
     assert_eq!(
         &memory[COPY_AT..COPY_AT + BUNDLE.len()],
         BUNDLE,
-        "the bytes the initialiser read are the declared bytes, baked into the template"
+        "the bytes the initialiser read are the declared bytes, captured in the template"
     );
 }
 
 #[test]
-fn without_a_declared_set_the_same_path_is_no_entry_during_pre_init() {
-    let wasm = guest();
-    let outcome = PreInitializer::new()
-        .run(&wasm)
-        .expect("pre-init converges");
-    let memory = template_memory(&outcome.wasm);
+fn without_a_declared_set_the_same_path_is_no_entry_during_initialization() {
+    let memory = template_memory(PlatformFiles::default());
     assert_eq!(
         (memory[OPEN_AT], memory[OPEN_AT + 4]),
         (1, 20),

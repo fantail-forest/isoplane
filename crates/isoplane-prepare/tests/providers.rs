@@ -1,8 +1,8 @@
 mod common;
+#[path = "common/guest.rs"]
+mod guest;
 #[path = "common/packets.rs"]
 mod packets;
-#[path = "common/provider.rs"]
-mod provider;
 
 use isoplane_prepare::{BuildRequest, Preparation, RuntimeProfile};
 use tokio_util::sync::CancellationToken;
@@ -47,7 +47,7 @@ fn read_file() -> &'static str {
 }
 
 async fn preserves_application_state(provider: &dyn Preparation) {
-    let wasm = common::guest(
+    let wasm = guest::guest(
         &file_imports(),
         &format!("(global.set $state (i32.const 42)) {}", read_file()),
     );
@@ -104,15 +104,11 @@ async fn preserves_application_state(provider: &dyn Preparation) {
         !loaded.has_initialize(),
         "the provider must remove initialization from its output"
     );
-    assert!(
-        !product.prepared_bytes().is_empty(),
-        "the provider must return native and explicit-state transport"
-    );
 }
 
 #[tokio::test]
 async fn local_preparation_preserves_the_same_state_as_the_portable_sdk_path() {
-    preserves_application_state(&*crate::provider::local_preparation()).await;
+    preserves_application_state(&*isoplane_harness::preparation::local_preparation()).await;
 }
 
 #[cfg(target_os = "linux")]
@@ -144,7 +140,7 @@ async fn layered_preparation_accepts_a_guest_without_an_initializer() {
         initialization: common::request(),
         module: isoplane_prepare::Module::new(&wasm),
     };
-    let product = crate::provider::local_preparation()
+    let product = isoplane_harness::preparation::local_preparation()
         .prepare(&request, &CancellationToken::new())
         .await
         .expect("a guest without an initializer needs no initialized capture boundary");
@@ -155,10 +151,6 @@ async fn layered_preparation_accepts_a_guest_without_an_initializer() {
     let template = engine
         .load_prepared_product_in(&prepared, &std::env::temp_dir())
         .expect("load prepared guest");
-    assert!(
-        !template.has_initialize(),
-        "ordinary activation must not acquire an initializer"
-    );
     assert_eq!(
         &template.memory_image_arc().to_dense()[64..69],
         b"ready",

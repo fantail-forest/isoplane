@@ -1,36 +1,25 @@
 mod common;
+#[path = "common/guest.rs"]
+mod guest;
 
-use isoplane_engine::bindings::{BindingError, InitializationBindings};
-use isoplane_engine::{Completion, ImportCall, Instance, InstanceOps, OccupancyBudget};
+use isoplane_engine::{Completion, InstanceOps};
+use isoplane_harness::preparation::{
+    self, activate, dispatch, staged_guest, staged_guest_with_handle, Prepared,
+};
+use isoplane_prepare::PrepareError;
 
-struct NoImports;
-impl InitializationBindings for NoImports {
-    fn begin_slice(&mut self) {}
-    fn call_sync(&mut self, call: ImportCall<'_>) -> Result<i64, BindingError> {
-        Err(BindingError::Unsupported(call.import))
-    }
-    fn call_fill(&mut self, call: ImportCall<'_>, _output: &mut [u8]) -> Result<i64, BindingError> {
-        Err(BindingError::Unsupported(call.import))
-    }
+fn request(wasm: &[u8]) -> isoplane_prepare::BuildRequest {
+    preparation::request(wasm, common::engine_config(), common::request())
 }
 
-fn dispatch(instance: &mut Instance) -> Completion {
-    let record = isoplane_abi::dispatch::DispatchRecord {
-        dispatch_id: 1,
-        kind: isoplane_abi::dispatch::DispatchKind::Background,
-        cancel_future: 0,
-        occupancy_budget_ms: 1000,
-        pending_futures_limit: 64,
-        now_ms: 0,
-    };
-    instance
-        .dispatch(&record, OccupancyBudget::default())
-        .completion
+/// Prepares `wasm` the way a node prepares an application on a shared runtime.
+fn prepare(wasm: &[u8]) -> Result<Prepared, PrepareError> {
+    preparation::prepare(&request(wasm))
 }
 
 #[test]
 fn an_unused_passive_segment_survives_preparation() {
-    let wasm = common::guest(r#"(data "retained")"#, "");
+    let wasm = guest::guest(r#"(data "retained")"#, "");
     let output = isoplane_prepare::initialize(&common::engine(), &wasm, &common::request())
         .expect("passive data is representable");
     let mut passive = Vec::new();
@@ -52,46 +41,19 @@ fn an_unused_passive_segment_survives_preparation() {
 }
 
 #[test]
-fn memory_init_keeps_original_segment_indices_before_and_after_baking() {
-    let wasm = common::guest_with_handle(
+fn memory_init_addresses_its_original_passive_segment_in_a_prepared_template() {
+    let wasm = staged_guest_with_handle(
         r#"(data (i32.const 0) "active") (data $payload "payload")"#,
+        "",
         "(memory.init $payload (i32.const 64) (i32.const 0) (i32.const 7))",
         "(memory.init $payload (i32.const 128) (i32.const 0) (i32.const 7)) (i64.const 0)",
     );
-    let engine = common::engine();
-    let output = isoplane_prepare::initialize(&engine, &wasm, &common::request())
-        .expect("memory.init does not drop passive state");
-    let input_hash = *blake3::hash(&wasm).as_bytes();
-    let identity = isoplane_engine::prepared::PreparedIdentity {
-        input_hash,
-        runtime_profile: isoplane_prepare::RuntimeProfile::RawWasm
-            .digest()
-            .expect("raw profile"),
-        initialization_hash: common::request()
-            .digest(input_hash)
-            .expect("initialization identity"),
-    };
-    let directory = tempfile::tempdir().expect("owned publication");
-    let path = directory.path().join("prepared");
-    engine
-        .prepare_template_with_files(
-            &output.wasm,
-            identity,
-            isoplane_engine::PlatformFiles::default(),
-        )
-        .expect("native preparation")
-        .publish(&path)
-        .expect("local publication");
-    // SAFETY: nothing changes the published files while the template maps them.
-    let template = unsafe { engine.load_prepared(&path, identity, &[]) }
-        .expect("native passive-data artifact");
-    let mut live = engine
-        .activate_initialization(&template, Box::new(NoImports))
-        .expect("baked activation");
+    let prepared = prepare(&wasm).expect("memory.init does not drop passive state");
+    let mut live = activate(&prepared.engine, &prepared.template);
     assert_eq!(
         &live.memory()[64..71],
         b"payload",
-        "the initializer's passive-data copy must be baked into memory"
+        "the initializer's passive-data copy must be in the template's memory"
     );
     assert_eq!(
         dispatch(&mut live),
@@ -101,14 +63,12 @@ fn memory_init_keeps_original_segment_indices_before_and_after_baking() {
     assert_eq!(
         &live.memory()[128..135],
         b"payload",
-        "runtime memory.init must retain the payload after baking"
+        "runtime memory.init must copy the payload in an instance of the template"
     );
     let state = live
         .capture_mutable_state()
         .expect("capture after passive copy");
-    let mut restored = engine
-        .activate_initialization(&template, Box::new(NoImports))
-        .expect("independent activation");
+    let mut restored = activate(&prepared.engine, &prepared.template);
     restored
         .restore_mutable_state(&state)
         .expect("restore explicit state");
@@ -125,36 +85,37 @@ fn memory_init_keeps_original_segment_indices_before_and_after_baking() {
 }
 
 #[test]
-fn originally_active_segments_remain_empty_for_memory_init() {
-    let wasm = common::guest_with_handle(
+fn an_originally_active_segment_is_empty_for_memory_init_in_a_prepared_template() {
+    let wasm = staged_guest_with_handle(
         r#"(data $active (i32.const 0) "active")"#,
+        "",
         "",
         "(memory.init $active (i32.const 128) (i32.const 0) (i32.const 1)) (i64.const 0)",
     );
+    let prepared = prepare(&wasm).expect("active data is capturable");
     let engine = common::engine();
-    let output =
-        isoplane_prepare::initialize(&engine, &wasm, &common::request()).expect("active data bake");
-    for bytes in [&wasm, &output.wasm] {
-        let template = engine.load_template(bytes).expect("module");
-        let mut live = engine
-            .activate_initialization(&template, Box::new(NoImports))
-            .expect("activation");
+    let unprepared = engine
+        .load_template(&wasm)
+        .expect("the module as submitted");
+    for (engine, template) in [
+        (&engine, &unprepared),
+        (&*prepared.engine, &prepared.template),
+    ] {
+        let mut live = activate(engine, template);
         assert_eq!(
             dispatch(&mut live),
             Completion::Trapped,
-            "an originally active segment must be empty after instantiation on both paths"
+            "an originally active segment must be empty in an instance, prepared or not"
         );
     }
 }
 
 #[test]
 fn dropping_passive_state_remains_explicitly_unsupported() {
-    let wasm = common::guest(r#"(data $payload "payload")"#, "(data.drop $payload)");
+    let wasm = staged_guest(r#"(data $payload "payload")"#, "", "(data.drop $payload)");
+    let error = preparation::baseline_refusal(&request(&wasm));
     assert!(
-        matches!(
-            isoplane_prepare::initialize(&common::engine(), &wasm, &common::request()),
-            Err(isoplane_prepare::PrepareError::State(_))
-        ),
-        "unrepresented data.drop state must still refuse preparation"
+        matches!(error, PrepareError::State(_)),
+        "unrepresented data.drop state must still refuse preparation: {error}"
     );
 }

@@ -1,7 +1,7 @@
 //! Built Rust guests through admission and preparation, including hostile modules.
 
 use isoplane_control::validator::{self, ViolationCode as V};
-use isoplane_prepare::preinit::PreInitializer;
+use isoplane_harness::preparation;
 
 /// The verdict admission under the default limits must reach for each module in
 /// the build script's manifest, as `(code, subject)` pairs; empty means the
@@ -85,8 +85,35 @@ fn render(v: &[String]) -> String {
     }
 }
 
-#[test]
-fn a_guest_built_with_the_rust_sdk_is_prepared_into_a_template_without_its_initializer() {
+/// Prepares `wasm`, built with the Rust SDK, the way a node prepares a
+/// module that carries its whole application, under the default limits.
+async fn prepare(wasm: &[u8]) -> preparation::Prepared {
+    let engine = isoplane_engine::EngineConfig {
+        max_instances: 4,
+        ..Default::default()
+    };
+    let initialization = isoplane_prepare::Initialization::new(b"{}".to_vec());
+    let request = isoplane_prepare::BuildRequest {
+        runtime: isoplane_prepare::RuntimeProfile::RawWasm,
+        ..preparation::request(wasm, engine, initialization)
+    };
+    preparation::prepare_whole_module(&request)
+        .await
+        .expect("the guest must initialize")
+}
+
+/// The memory an instance of `wasm` starts with when it is not prepared.
+fn unprepared_memory(prepared: &preparation::Prepared, wasm: &[u8]) -> Vec<u8> {
+    prepared
+        .engine
+        .load_template(wasm)
+        .expect("the module must load as submitted")
+        .memory_image_arc()
+        .to_dense()
+}
+
+#[tokio::test]
+async fn a_guest_built_with_the_rust_sdk_is_prepared_into_a_template_without_its_initializer() {
     let wasm = isoplane_fixtures::rust("quotes-api");
     let report = validator::validate_with_limits(
         &wasm,
@@ -100,23 +127,15 @@ fn a_guest_built_with_the_rust_sdk_is_prepared_into_a_template_without_its_initi
         "the guest SDK must export isoplane_initialize"
     );
 
-    let out = PreInitializer::new()
-        .run(&wasm)
-        .expect("pre-init must succeed");
+    let out = prepare(&wasm).await;
 
-    assert_ne!(out.wasm, wasm, "the template must not be the input module");
-    assert!(
-        !exports_init(&out.wasm),
-        "isoplane_initialize must be stripped from the template"
+    assert_ne!(
+        out.memory(),
+        unprepared_memory(&out, &wasm),
+        "the template must carry what the initializer did, not the input module's memory"
     );
-}
-
-fn exports_init(wasm: &[u8]) -> bool {
-    wasmparser::Parser::new(0).parse_all(wasm).any(|p| match p {
-        Ok(wasmparser::Payload::ExportSection(r)) => r
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .any(|e| e.name == isoplane_abi::imports::exports::INITIALIZE),
-        _ => false,
-    })
+    assert!(
+        !out.template.has_initialize(),
+        "the template must not run isoplane_initialize again"
+    );
 }

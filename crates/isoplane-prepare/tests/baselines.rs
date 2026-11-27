@@ -1,16 +1,13 @@
 //! A runtime prepared once to the end of its own initializer, and
 //! applications prepared as layers over it.
 mod common;
-#[path = "common/provider.rs"]
-mod provider;
-#[path = "common/staged.rs"]
-mod staged;
+#[path = "common/guest.rs"]
+mod guest;
 
-use isoplane_engine::prepared::PreparedIdentity;
 use isoplane_engine::{IsoplaneEngine, Template};
+use isoplane_harness::preparation::{load, load_in, staged_guest};
 use isoplane_prepare::{
-    BuildProduct, BuildRequest, Preparation, PrepareError, PreparedBaseline, RuntimeBaseline,
-    RuntimeProfile,
+    BuildRequest, Preparation, PrepareError, PreparedBaseline, RuntimeBaseline, RuntimeProfile,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -25,7 +22,7 @@ const APPLICATION: &str = "(global.set $state (i32.const 42))
 
 fn request(wasm: &[u8]) -> BuildRequest {
     BuildRequest {
-        engine: common::engine().configuration(),
+        engine: common::engine_config(),
         application_files: Default::default(),
         runtime: RuntimeProfile::RawWasm,
         memory_limit: isoplane_abi::config::GuestMemoryBytes::default(),
@@ -47,43 +44,11 @@ fn refusal_of(result: Result<PreparedBaseline, PrepareError>) -> PrepareError {
     }
 }
 
-/// Loads `product`, prepared as `identity`, into `engine`, over `base` when
-/// it is a layer.
-fn load(
-    engine: &IsoplaneEngine,
-    product: &BuildProduct,
-    identity: PreparedIdentity,
-    base: Option<&Template>,
-    directory: &std::path::Path,
-) -> Template {
-    let bytes = product.prepared_bytes();
-    // SAFETY: LocalPreparation in this process produced these bytes.
-    let prepared = unsafe {
-        match base {
-            Some(base) => engine.decode_builder_output_over(base, bytes, identity),
-            None => engine.decode_builder_output(bytes, identity),
-        }
-    }
-    .expect("the prepared output must decode");
-
-    prepared.publish(directory).expect("publish");
-    // SAFETY: LocalPreparation in this process produced the decoded native code.
-    // The caller holds this private publication directory and leaves its files
-    // unchanged for every returned template and instance.
-    unsafe {
-        match base {
-            Some(base) => engine.load_prepared_over(base, directory, identity, &[]),
-            None => engine.load_prepared(directory, identity, &[]),
-        }
-    }
-    .expect("the prepared output must load")
-}
-
 #[tokio::test]
 async fn an_application_over_a_baseline_loads_to_the_memory_its_whole_initialization_leaves() {
-    let wasm = staged::staged_guest(ENTROPY, RUNTIME, APPLICATION);
+    let wasm = staged_guest(ENTROPY, RUNTIME, APPLICATION);
     let request = request(&wasm);
-    let preparation = crate::provider::local_preparation();
+    let preparation = isoplane_harness::preparation::local_preparation();
     let whole = preparation
         .prepare(&request, &CancellationToken::new())
         .await
@@ -97,15 +62,8 @@ async fn an_application_over_a_baseline_loads_to_the_memory_its_whole_initializa
         .expect("the application must prepare over its baseline")
         .product;
     let engine = common::engine();
-    let directory = tempfile::tempdir().expect("publication");
     let identity = request.identity().expect("the application's identity");
-    let whole = load(
-        &engine,
-        &whole,
-        identity,
-        None,
-        &directory.path().join("whole"),
-    );
+    let whole = load(&engine, &whole, identity, None);
     let base = load(
         &engine,
         &runtime.product,
@@ -114,15 +72,8 @@ async fn an_application_over_a_baseline_loads_to_the_memory_its_whole_initializa
             .identity()
             .expect("the baseline's identity"),
         None,
-        &directory.path().join("base"),
     );
-    let layer = load(
-        &engine,
-        &layer,
-        identity,
-        Some(&base),
-        &directory.path().join("layer"),
-    );
+    let layer = load(&engine, &layer, identity, Some(&base));
     assert_eq!(
         layer.memory_image_arc().to_dense(),
         whole.memory_image_arc().to_dense(),
@@ -132,10 +83,11 @@ async fn an_application_over_a_baseline_loads_to_the_memory_its_whole_initializa
 
 #[tokio::test]
 async fn a_module_without_a_runtime_stage_cannot_produce_a_baseline() {
-    let wasm = common::guest(ENTROPY, "");
+    let wasm = guest::guest(ENTROPY, "");
+    let refusal = refusal_of(baseline(&request(&wasm)).await);
     assert!(
-        baseline(&request(&wasm)).await.is_err(),
-        "an absent runtime stage must not produce an uninitialized baseline"
+        matches!(refusal, PrepareError::InvalidRequest(_)),
+        "an absent runtime stage must not produce an uninitialized baseline: {refusal}"
     );
 }
 
@@ -150,15 +102,16 @@ async fn a_module_without_an_application_initializer_cannot_produce_a_baseline()
         (func (export "isoplane_initialize_runtime") (result i64) i64.const 0))"#,
     )
     .expect("runtime-only fixture");
+    let refusal = refusal_of(baseline(&request(&wasm)).await);
     assert!(
-        baseline(&request(&wasm)).await.is_err(),
-        "a runtime without an application initializer must not produce a deployable baseline"
+        matches!(refusal, PrepareError::InvalidRequest(_)),
+        "a runtime without an application initializer must not produce a deployable baseline: {refusal}"
     );
 }
 
 #[tokio::test]
 async fn a_runtime_stage_that_draws_entropy_is_refused_as_a_baseline() {
-    let wasm = staged::staged_guest(ENTROPY, "(call $entropy (i32.const 64) (i32.const 16))", "");
+    let wasm = staged_guest(ENTROPY, "(call $entropy (i32.const 64) (i32.const 16))", "");
     let refusal = refusal_of(baseline(&request(&wasm)).await);
     assert!(
         matches!(refusal, PrepareError::Baseline(_)),
@@ -175,7 +128,7 @@ async fn layer_refusal(runtime: &RuntimeBaseline, request: &BuildRequest) -> Pre
 
 #[tokio::test]
 async fn an_application_is_refused_over_a_baseline_prepared_for_other_limits() {
-    let wasm = staged::staged_guest(ENTROPY, RUNTIME, APPLICATION);
+    let wasm = staged_guest(ENTROPY, RUNTIME, APPLICATION);
     let request = request(&wasm);
     let runtime = baseline(&request).await.expect("the baseline");
     let other = BuildRequest {
@@ -198,9 +151,14 @@ mod published {
 
     use super::*;
 
-    /// `request`'s runtime baseline, prepared through `preparation` and published as
-    /// a local baseline, with the digest of its published manifest.
-    async fn published_baseline(
+    /// `request`'s runtime baseline, prepared through `preparation` and published
+    /// in `directory` as a local baseline, with the digest of its published
+    /// manifest.
+    ///
+    /// # Safety
+    /// Nothing may change the files in `directory` while the returned
+    /// baseline, the template or anything prepared or loaded over them exists.
+    async unsafe fn published_baseline(
         preparation: &dyn Preparation,
         engine: &IsoplaneEngine,
         request: &BuildRequest,
@@ -215,12 +173,13 @@ mod published {
             .baseline()
             .identity()
             .expect("the baseline's identity");
-        let base = load(engine, &product, identity, None, directory);
+        // SAFETY: this function's caller keeps the files in `directory` unchanged.
+        let base = unsafe { load_in(engine, &product, identity, None, directory) };
         let digest = engine
             .prepared_manifest_sha256(directory)
             .expect("the published manifest digest");
-        // SAFETY: this test's LocalPreparation produced the private baseline;
-        // its native code, state and mapped bytes remain unchanged while in use.
+        // SAFETY: this test's LocalPreparation produced the baseline, and this
+        // function's caller keeps the files in `directory` unchanged.
         (
             unsafe { PublishedBaseline::new(directory.to_path_buf(), digest) },
             base,
@@ -229,17 +188,21 @@ mod published {
 
     #[tokio::test]
     async fn an_application_prepared_over_a_published_baseline_loads_to_its_whole_initialization() {
-        let wasm = staged::staged_guest(ENTROPY, RUNTIME, APPLICATION);
+        let wasm = staged_guest(ENTROPY, RUNTIME, APPLICATION);
         let request = request(&wasm);
-        let preparation = crate::provider::local_preparation();
+        let preparation = isoplane_harness::preparation::local_preparation();
         let engine = common::engine();
         let directory = tempfile::tempdir().expect("publication");
-        let (published, base) = published_baseline(
-            &*preparation,
-            &engine,
-            &request,
-            &directory.path().join("base"),
-        )
+        // SAFETY: `directory` is this test's own, and the test changes
+        // nothing in it once the baseline is published there.
+        let (published, base) = unsafe {
+            published_baseline(
+                &*preparation,
+                &engine,
+                &request,
+                &directory.path().join("base"),
+            )
+        }
         .await;
         let layer = preparation
             .prepare_over(&published, &request, &CancellationToken::new())
@@ -250,20 +213,8 @@ mod published {
             .await
             .expect("the whole initialization must prepare");
         let identity = request.identity().expect("the application's identity");
-        let layer = load(
-            &engine,
-            &layer,
-            identity,
-            Some(&base),
-            &directory.path().join("layer"),
-        );
-        let whole = load(
-            &engine,
-            &whole,
-            identity,
-            None,
-            &directory.path().join("whole"),
-        );
+        let layer = load(&engine, &layer, identity, Some(&base));
+        let whole = load(&engine, &whole, identity, None);
         assert_eq!(
             layer.memory_image_arc().to_dense(),
             whole.memory_image_arc().to_dense(),
@@ -273,19 +224,23 @@ mod published {
 
     #[tokio::test]
     async fn an_application_is_refused_when_the_supplied_baseline_digest_differs() {
-        let wasm = staged::staged_guest(ENTROPY, RUNTIME, APPLICATION);
+        let wasm = staged_guest(ENTROPY, RUNTIME, APPLICATION);
         let request = request(&wasm);
-        let preparation = crate::provider::local_preparation();
+        let preparation = isoplane_harness::preparation::local_preparation();
         let directory = tempfile::tempdir().expect("publication");
-        let (_published, _base) = published_baseline(
-            &*preparation,
-            &common::engine(),
-            &request,
-            &directory.path().join("base"),
-        )
+        // SAFETY: `directory` is this test's own, and the test changes
+        // nothing in it once the baseline is published there.
+        let (_published, _base) = unsafe {
+            published_baseline(
+                &*preparation,
+                &common::engine(),
+                &request,
+                &directory.path().join("base"),
+            )
+        }
         .await;
-        // SAFETY: this test's LocalPreparation produced the private baseline;
-        // its native code, state and mapped bytes remain unchanged while in use.
+        // SAFETY: this test's LocalPreparation produced the baseline, which
+        // the test leaves unchanged in its own directory.
         let other = unsafe { PublishedBaseline::new(directory.path().join("base"), [0; 32]) };
         match preparation
             .prepare_over(&other, &request, &CancellationToken::new())
@@ -301,16 +256,20 @@ mod published {
 
     #[tokio::test]
     async fn an_engine_that_cannot_be_constructed_is_reported_as_that_over_a_published_baseline() {
-        let wasm = staged::staged_guest(ENTROPY, RUNTIME, APPLICATION);
+        let wasm = staged_guest(ENTROPY, RUNTIME, APPLICATION);
         let request = request(&wasm);
-        let preparation = crate::provider::local_preparation();
+        let preparation = isoplane_harness::preparation::local_preparation();
         let directory = tempfile::tempdir().expect("publication");
-        let (published, _base) = published_baseline(
-            &*preparation,
-            &common::engine(),
-            &request,
-            &directory.path().join("base"),
-        )
+        // SAFETY: `directory` is this test's own, and the test changes
+        // nothing in it once the baseline is published there.
+        let (published, _base) = unsafe {
+            published_baseline(
+                &*preparation,
+                &common::engine(),
+                &request,
+                &directory.path().join("base"),
+            )
+        }
         .await;
         let mut unconstructible = request;
         unconstructible.engine.max_wasm_stack_bytes = 0;
@@ -374,7 +333,7 @@ fn word(template: &Template, offset: usize) -> u32 {
 }
 
 /// Prepares `wasm`'s baseline and its application layer over it, loaded.
-async fn baseline_and_layer(wasm: &[u8], directory: &std::path::Path) -> (Template, Template) {
+async fn baseline_and_layer(wasm: &[u8]) -> (Template, Template) {
     let request = request(wasm);
     let runtime = baseline(&request)
         .await
@@ -393,14 +352,12 @@ async fn baseline_and_layer(wasm: &[u8], directory: &std::path::Path) -> (Templa
             .identity()
             .expect("the baseline's identity"),
         None,
-        &directory.join("base"),
     );
     let layer = load(
         &engine,
         &layer,
         request.identity().expect("the application's identity"),
         Some(&base),
-        &directory.join("layer"),
     );
     (base, layer)
 }
@@ -408,8 +365,7 @@ async fn baseline_and_layer(wasm: &[u8], directory: &std::path::Path) -> (Templa
 #[tokio::test]
 async fn each_initializer_stage_collects_the_guests_garbage_before_its_capture() {
     let wasm = collecting_guest(true, COUNT_COLLECTION);
-    let directory = tempfile::tempdir().expect("publication");
-    let (base, layer) = baseline_and_layer(&wasm, directory.path()).await;
+    let (base, layer) = baseline_and_layer(&wasm).await;
     assert_eq!(
         (word(&base, 300), word(&layer, 308), word(&layer, 300)),
         (1, 1, 2),

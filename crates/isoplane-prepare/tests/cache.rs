@@ -1,4 +1,6 @@
 mod common;
+#[path = "common/guest.rs"]
+mod guest;
 
 use isoplane_prepare::{BuildRequest, LocalPreparation, Preparation, RuntimeProfile};
 use std::path::{Path, PathBuf};
@@ -20,7 +22,7 @@ fn setup() -> (tempfile::TempDir, LocalPreparation) {
     (directory, provider)
 }
 fn wasm(value: u32) -> Vec<u8> {
-    common::guest(
+    guest::guest(
         r#"(import "isoplane" "entropy_fill" (func $entropy (param i32 i32)))
         (import "isoplane" "runtime_config_get" (func $settings (param i32 i32) (result i32)))"#,
         &format!("(call $entropy (i32.const 64) (i32.const 16)) (drop (call $settings (i32.const 128) (i32.const 32))) (global.set $state (i32.const {value}))"),
@@ -31,7 +33,7 @@ fn request(wasm: &[u8]) -> BuildRequest {
         guest_memory_bytes: None,
         validation_limits: Default::default(),
         application_files: isoplane_engine::PlatformFiles::default(),
-        engine: common::engine().configuration(),
+        engine: common::engine_config(),
         runtime: RuntimeProfile::RawWasm,
         memory_limit: isoplane_abi::config::GuestMemoryBytes::default(),
         initialization: common::request(),
@@ -284,6 +286,36 @@ async fn initialization_without_a_memory_maximum_obeys_the_application_budget() 
     );
 }
 
+#[tokio::test]
+async fn a_module_that_carries_its_application_may_declare_only_the_memory_it_is_allowed() {
+    let wasm = wat::parse_str(
+        r#"(module
+        (memory (export "memory") 1 16384)
+        (func (export "isoplane_alloc") (param i32 i32) (result i32) i32.const 0)
+        (func (export "isoplane_handle") (param i32 i32) (result i64) i64.const 0)
+        (func (export "isoplane_wake") (param i64 i32 i32) (result i64) i64.const 0)
+        (func (export "isoplane_initialize") (result i64) i64.const 0))"#,
+    )
+    .expect("the one-gibibyte fixture assembles");
+    let mut input = request(&wasm);
+    let (_directory, provider) = setup();
+    let refused = provider.prepare(&input, &CancellationToken::new()).await;
+    assert!(
+        matches!(refused, Err(isoplane_prepare::PrepareError::Input(_))),
+        "a declared gibibyte must be refused under the default memory limit before the module runs"
+    );
+    input.guest_memory_bytes =
+        Some(isoplane_abi::config::GuestMemoryBytes::new(1 << 30).expect("valid budget"));
+    input.engine.max_memory_bytes = isoplane_abi::config::memory_ceiling_bytes(1 << 30);
+    assert!(
+        provider
+            .prepare(&input, &CancellationToken::new())
+            .await
+            .is_ok(),
+        "an application allowed a gibibyte must be able to declare it"
+    );
+}
+
 #[test]
 fn preparation_identity_binds_the_fallback_memory_budget() {
     let wasm = wasm(42);
@@ -309,7 +341,7 @@ fn preparation_identity_binds_the_guest_visible_engine_memory_ceiling() {
 
 #[tokio::test]
 async fn cancellation_before_preparation_refuses_to_enter_the_initializer() {
-    let wasm = common::guest("", "unreachable");
+    let wasm = guest::guest("", "unreachable");
     let cancellation = CancellationToken::new();
     cancellation.cancel();
     let (_directory, provider) = setup();
