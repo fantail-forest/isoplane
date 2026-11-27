@@ -1,5 +1,3 @@
-//! Where tests find the repository and what Task prepared for them.
-
 use std::path::{Path, PathBuf};
 
 /// The repository root above a crate's `CARGO_MANIFEST_DIR`: every crate

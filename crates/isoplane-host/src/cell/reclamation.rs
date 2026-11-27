@@ -1,5 +1,3 @@
-//! Reclaimable instance ownership and pressure-driven local policy.
-
 use super::*;
 
 #[cfg(test)]

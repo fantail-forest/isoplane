@@ -1,6 +1,3 @@
-//! Runtime baselines this node publishes once per runtime, engine and limits,
-//! and prepares applications over as layers.
-
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::Path;

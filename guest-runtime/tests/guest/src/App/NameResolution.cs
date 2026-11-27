@@ -8,12 +8,6 @@ using System.Threading.Tasks;
 
 namespace Acceptance;
 
-/// <summary>
-/// Name resolution through the source-built asynchronous WASI path: forward
-/// lookups await the host's resolver, literals never leave the guest, failures
-/// map to the ordinary socket errors, the host name comes from libc, and the
-/// lookups that would have to block fail explicitly rather than by trap.
-/// </summary>
 internal sealed class NameResolution
 {
     public async Task<string> RunAsync(string[] path)

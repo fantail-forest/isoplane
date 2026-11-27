@@ -1,5 +1,3 @@
-//! Local routing and HTTP dispatch interfaces consumed by the host.
-
 use async_trait::async_trait;
 
 mod http;

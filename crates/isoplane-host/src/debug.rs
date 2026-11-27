@@ -1,5 +1,3 @@
-//! Local debugger activation using the cell's ordinary dispatch and cleanup.
-
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;

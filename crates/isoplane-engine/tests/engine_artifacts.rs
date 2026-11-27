@@ -1,6 +1,3 @@
-//! Reset and re-sealing of globals and tables, the mapped-artifact path, and
-//! the artifact metadata that guards it.
-
 mod common;
 
 use common::*;
@@ -59,10 +56,6 @@ fn http_dispatch(id: u64) -> isoplane_abi::dispatch::DispatchRecord {
         now_ms: 1_700_000_000_000,
     }
 }
-
-// ---------------------------------------------------------------------------
-// activation
-// ---------------------------------------------------------------------------
 
 #[test]
 fn activation_seals_globals_and_tables_from_the_template() {

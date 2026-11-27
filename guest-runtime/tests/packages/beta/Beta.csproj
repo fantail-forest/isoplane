@@ -1,11 +1,5 @@
 <Project>
   <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
-  <!--
-    A package whose closure differs from alpha's in every way the runtime
-    must not care about: a project dependency with generic value types, a
-    NuGet closure, a satellite assembly, and BCL paths reaching compression,
-    cryptography and JSON serialization.
-  -->
   <Import Project="../Package.props" />
   <PropertyGroup>
     <AssemblyName>Beta</AssemblyName>

@@ -1,5 +1,3 @@
-//! Operator-selected structural admission limits.
-
 /// Resource policy applied before native compilation; sandbox capabilities stay fixed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]

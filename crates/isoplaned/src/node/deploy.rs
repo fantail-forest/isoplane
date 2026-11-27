@@ -1,5 +1,3 @@
-//! Local bundle preparation and atomic selection for the next daemon start.
-
 use crate::config::NodeConfig;
 use std::io::Read;
 use std::path::Path;

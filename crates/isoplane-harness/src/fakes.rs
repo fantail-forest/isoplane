@@ -1,7 +1,3 @@
-//! Test doubles for the cell. [`FakeInstance`] is a scripted guest that
-//! returns `Pending` as a return, issues real import calls through the real
-//! vtable, and reports scripted budget kills without depending on scheduling.
-
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;

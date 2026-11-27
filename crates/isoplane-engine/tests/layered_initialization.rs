@@ -1,4 +1,3 @@
-//! Captured initialization state restores over unchanged compiled code.
 mod common;
 #[cfg(target_os = "linux")]
 #[path = "common/dispatch.rs"]

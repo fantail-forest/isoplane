@@ -3,12 +3,6 @@ using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using NuGet.Versioning;
 
-/// <summary>
-/// The release that added each documented item, kept in a JSON file beside the site. Pages are drafted
-/// with a placeholder after each item's name. Resolving a page replaces the placeholder with a release
-/// marker when the item arrived after the line's first release, with a <c>next</c> marker when no
-/// release has stamped it yet, and with nothing otherwise, so that a line's original items carry no marker.
-/// </summary>
 internal sealed class Since
 {
     private const char Delimiter = '\u0001';

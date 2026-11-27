@@ -1,5 +1,3 @@
-//! A real node: real engine, cells, guest wasm, proxy and TCP.
-
 mod common;
 #[path = "real_node/egress.rs"]
 mod egress;
@@ -68,8 +66,6 @@ fn head(status: u16, body: &str) -> ResponseHead {
 async fn start(head: ResponseHead) -> Rig {
     start_with(guest(&head)).await
 }
-
-// ---------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn an_http_request_runs_real_guest_wasm_end_to_end() {

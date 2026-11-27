@@ -1,5 +1,3 @@
-//! Connection-specific HTTP fields never cross the guest boundary.
-
 use hyper::header::{HeaderName, CONNECTION};
 use hyper::HeaderMap;
 

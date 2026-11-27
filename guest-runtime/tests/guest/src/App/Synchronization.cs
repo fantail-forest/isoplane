@@ -6,16 +6,15 @@ using System.Threading.Tasks;
 
 namespace Acceptance;
 
-/// <summary>
-/// Synchronous waits and lock acquisitions on the guest's one thread. A call
-/// that can be satisfied at once answers "acquired", a try that cannot answers
-/// "refused", and any other outcome is named by its exception type, so a wait
-/// that would have to block shows as the exception it refused with.
-/// </summary>
 internal static class Synchronization
 {
     private static readonly TimeSpan Second = TimeSpan.FromSeconds(1);
 
+    /// <summary>
+    /// Answers "acquired" for a call satisfied at once, "refused" for a try that could not be, and
+    /// otherwise the type name of the exception, so a wait that would have to block shows as the
+    /// exception it refused with.
+    /// </summary>
     internal static string Run(string[] path)
     {
         string scenario = string.Join('/', path);

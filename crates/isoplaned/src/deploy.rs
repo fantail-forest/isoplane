@@ -1,5 +1,3 @@
-//! Locally compiled preparation artifacts and immutable application snapshots.
-
 use std::path::Path;
 
 use isoplane_abi::config::AppManifest;

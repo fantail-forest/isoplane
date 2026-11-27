@@ -1,5 +1,3 @@
-//! Import-surface validation and engine construction refusals.
-
 mod common;
 
 use common::*;
@@ -7,10 +5,6 @@ use common::*;
 fn import(name: &str, params: &str, results: &str) -> String {
     format!(r#"(import "isoplane" "{name}" (func ${name} {params} {results}))"#)
 }
-
-// ---------------------------------------------------------------------------
-// imports are the complete capability surface
-// ---------------------------------------------------------------------------
 
 #[test]
 fn an_import_outside_the_table_fails_to_load() {
@@ -113,10 +107,6 @@ fn a_module_with_more_table_elements_than_the_pool_allows_is_refused() {
     let t = e.load_template(&wasm).expect("a table at the cap loads");
     activate(&e, &t);
 }
-
-// ---------------------------------------------------------------------------
-// the features that make blocking inexpressible
-// ---------------------------------------------------------------------------
 
 #[test]
 fn threads_shared_memory_and_atomics_are_rejected_by_the_engine() {

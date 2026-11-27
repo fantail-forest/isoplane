@@ -1,5 +1,3 @@
-//! The capture sequence: the pre-capture gc hint, the future and socket handoff, and the delta diff against the template.
-
 use std::sync::Arc;
 
 use isoplane_engine::Completion;

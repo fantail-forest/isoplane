@@ -1,6 +1,3 @@
-//! Lists the WASI imports accepted from the shared runtime and the native
-//! operation that serves each one. Unlisted WASI imports are rejected.
-
 use crate::imports::Sig;
 use crate::native_io::canonical::{
     Definition, MONOTONIC_CLOCK_SUBSCRIBE_DURATION, POLL_POLL, POLL_POLLABLE_DROP,
@@ -34,7 +31,10 @@ impl PalDef {
 const MONOTONIC_CLOCK: &str = "wasi:clocks/monotonic-clock@0.2.0";
 const IO_POLL: &str = "wasi:io/poll@0.2.0";
 
-/// Every admitted WASI import.
+/// Every admitted WASI import; one not listed is rejected. Each entry is
+/// answered by the native operation its `isoplane` capability already offers,
+/// so an entry that is not would give the guest a channel, time or entropy
+/// outside the capability table.
 pub const PAL_IMPORTS: &[PalDef] = &[
     PalDef {
         module: MONOTONIC_CLOCK,

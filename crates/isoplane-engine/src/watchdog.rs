@@ -1,8 +1,3 @@
-//! The epoch watchdog. Bumps the engine's epoch every `tick` to deliver
-//! deadline kills, and sleeps on a condvar whenever nothing is hot so an idle
-//! cell's CPU is not a spinning ticker. There is no yielding: wasmtime's
-//! epoch-yield needs fibers, which are not compiled in.
-
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -13,6 +8,10 @@ use parking_lot::{Condvar, Mutex};
 /// Period of the epoch tick while a dispatch is hot.
 pub(crate) const EPOCH_TICK_US: u64 = 200;
 
+/// Increments the engine's epoch while a dispatch is hot. Each tick requests
+/// the store's budget and deadline checks, which enter grace and continue the
+/// slice or end it. Nothing yields on a tick: wasmtime's epoch-yield needs
+/// fibers, which are not compiled in.
 pub(crate) struct Watchdog {
     shared: Arc<Shared>,
     join: Option<std::thread::JoinHandle<()>>,

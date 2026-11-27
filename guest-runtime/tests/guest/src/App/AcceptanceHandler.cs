@@ -4,12 +4,6 @@ using Isoplane;
 
 namespace Acceptance;
 
-/// <summary>
-/// Routes a request to the family of runtime behaviour its first path
-/// segment names. Every family answers with plain text the host asserts on;
-/// an exception the family did not classify is reported by type name so a
-/// test failure names the managed failure rather than a trap.
-/// </summary>
 public sealed class AcceptanceHandler
 {
     private readonly EventLoop _eventLoop = new();

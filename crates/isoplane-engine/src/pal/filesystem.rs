@@ -1,9 +1,3 @@
-//! The PAL filesystem: a read-only root holding nothing but the host-declared
-//! [`PlatformFiles`], whose bytes a guest reaches only through an immediate
-//! `descriptor.read` copy. Descriptor records live in guest memory, so
-//! templates and deltas retain their complete state and the host holds no
-//! resource on a guest's behalf.
-
 use anyhow::{bail, ensure, Result};
 use isoplane_abi::filesystem::{Definition, Operation, IMPORTS, MAX_ARGUMENTS};
 use isoplane_abi::imports::MAX_OUT_BUFFER_BYTES;

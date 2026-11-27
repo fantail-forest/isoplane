@@ -1,5 +1,3 @@
-//! Pressure thresholds for handler reclamation.
-
 pub use crate::hibernate_capture::{CaptureEnv, CaptureObserver, CaptureRefused, GC_HINT_SNAPSHOT};
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]

@@ -1,5 +1,3 @@
-//! Share disk-backed compilation while keeping engines and guest state isolated.
-
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock, Weak};

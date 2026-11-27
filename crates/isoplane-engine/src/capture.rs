@@ -1,6 +1,3 @@
-//! Hibernation snapshot support: capturing and restoring an instance's
-//! mutable globals and tables against its template's baseline.
-
 use anyhow::{bail, Context};
 use wasmtime::{Ref, Store, Table, Val};
 

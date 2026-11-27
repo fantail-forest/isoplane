@@ -7,12 +7,6 @@ using System.Threading.Tasks;
 
 namespace Acceptance;
 
-/// <summary>
-/// The host-driven event loop: timers park the guest on host-owned wake
-/// sources, ready thread-pool work runs before parking, continuations resume
-/// on the next wake, and registrations are retained once and released when
-/// their owner is done or cancelled.
-/// </summary>
 internal sealed class EventLoop
 {
     private int _abandonedCallbacks;

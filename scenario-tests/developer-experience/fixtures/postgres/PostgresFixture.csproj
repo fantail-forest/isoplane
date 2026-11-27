@@ -1,4 +1,3 @@
-<!-- A handler application using EF Core over Npgsql, built against this checkout's SDK and runtime. -->
 <Project>
   <PropertyGroup>
     <UseArtifactsIntermediateOutput>false</UseArtifactsIntermediateOutput>

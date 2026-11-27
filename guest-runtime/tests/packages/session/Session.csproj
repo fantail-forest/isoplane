@@ -1,6 +1,5 @@
 <Project>
   <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk.Web" />
-  <!-- ASP.NET Core session state and session-backed TempData over a distributed cache. -->
   <Import Project="../Package.props" />
   <PropertyGroup>
     <AssemblyName>Session</AssemblyName>

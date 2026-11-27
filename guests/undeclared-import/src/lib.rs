@@ -1,27 +1,3 @@
-//! `undeclared-import` — the validator's rule **V1** corpus.
-//!
-//! V1 rejects any import outside the world's allowlist. Imports are the
-//! complete capability surface, so an undeclared import is an attempted
-//! capability and there is no "dynamic linking" escape hatch.
-//!
-//! This module is otherwise a perfectly well-formed guest: it exports
-//! `isoplane_alloc`, `isoplane_handle`, `isoplane_wake`, `isoplane_gc_hint` and
-//! `isoplane_initialize`, and it imports the real capabilities through the SDK.
-//! The *only* thing wrong with it is one extra import. It must therefore be
-//! rejected at deploy time, not at run time -- if it ever instantiates, V1 is
-//! not being enforced.
-//!
-//! Two build variants, because there are two ways to smuggle a capability:
-//!
-//! * default: an **unknown field** of the declared module -- `isoplane::fs_open`.
-//!   The module name is right, so a validator that only checks module names
-//!   would pass it.
-//! * `--features foreign-module`: an **unknown module** -- `env::__wasi_fd_write`.
-//!   A validator that only checks field names against `IMPORTS` would pass it.
-//!
-//! `isoplane_abi::imports::is_declared` requires *both* to match, and this crate
-//! exists to prove that it does.
-
 use core::future::Future;
 
 use isoplane_guest::{Ctx, Handler, Request, Response};

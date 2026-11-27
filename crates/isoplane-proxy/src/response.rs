@@ -1,5 +1,3 @@
-//! Guest response validation and host-owned HTTP framing.
-
 use std::pin::Pin;
 use std::task::{Context, Poll};
 

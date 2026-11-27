@@ -6,17 +6,12 @@ using Isoplane;
 
 namespace Isoplane.App;
 
-/// <summary>
-/// A generator seeded once during initialization, before the template snapshot, and
-/// reseeded on activation: the activation hook is what keeps two copies of
-/// the template from drawing the same sequence. That generator was given a
-/// seed, so only the app can reseed it. The generators that seed themselves
-/// are also created or drawn from during initialization, as a warm-up request
-/// would, and are left for the runtime to reseed. One with a fixed seed is
-/// there to show that the runtime leaves a deterministic generator alone.
-/// </summary>
 internal static class ActivationProbe
 {
+    /// <summary>
+    /// Given a seed, so only the app can reseed it: the activation hook is what keeps two copies
+    /// of the template from drawing the same sequence.
+    /// </summary>
     private static Random _seeded = Fresh();
     private static readonly Random Unseeded = new();
     private static readonly Random UnseededDerived = new Derived();

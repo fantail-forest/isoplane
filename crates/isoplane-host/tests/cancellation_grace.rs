@@ -1,6 +1,3 @@
-//! The grace a dispatch has to finish once its cancellation is requested,
-//! through the cell with a scripted guest.
-
 mod common;
 
 use std::sync::mpsc::Receiver;

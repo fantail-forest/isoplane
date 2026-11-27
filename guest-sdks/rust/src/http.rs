@@ -1,5 +1,3 @@
-//! Request and response shapes for the Handler entrypoint.
-
 use isoplane_abi::dispatch::ResponseHead;
 use serde::Serialize;
 

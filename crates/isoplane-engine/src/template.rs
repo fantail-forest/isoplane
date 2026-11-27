@@ -1,5 +1,3 @@
-//! Templates: the compiled, pre-initialised unit a cell loads.
-
 use std::sync::Arc;
 
 use anyhow::{bail, Result};

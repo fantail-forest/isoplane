@@ -1,7 +1,5 @@
 <Project>
   <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
-  <!-- SQLite through unmodified Microsoft.Data.Sqlite and EF Core, served by
-       the runtime's e_sqlite3. -->
   <Import Project="../Package.props" />
   <PropertyGroup>
     <AssemblyName>SqliteUse</AssemblyName>

@@ -1,18 +1,6 @@
-/*
- * SQLite as the shared runtime's native library `e_sqlite3`, the module
- * SQLitePCLRaw's provider imports, configured for databases held in memory.
- *
- * An instance keeps no storage beyond its own memory, so a database file would
- * vanish with the instance that wrote it. The operating-system layer is
- * therefore this file's VFS, which refuses every file and serves randomness and
- * the current time from the runtime's libc. The feature options follow the
- * e_sqlite3 builds SQLitePCLRaw ships for other platforms.
- *
- * Compiling the amalgamation in this translation unit lets the open functions
- * replace the generic "unable to open database file" with a message that says
- * why a file cannot be opened and what to use instead.
- */
-
+/* An instance keeps no storage beyond its own memory, so the operating-system
+ * layer is this file's VFS, which refuses every file. The feature options
+ * follow the e_sqlite3 builds SQLitePCLRaw ships for other platforms. */
 #define SQLITE_OS_OTHER 1
 #define SQLITE_THREADSAFE 0
 #define SQLITE_TEMP_STORE 3
@@ -27,6 +15,9 @@
 #define SQLITE_ENABLE_RTREE 1
 #define SQLITE_ENABLE_SNAPSHOT 1
 
+/* The amalgamation compiles in this translation unit so the open functions can
+ * replace the generic "unable to open database file" with a message that says
+ * why a file cannot be opened and what to use instead. */
 #define sqlite3_open isoplane_sqlite3_open_unchecked
 #define sqlite3_open16 isoplane_sqlite3_open16_unchecked
 #define sqlite3_open_v2 isoplane_sqlite3_open_v2_unchecked

@@ -1,5 +1,3 @@
-//! Request traces carrying an opaque host-generated request ID that joins a request's logs.
-
 use std::pin::Pin;
 use std::task::{Context, Poll};
 

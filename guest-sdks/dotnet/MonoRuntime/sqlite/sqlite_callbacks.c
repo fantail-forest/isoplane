@@ -1,15 +1,3 @@
-/*
- * Native entry points for managed callbacks that SQLite calls.
- *
- * WebAssembly calls a function pointer only with the function's own static
- * type, so each managed method native code calls needs a native entry point
- * of its signature. The runtime build generates them for the methods of the
- * assemblies it compiles; SQLitePCLRaw is an application's package, so its
- * callbacks take entry points from pools generated for the callback shapes of
- * SQLite's C API, and serve whichever SQLitePCLRaw version the application
- * resolves.
- */
-
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -53,6 +41,10 @@ static void *generated_entry(MonoMethod *method, void *klass, const char *assemb
     return wasm_dl_get_native_to_interp(mono_method_get_token(method), key, target);
 }
 
+/* WebAssembly calls a function pointer only with the function's own static
+ * type, and the runtime build generates entry points only for the assemblies
+ * it compiles. SQLitePCLRaw is an application's package, so its callbacks take
+ * entry points from pools generated for the callback shapes of SQLite's C API. */
 static void *pooled_entry(MonoMethod *method, void *target)
 {
     char signature[32];

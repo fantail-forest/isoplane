@@ -1,9 +1,3 @@
-//! Outbound TCP through the source-built socket engine (runtime patch 007):
-//! readiness comes from the pollables libc registers for a socket, observed
-//! through libc's public poll rather than its private descriptor layout, and
-//! every connection state the peer can produce reaches the ordinary managed
-//! exception across destroyed Stores.
-
 use isoplane_harness::logging::GuestLogs;
 #[macro_use]
 mod common;
@@ -103,8 +97,6 @@ in_mono_runtime! {
 }
 
 in_mono_runtime! {
-    /// A parked read survives hibernation: the guest's memory goes through the
-    /// local snapshot between the park and the wake that delivers the bytes.
     #[tokio::test]
     async fn a_parked_read_survives_a_hibernation_delta_round_trip(runtime: GuestRuntime) {
         let echo = peer(Peer::Echo).await;
@@ -371,9 +363,6 @@ in_mono_runtime! {
 }
 
 in_mono_runtime! {
-    /// Timeouts govern blocking calls, which an Isoplane socket never makes; they are
-    /// stored like any other option rather than refused, as they are for
-    /// asynchronous use on every other platform.
     #[tokio::test]
     async fn socket_and_stream_timeouts_are_stored_options(runtime: GuestRuntime) {
         let echo = peer(Peer::Echo).await;
@@ -432,9 +421,6 @@ in_mono_runtime! {
 }
 
 in_mono_runtime! {
-    /// An Isoplane socket never blocks; the synchronous socket calls either refuse
-    /// explicitly (Connect) or report the ordinary would-block error, never a
-    /// trap or a hang.
     #[tokio::test]
     async fn synchronous_socket_calls_refuse_or_report_would_block_instead_of_blocking(runtime: GuestRuntime) {
         let silent = peer(Peer::Silent).await;
@@ -477,8 +463,6 @@ in_mono_runtime! {
 }
 
 in_mono_runtime! {
-    /// Socket.Poll waits inside the call; it is refused explicitly rather than
-    /// trapped by the host's refusal to block.
     #[tokio::test]
     async fn a_synchronous_poll_is_refused_explicitly(runtime: GuestRuntime) {
         let silent = peer(Peer::Silent).await;
@@ -551,9 +535,7 @@ in_mono_runtime! {
 }
 
 in_mono_runtime! {
-    /// Enabled linger asks for a close-with-reset the host never performs;
-    /// the runtime refuses it before any host call, as upstream .NET does on
-    /// WASI, and the socket keeps working.
+    /// Enabled linger asks for a close-with-reset the host never performs.
     #[tokio::test]
     async fn enabling_linger_is_refused_as_unsupported_and_the_socket_stays_usable(runtime: GuestRuntime) {
         let echo = peer(Peer::Echo).await;
@@ -575,9 +557,7 @@ in_mono_runtime! {
 }
 
 in_mono_runtime! {
-    /// Disabled linger is the platform's only state: the SDK shim accepts
-    /// setting it as the no-op it is (libc itself has no SO_LINGER), and the
-    /// socket keeps working and reads back as not lingering.
+    /// Disabled linger is the platform's only state; libc itself has no SO_LINGER.
     #[tokio::test]
     async fn disabling_linger_is_accepted_as_a_no_op_and_the_socket_stays_usable(runtime: GuestRuntime) {
         let echo = peer(Peer::Echo).await;
@@ -599,12 +579,9 @@ in_mono_runtime! {
 }
 
 in_mono_runtime! {
-    /// A negative timeout and a negative linger time are refused by managed
-    /// argument checks; a NoDelay value too short for the option reaches the
-    /// host shim and is refused as an invalid argument. Each leaves the value
-    /// it targeted in place. The invalid-argument refusal also marks the
-    /// managed Socket disconnected, as .NET does on every platform, while the
-    /// host connection still carries bytes.
+    /// The invalid-argument refusal also marks the managed Socket
+    /// disconnected, as .NET does on every platform, while the host
+    /// connection still carries bytes.
     #[tokio::test]
     async fn an_invalid_option_value_is_refused_and_leaves_the_previous_value_in_place(runtime: GuestRuntime) {
         let echo = peer(Peer::Echo).await;
@@ -627,11 +604,6 @@ in_mono_runtime! {
 }
 
 in_mono_runtime! {
-    /// Keep-alive is real host state. What the guest sets before connecting
-    /// is on the host's socket once it connects, what it sets afterwards
-    /// lands at once, and each timing is clamped by the host and read back
-    /// as clamped. The settings stay with the host's socket across guest
-    /// snapshot restoration.
     #[tokio::test]
     async fn keep_alive_reaches_the_host_socket_with_clamped_timings(runtime: GuestRuntime) {
         for (owner, configured, unconnected) in [
@@ -687,7 +659,6 @@ in_mono_runtime! {
 }
 
 in_mono_runtime! {
-    /// The guest reads its clamped requests back across connection and hibernation.
     /// Kernel application of these settings is checked before traffic in the host tests;
     /// TCP autotuning may resize the actual buffers during this exchange.
     #[tokio::test]
@@ -722,9 +693,6 @@ in_mono_runtime! {
 }
 
 in_mono_runtime! {
-    /// The hop limit reaches the host and is refused: it neither
-    /// round-trips in the guest nor disturbs the socket. The refusal leaves
-    /// NoDelay, real host state, in place and the socket usable.
     #[tokio::test]
     async fn an_unsupported_option_is_refused_and_leaves_the_socket_usable_with_its_state(runtime: GuestRuntime) {
         let echo = peer(Peer::Echo).await;
@@ -770,9 +738,8 @@ const BACKPRESSURE_PAYLOAD_BYTES: usize = 512 * 1024;
 const SMALL_SOCKET_BUFFER_BYTES: u32 = 16 * 1024;
 const DRAIN_CHUNK_BYTES: usize = 32 * 1024;
 
-/// Windows can accept one oversized send despite SO_SNDBUF. Bounded writes
-/// fill the buffers before the peer starts draining; its digest proves that
-/// every byte arrives once, in order, across the guest's parks.
+/// Windows can accept one oversized send despite SO_SNDBUF, so bounded writes
+/// fill the buffers before the peer starts draining.
 async fn a_large_send_under_backpressure(runtime: GuestRuntime, owner: u64, wake: WakePath) {
     let (sink, drain, drained) =
         slow_drain_peer(SMALL_SOCKET_BUFFER_BYTES, DRAIN_CHUNK_BYTES).await;
@@ -852,7 +819,6 @@ in_mono_runtime! {
 }
 
 in_mono_runtime! {
-    /// The partially sent buffer and send-loop position survive local snapshot restoration.
     #[tokio::test]
     async fn a_large_send_under_backpressure_survives_a_hibernation_delta_at_every_park(runtime: GuestRuntime) {
         a_large_send_under_backpressure(runtime, 35, WakePath::ThroughDelta).await;
@@ -887,10 +853,10 @@ in_mono_runtime! {
     }
 }
 
-/// A synchronous socket call the platform cannot serve without blocking:
-/// it must fail in the dispatch that made it, without parking. The connect
-/// before it takes at most one wake, and none when the loopback peer
-/// accepts before the guest first polls.
+/// An Isoplane socket never blocks, so a synchronous call it cannot serve at
+/// once must fail in the dispatch that made it, without parking. The connect
+/// before it takes at most one wake, and none when the loopback peer accepts
+/// before the guest first polls.
 async fn a_synchronous_call_fails_fast(
     runtime: GuestRuntime,
     owner: u64,
@@ -937,8 +903,6 @@ async fn a_synchronous_call_fails_fast(
 }
 
 in_mono_runtime! {
-    /// The buffers on both ends are far smaller than the payload, so a
-    /// blocking send would have to wait for the silent peer.
     #[tokio::test]
     async fn a_synchronous_send_exceeding_the_socket_buffer_fails_fast_instead_of_blocking(runtime: GuestRuntime) {
         a_synchronous_call_fails_fast(
@@ -953,8 +917,6 @@ in_mono_runtime! {
 }
 
 in_mono_runtime! {
-    /// ReceiveTimeout round-trips as a property; it never times a receive
-    /// out, because a synchronous receive is refused before it could wait.
     /// The reactor's clock is not advanced: nothing here may depend on time.
     #[tokio::test]
     async fn a_receive_timeout_does_not_make_a_synchronous_receive_wait(runtime: GuestRuntime) {

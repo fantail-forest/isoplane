@@ -1,10 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <Import Project="Build/Isoplane.SourceReferences.props" />
 
-  <!--
-    The C# Isoplane guest SDK: the ABI, the async runtime, and the bindings.
-    Compiles to IL; the guest that references it is what publishes to wasm.
-  -->
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>Isoplane</RootNamespace>

@@ -1,10 +1,3 @@
-//! Host-build test support. Never compiled for `wasm32`.
-//!
-//! The SDK's most important property -- that parking is a `return` -- is
-//! testable without a wasm engine, because the executor does not care where
-//! future ids come from. These stubs stand in for the host's import vtable so
-//! `cargo test` on a laptop exercises the real `rt` code paths.
-
 #![cfg(not(target_arch = "wasm32"))]
 
 use std::cell::{Cell, RefCell};

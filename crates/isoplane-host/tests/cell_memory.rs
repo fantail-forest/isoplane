@@ -1,5 +1,3 @@
-//! Application memory budgets enforced independently of the engine's capacity.
-
 use std::sync::Arc;
 use std::time::Duration;
 

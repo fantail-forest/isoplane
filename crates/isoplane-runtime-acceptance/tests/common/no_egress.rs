@@ -1,5 +1,3 @@
-//! A reactor for behaviour that reaches neither the network nor a resolver.
-
 use isoplane_harness::Reactor;
 use isoplane_host::InstanceId;
 

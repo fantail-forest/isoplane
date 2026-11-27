@@ -1,6 +1,3 @@
-//! HTTP/1.1 termination, route resolution and
-//! shedding. The listener is plaintext; TLS termination is not implemented.
-
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::Arc;
 use std::time::Instant;

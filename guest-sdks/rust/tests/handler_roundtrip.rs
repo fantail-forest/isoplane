@@ -1,11 +1,3 @@
-//! End-to-end through the **real guest exports**: a `DispatchRecord` goes in
-//! through `isoplane_handle`, the guest parks, and `isoplane_wake` finishes it.
-//!
-//! This is the same code path a wasm engine drives; only the import vtable is
-//! a stub. What it pins down is that a dispatch waiting on host work
-//! **returns** `pending` with an empty stack, and the response only appears
-//! after a wake.
-
 use isoplane_guest::isoplane_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest};
 use isoplane_guest::isoplane_abi::result::{ResultRecord, WakeRecord};
 use isoplane_guest::isoplane_abi::status::PollStatus;

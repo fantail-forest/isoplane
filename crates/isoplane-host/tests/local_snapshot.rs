@@ -1,5 +1,3 @@
-//! Real guest continuations through physically reserved local snapshots.
-
 use isoplane_harness::logging::GuestLogs;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener};

@@ -1,5 +1,3 @@
-//! Node-wide ordering over the node's cells.
-
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 

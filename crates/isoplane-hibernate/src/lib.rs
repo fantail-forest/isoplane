@@ -1,8 +1,3 @@
-//! Same-process pressure snapshots with explicitly reserved local backing.
-//!
-//! Guest memory and mutable state are saved against the immutable template.
-//! Host resources remain owned by the original execution context during sleep.
-
 #![forbid(unsafe_code)]
 
 /// Snapshot operation result, retaining underlying storage errors.

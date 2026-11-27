@@ -9,12 +9,6 @@ using System.Threading.Tasks;
 
 namespace Acceptance;
 
-/// <summary>
-/// Compression through the pack's native zlib: the stream codecs round-trip
-/// and reject corrupt input, archives (zip, tar) build and read back in
-/// memory, a codec's native state survives parks between its writes, and
-/// anything that needs the disk fails the declared way.
-/// </summary>
 internal sealed class Compression
 {
     public async Task<string> RunAsync(string[] path)
@@ -245,11 +239,6 @@ internal sealed class Compression
         }
     }
 
-    /// <summary>
-    /// Feeds an encoder four chunks with a park between each, parks once
-    /// more, then decodes in four exact reads with a park between each: nine
-    /// parks in all, each with live zlib state in the guest's memory.
-    /// </summary>
     private static async Task<string> GzipAcrossParks()
     {
         byte[] plain = Pattern(200_000);

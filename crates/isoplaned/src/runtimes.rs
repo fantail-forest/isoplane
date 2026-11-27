@@ -1,7 +1,3 @@
-//! The shared runtimes a node installation supports: `inventory.json` lists
-//! the SDK releases, and each release's directory holds the `runtime.json`
-//! that release's SDK carries and the runtime module it names.
-
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 

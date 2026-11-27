@@ -21,16 +21,13 @@ import { DocsPreferredVersionContextProvider } from '@docusaurus/plugin-content-
 let DocSearchModal = null;
 
 // Ejected from docusaurus-theme-search-typesense to shape the traffic the
-// search box sends through /docs/search (see ../../../search/worker.js):
-// typing is debounced, a refusal or outage is retried after the pause its
-// Retry-After names, and each page load can tag its searches with a random id
-// so refinements line up in the search log. The id lives in memory only;
-// nothing is stored on the device. It is disabled pending a consent
-// implementation.
+// search box sends through /docs/search.
 const DEBOUNCE_MS = 250;
 // Pauses when a refusal or outage names none, per attempt.
 const RETRY_FALLBACK_MS = {429: [5000], 502: [2000, 4000], 503: [2000, 4000]};
 const MAX_RETRY_AFTER_MS = 10000;
+// The id lives in memory only; nothing is stored on the device. Disabled
+// pending a consent implementation.
 const SEARCH_SESSION_ENABLED = false;
 const pageSessionId = SEARCH_SESSION_ENABLED && typeof crypto !== 'undefined' && crypto.randomUUID
     ? crypto.randomUUID()

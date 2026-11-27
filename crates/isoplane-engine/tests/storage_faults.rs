@@ -1,5 +1,3 @@
-//! Failed storage under a mapped template ends the operation that reads it,
-//! never the process.
 #![cfg(target_os = "linux")]
 mod common;
 #[path = "common/dispatch.rs"]

@@ -1,5 +1,3 @@
-//! Park state, hibernation capture and restore, and the pre-capture GC hint.
-
 mod common;
 #[path = "common/managed.rs"]
 mod managed;
@@ -34,10 +32,6 @@ fn http_dispatch(id: u64) -> isoplane_abi::dispatch::DispatchRecord {
         now_ms: 1_700_000_000_000,
     }
 }
-
-// ---------------------------------------------------------------------------
-// park state and capture
-// ---------------------------------------------------------------------------
 
 #[test]
 fn an_instance_is_parked_only_after_returning_pending() {
@@ -110,10 +104,6 @@ fn capture_and_restore_round_trip_mutable_globals() {
         "restore must put the globals exactly where the capture found them"
     );
 }
-
-// ---------------------------------------------------------------------------
-// the pre-capture GC hint
-// ---------------------------------------------------------------------------
 
 #[test]
 fn gc_hint_reaches_the_guest_and_leaves_a_parked_instance_parked() {

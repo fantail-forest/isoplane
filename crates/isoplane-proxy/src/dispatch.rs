@@ -1,7 +1,3 @@
-//! HTTP dispatch: turning a resolved route and a hyper
-//! request into a call through `Dispatcher`, and a guest's reply into an
-//! HTTP response.
-
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::Arc;
 

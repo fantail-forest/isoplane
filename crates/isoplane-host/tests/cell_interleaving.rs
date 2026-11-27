@@ -1,6 +1,3 @@
-//! Several dispatches in progress on one instance, through the real engine and
-//! cell with `guests/quotes-api`, whose `/park?ms=` waits on a host timer.
-
 mod common;
 
 use std::sync::mpsc::{Receiver, TryRecvError};

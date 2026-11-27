@@ -1,5 +1,3 @@
-//! Fragmented debugger packets through the runtime's real socket transport.
-
 use isoplane_harness::logging::GuestLogs;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};

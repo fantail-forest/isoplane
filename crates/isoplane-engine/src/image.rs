@@ -1,5 +1,3 @@
-//! Sparse template memory with a persisted index and demand-readable payload.
-
 use std::sync::Arc;
 
 /// The unit hibernation diffs in.

@@ -1,5 +1,3 @@
-//! Initialization working-set observation through present process page-table entries.
-
 use std::io;
 use std::ops::Range;
 

@@ -1,5 +1,3 @@
-//! Test-only observation of the production tracing output boundary.
-
 use std::io::{self, Write};
 use std::sync::{Arc, OnceLock};
 

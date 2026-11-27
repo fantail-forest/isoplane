@@ -1,8 +1,3 @@
-//! The C# SDK's hand-written mirrors of this crate's wire values, held to it:
-//! every enum in `Abi/Records.cs` and `Abi/PollStatus.cs` against the
-//! discriminants postcard writes for the Rust type. Runs on the stable
-//! toolchain with no .NET installed.
-
 use std::collections::BTreeMap;
 
 use isoplane_abi::dispatch::{DispatchKind, HttpRequest};

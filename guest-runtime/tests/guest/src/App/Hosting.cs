@@ -16,13 +16,6 @@ using Microsoft.Extensions.Options;
 
 namespace Acceptance;
 
-/// <summary>
-/// The Microsoft.Extensions stack a customer's application is built on:
-/// dependency injection with its scope guards, configuration from memory
-/// and JSON (and its file providers on the empty disk), options, logging
-/// into a sink the route owns, activities and diagnostic listeners, the
-/// generic host's lifecycle, and the process facts the runtime reports.
-/// </summary>
 internal sealed partial class Hosting
 {
     public async Task<string> RunAsync(string[] path)

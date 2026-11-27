@@ -1,5 +1,3 @@
-//! Cancellable DNS using the node's startup configuration and hosts records.
-
 use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;

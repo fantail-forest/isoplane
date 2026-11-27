@@ -1,9 +1,3 @@
-//! One Mono runtime module, linked and compiled with no application, runs
-//! application packages it was never built with. Each package is served as
-//! application files, loaded by the runtime's fixed loader as a layer over
-//! the runtime's baseline during real preparation, and executed through the
-//! reactor across a park and a hibernation delta.
-
 use isoplane_harness::logging::GuestLogs;
 use std::io::Read;
 use std::sync::{Arc, OnceLock};
@@ -917,8 +911,7 @@ fn alpha_initialized_by(initializer: &str) -> Application {
 }
 
 /// A cell serving `application` as module `module`, whose instances stop after
-/// `background_idle_limit_ms` without a request, and which shows guests'
-/// the configured idle stop.
+/// `background_idle_limit_ms` without a request. Its resolver answers every name with no address.
 fn serving_cell(
     application: &Application,
     module: &isoplane_host::ModuleId,

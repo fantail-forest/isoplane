@@ -1,5 +1,3 @@
-//! Background slices use the instance allowance and the ordinary execution queue.
-
 use super::*;
 use crate::futures::INSTANCE_WORK;
 

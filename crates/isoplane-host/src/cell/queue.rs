@@ -1,7 +1,3 @@
-//! The cell's work queue: alternating wake and dispatch lanes per thread, with
-//! dispatches, new work placed on the less loaded of two lanes drawn at
-//! random.
-
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 

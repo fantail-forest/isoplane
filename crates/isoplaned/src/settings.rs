@@ -1,5 +1,3 @@
-//! App-specific local settings, read for preparation and captured with the deployed artifact.
-
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;

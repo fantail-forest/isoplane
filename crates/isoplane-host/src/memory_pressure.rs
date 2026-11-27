@@ -1,5 +1,3 @@
-//! Host memory headroom, bounded by the process's visible resource hierarchy.
-
 use std::path::PathBuf;
 
 #[cfg(target_os = "linux")]

@@ -1,5 +1,3 @@
-//! Reactor authority shared by cell requests and preparation.
-
 use std::sync::Arc;
 
 use isoplane_abi::result::ResultRecord;

@@ -1,5 +1,3 @@
-//! The execution and idle-sweep thread pools, and panic containment at their boundary.
-
 use super::*;
 
 thread_local! {

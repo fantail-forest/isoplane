@@ -1,6 +1,3 @@
-//! A real node under test: real engine, cells, guest wasm and proxy, on
-//! ephemeral ports, with one app `quotes@v1` deployed through the pipeline.
-
 pub mod preparation;
 use preparation::LocalDeployment;
 

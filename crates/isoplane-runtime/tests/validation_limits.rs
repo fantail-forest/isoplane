@@ -1,4 +1,3 @@
-//! Structural resource policy is independent of capability validation.
 use isoplane_abi::config::ValidationLimits;
 use isoplane_runtime::validator::{validate_with_limits, ViolationCode};
 

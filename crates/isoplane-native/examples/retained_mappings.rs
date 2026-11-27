@@ -1,4 +1,3 @@
-//! Internal Linux mapping microbenchmark: unique overlays over one shared baseline.
 #![forbid(unsafe_code)]
 
 #[cfg(target_os = "linux")]

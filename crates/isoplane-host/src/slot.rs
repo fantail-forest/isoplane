@@ -1,5 +1,3 @@
-//! Instance slots with exclusive call access through [`CallGuard`].
-
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 

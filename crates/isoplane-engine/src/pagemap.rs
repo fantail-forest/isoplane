@@ -1,5 +1,3 @@
-//! Page-table state of this process's own mappings, from `/proc/self/pagemap`.
-
 use std::io;
 use std::ops::Range;
 

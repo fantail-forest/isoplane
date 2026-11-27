@@ -1,11 +1,3 @@
-//! [`HostFuture`] and the combinators that make `Task.WhenAll`-style
-//! concurrency work with zero threads.
-//!
-//! A `HostFuture` is a *handle to work the host is doing*, not work the guest
-//! is doing. Its `poll` never waits: it either finds a delivered result in the
-//! future table or records itself there and returns `Poll::Pending`. That is
-//! the entire suspension mechanism -- see [`crate::rt`].
-
 use core::future::Future;
 use core::marker::PhantomData;
 use core::pin::Pin;
@@ -94,10 +86,6 @@ impl<T> Drop for HostFuture<T> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Issuing calls
-// ---------------------------------------------------------------------------
-
 pub(crate) fn decode_unit(_: &[u8]) -> Result<()> {
     Ok(())
 }
@@ -120,10 +108,6 @@ pub(crate) fn call<A: Serialize, T>(
     drop(buf);
     HostFuture::new(id, decode)
 }
-
-// ---------------------------------------------------------------------------
-// Combinators
-// ---------------------------------------------------------------------------
 
 enum MaybeDone<F: Future> {
     Pending(Pin<Box<F>>),

@@ -1,5 +1,3 @@
-//! Private settings captured with a prepared artifact, never refreshed during restoration.
-
 use serde::{Deserialize, Serialize};
 
 use super::{Deployer, PreparedReceipt};

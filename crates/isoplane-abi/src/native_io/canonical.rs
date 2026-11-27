@@ -1,4 +1,3 @@
-//! Canonical native socket and readiness entrypoints observed in the pinned runtime.
 use super::{ResourceKind, SocketBuffer};
 use crate::imports::{Sig, Ty};
 

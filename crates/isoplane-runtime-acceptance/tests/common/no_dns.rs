@@ -1,5 +1,3 @@
-//! The resolver of a test with no name to resolve.
-
 use isoplane_host::egress::DnsError;
 use isoplane_host::Resolver;
 

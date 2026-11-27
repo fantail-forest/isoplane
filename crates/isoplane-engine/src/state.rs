@@ -1,6 +1,3 @@
-//! Per-instance store data: the bindings, the frozen clock, the meter, and
-//! the wasm-frame depth capture eligibility is checked against.
-
 use std::time::Instant;
 
 use wasmtime::{Memory, ResourceLimiter};

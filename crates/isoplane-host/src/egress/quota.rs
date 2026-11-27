@@ -1,7 +1,3 @@
-//! Open outbound connections, counted per instance, so that one instance
-//! cannot hold more host sockets than its limit, whether it is running,
-//! parked or hibernated.
-
 use std::collections::HashMap;
 
 use parking_lot::Mutex;

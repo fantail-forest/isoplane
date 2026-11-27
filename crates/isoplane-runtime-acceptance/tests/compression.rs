@@ -1,8 +1,3 @@
-//! Compression through the runtime pack: the stream codecs round-trip
-//! and reject corrupt input, zip and tar archives build and read back in
-//! memory, a codec's native state survives a hibernation delta between its
-//! writes, and the helpers that need a directory fail on the empty disk.
-
 use isoplane_harness::logging::GuestLogs;
 #[macro_use]
 mod common;
@@ -54,9 +49,7 @@ in_mono_runtime! {
 
 in_mono_runtime! {
     /// Upstream `DeflateStream` ends a truncated member as a short, clean
-    /// stream (the long-standing .NET behaviour on every platform), so an
-    /// application that needs integrity checks the length or the trailer
-    /// itself. Recorded so a change in the runtime is noticed.
+    /// stream on every platform; this records it so a change in the runtime is noticed.
     #[tokio::test]
     async fn a_gzip_member_cut_before_its_trailer_decodes_short_without_an_error(runtime: GuestRuntime) {
         assert_eq!(
@@ -99,8 +92,6 @@ in_mono_runtime! {
 }
 
 in_mono_runtime! {
-    /// `ZipFile` needs a file on disk and meets the empty read-only
-    /// filesystem: excluded, and the failure is the disk's, not a trap.
     #[tokio::test]
     async fn opening_a_zip_file_on_the_disk_is_refused_by_the_empty_filesystem(runtime: GuestRuntime) {
         assert_eq!(
@@ -112,10 +103,6 @@ in_mono_runtime! {
 }
 
 in_mono_runtime! {
-    /// An encoder is fed four chunks with a timer park between each, the
-    /// guest parks once more, then decodes in four exact reads with a park
-    /// between each: nine parks, each crossing a hibernation delta with live
-    /// zlib state in the guest's memory.
     #[tokio::test(start_paused = true)]
     async fn a_gzip_stream_mid_write_survives_a_hibernation_delta_at_every_park(runtime: GuestRuntime) {
         let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());

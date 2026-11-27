@@ -1,5 +1,3 @@
-//! Trusted producer provenance, independent of adjustable tenant quotas.
-
 use serde::{Deserialize, Serialize};
 
 /// Provenance supplied by the trusted build pipeline, never inferred from client WASM.

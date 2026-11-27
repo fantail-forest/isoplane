@@ -1,5 +1,3 @@
-//! DNS answers and cancellation retained independently of a guest Store.
-
 use super::*;
 use std::collections::VecDeque;
 use std::net::IpAddr;

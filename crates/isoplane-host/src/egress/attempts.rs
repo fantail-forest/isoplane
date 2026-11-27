@@ -1,8 +1,3 @@
-//! Connections an instance has in progress. Beyond its limit a further attempt
-//! waits, first in, first out, rather than being refused; the guest sees only a
-//! slower connect. Waiting is part of the attempt's reactor task, so it occupies
-//! no worker, and dropping that task leaves the queue.
-
 use std::collections::HashMap;
 use std::sync::Arc;
 

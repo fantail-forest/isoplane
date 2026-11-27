@@ -1,5 +1,3 @@
-//! Host-owned futures, completion routing and per-instance resource limits.
-
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;

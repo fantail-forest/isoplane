@@ -1,6 +1,3 @@
-//! A live activation: the template mapped copy-on-write, its mutable globals
-//! and tables, and whether it was discarded.
-
 use std::sync::Arc;
 use std::time::Instant;
 

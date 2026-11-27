@@ -1,5 +1,3 @@
-//! What happens to an instance at the end of a dispatch; [`Disposition`] has one producer, [`decide`].
-
 use isoplane_engine::Completion;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

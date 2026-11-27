@@ -1,5 +1,3 @@
-//! Built Rust guests through admission and preparation, including hostile modules.
-
 use isoplane_control::validator::{self, ViolationCode as V};
 
 /// The verdict admission under the default limits must reach for each module in

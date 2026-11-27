@@ -1,5 +1,3 @@
-//! Host-resident activation configuration, isolated by registered module owner.
-
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 

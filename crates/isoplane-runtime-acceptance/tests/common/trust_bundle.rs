@@ -1,5 +1,3 @@
-//! The platform trust bundle as a node serves it to the guest's PAL.
-
 use std::hash::{Hash, Hasher};
 
 use isoplane_engine::{PlatformFile, PlatformFiles};

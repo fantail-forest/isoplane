@@ -1,7 +1,3 @@
-// The search half of the docs Worker (worker/index.mjs): the search box's
-// requests under /docs/search go to the Typesense server, rate limited per
-// client and cached per query at the edge.
-
 export const SEARCH_PATH = '/docs/search';
 const COLLECTION = 'isoplane-docs';
 const CACHE_SECONDS = 3600;

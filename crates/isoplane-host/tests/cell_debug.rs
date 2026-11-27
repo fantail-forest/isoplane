@@ -1,5 +1,3 @@
-//! Raw debugger guests retain shared cell dispatch, wake, and terminal cleanup.
-
 mod common;
 
 use isoplane_abi::dispatch::HttpRequest;

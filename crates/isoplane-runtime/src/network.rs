@@ -1,5 +1,3 @@
-//! Network binding limits shared by the daemon and local guest execution.
-
 /// Default for [`NetworkLimits::instance_pending_connections`], the number of
 /// connections Cloudflare Workers lets one invocation have waiting at once.
 pub const DEFAULT_INSTANCE_PENDING_CONNECTIONS: u64 = 6;

@@ -1,5 +1,3 @@
-//! Snapshot reservation refusal through the cell's public dispatch boundary.
-
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;

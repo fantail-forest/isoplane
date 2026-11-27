@@ -1,12 +1,3 @@
-//! Outbound HTTP through the runtime's own `SocketsHttpHandler` over the
-//! delegated sockets: connections and reads park on socket readiness and
-//! survive hibernation deltas mid-request, bodies stream both ways in guest
-//! memory, redirects, decompression and pooling are the client's own, TLS
-//! is the guest's `SslStream` with a root the application supplies, HTTP/2
-//! is negotiated through that TLS's ALPN or spoken h2c with prior
-//! knowledge while HTTP/3 stays off, and every failure reaches the ordinary
-//! `HttpRequestException` with the socket error that caused it.
-
 use isoplane_harness::logging::GuestLogs;
 #[macro_use]
 mod common;
@@ -500,8 +491,6 @@ in_mono_runtime! {
         released(&reactor).await;
     }
 
-    /// The issuer's URL names a port nothing listens on: the retrieval
-    /// fails and the chain stays partial, as it does off the network.
     #[tokio::test]
     async fn a_missing_intermediate_fails_the_request_when_its_issuer_cannot_be_reached(runtime: GuestRuntime) {
         let peer = https_peer(Certificate::RemoteAlone).await;

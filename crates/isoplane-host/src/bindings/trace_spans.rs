@@ -1,5 +1,3 @@
-//! The `trace_span_*` import arms and the spans an instance holds open.
-
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 

@@ -1,5 +1,3 @@
-//! Local execution using the same preparation, host and proxy as the daemon.
-
 pub mod debug;
 mod runtime;
 

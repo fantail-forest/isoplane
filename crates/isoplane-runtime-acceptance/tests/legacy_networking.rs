@@ -1,5 +1,3 @@
-//! Legacy BCL networking through socket-backed asynchronous I/O and guest deltas.
-
 use isoplane_harness::logging::GuestLogs;
 #[macro_use]
 mod common;

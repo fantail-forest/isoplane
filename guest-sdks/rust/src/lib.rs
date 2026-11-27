@@ -1,24 +1,3 @@
-//! Internal Rust guest-test support for capability bindings, async execution
-//! and host preparation. Awaiting a host future returns control on an empty
-//! guest stack; the host owns wake sources and resource lifetimes.
-//!
-//! ## Writing a guest
-//!
-//! ```ignore
-//! use isoplane_guest::{Ctx, Handler, Request, Response};
-//!
-//! struct Api;
-//!
-//! impl Handler for Api {
-//!     fn new() -> Self { Api }
-//!     async fn handle(&'static self, req: Request, _ctx: Ctx) -> Response {
-//!         Response::new(200, req.path.into_bytes())
-//!     }
-//! }
-//!
-//! isoplane_guest::export_handler!(Api);
-//! ```
-
 pub mod abi;
 pub mod alloc;
 pub mod app;
@@ -57,11 +36,9 @@ pub mod __rexport {
     }
 }
 
-/// Called by the generated `isoplane_gc_hint` export.
-///
-/// See [`alloc`] for exactly what this does; the short version is that it
-/// rolls the bump pointer back over a free tail and zeroes everything
-/// reclaimable, because zeroed pages compress out of the hibernation delta.
+/// Called by the generated `isoplane_gc_hint` export: rolls the bump pointer
+/// back over a free tail and zeroes what is reclaimable, because zeroed pages
+/// compress out of the hibernation delta.
 pub fn gc_hint(pressure: u8) {
     alloc::gc_hint(GcPressure::from_u8(pressure));
 }
@@ -77,8 +54,8 @@ pub fn heap_stats() -> alloc::HeapStats {
 ///
 /// The release profile builds with `panic = "abort"`, so a panic here is a
 /// wasm trap and the host discards the instance -- there is no `finally`, no
-/// finalizer and no cleanup quantum. A panic is not a budget kill: see
-/// [`budget`] for the window in which a dispatch can still unwind and return.
+/// finalizer and no cleanup quantum. A panic is not a budget kill, where a
+/// dispatch can still unwind and return inside the grace window.
 pub fn install_panic_hook() {
     use core::sync::atomic::{AtomicBool, Ordering};
     static DONE: AtomicBool = AtomicBool::new(false);

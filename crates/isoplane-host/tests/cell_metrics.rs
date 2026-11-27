@@ -1,6 +1,3 @@
-//! What a cell counts for the dispatches it serves: activations, and each
-//! application's occupied time.
-
 use std::sync::Arc;
 use std::time::Duration;
 

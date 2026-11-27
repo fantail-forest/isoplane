@@ -1,6 +1,3 @@
-//! The map behind `Cell::active`: one mutex per shard, because every use is a
-//! single-key operation and nothing holds an invariant across two keys.
-
 use std::collections::HashMap;
 use std::hash::Hash;
 
@@ -23,6 +20,8 @@ struct Shard<K, V> {
     map: Mutex<HashMap<K, V>>,
 }
 
+/// One mutex per shard, because every use is a single-key operation and
+/// nothing holds an invariant across two keys.
 pub(crate) struct ShardedMap<K, V> {
     shards: Box<[Shard<K, V>]>,
     mask: u64,

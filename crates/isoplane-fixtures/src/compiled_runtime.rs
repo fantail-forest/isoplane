@@ -1,6 +1,3 @@
-//! The engine configuration tests load the shared runtime under, and that
-//! runtime as `task fixtures:compiled-runtime` compiled it for them.
-
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 

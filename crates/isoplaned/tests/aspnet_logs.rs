@@ -1,5 +1,3 @@
-//! Packaged ASP.NET ILogger output through the real node logging boundary.
-
 pub mod common;
 
 use isoplane_harness::logging::LogCapture;

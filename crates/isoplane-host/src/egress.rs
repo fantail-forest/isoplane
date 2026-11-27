@@ -1,8 +1,3 @@
-//! Egress policy, enforced host-side: private and link-local ranges denied,
-//! optional per-app allowlists, per-instance connection limits, and
-//! resolve-then-pin. A check resolves once and validates every address it got
-//! back, so DNS cannot move the target between the check and the connect.
-
 mod additional_destinations;
 mod attempts;
 mod connection;

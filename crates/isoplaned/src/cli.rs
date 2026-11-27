@@ -1,5 +1,3 @@
-//! The local host command contract shared by help and argument parsing.
-
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 

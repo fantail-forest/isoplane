@@ -1,5 +1,3 @@
-//! Validate application modules and the trusted shared runtimes they use.
-
 use isoplane_abi::config::{AppManifest, GuestMemoryBytes};
 use serde::{Deserialize, Serialize};
 

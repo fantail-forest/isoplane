@@ -1,4 +1,3 @@
-//! Registered template mappings survive hibernation while mutable state comes from the delta.
 #![cfg(target_os = "linux")]
 mod common;
 

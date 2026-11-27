@@ -1,4 +1,3 @@
-//! Test support any crate's tests can carry without building the engine.
 #![forbid(unsafe_code)]
 
 pub mod files;

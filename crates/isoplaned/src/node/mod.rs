@@ -1,5 +1,3 @@
-//! One local execution pool behind a shared Host-routed listener.
-
 pub mod deploy;
 
 use crate::admin::NodeAdmin;

@@ -1,5 +1,3 @@
-//! Per-dispatch context.
-
 use core::future::Future;
 
 use isoplane_abi::dispatch::DispatchRecord;

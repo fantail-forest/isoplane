@@ -1,6 +1,3 @@
-//! A runtime prepared once to the end of its own initializer, and
-//! applications prepared as layers over it.
-
 use std::sync::Arc;
 
 use isoplane_engine::prepared::PreparedIdentity;

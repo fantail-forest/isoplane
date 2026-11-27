@@ -1,5 +1,3 @@
-//! Ordinary certificate value operations.
-
 use crate::bindings::Recorder;
 use crate::dotnet::{fixture, Fixture, GuestRuntime, Request};
 use isoplane_engine::Instance;

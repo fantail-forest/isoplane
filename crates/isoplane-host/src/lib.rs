@@ -1,24 +1,3 @@
-//! The cell: the runtime data plane that owns kernel objects, runs guest code
-//! and holds the memory that is the tenant's state.
-//!
-//! Two thread classes. The cell's tokio reactor threads own all I/O: a
-//! completion arrives, [`futures::FutureTable`] maps its id to the owning
-//! instance, and a wake is enqueued. Execution-pool threads run Hot dispatches
-//! as synchronous calls into the engine, never the engine's async mode, whose
-//! epoch yielding runs on fibers, hidden native stacks that a parked instance
-//! could not be captured out of. There is no scheduler here: a CPU-bound
-//! tenant occupies its own pool thread and the kernel preempts it. What the
-//! cell controls is admission, a bounded queue per worker and a shed when it
-//! is full.
-//!
-//! The type system rather than review keeps reentrant calls out: the only
-//! `&mut dyn InstanceOps` in this crate comes from [`slot::CallGuard`],
-//! obtained by moving the instance out of its slot, so a reentrant call finds
-//! an empty slot.
-//!
-//! A cell is a thread group within one process, not a seccomp'd process, and
-//! fairness between tenants is whatever the kernel gives equal-weight threads.
-
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 

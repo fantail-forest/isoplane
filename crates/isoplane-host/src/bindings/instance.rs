@@ -1,6 +1,3 @@
-//! The per-instance half of the vtable's state, shared between the slot and
-//! the bindings moved into the engine at activation.
-
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;

@@ -1,9 +1,3 @@
-//! Deploy-time validation. The import list is the capability manifest (V1),
-//! and with threads and atomics outside the engine profile (V2) blocking is
-//! not expressible inside the sandbox at all. V2 is `wasmparser`'s validator
-//! run with [`ENGINE_FEATURES`], the one declaration of the profile the
-//! engine is configured from, so the two cannot disagree.
-
 mod checks;
 mod report;
 mod scan;

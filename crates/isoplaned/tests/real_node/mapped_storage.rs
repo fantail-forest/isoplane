@@ -1,6 +1,3 @@
-//! A node serves every application's mapped template from its own process;
-//! failed storage beneath one application fails only that application's requests.
-
 use std::path::{Path, PathBuf};
 
 use isoplane_test_support::{directories_under, mapped_backing};

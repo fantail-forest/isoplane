@@ -1,4 +1,3 @@
-<!-- The handler fixture with a build gate: a test creates omit-publication to make the next build fail, or hold-publication to hold it until the test releases it. The SDK version comes from the global.json Task writes beside it. -->
 <Project Sdk="Isoplane.Sdk">
   <PropertyGroup>
     <Nullable>enable</Nullable>

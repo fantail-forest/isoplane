@@ -1,5 +1,4 @@
 #![forbid(unsafe_code)]
-//! Empty-filesystem conformance through the engine's real validator and linker.
 mod common;
 #[path = "common/filesystem.rs"]
 mod filesystem;

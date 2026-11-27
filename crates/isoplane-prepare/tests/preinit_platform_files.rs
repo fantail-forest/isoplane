@@ -1,7 +1,4 @@
 #![forbid(unsafe_code)]
-//! A declared platform file is visible inside the init sandbox: an
-//! initialiser that reads it leaves its bytes in the template, through the
-//! same `filesystem_call` packets the native wrappers send.
 
 use std::sync::Arc;
 

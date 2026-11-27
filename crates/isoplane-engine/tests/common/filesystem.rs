@@ -1,8 +1,3 @@
-//! The filesystem conformance rig: a `.wat` guest with a function for every
-//! filesystem operation, with the strings a test's paths need laid out in its
-//! data section, dispatched once so a test reads the result areas back out of
-//! guest memory.
-
 use crate::common::{activate, guest, DONE};
 use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest};
 use isoplane_abi::filesystem::{Operation, IMPORTS};

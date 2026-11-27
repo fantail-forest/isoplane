@@ -1,7 +1,3 @@
-//! Immutable files served through the PAL filesystem. Host platform files and
-//! application content form separate sets until a Store combines them. Their
-//! paths imply directories; nothing outside the declared namespace exists.
-
 use std::collections::BTreeMap;
 use std::sync::Arc;
 

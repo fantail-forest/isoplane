@@ -1,5 +1,3 @@
-//! Standard managed SHA-256, HMAC-SHA-256 and PBKDF2 APIs.
-
 use crate::bindings::Recorder;
 use crate::dotnet::{fixture, Fixture, GuestRuntime, Request};
 use isoplane_engine::Instance;

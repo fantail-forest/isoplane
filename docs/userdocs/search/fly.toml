@@ -1,5 +1,3 @@
-# The docs search server. Reached only through the isoplane-docs Worker at
-# isoplane.dev/docs/search, which holds the search-only key and rate limits.
 app = "isoplane-docs-search"
 primary_region = "syd"
 

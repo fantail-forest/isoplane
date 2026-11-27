@@ -1,5 +1,3 @@
-//! A runtime prepared once to the end of its own initializer, and
-//! applications prepared as layers over it.
 mod common;
 #[path = "common/guest.rs"]
 mod guest;

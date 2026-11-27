@@ -1,5 +1,3 @@
-//! Reflection, runtime-created generics, serialization and hibernation on Mono.
-
 #[macro_use]
 mod common;
 
@@ -15,8 +13,6 @@ async fn answer(runtime: GuestRuntime, owner: u64, path: &str) -> String {
 }
 
 in_mono_runtime! {
-    /// A type named by a literal is kept by the trimmer and found; a
-    /// framework instantiation is found by its qualified name.
     #[tokio::test]
     async fn a_type_the_trimmer_can_see_is_found_by_name(runtime: GuestRuntime) {
         assert_eq!(

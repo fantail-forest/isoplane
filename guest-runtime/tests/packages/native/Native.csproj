@@ -1,6 +1,5 @@
 <Project>
   <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
-  <!-- A hostile package: native use the shared runtime does not support. -->
   <Import Project="../Package.props" />
   <PropertyGroup>
     <AssemblyName>Native</AssemblyName>

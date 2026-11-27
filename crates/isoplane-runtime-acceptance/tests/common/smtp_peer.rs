@@ -1,5 +1,3 @@
-//! An owned SMTP dialogue for guest mail delivery and cancellation tests.
-
 use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;

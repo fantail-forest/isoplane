@@ -1,5 +1,3 @@
-//! HTTP proxy, route resolution and admission control.
-
 #![forbid(unsafe_code)]
 
 mod dispatch;

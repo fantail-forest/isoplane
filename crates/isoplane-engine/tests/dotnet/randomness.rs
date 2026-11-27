@@ -1,5 +1,3 @@
-//! Ordinary managed RNG calls use host entropy without cloned PRNG state.
-
 use crate::bindings::Recorder;
 use crate::dotnet::{budget, fixture, Fixture, GuestRuntime, Request};
 use isoplane_engine::{Completion, DispatchOutcome, Instance};

@@ -1,5 +1,3 @@
-//! Locally compiled prepared templates, independent of artifact acquisition and build orchestration.
-
 mod files;
 mod layer;
 pub(crate) mod native;

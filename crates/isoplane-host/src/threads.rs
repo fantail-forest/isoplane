@@ -1,5 +1,3 @@
-//! CPU-based starting allocations; these are thread counts, not CPU reservations.
-
 /// Allocation across guest execution and the two asynchronous runtimes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ThreadAllocation {

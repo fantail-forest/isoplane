@@ -1,5 +1,3 @@
-//! Parses request query strings.
-
 pub(crate) fn parse_query(q: &str) -> Vec<(String, String)> {
     q.split('&')
         .filter(|s| !s.is_empty())

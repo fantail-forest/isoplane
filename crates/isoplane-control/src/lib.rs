@@ -1,5 +1,3 @@
-//! Local preparation admission and owner-protected files.
-
 #![forbid(unsafe_code)]
 
 pub mod admission;

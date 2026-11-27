@@ -2,12 +2,6 @@
   <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
   <Import Project="../../../../guest-sdks/dotnet/Build/Isoplane.SourceReferences.props" />
 
-  <!--
-    The acceptance guest for the source-built runtime: one handler per family
-    of runtime modification, each request path one behaviour. Task packages
-    its managed assemblies for the shared Mono runtime.
-  -->
-
   <PropertyGroup>
     <AssemblyName>guest_runtime_acceptance</AssemblyName>
     <TargetFramework>net10.0</TargetFramework>

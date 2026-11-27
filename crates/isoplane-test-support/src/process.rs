@@ -1,7 +1,3 @@
-//! Child processes under test: the test binary re-run as a child, commands
-//! that must succeed, children whose process tree ends with the test, and
-//! their output read within a deadline.
-
 use std::ffi::{OsStr, OsString};
 use std::io::{self, BufRead, BufReader, Read};
 use std::ops::{Deref, DerefMut};

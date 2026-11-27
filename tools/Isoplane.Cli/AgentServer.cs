@@ -5,10 +5,8 @@ using Microsoft.Extensions.Logging;
 namespace Isoplane.Cli;
 
 /// <summary>
-/// The Model Context Protocol server a coding agent starts as <c>isoplane agent mcp</c>: tools over
-/// standard input and output, which is why nothing here writes to standard output, and logging on
-/// standard error. Serves until the agent closes the connection, stopping every session it started.
-/// Tool calls that do what a command does are recorded as that command, on the server run's telemetry.
+/// The Model Context Protocol server a coding agent starts as <c>isoplane agent mcp</c>. It speaks the
+/// protocol on standard input and output, so anything else written to standard output breaks the connection.
 /// </summary>
 internal static class AgentServer
 {

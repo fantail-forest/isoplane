@@ -1,4 +1,3 @@
-//! Process-safe retention for regenerable local artifacts.
 #![forbid(unsafe_code)]
 
 use file_id::FileId;

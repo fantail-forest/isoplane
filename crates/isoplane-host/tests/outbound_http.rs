@@ -1,4 +1,3 @@
-//! Outbound operations and bodies belong to their instance through the real HTTP bindings.
 #[path = "common/outbound_http.rs"]
 mod common;
 

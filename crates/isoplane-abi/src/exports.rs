@@ -1,5 +1,3 @@
-//! The guest exports the host requires, and their core-wasm signatures.
-
 pub const ALLOC: &str = "isoplane_alloc";
 pub const HANDLE: &str = "isoplane_handle";
 pub const WAKE: &str = "isoplane_wake";

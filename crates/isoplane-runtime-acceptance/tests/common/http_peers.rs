@@ -1,11 +1,3 @@
-//! Owned HTTP peers for the `HttpClient` family: a server with one route
-//! per behaviour, speaking HTTP/1.1 alone or HTTP/1.1 and HTTP/2 (h2c with
-//! prior knowledge in plaintext, `h2` through ALPN behind TLS with the
-//! fixed certificate material), a peer that closes its idle connection
-//! after answering, an HTTP/2 peer that sends GOAWAY before its first
-//! answer, and a reactor that admits exactly those peers and trusts nothing
-//! on the guest's behalf.
-
 use std::future::Future;
 use std::io::Write as _;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};

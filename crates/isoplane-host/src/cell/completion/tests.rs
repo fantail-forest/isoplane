@@ -1,5 +1,3 @@
-//! Canonical dispatch reporting through the cell's real execution boundaries.
-
 use super::test_events::Events;
 use super::*;
 use crate::cell::pool::cell_tests::{app, cell, http, manifest};

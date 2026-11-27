@@ -1,5 +1,3 @@
-//! The certificate chain a test TLS peer presents, from the fixed material.
-
 use rustls_pki_types::pem::PemObject;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 

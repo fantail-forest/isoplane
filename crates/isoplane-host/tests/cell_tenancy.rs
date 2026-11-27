@@ -1,5 +1,3 @@
-//! Runtime configuration stays scoped to its registered application owner.
-
 use std::sync::Arc;
 
 use isoplane_harness::fakes::*;

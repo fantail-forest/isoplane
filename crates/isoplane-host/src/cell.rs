@@ -1,9 +1,3 @@
-//! The cell: reactor threads that own all I/O, an execution pool that runs
-//! Hot dispatches as synchronous calls into the engine, the instance
-//! registries, and the idle trajectory. There is no scheduler: the kernel
-//! preempts a CPU-bound tenant on its own pool thread, and the cell controls
-//! admission with a bounded lane per worker.
-
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
@@ -179,8 +173,6 @@ pub struct Cell {
         Mutex<HashMap<registry::ApplicationKey, Weak<crate::admission::ApplicationInstances>>>,
     residents: Mutex<HashMap<InstanceId, Resident>>,
     active: ShardedMap<InstanceId, registry::ActiveDispatches>,
-    /// Dispatches that joined an instance while another dispatch's slice ran,
-    /// waiting to begin between slices.
     /// Dispatches that joined an instance while a slice ran, with when they
     /// began waiting for its thread.
     starts: ShardedMap<InstanceId, VecDeque<(Instant, DispatchJob)>>,

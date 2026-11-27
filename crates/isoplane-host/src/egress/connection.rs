@@ -1,5 +1,3 @@
-//! Socket creation is a deployment responsibility; the local provider uses native TCP.
-
 use std::net::SocketAddr;
 use tokio::net::TcpStream;
 

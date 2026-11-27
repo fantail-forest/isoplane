@@ -1,5 +1,3 @@
-//! Initialization's serializable outbound authority and bounded reactor.
-
 use isoplane_host::bindings::{PreparationIo, PreparationIoConfig};
 use isoplane_host::egress::{
     AdditionalDestinations, ConnectionCeilings, ConnectionLimits, ConnectionOwner,

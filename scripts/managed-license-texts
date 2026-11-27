@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 # Collect the license texts for the managed dependency inventory, without the network:
 # managed-license-texts INVENTORY_JSON OUTPUT_DIR
-# A package that names its license only by URL supplies the files inside its
-# restored package, or a text kept in licenses/third-party/packages.
 set -euo pipefail
 if [ "$#" != 2 ]; then
   echo "Usage: $0 INVENTORY_JSON OUTPUT_DIR" >&2

@@ -1,5 +1,3 @@
-//! One dispatch from admission to its final response: the dispatch lifecycle across every slice, the outcome switch, and the books a killed instance keeps.
-
 use super::*;
 
 /// A dispatch whose books [`Cell::end_dispatch_books`] closed.

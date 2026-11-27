@@ -9,10 +9,6 @@ using SQLitePCL;
 
 namespace Sqlite;
 
-/// <summary>
-/// Uses SQLite through Microsoft.Data.Sqlite and EF Core as an application
-/// would, answering after one host timer so each request parks once.
-/// </summary>
 public static class Handler
 {
     private const string Reference = "Data Source=reference;Mode=Memory;Cache=Shared";

@@ -1,11 +1,3 @@
-//! A harness for tests that drive a managed guest through the real reactor:
-//! a cell runtime with in-memory services and an injected egress policy, and
-//! a guest whose every host return destroys its Store and whose every wake
-//! restores it on another thread, exercising returned-state reconstruction.
-//!
-//! Test support only: it panics on every failure because its callers are
-//! tests. A dev-dependency only; nothing here is linked into a daemon.
-
 mod compiled_guest;
 pub mod fakes;
 pub mod logging;

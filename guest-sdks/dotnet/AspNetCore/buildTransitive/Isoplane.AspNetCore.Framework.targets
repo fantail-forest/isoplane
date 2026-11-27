@@ -1,5 +1,5 @@
 <Project>
-  <!-- Compiles against the Linux ASP.NET implementation assemblies, which a
+  <!-- Compiles against the Linux ASP.NET implementation assemblies, which an
        application IL package carries, in place of the shared
        framework a wasm target cannot restore. -->
   <Target Name="IsoplaneSelectAspNetCore" BeforeTargets="ProcessFrameworkReferences;ResolveAssemblyReferences;IsoplaneResolveManagedPlatform"

@@ -15,10 +15,6 @@ using Microsoft.Extensions.Logging.Console;
 
 namespace Web;
 
-/// <summary>
-/// Minimal API routes over a singleton, a content file, a static web asset, a logged entry and, when a <c>Peer</c> setting names one, a client from <c>IHttpClientFactory</c>.
-/// A <c>ConsoleLogging</c> setting names the logging calls its builder makes.
-/// </summary>
 public static class Application
 {
     /// <summary>Builds the application, subscribes its warm-up and runs it.</summary>

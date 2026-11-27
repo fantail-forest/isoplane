@@ -1,5 +1,3 @@
-//! Ephemeral host entropy shared by preparation and live guest draws.
-
 use std::cell::RefCell;
 use std::io;
 

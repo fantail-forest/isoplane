@@ -1,5 +1,3 @@
-//! Runs the initialization contract through the same engine used by workers.
-
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};

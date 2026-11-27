@@ -1,20 +1,9 @@
-//! Typed async wrappers over the raw capability imports.
-//!
-//! Every binding here is a thin shape over `abi::*`. The pattern is always the
-//! same and is worth stating once: **encode, call, wrap the returned id, and
-//! return.** No wrapper waits for anything; the awaiting happens in the app's
-//! state machine and resolves to a `return Poll::Pending` out of the guest.
-
 use isoplane_abi::calls::*;
 use isoplane_abi::result::{BodyChunk, FetchResponse};
 
 use crate::abi;
 use crate::error::{IsoplaneError, Result};
 use crate::future::{call, decode_postcard, decode_unit, HostFuture};
-
-// ---------------------------------------------------------------------------
-// outbound HTTP
-// ---------------------------------------------------------------------------
 
 pub struct HttpFetch;
 
@@ -80,10 +69,6 @@ pub async fn fetch_bytes(url: &str) -> Result<(u16, Vec<u8>)> {
     Ok((r.status, body))
 }
 
-// ---------------------------------------------------------------------------
-// clock & entropy
-// ---------------------------------------------------------------------------
-
 pub struct Clock;
 
 impl Clock {
@@ -114,10 +99,6 @@ impl Entropy {
         u64::from_le_bytes(b)
     }
 }
-
-// ---------------------------------------------------------------------------
-// observability
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]

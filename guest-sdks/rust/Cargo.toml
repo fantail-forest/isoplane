@@ -1,22 +1,9 @@
 [package]
 name = "isoplane-guest"
-# This crate lives beside the C# SDK in `guest-sdks/`, and belongs to the
-# `guests/` Cargo workspace. Those are separate things: the directory is where
-# the source is, the workspace is where its build settings come from.
-#
-# It wants the guest workspace's, not the root one's:
-#   * `[profile.release]` there is the size-tuned one (`opt-level = "z"`, LTO,
-#     `panic = "abort"`, strip) that the guests linking this crate are built
-#     with.
-#   * `[workspace.dependencies]` there pins `isoplane-abi` with
-#     `default-features = false`. Inert today (`default = []`), and a guard
-#     worth keeping: a guest must not pick up a host-shaped feature by default.
-#     It also enables `rust-guests`, which declares the imports this SDK calls.
-#
-# Naming the root is required because Cargo finds one by walking UP, which from
-# here reaches the repo root — whose explicit `members` list does not include
-# this crate, so the inherited fields below would have nothing to resolve
-# against.
+# Cargo finds a workspace root by walking up, which from here reaches the repo
+# root, whose `members` list does not include this crate. Naming `guests` gives
+# this crate the size-tuned release profile and the `isoplane-abi` features
+# (`default-features = false`, `rust-guests`) of the guests that link it.
 workspace = "../../guests"
 version.workspace = true
 edition.workspace = true

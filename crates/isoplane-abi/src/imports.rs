@@ -1,6 +1,3 @@
-//! Canonical guest capabilities consumed by the validator, linker and SDK.
-//! This is the shared definition used to check declared imports and signatures.
-
 /// Core-wasm module name that every Isoplane import lives under.
 pub const HOST_MODULE: &str = "isoplane";
 
@@ -225,8 +222,6 @@ mod tests {
         }
     }
 
-    /// The static metadata does not grant runtime capability groups unconditionally.
-    /// The engine applies explicit application-entropy and initialization capability policy.
     #[test]
     fn unconditional_initialization_imports_exclude_runtime_capability_groups() {
         let io = [Group::Http, Group::Socket, Group::Clock, Group::Entropy];

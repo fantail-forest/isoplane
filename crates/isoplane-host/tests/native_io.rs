@@ -1,5 +1,3 @@
-//! Managed native I/O across destroyed Stores using Mono and the real host reactor.
-
 use isoplane_engine::Completion;
 use isoplane_harness::logging::GuestLogs;
 use std::sync::Arc;

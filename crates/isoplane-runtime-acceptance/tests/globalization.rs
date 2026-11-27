@@ -1,5 +1,3 @@
-//! ICU-backed culture, Unicode, calendar and time-zone behavior in Mono.
-
 #[macro_use]
 mod common;
 

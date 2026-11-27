@@ -1,7 +1,3 @@
-//! Applications prepared on the shared .NET runtime the way a node and the
-//! command line prepare them: the runtime once, as a baseline, and each
-//! application as a layer over it.
-
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 

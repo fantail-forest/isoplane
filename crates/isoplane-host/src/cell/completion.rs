@@ -1,5 +1,3 @@
-//! One attributed dispatch owner, retained across queueing and parked intervals.
-
 use super::*;
 
 static NEXT_TOKEN: AtomicU64 = AtomicU64::new(1);

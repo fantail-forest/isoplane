@@ -1,21 +1,3 @@
-//! Cooperating with the budget.
-//!
-//! A guest learns that its budget ran out only at its next slice: every host
-//! future it awaits from then on resolves to `Cancelled`, as does
-//! [`crate::Ctx::cancelled`]. Cancellation stays fixed within a slice, so a
-//! guest that wants to finish does long work in chunks and awaits between
-//! them. A guest that returns after cancellation has run its `Drop`s and its
-//! instance can be used again; one still executing when its grace ends is
-//! trapped where it stands and its instance is discarded.
-//!
-//! SECURITY: there is deliberately no way to read the remaining budget.
-//! A value that falls while the guest runs is a clock, and a clock finer than
-//! the frozen slice clock is what Spectre-class side channels need.
-//!
-//! Guest modules build with `panic = "abort"` (see `guests/Cargo.toml`), so
-//! the unwind is an ordinary early `return` and the `finally` semantics are
-//! `Drop`.
-
 use crate::abi;
 
 /// RAII guard for the *unsafe-to-trap* bit.
@@ -59,9 +41,8 @@ mod tests {
     use super::*;
     use crate::testing;
 
-    /// The guard must clear the bit on the way out, including on an early
-    /// return, or a guest would pin it by accident and discover the fact only
-    /// as a kill.
+    /// A guard that left the bit set would pin it by accident, and the guest
+    /// would discover that only as a kill.
     #[test]
     fn the_unsafe_to_trap_guard_clears_on_drop() {
         testing::with_stub_host(|host| {

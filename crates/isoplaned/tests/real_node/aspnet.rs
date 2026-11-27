@@ -1,5 +1,3 @@
-//! The maintained ASP.NET adapter through the real deploy pipeline and HTTP listener.
-
 use super::common;
 
 use bytes::Bytes;

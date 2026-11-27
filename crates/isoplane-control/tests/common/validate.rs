@@ -1,5 +1,3 @@
-//! Fixture helpers shared by the validator corpus and the WASI PAL corpus.
-
 use isoplane_abi::config::GuestMemoryBytes;
 use isoplane_control::validator::{self, ValidationReport, Violation, ViolationCode as V};
 

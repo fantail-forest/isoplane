@@ -1,6 +1,3 @@
-//! Template initialization: values an application builds once, before its
-//! memory is captured, and the configuration preparation supplies to it.
-
 use core::cell::{Cell, UnsafeCell};
 
 use crate::abi;

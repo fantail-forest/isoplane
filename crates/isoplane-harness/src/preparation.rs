@@ -1,7 +1,3 @@
-//! Templates prepared the way a node and the command line prepare them: the
-//! module's runtime stage as a baseline, then its application stage as a
-//! layer over that baseline, each as its stage's preparation loaded it.
-
 use std::sync::Arc;
 
 use isoplane_engine::prepared::PreparedIdentity;

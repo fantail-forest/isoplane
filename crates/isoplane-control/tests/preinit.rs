@@ -1,12 +1,3 @@
-//! Initialization in the init sandbox, and the template it leaves.
-//!
-//! What is asserted here:
-//!  * a forbidden import traps rather than reading a zero;
-//!  * initialization entropy comes from the host;
-//!  * the template carries post-init memory and globals, read from the
-//!    template a node would load;
-//!  * input identities permit intentional captured-state reuse without forcing random draws to repeat.
-
 use isoplane_engine::EngineConfig;
 use isoplane_harness::preparation::{self, Prepared};
 use isoplane_prepare::{BuildRequest, Initialization, PrepareError};
@@ -160,7 +151,6 @@ fn template_carries_post_init_memory_into_the_runtime_engine() {
     );
 }
 
-/// Initialization is answered a fixed clock and fresh entropy.
 #[test]
 fn initialization_is_answered_a_fixed_clock_and_fresh_entropy() {
     let wat = r#"(module

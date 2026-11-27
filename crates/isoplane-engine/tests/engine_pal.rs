@@ -1,6 +1,3 @@
-//! The WASI PAL adapter and the native I/O packets exercised through the
-//! full engine.
-
 mod common;
 
 use common::*;

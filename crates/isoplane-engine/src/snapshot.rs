@@ -1,6 +1,3 @@
-//! The non-memory half of an instance's mutable state. Linear memory is
-//! diffed by `isoplane-hibernate`; globals and tables are small and captured whole.
-
 use anyhow::bail;
 use serde::{Deserialize, Serialize};
 use wasmtime::Val;

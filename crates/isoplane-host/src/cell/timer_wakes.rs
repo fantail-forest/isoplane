@@ -1,5 +1,3 @@
-//! Idle background wake deadlines and the five-minute stop without request demand.
-
 use super::*;
 use crate::bindings::IdleTimers;
 

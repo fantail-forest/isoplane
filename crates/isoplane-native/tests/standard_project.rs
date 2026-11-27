@@ -1,5 +1,3 @@
-//! Installed projects build packages and run them on their SDK's shared runtime.
-
 #[path = "common/dev.rs"]
 pub mod common;
 

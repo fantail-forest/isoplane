@@ -1,6 +1,3 @@
-//! The frozen dispatch-slice clock, and import buffers copied in both
-//! directions across the guest boundary.
-
 mod common;
 #[path = "common/dispatch.rs"]
 mod dispatch;
@@ -18,10 +15,6 @@ fn read_u64(m: &[u8], off: usize) -> u64 {
 fn import(name: &str, params: &str, results: &str) -> String {
     format!(r#"(import "isoplane" "{name}" (func ${name} {params} {results}))"#)
 }
-
-// ---------------------------------------------------------------------------
-// the frozen clock
-// ---------------------------------------------------------------------------
 
 #[test]
 fn the_coarse_clock_does_not_advance_within_a_dispatch_slice() {
@@ -125,10 +118,6 @@ fn a_future_returning_import_resamples_the_binding_clock() {
         "the frozen clock is engine-owned and must never reach a binding: {calls:?}"
     );
 }
-
-// ---------------------------------------------------------------------------
-// buffers, in both directions
-// ---------------------------------------------------------------------------
 
 #[test]
 fn guest_buffers_are_copied_out_and_out_buffers_are_copied_in() {

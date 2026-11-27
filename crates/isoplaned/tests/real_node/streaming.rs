@@ -1,5 +1,3 @@
-//! Customer-visible response streaming through the managed adapter, real cell and proxy.
-
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;

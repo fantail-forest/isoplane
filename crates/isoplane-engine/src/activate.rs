@@ -1,6 +1,3 @@
-//! Instance activation: mapping a template copy-on-write and wiring the
-//! epoch and call hooks that make a dispatch meterable.
-
 use std::sync::Arc;
 
 use anyhow::Context;

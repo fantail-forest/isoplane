@@ -1,5 +1,3 @@
-//! Defaults for local initialization.
-
 /// Default local initialization occupancy budget.
 pub const DEFAULT_INITIALIZATION_OCCUPANCY_MS: u32 = 30_000;
 /// Default local initialization wall backstop, including waits.

@@ -1,5 +1,3 @@
-//! Minimal installed runtime for tests that register a directly prepared WAT guest.
-
 use sha2::Digest;
 use std::path::{Path, PathBuf};
 

@@ -1,5 +1,3 @@
-//! Drives the real proxy over a real TCP socket; the only fake is the cell.
-
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;

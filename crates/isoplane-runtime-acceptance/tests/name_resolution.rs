@@ -1,8 +1,3 @@
-//! Name resolution through the source-built asynchronous WASI path (runtime
-//! patch 008): forward lookups await the host resolver on a pollable,
-//! literals never leave the guest, host failures reach the ordinary socket
-//! errors, and the lookups that would have to block fail explicitly.
-
 use isoplane_harness::logging::GuestLogs;
 #[macro_use]
 mod common;
@@ -73,8 +68,6 @@ in_mono_runtime! {
 }
 
 in_mono_runtime! {
-    /// A parked lookup survives hibernation: the answer reaches the continuation
-    /// after the guest's memory went through the local snapshot.
     #[tokio::test]
     async fn a_parked_lookup_survives_a_hibernation_delta_round_trip(runtime: GuestRuntime) {
         let reactor = reactor_for_dns(40, dual_stack());

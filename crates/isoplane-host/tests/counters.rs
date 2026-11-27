@@ -1,6 +1,3 @@
-//! Each cell counter is moved by the event it counts. Where a counter is one
-//! half of an identity, the identity is asserted too.
-
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -79,7 +76,6 @@ fn app(r: &Rig, name: &str, behaviour: FakeBehaviour) -> ModuleId {
     module
 }
 
-/// A kill and a trap each end an instance, and are counted apart.
 #[test]
 fn a_hard_kill_is_not_counted_as_a_trap() {
     let r = rig(CellConfig {

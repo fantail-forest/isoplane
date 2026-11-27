@@ -1,5 +1,3 @@
-//! The WASI PAL adapter corpus, and rule V1 around it.
-
 use isoplane_control::validator::ViolationCode as V;
 
 #[path = "common/validate.rs"]
@@ -20,9 +18,6 @@ fn wasi_wat() -> String {
     )
 }
 
-/// **The rule.** A module whose non-`isoplane` imports are all in the enumerated
-/// whitelist deploys — that is the whole point of the adapter, and the
-/// thing that lets the shared runtime pass V1 without an exemption.
 #[test]
 fn v1_accepts_a_module_whose_wasi_imports_are_all_whitelisted() {
     let wasm = parse(&wasi_wat());
@@ -30,11 +25,8 @@ fn v1_accepts_a_module_whose_wasi_imports_are_all_whitelisted() {
         .unwrap_or_else(|vs| panic!("whitelisted wasi imports must validate: {vs:?}"));
 }
 
-/// **The negative control for that rule.** The whitelist is keyed by
-/// `(interface, function)`, not by interface — otherwise admitting
-/// `wasi:io/poll` for `poll` would silently admit every other function in
-/// the same interface, and an enumerated whitelist that enumerates
-/// interfaces is not an enumerated whitelist.
+/// The whitelist is keyed by `(interface, function)`: keyed by interface,
+/// admitting `wasi:io/poll` for `poll` would admit every other function in it.
 #[test]
 fn v1_rejects_a_wasi_import_outside_the_whitelist() {
     // A different function in an interface we DO admit: a wait inside a call.
@@ -78,9 +70,8 @@ fn v1_rejects_a_wasi_import_outside_the_whitelist() {
     );
 }
 
-/// A WASI import gets a real body run against its declared type, so its
-/// shape is checked like any `isoplane` import. Half a type check is not a
-/// type check — and here it would be a type confusion in host code.
+/// A WASI import gets a real body run against its declared type, so an
+/// unchecked signature would be a type confusion in host code.
 #[test]
 fn v1_checks_the_signature_of_a_delegated_wasi_import() {
     assert_violates(

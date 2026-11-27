@@ -1,5 +1,3 @@
-//! Exact Host routing to one installed deployment per application.
-
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;

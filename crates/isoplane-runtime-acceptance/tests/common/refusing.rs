@@ -1,5 +1,3 @@
-//! An endpoint that refuses connections, for the behaviours a refusal drives.
-
 use std::net::SocketAddr;
 
 /// An endpoint that refuses connections: bound so nothing else can take it,

@@ -1,5 +1,3 @@
-//! Non-callable activations whose mappings outlive their resident pages.
-
 use anyhow::ensure;
 #[cfg(target_os = "linux")]
 use anyhow::Context;

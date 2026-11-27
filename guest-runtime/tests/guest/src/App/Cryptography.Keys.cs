@@ -5,10 +5,6 @@ using System.Text;
 
 namespace Acceptance;
 
-/// <summary>
-/// Key material: the import and export formats round-trip, malformed input
-/// is refused, and a disposed key is unusable without affecting any other.
-/// </summary>
 internal sealed partial class Cryptography
 {
     private static readonly byte[] Message = Encoding.ASCII.GetBytes("isoplane");

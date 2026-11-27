@@ -1,7 +1,3 @@
-//! Deployment settings a guest reads during initialization are captured in
-//! its template, with a different guest fixture from the rest of the
-//! real-node suite.
-
 #[path = "common/runtime_inventory.rs"]
 mod runtime_inventory;
 

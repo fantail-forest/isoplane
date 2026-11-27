@@ -1,5 +1,3 @@
-//! Bounded local initialization and installed runtime selection.
-
 use serde::{Deserialize, Serialize};
 
 /// Trusted local preparation policy; initialization still runs inside the sandbox.

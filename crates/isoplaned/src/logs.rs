@@ -1,5 +1,3 @@
-//! Structured diagnostic output and optional OTLP export.
-
 use opentelemetry::trace::TracerProvider as _;
 use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::prelude::*;

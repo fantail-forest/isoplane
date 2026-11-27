@@ -1,5 +1,3 @@
-//! Module registration and the resident-instance bookkeeping tables.
-
 use super::*;
 use crate::DISPATCHES_PER_INSTANCE;
 

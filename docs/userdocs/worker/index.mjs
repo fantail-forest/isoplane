@@ -1,6 +1,3 @@
-// Serves the built site, giving a page's Markdown form to a client whose
-// Accept header asks for it, and proxies the search box's requests. Everything
-// else is the static asset as built.
 import {SEARCH_PATH, search} from '../search/worker.js';
 import {markdownSibling, prefersMarkdown} from './negotiate.mjs';
 

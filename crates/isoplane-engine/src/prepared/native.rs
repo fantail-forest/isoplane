@@ -1,7 +1,3 @@
-//! Native code shared by every template whose checked local manifest records
-//! the same compiled payload, so an engine holds one copy per distinct
-//! runtime however many applications it serves.
-
 use std::collections::HashMap;
 use std::io::Write;
 use std::sync::{Arc, Weak};

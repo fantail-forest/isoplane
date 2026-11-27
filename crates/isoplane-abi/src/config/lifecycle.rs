@@ -1,5 +1,3 @@
-//! The lifecycle tiers an instance moves through.
-
 use serde::{Deserialize, Serialize};
 
 /// The lifecycle tiers an instance moves through. Defined here because the

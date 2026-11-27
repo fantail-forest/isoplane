@@ -1,8 +1,3 @@
-//! Owned TLS peers for the `SslStream` family: a server presenting one of
-//! the fixed certificates, optionally requiring a client certificate or
-//! negotiating ALPN, that echoes what the guest sends, closes cleanly,
-//! truncates a record, or never answers; every peer reports what it saw.
-
 use std::net::SocketAddr;
 use std::sync::Arc;
 

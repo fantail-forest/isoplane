@@ -6,14 +6,6 @@ using Isoplane.Abi;
 
 namespace Isoplane.Runtime;
 
-/// <summary>
-/// The map from host future ids to the operations awaiting them, behind the
-/// gate the host's per-dispatch cap calls for: a dispatch starts as many host
-/// operations as its record allows, and one started past that waits, in start
-/// order, until an earlier operation of the same dispatch completes. Every
-/// entry is a promise the host holds the trigger for, and the map lives in
-/// linear memory, so it survives a capture with everything else.
-/// </summary>
 internal static class FutureTable
 {
     /// <summary>

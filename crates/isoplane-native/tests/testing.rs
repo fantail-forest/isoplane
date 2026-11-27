@@ -1,5 +1,3 @@
-//! An ordinary test project consumes the local testing package and installed CLI.
-
 use isoplane_test_support::run_successfully;
 use std::process::Command;
 

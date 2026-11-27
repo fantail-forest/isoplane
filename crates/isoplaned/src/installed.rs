@@ -1,5 +1,3 @@
-//! Atomic application selection and ownership of its immutable backing artifacts.
-
 use std::collections::HashSet;
 use std::fs::{File, OpenOptions};
 use std::io::Write;

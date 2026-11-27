@@ -1,6 +1,3 @@
-//! The books for instances killed off the dispatch path, and the
-//! panic-recovery paths.
-
 use super::*;
 
 impl Cell {

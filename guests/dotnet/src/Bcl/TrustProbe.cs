@@ -7,17 +7,14 @@ using Isoplane;
 
 namespace Isoplane.App;
 
-/// <summary>
-/// Lists the machine root store while the application initializes, so the
-/// template carries the store's cache of
-/// the bundle served at preparation. Answers <c>/at-boot</c> with that
-/// listing and <c>/roots</c> with what the store lists now, each as
-/// <c>roots=N thumbprint,thumbprint,…</c> sorted.
-/// </summary>
 internal static class TrustProbe
 {
     private static string _atBoot = "";
 
+    /// <summary>
+    /// Lists the machine root store during initialization so the template carries the store's
+    /// cache of the bundle served at preparation.
+    /// </summary>
     public static Task InitializeAsync()
     {
         _atBoot = Roots();

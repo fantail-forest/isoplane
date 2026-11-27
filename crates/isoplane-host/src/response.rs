@@ -1,8 +1,3 @@
-//! Response building. A guest may return `done` with a streaming response
-//! handle and keep appending chunks while that response remains unfinished.
-//! The dispatch ends after the response finishes, not after the slice that
-//! initially returned its handle.
-
 use std::collections::HashMap;
 use std::mem::size_of;
 

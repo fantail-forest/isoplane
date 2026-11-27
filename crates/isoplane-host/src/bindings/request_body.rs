@@ -1,5 +1,3 @@
-//! Upload ownership for one HTTP dispatch, with no guest-selectable source handle.
-
 #[cfg(test)]
 use std::num::NonZeroU32;
 use std::sync::Arc;

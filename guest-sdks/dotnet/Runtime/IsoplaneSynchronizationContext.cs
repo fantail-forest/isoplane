@@ -6,15 +6,8 @@ using System.Threading.Tasks;
 namespace Isoplane.Runtime;
 
 /// <summary>
-/// Queues continuations posted through Isoplane's synchronization context in
-/// guest memory. Each dispatch has its own, so a continuation runs in a slice
-/// of the dispatch that awaited; <see cref="Instance"/> serves code outside any
-/// dispatch, and takes over a dispatch's continuations once it ends. The export
-/// driver runs a bounded batch from the current dispatch's queue per slice, and
-/// stops the batch at a continuation <see cref="Task.Yield"/> posted in the
-/// same slice, so a yield returns control to the host. This scheduler does not
-/// intercept awaiters that bypass context capture or prove that an incomplete
-/// task has a completion source.
+/// Does not intercept awaiters that bypass context capture, and cannot prove
+/// that an incomplete task has a completion source.
 /// </summary>
 internal sealed class IsoplaneSynchronizationContext : SynchronizationContext
 {

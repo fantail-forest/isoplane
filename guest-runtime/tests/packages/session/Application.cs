@@ -11,12 +11,6 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Session;
 
-/// <summary>
-/// Session state, and TempData kept in it, over the cache the <c>Cache</c> setting names:
-/// <c>memory</c> for ASP.NET Core's in-memory cache, otherwise <see cref="TimerCache"/>. The
-/// <c>Pipeline</c> setting <c>UseSession</c> adds ASP.NET Core's session middleware in place of
-/// <c>UseLoadedSession</c>.
-/// </summary>
 public static class Application
 {
     /// <summary>Builds the application and runs it.</summary>

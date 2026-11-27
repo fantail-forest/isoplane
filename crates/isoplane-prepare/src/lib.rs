@@ -1,5 +1,3 @@
-//! Local application initialization and prepared state production.
-
 // On Linux, preparation loads a published runtime baseline's native code.
 #![cfg_attr(not(target_os = "linux"), forbid(unsafe_code))]
 

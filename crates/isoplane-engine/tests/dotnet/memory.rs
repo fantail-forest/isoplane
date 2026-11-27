@@ -1,4 +1,3 @@
-//! The real collectors observe host memory capacity before the template is captured.
 use crate::dotnet::{budget, fixture, Fixture, GuestRuntime, Request};
 use isoplane_engine::Completion;
 

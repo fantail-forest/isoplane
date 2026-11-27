@@ -1,6 +1,3 @@
-//! TCP keep-alive on a guest's outbound socket: the bounds a request is
-//! clamped to, and the record the host applies to its own socket.
-
 use std::time::Duration;
 
 use isoplane_abi::native_io::{DurationNanos, Error, KeepAlive, KeepAliveChange, ProbeCount};

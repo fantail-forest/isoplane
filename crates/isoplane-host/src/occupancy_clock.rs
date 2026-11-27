@@ -1,5 +1,3 @@
-//! Native worker occupancy and monotonic clocks used by dispatch accounting.
-
 #[cfg(test)]
 thread_local! {
     /// Fault injection for the unreadable-clock path; thread-local so one

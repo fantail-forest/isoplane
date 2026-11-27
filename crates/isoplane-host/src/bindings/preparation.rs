@@ -1,5 +1,3 @@
-//! Preparation uses the same bounded native I/O and egress enforcement as cells.
-
 use std::sync::Arc;
 
 use isoplane_abi::native_io::{Error, PreparedResources, Request, Response};
