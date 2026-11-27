@@ -80,6 +80,9 @@ struct Lane {
     /// worker has taken and not yet finished. Read without the lock by the
     /// placer, so a stale read costs a worse choice rather than a wrong one.
     load: AtomicUsize,
+    /// Signalled each time a worker starts waiting on `cv`.
+    #[cfg(test)]
+    waiter_arrived: Condvar,
 }
 
 #[derive(Default)]
@@ -88,6 +91,9 @@ struct QueueInner {
     dispatches: std::collections::VecDeque<QueuedDispatch>,
     closed: bool,
     last_was_wake: bool,
+    /// Workers waiting on the lane's `cv`.
+    #[cfg(test)]
+    waiting: usize,
 }
 
 struct QueuedDispatch {
@@ -131,6 +137,8 @@ impl WorkQueue {
                     inner: Mutex::new(QueueInner::default()),
                     cv: Condvar::new(),
                     load: AtomicUsize::new(0),
+                    #[cfg(test)]
+                    waiter_arrived: Condvar::new(),
                 })
                 .collect(),
             cap: depth_per_lane.max(1),
@@ -247,7 +255,16 @@ impl WorkQueue {
             if g.closed {
                 return None;
             }
+            #[cfg(test)]
+            {
+                g.waiting += 1;
+                lane.waiter_arrived.notify_all();
+            }
             lane.cv.wait(&mut g);
+            #[cfg(test)]
+            {
+                g.waiting -= 1;
+            }
         }
     }
 
@@ -398,6 +415,24 @@ mod queue_tests {
             std::thread::sleep(Duration::from_millis(1));
         }
         h.join().expect("thread panicked")
+    }
+
+    /// Returns once a worker is waiting on every lane's `cv`. The count
+    /// changes under the lane's lock, which the wait releases, and
+    /// parking_lot's condition variable does not wake spuriously, so a worker
+    /// counted here leaves its wait only through a notification.
+    fn await_a_waiting_worker_on_every_lane(q: &WorkQueue, within: Duration) {
+        let deadline = Instant::now() + within;
+        for (w, lane) in q.lanes.iter().enumerate() {
+            let mut g = lane.inner.lock();
+            while g.waiting == 0 {
+                let waited = lane.waiter_arrived.wait_until(&mut g, deadline);
+                assert!(
+                    g.waiting > 0 || !waited.timed_out(),
+                    "no worker reached lane {w}'s wait within {within:?}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -560,7 +595,7 @@ mod queue_tests {
     }
 
     #[test]
-    fn closing_the_queue_releases_parked_workers() {
+    fn closing_the_queue_releases_its_workers() {
         let q = Arc::new(WorkQueue::new(64, 4));
         let hs: Vec<_> = (0..4)
             .map(|w| {
@@ -568,10 +603,7 @@ mod queue_tests {
                 std::thread::spawn(move || q.pop(w))
             })
             .collect();
-        // A worker with an empty lane is on its condition variable by the
-        // time it can be observed holding nothing, so the close must reach it
-        // there or the join below hangs.
-        std::thread::sleep(Duration::from_millis(20));
+        await_a_waiting_worker_on_every_lane(&q, Duration::from_secs(10));
         q.close();
         for (w, h) in hs.into_iter().enumerate() {
             assert!(

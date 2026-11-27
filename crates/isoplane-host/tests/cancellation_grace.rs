@@ -139,13 +139,18 @@ fn a_dispatch_that_finishes_inside_its_grace_keeps_its_instance() {
         "the dispatch finished after cancellation"
     );
 
-    // The grace runs out after the dispatch has finished.
-    std::thread::sleep(Duration::from_millis(GRACE_MS * 4));
+    assert!(
+        wait_for(
+            || cell.idle_instances(&module) == Some(1),
+            Duration::from_secs(30)
+        ),
+        "the instance must return to its pool once its dispatch has finished"
+    );
     let next = result(&submit(&cell, &module));
     assert_eq!(
         (next.status, next.instance, next.acquired),
         (200, first.instance, "warm"),
-        "the instance must outlive a grace its dispatch finished inside"
+        "a dispatch that finished inside its grace must leave its instance to the next"
     );
     assert_eq!(cell.metrics().cancellation_grace_kills, 0);
     let metrics = cell.metrics();
