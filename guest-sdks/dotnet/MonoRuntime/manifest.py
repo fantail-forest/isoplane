@@ -2,7 +2,6 @@
 """Write the runtime identity shipped in SDK and application packages."""
 import hashlib
 import json
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -20,6 +19,15 @@ def source_revision(root):
     return revision + ("+dirty" if dirty else "")
 
 
+def release_version(root):
+    evaluation = subprocess.run(
+        ["dotnet", "msbuild", str(root / "Directory.Build.props"), "-nologo", "-getProperty:Version"],
+        capture_output=True, text=True)
+    if evaluation.returncode != 0:
+        sys.exit(f"runtime manifest: MSBuild could not evaluate Directory.Build.props:\n{evaluation.stdout}{evaluation.stderr}")
+    return evaluation.stdout.strip()
+
+
 def provenance(receipt):
     """The runtime's identity as the SDK package and the platform read it."""
     version, sha512 = receipt["monoPack"].split("@sha512:", 1)
@@ -33,14 +41,11 @@ def provenance(receipt):
 
 def main(directory, root, revision=None):
     directory, root = Path(directory), Path(root)
-    version = re.search(r"<Version>([^<]+)</Version>", (root / "Directory.Build.props").read_text())
-    if version is None:
-        sys.exit("runtime manifest: Directory.Build.props declares no <Version>")
     packs = {(directory / f"{name}.runtime").read_text().strip() for name in MODULES}
     if len(packs) != 1:
         sys.exit(f"runtime manifest: the runtime modules linked different Mono packs: {sorted(packs)}")
     receipt = {
-        "sdkVersion": version.group(1).strip(),
+        "sdkVersion": release_version(root),
         "sourceRevision": revision or source_revision(root),
         "monoPack": packs.pop(),
         "modules": {name: hashlib.sha256((directory / name).read_bytes()).hexdigest() for name in MODULES},

@@ -9,7 +9,8 @@ import xml.etree.ElementTree as ET
 root = Path(__file__).resolve().parents[3]
 destination = Path(sys.argv[1]).resolve()
 packages = Path(os.environ['ISOPLANE_TEST_PACKAGE_FEED'])
-version = ET.parse(root / 'Directory.Build.props').findtext('.//Version')
+version = subprocess.run(['dotnet', 'msbuild', str(root / 'Directory.Build.props'), '-nologo', '-getProperty:Version'],
+                         check=True, capture_output=True, text=True).stdout.strip()
 hive = destination / 'hive'
 app = destination / 'app'
 for cache in (hive, app, destination / 'nuget'):

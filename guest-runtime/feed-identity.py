@@ -2,9 +2,14 @@
 import argparse
 import base64
 import hashlib
+import json
 from pathlib import Path
 import subprocess
-import xml.etree.ElementTree as ET
+
+PACKAGES = (
+    ('Microsoft.NETCore.App.Runtime.Mono.wasi-wasm', 'IsoplaneGuestRuntimePack'),
+    ('Microsoft.NET.Runtime.WebAssembly.Wasi.Sdk', 'IsoplaneGuestWasiSdkPack'),
+)
 
 
 def file_digest(stream, algorithm):
@@ -14,29 +19,34 @@ def file_digest(stream, algorithm):
     return digest.digest()
 
 
+def evaluate(props, names):
+    evaluation = subprocess.run(
+        ['dotnet', 'msbuild', str(props), '-nologo', '-getProperty:' + ','.join(names)],
+        capture_output=True, text=True)
+    if evaluation.returncode != 0:
+        raise ValueError(f'MSBuild could not evaluate {props}:\n{evaluation.stdout}{evaluation.stderr}')
+    return json.loads(evaluation.stdout)['Properties']
+
+
 def verify_feed(feed, expected_sources=None):
     feed = Path(feed)
-    props = ET.parse(feed / 'Isoplane.GuestRuntime.props').getroot()
+    expected_sources = expected_sources or {}
+    names = [*expected_sources, 'IsoplaneGuestWasiSdkPackDirectory']
+    names += [prefix + suffix for _, prefix in PACKAGES for suffix in ('Version', 'Sha512')]
+    properties = evaluate(feed / 'Isoplane.GuestRuntime.props', names)
 
     def field(name):
-        elements = props.findall('./PropertyGroup/' + name)
-        if len(elements) > 1:
-            raise ValueError(f'{feed} has ambiguous duplicate {name} properties')
-        value = elements[0].text if elements else None
-        if not value or not value.strip():
+        value = properties[name]
+        if not value:
             raise ValueError(f'{feed} has no {name}; rebuild the runtime feed')
-        return value.strip()
+        return value
 
-    for name, expected in (expected_sources or {}).items():
+    for name, expected in expected_sources.items():
         actual = field(name)
         if actual != expected:
             raise ValueError(f'{name}: expected {expected}, received {actual}')
 
-    packages = (
-        ('Microsoft.NETCore.App.Runtime.Mono.wasi-wasm', 'IsoplaneGuestRuntimePack'),
-        ('Microsoft.NET.Runtime.WebAssembly.Wasi.Sdk', 'IsoplaneGuestWasiSdkPack'),
-    )
-    for package, prefix in packages:
+    for package, prefix in PACKAGES:
         version = field(prefix + 'Version')
         if Path(version).name != version or '\\' in version:
             raise ValueError(f'invalid runtime package version: {version}')
@@ -45,10 +55,7 @@ def verify_feed(feed, expected_sources=None):
             actual = base64.b64encode(file_digest(stream, 'sha512')).decode()
         if actual != field(prefix + 'Sha512'):
             raise ValueError(f'runtime package content differs from published identity: {path}')
-    directory = field('IsoplaneGuestWasiSdkPackDirectory').replace(
-        '$(MSBuildThisFileDirectory)', str(feed.resolve()) + '/')
-    if '$(' in directory:
-        raise ValueError(f'unsupported WASI SDK directory expression: {directory}')
+    directory = field('IsoplaneGuestWasiSdkPackDirectory')
     if not Path(directory).is_dir():
         raise ValueError(f'unpacked WASI SDK package is missing: {directory}')
     return field('IsoplaneGuestRuntimePackVersion') + '@sha512:' + field('IsoplaneGuestRuntimePackSha512')
@@ -84,7 +91,7 @@ def main():
     try:
         expected = release_sources(args.wasi_sdk_version) if args.action == 'verify-release' else None
         print(verify_feed(args.feed, expected))
-    except (OSError, ValueError, ET.ParseError, subprocess.CalledProcessError) as error:
+    except (OSError, ValueError, subprocess.CalledProcessError) as error:
         parser.exit(1, f'{error}\n')
 
 

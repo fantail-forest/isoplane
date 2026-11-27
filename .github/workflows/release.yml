@@ -31,7 +31,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with: {persist-credentials: false}
       - uses: ./.github/actions/toolchain
-        with: {rust: 'false'}
+        with: {rust: 'false', dotnet: 'true'}
       - name: Read the declared version
         id: version
         run: |
