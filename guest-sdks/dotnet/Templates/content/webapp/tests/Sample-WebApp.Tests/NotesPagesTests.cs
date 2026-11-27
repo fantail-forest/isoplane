@@ -3,6 +3,7 @@ using AngleSharp;
 using AngleSharp.Dom;
 using AngleSharp.Html.Dom;
 using Microsoft.EntityFrameworkCore;
+using Sample_WebApp.Pages;
 
 namespace Sample_WebApp.Tests;
 
@@ -32,7 +33,7 @@ public sealed class NotesPagesTests(SandboxFixture sandbox)
         var listed = await Form(home, "new-note").SubmitAsync(Fields("Buy oat milk", "Two cartons."));
 
         Assert.True(listed.StatusCode == HttpStatusCode.OK, sandbox.Diagnostics);
-        Assert.Equal("Note added.", listed.QuerySelector(".flash")?.TextContent);
+        Assert.Equal(Confirmation.NoteAdded, Confirmed(listed));
         Assert.Contains("Buy oat milk", Titles(listed));
     }
 
@@ -44,7 +45,12 @@ public sealed class NotesPagesTests(SandboxFixture sandbox)
 
         var refused = await Form(home, "new-note").SubmitAsync(Fields("", "A body with no title above it."));
 
-        Assert.Equal("The Title field is required.", refused.QuerySelector(".note-form .error")?.TextContent);
+        // The validation tag helper names the field a message belongs to in
+        // data-valmsg-for, and gives the message of a field that failed the class
+        // field-validation-error. Finding it by those, and checking only that it
+        // says something, leaves its wording free to change.
+        var message = refused.QuerySelector(".field-validation-error[data-valmsg-for='Input.Title']");
+        Assert.False(string.IsNullOrWhiteSpace(message?.TextContent), "The title has no message beside it.");
         // What was typed is still in the form.
         Assert.Equal("A body with no title above it.", refused.QuerySelector<IHtmlTextAreaElement>("textarea")?.Value.Trim());
         await using var database = sandbox.OpenDatabase();
@@ -61,14 +67,14 @@ public sealed class NotesPagesTests(SandboxFixture sandbox)
         var edit = await Link(listed, "Draft the anouncement").NavigateAsync();
         var saved = await Form(edit, "edit-note").SubmitAsync(Fields("Draft the announcement", "Spelled properly this time."));
 
-        Assert.Equal("Note saved.", saved.QuerySelector(".flash")?.TextContent);
+        Assert.Equal(Confirmation.NoteSaved, Confirmed(saved));
         Assert.Contains("Draft the announcement", Titles(saved));
         Assert.DoesNotContain("Draft the anouncement", Titles(saved));
 
         var again = await Link(saved, "Draft the announcement").NavigateAsync();
         var deleted = await Form(again, "delete-note").SubmitAsync();
 
-        Assert.Equal("Note deleted.", deleted.QuerySelector(".flash")?.TextContent);
+        Assert.Equal(Confirmation.NoteDeleted, Confirmed(deleted));
         Assert.DoesNotContain("Draft the announcement", Titles(deleted));
     }
 
@@ -120,6 +126,19 @@ public sealed class NotesPagesTests(SandboxFixture sandbox)
 
     private static IEnumerable<string> Titles(IDocument page) =>
         page.QuerySelectorAll(".notes a").Select(link => link.TextContent);
+
+    /// <summary>
+    /// What the page confirms, or null when it confirms nothing. The layout names
+    /// the outcome in the confirmation's data-confirmation attribute, so rewording
+    /// a message needs no change here. A confirmation that says nothing fails.
+    /// </summary>
+    private static Confirmation? Confirmed(IDocument page)
+    {
+        var confirmation = page.GetElementById("confirmation");
+        if (confirmation is null) return null;
+        Assert.False(string.IsNullOrWhiteSpace(confirmation.TextContent), "The confirmation has no wording.");
+        return Enum.Parse<Confirmation>(confirmation.GetAttribute("data-confirmation")!);
+    }
 
     /// <summary>Form fields by name. A [BindProperty] named Input binds fields named "Input.…".</summary>
     private static Dictionary<string, string> Fields(string title, string? body) =>

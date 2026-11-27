@@ -19,6 +19,10 @@ public sealed class SandboxFixture : IAsyncLifetime
     /// <summary>The value the session gives "Handbook:MaxResults", below what the application ships with.</summary>
     public const int MaxResults = 2;
 
+    /// <summary>The application's project directory, found from this test assembly's output directory.</summary>
+    public static string ProjectDirectory { get; } =
+        Path.GetFullPath("../../../../../src/Sample-McpServer", AppContext.BaseDirectory);
+
     private IsoplaneApplication? application;
     private McpClient? mcp;
 
@@ -35,8 +39,7 @@ public sealed class SandboxFixture : IAsyncLifetime
     {
         using var startup = new CancellationTokenSource(TimeSpan.FromMinutes(10));
         application = await IsoplaneApplication.StartAsync(
-            // The application's project directory, found from this test assembly's output directory.
-            Path.GetFullPath("../../../../../src/Sample-McpServer", AppContext.BaseDirectory),
+            ProjectDirectory,
             new ApplicationOptions
             {
                 // The session reads the same configuration as `dotnet run`: the

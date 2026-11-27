@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using Microsoft.AspNetCore.Http;
 using Sample_Api.Notifications;
 using Sample_Api.Todos;
 
@@ -51,7 +52,9 @@ public sealed class TodoApiTests(SandboxFixture sandbox)
         using var response = await sandbox.Client.PostAsJsonAsync("/todos", new { title });
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        Assert.Contains("Title", await response.Content.ReadAsStringAsync());
+        // The problem description names each field that failed, with its messages.
+        var problem = await response.Content.ReadFromJsonAsync<HttpValidationProblemDetails>();
+        Assert.Contains("Title", problem!.Errors.Keys);
     }
 
     [Fact]
@@ -71,12 +74,17 @@ public sealed class TodoApiTests(SandboxFixture sandbox)
     [Fact]
     public async Task The_export_lists_every_todo()
     {
-        using var created = await sandbox.Client.PostAsJsonAsync("/todos", new CreateTodo("Appear in the export"));
-        var todo = (await created.Content.ReadFromJsonAsync<TodoResponse>())!;
+        using var first = await sandbox.Client.PostAsJsonAsync("/todos", new CreateTodo("Appear in the export"));
+        using var second = await sandbox.Client.PostAsJsonAsync("/todos", new CreateTodo("Appear there too"));
+        var firstId = (await first.Content.ReadFromJsonAsync<TodoResponse>())!.Id;
+        var secondId = (await second.Content.ReadFromJsonAsync<TodoResponse>())!.Id;
 
         var exported = await sandbox.Client.GetFromJsonAsync<List<TodoResponse>>("/todos/export");
 
-        Assert.Contains(exported!, item => item.Id == todo.Id && item.Title == "Appear in the export");
+        // The responses give the identifiers to look for. The titles expected
+        // are the ones sent, so a title lost on the way out is noticed.
+        Assert.Contains(exported!, item => item.Id == firstId && item.Title == "Appear in the export");
+        Assert.Contains(exported!, item => item.Id == secondId && item.Title == "Appear there too");
     }
 
     [Fact]

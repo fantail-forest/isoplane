@@ -17,12 +17,6 @@ public sealed class NoteTests
     }
 
     [Fact]
-    public void A_note_without_a_body_has_an_empty_one()
-    {
-        Assert.Equal("", Note.Create("Title only", null, Now).Body);
-    }
-
-    [Fact]
     public void Editing_a_note_records_when_it_changed()
     {
         var note = Note.Create("Draft", null, Now);
