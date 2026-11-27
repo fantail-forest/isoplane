@@ -1,14 +1,10 @@
-//! The WASI PAL adapter exercised through the full engine: composition,
-//! the quantized frozen clock, entropy delegation, and trap-on-call stubs.
+//! The WASI PAL adapter and the native I/O packets exercised through the
+//! full engine.
 
 mod common;
 
 use common::*;
 use isoplane_engine::{Completion, InstanceOps, OccupancyBudget};
-
-fn read_u32(m: &[u8], off: usize) -> u32 {
-    u32::from_le_bytes(m[off..off + 4].try_into().expect("4 bytes"))
-}
 
 /// A `DispatchRecord` with nothing interesting in it.
 fn http_dispatch(id: u64) -> isoplane_abi::dispatch::DispatchRecord {
@@ -29,35 +25,20 @@ fn http_dispatch(id: u64) -> isoplane_abi::dispatch::DispatchRecord {
     }
 }
 
-/// A guest that imports `wasi:*` as well as `isoplane`, with the `cabi_realloc`
-/// export the canonical ABI needs to return a `list<u8>`.
-fn pal_guest(handle: &str) -> Vec<u8> {
-    let imports = String::from(
-        r#"
-  (import "wasi:clocks/monotonic-clock@0.2.0" "now" (func $wasi_now (result i64)))
-  (import "wasi:random/random@0.2.0" "get-random-bytes" (func $wasi_random (param i64 i32)))
-  (import "wasi:cli/exit@0.2.0" "exit" (func $wasi_exit (param i32)))
-  (import "wasi:cli/environment@0.2.0" "get-environment" (func $wasi_env (param i32)))
-"#,
-    );
-    let funcs = r#"
-  (global $cabi (mut i32) (i32.const 40000))
-  (func (export "cabi_realloc")
-        (param $old i32) (param $oldsz i32) (param $align i32) (param $newsz i32) (result i32)
-    (local $p i32)
-    (local.set $p (global.get $cabi))
-    (global.set $cabi
-      (i32.and (i32.add (i32.add (local.get $p) (local.get $newsz)) (i32.const 15))
-               (i32.const -16)))
-    (local.get $p))
-"#;
-    guest(4, &imports, funcs, handle, DONE)
-}
-
 #[test]
 fn a_module_with_wasi_imports_instantiates_through_the_pal_adapter() {
     let e = test_engine();
-    let wasm = pal_guest("(i64.const 0)");
+    let wasm = guest(
+        4,
+        r#"
+  (import "wasi:clocks/monotonic-clock@0.2.0" "subscribe-duration" (func (param i64) (result i32)))
+  (import "wasi:io/poll@0.2.0" "poll" (func (param i32 i32 i32)))
+  (import "wasi:io/poll@0.2.0" "[resource-drop]pollable" (func (param i32)))
+"#,
+        "",
+        "(i64.const 0)",
+        DONE,
+    );
     let t = e
         .load_template(&wasm)
         .expect("a whitelisted wasi: surface must instantiate");
@@ -68,174 +49,6 @@ fn a_module_with_wasi_imports_instantiates_through_the_pal_adapter() {
             .completion,
         Completion::Done,
         "the module dispatches"
-    );
-}
-
-/// A nanosecond monotonic clock would pass "the guest can read the time" and
-/// fail both assertions; a fine timer is the measurement primitive
-/// Spectre-class attacks need.
-#[test]
-fn the_pal_clock_is_quantized_and_frozen_within_a_slice() {
-    let e = test_engine();
-    let wasm = pal_guest(
-        r#"
-    (i64.store (i32.const 3000) (call $wasi_now))
-    (i64.store (i32.const 3008) (call $wasi_now))
-    (i64.const 0)"#,
-    );
-    let t = e.load_template(&wasm).expect("template");
-    let mut i = activate(&e, &t);
-
-    let read = |i: &mut isoplane_engine::Instance, off: usize| -> i64 {
-        let m = i.memory();
-        i64::from_le_bytes(m[off..off + 8].try_into().expect("8 bytes"))
-    };
-
-    assert_eq!(
-        i.dispatch(&http_dispatch(1), OccupancyBudget::default())
-            .completion,
-        Completion::Done,
-        "the dispatch completes"
-    );
-    let (a, b) = (read(&mut i, 3000), read(&mut i, 3008));
-    assert_eq!(
-        a, b,
-        "the clock is frozen within a slice, so two reads cannot differ"
-    );
-    assert_eq!(
-        a % 1_000_000,
-        0,
-        "the delegated clock is quantized to the coarse clock's millisecond: {a} ns"
-    );
-
-    assert_eq!(
-        i.dispatch(&http_dispatch(2), OccupancyBudget::default())
-            .completion,
-        Completion::Done,
-        "the second dispatch completes"
-    );
-    let c = read(&mut i, 3000);
-    assert!(
-        c > a,
-        "the coarse clock must advance between slices ({a} then {c}), or the freeze test is \
-         vacuous"
-    );
-    assert_eq!(
-        c % 1_000_000,
-        0,
-        "quantization must survive the slice boundary"
-    );
-}
-
-/// Entropy captured into a template, or memoised anywhere on the delegation
-/// path, would be shared by every clone and look fine, because random-looking
-/// bytes arrive either way.
-#[test]
-fn the_pal_entropy_delegation_draws_per_call_and_never_caches() {
-    let e = test_engine();
-    let wasm = pal_guest(
-        r#"
-    (call $wasi_random (i64.const 16) (i32.const 3000))
-    (call $wasi_random (i64.const 16) (i32.const 3016))
-    (i64.const 0)"#,
-    );
-    let t = e.load_template(&wasm).expect("template");
-    let mut i = activate(&e, &t);
-
-    assert_eq!(
-        i.dispatch(&http_dispatch(1), OccupancyBudget::default())
-            .completion,
-        Completion::Done,
-        "the dispatch completes"
-    );
-
-    let (p1, l1, p2, l2) = {
-        let m = i.memory();
-        (
-            read_u32(m, 3000) as usize,
-            read_u32(m, 3004),
-            read_u32(m, 3016) as usize,
-            read_u32(m, 3020),
-        )
-    };
-    assert_eq!(
-        (l1, l2),
-        (16, 16),
-        "the adapter returns the requested length"
-    );
-    assert_ne!(
-        p1, p2,
-        "each draw allocates its own buffer through `cabi_realloc`"
-    );
-
-    let (first, second) = {
-        let m = i.memory();
-        (m[p1..p1 + 16].to_vec(), m[p2..p2 + 16].to_vec())
-    };
-    assert_ne!(
-        first, second,
-        "two draws in one dispatch returned identical bytes, so something on the delegation \
-         path cached the CSPRNG output"
-    );
-}
-
-/// A stub that returned zero would let the guest carry on, turning a denied
-/// capability into a supported one that answers badly.
-#[test]
-fn a_pal_trap_on_call_stub_traps_rather_than_answering() {
-    let e = test_engine();
-    let wasm = pal_guest(
-        r#"
-    (call $wasi_exit (i32.const 0))
-    (i64.store (i32.const 3000) (i64.const 1))   ;; must never run
-    (i64.const 0)"#,
-    );
-    let t = e.load_template(&wasm).expect("template");
-    let mut i = activate(&e, &t);
-
-    let out = i.dispatch(&http_dispatch(1), OccupancyBudget::default());
-    assert_eq!(
-        out.completion,
-        Completion::Trapped,
-        "a denied capability must not answer"
-    );
-    let msg = out.trap.map(|t| t.message).unwrap_or_default();
-    assert!(
-        msg.contains("wasi:cli/exit") && msg.contains("trap-on-call"),
-        "the trap must name the import and say why: {msg}"
-    );
-    assert!(
-        i.capture_mutable_state().is_err(),
-        "a trapped instance is discarded"
-    );
-}
-
-#[test]
-fn the_pal_environment_delegation_answers_empty() {
-    let e = test_engine();
-    let wasm = pal_guest(
-        r#"
-    (i64.store (i32.const 3000) (i64.const -1))  ;; poison the return area
-    (call $wasi_env (i32.const 3000))
-    (i64.const 0)"#,
-    );
-    let t = e.load_template(&wasm).expect("template");
-    let mut i = activate(&e, &t);
-    assert_eq!(
-        i.dispatch(&http_dispatch(1), OccupancyBudget::default())
-            .completion,
-        Completion::Done,
-        "the dispatch completes"
-    );
-
-    let (ptr, len) = {
-        let m = i.memory();
-        (read_u32(m, 3000), read_u32(m, 3004))
-    };
-    assert_eq!(
-        (ptr, len),
-        (0, 0),
-        "there is no ambient environment, so the list is empty"
     );
 }
 
@@ -339,15 +152,29 @@ mod native_readiness {
             .completion
     }
 
+    fn send_operation() -> u32 {
+        isoplane_abi::native_io::canonical::DEFINITIONS
+            .iter()
+            .find(|definition| {
+                matches!(
+                    definition.action,
+                    isoplane_abi::native_io::canonical::Action::TrySendWithErrorCode
+                )
+            })
+            .expect("the canonical contract defines the detailed send bridge")
+            .id
+            .0
+    }
+
     fn send_bridge(answer: Result<u64, isoplane_abi::native_io::Error>) -> i64 {
         let engine = test_engine();
         let wasm = guest(2,
-            r#"(import "isoplane:native-sockets" "try-send-with-error-code" (func $send (param i32 i32 i32 i32) (result i64)))"#,
+            r#"(import "isoplane" "socket_call" (func $socket (param i32 i32 i32) (result i64)))"#,
             r#"(data (i32.const 2000) "abc")"#,
-            &format!("(i32.store (i32.const 3000) (i32.const 7)) (i64.store (i32.const 1000) (call $send (i32.const 3000) (i32.const 1) (i32.const 2000) (i32.const 3))) {DONE}"), DONE);
+            &format!("(i32.store (i32.const 3000) (i32.const 7)) (i64.store (i32.const 1100) (i64.const 3000)) (i64.store (i32.const 1108) (i64.const 1)) (i64.store (i32.const 1116) (i64.const 2000)) (i64.store (i32.const 1124) (i64.const 3)) (i64.store (i32.const 1000) (call $socket (i32.const {}) (i32.const 1100) (i32.const 4))) {DONE}", send_operation()), DONE);
         let template = engine
             .load_template(&wasm)
-            .expect("the socket bridge must remain admitted");
+            .expect("the socket import must validate");
         let mut instance = engine
             .activate(&template, Box::new(ReadyHost { send: Some(answer) }))
             .expect("the send fixture must activate");
@@ -407,31 +234,11 @@ mod native_readiness {
     }
 
     #[test]
-    fn readiness_permission_cannot_invoke_the_versioned_send_bridge() {
+    fn readiness_permission_cannot_invoke_the_send_bridge() {
         assert_eq!(
-            packet(
-                operation("isoplane_socket_try_send_with_error_code"),
-                1000,
-                4,
-                ""
-            ),
+            packet(send_operation(), 1000, 4, ""),
             Completion::Trapped,
             "a readiness-only packet must not acquire socket send authority"
-        );
-    }
-
-    #[test]
-    fn the_versioned_send_bridge_rejects_a_wrong_import_signature() {
-        let wasm = guest(
-            2,
-            r#"(import "isoplane:native-sockets" "try-send-with-error-code" (func $send (param i32) (result i64)))"#,
-            "",
-            DONE,
-            DONE,
-        );
-        assert!(
-            test_engine().load_template(&wasm).is_err(),
-            "the detailed send bridge must enforce its canonical signature"
         );
     }
 
@@ -451,17 +258,6 @@ mod native_readiness {
             Completion::Trapped,
             "a guest with only readiness permission must not obtain network authority"
         );
-    }
-
-    #[test]
-    fn readiness_permission_cannot_invoke_clock_capabilities() {
-        for symbol in ["monotonic_clock_now", "monotonic_clock_resolution"] {
-            assert_eq!(
-                packet(operation(symbol), 1000, 0, ""),
-                Completion::Trapped,
-                "{symbol} must require the clock capability rather than readiness permission"
-            );
-        }
     }
 
     #[test]

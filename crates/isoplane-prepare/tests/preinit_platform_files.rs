@@ -1,15 +1,17 @@
 #![forbid(unsafe_code)]
 //! A declared platform file is visible inside the init sandbox: a
 //! static initialiser that reads it bakes its bytes into the template,
-//! through the same `wasi:filesystem` imports wasi-libc uses.
+//! through the same `filesystem_call` packets the native wrappers send.
 
 use std::sync::Arc;
 
 use isoplane_abi::filesystem::{Operation, IMPORTS};
-use isoplane_abi::imports::Ty;
 use isoplane_engine::{PlatformFile, PlatformFiles};
 use isoplane_prepare::PreInitializer;
 use wasmtime as wt;
+
+#[path = "common/packets.rs"]
+mod packets;
 
 const BUNDLE: &[u8] = b"-----BEGIN CERTIFICATE-----\nMIIBinit\n-----END CERTIFICATE-----\n";
 const PATH: &str = "etc/ssl/certs/ca-certificates.crt";
@@ -29,24 +31,17 @@ fn declared() -> PlatformFiles {
 }
 
 /// A guest whose `isoplane_initialize` opens and reads the declared path through
-/// the raw `wasi:filesystem` imports and copies what it read to `COPY_AT`.
+/// filesystem packets and copies what it read to `COPY_AT`.
 fn guest() -> Vec<u8> {
-    let imports = IMPORTS
+    let imports = packets::FILESYSTEM_IMPORT;
+    let operations = IMPORTS
         .iter()
         .map(|definition| {
-            let signature = definition.pal.sig.expect("filesystem signature");
-            let types = signature
-                .params
-                .iter()
-                .map(|ty| match ty {
-                    Ty::I32 => "i32",
-                    Ty::I64 => "i64",
-                })
-                .collect::<Vec<_>>()
-                .join(" ");
-            format!(
-                "(import \"{}\" \"{}\" (func $fs{} (param {types})))",
-                definition.pal.module, definition.pal.func, definition.operation as u32
+            packets::function(
+                &format!("fs{}", definition.operation as u32),
+                "filesystem_call",
+                definition.operation as u32,
+                definition.sig,
             )
         })
         .collect::<Vec<_>>()
@@ -57,6 +52,7 @@ fn guest() -> Vec<u8> {
   (memory (export "memory") 4 4)
   (global $heap (mut i32) (i32.const 40000))
   (data (i32.const 2000) "{PATH}")
+  {operations}
   (func (export "cabi_realloc") (param i32 i32 i32) (param $size i32) (result i32)
     (local $p i32)
     (local.set $p (global.get $heap))

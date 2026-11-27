@@ -3,7 +3,7 @@
 
 use std::collections::BTreeSet;
 
-use isoplane_abi::pal::{self, Disposition, PalDef};
+use isoplane_abi::pal::{self, PalDef};
 use isoplane_abi::{config::ValidationLimits, imports};
 use wasmparser::{ExternalKind, TypeRef};
 
@@ -106,9 +106,8 @@ pub(super) fn check_imports(s: &Scan, v: &mut Vec<Violation>, policy: &Validatio
     }
 }
 
-/// A delegated entry runs a body against its declared type, so its
-/// signature is checked; a trap-on-call stub is generated from the module's
-/// own type and traps before it reads an argument.
+/// An adapter entry runs a body against its declared type, so its signature
+/// is checked.
 fn check_pal_import(p: &'static PalDef, ty: &TypeRef, s: &Scan, v: &mut Vec<Violation>) {
     let Some(idx) = func_type_index(ty) else {
         v.push(Violation::about(
@@ -123,29 +122,28 @@ fn check_pal_import(p: &'static PalDef, ty: &TypeRef, s: &Scan, v: &mut Vec<Viol
         return;
     };
 
-    if let (Disposition::Delegate(_), Some(want)) = (p.disposition, p.sig) {
-        match s.func_types.get(idx as usize) {
-            Some(Some((params, results))) if sig_matches(&want, params, results) => {}
-            Some(Some((params, results))) => {
-                v.push(Violation::about(
-                    ViolationCode::V1SignatureMismatch,
+    let want = p.sig();
+    match s.func_types.get(idx as usize) {
+        Some(Some((params, results))) if sig_matches(&want, params, results) => {}
+        Some(Some((params, results))) => {
+            v.push(Violation::about(
+                ViolationCode::V1SignatureMismatch,
+                p.full_name(),
+                format!(
+                    "`{}` has signature {}, but the PAL adapter delegates it with {} — a \
+                     delegated import runs a real body against its declared type, so half \
+                     a type check is not a type check",
                     p.full_name(),
-                    format!(
-                        "`{}` has signature {}, but the PAL adapter delegates it with {} — a \
-                         delegated import runs a real body against its declared type, so half \
-                         a type check is not a type check",
-                        p.full_name(),
-                        render_sig(params, results),
-                        render_want(&want)
-                    ),
-                ));
-            }
-            _ => {
-                v.push(Violation::new(
-                    ViolationCode::V1SignatureMismatch,
-                    format!("`{}` references non-function type {idx}", p.full_name()),
-                ));
-            }
+                    render_sig(params, results),
+                    render_want(&want)
+                ),
+            ));
+        }
+        _ => {
+            v.push(Violation::new(
+                ViolationCode::V1SignatureMismatch,
+                format!("`{}` references non-function type {idx}", p.full_name()),
+            ));
         }
     }
 }

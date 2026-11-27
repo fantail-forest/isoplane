@@ -294,11 +294,9 @@ impl Template {
 }
 
 #[test]
-fn the_initializer_preserves_both_filesystem_adapter_routes() {
+fn the_initializer_preserves_filesystem_adapter_results() {
     let wasm = wat::parse_str(format!(
         r#"(module
-      (import "wasi:filesystem/preopens@0.2.0" "get-directories" (func $directories (param i32)))
-      (import "wasi:filesystem/types@0.2.0" "[method]descriptor.stat" (func $stat (param i32 i32)))
       (import "isoplane" "filesystem_call" (func $filesystem (param i32 i32 i32)))
       (memory (export "memory") 1 16)
       (global $heap (mut i32) (i32.const 4096))
@@ -308,104 +306,39 @@ fn the_initializer_preserves_both_filesystem_adapter_routes() {
         (global.set $heap (i32.add (global.get $heap) (i32.const 128)))
         (local.get $p))
       (func (export "isoplane_initialize") (result i64)
-        (call $directories (i32.const 16))
-        (call $stat (i32.load (i32.load (i32.const 16))) (i32.const 128))
+        (i64.store (i32.const 512) (i64.const 16))
+        (call $filesystem (i32.const {directories}) (i32.const 512) (i32.const 1))
         (i64.store (i32.const 512) (i64.extend_i32_u (i32.load (i32.load (i32.const 16)))))
         (i64.store (i32.const 520) (i64.const 256))
-        (call $filesystem (i32.const {}) (i32.const 512) (i32.const 2)) i64.const 0)
+        (call $filesystem (i32.const {stat}) (i32.const 512) (i32.const 2)) i64.const 0)
       (func (export "isoplane_alloc") (param i32 i32) (result i32) (i32.const 2048))
       (func (export "isoplane_handle") (param i32 i32) (result i64) (i64.const 0))
       (func (export "isoplane_wake") (param i64 i32 i32) (result i64) (i64.const 0))
       (func (export "probe") (param $pointer i32) (result i64) (i64.load (local.get $pointer)))
     )"#,
-        isoplane_abi::filesystem::Operation::Stat as u32
+        directories = isoplane_abi::filesystem::Operation::Directories as u32,
+        stat = isoplane_abi::filesystem::Operation::Stat as u32
     ))
     .expect("filesystem initialization fixture must compile");
     let initialized = PreInitializer::new()
         .run(&wasm)
         .expect("deterministic filesystem probes must be admitted by initialization");
     let mut template = Template::load(&initialized.wasm);
-    for pointer in [128, 256] {
-        assert_eq!(
-            template.probe(pointer),
-            0,
-            "both adapter routes must return successful root metadata during initialization"
-        );
-        assert_eq!(
-            template.probe(pointer + 8),
-            3,
-            "the initializer must preserve the synthetic directory type"
-        );
-    }
+    assert_eq!(
+        template.probe(256),
+        0,
+        "the adapter must return successful root metadata during initialization"
+    );
+    assert_eq!(
+        template.probe(264),
+        3,
+        "the initializer must preserve the synthetic directory type"
+    );
     let repeated = PreInitializer::new()
         .run(&wasm)
         .expect("repeat filesystem initialization");
     assert_eq!(
         initialized.wasm, repeated.wasm,
         "filesystem initialization must not depend on a host directory or resource identity"
-    );
-}
-
-fn pal_init_guest(module: &str, function: &str, body: &str) -> Vec<u8> {
-    let source = guest_wat()
-        .replacen(
-            "(module",
-            &format!(r#"(module (import "{module}" "{function}" (func $pal_probe (param i32)))"#),
-            1,
-        )
-        .replace("(local $i i32)", &format!("(local $i i32) {body}"));
-    wat::parse_str(source).expect("the PAL initialization fixture must assemble")
-}
-
-#[test]
-fn initialization_receives_an_empty_launch_argument_list() {
-    let wasm = pal_init_guest(
-        isoplane_abi::pal::CLI_ENV,
-        "get-arguments",
-        r#"
-      (i64.store (i32.const 64) (i64.const -1))
-      (call $pal_probe (i32.const 64))
-      (if (i64.ne (i64.load (i32.const 64)) (i64.const 0)) (then unreachable))"#,
-    );
-    let output = PreInitializer::new()
-        .run(&wasm)
-        .expect("argument absence must also be supported during initialization");
-    assert_eq!(
-        output.initialized.pal_calls,
-        vec![
-            ("entropy_fill".to_owned(), 2),
-            (isoplane_abi::pal::CLI_ENV.to_owned(), 1)
-        ],
-        "the initialization ledger must record the delegated launch argument call beside the fixture's entropy draws"
-    );
-}
-
-#[test]
-fn initialization_rejects_an_invalid_argument_return_pointer() {
-    let wasm = pal_init_guest(
-        isoplane_abi::pal::CLI_ENV,
-        "get-arguments",
-        "(call $pal_probe (i32.const -1))",
-    );
-    assert!(
-        PreInitializer::new().run(&wasm).is_err(),
-        "the init adapter must reject a return record outside guest memory"
-    );
-}
-
-#[test]
-fn initialization_cannot_query_a_denied_wall_clock_resolution() {
-    let wasm = pal_init_guest(
-        isoplane_abi::pal::WALL_CLOCK,
-        "resolution",
-        "(call $pal_probe (i32.const 64))",
-    );
-    let error = PreInitializer::new()
-        .run(&wasm)
-        .err()
-        .expect("wall-clock resolution must remain denied during initialization");
-    assert!(
-        matches!(error, PreInitError::Trapped(_)),
-        "initialization must fail with a trapped denied operation: {error:#}"
     );
 }

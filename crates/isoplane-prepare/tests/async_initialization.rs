@@ -1,6 +1,8 @@
 #![cfg_attr(not(target_os = "linux"), forbid(unsafe_code))]
 
 mod common;
+#[path = "common/packets.rs"]
+mod packets;
 #[path = "common/provider.rs"]
 mod provider;
 
@@ -25,16 +27,17 @@ fn request() -> Initialization {
     request
 }
 
-fn import(symbol: &str, name: &str) -> String {
-    let definition = DEFINITIONS
+/// The WASI import the shared runtime declares for the operation `symbol`.
+fn wasi_import(symbol: &str, name: &str) -> String {
+    let import = isoplane_abi::pal::PAL_IMPORTS
         .iter()
-        .find(|definition| definition.symbol == symbol)
+        .find(|import| import.operation.symbol == symbol)
         .unwrap();
-    let signature = definition.pal.sig.unwrap();
     let ty = |ty: &Ty| match ty {
         Ty::I32 => "i32",
         Ty::I64 => "i64",
     };
+    let signature = import.sig();
     let parameters = signature
         .params
         .iter()
@@ -49,8 +52,24 @@ fn import(symbol: &str, name: &str) -> String {
         .join(" ");
     format!(
         r#"(import "{}" "{}" (func ${name} (param {parameters}) (result {results})))"#,
-        definition.pal.module, definition.pal.func
+        import.module, import.func
     )
+}
+
+/// The socket import and a function `$name` for each socket operation `symbol`.
+fn socket_functions(operations: &[(&str, &str)]) -> String {
+    let functions = operations
+        .iter()
+        .map(|(symbol, name)| {
+            let definition = DEFINITIONS
+                .iter()
+                .find(|definition| definition.symbol == *symbol)
+                .unwrap();
+            packets::function(name, "socket_call", definition.id.0, definition.sig)
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("{}\n{functions}", packets::SOCKET_IMPORT)
 }
 
 fn asynchronous_guest(imports: &str, init: &str, wake: &str) -> Vec<u8> {
@@ -69,8 +88,8 @@ fn asynchronous_guest(imports: &str, init: &str, wake: &str) -> Vec<u8> {
 fn timer_guest() -> Vec<u8> {
     let imports = format!(
         "{} {}",
-        import("monotonic_clock_subscribe_duration", "timer"),
-        import("poll_pollable_drop", "drop_timer")
+        wasi_import("monotonic_clock_subscribe_duration", "timer"),
+        wasi_import("poll_pollable_drop", "drop_timer")
     );
     asynchronous_guest(&imports,
         "(i32.store (i32.const 64) (call $timer (i64.const 1000000))) (i64.const 1)",
@@ -138,7 +157,7 @@ fn a_pending_initializer_without_a_host_wake_source_is_refused() {
 #[test]
 fn a_completed_initializer_cannot_capture_a_retained_native_socket() {
     let wasm = common::guest(
-        &import("tcp_create_socket_create_tcp_socket", "create"),
+        &socket_functions(&[("tcp_create_socket_create_tcp_socket", "create")]),
         "(call $create (i32.const 0) (i32.const 64))",
     );
     let result = initialize(&common::engine(), &wasm, &request());
@@ -152,10 +171,10 @@ fn a_completed_initializer_cannot_capture_a_retained_native_socket() {
 fn a_refused_capture_carries_the_guests_warnings_without_its_routine_logs() {
     let wasm = common::guest(
         &format!(
-            r#"{} (import "isoplane" "log_emit" (func $log (param i32 i32 i32)))
+            r#"(import "isoplane" "log_emit" (func $log (param i32 i32 i32))) {}
             (data (i32.const 128) "entering the initializer")
             (data (i32.const 192) "the cache client is still connected")"#,
-            import("tcp_create_socket_create_tcp_socket", "create")
+            socket_functions(&[("tcp_create_socket_create_tcp_socket", "create")])
         ),
         r#"(call $log (i32.const 1) (i32.const 128) (i32.const 24))
         (call $log (i32.const 3) (i32.const 192) (i32.const 35))
@@ -177,16 +196,12 @@ fn a_refused_capture_carries_the_guests_warnings_without_its_routine_logs() {
 }
 
 fn socket_imports() -> String {
-    [
+    socket_functions(&[
         ("instance_network_instance_network", "network"),
         ("tcp_create_socket_create_tcp_socket", "create"),
         ("tcp_method_tcp_socket_start_connect", "connect"),
         ("tcp_tcp_socket_drop", "drop_socket"),
-    ]
-    .iter()
-    .map(|(symbol, name)| import(symbol, name))
-    .collect::<Vec<_>>()
-    .join("\n")
+    ])
 }
 
 #[test]

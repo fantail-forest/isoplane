@@ -197,39 +197,19 @@ impl isoplane_engine::bindings::InitializationBindings for NativeInitialization 
 }
 
 #[test]
-fn offline_initialization_reads_the_frozen_coarse_clock_through_wasi() {
-    check_offline_clock(
-        "now",
-        r#"
-        (i64.store (i32.const 8) (call $clock_now_coarse))
-        (i64.store (i32.const 16) (call $wasi_clock))
-        (drop (call $burn (i32.const 200000)))
-        (i64.store (i32.const 24) (call $wasi_clock))
-        (i64.store (i32.const 32) (call $clock_now_coarse))"#,
-        &[1_234, 1_234_000_000, 1_234_000_000, 1_234],
-    );
-}
-
-#[test]
-fn offline_initialization_reports_the_coarse_clock_resolution() {
-    check_offline_clock(
-        "resolution",
-        "(i64.store (i32.const 8) (call $wasi_clock))",
-        &[isoplane_abi::pal::CLOCK_QUANTUM_NS],
-    );
-}
-
-fn check_offline_clock(function: &str, body: &str, expected: &[i64]) {
+fn offline_initialization_reads_the_frozen_coarse_clock() {
     let engine = test_engine();
-    let imports = format!(
-        r#"(import "wasi:clocks/monotonic-clock@0.2.0" "{function}" (func $wasi_clock (result i64)))
-        (import "isoplane" "clock_now_coarse" (func $clock_now_coarse (result i64)))"#
+    let body = r#"(func (export "isoplane_initialize") (result i64)
+        (i64.store (i32.const 8) (call $clock_now_coarse))
+        (drop (call $burn (i32.const 200000)))
+        (i64.store (i32.const 16) (call $clock_now_coarse)) i64.const 0)"#;
+    let wasm = guest(
+        4,
+        &import("clock_now_coarse", "", "(result i64)"),
+        body,
+        DONE,
+        DONE,
     );
-    let body = format!(
-        r#"(func (export "isoplane_initialize") (result i64)
-        {body} i64.const 0)"#
-    );
-    let wasm = guest(4, &imports, &body, DONE, DONE);
     let template = engine.load_template(&wasm).expect("admitted clock import");
     let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let mut instance = engine
@@ -245,18 +225,19 @@ fn check_offline_clock(function: &str, body: &str, expected: &[i64]) {
     assert_eq!(
         outcome.completion,
         Completion::Done,
-        "offline initialization must admit WASI clock {function}: {:?}",
+        "offline initialization must admit the coarse clock: {:?}",
         outcome.trap
     );
-    let actual: Vec<_> = instance.memory()[8..8 + expected.len() * 8]
+    let actual: Vec<_> = instance.memory()[8..24]
         .as_chunks::<8>()
         .0
         .iter()
         .map(|bytes| i64::from_le_bytes(*bytes))
         .collect();
     assert_eq!(
-        actual, expected,
-        "the WASI clock must retain coarse fidelity"
+        actual,
+        [1_234, 1_234],
+        "the clock must stay frozen across guest computation"
     );
     assert_eq!(instance.last_capability_violation(), None);
     assert_eq!(
@@ -267,37 +248,40 @@ fn check_offline_clock(function: &str, body: &str, expected: &[i64]) {
 }
 
 fn check_raw_native_initialization(permits_io: bool, permitted: bool) {
+    use isoplane_abi::native_io::canonical::{Action, DEFINITIONS};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
-    for (module, function, parameters, argument, capability) in [
+    let operation = |wanted: fn(&Action) -> bool| {
+        DEFINITIONS
+            .iter()
+            .find(|definition| wanted(&definition.action))
+            .expect("the native contract defines the operation")
+            .id
+            .0
+    };
+    let network = operation(|action| matches!(action, Action::Network));
+    let deadline = operation(|action| matches!(action, Action::Timer { absolute: true }));
+    for (imports, call, capability) in [
         (
-            "wasi:sockets/instance-network@0.2.0",
-            "instance-network",
-            "",
-            "",
+            r#"(import "isoplane" "socket_call" (func $native (param i32 i32 i32) (result i64)))"#.to_owned(),
+            format!("(call $native (i32.const {network}) (i32.const 64) (i32.const 0))"),
             "socket_call",
         ),
         (
-            "wasi:clocks/monotonic-clock@0.2.0",
-            "subscribe-duration",
-            "(param i64)",
-            "(i64.const 0)",
+            r#"(import "wasi:clocks/monotonic-clock@0.2.0" "subscribe-duration" (func $native (param i64) (result i32)))"#.to_owned(),
+            "(call $native (i64.const 0))".to_owned(),
             "poll_call",
         ),
         (
-            "wasi:clocks/monotonic-clock@0.2.0",
-            "subscribe-instant",
-            "(param i64)",
-            "(i64.const 0)",
+            r#"(import "isoplane" "poll_call" (func $native (param i32 i32 i32) (result i64)))"#.to_owned(),
+            format!("(call $native (i32.const {deadline}) (i32.const 64) (i32.const 1))"),
             "poll_call",
         ),
     ] {
         let engine = test_engine();
-        let imports =
-            format!(r#"(import "{module}" "{function}" (func $native {parameters} (result i32)))"#);
         let body = format!(
             r#"(func (export "isoplane_initialize") (result i64)
-            (drop (call $native {argument})) i64.const 0)"#
+            (drop {call}) i64.const 0)"#
         );
         let wasm = guest(4, &imports, &body, DONE, DONE);
         let template = engine

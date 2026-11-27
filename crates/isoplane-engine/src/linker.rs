@@ -19,6 +19,9 @@ pub(crate) fn build_linker(engine: &Engine) -> Result<Linker<StoreState>> {
     for def in IMPORTS {
         define(&mut l, def).with_context(|| format!("defining import `{}`", def.name))?;
     }
+    crate::pal::define_imports(&mut l)
+        .map_err(wasmtime::Error::from_anyhow)
+        .context("defining the WASI imports")?;
     Ok(l)
 }
 

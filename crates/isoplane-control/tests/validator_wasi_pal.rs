@@ -6,19 +6,15 @@ use isoplane_control::validator::ViolationCode as V;
 mod validate;
 use validate::{assert_violates, codes, parse, validate, REQUIRED_EXPORTS};
 
-/// A module with canonical WASI imports: a handful of `isoplane`
-/// imports plus the `wasi:*` residue the toolchain leaves behind. The four
-/// `wasi` entries here are the ones the adapter delegates; `output-stream.blocking-flush`
-/// stands in for the trap-on-call remainder.
+/// A module with the canonical WASI imports the shared runtime declares
+/// beside its `isoplane` imports.
 fn wasi_wat() -> String {
     format!(
         r#"(module
   (import "isoplane" "log_emit" (func $log (param i32 i32 i32)))
-  (import "wasi:cli/environment@0.2.0"    "get-environment"  (func $env  (param i32)))
-  (import "wasi:clocks/monotonic-clock@0.2.0" "now"          (func $now  (result i64)))
-  (import "wasi:clocks/monotonic-clock@0.2.0" "resolution"   (func $res  (result i64)))
-  (import "wasi:random/random@0.2.0"      "get-random-bytes" (func $rand (param i64 i32)))
-  (import "wasi:io/streams@0.2.0" "[method]output-stream.blocking-flush" (func $flush (param i32 i32)))
+  (import "wasi:clocks/monotonic-clock@0.2.0" "subscribe-duration" (func $timer (param i64) (result i32)))
+  (import "wasi:io/poll@0.2.0" "poll" (func $poll (param i32 i32 i32)))
+  (import "wasi:io/poll@0.2.0" "[resource-drop]pollable" (func $drop (param i32)))
   {REQUIRED_EXPORTS}
 )"#
     )
@@ -26,7 +22,7 @@ fn wasi_wat() -> String {
 
 /// **The rule.** A module whose non-`isoplane` imports are all in the enumerated
 /// whitelist deploys — that is the whole point of the adapter, and the
-/// thing that lets a stock .NET module pass V1 without an exemption.
+/// thing that lets the shared runtime pass V1 without an exemption.
 #[test]
 fn v1_accepts_a_module_whose_wasi_imports_are_all_whitelisted() {
     let wasm = parse(&wasi_wat());
@@ -36,17 +32,17 @@ fn v1_accepts_a_module_whose_wasi_imports_are_all_whitelisted() {
 
 /// **The negative control for that rule.** The whitelist is keyed by
 /// `(interface, function)`, not by interface — otherwise admitting
-/// `wasi:random/random` for `get-random-bytes` would silently admit every
-/// other function in the same interface, and an enumerated whitelist that
-/// enumerates interfaces is not an enumerated whitelist.
+/// `wasi:io/poll` for `poll` would silently admit every other function in
+/// the same interface, and an enumerated whitelist that enumerates
+/// interfaces is not an enumerated whitelist.
 #[test]
 fn v1_rejects_a_wasi_import_outside_the_whitelist() {
-    // A different function in an interface we DO admit.
+    // A different function in an interface we DO admit: a wait inside a call.
     assert_violates(
         "same-interface-different-function",
         &wasi_wat().replace(
-            r#""get-random-bytes" (func $rand (param i64 i32))"#,
-            r#""get-insecure-random-bytes" (func $rand (param i64 i32))"#,
+            r#""poll" (func $poll (param i32 i32 i32))"#,
+            r#""[method]pollable.block" (func $poll (param i32))"#,
         ),
         isoplane_abi::config::GuestMemoryBytes::default(),
         V::V1UndeclaredImport,
@@ -55,8 +51,8 @@ fn v1_rejects_a_wasi_import_outside_the_whitelist() {
     assert_violates(
         "near-miss-name",
         &wasi_wat().replace(
-            r#""now"          (func $now  (result i64))"#,
-            r#""now-fine"     (func $now  (result i64))"#,
+            r#""subscribe-duration" (func $timer (param i64) (result i32))"#,
+            r#""subscribe-durations" (func $timer (param i64) (result i32))"#,
         ),
         isoplane_abi::config::GuestMemoryBytes::default(),
         V::V1UndeclaredImport,
@@ -66,8 +62,8 @@ fn v1_rejects_a_wasi_import_outside_the_whitelist() {
     assert_violates(
         "wasi-preview1",
         &wasi_wat().replace(
-            r#"(import "wasi:cli/environment@0.2.0"    "get-environment"  (func $env  (param i32)))"#,
-            r#"(import "wasi_snapshot_preview1" "fd_write" (func $env (param i32)))"#,
+            r#"(import "wasi:io/poll@0.2.0" "[resource-drop]pollable" (func $drop (param i32)))"#,
+            r#"(import "wasi_snapshot_preview1" "fd_write" (func $drop (param i32)))"#,
         ),
         isoplane_abi::config::GuestMemoryBytes::default(),
         V::V1UndeclaredImport,
@@ -76,111 +72,49 @@ fn v1_rejects_a_wasi_import_outside_the_whitelist() {
     // the 0.2.0 canonical-ABI lowering; 0.3.0 is a different contract.
     assert_violates(
         "wasi-0.3.0",
-        &wasi_wat().replace("wasi:random/random@0.2.0", "wasi:random/random@0.3.0"),
+        &wasi_wat().replace("wasi:io/poll@0.2.0", "wasi:io/poll@0.3.0"),
         isoplane_abi::config::GuestMemoryBytes::default(),
         V::V1UndeclaredImport,
     );
 }
 
-/// A *delegated* import gets a real body run against its declared type, so
-/// its shape is checked like any `isoplane` import. Half a type check is not a
+/// A WASI import gets a real body run against its declared type, so its
+/// shape is checked like any `isoplane` import. Half a type check is not a
 /// type check — and here it would be a type confusion in host code.
 #[test]
 fn v1_checks_the_signature_of_a_delegated_wasi_import() {
     assert_violates(
-        "delegated-wrong-signature",
+        "delegated-wrong-parameter",
         &wasi_wat().replace(
-            r#""get-random-bytes" (func $rand (param i64 i32))"#,
-            r#""get-random-bytes" (func $rand (param i32 i32))"#,
+            r#""subscribe-duration" (func $timer (param i64) (result i32))"#,
+            r#""subscribe-duration" (func $timer (param i32) (result i32))"#,
         ),
         isoplane_abi::config::GuestMemoryBytes::default(),
         V::V1SignatureMismatch,
     );
     assert_violates(
-        "delegated-clock-wrong-signature",
+        "delegated-wrong-result",
         &wasi_wat().replace(
-            r#""now"          (func $now  (result i64))"#,
-            r#""now"          (func $now  (result i32))"#,
+            r#""poll" (func $poll (param i32 i32 i32))"#,
+            r#""poll" (func $poll (param i32 i32 i32) (result i32))"#,
         ),
         isoplane_abi::config::GuestMemoryBytes::default(),
         V::V1SignatureMismatch,
     );
 }
 
-/// **The negative control for the signature rule.** A trap-on-call stub
-/// is generated from the module's own declared type and traps before reading
-/// an argument, so its shape is genuinely irrelevant — pinning one would be a
-/// check that breaks the first time a toolchain lowers the same function
-/// differently, for no security gain. This test exists so that the asymmetry
-/// is deliberate rather than an oversight.
-#[test]
-fn v1_does_not_pin_the_signature_of_a_trap_on_call_stub() {
-    let wat = wasi_wat().replace(
-        r#""[method]output-stream.blocking-flush" (func $flush (param i32 i32))"#,
-        r#""[method]output-stream.blocking-flush" (func $flush (param i32 i32 i32 i32) (result i32))"#,
-    );
-    validate(
-        &parse(&wat),
-        isoplane_abi::config::GuestMemoryBytes::default(),
-    )
-    .expect("a trap-on-call stub is shape-agnostic");
-}
-
-/// Importing a *memory* under a whitelisted WASI name is not a function
+/// Importing a *global* under a whitelisted WASI name is not a function
 /// import and must not slip through the composition path (no host
 /// objects inside the sandbox).
 #[test]
 fn v1_rejects_a_non_function_wasi_import() {
     let wat = wasi_wat().replace(
-        r#"(import "wasi:clocks/monotonic-clock@0.2.0" "now"          (func $now  (result i64)))"#,
-        r#"(import "wasi:clocks/monotonic-clock@0.2.0" "now" (global i64))"#,
+        r#"(import "wasi:clocks/monotonic-clock@0.2.0" "subscribe-duration" (func $timer (param i64) (result i32)))"#,
+        r#"(import "wasi:clocks/monotonic-clock@0.2.0" "subscribe-duration" (global i64))"#,
     );
     let got = codes(
         &parse(&wat),
         isoplane_abi::config::GuestMemoryBytes::default(),
     );
     assert!(got.contains(&V::V1SignatureMismatch), "got {got:?}");
-}
-
-#[test]
-fn a_native_socket_delegation_requires_its_full_canonical_signature() {
-    assert_violates(
-        "native-socket-wrong-signature",
-        &wasi_wat().replace(
-            r#"(import "wasi:io/streams@0.2.0" "[method]output-stream.blocking-flush" (func $flush (param i32 i32)))"#,
-            r#"(import "wasi:sockets/tcp@0.2.0" "[method]tcp-socket.start-connect" (func $c (param i32 i32)))"#,
-        ),
-        isoplane_abi::config::GuestMemoryBytes::default(),
-        V::V1SignatureMismatch,
-    );
-}
-
-#[test]
-fn launch_arguments_validate_only_with_the_canonical_return_area_signature() {
-    let source = wasi_wat().replace("get-environment", "get-arguments");
-    validate(
-        &parse(&source),
-        isoplane_abi::config::GuestMemoryBytes::default(),
-    )
-    .expect("empty launch arguments must be declared");
-    assert_violates(
-        "arguments-wrong-return-area",
-        &source.replace("(func $env  (param i32))", "(func $env  (param i64))"),
-        isoplane_abi::config::GuestMemoryBytes::default(),
-        V::V1SignatureMismatch,
-    );
-}
-
-#[test]
-fn wall_clock_resolution_is_admitted_as_a_denial() {
-    let source = format!(
-        r#"(module
-      (import "wasi:clocks/wall-clock@0.2.0" "resolution" (func (param i32)))
-      {REQUIRED_EXPORTS})"#
-    );
-    validate(
-        &parse(&source),
-        isoplane_abi::config::GuestMemoryBytes::default(),
-    )
-    .expect("a declared denial must validate");
 }

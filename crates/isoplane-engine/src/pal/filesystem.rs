@@ -9,6 +9,7 @@ use isoplane_abi::filesystem::{Definition, Operation, IMPORTS, MAX_ARGUMENTS};
 use isoplane_abi::imports::MAX_OUT_BUFFER_BYTES;
 
 use super::platform_files::{LookupError, Node, NodeKind, PlatformFile, PlatformFiles};
+use crate::state::StoreState;
 
 const DESCRIPTOR: u32 = 0x77534601;
 const DIRECTORY_STREAM: u32 = 0x77534602;
@@ -58,15 +59,11 @@ pub fn packet(
         .iter()
         .find(|definition| definition.operation as u32 == operation)
         .ok_or_else(|| anyhow::anyhow!("unknown filesystem operation {operation}"))?;
-    let signature = definition
-        .pal
-        .sig
-        .ok_or_else(|| anyhow::anyhow!("filesystem operation has no signature"))?;
     ensure!(
-        count as usize == signature.params.len(),
+        count as usize == definition.sig.params.len(),
         "filesystem operation {} expected {} arguments, received {count}",
-        definition.pal.func,
-        signature.params.len()
+        definition.name,
+        definition.sig.params.len()
     );
     let mut arguments = [0u64; MAX_ARGUMENTS];
     for (index, argument) in arguments.iter_mut().take(count as usize).enumerate() {
@@ -272,23 +269,15 @@ fn result_layout(operation: Operation) -> (usize, usize) {
     }
 }
 
-/// Execute an admitted canonical filesystem call. All state changes affect only guest bytes.
+/// Execute a canonical filesystem call. All state changes affect only guest bytes.
 /// Invalid descriptors precede path lookup; mutations fail read-only before lookup.
-pub fn call(
+fn call(
     files: &PlatformFiles,
     memory: &mut impl Memory,
     definition: &Definition,
     arguments: &[u64],
 ) -> Result<()> {
     use Operation::*;
-    let signature = definition
-        .pal
-        .sig
-        .ok_or_else(|| anyhow::anyhow!("filesystem signature is missing"))?;
-    ensure!(
-        arguments.len() == signature.params.len(),
-        "filesystem canonical argument count is wrong"
-    );
     let operation = definition.operation;
     let arg = |index: usize| arguments[index] as u32;
     if operation == Directories {
@@ -413,9 +402,9 @@ pub fn call(
 }
 
 /// Memory adapter for the execution engine's Wasmtime caller.
-pub struct CallerMemory<'a, 'b, T: 'static>(pub &'a mut wasmtime::Caller<'b, T>);
+pub(crate) struct CallerMemory<'a, 'b>(pub &'a mut wasmtime::Caller<'b, StoreState>);
 
-impl<T: 'static> CallerMemory<'_, '_, T> {
+impl CallerMemory<'_, '_> {
     fn memory(&mut self) -> Result<wasmtime::Memory> {
         self.0
             .get_export("memory")
@@ -424,7 +413,7 @@ impl<T: 'static> CallerMemory<'_, '_, T> {
     }
 }
 
-impl<T: 'static> Memory for CallerMemory<'_, '_, T> {
+impl Memory for CallerMemory<'_, '_> {
     fn read(&mut self, pointer: u32, bytes: &mut [u8]) -> Result<()> {
         self.memory()?.read(&*self.0, pointer as usize, bytes)?;
         Ok(())

@@ -85,9 +85,6 @@ impl IsoplaneEngine {
         image: MemoryImage,
     ) -> Result<Template> {
         let filesystem_files = state.filesystem(&self.inner.cfg.platform_files)?;
-        let pal_linker = self
-            .template_linker(&native.module)
-            .map_err(PreparedError::Engine)?;
         Ok(Template {
             hash: ModuleHash(manifest.module_hash),
             abi_rev: manifest.abi_rev,
@@ -99,7 +96,6 @@ impl IsoplaneEngine {
                 application_files: state.application_files,
                 filesystem_files,
                 native,
-                pal_linker,
                 image: Arc::new(image),
                 memory_pages: state.memory_pages,
                 prepared_resources: state.prepared_resources,
