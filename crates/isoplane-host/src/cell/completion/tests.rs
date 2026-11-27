@@ -222,8 +222,20 @@ pub(in crate::cell) fn panic_activator(module: ModuleId) -> Arc<dyn Activator> {
 fn completion_events_keep_queue_and_park_wall_separate_from_hot_occupancy() {
     let cell = cell(CellConfig {
         exec_threads: 0,
+        reactor_threads: 1,
         ..crate::fakes::cell_config("completion-clock")
     });
+    let (release_reactor, released) = std::sync::mpsc::channel::<()>();
+    let (holding, reactor_held) = std::sync::mpsc::sync_channel(0);
+    cell.rt.reactor.spawn(async move {
+        holding.send(()).expect("the test waits for the hold");
+        released
+            .recv()
+            .expect_err("the hold ends when the test drops its sender");
+    });
+    reactor_held
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the reactor's one thread is held");
     let now = Arc::new(AtomicU64::new(100));
     let clock = now.clone();
     *cell.completion_clock.write() = Arc::new(move || Some(clock.load(Ordering::SeqCst)));
@@ -304,6 +316,7 @@ fn completion_events_keep_queue_and_park_wall_separate_from_hot_occupancy() {
             .expect("total occupancy"),
         "canonical reporting must not double-count slices"
     );
+    drop(release_reactor);
     cell.shutdown();
 }
 
