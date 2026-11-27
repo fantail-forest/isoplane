@@ -125,10 +125,11 @@ if test -n "$EXPECTED_SDK_VERSION"; then
     test "$(dotnet --version)" = "$EXPECTED_SDK_VERSION"
 fi
 dotnet tool install --global Isoplane.Cli --version "$RELEASE_VERSION" --add-source /release/packages
-test "$(isoplane --version)" = "isoplane $RELEASE_VERSION+$RELEASE_REVISION"
+# Telemetry commands record nothing, and turning it off first keeps the journey's own runs out of it.
 isoplane telemetry status | grep -q '^Telemetry is enabled\.'
 isoplane telemetry disable
 isoplane telemetry status | grep -q '^Telemetry is disabled\.'
+test "$(isoplane --version)" = "isoplane $RELEASE_VERSION+$RELEASE_REVISION"
 isoplane setup --source /release --yes
 isoplane doctor | grep -q '^Debugging is available'
 # With the library setup downloaded, the adapter serves until its input ends.

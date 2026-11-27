@@ -19,6 +19,8 @@ export TMPDIR
 export DOTNET_CLI_HOME=$workspace
 export ISOPLANE_HOME=$workspace/installation
 export NUGET_PACKAGES=$workspace/packages
+# The released CLI this installs sends telemetry; the journey's runs stay out of it.
+export ISOPLANE_TELEMETRY_OPTOUT=1
 cli=$workspace/tools/isoplane
 customer_file=$ISOPLANE_HOME/customer-owned.txt
 

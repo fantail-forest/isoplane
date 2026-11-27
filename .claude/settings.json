@@ -1,0 +1,5 @@
+{
+  "env": {
+    "ISOPLANE_TELEMETRY_OPTOUT": "1"
+  }
+}
