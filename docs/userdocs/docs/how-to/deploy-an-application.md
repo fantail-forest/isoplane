@@ -21,7 +21,12 @@ the host does not invoke a project build or require the source files.
 
 ## Configure the host
 
-On Linux, install the `isoplaned` binary and the matching SDK runtime files. The node archive
+`isoplaned` runs on Linux only. It starts instances from prepared templates
+using memory-management facilities that only Linux provides, so it is not built
+for macOS or Windows for now. The SDK and the `isoplane` command run on all
+three; see [Install](install.md).
+
+Install the `isoplaned` binary and the matching SDK runtime files. The node archive
 contains the binary, a `runtimes` directory, license notices, checksums, and an optional systemd
 service installer. The CLI commands below require `isoplaned` on PATH and must run
 as the same operating-system user that owns the host's state.

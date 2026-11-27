@@ -366,7 +366,6 @@ mod tests {
         use isoplane_host::LifecycleTier;
 
         let mut directory_builder = tempfile::Builder::new();
-        #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             directory_builder.permissions(std::fs::Permissions::from_mode(0o700));

@@ -5,7 +5,6 @@ use std::path::Path;
 use isoplane_abi::config::AppManifest;
 use isoplane_control::DeployOptions;
 
-#[cfg(target_os = "linux")]
 mod baseline;
 mod settings;
 
@@ -15,7 +14,6 @@ const BASELINE_FILE: &str = "baseline";
 /// Prepares immutable local artifacts without retaining deployment history.
 pub struct Deployer {
     root: std::path::PathBuf,
-    #[cfg(target_os = "linux")]
     baselines: baseline::Baselines,
 }
 
@@ -25,7 +23,6 @@ impl Deployer {
         isoplane_control::private_files::directory(root)?;
         Ok(Deployer {
             root: root.to_path_buf(),
-            #[cfg(target_os = "linux")]
             baselines: baseline::Baselines::default(),
         })
     }
@@ -174,7 +171,6 @@ impl Deployer {
             .map_err(|_| anyhow::anyhow!("prepared manifest SHA256 must be 32 bytes"))?;
         let artifact = self.root.join(&receipt.artifact_key.0);
         let runtime_profile = receipt.runtime_profile.digest()?;
-        #[cfg(target_os = "linux")]
         if let Some(name) = baseline::named_by(&artifact)? {
             let base = self.base(engine, &name, runtime_profile)?;
             // SAFETY: as below; the base is a published baseline this deployer never modifies.
@@ -210,7 +206,6 @@ impl Deployer {
             .admit_request(manifest, wasm, options, context, producer)
             .await?;
         let (product, artifact, baseline): (_, _, Option<String>) = match producer {
-            #[cfg(target_os = "linux")]
             Producer::SharedRuntime => {
                 anyhow::ensure!(
                     report.has_initialize()
@@ -236,24 +231,6 @@ impl Deployer {
             }
             #[cfg(feature = "rust-guests")]
             Producer::SelfContained => {
-                let product = context
-                    .provider
-                    .prepare(wasm, &request, context.cancellation)
-                    .await?;
-                // SAFETY: native output comes only from the selected trusted producer, never a bundle.
-                let artifact = unsafe {
-                    context
-                        .engine
-                        .decode_builder_output(product.prepared_bytes(), identity)
-                }?;
-                (product, artifact, None)
-            }
-            #[cfg(not(target_os = "linux"))]
-            Producer::SharedRuntime => {
-                anyhow::ensure!(
-                    report.has_initialize(),
-                    "installed runtime needs application initialization"
-                );
                 let product = context
                     .provider
                     .prepare(wasm, &request, context.cancellation)

@@ -139,7 +139,7 @@ impl RuntimeSettingsSource for LocalFiles {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use isoplane_control::private_files::PrivateFileError;

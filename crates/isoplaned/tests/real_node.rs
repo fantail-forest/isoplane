@@ -3,7 +3,6 @@
 mod common;
 #[path = "real_node/egress.rs"]
 mod egress;
-#[cfg(target_os = "linux")]
 #[path = "real_node/mapped_storage.rs"]
 mod mapped_storage;
 #[path = "real_node/prepared_deploy.rs"]
@@ -457,6 +456,5 @@ mod bodyless;
 #[path = "real_node/app_identity.rs"]
 mod app_identity;
 
-#[cfg(target_os = "linux")]
 #[path = "real_node/local_installation.rs"]
 mod local_installation;

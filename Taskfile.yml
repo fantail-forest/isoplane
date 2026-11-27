@@ -43,6 +43,9 @@ vars:
   TEST_HOME: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/test-home'
   TEST_COMPILED_RUNTIME: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/test-compiled-runtime'
 
+  # isoplaned builds for Linux only, so on another platform the workspace leaves it out.
+  RUST_WORKSPACE: '--workspace{{if ne OS "linux"}} --exclude isoplaned{{end}}'
+
   MODULES: '{{.ISOPLANE_TEST_RUNTIME_MODULES | default (printf "%s/.build/wasm32/runtime-modules" .ROOT_DIR)}}'
   FEED: '{{.ISOPLANE_TEST_RUNTIME_FEED | default (printf "%s/.build/wasm32/runtime/feed" .ROOT_DIR)}}'
 
@@ -114,7 +117,7 @@ tasks:
     desc: Build every Rust crate, test and example for this platform
     deps: [initialize]
     cmds:
-      - '{{.DEVELOPMENT_COMMAND}}cargo build --workspace --all-targets {{.CLI_ARGS}}'
+      - '{{.DEVELOPMENT_COMMAND}}cargo build {{.RUST_WORKSPACE}} --all-targets {{.CLI_ARGS}}'
 
   lint:
     desc: Run Clippy on all targets with the arguments after --, such as -p <name>
@@ -126,7 +129,7 @@ tasks:
     desc: The full Rust lint gate, lint and then lint:shipped, each given the arguments after --
     cmds:
       - task: lint
-        vars: {CLI_ARGS: '{{.CLI_ARGS}}'}
+        vars: {CLI_ARGS: '{{.RUST_WORKSPACE}} {{.CLI_ARGS}}'}
       - task: lint:shipped
         vars: {CLI_ARGS: '{{.CLI_ARGS}}'}
 
@@ -134,7 +137,7 @@ tasks:
     desc: Lint the shipped packages as a release builds them, without their tests
     deps: [initialize]
     vars:
-      SHIPPED: '{{.SHIPPED | default "isoplane-native isoplaned"}}'
+      SHIPPED: '{{if .SHIPPED}}{{.SHIPPED}}{{else}}isoplane-native{{if eq OS "linux"}} isoplaned{{end}}{{end}}'
     cmds:
       # Without the tests, and so without the `test-util` and `rust-guests` features the
       # tests turn on: code only those features reach is dead here.
@@ -154,6 +157,7 @@ tasks:
 
   daemon:
     desc: Run isoplaned with the arguments after --
+    platforms: [linux]
     deps: [initialize]
     cmds:
       - '{{.DEVELOPMENT_COMMAND}}cargo run -p isoplaned -- {{.CLI_ARGS}}'

@@ -1,19 +1,13 @@
 //! Measures mapped loads of portable WASM compiled by this invocation.
 //! JSON input supplies the module path, optional engine configuration and iteration count.
 
-#[cfg(target_os = "linux")]
 mod linux;
 
-#[cfg(target_os = "linux")]
 use isoplane_engine::prepared::{PreparedIdentity, PreparedPayload, ReadAhead};
-#[cfg(target_os = "linux")]
 use serde::Deserialize;
-#[cfg(target_os = "linux")]
 use std::io::Read;
-#[cfg(target_os = "linux")]
 use std::time::Instant;
 
-#[cfg(target_os = "linux")]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Input {
@@ -24,16 +18,6 @@ struct Input {
 }
 
 fn main() -> anyhow::Result<()> {
-    measure()
-}
-
-#[cfg(not(target_os = "linux"))]
-fn measure() -> anyhow::Result<()> {
-    anyhow::bail!("verified file-cache eviction measurement requires Linux")
-}
-
-#[cfg(target_os = "linux")]
-fn measure() -> anyhow::Result<()> {
     let mut input = Vec::new();
     std::io::stdin()
         .take(1024 * 1024 + 1)
