@@ -230,7 +230,6 @@ pub(super) mod cell_tests {
                 headers: vec![],
                 body: vec![],
             }),
-            trace: TraceContext::default(),
             cancel_future: 0,
             occupancy_budget_ms: 1_000,
             pending_futures_limit: 64,

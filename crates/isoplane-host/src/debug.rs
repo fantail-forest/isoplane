@@ -293,7 +293,7 @@ mod tests {
     use super::*;
     use crate::{CellBindings, InstanceId};
 
-    use isoplane_abi::dispatch::{DispatchKind, HttpRequest, TraceContext};
+    use isoplane_abi::dispatch::{DispatchKind, HttpRequest};
 
     fn activator(initialize: Option<&str>) -> Result<DebugActivator, DebugError> {
         activator_with_wake(initialize, "")
@@ -360,7 +360,6 @@ mod tests {
                 headers: vec![],
                 body: vec![],
             }),
-            trace: TraceContext::default(),
             cancel_future: 0,
             occupancy_budget_ms: DEBUG_BUDGET_MS,
             pending_futures_limit: 64,

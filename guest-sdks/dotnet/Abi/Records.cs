@@ -48,11 +48,6 @@ public sealed class DispatchRecord
                 throw new PostcardException();
         }
 
-        // TraceContext { trace_id, span_id, sampled }
-        r.SkipBytes();
-        r.SkipBytes();
-        r.Bool();
-
         d.CancelFuture = r.U64();
         d.OccupancyBudgetMs = r.U32();
         d.PendingFuturesLimit = r.U32();

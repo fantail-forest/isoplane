@@ -2,7 +2,7 @@
 
 use core::future::Future;
 
-use isoplane_abi::dispatch::{DispatchRecord, TraceContext};
+use isoplane_abi::dispatch::DispatchRecord;
 
 use crate::future::{decode_unit, HostFuture};
 use crate::rt;
@@ -15,7 +15,6 @@ pub struct Ctx {
     /// Coarse wall clock at dispatch start, frozen for the slice.
     pub now_ms: u64,
     pub occupancy_budget_ms: u32,
-    pub trace: TraceContext,
     cancel_future: u64,
 }
 
@@ -26,7 +25,6 @@ impl Ctx {
             dispatch_id: rec.dispatch_id,
             now_ms: rec.now_ms,
             occupancy_budget_ms: rec.occupancy_budget_ms,
-            trace: rec.trace.clone(),
             cancel_future: rec.cancel_future,
         }
     }

@@ -357,7 +357,6 @@ impl Cell {
         DispatchRecord {
             dispatch_id: self.next_dispatch.fetch_add(1, Ordering::Relaxed),
             kind: DispatchKind::Http(req),
-            trace: TraceContext::default(),
             cancel_future: 0,
             occupancy_budget_ms,
             pending_futures_limit: self.pending_futures_limit(module),

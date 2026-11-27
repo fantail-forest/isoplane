@@ -29,7 +29,6 @@ fn http_dispatch(id: u64) -> isoplane_abi::dispatch::DispatchRecord {
             headers: vec![("host".into(), "example.test".into())],
             body: vec![],
         }),
-        trace: TraceContext::default(),
         cancel_future: 0,
         occupancy_budget_ms: 30_000,
         pending_futures_limit: 64,

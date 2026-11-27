@@ -79,7 +79,6 @@ fn exhausted_snapshot_capacity_refuses_admission_before_guest_activation() {
             headers: vec![],
             body: vec![],
         }),
-        trace: Default::default(),
         cancel_future: 0,
         occupancy_budget_ms: 1_000,
         pending_futures_limit: 64,
