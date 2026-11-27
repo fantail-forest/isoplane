@@ -9,12 +9,10 @@
     <Optimize Condition="'$(IsoplaneDebuggerOptimized)' != 'true'">false</Optimize>
     <Optimize Condition="'$(IsoplaneDebuggerOptimized)' == 'true'">true</Optimize>
     <DebugType>portable</DebugType>
-    <_DebuggerSources>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../../../../.build/clr-anycpu/debugger-sources'))</_DebuggerSources>
-    <PathMap>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory).'))=/isoplane-debugger-fixture,$(_DebuggerSources)=/isoplane-debugger-fixture</PathMap>
+    <PathMap>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory).'))=/isoplane-debugger-fixture</PathMap>
     <EnableSourceLink>false</EnableSourceLink>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="$(_DebuggerSources)/*.cs" />
     <Compile Remove="hotreload.cs;../debugger/hotreload.cs;hotreload/**/*" />
     <ProjectReference Include="../../../../guest-sdks/dotnet/AspNetCore/Isoplane.AspNetCore.csproj" />
     <ProjectReference Include="$(MSBuildThisFileDirectory)hotreload/HotReloadFixture.csproj" />

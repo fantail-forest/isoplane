@@ -1,3 +1,13 @@
+using System;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Builder;
+
+namespace Debugger.Async;
+
+internal static class Application
+{
+    internal static void Map(WebApplication app) => app.MapGet("/async-stack", Handle);
+
     private static async Task<string> Handle()
     {
         int seed = 21;
@@ -42,3 +52,4 @@
         public int Value;
         public string Name = "";
     }
+}

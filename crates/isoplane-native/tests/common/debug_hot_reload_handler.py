@@ -17,8 +17,7 @@ def exercise(source, send, response, until):
         return thread, frame
 
     thread, frame = stop()
-    original = Path(source).read_text()
-    edited = original.replace("value += 10; // HOT_RELOAD_UNCHANGED", "value += 20; // HOT_RELOAD_UNCHANGED")
+    edited = Path(source).with_suffix(".edited.cs.in").read_text()
     changed = response(send("isoplane/hotReload", {"sources": [{"path": source, "text": edited}]}))["body"]
     assert changed["appliedModules"] == 0 and changed["diagnostics"] and changed["restartRequired"], changed
     value = response(send("evaluate", {"expression": "value", "frameId": frame["id"], "context": "watch"}))["body"]["result"]

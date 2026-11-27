@@ -1,0 +1,27 @@
+using System.Collections.Generic;
+using System.Threading.Tasks;
+
+namespace Debugger.HotReload;
+
+public static partial class Iterators
+{
+    private static bool asyncDisposed;
+
+    private static async IAsyncEnumerable<int> AsyncSequence()
+    {
+        int asyncItem = 1;
+        await Task.Delay(1);
+        try
+        {
+            asyncItem += 10; // ASYNC_EDIT
+            yield return asyncItem;
+            await Task.Delay(1);
+            asyncItem += 100; // ASYNC_RESUME
+            yield return asyncItem;
+        }
+        finally
+        {
+            asyncDisposed = true;
+        }
+    }
+}

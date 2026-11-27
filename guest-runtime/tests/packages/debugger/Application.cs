@@ -26,6 +26,9 @@ public static class Application
         app.MapGet("/hotreload-constructor-callers", HotReload.Callers.Construct);
         app.MapGet("/hotreload-running", HotReload.Callers.Running);
         app.MapGet("/hotreload-iterators", HotReload.Iterators.Handle);
+        app.MapGet("/hotreload-statement", HotReload.EditedStatement.Handle);
+        app.MapGet("/hotreload-try-region", HotReload.TryRegion.Handle);
+        app.MapGet("/hotreload-async-region", HotReload.AsyncRegion.Handle);
         app.MapGet("/hotreload", HotReload.Application.Handle);
         app.MapGet("/hotreload-layout", Debugger.HotReload.Application.HandleLayout);
         app.MapGet("/hotreload-try", HotReload.Application.HandleTry);

@@ -5,15 +5,24 @@ from debug_sources import stop_event
 EXPECTED_RESPONSE = b"101,1101,101,1101:True:True"
 
 
+def documents(source):
+    """The document each iterator is declared in, beside the one holding their caller."""
+    return [(name, str(Path(source).with_name(f"{document}.cs")))
+            for name, document in [("syncItem", "SyncIterator"), ("asyncItem", "AsyncIterator")]]
+
+
+def marked_line(text, marker):
+    return next(index + 1 for index, line in enumerate(text.splitlines()) if marker in line)
+
+
 def configure(source, send, response):
-    lines = Path(source).read_text().splitlines()
-    response(send("setBreakpoints", {"source": {"path": source}, "breakpoints": [
-        {"line": index + 1} for index, line in enumerate(lines) if "_EDIT" in line or "_RESUME" in line]}))
+    for _, document in documents(source):
+        text = Path(document).read_text()
+        response(send("setBreakpoints", {"source": {"path": document}, "breakpoints": [
+            {"line": marked_line(text, marker)} for marker in ("_EDIT", "_RESUME")]}))
 
 
 def exercise(source, send, response, until):
-    edited = Path(source).read_text()
-
     def stop():
         event = until(stop_event)
         thread = event["body"]["threadId"]
@@ -23,14 +32,14 @@ def exercise(source, send, response, until):
     def value(frame, name):
         return response(send("evaluate", {"expression": name, "frameId": frame["id"]}))["body"]["result"]
 
-    for name, marker in [("syncItem", "SYNC"), ("asyncItem", "ASYNC")]:
-        for phase, before, after, change in [("EDIT", "1", "101", (10, 100)), ("RESUME", "101", "1101", (100, 1000))]:
+    for name, document in documents(source):
+        edited = Path(document).read_text()
+        for phase, before, after in [("edit", "1", "101"), ("resume", "101", "1101")]:
             thread, frame = stop()
-            line = next(index + 1 for index, text in enumerate(edited.splitlines()) if f"// {marker}_{phase}" in text)
+            line = marked_line(edited, f"_{phase.upper()}")
             assert frame["line"] == line and value(frame, name) == before, frame
-            old, new = change
-            edited = edited.replace(f"{name} += {old}; // {marker}_{phase}", f"{name} += {new}; // {marker}_{phase}")
-            result = response(send("isoplane/hotReload", {"sources": [{"path": source, "text": edited}]}))["body"]
+            edited = Path(document).with_suffix(f".{phase}.cs.in").read_text()
+            result = response(send("isoplane/hotReload", {"sources": [{"path": document, "text": edited}]}))["body"]
             assert result["appliedModules"] == 1 and not result["diagnostics"] and not result["restartRequired"], result
             thread, frame = stop()
             assert frame["line"] == line, "applying an edit must retain the paused statement, even when another statement has identical text"

@@ -19,7 +19,6 @@ tasks:
     desc: Build the managed applications used by Rust integration tests
     cmds:
       - task: ':runtime'
-      - task: ':fixtures:debugger:sources'
       - task: compile
         vars: {FILTER: '{{.FILTER | default "Isoplane.Fixtures.slnf"}}'}
       - task: publish-cli
@@ -28,7 +27,6 @@ tasks:
     desc: Build managed tools, tests and guest applications in one graph
     cmds:
       - task: ':runtime'
-      - task: ':fixtures:debugger:sources'
       - task: compile
         vars: {FILTER: Isoplane.AllTests.slnf}
       - task: publish-cli

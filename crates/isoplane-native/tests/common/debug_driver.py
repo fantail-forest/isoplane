@@ -43,6 +43,8 @@ import debug_watchpoint_steps
 from debug_sources import same_source, stop_event
 
 launcher, endpoint, url, source, owner, mode, module = sys.argv[1:]
+# Read from the repository: Task does not prepare the fixture again when only this revision changes.
+RELOADED = Path(__file__).resolve().parents[1] / "fixtures/handler/DebugFixture.reloaded.cs.in"
 # The fixture route whose code this mode pauses in, appended to whichever address serves it.
 route = os.environ.get("ISOPLANE_DEBUG_ROUTE", "")
 url = url.rstrip("/") + route
@@ -273,7 +275,7 @@ try:
                     until(lambda item: item.get("event") == "output" and "reload failed; keeping" in item["body"]["output"])
                     saved = response(send("evaluate", {"expression": "answer", "frameId": frame["id"], "context": "watch"}))
                     assert saved["body"]["result"] == "42", "a failed rebuild must leave the paused invocation inspectable"
-                    Path(source).write_text(original.replace("int answer = 42;", "int answer = 84;"))
+                    Path(source).write_text(RELOADED.read_text())
                     rebuilt = until(lambda item: item.get("seq", 0) > saved["seq"] and item.get("event") == "output"
                                     and "rebuilt application;" in item["body"]["output"])
                     saved = response(send("evaluate", {"expression": "answer", "frameId": frame["id"], "context": "watch"}))
@@ -283,7 +285,7 @@ try:
                     Path(source).write_text(original + "\n#error detach rebuild ordering\n")
                     print('request-owner-event:reload_failed', flush=True)
                     assert sys.stdin.readline() == 'owner-event:reload_failed\n'
-                    Path(source).write_text(original.replace("int answer = 42;", "int answer = 84;"))
+                    Path(source).write_text(RELOADED.read_text())
                     print('request-owner-event:reload_pending', flush=True)
                     assert sys.stdin.readline() == 'owner-event:reload_pending\n'
                     for command, arguments in [("disconnect", {"terminateDebuggee": False}), ("isoplane/prepareDetach", {})]:
@@ -305,8 +307,7 @@ try:
                     if not terminal_mode:
                         with socket.socket() as check:
                             assert check.connect_ex((address, int(port))) != 0, "detach must release the debugger control listener"
-                    original = Path(source).read_text()
-                    Path(source).write_text(original.replace("int answer = 42;", "int answer = 84;"))
+                    Path(source).write_text(RELOADED.read_text())
                     owner_event("reloaded")
                     with urllib.request.urlopen(url) as reply:
                         assert (reply.status, reply.read()) == (200, b"84"), "source reload must keep using the ordinary runtime after detach"

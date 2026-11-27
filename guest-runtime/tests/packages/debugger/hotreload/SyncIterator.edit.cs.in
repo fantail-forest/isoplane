@@ -1,0 +1,24 @@
+using System.Collections.Generic;
+
+namespace Debugger.HotReload;
+
+public static partial class Iterators
+{
+    private static bool syncDisposed;
+
+    private static IEnumerable<int> Sequence()
+    {
+        int syncItem = 1;
+        try
+        {
+            syncItem += 100; // SYNC_EDIT
+            yield return syncItem;
+            syncItem += 100; // SYNC_RESUME
+            yield return syncItem;
+        }
+        finally
+        {
+            syncDisposed = true;
+        }
+    }
+}

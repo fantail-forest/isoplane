@@ -1,0 +1,55 @@
+using System;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Builder;
+
+namespace Debugger.ValueTasks;
+
+internal static class Application
+{
+    internal static void Map(WebApplication app) => app.MapGet("/async-valuetask", Handle);
+
+    private static async Task<string> Handle()
+    {
+        int seed = 21;
+        int result = await Outer(seed);
+        return (result + seed - 21).ToString();
+    }
+
+    private static async ValueTask<int> Outer(int input)
+    {
+        int outer = input + 1;
+        var outerSample = new DebugSample { Value = 1 };
+        int[] outerNumbers = [2, 3];
+        int result = await Inner(outer, outerSample, outerNumbers).ConfigureAwait(false);
+        outer += 1;
+        return result + outer + outerSample.Value + outerNumbers[1];
+    }
+
+    private static async ValueTask<int> Inner(int input, DebugSample watched, int[] watchedNumbers)
+    {
+        int answer = input;
+        var sample = new DebugSample { Value = 7, Name = "hello" };
+        int[] numbers = [3, 4];
+        Task delay = Task.Delay(100);
+        if (delay.IsCompleted) throw new InvalidOperationException("the host timer must be pending before await");
+        await delay;
+        int total = ComputeTotal(answer, sample, numbers);
+        await Task.Delay(1);
+        GC.Collect();
+        watched.Value += 1;
+        watchedNumbers[1] += 1;
+        return total;
+    }
+
+    private static int ComputeTotal(int answer, DebugSample sample, int[] numbers)
+    {
+        int sum = answer + sample.Value + numbers[1];
+        return sum;
+    }
+
+    private sealed class DebugSample
+    {
+        public int Value;
+        public string Name = "";
+    }
+}

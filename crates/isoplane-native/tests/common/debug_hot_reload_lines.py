@@ -18,9 +18,11 @@ def exercise(source, send, response, until):
 
     thread, frame = stop()
     original = Path(source).read_text()
+    incremented = Path(source).with_suffix(".increment.cs.in").read_text()
     original_line = frame["line"]
-    for blank_lines, increment, expected_value in [(2, 10, "11"), (4, 10, "21"), (4, 100, "31"), (6, 100, "131")]:
-        edited = "\n" * blank_lines + original.replace("value += 10; // HOT_RELOAD_BODY", f"value += {increment}; // HOT_RELOAD_BODY")
+    # Leading blank lines move every statement down without changing one: the remapping under test.
+    for blank_lines, text, expected_value in [(2, original, "11"), (4, original, "21"), (4, incremented, "31"), (6, incremented, "131")]:
+        edited = "\n" * blank_lines + text
         changed = response(send("isoplane/hotReload", {"sources": [{"path": source, "text": edited}]}))["body"]
         assert changed["appliedModules"] == 1 and not changed["diagnostics"] and not changed["restartRequired"], changed
         thread, frame = stop()
