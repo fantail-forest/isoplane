@@ -62,8 +62,8 @@ cargo metadata --no-deps --format-version 1 \
 ```sh
 task setup                                         # Initialize submodules and install development tools
 task --list                    # List build and release tasks
-scripts/dev <command>                              # Run a native development command
-scripts/dev                                       # A development shell
+task exec -- <command>                             # Run a native development command
+task exec                                          # A development shell
 
 task build                                         # Build crates, tests, examples
 task lint                                          # The Rust lint gate; task lint -- -p <name> for one package
@@ -74,10 +74,10 @@ task test                                          # Requires a prepared release
 task test:unit -- -p isoplane-engine               # One crate's library tests, without fixtures
 task test:rust -- -p isoplane-host --test cell_dispatch # One integration test binary, with Rust fixtures
 task test:managed:standard -- --filter "FullyQualifiedName~NativeSessionTests" # Selected managed tests
-scripts/dev cargo <args>                           # Any other Cargo command; plain cargo fails by design
+task exec -- cargo <args>                          # Any other Cargo command; plain cargo fails by design
 
-scripts/dev guests/build.sh                        # Rust guests -> .build/wasm32/rust-guests/*.wasm
-scripts/dev guests/build-dotnet.sh --if-stale      # managed probes -> .build/clr-anycpu/probes/*.tar
+task fixtures:rust                                 # Rust guests -> .build/wasm32/rust-guests/*.wasm
+task fixtures:dotnet                               # managed probes -> .build/clr-anycpu/probes/*.tar
 
 task daemon -- serve --config isoplaned.toml            # Run a node
 task daemon -- serve --config isoplaned.toml --check    # Validate a config without running
@@ -86,7 +86,7 @@ isoplane deploy --local --config host.toml --app <name> --bundle application.tar
 
 cd docs/userdocs && pnpm run start                 # Serve customer docs
 
-scripts/clean                                      # Reclaim build intermediates
+task clean                                         # Reclaim build intermediates
 ```
 
 **IMPORTANT**: Redirect long-running command output (`cargo build`,

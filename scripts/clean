@@ -1,4 +1,0 @@
-#!/usr/bin/env bash
-# Remove inactive worktree build and test output.
-set -euo pipefail
-exec task --dir "$(dirname "${BASH_SOURCE[0]}")/.." clean -- "$@"

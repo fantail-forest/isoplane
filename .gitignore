@@ -19,7 +19,7 @@ isoplaned-data-todo/
 # local .data output for manual testing
 .data/
 
-# Guest fixtures, built on demand by guests/build-dotnet.sh.
+# Local guest fixture build outputs.
 guests/dotnet/out/*.wasm
 guests/dotnet/out/mono/*.wasm
 guests/dotnet/obj-mono/

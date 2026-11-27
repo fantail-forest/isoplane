@@ -1,8 +1,8 @@
 [build]
 # Hosts share this worktree, so each needs its own target directory, which
-# scripts/dev and Task set through CARGO_TARGET_DIR. This path is a file, so
-# Cargo run without them fails instead of sharing one directory across hosts.
-target-dir = ".run-cargo-through-scripts-dev"
+# Task sets through CARGO_TARGET_DIR. This path is a file, so
+# Cargo run without that setting fails instead of sharing one directory across hosts.
+target-dir = ".run-cargo-through-task"
 
 [net]
 # Use Git for fetching pinned source dependencies.

@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 # Build every Rust guest to .build/wasm32/rust-guests/*.wasm and list them in .build/wasm32/rust-guests/manifest.
-#
-#   scripts/dev guests/build.sh            # build all
-#   scripts/dev guests/build.sh --if-stale # reuse outputs when inputs have not changed
+# Run from the repository root with task fixtures:rust.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

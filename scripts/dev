@@ -1,6 +1,0 @@
-#!/usr/bin/env bash
-# Run a command in the worktree's development environment.
-set -euo pipefail
-root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$root"
-exec task exec -- "$@"

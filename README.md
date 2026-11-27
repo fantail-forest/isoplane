@@ -197,7 +197,7 @@ cargo metadata --no-deps --format-version 1 \
 | `guests/`             | The guest modules: fixtures the engine's tests drive.                     |
 | `docs/userdocs` | Customer guides for Isoplane. |
 | `docs/opinion-registry` | How software is built here.                                             |
-| `scripts/`            | `scripts/dev` runs a local command; `scripts/clean` reclaims build intermediates. |
+| `scripts/`            | Fork pin management, release packaging and installation checks. |
 
 ## License
 

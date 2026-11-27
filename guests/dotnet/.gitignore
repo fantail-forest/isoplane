@@ -3,5 +3,5 @@ src/bin/
 src/obj/
 # The PAL shim's compiled object (native/isoplane_pal.c is the source of record).
 obj/
-# Only used when CARGO_TARGET_DIR is unset; scripts/dev points it at /ctarget.
+# Cargo writes here when CARGO_TARGET_DIR is unset.
 hostcheck/target/
