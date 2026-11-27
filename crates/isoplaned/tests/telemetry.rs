@@ -151,7 +151,7 @@ async fn an_actual_http_guest_completion_crosses_the_otlp_boundary() {
     server.await.unwrap();
     tokio::task::spawn_blocking(move || {
         let cell = node
-            .real
+            .execution
             .as_ref()
             .cells()
             .iter()

@@ -78,7 +78,7 @@ pub(crate) trait LocalDeployment {
 
 /// Local preparation compiling into the artifact store of a node configured as `cfg`.
 pub fn provider(cfg: &isoplaned::config::NodeConfig) -> isoplane_prepare::LocalPreparation {
-    let artifacts = isoplaned::real::RealPaths::under(&cfg.data_dir).artifacts;
+    let artifacts = isoplaned::execution::NodeStoragePaths::under(&cfg.data_dir).artifacts;
     // SAFETY: the node under test owns this cache, and only the compiler's atomic,
     // content-addressed writer fills it.
     let cache = unsafe { isoplane_engine::CompilationCache::from_trusted_directory(artifacts) }
@@ -121,7 +121,7 @@ impl LocalDeployment for Node {
     ) -> anyhow::Result<Deployed> {
         let guest = guest.into();
         let provider = provider(&self.cfg);
-        let engine = self.real.engine();
+        let engine = self.execution.engine();
         let cancellation = tokio_util::sync::CancellationToken::new();
         let context = isoplaned::deploy::PreparationContext {
             network: network(tenant, &manifest),
@@ -138,7 +138,7 @@ impl LocalDeployment for Node {
         };
         manifest.name = app.to_string();
         let prepared = self
-            .real
+            .execution
             .deployer
             .prepare_application(
                 &manifest,
@@ -153,7 +153,9 @@ impl LocalDeployment for Node {
             .await?;
         let (installed, initialized, stages) = prepared.into_application();
         let receipt = installed.receipt.clone();
-        self.real.install_application(tenant, installed).await?;
+        self.execution
+            .install_application(tenant, installed)
+            .await?;
         route(self, app, version);
         Ok(Deployed {
             prepared: receipt,

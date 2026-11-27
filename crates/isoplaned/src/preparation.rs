@@ -71,8 +71,9 @@ pub(crate) async fn prepare(
         application: &manifest.name,
     })?;
     let trust = cfg.trust_bundle()?;
-    let engine = isoplane_engine::IsoplaneEngine::new(crate::real::engine_config(cfg, &trust)?)?;
-    let paths = crate::real::RealPaths::under(&cfg.data_dir);
+    let engine =
+        isoplane_engine::IsoplaneEngine::new(crate::execution::engine_config(cfg, &trust)?)?;
+    let paths = crate::execution::NodeStoragePaths::under(&cfg.data_dir);
     isoplane_engine::CompilationCache::create_directory(&paths.artifacts)?;
     // SAFETY: this protected host-owned cache is populated only by atomic compiler publication.
     let cache =
@@ -80,7 +81,7 @@ pub(crate) async fn prepare(
     let provider = isoplane_prepare::LocalPreparation::with_cache(std::sync::Arc::new(cache))?;
     let deployer = crate::deploy::Deployer::open(&paths.registry)?;
     let context = crate::deploy::PreparationContext {
-        network: crate::real::initialization_network(
+        network: crate::execution::initialization_network(
             &cfg.owner,
             manifest,
             settings.allowed_destinations,

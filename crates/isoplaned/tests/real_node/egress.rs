@@ -109,7 +109,7 @@ async fn a_default_node_refuses_private_outbound_destinations() {
     );
     let denied: u64 = rig
         .node
-        .real
+        .execution
         .as_ref()
         .cells()
         .iter()
@@ -190,7 +190,7 @@ async fn a_managed_network_stream_exchanges_partial_payloads_through_a_real_node
     .await
     .expect("the ordinary NetworkStream fixture must deploy");
     let rig = serve(node, directory).await;
-    let cell = rig.node.real.as_ref().cells()[0].clone();
+    let cell = rig.node.execution.as_ref().cells()[0].clone();
     let proxy = rig.proxy;
     let request = tokio::spawn(async move {
         get(

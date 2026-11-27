@@ -1,46 +1,3 @@
-//! **The isoplane scheduler**: a single-threaded, non-concurrent executor that
-//! owns a continuation queue and a future table mapping host future ids to
-//! waker slots.
-//!
-//! # How parking works, precisely
-//!
-//! This module is where the platform's central invariant is either true or a
-//! slogan: *suspension implies an empty stack*. The only way for guest code to
-//! wait is to return control to the host with a "pending" status.
-//!
-//! There is one code path and it is a chain of ordinary `return`s:
-//!
-//! ```text
-//!  host calls isoplane_handle(ptr, len)
-//!    -> rt::handle_dispatch  decodes the record, spawns ONE task, calls run()
-//!      -> run()              pops the task, polls it exactly once
-//!        -> app's async fn   awaits a host timer
-//!          -> HostFuture::poll   calls the `clock_deadline_in` import, gets a future id,
-//!                                records (id -> this task) in the future
-//!                                table, and returns Poll::Pending
-//!        <- Poll::Pending    every `.await` in the app's state machine
-//!                            propagates Pending outward; no frame loops,
-//!                            no frame waits
-//!      <- run()              the ready queue is empty, so the loop EXITS
-//!    <- handle_dispatch      returns PollStatus::Pending.encode()
-//!  host sees `pending`; the wasm stack is now empty and the instance is
-//!  Parked: evictable, snapshotable, relocatable.
-//! ```
-//!
-//! Later, `isoplane_wake(future_id, result)` writes the result into the slot,
-//! pushes the owning task back onto the ready queue and calls `run()` again --
-//! a *fresh* stack, not a resumed one. That is the whole mechanism. There is
-//! no Asyncify, no stack switching, no thread, and nothing that spins:
-//! `run()` polls only tasks that something has explicitly made ready, and when
-//! the ready queue drains it returns rather than looping.
-//!
-//! `debug_assert`s and the tests at the bottom of this file pin that down:
-//! a dispatch that parks must cost **exactly one** poll.
-//!
-//! An instance can have several dispatches in progress. Every task belongs to
-//! the dispatch it was spawned in, a slice polls only its own dispatch's
-//! tasks, and the status it returns is that dispatch's.
-
 use core::alloc::Layout;
 use core::cell::UnsafeCell;
 use core::future::Future;
@@ -261,7 +218,8 @@ fn waker_for(id: u32) -> Waker {
 // The loop
 // ---------------------------------------------------------------------------
 
-/// Drive every ready task to its next await point, then return.
+/// Drive every ready task of `dispatch` to its next await point, then return
+/// that dispatch's status.
 ///
 /// The loop condition is "is anything ready", never "is anything finished".
 /// When nothing is ready the function returns and the wasm stack unwinds to

@@ -31,8 +31,8 @@ pub struct Node {
     pub metrics: Arc<ProxyMetrics>,
     pub(crate) background: tokio_util::sync::CancellationToken,
     pub(crate) reclamation: Arc<crate::reclamation::Coordinator>,
-    /// The real sandbox execution pool.
-    pub real: Arc<crate::real::RealCells>,
+    /// The sandbox execution pool.
+    pub execution: Arc<crate::execution::NodeCells>,
     _daemon: std::fs::File,
 }
 
@@ -51,9 +51,9 @@ impl Node {
         let store = crate::installed::InstalledApplications::open(&cfg.data_dir)?;
         let daemon = store.daemon()?;
         let trust = cfg.trust_bundle()?;
-        let real = crate::real::RealCells::build_with_destinations(
+        let cells = crate::execution::NodeCells::build_with_destinations(
             &cfg,
-            &crate::real::RealPaths::under(&cfg.data_dir),
+            &crate::execution::NodeStoragePaths::under(&cfg.data_dir),
             destinations,
             &trust,
         )?;
@@ -61,15 +61,15 @@ impl Node {
         let metrics = Arc::new(ProxyMetrics::new());
         let proxy = Proxy::new(
             routes.clone(),
-            real.clone(),
+            cells.clone(),
             metrics.clone(),
             ShedConfig {
                 max_in_flight: cfg.proxy.max_in_flight,
                 max_queued: cfg.proxy.max_queued,
             },
         );
-        let admin = Arc::new(crate::real::RealNodeAdmin::new(real.clone()));
-        let reclamation = crate::reclamation::Coordinator::new(&real, cfg.host.hibernate);
+        let admin = Arc::new(crate::execution::CellMetrics::new(cells.clone()));
+        let reclamation = crate::reclamation::Coordinator::new(&cells, cfg.host.hibernate);
         let node = Arc::new(Self {
             cfg,
             routes,
@@ -78,10 +78,10 @@ impl Node {
             metrics,
             background: tokio_util::sync::CancellationToken::new(),
             reclamation,
-            real,
+            execution: cells,
             _daemon: daemon,
         });
-        if let Some(cell) = node.real.cells().first() {
+        if let Some(cell) = node.execution.cells().first() {
             node.reclamation.start(
                 cell.reactor(),
                 std::time::Duration::from_millis(node.cfg.host.sweep_interval_ms),
@@ -116,7 +116,7 @@ impl Node {
                 version: selected.receipt.version.clone(),
                 tier: CodeTier::Optimized,
             };
-            self.real
+            self.execution
                 .restore_application(&self.cfg.owner, selected)
                 .await?;
             routes.push((target, &app.hosts));

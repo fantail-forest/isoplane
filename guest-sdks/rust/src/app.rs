@@ -136,8 +136,7 @@ macro_rules! __isoplane_common_exports {
         }
 
         /// `isoplane-wake: func(future: u64, result: result-record) -> poll-status`.
-        /// This is the *only* way a parked instance resumes, and it arrives on
-        /// a fresh stack -- see the `isoplane_guest::rt` module docs.
+        /// The only way a parked instance resumes; it arrives on a fresh stack.
         #[no_mangle]
         pub extern "C" fn isoplane_wake(future: u64, ptr: usize, len: usize) -> u64 {
             $crate::rt::export_wake(future, ptr, len)

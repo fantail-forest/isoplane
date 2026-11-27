@@ -42,7 +42,7 @@ trait Instances: Send + Sync {
     async fn reclaim(&self, candidate: Candidate) -> anyhow::Result<bool>;
 }
 
-struct Local(Weak<crate::real::RealCells>);
+struct Local(Weak<crate::execution::NodeCells>);
 
 #[async_trait::async_trait]
 impl Instances for Local {
@@ -96,7 +96,7 @@ pub(crate) struct Coordinator {
 
 impl Coordinator {
     pub(crate) fn new(
-        cells: &Arc<crate::real::RealCells>,
+        cells: &Arc<crate::execution::NodeCells>,
         policy: isoplane_host::hibernate_policy::HibernateConfig,
     ) -> Arc<Self> {
         for cell in cells.cells() {
@@ -401,7 +401,7 @@ mod tests {
         let node = crate::Node::build(config).expect("assemble a real node");
         // This test drives reclamation itself, under a pressure it controls.
         node.background.cancel();
-        let real = node.real.clone();
+        let cells = node.execution.clone();
         let response = postcard::to_allocvec(&isoplane_abi::dispatch::ResponseHead {
             status: 200,
             headers: vec![],
@@ -428,7 +428,8 @@ mod tests {
                 (if (i32.ne (i32.load (i32.const 8192)) (i32.const 123456)) (then unreachable))
                 (i64.shl (i64.extend_i32_u (call $response (i32.const 1024) (i32.const {}))) (i64.const 32))))"#, response.len()))
             .expect("assemble the returned-stack continuation fixture");
-        real.install_prepared(&node.cfg, &version, &manifest, &wasm)
+        cells
+            .install_prepared(&node.cfg, &version, &manifest, &wasm)
             .await
             .expect("register the real guest for local snapshot capture");
         node.routes
@@ -442,10 +443,10 @@ mod tests {
                 std::slice::from_ref(&hostname),
             )
             .expect("publish the fixture route");
-        let cell = real.cells().first().expect("one real cell").clone();
+        let cell = cells.cells().first().expect("one real cell").clone();
         let pressure = Arc::new(ControlledPressure(std::sync::atomic::AtomicU64::new(100)));
         let coordinator = Coordinator {
-            instances: Arc::new(Local(Arc::downgrade(&real))),
+            instances: Arc::new(Local(Arc::downgrade(&cells))),
             round: tokio::sync::Mutex::new(()),
             pressure: pressure.clone(),
             policy: node.cfg.host.hibernate,
@@ -534,7 +535,7 @@ mod tests {
             .expect("join real listener")
             .expect("listener shutdown must succeed");
         drop(cell);
-        drop(real);
+        drop(cells);
         tokio::task::spawn_blocking(move || drop(node))
             .await
             .expect("drop the cell runtime outside its async executor");
