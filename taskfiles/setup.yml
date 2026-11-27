@@ -1,10 +1,5 @@
 version: '3'
 
-vars:
-  SDK_CONFIG:
-    sh: cat global.json
-  SDK_VERSION: '{{(fromJson .SDK_CONFIG).sdk.version}}'
-
 tasks:
   default:
     desc: Initialize source dependencies and install development tools
@@ -15,15 +10,15 @@ tasks:
   dotnet:
     deps: [':initialize']
     status:
-      - 'test "$(dotnet --version)" = "{{.SDK_VERSION}}"'
+      - dotnet --version
     cmds:
       - cmd: 'curl --fail --location --output "{{.SCRATCH}}/dotnet-install.sh" https://dot.net/v1/dotnet-install.sh'
         platforms: [linux, darwin]
-      - cmd: 'bash "{{.SCRATCH}}/dotnet-install.sh" --version "{{.SDK_VERSION}}" --install-dir "{{.USER_HOME}}/.dotnet" --no-path'
+      - cmd: 'bash "{{.SCRATCH}}/dotnet-install.sh" --jsonfile global.json --install-dir "{{.USER_HOME}}/.dotnet" --no-path'
         platforms: [linux, darwin]
       - cmd: 'curl.exe --fail --location --output "{{.SCRATCH}}/dotnet-install.ps1" https://dot.net/v1/dotnet-install.ps1'
         platforms: [windows]
-      - cmd: 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{{.SCRATCH}}/dotnet-install.ps1" -Version "{{.SDK_VERSION}}" -InstallDir "{{.USER_HOME}}/.dotnet" -NoPath'
+      - cmd: 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{{.SCRATCH}}/dotnet-install.ps1" -JSonFile global.json -InstallDir "{{.USER_HOME}}/.dotnet" -NoPath'
         platforms: [windows]
 
   release-python:
@@ -40,17 +35,14 @@ tasks:
 
   rust:
     cmds:
-      - rustup component add rustfmt clippy
-      - rustup target add wasm32-unknown-unknown wasm32-wasip1
+      - rustup toolchain install
 
   wasm-tools:
     deps: [':initialize']
-    vars:
-      VERSION: '1.244.0'
     status:
-      - 'test "$(wasm-tools --version)" = "wasm-tools {{.VERSION}}"'
+      - 'test "$(wasm-tools --version)" = "wasm-tools {{.WASM_TOOLS_VERSION}}"'
     cmds:
-      - cargo install --locked wasm-tools@{{.VERSION}}
+      - cargo install --locked wasm-tools@{{.WASM_TOOLS_VERSION}}
 
   workload:
     deps: [dotnet]

@@ -44,7 +44,7 @@ try {
     foreach ($file in @('Directory.Build.props', 'Directory.Build.targets', 'Directory.Packages.props')) {
         Set-Content -Encoding UTF8 (Join-Path $workspace $file) '<Project />'
     }
-    Set-Content -Encoding UTF8 (Join-Path $workspace 'global.json') '{"sdk":{"version":"10.0.100","rollForward":"latestFeature","allowPrerelease":false}}'
+    Copy-Item "$PSScriptRoot/../global.json" $workspace
     $feed = [Security.SecurityElement]::Escape((Join-Path $Release 'packages'))
     Set-Content -Encoding UTF8 (Join-Path $workspace 'nuget.config') @"
 <configuration>

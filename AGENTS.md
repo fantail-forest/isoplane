@@ -43,11 +43,11 @@ cargo metadata --no-deps --format-version 1 \
 
 | Tool                     | Configured in                                               | Notes                                                                                                                                            |
 | ------------------------ | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Rust**                 | `Cargo.toml` (`rust-version`), `Dockerfile`             | `rust-version` declares the minimum supported version; the Dockerfile pins the build toolchain. Nightly is never required for build, test, lint, or docs.                                                                                |
+| **Rust**                 | `Cargo.toml` (`rust-version`), `rust-toolchain.toml`            | `rust-version` declares the minimum supported version; `rust-toolchain.toml` pins the build toolchain. Nightly is never required for build, test, lint, or docs.                                                                                |
 | **wasmtime**             | `Cargo.toml`                                            | One version across the workspace, shared by preparation and execution.                                                |
 | **Build orchestration**   | `Taskfile.yml`, `taskfiles/`                             | Run common operations through Task; `task --list` is the menu. Task handles repository build dependencies, preparation and per-platform build directories; native build tools own compilation and incrementality. |
-| **.NET SDK**             | `global.json`, consumed by `Dockerfile`                         | Policy: pin one SDK version. The image installs the version declared in `global.json`.                                                                                                           |
-| **wasi-sdk, wasm-tools** | `Dockerfile`                                            | The C# guest linker and the wasm inspection tool.                                                                                                |
+| **.NET SDK**             | `global.json`, `tools.env`                                  | `global.json` selects the contributor SDK. Customer compatibility fixtures use `MINIMUM_DOTNET_SDK_VERSION` from `tools.env`.                                                                                             |
+| **wasi-sdk, wasm-tools** | `guest-runtime/manifest.env`, `tools.env`                       | The C# guest linker and the wasm inspection tool.                                                                                                |
 | **Lint**                 | `task lint`                                             | Full Rust gate before merging or releasing code changes; lint affected packages (`task lint -- -p <name>`) during development. See the validation workflow. |
 | **Format**               | `rustfmt.toml` (root and `guests/`)                     | Check affected workspaces during development; `task format:check` is the full format gate. Default rustfmt settings, without `#[rustfmt::skip]`. |
 | **Tests**                | `task test`, `task test:unit`, `task test:rust`         | The test tasks prepare their prerequisites before running `cargo test`. Fixture helpers resolve and load prepared artifacts. |
@@ -56,23 +56,20 @@ cargo metadata --no-deps --format-version 1 \
 | **Wire formats**         | postcard (guest boundary, deltas), JSON (operator API)  |                                                                                                                                                  |
 | **Logging**              | `tracing` + `tracing-subscriber` (JSON)                 |                                                                                                                                                  |
 | **Docs site**            | Docusaurus 3 (`docs/userdocs`)                          |                                                                                                                                                  |
-| **Container**            | `scripts/dev --container`, `Dockerfile`                             | A convenience that carries the whole toolchain. Crates, tests, scripts, and docs do not require, detect, or gate on it.                    |
 
 ## Common Operations
 
 ```sh
-scripts/setup                                     # Initialize submodules and install Task/native tools
+task setup                                         # Initialize submodules and install development tools
 task --list                    # List build and release tasks
 scripts/dev <command>                              # Run a native development command
 scripts/dev                                       # A development shell
-scripts/dev --container --build                    # Optional Linux toolchain image
-scripts/dev --container --stop                     # Remove your container when done
 
 task build                                         # Build crates, tests, examples
 task lint                                          # The Rust lint gate; task lint -- -p <name> for one package
 task format                                        # Format both workspaces; task format:check is the gate
 
-task test -- -- --skip a_prepared_release_installs_builds_applications_and_uninstalls # Rust suite without the installation journey
+task test -- -- --skip a_prepared_release_ # Rust suite without the installation journey
 task test                                          # Requires a prepared release for the installation journey
 task test:unit -- -p isoplane-engine               # One crate's library tests, without fixtures
 task test:rust -- -p isoplane-host --test cell_dispatch # One integration test binary, with Rust fixtures
@@ -110,10 +107,6 @@ the problem and choose a concrete recovery action or a revised, justified
 wait; do not fall back to repeated progress polling.
 
 **IMPORTANT**: Build what the tests need through Task before running them. See [testing](docs/opinion-registry/testing.md) and [tooling](docs/opinion-registry/workflow/tooling.md).
-
-**IMPORTANT**: `scripts/dev --container` runs you as your own uid and only ever removes
-containers it created. Don't drive Docker directly to work around it, and don't
-leave a container running when you are done.
 
 ### Wasmtime fork maintenance
 

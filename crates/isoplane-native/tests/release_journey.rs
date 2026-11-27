@@ -102,10 +102,12 @@ fn a_prepared_release_installs_builds_applications_and_uninstalls() {
 }
 
 #[test]
-fn a_prepared_release_works_with_the_first_dotnet_10_sdk_without_upgrading_it() {
+fn a_prepared_release_works_with_the_oldest_supported_sdk_without_changing_it() {
     let release = prepared_release();
-    let image = customer_image("FROM mcr.microsoft.com/dotnet/sdk:10.0.100");
-    assert_journey(&release, &image, "10.0.100");
+    let sdk = std::env::var("MINIMUM_DOTNET_SDK_VERSION")
+        .expect("Task loads the oldest supported customer SDK from tools.env");
+    let image = customer_image(&format!("FROM mcr.microsoft.com/dotnet/sdk:{sdk}"));
+    assert_journey(&release, &image, &sdk);
 }
 
 fn assert_journey(release: &Release, image: &str, expected_sdk: &str) {

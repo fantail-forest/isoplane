@@ -1,4 +1,0 @@
-# The toolchain image does not copy the checkout.
-**
-!Dockerfile
-!global.json

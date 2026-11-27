@@ -62,7 +62,7 @@ tasks:
       - task: managed:prepared
 
   managed:sdk-compatibility:
-    desc: Exercise Hot Reload with the oldest supported .NET 10 SDK and runtime
+    desc: Exercise Hot Reload with the oldest supported .NET SDK and runtime
     cmds:
       - task: ':managed:tests'
       - task: managed:sdk-compatibility:prepared
@@ -74,8 +74,9 @@ tasks:
     deps: [':initialize']
     vars: &sdk_compatibility_vars
       DIRECTORY: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/sdk-compatibility'
-      SDK_VERSION: '10.0.100'
+      SDK_VERSION: '{{.MINIMUM_DOTNET_SDK_VERSION}}'
     sources:
+      - tools.env
       - tools/Isoplane.Debugging.Tests/fixtures/SdkCompatibility/*
       - guest-runtime/tests/packages/debugger/hotreload/*.cs
       - guest-runtime/tests/packages/debugger/hotreload.cs
@@ -94,7 +95,7 @@ tasks:
         printf '%s\n' '<configuration><packageSources><clear /></packageSources></configuration>' > "{{.DIRECTORY}}/nuget.config"
         docker run --rm --network none --user "$(id -u):$(id -g)" \
           -v "{{.DIRECTORY}}:/fixture" -w /fixture \
-          -e DOTNET_CLI_HOME=/tmp/dotnet -e NUGET_PACKAGES=/tmp/nuget \
+          -e HOME=/tmp -e DOTNET_CLI_HOME=/tmp/dotnet -e NUGET_PACKAGES=/tmp/nuget \
           -e DOTNET_NOLOGO=1 -e DOTNET_CLI_TELEMETRY_OPTOUT=1 \
           mcr.microsoft.com/dotnet/sdk:{{.SDK_VERSION}} bash -euc '
             dotnet build hotreload/HotReloadFixture.csproj -c Release --artifacts-path /fixture/artifacts
@@ -267,7 +268,7 @@ tasks:
 
   managed:sdk-compatibility:prepared:
     internal: true
-    desc: Exercise Hot Reload with the oldest supported .NET 10 SDK and runtime
+    desc: Exercise Hot Reload with the oldest supported .NET SDK and runtime
     platforms: [linux]
     deps: [sdk-compatibility-fixture]
     vars: *sdk_compatibility_vars
