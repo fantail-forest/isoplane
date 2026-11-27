@@ -1662,7 +1662,6 @@ dependencies = [
  "procfs",
  "reqwest 0.12.28",
  "rustix",
- "serde",
  "serde_json",
  "sha2",
  "strip-ansi-escapes",

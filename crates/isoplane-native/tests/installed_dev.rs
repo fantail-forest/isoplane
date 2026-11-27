@@ -130,7 +130,7 @@ async fn a_package_reload_prepares_only_its_layer_over_the_held_runtime_baseline
         "the first preparation and the reload must each prepare only the package's layer:\n{diagnostics}"
     );
     assert!(
-        layered[1].contains("\"compiled\":false")
+        layered[1].contains(" compiled=false")
             && !diagnostics.contains("local native compilation ready"),
         "a package reload must compile nothing:\n{diagnostics}"
     );
@@ -162,7 +162,7 @@ fn a_second_debug_session_reuses_the_compiled_debug_runtime() {
             "a debug session must load its runtime once:\n{diagnostics}"
         );
         assert!(
-            compilations[0].contains(&format!("\"compiled\":{compiled}")),
+            compilations[0].contains(&format!(" compiled={compiled}")),
             "only the first debug session may compile the debug runtime:\n{diagnostics}"
         );
     }
@@ -217,7 +217,7 @@ fn a_prepared_runtime_spares_the_first_sessions_its_compilation() {
             .find(|line| line.contains(ready))
             .unwrap_or_else(|| panic!("no \"{ready}\" event:\n{diagnostics}"));
         assert!(
-            line.contains("\"compiled\":false"),
+            line.contains(" compiled=false"),
             "a session after prepare-runtime must not compile the runtime:\n{diagnostics}"
         );
     }

@@ -305,8 +305,10 @@ async fn capture_refuses_pending_fetches_retained_bodies_and_inflight_reads() {
             .send(())
             .expect("the pending fetch must remain live after capture refusal");
         let head = loop {
-            if let Some((_, isoplane_abi::result::ResultRecord::Ok(bytes))) =
-                activator.wakes().first()
+            if let Some(isoplane_harness::fakes::Wake {
+                result: isoplane_abi::result::ResultRecord::Ok(bytes),
+                ..
+            }) = activator.wakes().first()
             {
                 break postcard::from_bytes::<isoplane_abi::result::FetchResponse>(bytes)
                     .expect("the Cell must deliver response headers");

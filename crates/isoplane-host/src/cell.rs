@@ -54,7 +54,7 @@ use crate::{InstanceId, ModuleId};
 use completion::{DispatchCompletion, TerminalReason};
 use pool::IN_FLIGHT;
 use queue::{Delivery, DispatchJob, Job, WakeItem, WorkQueue};
-use registry::{ActiveDispatch, ModuleEntry, Resident};
+use registry::{ActiveDispatch, ModuleEntry, RemovedDispatch, Resident};
 use wake::CellWake;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

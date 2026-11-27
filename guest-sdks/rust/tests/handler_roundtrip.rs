@@ -53,21 +53,29 @@ fn record(path: &str) -> DispatchRecord {
     }
 }
 
+struct Handoff {
+    ptr: usize,
+    len: usize,
+}
+
 /// Copy `bytes` into a guest buffer the way a host does: ask `isoplane_alloc`,
-/// write, then hand back `(ptr, len)`.
-fn handoff(bytes: &[u8]) -> (usize, usize) {
+/// write, then hand back where it is.
+fn handoff(bytes: &[u8]) -> Handoff {
     let p = isoplane_alloc(bytes.len(), 8);
     assert_ne!(p, 0, "isoplane_alloc refused");
     // SAFETY: isoplane_alloc returned a distinct buffer with room for all bytes.
     unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), p as *mut u8, bytes.len()) };
-    (p, bytes.len())
+    Handoff {
+        ptr: p,
+        len: bytes.len(),
+    }
 }
 
 #[test]
 fn a_dispatch_that_waits_parks_and_a_wake_completes_it() {
     with_stub_host(|host| {
         let enc = postcard::to_allocvec(&record("/hello")).unwrap();
-        let (ptr, len) = handoff(&enc);
+        let Handoff { ptr, len } = handoff(&enc);
 
         // 1. The dispatch. The handler awaits `clock_deadline_in`, so this MUST park.
         let st = PollStatus::decode(isoplane_handle(ptr, len));
@@ -88,7 +96,7 @@ fn a_dispatch_that_waits_parks_and_a_wake_completes_it() {
         // 2. The wake. A new slice, a fresh wasm stack.
         let res = ResultRecord::Ok(Vec::new());
         let enc = postcard::to_allocvec(&wake(res)).unwrap();
-        let (ptr, len) = handoff(&enc);
+        let Handoff { ptr, len } = handoff(&enc);
         let st = PollStatus::decode(isoplane_wake(fut_id, ptr, len));
 
         assert_eq!(
@@ -110,7 +118,7 @@ fn a_dispatch_that_waits_parks_and_a_wake_completes_it() {
 fn an_io_error_surfaces_as_an_error_not_a_trap() {
     with_stub_host(|_| {
         let enc = postcard::to_allocvec(&record("/hello")).unwrap();
-        let (ptr, len) = handoff(&enc);
+        let Handoff { ptr, len } = handoff(&enc);
         assert_eq!(
             PollStatus::decode(isoplane_handle(ptr, len)),
             PollStatus::Pending
@@ -118,7 +126,7 @@ fn an_io_error_surfaces_as_an_error_not_a_trap() {
 
         let res = ResultRecord::Err(isoplane_guest::FutureError::Io("operation failed".into()));
         let enc = postcard::to_allocvec(&wake(res)).unwrap();
-        let (ptr, len) = handoff(&enc);
+        let Handoff { ptr, len } = handoff(&enc);
         let st = PollStatus::decode(isoplane_wake(1, ptr, len));
         assert_eq!(
             st,
@@ -135,11 +143,11 @@ fn dispatch_and_wake_each_release_their_handoff_buffer() {
     with_stub_host(|host| {
         assert_eq!(host.outstanding_handoff_buffers(), 0);
         let enc = postcard::to_allocvec(&record("/hello")).unwrap();
-        let (ptr, len) = handoff(&enc);
+        let Handoff { ptr, len } = handoff(&enc);
         assert_eq!(host.outstanding_handoff_buffers(), 1);
 
         let renc = postcard::to_allocvec(&wake(ResultRecord::Ok(Vec::new()))).unwrap();
-        let (rp, rl) = handoff(&renc);
+        let Handoff { ptr: rp, len: rl } = handoff(&renc);
         assert_eq!(host.outstanding_handoff_buffers(), 2);
 
         assert_eq!(

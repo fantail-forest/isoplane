@@ -137,7 +137,7 @@ public sealed class DebugRelayTests
             Relay = new DebugRelay(Package, Cancellation);
             Host = new LocalSession(SessionFixture.Module, fixture.Options, message =>
             {
-                if (message["event"]?.GetValue<string>() == "ready") ready.TrySetResult();
+                if (message is SessionEvent.Ready) ready.TrySetResult();
             });
             Owner = DebugDevelopment.RunHostAsync(Host, Relay, Cancellation);
         }

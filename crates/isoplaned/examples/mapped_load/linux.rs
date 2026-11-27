@@ -15,11 +15,20 @@ pub(super) fn evict(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(super) fn resident_pages(path: &Path) -> anyhow::Result<(usize, usize)> {
+/// How much of a file the page cache holds.
+pub(super) struct Residency {
+    pub(super) resident_pages: usize,
+    pub(super) file_pages: usize,
+}
+
+pub(super) fn residency(path: &Path) -> anyhow::Result<Residency> {
     let file = File::open(path)?;
     let length = usize::try_from(file.metadata()?.len())?;
     if length == 0 {
-        return Ok((0, 0));
+        return Ok(Residency {
+            resident_pages: 0,
+            file_pages: 0,
+        });
     }
     // SAFETY: sysconf has no pointer arguments and _SC_PAGESIZE is supported on Linux.
     let page_size = usize::try_from(unsafe { libc::sysconf(libc::_SC_PAGESIZE) })?;
@@ -53,8 +62,8 @@ pub(super) fn resident_pages(path: &Path) -> anyhow::Result<(usize, usize)> {
         "cache probe unmap failed: {}",
         std::io::Error::last_os_error()
     );
-    Ok((
-        pages.iter().filter(|page| **page & 1 != 0).count(),
-        pages.len(),
-    ))
+    Ok(Residency {
+        resident_pages: pages.iter().filter(|page| **page & 1 != 0).count(),
+        file_pages: pages.len(),
+    })
 }

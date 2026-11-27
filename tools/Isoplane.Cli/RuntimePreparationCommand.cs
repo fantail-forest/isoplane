@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Isoplane.Native;
 
 namespace Isoplane.Cli;
@@ -17,19 +16,12 @@ internal static class RuntimePreparationCommand
         var trust = Directory.CreateTempSubdirectory("isoplane-prepare-runtime-");
         try
         {
-            Dictionary<string, object?> options = new()
-            {
-                ["manifest"] = LocalProject.Manifest("runtime", LimitOverrides.None),
-                ["runtime_library"] = NativeRuntime.LibraryPath,
-                ["runtime_cache_directory"] = cacheDirectory,
-                ["runtime_identity"] = File.ReadAllText(runtime.Identity),
-            };
-            if (MachineTrust.Export(trust.FullName) is { } roots) options["machine_roots"] = roots;
-            var report = RuntimeCache.Prepare(File.ReadAllBytes(runtime.Module), File.ReadAllBytes(runtime.DebugModule),
-                JsonSerializer.SerializeToUtf8Bytes(options));
+            var prepared = RuntimeCache.Prepare(File.ReadAllBytes(runtime.Module), File.ReadAllBytes(runtime.DebugModule),
+                new RuntimePreparationOptions(LocalProject.Manifest("runtime", default), NativeRuntime.LibraryPath, cacheDirectory,
+                    MachineTrust.Export(trust.FullName), File.ReadAllText(runtime.Identity)));
             output.WriteLine($"Compiled runtime cache: {cacheDirectory}");
-            output.WriteLine(report["baseline_compiled"]!.GetValue<bool>() ? "Compiled the runtime." : "The runtime was already compiled.");
-            output.WriteLine(report["debug_compiled"]!.GetValue<bool>() ? "Compiled the debug runtime." : "The debug runtime was already compiled.");
+            output.WriteLine(prepared.baseline_compiled ? "Compiled the runtime." : "The runtime was already compiled.");
+            output.WriteLine(prepared.debug_compiled ? "Compiled the debug runtime." : "The debug runtime was already compiled.");
             return 0;
         }
         finally

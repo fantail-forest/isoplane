@@ -113,12 +113,13 @@ pub fn load_compiled_runtime(engine: &IsoplaneEngine) -> Template {
     // so loading maps it and compiles nothing.
     let artifacts = unsafe { CompilationCache::from_trusted_directory(directory) }
         .expect("open the compiled shared runtime");
-    let (template, compiled) = artifacts
+    let loaded = artifacts
         .load(engine, &wasm)
         .expect("load the shared runtime Task compiled");
-    assert!(
-        !compiled,
+    assert_eq!(
+        loaded.compilation,
+        isoplane_engine::Compilation::Reused,
         "the shared runtime compiled at test time; rerun task fixtures:compiled-runtime"
     );
-    template
+    loaded.template
 }

@@ -110,13 +110,12 @@ fn fetch_payload(url: &str) -> Vec<u8> {
 
 async fn settle(v: &Vt, id: u64) -> ResultRecord {
     for _ in 0..500 {
-        if let Some((got, res)) = v
-            .futures
-            .take_ready(v.ctx.instance)
-            .map(isoplane_host::futures::Ready::into_pair)
-        {
-            assert_eq!(got, id, "the ready result is the future being awaited");
-            return res;
+        if let Some(ready) = v.futures.take_ready(v.ctx.instance) {
+            assert_eq!(
+                ready.future, id,
+                "the ready result is the future being awaited"
+            );
+            return ready.result;
         }
         tokio::time::sleep(Duration::from_millis(2)).await;
     }

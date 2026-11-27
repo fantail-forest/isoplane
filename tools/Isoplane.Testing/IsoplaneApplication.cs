@@ -1,6 +1,7 @@
 using System.Diagnostics;
-using System.Text.Json;
+using System.Text.Json.Nodes;
 using Isoplane.Cli;
+using Isoplane.Native;
 using Isoplane.Processes;
 
 namespace Isoplane.Testing;
@@ -181,12 +182,9 @@ public sealed class IsoplaneApplication : IAsyncDisposable
             {
                 diagnostics.Append(line.AsSpan());
                 diagnostics.Append("\n".AsSpan());
-                using var record = JsonDocument.Parse(line);
-                var root = record.RootElement;
-                if (!root.TryGetProperty("event", out var kind) || kind.GetString() != "ready")
+                if (SessionEvent.Parse(JsonNode.Parse(line)!.AsObject()) is not SessionEvent.Ready announced)
                     continue;
-                var url = root.GetProperty("url").GetString();
-                if (!Uri.TryCreate(url, UriKind.Absolute, out var address) || address.Scheme != Uri.UriSchemeHttp || !address.IsLoopback || address.Port == 0)
+                if (!Uri.TryCreate(announced.Url, UriKind.Absolute, out var address) || address.Scheme != Uri.UriSchemeHttp || !address.IsLoopback || address.Port == 0)
                     throw new InvalidOperationException("The CLI ready record did not identify a bound loopback HTTP listener.");
                 ready.TrySetResult(address);
             }

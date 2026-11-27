@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using Isoplane.Cli;
+using Isoplane.Native;
 using Xunit;
 
 namespace Isoplane.Cli.Tests;
@@ -63,23 +64,23 @@ public sealed class LocalEventsTests
     }
 
     [Theory]
-    [InlineData(0)]
-    [InlineData(1)]
-    public void plain_and_nonconforming_logs_below_information_are_suppressed(int level)
+    [InlineData(0UL)]
+    [InlineData(1UL)]
+    public void plain_and_nonconforming_logs_below_information_are_suppressed(ulong level)
     {
         Assert.Empty(Display(level, "console output"));
         Assert.Empty(Display(level, "{\"message\":42}"));
     }
 
     [Theory]
-    [InlineData(0, "Trace", "trace")]
-    [InlineData(1, "Debug", "debug")]
-    [InlineData(2, "Information", "info ")]
-    [InlineData(3, "Warning", "warn ")]
-    [InlineData(4, "Error", "error")]
-    [InlineData(4, "Critical", "crit ")]
-    [InlineData(9, "Critical", "log  ")]
-    public void structured_logs_keep_the_host_level_and_framework_critical_severity(int level, string severity, string expected)
+    [InlineData(0UL, "Trace", "trace")]
+    [InlineData(1UL, "Debug", "debug")]
+    [InlineData(2UL, "Information", "info ")]
+    [InlineData(3UL, "Warning", "warn ")]
+    [InlineData(4UL, "Error", "error")]
+    [InlineData(4UL, "Critical", "crit ")]
+    [InlineData(9UL, "Critical", "log  ")]
+    public void structured_logs_keep_the_host_level_and_framework_critical_severity(ulong level, string severity, string expected)
     {
         var payload = new JsonObject { ["message"] = "hello", ["severity"] = severity, ["properties"] = new JsonObject { ["count"] = 1 } };
 
@@ -97,27 +98,51 @@ public sealed class LocalEventsTests
     }
 
     [Fact]
-    public void json_output_preserves_the_complete_guest_diagnostic()
+    public void json_output_names_each_event_beside_its_members()
     {
-        var diagnostic = Diagnostic(0, "{\"message\":{},\"severity\":false}");
         var output = new List<string>();
+        SessionEvent[] events =
+        [
+            new SessionEvent.Ready("shop", "http://127.0.0.1:5000"), new SessionEvent.Reloaded("shop", "http://127.0.0.1:5000"),
+            new SessionEvent.DebuggerDetached("shop", "http://127.0.0.1:5000"), new SessionEvent.ReloadFailed("the module does not validate"),
+            new SessionEvent.ApplicationLog(0, "{\"message\":{},\"severity\":false}"), new SessionEvent.Diagnostic("INFO isoplane_host::cell: activated instance=7"),
+            new SessionEvent.BuildFailed("error CS1002: ; expected"), new SessionEvent.ReloadPending(),
+            new SessionEvent.DebuggerReady("127.0.0.1:4711", "/sdk/runtime.wasm", "/app/application.tar", "mono"),
+        ];
 
-        LocalEvents.Write(diagnostic, json: true, output.Add);
+        foreach (var message in events) LocalEvents.Write(message, json: true, output.Add);
 
-        Assert.Equal([diagnostic.ToJsonString()], output);
+        string[] expected =
+        [
+            """{"event":"ready","app":"shop","url":"http://127.0.0.1:5000"}""",
+            """{"event":"reloaded","app":"shop","url":"http://127.0.0.1:5000"}""",
+            """{"event":"debugger_detached","app":"shop","url":"http://127.0.0.1:5000"}""",
+            """{"event":"reload_failed","detail":"the module does not validate"}""",
+            """{"event":"application_log","level":0,"fields":"{\"message\":{},\"severity\":false}"}""",
+            """{"event":"diagnostic","text":"INFO isoplane_host::cell: activated instance=7"}""",
+            """{"event":"build_failed","detail":"error CS1002: ; expected"}""",
+            """{"event":"reload_pending"}""",
+            """{"event":"debugger_ready","endpoint":"127.0.0.1:4711","module":"/sdk/runtime.wasm","package":"/app/application.tar","runtime":"mono"}""",
+        ];
+        Assert.Equal(expected.Length, output.Count);
+        foreach (var (wanted, written) in expected.Zip(output)) AssertSameJson(wanted, written);
     }
 
-    private static List<string> Display(int level, string text)
+    [Fact]
+    public void an_event_json_output_wrote_reads_back_as_the_same_event()
+    {
+        var written = new SessionEvent.ApplicationLog(3, "disk almost full");
+
+        Assert.Equal(written, SessionEvent.Parse(written.ToJson()));
+    }
+
+    private static void AssertSameJson(string expected, string actual) =>
+        Assert.True(JsonNode.DeepEquals(JsonNode.Parse(expected), JsonNode.Parse(actual)), $"Expected {expected}, and the output was {actual}.");
+
+    private static List<string> Display(ulong level, string text)
     {
         var output = new List<string>();
-        LocalEvents.Write(Diagnostic(level, text), json: false, output.Add);
+        LocalEvents.Write(new SessionEvent.ApplicationLog(level, text), json: false, output.Add);
         return output;
     }
-
-    private static JsonObject Diagnostic(int level, string text) => new()
-    {
-        ["event"] = "diagnostic",
-        ["target"] = "isoplane_host::bindings::observability",
-        ["fields"] = new JsonObject { ["level"] = level, ["fields"] = text }
-    };
 }

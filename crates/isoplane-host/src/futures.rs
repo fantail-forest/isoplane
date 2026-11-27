@@ -860,13 +860,6 @@ pub struct Ready {
     pub waited: Option<std::time::Duration>,
 }
 
-impl Ready {
-    /// The future and its result, for a caller that already knows the dispatch.
-    pub fn into_pair(self) -> (u64, ResultRecord) {
-        (self.future, self.result)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -979,7 +972,9 @@ mod tests {
             matches!(table.complete(id, ResultRecord::Ok(vec![])), WakeTarget::Instance(instance) if instance == owner)
         );
         assert_eq!(
-            table.take_ready(owner).map(Ready::into_pair),
+            table
+                .take_ready(owner)
+                .map(|ready| (ready.future, ready.result)),
             Some((id, ResultRecord::Ok(vec![])))
         );
         assert_cancelled(task).await;
@@ -1220,7 +1215,7 @@ mod tests {
 
         let (id, res) = t
             .take_ready(a)
-            .map(Ready::into_pair)
+            .map(|ready| (ready.future, ready.result))
             .expect("a ready result");
         assert_eq!(id, fa, "the ready result is the completed future");
         assert!(
@@ -1431,7 +1426,8 @@ mod tests {
             "undelivered guest results must prevent warm reuse"
         );
         assert_eq!(
-            t.take_ready(owner).map(Ready::into_pair),
+            t.take_ready(owner)
+                .map(|ready| (ready.future, ready.result)),
             None,
             "a ready result must not reach the next dispatch"
         );

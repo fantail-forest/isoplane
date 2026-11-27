@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::io;
 use std::os::fd::IntoRawFd;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
@@ -14,19 +13,8 @@ use rustix::process::{getpgid, pidfd_open, Pid, PidfdFlags};
 #[cfg(target_os = "macos")]
 #[path = "process_macos.rs"]
 mod macos;
-use serde::Deserialize;
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Start {
-    executable: String,
-    arguments: Vec<String>,
-    directory: String,
-    environment: BTreeMap<String, String>,
-    capture_output: bool,
-    capture_errors: bool,
-    cleanup_grace_ms: u64,
-}
+use crate::process_records::{NativeProcessStarted, Start};
 
 pub(crate) struct OwnedChild {
     child: Mutex<Child>,
@@ -35,8 +23,7 @@ pub(crate) struct OwnedChild {
     cleanup_grace: Duration,
 }
 
-pub(crate) fn start(settings: &[u8]) -> Result<Vec<u8>, crate::error::Error> {
-    let settings: Start = serde_json::from_slice(settings)?;
+pub(crate) fn start(settings: Start) -> io::Result<NativeProcessStarted> {
     let mut child = Command::new(settings.executable)
         .args(settings.arguments)
         .current_dir(settings.directory)
@@ -62,14 +49,21 @@ pub(crate) fn start(settings: &[u8]) -> Result<Vec<u8>, crate::error::Error> {
         .into_raw_fd();
     let stdout = child.stdout.take().map(IntoRawFd::into_raw_fd);
     let stderr = child.stderr.take().map(IntoRawFd::into_raw_fd);
-    let pid = child.id() as libc::pid_t;
+    let id = child.id();
+    let pid = id as libc::pid_t;
     let owner = Box::new(OwnedChild {
         child: Mutex::new(child),
         pid,
         reaped: Mutex::new(false),
         cleanup_grace: Duration::from_millis(settings.cleanup_grace_ms),
     });
-    Ok(serde_json::json!({ "handle": Box::into_raw(owner) as usize, "pid":pid, "stdin":stdin, "stdout":stdout, "stderr":stderr }).to_string().into_bytes())
+    Ok(NativeProcessStarted {
+        handle: Box::into_raw(owner).cast(),
+        pid: id,
+        stdin: stdin.into(),
+        stdout: stdout.map_or(-1, Into::into),
+        stderr: stderr.map_or(-1, Into::into),
+    })
 }
 
 impl OwnedChild {

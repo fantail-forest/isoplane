@@ -6,11 +6,16 @@ pub mod common;
 use common::Dev;
 use std::path::{Path, PathBuf};
 
-fn project(destination: &Path) -> (PathBuf, PathBuf) {
-    (
-        isoplane_fixtures::gated_project(destination),
-        isoplane_fixtures::managed_cli(),
-    )
+struct Project {
+    app: PathBuf,
+    cli: PathBuf,
+}
+
+fn project(destination: &Path) -> Project {
+    Project {
+        app: isoplane_fixtures::gated_project(destination),
+        cli: isoplane_fixtures::managed_cli(),
+    }
 }
 
 fn source(app: &Path, response: &str, log: &str) {
@@ -46,7 +51,7 @@ async fn body(dev: &Dev) -> String {
 #[tokio::test]
 async fn guest_logs_reach_the_installed_cli_from_execution_threads() {
     let directory = tempfile::tempdir().expect("isolate the installed logging workflow");
-    let (app, cli) = project(directory.path());
+    let Project { app, cli } = project(directory.path());
     let mut dev = Dev::start_managed(&app, &cli);
     assert_eq!(
         body(&dev).await,
@@ -60,7 +65,7 @@ async fn guest_logs_reach_the_installed_cli_from_execution_threads() {
 #[tokio::test]
 async fn a_failed_package_build_preserves_the_running_app_and_allows_repair() {
     let directory = tempfile::tempdir().unwrap();
-    let (app, cli) = project(directory.path());
+    let Project { app, cli } = project(directory.path());
     let mut dev = Dev::start_managed(&app, &cli);
     assert_eq!(
         body(&dev).await,
@@ -91,7 +96,7 @@ async fn a_failed_package_build_preserves_the_running_app_and_allows_repair() {
 #[tokio::test]
 async fn shutdown_cancels_a_publication_waiting_on_external_work() {
     let directory = tempfile::tempdir().unwrap();
-    let (app, cli) = project(directory.path());
+    let Project { app, cli } = project(directory.path());
     let mut dev = Dev::start_managed(&app, &cli);
     std::fs::write(app.join("hold-publication"), "").unwrap();
     dev.wait_for("publication-is-held");
@@ -130,7 +135,7 @@ async fn a_keep_alive_connection_serves_the_new_publication_after_reload() {
     }
 
     let directory = tempfile::tempdir().unwrap();
-    let (app, cli) = project(directory.path());
+    let Project { app, cli } = project(directory.path());
     let mut running = Dev::start_managed(&app, &cli);
     let (mut sender, connection) =
         tokio::time::timeout(std::time::Duration::from_secs(60), async {
@@ -166,7 +171,7 @@ async fn a_keep_alive_connection_serves_the_new_publication_after_reload() {
 #[test]
 fn a_second_managed_process_cannot_share_the_projects_state() {
     let directory = tempfile::tempdir().unwrap();
-    let (app, cli) = project(directory.path());
+    let Project { app, cli } = project(directory.path());
     let mut running = Dev::start_managed(&app, &cli);
     let output = std::process::Command::new(&cli)
         .args(["dev", "--no-watch", "--project"])

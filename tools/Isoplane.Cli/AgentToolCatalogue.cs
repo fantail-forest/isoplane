@@ -1,5 +1,8 @@
 namespace Isoplane.Cli;
 
+/// <summary>A tool the agent server offers, by the name an agent calls it with.</summary>
+internal sealed record AgentTool(string Name, string Description);
+
 /// <summary>
 /// The tools the agent server offers, by name and description. The tool methods take their text from
 /// here, and the CLI reference lists them from here, so the two cannot differ.
@@ -13,7 +16,7 @@ internal static class AgentToolCatalogue
     internal const string StartSessionDescription = "Builds an Isoplane application project and runs it in the sandbox on this machine, as `isoplane dev` does. Returns the session's id and the address the application answers at. With watching on, a saved source change rebuilds and reloads it. A build that fails returns its errors and starts nothing.";
 
     internal const string SessionEvents = "session_events";
-    internal const string SessionEventsDescription = "Returns what a session has reported since a given event number: ready and reloaded with the application's address, reload_pending, reload_failed and build_failed with their detail, and diagnostic for each line the application logged. Pass the last number seen to read only newer events; a wait of some seconds returns as soon as one arrives.";
+    internal const string SessionEventsDescription = "Returns what a session has reported since a given event number: ready and reloaded with the application's address, reload_pending, reload_failed and build_failed with their detail, application_log for each line the application logged, and diagnostic for each record the host logged. Pass the last number seen to read only newer events; a wait of some seconds returns as soon as one arrives.";
 
     internal const string StopSession = "stop_session";
     internal const string StopSessionDescription = "Stops a session started by start_session and frees its port.";
@@ -21,9 +24,9 @@ internal static class AgentToolCatalogue
     internal const string ListSessions = "list_sessions";
     internal const string ListSessionsDescription = "Lists the sessions started by start_session that are still running, with the project and address of each.";
 
-    internal static readonly (string Name, string Description)[] All =
+    internal static readonly AgentTool[] All =
     [
-        (CheckMachine, CheckMachineDescription), (StartSession, StartSessionDescription), (SessionEvents, SessionEventsDescription),
-        (StopSession, StopSessionDescription), (ListSessions, ListSessionsDescription),
+        new(CheckMachine, CheckMachineDescription), new(StartSession, StartSessionDescription), new(SessionEvents, SessionEventsDescription),
+        new(StopSession, StopSessionDescription), new(ListSessions, ListSessionsDescription),
     ];
 }

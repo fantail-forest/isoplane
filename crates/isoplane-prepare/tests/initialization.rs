@@ -143,7 +143,10 @@ fn initialization_answers_and_counts_the_clock() {
     let result = prepare(&wasm, request()).expect("clock admission");
     assert_eq!(
         result.initialized.pal_calls,
-        vec![("clock_now_coarse".to_string(), 1)],
+        vec![isoplane_engine::PalCallCount {
+            import: "clock_now_coarse".into(),
+            calls: 1,
+        }],
         "the report must count the admitted clock exactly once"
     );
 }

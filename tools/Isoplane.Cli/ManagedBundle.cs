@@ -157,9 +157,12 @@ internal static class ManagedBundle
     private static Task WriteEntryAsync(TarWriter tar, string name, Stream content, DateTimeOffset modified, CancellationToken cancellation) =>
         tar.WriteEntryAsync(new PaxTarEntry(TarEntryType.RegularFile, name) { DataStream = content, ModificationTime = modified }, cancellation);
 
-    private static (string Source, string Target)[] ReadAssets(JsonElement items)
+    /// <summary>A file the bundle carries: where the build left it, and its path under the bundle's assets.</summary>
+    private sealed record BundleAsset(string Source, string Target);
+
+    private static BundleAsset[] ReadAssets(JsonElement items)
     {
-        var result = new List<(string Source, string Target)>();
+        var result = new List<BundleAsset>();
         var names = new HashSet<string>(StringComparer.Ordinal);
         foreach (var item in items.GetProperty("IsoplaneBundleAsset").EnumerateArray())
         {
@@ -175,12 +178,12 @@ internal static class ManagedBundle
             target = target.Replace('\\', '/');
             if (!AssetPaths.TryAdd(names, target))
                 throw new InvalidOperationException($"Bundle asset '{target}' is not a unique relative file path.");
-            result.Add((source, target));
+            result.Add(new(source, target));
         }
         return result.OrderBy(asset => asset.Target, StringComparer.Ordinal).ToArray();
     }
 
-    private static (string Source, string Target)[] Layer((string Source, string Target)[] assets, IReadOnlyList<string> sessionContent)
+    private static BundleAsset[] Layer(BundleAsset[] assets, IReadOnlyList<string> sessionContent)
     {
         var layered = assets.ToDictionary(asset => asset.Target, asset => asset.Source, StringComparer.Ordinal);
         foreach (var directory in sessionContent)
@@ -193,7 +196,7 @@ internal static class ManagedBundle
         foreach (var target in layered.Keys)
             if (!AssetPaths.TryAdd(names, target))
                 throw new InvalidOperationException($"Session content gives the bundle asset '{target}', which is not a unique relative file path beside the project's content.");
-        return layered.Select(asset => (asset.Value, asset.Key)).OrderBy(asset => asset.Key, StringComparer.Ordinal).ToArray();
+        return layered.Select(asset => new BundleAsset(asset.Value, asset.Key)).OrderBy(asset => asset.Target, StringComparer.Ordinal).ToArray();
     }
 
     private static void ValidateSymbols(string path)

@@ -169,8 +169,7 @@ impl Cell {
         status: u16,
         code: &'static str,
     ) {
-        let (active, _) = self.remove_active(slot.id, dispatch);
-        let Some(active) = active else {
+        let Some(active) = self.remove_active(slot.id, dispatch).dispatch else {
             return;
         };
         let owner = active.completion;

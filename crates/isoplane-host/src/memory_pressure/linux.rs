@@ -27,7 +27,7 @@ pub(super) fn sample(read_file: &ReadFile<'_>) -> Result<MemorySample, MemoryPre
         return Ok(sample);
     };
     let mountinfo = read(read_file, Path::new("/proc/self/mountinfo"))?;
-    let (mount, directory) = locate_cgroup(&membership, &mountinfo)?;
+    let CgroupLocation { mount, directory } = locate_cgroup(&membership, &mountinfo)?;
     for ancestor in directory.ancestors() {
         if !ancestor.starts_with(&mount) {
             break;
@@ -182,9 +182,18 @@ fn unescape_path(value: &str) -> Result<PathBuf, MemoryPressureError> {
     absolute_path(&decoded, source)
 }
 
-fn locate_cgroup(member: &Path, input: &str) -> Result<(PathBuf, PathBuf), MemoryPressureError> {
+/// Where this process's cgroup is visible in the filesystem.
+#[derive(Debug, PartialEq)]
+struct CgroupLocation {
+    /// The cgroup v2 mount point that contains it.
+    mount: PathBuf,
+    /// The cgroup's own directory under that mount.
+    directory: PathBuf,
+}
+
+fn locate_cgroup(member: &Path, input: &str) -> Result<CgroupLocation, MemoryPressureError> {
     let source = Path::new("/proc/self/mountinfo");
-    let mut selected: Option<(usize, PathBuf, PathBuf)> = None;
+    let mut selected: Option<(usize, CgroupLocation)> = None;
     for line in input.lines() {
         let Some((before, after)) = line.split_once(" - ") else {
             return Err(invalid(source, "missing mount separator"));
@@ -206,13 +215,13 @@ fn locate_cgroup(member: &Path, input: &str) -> Result<(PathBuf, PathBuf), Memor
         let root_depth = root.components().count();
         if selected
             .as_ref()
-            .is_none_or(|(previous_depth, _, _)| root_depth < *previous_depth)
+            .is_none_or(|(previous_depth, _)| root_depth < *previous_depth)
         {
-            selected = Some((root_depth, mount, directory));
+            selected = Some((root_depth, CgroupLocation { mount, directory }));
         }
     }
     selected
-        .map(|(_, mount, directory)| (mount, directory))
+        .map(|(_, location)| location)
         .ok_or_else(|| invalid(source, "no visible cgroup v2 mount contains this process"))
 }
 

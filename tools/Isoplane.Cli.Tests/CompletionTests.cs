@@ -70,7 +70,9 @@ public sealed class CompletionTests
         Assert.NotEmpty(result.Error);
     }
 
-    private static async Task<(int ExitCode, string Output, string Error)> RunAsync(params string[] args)
+    private sealed record Completed(int ExitCode, string Output, string Error);
+
+    private static async Task<Completed> RunAsync(params string[] args)
     {
         using var directory = new FileSystemTestDirectory("isoplane-completion-");
         var home = Path.Combine(directory.Path, "home");
@@ -92,7 +94,7 @@ public sealed class CompletionTests
         try
         {
             await process.WaitForExitAsync(deadline.Token);
-            return (process.ExitCode, await output, await error);
+            return new(process.ExitCode, await output, await error);
         }
         finally
         {

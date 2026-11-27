@@ -1,7 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
-using System.Text.Json.Nodes;
 using Isoplane.Native.Interop;
 
 namespace Isoplane.Native;
@@ -9,7 +8,7 @@ namespace Isoplane.Native;
 internal sealed class LocalSession : IAsyncDisposable
 {
     private readonly nint handle;
-    private readonly Action<JsonObject> events;
+    private readonly Action<SessionEvent> events;
     private readonly object access = new();
     private ExceptionDispatchInfo? callbackFailure;
     private bool disposed;
@@ -17,7 +16,11 @@ internal sealed class LocalSession : IAsyncDisposable
 
     internal Task Completion { get; }
 
-    internal LocalSession(byte[] module, byte[] options, Action<JsonObject> events)
+    /// <summary>
+    /// Starts <paramref name="module"/> under <paramref name="options"/>. <paramref name="events"/> receives each
+    /// event the host reports, possibly concurrently; one it throws stops the session and fails <see cref="Completion"/>.
+    /// </summary>
+    internal LocalSession(byte[] module, LocalSessionOptions options, Action<SessionEvent> events)
     {
         NativeRuntime.EnsureLoaded();
         this.events = events;
@@ -27,18 +30,19 @@ internal sealed class LocalSession : IAsyncDisposable
 
     private static unsafe nint Create() => (nint)NativeMethods.isoplane_session_create();
 
-    internal unsafe void Reload(byte[] module, byte[] options)
+    internal unsafe void Reload(byte[] module, LocalSessionOptions options)
     {
+        using var arguments = new NativeArguments();
+        var settings = options.Lend(arguments);
         lock (access)
         {
             ObjectDisposedException.ThrowIf(disposed, this);
             fixed (byte* wasm = module)
-            fixed (byte* settings = options)
-                NativeRuntime.Read(NativeMethods.isoplane_session_reload((void*)handle, wasm, (nuint)module.Length, settings, (nuint)options.Length));
+                NativeRuntime.Check(NativeMethods.isoplane_session_reload((void*)handle, wasm, (nuint)module.Length, &settings));
         }
     }
 
-    internal async Task PrepareDetachAsync(byte[] module, byte[] options)
+    internal async Task PrepareDetachAsync(byte[] module, LocalSessionOptions options)
     {
         var prepared = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         if (Interlocked.CompareExchange(ref detaching, prepared, null) is not null)
@@ -60,38 +64,39 @@ internal sealed class LocalSession : IAsyncDisposable
     {
         lock (access)
         {
-            if (!disposed) NativeRuntime.Read(NativeMethods.isoplane_session_stop((void*)handle));
+            if (!disposed) NativeRuntime.Check(NativeMethods.isoplane_session_stop((void*)handle));
         }
     }
 
-    private unsafe void Run(byte[] module, byte[] options)
+    private unsafe void Run(byte[] module, LocalSessionOptions options)
     {
         var context = GCHandle.Alloc(this);
         try
         {
+            using var arguments = new NativeArguments();
+            var settings = options.Lend(arguments);
             fixed (byte* wasm = module)
-            fixed (byte* settings = options)
-                NativeRuntime.Read(NativeMethods.isoplane_session_run((void*)handle, wasm, (nuint)module.Length,
-                    settings, (nuint)options.Length, &OnEvent, (void*)GCHandle.ToIntPtr(context)));
+                NativeRuntime.Check(NativeMethods.isoplane_session_run((void*)handle, wasm, (nuint)module.Length,
+                    &settings, &OnEvent, (void*)GCHandle.ToIntPtr(context)));
             callbackFailure?.Throw();
         }
         finally { context.Free(); }
     }
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
-    private static unsafe void OnEvent(void* context, byte* data, nuint length)
+    private static unsafe void OnEvent(void* context, NativeEvent* reported)
     {
         var session = (LocalSession)GCHandle.FromIntPtr((nint)context).Target!;
         try
         {
-            var message = JsonNode.Parse(new ReadOnlySpan<byte>(data, checked((int)length)))!.AsObject();
-            switch (message["event"]?.GetValue<string>())
+            var message = SessionEvent.Read(reported);
+            switch (message)
             {
-                case "debugger_detach_prepared":
+                case SessionEvent.DebuggerDetachPrepared:
                     Volatile.Read(ref session.detaching)?.TrySetResult();
                     return;
-                case "debugger_detach_failed":
-                    Volatile.Read(ref session.detaching)?.TrySetException(new InvalidOperationException(message["detail"]!.GetValue<string>()));
+                case SessionEvent.DebuggerDetachFailed failed:
+                    Volatile.Read(ref session.detaching)?.TrySetException(new InvalidOperationException(failed.Detail));
                     return;
                 default:
                     session.events(message);

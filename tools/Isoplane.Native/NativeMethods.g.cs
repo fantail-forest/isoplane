@@ -15,9 +15,9 @@ namespace Isoplane.Native.Interop
         const string __DllName = "isoplane_native";
 
         /// <summary>
-        ///  Version of the native entry points and their report schema.
+        ///  Version of the native entry points and the records they exchange.
         /// </summary>
-        internal const uint ABI_VERSION = 5;
+        internal const uint ABI_VERSION = 6;
 
 
 
@@ -29,11 +29,11 @@ namespace Isoplane.Native.Interop
         internal static extern uint isoplane_abi_version();
 
         /// <summary>
-        ///  Releases the payload of a result returned by this library.
+        ///  Releases the error message of a result returned by this library.
         ///
         ///  # Safety
-        ///  Pass an unchanged result exactly once, after all payload readers finish.
-        ///  The managed wrapper calls this in a finally block after copying the payload.
+        ///  Pass an unchanged result exactly once, after all message readers finish.
+        ///  The managed wrapper calls this in a finally block after copying the message.
         /// </summary>
         [DllImport(__DllName, EntryPoint = "isoplane_result_free", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern void isoplane_result_free(NativeResult result);
@@ -45,24 +45,26 @@ namespace Isoplane.Native.Interop
         internal static extern void* isoplane_session_create();
 
         /// <summary>
-        ///  Runs a local application's native host until stopped, including across debug requests.
+        ///  Runs a local application's native host until stopped, including across
+        ///  debug requests, and reports each of its events to `callback`, which may
+        ///  read the event only during the call.
         ///
         ///  # Safety
         ///  The session comes from `isoplane_session_create` and remains alive for the call.
-        ///  Both input buffers stay pinned and readable. The callback and context stay alive
+        ///  The module and options stay pinned and readable. The callback and context stay alive
         ///  until this call returns; callbacks may be concurrent and cannot throw across FFI.
         /// </summary>
         [DllImport(__DllName, EntryPoint = "isoplane_session_run", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        internal static extern NativeResult isoplane_session_run(void* session, byte* wasm, nuint wasm_length, byte* options, nuint options_length, delegate* unmanaged[Cdecl]<void*, byte*, nuint, void> callback, void* context);
+        internal static extern NativeResult isoplane_session_run(void* session, byte* wasm, nuint wasm_length, NativeSessionOptions* options, delegate* unmanaged[Cdecl]<void*, NativeEvent*, void> callback, void* context);
 
         /// <summary>
         ///  Offers a newly published module to the running local host.
         ///
         ///  # Safety
-        ///  The session remains alive and both buffers remain pinned for this call.
+        ///  The session remains alive, and the module and options remain pinned, for this call.
         /// </summary>
         [DllImport(__DllName, EntryPoint = "isoplane_session_reload", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        internal static extern NativeResult isoplane_session_reload(void* session, byte* wasm, nuint wasm_length, byte* options, nuint options_length);
+        internal static extern NativeResult isoplane_session_reload(void* session, byte* wasm, nuint wasm_length, NativeSessionOptions* options);
 
         /// <summary>
         ///  Requests cooperative shutdown; `isoplane_session_run` joins owned work before returning.
@@ -86,20 +88,23 @@ namespace Isoplane.Native.Interop
         ///  Launches an owned build-tool process group and transfers its pipe descriptors.
         ///
         ///  # Safety
-        ///  The settings buffer is pinned and readable for this call. The managed owner
-        ///  closes every returned descriptor and joins the wait call before freeing the handle.
+        ///  The settings stay pinned and readable, and `started` writable, for this call. The
+        ///  managed owner closes every returned descriptor and joins the wait call before
+        ///  freeing the handle.
         /// </summary>
         [DllImport(__DllName, EntryPoint = "isoplane_process_start", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        internal static extern NativeResult isoplane_process_start(byte* settings, nuint length);
+        internal static extern NativeResult isoplane_process_start(NativeProcessStart* settings, NativeProcessStarted* started);
 
         /// <summary>
-        ///  Waits for an owned process and cleans its group before reaping the leader.
+        ///  Waits for an owned process, cleans its group before reaping the leader, and
+        ///  writes its exit code to `exit_code`.
         ///
         ///  # Safety
         ///  The handle comes from process_start, remains alive, and has exactly one waiter.
+        ///  `exit_code` is writable for the call.
         /// </summary>
         [DllImport(__DllName, EntryPoint = "isoplane_process_wait", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        internal static extern NativeResult isoplane_process_wait(void* handle);
+        internal static extern NativeResult isoplane_process_wait(void* handle, int* exit_code);
 
         /// <summary>
         ///  Terminates an unreaped owned process group, without affecting other sessions.
@@ -123,61 +128,388 @@ namespace Isoplane.Native.Interop
         ///  Reports the compiled runtimes in the per-user runtime cache at the
         ///  absolute UTF-8 `directory`: the cache's byte budget and each runtime's
         ///  size and last use. A directory that does not exist is an empty cache and
-        ///  is not created.
+        ///  is not created. Release the report with `isoplane_runtime_cache_inventory_free`.
         ///
         ///  # Safety
         ///  The nonempty buffer points to readable memory for its length and remains
-        ///  alive and unchanged for the call. The managed wrapper pins it.
+        ///  alive and unchanged for the call, and `inventory` is writable for the call.
+        ///  The managed wrapper pins both.
         /// </summary>
         [DllImport(__DllName, EntryPoint = "isoplane_runtime_cache_inventory", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        internal static extern NativeResult isoplane_runtime_cache_inventory(byte* directory, nuint directory_length);
+        internal static extern NativeResult isoplane_runtime_cache_inventory(byte* directory, nuint directory_length, NativeCacheInventory* inventory);
+
+        /// <summary>
+        ///  Releases a report of `isoplane_runtime_cache_inventory`.
+        ///
+        ///  # Safety
+        ///  Pass an unchanged report exactly once, after all its readers finish.
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "isoplane_runtime_cache_inventory_free", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern void isoplane_runtime_cache_inventory_free(NativeCacheInventory inventory);
 
         /// <summary>
         ///  Removes every compiled runtime from the per-user runtime cache at the
         ///  absolute UTF-8 `directory`, including one a running session uses, and
         ///  reports the bytes removed, the runtimes that remain and why each could
-        ///  not be removed.
+        ///  not be removed. Release the report with `isoplane_runtime_cache_cleared_free`.
         ///
         ///  # Safety
         ///  As for `isoplane_runtime_cache_inventory`.
         /// </summary>
         [DllImport(__DllName, EntryPoint = "isoplane_runtime_cache_clear", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        internal static extern NativeResult isoplane_runtime_cache_clear(byte* directory, nuint directory_length);
+        internal static extern NativeResult isoplane_runtime_cache_clear(byte* directory, nuint directory_length, NativeCacheCleared* cleared);
+
+        /// <summary>
+        ///  Releases a report of `isoplane_runtime_cache_clear`.
+        ///
+        ///  # Safety
+        ///  Pass an unchanged report exactly once, after all its readers finish.
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "isoplane_runtime_cache_cleared_free", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern void isoplane_runtime_cache_cleared_free(NativeCacheCleared cleared);
 
         /// <summary>
         ///  Compiles a shared runtime and its debug build into the runtime cache ahead
-        ///  of the first session on them, as that session would. The UTF-8 JSON
-        ///  `options` give the application manifest, native library, runtime cache
-        ///  directory, machine roots and the runtime's `runtime.json`. Reports
-        ///  `baseline_compiled` and `debug_compiled`: whether each had to be compiled.
+        ///  of the first session on them, as that session would, and reports whether
+        ///  each had to be compiled.
         ///
         ///  # Safety
-        ///  All three buffers stay pinned and readable for this call.
+        ///  Both modules and the options stay pinned and readable, and `prepared`
+        ///  writable, for this call.
         /// </summary>
         [DllImport(__DllName, EntryPoint = "isoplane_runtime_prepare", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        internal static extern NativeResult isoplane_runtime_prepare(byte* wasm, nuint wasm_length, byte* debug_wasm, nuint debug_wasm_length, byte* options, nuint options_length);
+        internal static extern NativeResult isoplane_runtime_prepare(byte* wasm, nuint wasm_length, byte* debug_wasm, nuint debug_wasm_length, NativeRuntimeOptions* options, RuntimePreparation* prepared);
 
 
     }
 
     /// <summary>
-    ///  An owned UTF-8 report or error, released once with `isoplane_result_free`.
+    ///  An operation's outcome and, when it failed, its UTF-8 error message,
+    ///  released once with `isoplane_result_free`.
     /// </summary>
     [StructLayout(LayoutKind.Sequential)]
     internal unsafe partial struct NativeResult
     {
         /// <summary>
-        ///  Interpretation of the payload.
+        ///  Whether the operation succeeded, and if not, how it failed.
         /// </summary>
         public NativeStatus status;
         /// <summary>
-        ///  Read-only payload allocated by this library.
+        ///  Read-only error message allocated by this library; empty on success.
         /// </summary>
         public byte* data;
         /// <summary>
-        ///  Payload length in bytes.
+        ///  Error message length in bytes.
         /// </summary>
         public nuint length;
+    }
+
+    /// <summary>
+    ///  UTF-8 text. Text the managed caller lends lasts for the call; text this
+    ///  library returns lasts until the record that holds it is released.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe partial struct NativeText
+    {
+        /// <summary>
+        ///  The first byte, which may be null when `length` is zero.
+        /// </summary>
+        public byte* data;
+        /// <summary>
+        ///  Length in bytes.
+        /// </summary>
+        public nuint length;
+    }
+
+    /// <summary>
+    ///  One named value: an application setting or an environment variable.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe partial struct NativeSetting
+    {
+        public NativeText name;
+        public NativeText value;
+    }
+
+    /// <summary>
+    ///  The manifest an application runs under locally.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe partial struct NativeManifest
+    {
+        public NativeText name;
+        public LimitOverrides limits;
+    }
+
+    /// <summary>
+    ///  The limits that replace a local application's defaults. Zero keeps a
+    ///  limit's default.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe partial struct LimitOverrides
+    {
+        /// <summary>
+        ///  The instance soft memory limit in bytes, a multiple of the wasm page size.
+        /// </summary>
+        public ulong guest_memory_bytes;
+        /// <summary>
+        ///  The running time one request may use.
+        /// </summary>
+        public uint occupancy_ms_per_dispatch;
+        /// <summary>
+        ///  The most outbound connections one instance may hold at once.
+        /// </summary>
+        public ulong instance_open_connections;
+        /// <summary>
+        ///  The most asynchronous operations one dispatch may have pending at once.
+        /// </summary>
+        public uint pending_futures_per_dispatch;
+    }
+
+    /// <summary>
+    ///  What a local session runs and where it keeps its files, as the managed
+    ///  owner lends it for a call.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe partial struct NativeSessionOptions
+    {
+        public NativeManifest manifest;
+        /// <summary>
+        ///  The absolute directory that holds the session's lock and state.
+        /// </summary>
+        public NativeText state_directory;
+        /// <summary>
+        ///  The native library, whose identity the compiled runtime depends on.
+        /// </summary>
+        public NativeText runtime_library;
+        /// <summary>
+        ///  The absolute directory for the project's prepared application.
+        /// </summary>
+        public NativeText compilation_directory;
+        /// <summary>
+        ///  The absolute directory of the per-user cache of compiled runtimes.
+        /// </summary>
+        public NativeText runtime_cache_directory;
+        /// <summary>
+        ///  The machine's trusted roots exported as PEM, or empty to trust the shipped roots alone.
+        /// </summary>
+        public NativeText machine_roots;
+        /// <summary>
+        ///  The application's settings.
+        /// </summary>
+        public NativeSetting* configuration;
+        public nuint configuration_length;
+        /// <summary>
+        ///  The filter that admits host log records, in `RUST_LOG` syntax.
+        /// </summary>
+        public NativeText log_filter;
+        /// <summary>
+        ///  Whether to listen on `port` rather than the default port.
+        /// </summary>
+        [MarshalAs(UnmanagedType.U1)] public bool port_set;
+        /// <summary>
+        ///  The loopback port to listen on, where zero lets the system choose one.
+        /// </summary>
+        public ushort port;
+        /// <summary>
+        ///  Where the guest's debugger agent connects, or empty to run without a debugger.
+        /// </summary>
+        public NativeText debug_endpoint;
+        /// <summary>
+        ///  The absolute path of the application package the shared runtime loads.
+        /// </summary>
+        public NativeText package;
+    }
+
+    /// <summary>
+    ///  An event of a local session, lent to the managed owner for the callback.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe partial struct NativeEvent
+    {
+        public NativeEventKind kind;
+        public NativeEventDetails details;
+    }
+
+    /// <summary>
+    ///  What an event says, by its kind. `DebuggerDetachPrepared` says nothing.
+    /// </summary>
+    [StructLayout(LayoutKind.Explicit)]
+    internal unsafe partial struct NativeEventDetails
+    {
+        /// <summary>
+        ///  For `Ready`, `Reloaded` and `DebuggerDetached`.
+        /// </summary>
+        [FieldOffset(0)]
+        public NativeServing serving;
+        /// <summary>
+        ///  For `DebuggerDetachFailed` and `ReloadFailed`, why; for `Diagnostic`, the record.
+        /// </summary>
+        [FieldOffset(0)]
+        public NativeText text;
+        /// <summary>
+        ///  For `ApplicationLog`.
+        /// </summary>
+        [FieldOffset(0)]
+        public NativeApplicationLog application_log;
+    }
+
+    /// <summary>
+    ///  The application and the address it serves at.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe partial struct NativeServing
+    {
+        public NativeText app;
+        public NativeText url;
+    }
+
+    /// <summary>
+    ///  A line the application logged.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe partial struct NativeApplicationLog
+    {
+        /// <summary>
+        ///  The severity the application gave it, from 0 for trace to 4 for error.
+        /// </summary>
+        public ulong level;
+        /// <summary>
+        ///  The text the application logged.
+        /// </summary>
+        public NativeText fields;
+    }
+
+    /// <summary>
+    ///  The build-tool process to start and own, as the managed owner lends it for the call.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe partial struct NativeProcessStart
+    {
+        public NativeText executable;
+        public NativeText* arguments;
+        public nuint arguments_length;
+        public NativeText directory;
+        /// <summary>
+        ///  The child's whole environment; it inherits nothing.
+        /// </summary>
+        public NativeSetting* environment;
+        public nuint environment_length;
+        [MarshalAs(UnmanagedType.U1)] public bool capture_output;
+        [MarshalAs(UnmanagedType.U1)] public bool capture_errors;
+        /// <summary>
+        ///  How long descendants may outlive the leader before its group is killed.
+        /// </summary>
+        public ulong cleanup_grace_ms;
+    }
+
+    /// <summary>
+    ///  A started process, whose pipe ends the managed owner now closes.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe partial struct NativeProcessStarted
+    {
+        /// <summary>
+        ///  The owner to pass to the wait, stop and free entry points.
+        /// </summary>
+        public void* handle;
+        public uint pid;
+        /// <summary>
+        ///  The operating system's descriptor or handle for the child's standard input.
+        /// </summary>
+        public long stdin;
+        /// <summary>
+        ///  The descriptor or handle for captured standard output, or -1 when it is not captured.
+        /// </summary>
+        public long stdout;
+        /// <summary>
+        ///  The descriptor or handle for captured standard error, or -1 when it is not captured.
+        /// </summary>
+        public long stderr;
+    }
+
+    /// <summary>
+    ///  One compiled runtime in the cache.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe partial struct CompiledRuntime
+    {
+        public ulong bytes;
+        public ulong last_used_unix_ms;
+    }
+
+    /// <summary>
+    ///  The compiled runtimes a cache holds, released with
+    ///  `isoplane_runtime_cache_inventory_free`.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe partial struct NativeCacheInventory
+    {
+        /// <summary>
+        ///  The most the cache keeps before it removes the runtimes used least recently.
+        /// </summary>
+        public ulong budget_bytes;
+        public CompiledRuntime* entries;
+        public nuint entries_length;
+    }
+
+    /// <summary>
+    ///  What clearing a cache did, released with `isoplane_runtime_cache_cleared_free`.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe partial struct NativeCacheCleared
+    {
+        /// <summary>
+        ///  The cache as clearing left it.
+        /// </summary>
+        public NativeCacheInventory remaining;
+        public ulong removed_bytes;
+        /// <summary>
+        ///  Why each remaining runtime could not be removed.
+        /// </summary>
+        public NativeText* failures;
+        public nuint failures_length;
+    }
+
+    /// <summary>
+    ///  What a shared runtime is compiled for, as the managed caller lends it for the call.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe partial struct NativeRuntimeOptions
+    {
+        public NativeManifest manifest;
+        /// <summary>
+        ///  The native library, whose identity the compiled runtime depends on.
+        /// </summary>
+        public NativeText runtime_library;
+        /// <summary>
+        ///  The absolute directory of the cache to compile into.
+        /// </summary>
+        public NativeText runtime_cache_directory;
+        /// <summary>
+        ///  The machine's trusted roots exported as PEM, or empty to trust the shipped roots alone.
+        /// </summary>
+        public NativeText machine_roots;
+        /// <summary>
+        ///  The runtime's `runtime.json`, which names its SDK and the runtime module's digest.
+        /// </summary>
+        public NativeText runtime_identity;
+    }
+
+    /// <summary>
+    ///  What preparing a shared runtime ahead of its first session did.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe partial struct RuntimePreparation
+    {
+        /// <summary>
+        ///  Whether the runtime baseline was compiled, rather than found in the cache.
+        /// </summary>
+        [MarshalAs(UnmanagedType.U1)] public bool baseline_compiled;
+        /// <summary>
+        ///  Whether the debug runtime was compiled, rather than found in the cache.
+        /// </summary>
+        [MarshalAs(UnmanagedType.U1)] public bool debug_compiled;
     }
 
 
@@ -187,11 +519,11 @@ namespace Isoplane.Native.Interop
     internal enum NativeStatus : uint
     {
         /// <summary>
-        ///  The operation returned its report.
+        ///  The operation succeeded.
         /// </summary>
         Success,
         /// <summary>
-        ///  The supplied input could not be read or parsed.
+        ///  The supplied input could not be read.
         /// </summary>
         InvalidInput,
         /// <summary>
@@ -202,6 +534,21 @@ namespace Isoplane.Native.Interop
         ///  A native operation failed, or an unexpected panic was contained.
         /// </summary>
         InternalError,
+    }
+
+    /// <summary>
+    ///  Which event a `NativeEvent` is, and so which member of its details it carries.
+    /// </summary>
+    internal enum NativeEventKind : uint
+    {
+        Ready,
+        Reloaded,
+        DebuggerDetached,
+        DebuggerDetachPrepared,
+        DebuggerDetachFailed,
+        ReloadFailed,
+        ApplicationLog,
+        Diagnostic,
     }
 
 

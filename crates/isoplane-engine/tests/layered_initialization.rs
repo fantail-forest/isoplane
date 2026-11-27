@@ -64,7 +64,10 @@ fn layer_publication_preserves_compiled_code_and_restores_globals_and_memory() {
         &engine,
         "i32.const 100 i32.const 42 i32.store8 i64.const 73 global.set $calls i64.const 0",
     );
-    let (_, native_before) = engine.precompile(&wasm).expect("original native code");
+    let native_before = engine
+        .precompile(&wasm)
+        .expect("original native code")
+        .cwasm;
     let mut instance = initialize(&engine, &source);
     let captured = instance.capture_mutable_state().expect("captured globals");
     let product = capture(&engine, &source, &mut instance);

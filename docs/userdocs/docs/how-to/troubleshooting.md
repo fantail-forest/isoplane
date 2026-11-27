@@ -148,8 +148,8 @@ formatter methods such as `AddJsonConsole`, logs each message as that formatter
 writes it instead.
 
 Local development prints application messages in a compact level, message and
-category format. Runtime diagnostics stay out of that view. To capture the full
-structured runtime record for a bug report, run:
+category format. Runtime diagnostics stay out of that view. To capture every
+runtime diagnostic for a bug report, run:
 
 <OnlyOn platforms="mac linux">
 
@@ -174,7 +174,8 @@ finally { Remove-Item Env:RUST_LOG }
 </OnlyOn>
 
 The session file contains machine-readable ready and reload events. The debug
-file contains the runtime diagnostics to attach to the report.
+file contains the application's messages and the runtime diagnostics, one JSON
+object per line, to attach to the report.
 
 ## A database certificate is rejected
 

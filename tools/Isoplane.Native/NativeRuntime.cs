@@ -1,7 +1,6 @@
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
-using System.Text.Json.Nodes;
 using Isoplane.Native.Interop;
 
 namespace Isoplane.Native;
@@ -25,23 +24,26 @@ internal static class NativeRuntime
         }
     }
 
-    internal static unsafe JsonObject Read(NativeResult result)
+    /// <summary>Releases <paramref name="result"/> and throws the error of an operation that failed.</summary>
+    internal static unsafe void Check(NativeResult result)
     {
         try
         {
-            var payload = Encoding.UTF8.GetString(new ReadOnlySpan<byte>(result.data, checked((int)result.length)));
-            return result.status switch
+            if (result.status == NativeStatus.Success) return;
+            var message = Encoding.UTF8.GetString(result.data, checked((int)result.length));
+            throw result.status switch
             {
-                NativeStatus.Success => JsonNode.Parse(payload)?.AsObject()
-                    ?? throw new InvalidOperationException("Native operation returned an empty report."),
-                NativeStatus.InvalidInput => throw new ArgumentException(payload),
-                NativeStatus.ProcessError => throw new IOException(payload),
-                NativeStatus.InternalError => throw new InvalidOperationException(payload),
-                _ => throw new InvalidOperationException("Unknown native result; reinstall a matching Isoplane package.")
+                NativeStatus.InvalidInput => new ArgumentException(message),
+                NativeStatus.ProcessError => new IOException(message),
+                NativeStatus.InternalError => new InvalidOperationException(message),
+                _ => new InvalidOperationException("Unknown native result; reinstall a matching Isoplane package.")
             };
         }
         finally { NativeMethods.isoplane_result_free(result); }
     }
+
+    /// <summary>The text <paramref name="text"/> holds, copied out of native memory.</summary>
+    internal static unsafe string Text(NativeText text) => Encoding.UTF8.GetString(text.data, checked((int)text.length));
 
     private static bool Load()
     {

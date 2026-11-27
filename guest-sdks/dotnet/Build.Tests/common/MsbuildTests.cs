@@ -24,7 +24,10 @@ public abstract class MsbuildTests : IDisposable
         return start;
     }
 
-    protected static async Task<(int Exit, string Output)> Run(ProcessStartInfo start)
+    /// <summary>How a process ended, and what it wrote to standard output followed by standard error.</summary>
+    protected sealed record Completed(int Exit, string Output);
+
+    protected static async Task<Completed> Run(ProcessStartInfo start)
     {
         using var process = Process.Start(start)!;
         var output = process.StandardOutput.ReadToEndAsync();
@@ -33,7 +36,7 @@ public abstract class MsbuildTests : IDisposable
         try
         {
             await process.WaitForExitAsync(timeout.Token);
-            return (process.ExitCode, await output + await error);
+            return new(process.ExitCode, await output + await error);
         }
         finally
         {

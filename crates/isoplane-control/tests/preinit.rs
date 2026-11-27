@@ -106,7 +106,10 @@ fn initialization_reports_its_logs_and_entropy_draws_and_captures_what_it_built(
     );
     assert_eq!(
         out.initialized.pal_calls,
-        vec![("entropy_fill".into(), 2)],
+        vec![isoplane_engine::PalCallCount {
+            import: "entropy_fill".into(),
+            calls: 2,
+        }],
         "initialization records the entropy it was answered"
     );
 
@@ -181,8 +184,14 @@ fn initialization_is_answered_a_fixed_clock_and_fresh_entropy() {
     assert_eq!(
         out.initialized.pal_calls,
         vec![
-            ("clock_now_coarse".to_string(), 1),
-            ("entropy_fill".to_string(), 1)
+            isoplane_engine::PalCallCount {
+                import: "clock_now_coarse".into(),
+                calls: 1,
+            },
+            isoplane_engine::PalCallCount {
+                import: "entropy_fill".into(),
+                calls: 1,
+            },
         ],
         "initialization must record the clock and entropy answers it consumed"
     );

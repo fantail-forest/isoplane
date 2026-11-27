@@ -1,27 +1,31 @@
 //! Native platform operations consumed by managed local development tooling.
 
 mod error;
+mod interop;
 mod local;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod process;
 #[cfg(windows)]
 #[path = "process_windows.rs"]
 mod process;
+mod process_records;
 mod runtime_cache;
 mod session;
 mod session_events;
 
+use std::ffi::c_void;
+use std::mem::MaybeUninit;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
-/// Version of the native entry points and their report schema.
-pub const ABI_VERSION: u32 = 5;
+/// Version of the native entry points and the records they exchange.
+pub const ABI_VERSION: u32 = 6;
 
 /// Outcome of a native operation.
 #[repr(C)]
 pub enum NativeStatus {
-    /// The operation returned its report.
+    /// The operation succeeded.
     Success,
-    /// The supplied input could not be read or parsed.
+    /// The supplied input could not be read.
     InvalidInput,
     /// An owned build-tool process could not be started, waited for or stopped.
     ProcessError,
@@ -29,14 +33,15 @@ pub enum NativeStatus {
     InternalError,
 }
 
-/// An owned UTF-8 report or error, released once with `isoplane_result_free`.
+/// An operation's outcome and, when it failed, its UTF-8 error message,
+/// released once with `isoplane_result_free`.
 #[repr(C)]
 pub struct NativeResult {
-    /// Interpretation of the payload.
+    /// Whether the operation succeeded, and if not, how it failed.
     pub status: NativeStatus,
-    /// Read-only payload allocated by this library.
+    /// Read-only error message allocated by this library; empty on success.
     pub data: *mut u8,
-    /// Payload length in bytes.
+    /// Error message length in bytes.
     pub length: usize,
 }
 
@@ -59,15 +64,17 @@ pub extern "C" fn isoplane_abi_version() -> u32 {
     ABI_VERSION
 }
 
-fn boundary(operation: impl FnOnce() -> Result<Vec<u8>, error::Error>) -> NativeResult {
+fn boundary(operation: impl FnOnce() -> Result<(), error::Error>) -> NativeResult {
     match catch_unwind(AssertUnwindSafe(operation)) {
-        Ok(Ok(report)) => NativeResult::new(NativeStatus::Success, report),
+        Ok(Ok(())) => NativeResult::new(NativeStatus::Success, Vec::new()),
         Ok(Err(error)) => {
             let status = match &error {
                 error::Error::Process(_) => NativeStatus::ProcessError,
-                error::Error::Buffer | error::Error::Settings(_) | error::Error::CacheDirectory => {
-                    NativeStatus::InvalidInput
-                }
+                error::Error::Buffer
+                | error::Error::Text
+                | error::Error::DebugEndpoint
+                | error::Error::Settings(_)
+                | error::Error::CacheDirectory => NativeStatus::InvalidInput,
                 error::Error::Session(_)
                 | error::Error::Cache(_)
                 | error::Error::RuntimePreparation(_) => NativeStatus::InternalError,
@@ -86,23 +93,29 @@ fn boundary(operation: impl FnOnce() -> Result<Vec<u8>, error::Error>) -> Native
     }
 }
 
-unsafe fn input<'a>(data: *const u8, length: usize) -> Result<&'a [u8], error::Error> {
-    if length == 0 {
-        return Ok(&[]);
-    }
-    if data.is_null() || length > isize::MAX as usize {
-        return Err(error::Error::Buffer);
-    }
-    // SAFETY: the export's caller guarantees readable, pinned memory; the null
-    // and addressable-length cases are checked above.
-    Ok(unsafe { std::slice::from_raw_parts(data, length) })
-}
-
-/// Releases the payload of a result returned by this library.
+/// The record the caller lends at `pointer`.
 ///
 /// # Safety
-/// Pass an unchanged result exactly once, after all payload readers finish.
-/// The managed wrapper calls this in a finally block after copying the payload.
+/// A non-null pointer refers to a record that stays alive and unchanged for `'a`.
+unsafe fn record<'a, T>(pointer: *const T) -> Result<&'a T, error::Error> {
+    // SAFETY: forwarded from the caller; null is refused.
+    unsafe { pointer.as_ref() }.ok_or(error::Error::Buffer)
+}
+
+/// Where the caller receives a report.
+///
+/// # Safety
+/// A non-null pointer refers to writable storage for one `T` for `'a`.
+unsafe fn output<'a, T>(pointer: *mut T) -> Result<&'a mut MaybeUninit<T>, error::Error> {
+    // SAFETY: forwarded from the caller; null is refused.
+    unsafe { pointer.cast::<MaybeUninit<T>>().as_mut() }.ok_or(error::Error::Buffer)
+}
+
+/// Releases the error message of a result returned by this library.
+///
+/// # Safety
+/// Pass an unchanged result exactly once, after all message readers finish.
+/// The managed wrapper calls this in a finally block after copying the message.
 #[no_mangle]
 pub unsafe extern "C" fn isoplane_result_free(result: NativeResult) {
     // SAFETY: this allocation was created from a boxed slice in NativeResult::new;
@@ -117,36 +130,34 @@ pub unsafe extern "C" fn isoplane_result_free(result: NativeResult) {
 
 /// Creates a local session lifetime. Free it only after its run call returns.
 #[no_mangle]
-pub extern "C" fn isoplane_session_create() -> *mut std::ffi::c_void {
+pub extern "C" fn isoplane_session_create() -> *mut c_void {
     Box::into_raw(Box::new(session::Session::new())).cast()
 }
 
-/// Runs a local application's native host until stopped, including across debug requests.
+/// Runs a local application's native host until stopped, including across
+/// debug requests, and reports each of its events to `callback`, which may
+/// read the event only during the call.
 ///
 /// # Safety
 /// The session comes from `isoplane_session_create` and remains alive for the call.
-/// Both input buffers stay pinned and readable. The callback and context stay alive
+/// The module and options stay pinned and readable. The callback and context stay alive
 /// until this call returns; callbacks may be concurrent and cannot throw across FFI.
 #[no_mangle]
 pub unsafe extern "C" fn isoplane_session_run(
-    session: *mut std::ffi::c_void,
+    session: *mut c_void,
     wasm: *const u8,
     wasm_length: usize,
-    options: *const u8,
-    options_length: usize,
-    callback: extern "C" fn(*mut std::ffi::c_void, *const u8, usize),
-    context: *mut std::ffi::c_void,
+    options: *const session::NativeSessionOptions,
+    callback: extern "C" fn(*mut c_void, *const session_events::NativeEvent),
+    context: *mut c_void,
 ) -> NativeResult {
     boundary(|| {
-        // SAFETY: the managed owner retains the session and pins both input buffers.
+        // SAFETY: the managed owner retains the session and pins the module and options.
         let (session, wasm, options) = unsafe {
             (
-                session
-                    .cast::<session::Session>()
-                    .as_ref()
-                    .ok_or(error::Error::Buffer)?,
-                input(wasm, wasm_length)?,
-                input(options, options_length)?,
+                record(session.cast::<session::Session>())?,
+                interop::lent(wasm, wasm_length)?,
+                record(options)?.read()?,
             )
         };
         session
@@ -155,39 +166,31 @@ pub unsafe extern "C" fn isoplane_session_run(
                 options,
                 session_events::Events::new(callback, context),
             )
-            .map_err(error::Error::Session)?;
-        Ok(b"{}".to_vec())
+            .map_err(error::Error::Session)
     })
 }
 
 /// Offers a newly published module to the running local host.
 ///
 /// # Safety
-/// The session remains alive and both buffers remain pinned for this call.
+/// The session remains alive, and the module and options remain pinned, for this call.
 #[no_mangle]
 pub unsafe extern "C" fn isoplane_session_reload(
-    session: *mut std::ffi::c_void,
+    session: *mut c_void,
     wasm: *const u8,
     wasm_length: usize,
-    options: *const u8,
-    options_length: usize,
+    options: *const session::NativeSessionOptions,
 ) -> NativeResult {
     boundary(|| {
-        // SAFETY: the managed owner retains the session and pins both input buffers.
+        // SAFETY: the managed owner retains the session and pins the module and options.
         let (session, wasm, options) = unsafe {
             (
-                session
-                    .cast::<session::Session>()
-                    .as_ref()
-                    .ok_or(error::Error::Buffer)?,
-                input(wasm, wasm_length)?,
-                input(options, options_length)?,
+                record(session.cast::<session::Session>())?,
+                interop::lent(wasm, wasm_length)?,
+                record(options)?.read()?,
             )
         };
-        session
-            .reload(wasm, options)
-            .map_err(error::Error::Session)?;
-        Ok(b"{}".to_vec())
+        session.reload(wasm, options).map_err(error::Error::Session)
     })
 }
 
@@ -196,13 +199,12 @@ pub unsafe extern "C" fn isoplane_session_reload(
 /// # Safety
 /// The session remains alive throughout the call.
 #[no_mangle]
-pub unsafe extern "C" fn isoplane_session_stop(session: *mut std::ffi::c_void) -> NativeResult {
+pub unsafe extern "C" fn isoplane_session_stop(session: *mut c_void) -> NativeResult {
     boundary(|| {
         // SAFETY: the managed owner retains the session for this call.
-        let session =
-            unsafe { session.cast::<session::Session>().as_ref() }.ok_or(error::Error::Buffer)?;
+        let session = unsafe { record(session.cast::<session::Session>())? };
         session.cancellation.cancel();
-        Ok(b"{}".to_vec())
+        Ok(())
     })
 }
 
@@ -211,7 +213,7 @@ pub unsafe extern "C" fn isoplane_session_stop(session: *mut std::ffi::c_void) -
 /// # Safety
 /// The pointer is the unchanged result of `isoplane_session_create`, freed once.
 #[no_mangle]
-pub unsafe extern "C" fn isoplane_session_free(session: *mut std::ffi::c_void) {
+pub unsafe extern "C" fn isoplane_session_free(session: *mut c_void) {
     // SAFETY: the managed owner joins the run task before transferring sole ownership.
     unsafe { drop(Box::from_raw(session.cast::<session::Session>())) };
 }
@@ -219,57 +221,43 @@ pub unsafe extern "C" fn isoplane_session_free(session: *mut std::ffi::c_void) {
 /// Launches an owned build-tool process group and transfers its pipe descriptors.
 ///
 /// # Safety
-/// The settings buffer is pinned and readable for this call. The managed owner
-/// closes every returned descriptor and joins the wait call before freeing the handle.
+/// The settings stay pinned and readable, and `started` writable, for this call. The
+/// managed owner closes every returned descriptor and joins the wait call before
+/// freeing the handle.
 #[no_mangle]
 pub unsafe extern "C" fn isoplane_process_start(
-    settings: *const u8,
-    length: usize,
+    settings: *const process_records::NativeProcessStart,
+    started: *mut process_records::NativeProcessStarted,
 ) -> NativeResult {
     boundary(|| {
-        // SAFETY: the managed caller pins the serialized process settings.
-        let settings = unsafe { input(settings, length)? };
-        #[cfg(any(target_os = "linux", target_os = "macos", windows))]
-        {
-            process::start(settings)
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-        {
-            let _settings = settings;
-            Err(std::io::Error::new(
-                std::io::ErrorKind::Unsupported,
-                "local process ownership is supported on Linux, macOS and Windows",
-            )
-            .into())
-        }
+        // SAFETY: the managed caller pins the settings and the report's storage.
+        let (settings, started) = unsafe { (record(settings)?.read()?, output(started)?) };
+        started.write(process::start(settings)?);
+        Ok(())
     })
 }
 
-/// Waits for an owned process and cleans its group before reaping the leader.
+/// Waits for an owned process, cleans its group before reaping the leader, and
+/// writes its exit code to `exit_code`.
 ///
 /// # Safety
 /// The handle comes from process_start, remains alive, and has exactly one waiter.
+/// `exit_code` is writable for the call.
 #[no_mangle]
-pub unsafe extern "C" fn isoplane_process_wait(handle: *mut std::ffi::c_void) -> NativeResult {
+pub unsafe extern "C" fn isoplane_process_wait(
+    handle: *mut c_void,
+    exit_code: *mut i32,
+) -> NativeResult {
     boundary(|| {
-        #[cfg(any(target_os = "linux", target_os = "macos", windows))]
-        {
-            // SAFETY: the managed owner retains the process until this call finishes.
-            let process = unsafe { handle.cast::<process::OwnedChild>().as_ref() }
-                .ok_or(error::Error::Buffer)?;
-            Ok(serde_json::json!({"exit_code":process.wait()?})
-                .to_string()
-                .into_bytes())
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-        {
-            let _handle = handle;
-            Err(std::io::Error::new(
-                std::io::ErrorKind::Unsupported,
-                "local process ownership is supported on Linux, macOS and Windows",
+        // SAFETY: the managed owner retains the process and the report's storage until this call finishes.
+        let (process, exit_code) = unsafe {
+            (
+                record(handle.cast::<process::OwnedChild>())?,
+                output(exit_code)?,
             )
-            .into())
-        }
+        };
+        exit_code.write(process.wait()?);
+        Ok(())
     })
 }
 
@@ -278,25 +266,12 @@ pub unsafe extern "C" fn isoplane_process_wait(handle: *mut std::ffi::c_void) ->
 /// # Safety
 /// The handle comes from process_start and remains alive for the call.
 #[no_mangle]
-pub unsafe extern "C" fn isoplane_process_stop(handle: *mut std::ffi::c_void) -> NativeResult {
+pub unsafe extern "C" fn isoplane_process_stop(handle: *mut c_void) -> NativeResult {
     boundary(|| {
-        #[cfg(any(target_os = "linux", target_os = "macos", windows))]
-        {
-            // SAFETY: the managed owner retains the process during cancellation.
-            let process = unsafe { handle.cast::<process::OwnedChild>().as_ref() }
-                .ok_or(error::Error::Buffer)?;
-            process.terminate()?;
-            Ok(b"{}".to_vec())
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-        {
-            let _handle = handle;
-            Err(std::io::Error::new(
-                std::io::ErrorKind::Unsupported,
-                "local process ownership is supported on Linux, macOS and Windows",
-            )
-            .into())
-        }
+        // SAFETY: the managed owner retains the process during cancellation.
+        let process = unsafe { record(handle.cast::<process::OwnedChild>())? };
+        process.terminate()?;
+        Ok(())
     })
 }
 
@@ -305,39 +280,55 @@ pub unsafe extern "C" fn isoplane_process_stop(handle: *mut std::ffi::c_void) ->
 /// # Safety
 /// The handle is unchanged, exclusively owned, and freed exactly once.
 #[no_mangle]
-pub unsafe extern "C" fn isoplane_process_free(handle: *mut std::ffi::c_void) {
-    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
+pub unsafe extern "C" fn isoplane_process_free(handle: *mut c_void) {
     // SAFETY: the managed owner joins the waiter before transferring sole ownership.
-    unsafe {
-        drop(Box::from_raw(handle.cast::<process::OwnedChild>()))
-    };
-    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-    let _handle = handle;
+    unsafe { drop(Box::from_raw(handle.cast::<process::OwnedChild>())) };
 }
 
 /// Reports the compiled runtimes in the per-user runtime cache at the
 /// absolute UTF-8 `directory`: the cache's byte budget and each runtime's
 /// size and last use. A directory that does not exist is an empty cache and
-/// is not created.
+/// is not created. Release the report with `isoplane_runtime_cache_inventory_free`.
 ///
 /// # Safety
 /// The nonempty buffer points to readable memory for its length and remains
-/// alive and unchanged for the call. The managed wrapper pins it.
+/// alive and unchanged for the call, and `inventory` is writable for the call.
+/// The managed wrapper pins both.
 #[no_mangle]
 pub unsafe extern "C" fn isoplane_runtime_cache_inventory(
     directory: *const u8,
     directory_length: usize,
+    inventory: *mut runtime_cache::NativeCacheInventory,
 ) -> NativeResult {
     boundary(|| {
-        // SAFETY: the managed wrapper pins the supplied path throughout this call.
-        runtime_cache::inventory(unsafe { input(directory, directory_length)? })
+        // SAFETY: the managed wrapper pins the supplied path and the report's storage.
+        let (directory, inventory) = unsafe {
+            (
+                interop::lent(directory, directory_length)?,
+                output(inventory)?,
+            )
+        };
+        inventory.write(runtime_cache::inventory(directory)?.native());
+        Ok(())
     })
+}
+
+/// Releases a report of `isoplane_runtime_cache_inventory`.
+///
+/// # Safety
+/// Pass an unchanged report exactly once, after all its readers finish.
+#[no_mangle]
+pub unsafe extern "C" fn isoplane_runtime_cache_inventory_free(
+    inventory: runtime_cache::NativeCacheInventory,
+) {
+    // SAFETY: the caller returns the unchanged report this library allocated.
+    unsafe { inventory.release() };
 }
 
 /// Removes every compiled runtime from the per-user runtime cache at the
 /// absolute UTF-8 `directory`, including one a running session uses, and
 /// reports the bytes removed, the runtimes that remain and why each could
-/// not be removed.
+/// not be removed. Release the report with `isoplane_runtime_cache_cleared_free`.
 ///
 /// # Safety
 /// As for `isoplane_runtime_cache_inventory`.
@@ -345,73 +336,64 @@ pub unsafe extern "C" fn isoplane_runtime_cache_inventory(
 pub unsafe extern "C" fn isoplane_runtime_cache_clear(
     directory: *const u8,
     directory_length: usize,
+    cleared: *mut runtime_cache::NativeCacheCleared,
 ) -> NativeResult {
     boundary(|| {
-        // SAFETY: the managed wrapper pins the supplied path throughout this call.
-        runtime_cache::clear(unsafe { input(directory, directory_length)? })
+        // SAFETY: the managed wrapper pins the supplied path and the report's storage.
+        let (directory, cleared) = unsafe {
+            (
+                interop::lent(directory, directory_length)?,
+                output(cleared)?,
+            )
+        };
+        cleared.write(runtime_cache::clear(directory)?.native());
+        Ok(())
     })
 }
 
-/// Compiles a shared runtime and its debug build into the runtime cache ahead
-/// of the first session on them, as that session would. The UTF-8 JSON
-/// `options` give the application manifest, native library, runtime cache
-/// directory, machine roots and the runtime's `runtime.json`. Reports
-/// `baseline_compiled` and `debug_compiled`: whether each had to be compiled.
+/// Releases a report of `isoplane_runtime_cache_clear`.
 ///
 /// # Safety
-/// All three buffers stay pinned and readable for this call.
+/// Pass an unchanged report exactly once, after all its readers finish.
+#[no_mangle]
+pub unsafe extern "C" fn isoplane_runtime_cache_cleared_free(
+    cleared: runtime_cache::NativeCacheCleared,
+) {
+    // SAFETY: the caller returns the unchanged report this library allocated.
+    unsafe { cleared.release() };
+}
+
+/// Compiles a shared runtime and its debug build into the runtime cache ahead
+/// of the first session on them, as that session would, and reports whether
+/// each had to be compiled.
+///
+/// # Safety
+/// Both modules and the options stay pinned and readable, and `prepared`
+/// writable, for this call.
 #[no_mangle]
 pub unsafe extern "C" fn isoplane_runtime_prepare(
     wasm: *const u8,
     wasm_length: usize,
     debug_wasm: *const u8,
     debug_wasm_length: usize,
-    options: *const u8,
-    options_length: usize,
+    options: *const runtime_cache::NativeRuntimeOptions,
+    prepared: *mut local::RuntimePreparation,
 ) -> NativeResult {
     boundary(|| {
-        // SAFETY: the managed wrapper pins all three buffers throughout this call.
-        let (wasm, debug_wasm, options) = unsafe {
-            (
-                input(wasm, wasm_length)?,
-                input(debug_wasm, debug_wasm_length)?,
-                input(options, options_length)?,
-            )
-        };
-        runtime_cache::prepare(wasm, debug_wasm, options)
+        // SAFETY: the managed wrapper pins the modules, the options and the report's storage.
+        unsafe {
+            let wasm = interop::lent(wasm, wasm_length)?;
+            let debug_wasm = interop::lent(debug_wasm, debug_wasm_length)?;
+            let report = runtime_cache::prepare(wasm, debug_wasm, record(options)?)?;
+            output(prepared)?.write(report);
+        }
+        Ok(())
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn managed_bindings_match_the_native_interface() {
-        assert_eq!(
-            include_str!(concat!(env!("OUT_DIR"), "/NativeMethods.g.cs")),
-            include_str!("../../../tools/Isoplane.Native/NativeMethods.g.cs"),
-            "regenerate bindings with ISOPLANE_GENERATE_BINDINGS=1 cargo build -p isoplane-native"
-        );
-    }
-
-    #[test]
-    fn invalid_buffer_descriptors_are_rejected_without_reading_memory() {
-        for (pointer, length) in [
-            (std::ptr::null(), 1),
-            (
-                std::ptr::NonNull::<u8>::dangling().as_ptr().cast_const(),
-                usize::MAX,
-            ),
-        ] {
-            // SAFETY: both descriptors fail the boundary checks before dereferencing.
-            let result = unsafe { input(pointer, length) };
-            assert!(
-                matches!(result, Err(error::Error::Buffer)),
-                "unreadable descriptors must return a managed input error"
-            );
-        }
-    }
 
     #[test]
     fn a_panicking_operation_returns_an_error_without_unwinding() {

@@ -17,7 +17,7 @@ public sealed class CacheCommandsTests
         var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var session = new LocalSession(SessionFixture.Module, fixture.Options, message =>
         {
-            if (message["event"]?.GetValue<string>() == "ready") ready.TrySetResult();
+            if (message is SessionEvent.Ready) ready.TrySetResult();
         });
         await ready.Task.WaitAsync(deadline.Token);
     }

@@ -74,9 +74,14 @@ impl Prepared {
         hash_files(&mut identity, &project.application_files);
         let version = identity.finalize().to_hex().to_string();
         let engine = debug_engine(project)?;
-        let (template, compiled) =
-            runtime_cache(project, blake3::hash(wasm).as_bytes())?.load(&engine, wasm)?;
-        tracing::info!(compiled, "local debug runtime compilation ready");
+        let isoplane_engine::LoadedTemplate {
+            template,
+            compilation,
+        } = runtime_cache(project, blake3::hash(wasm).as_bytes())?.load(&engine, wasm)?;
+        tracing::info!(
+            compiled = compilation.compiled(),
+            "local debug runtime compilation ready"
+        );
         let module = ModuleId::new(&manifest.name, &version);
         let activator = Arc::new(isoplane_host::debug::DebugActivator::new(
             engine, module, template,
@@ -91,6 +96,7 @@ impl Prepared {
 }
 
 /// What preparing a shared runtime ahead of its first session did.
+#[repr(C)]
 pub struct RuntimePreparation {
     /// Whether the runtime baseline was compiled, rather than found in the cache.
     pub baseline_compiled: bool,
@@ -107,11 +113,14 @@ pub fn prepare_runtime(
     debug_wasm: &[u8],
 ) -> anyhow::Result<RuntimePreparation> {
     let baseline_compiled =
-        baseline::prepare_runtime(project, wasm, || validate_runtime(project, wasm).map(drop))?;
+        baseline::prepare_runtime(project, wasm, || validate_runtime(project, wasm).map(drop))?
+            .compiled();
     validate(project, debug_wasm, true)?;
     let engine = debug_engine(project)?;
-    let (_, debug_compiled) =
-        runtime_cache(project, blake3::hash(debug_wasm).as_bytes())?.load(&engine, debug_wasm)?;
+    let debug_compiled = runtime_cache(project, blake3::hash(debug_wasm).as_bytes())?
+        .load(&engine, debug_wasm)?
+        .compilation
+        .compiled();
     Ok(RuntimePreparation {
         baseline_compiled,
         debug_compiled,
@@ -164,10 +173,10 @@ impl LocalCompilation {
         &self,
         engine: &isoplane_engine::IsoplaneEngine,
         wasm: &[u8],
-    ) -> anyhow::Result<(isoplane_engine::Template, bool)> {
-        let (mut template, compiled) = self.cache.load(engine, wasm)?;
-        template.retain_storage(self.lease.clone());
-        Ok((template, compiled))
+    ) -> anyhow::Result<isoplane_engine::LoadedTemplate> {
+        let mut loaded = self.cache.load(engine, wasm)?;
+        loaded.template.retain_storage(self.lease.clone());
+        Ok(loaded)
     }
 }
 

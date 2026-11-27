@@ -14,7 +14,6 @@ crate-type = ["cdylib", "rlib"]
 isoplane-cache.workspace = true
 isoplane-runtime = { workspace = true }
 isoplane-abi = { workspace = true, features = ["host"] }
-serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 
@@ -61,10 +60,8 @@ libproc.workspace = true
 windows-sys.workspace = true
 win32job.workspace = true
 
-[build-dependencies]
-csbindgen.workspace = true
-
 [dev-dependencies]
+csbindgen.workspace = true
 isoplane-native = { path = ".", features = ["rust-guests"] }
 isoplane-engine = { workspace = true, features = ["test-util"] }
 postcard = { workspace = true }

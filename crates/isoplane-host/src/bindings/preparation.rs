@@ -3,7 +3,6 @@
 use std::sync::Arc;
 
 use isoplane_abi::native_io::{Error, PreparedResources, Request, Response};
-use isoplane_abi::result::ResultRecord;
 use parking_lot::Mutex;
 use tokio::sync::Notify;
 
@@ -90,24 +89,15 @@ impl PreparationIo {
     }
 
     /// Wait for the next completion, or return None when no work remains.
-    pub async fn next_completion(&self) -> Option<(u64, ResultRecord)> {
+    pub async fn next_completion(&self) -> Option<crate::futures::Ready> {
         loop {
             let notified = self.wake.0.notified();
-            if let Some(result) = self
-                .runtime
-                .futures
-                .take_ready(self.instance())
-                .map(crate::futures::Ready::into_pair)
-            {
-                return Some(result);
+            if let Some(ready) = self.runtime.futures.take_ready(self.instance()) {
+                return Some(ready);
             }
             if self.pending_count() == 0 {
                 // A completion may arrive between the first ready check and the pending check.
-                return self
-                    .runtime
-                    .futures
-                    .take_ready(self.instance())
-                    .map(crate::futures::Ready::into_pair);
+                return self.runtime.futures.take_ready(self.instance());
             }
             notified.await;
         }
@@ -182,6 +172,7 @@ impl Drop for PreparationIo {
 mod tests {
     use super::*;
     use isoplane_abi::native_io::{AddressFamily, DurationNanos, ResourceHandle, ResourceKind};
+    use isoplane_abi::result::ResultRecord;
     use isoplane_engine::HostBindings;
     use tokio::io::AsyncReadExt;
 

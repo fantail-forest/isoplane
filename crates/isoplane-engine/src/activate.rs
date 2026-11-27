@@ -11,7 +11,7 @@ use isoplane_abi::imports::exports as guest_exports;
 use crate::bindings::{Bindings, HostBindings, InitializationBindings};
 use crate::instance::Live;
 use crate::state::{Kill, StoreState, WallCapExceeded};
-use crate::template::TemplateInner;
+use crate::template::{TemplateGlobal, TemplateInner, TemplateTable};
 use crate::{EngineInner, Instance, IsoplaneEngine, Result, Template};
 
 impl IsoplaneEngine {
@@ -188,14 +188,14 @@ pub(crate) fn instantiate(
     };
 
     let mut globals = Vec::with_capacity(t.mut_globals.len());
-    for (name, _) in &t.mut_globals {
+    for TemplateGlobal { name, .. } in &t.mut_globals {
         globals.push(
             inst.get_global(&mut store, name)
                 .with_context(|| format!("exported mutable global `{name}` vanished"))?,
         );
     }
     let mut tables = Vec::with_capacity(t.tables.len());
-    for (name, _) in &t.tables {
+    for TemplateTable { name, .. } in &t.tables {
         tables.push(
             inst.get_table(&mut store, name)
                 .with_context(|| format!("exported table `{name}` vanished"))?,
@@ -277,8 +277,8 @@ pub(crate) fn restore_globals(
     globals: &[wasmtime::Global],
     template: &TemplateInner,
 ) -> Result<()> {
-    for (global, (_, value)) in globals.iter().zip(&template.mut_globals) {
-        global.set(&mut *store, wasmtime::Val::from(*value))?;
+    for (global, held) in globals.iter().zip(&template.mut_globals) {
+        global.set(&mut *store, wasmtime::Val::from(held.value))?;
     }
     Ok(())
 }

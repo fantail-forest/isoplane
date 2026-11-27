@@ -7,8 +7,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/BuildProtocol/WasmMemory.props");
     println!("cargo::rerun-if-changed={}", source.display());
     let text = std::fs::read_to_string(&source)?;
-    let (page_bytes, maximum_bytes) =
-        memory_limits(&text).map_err(|error| format!("{}: {error}", source.display()))?;
+    let MemoryLimits {
+        page_bytes,
+        maximum_bytes,
+    } = memory_limits(&text).map_err(|error| format!("{}: {error}", source.display()))?;
     let output = std::path::PathBuf::from(
         std::env::var_os("OUT_DIR").ok_or("Cargo did not supply OUT_DIR")?,
     );
@@ -20,7 +22,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn memory_limits(text: &str) -> Result<(u64, u64), Box<dyn Error>> {
+struct MemoryLimits {
+    page_bytes: u64,
+    maximum_bytes: u64,
+}
+
+fn memory_limits(text: &str) -> Result<MemoryLimits, Box<dyn Error>> {
     let document = roxmltree::Document::parse(text)?;
     let project = document.root_element();
     if !project.has_tag_name("Project")
@@ -45,7 +52,10 @@ fn memory_limits(text: &str) -> Result<(u64, u64), Box<dyn Error>> {
     if page_bytes == 0 || maximum_bytes == 0 || !maximum_bytes.is_multiple_of(page_bytes) {
         return Err("memory sizes must be positive and the maximum must be page-aligned".into());
     }
-    Ok((page_bytes, maximum_bytes))
+    Ok(MemoryLimits {
+        page_bytes,
+        maximum_bytes,
+    })
 }
 
 fn literal(group: roxmltree::Node<'_, '_>, name: &str) -> Result<u64, Box<dyn Error>> {

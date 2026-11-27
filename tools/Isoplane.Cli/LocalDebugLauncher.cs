@@ -1,8 +1,10 @@
 using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using Isoplane.Debugging;
+using Isoplane.Native;
 using Isoplane.Processes;
 
 namespace Isoplane.Cli;
@@ -19,6 +21,17 @@ internal sealed class LocalDebugLauncher : DebugLauncher
         }
         var arguments = Arguments(options, json: true);
         using var process = Processes.Start("dotnet", arguments, options.Project, captureOutput: true, captureErrors: true, shutdownGrace: TimeSpan.FromSeconds(10));
+        await SuperviseAsync(process, ready, output, cancellation);
+    }
+
+    /// <summary>
+    /// Runs until <paramref name="process"/> exits or <paramref name="cancellation"/> is requested, then stops it.
+    /// Reports the debugger endpoint the process announces to <paramref name="ready"/> and everything else it
+    /// writes to <paramref name="output"/>. An event it does not know, or one that lacks one of its members, closes
+    /// the process's standard input and throws <see cref="JsonException"/>.
+    /// </summary>
+    internal static async Task SuperviseAsync(OwnedProcess process, Func<IPEndPoint, Task> ready, Action<string> output, CancellationToken cancellation)
+    {
         var stdout = ForwardAsync(process, process.StandardOutput, line => Report(line, ready, output));
         var stderr = ForwardAsync(process, process.StandardError, line => Report(line, ready, output));
         try
@@ -65,13 +78,13 @@ internal sealed class LocalDebugLauncher : DebugLauncher
             using var reader = new StreamReader(client.GetStream());
             var line = await reader.ReadLineAsync(cancellation)
                 ?? throw new IOException("The local application exited during startup; see the Isoplane terminal.");
-            var message = JsonNode.Parse(line) as JsonObject;
-            if (message?["endpoint"]?.GetValue<string>() is not { } address || !IPEndPoint.TryParse(address, out var endpoint)
+            var announcement = DebugLaunchAnnouncement.Read(line);
+            if (!IPEndPoint.TryParse(announcement.Endpoint, out var endpoint)
                 || !endpoint.Address.Equals(IPAddress.Loopback) || endpoint.Port == 0
-                || !Uri.TryCreate(message["url"]?.GetValue<string>(), UriKind.Absolute, out var url) || url.Scheme != "http" || !url.IsLoopback)
+                || !Uri.TryCreate(announcement.Url, UriKind.Absolute, out var url) || url.Scheme != "http" || !url.IsLoopback)
                 throw new IOException("The terminal application returned invalid debugger startup information.");
             await ready(endpoint);
-            output($"  ready {message["app"]?.GetValue<string>()} at {url}");
+            output($"  ready {announcement.App} at {url}");
         }
         var stopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var cancelled = cancellation.Register(() => stopped.TrySetCanceled(cancellation));
@@ -93,18 +106,18 @@ internal sealed class LocalDebugLauncher : DebugLauncher
 
     private static async Task Report(string line, Func<IPEndPoint, Task> ready, Action<string> output)
     {
-        JsonObject? message;
-        try { message = JsonNode.Parse(line) as JsonObject; }
-        catch (System.Text.Json.JsonException) { output(line); return; }
-        if (message?["event"]?.GetValue<string>() != "debugger_ready")
+        JsonObject? reported;
+        try { reported = JsonNode.Parse(line) as JsonObject; }
+        catch (JsonException) { output(line); return; }
+        if (reported?["event"] is null)
         {
-            if (message?["event"] is not null) LocalEvents.Write(message, json: false, output);
-            else output(line);
+            output(line);
             return;
         }
-        if (message["endpoint"]?.GetValue<string>() is not { } address || !IPEndPoint.TryParse(address, out var endpoint)
-            || !endpoint.Address.Equals(IPAddress.Loopback) || endpoint.Port == 0)
-            throw new IOException("The local application returned an invalid debugger endpoint.");
-        await ready(endpoint);
+        var message = SessionEvent.Parse(reported);
+        if (message is SessionEvent.DebuggerReady debugger)
+            await ready(IPEndPoint.Parse(debugger.Endpoint));
+        else
+            LocalEvents.Write(message, json: false, output);
     }
 }

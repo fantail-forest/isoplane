@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Isoplane.Native.Interop;
 
 namespace Isoplane.Cli;
 
@@ -23,7 +24,7 @@ internal sealed record DevelopmentSettings(string Name, ushort? Port, Dictionary
         var project = await ProjectProperties.ReadAsync(options, cancellation);
         var profile = options.UseLaunchProfile ? LaunchProfile.Read(options.Directory, options.LaunchProfile) : null;
         var configuration = Layer(LocalSecrets.Read(project.UserSecretsId), profile, options.Settings);
-        return new(project.AssemblyName, options.Port ?? profile?.Port, configuration, profile?.Limits ?? LimitOverrides.None,
+        return new(project.AssemblyName, options.Port ?? profile?.Port, configuration, profile?.Limits ?? default,
             MachineTrust.Export(new LocalProject(options.Directory).Trust), project.IntermediateDirectory, CliPaths.RuntimeCache);
     }
 

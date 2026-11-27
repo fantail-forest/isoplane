@@ -4,8 +4,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use super::{Manifest, PreparedError, Result};
-use crate::snapshot::GlobalValue;
-use crate::template::TemplateInner;
+use crate::template::{TemplateGlobal, TemplateInner, TemplateTable};
 use crate::{IsoplaneEngine, MemoryImage, ModuleHash, Template};
 
 #[derive(Serialize, Deserialize)]
@@ -14,8 +13,8 @@ pub(super) struct State {
     pub(super) application_files: crate::PlatformFiles,
     pub(super) memory_pages: u32,
     pub(super) prepared_resources: isoplane_abi::native_io::PreparedResources,
-    pub(super) mut_globals: Vec<(String, GlobalValue)>,
-    pub(super) tables: Vec<(String, u64)>,
+    pub(super) mut_globals: Vec<TemplateGlobal>,
+    pub(super) tables: Vec<TemplateTable>,
     pub(super) table_nullness: Vec<Vec<bool>>,
     pub(super) has_initialize: bool,
 }
@@ -55,7 +54,7 @@ impl State {
                 .tables
                 .iter()
                 .zip(&self.table_nullness)
-                .any(|((_, len), bits)| *len != bits.len() as u64)
+                .any(|(table, bits)| table.elements != bits.len() as u64)
         {
             return Err(PreparedError::Invalid("initial table dimensions"));
         }
@@ -63,8 +62,8 @@ impl State {
         for name in self
             .mut_globals
             .iter()
-            .map(|(name, _)| name)
-            .chain(self.tables.iter().map(|(name, _)| name))
+            .map(|global| &global.name)
+            .chain(self.tables.iter().map(|table| &table.name))
         {
             if name.is_empty() || !names.insert(name) {
                 return Err(PreparedError::Invalid(

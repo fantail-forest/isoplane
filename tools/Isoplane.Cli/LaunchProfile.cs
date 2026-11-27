@@ -1,12 +1,7 @@
 using System.Text.Json;
+using Isoplane.Native.Interop;
 
 namespace Isoplane.Cli;
-
-/// <summary>Limits a launch profile overrides for a development session.</summary>
-internal sealed record LimitOverrides(ulong? MemoryBytes, Dictionary<string, ulong> ResourceLimits)
-{
-    internal static LimitOverrides None { get; } = new(null, []);
-}
 
 /// <summary>
 /// The profile of <c>Properties/launchSettings.json</c> a development session
@@ -16,10 +11,6 @@ internal sealed record LimitOverrides(ulong? MemoryBytes, Dictionary<string, ulo
 internal sealed record LaunchProfile(string Name, ushort? Port, IReadOnlyDictionary<string, string> Environment, LimitOverrides Limits)
 {
     private static readonly string LimitsKey = LaunchProfileKeys.Limits.Name;
-
-    /// <summary>The manifest's resource limit for each override a profile may name.</summary>
-    private static readonly Dictionary<string, string> ResourceLimits = LaunchProfileKeys.LimitOverrides
-        .Where(key => key.ResourceLimit is not null).ToDictionary(key => key.Name, key => key.ResourceLimit!, StringComparer.Ordinal);
 
     private static readonly JsonDocumentOptions Lenient = new() { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true };
 
@@ -82,20 +73,23 @@ internal sealed record LaunchProfile(string Name, ushort? Port, IReadOnlyDiction
 
     private static LimitOverrides Overrides(string name, JsonElement profile, string path)
     {
-        if (!profile.TryGetProperty(LimitsKey, out var overrides)) return LimitOverrides.None;
+        if (!profile.TryGetProperty(LimitsKey, out var overrides)) return default;
         var supported = string.Join(", ", LaunchProfileKeys.LimitOverrides.Select(key => key.Name));
         if (overrides.ValueKind != JsonValueKind.Object)
             throw new ArgumentException($"{LimitsKey} in launch profile '{name}' in {path} must be an object with any of: {supported}.");
-        ulong? memory = null;
-        var limits = new Dictionary<string, ulong>(StringComparer.Ordinal);
+        var limits = new LimitOverrides();
         foreach (var limit in overrides.EnumerateObject())
         {
             if (limit.Value.ValueKind != JsonValueKind.Number || !limit.Value.TryGetUInt64(out var value) || value == 0)
                 throw new ArgumentException($"{LimitsKey}.{limit.Name} in launch profile '{name}' in {path} must be a positive whole number.");
-            if (limit.Name == LaunchProfileKeys.Memory.Name) memory = value;
-            else if (ResourceLimits.TryGetValue(limit.Name, out var resource)) limits[resource] = value;
+            uint Narrow() => value <= uint.MaxValue ? (uint)value
+                : throw new ArgumentException($"{LimitsKey}.{limit.Name} in launch profile '{name}' in {path} must be at most {uint.MaxValue}.");
+            if (limit.Name == LaunchProfileKeys.Memory.Name) limits.guest_memory_bytes = value;
+            else if (limit.Name == LaunchProfileKeys.Occupancy.Name) limits.occupancy_ms_per_dispatch = Narrow();
+            else if (limit.Name == LaunchProfileKeys.Connections.Name) limits.instance_open_connections = value;
+            else if (limit.Name == LaunchProfileKeys.PendingFutures.Name) limits.pending_futures_per_dispatch = Narrow();
             else throw new ArgumentException($"{LimitsKey} in launch profile '{name}' in {path} does not support '{limit.Name}'; it supports: {supported}.");
         }
-        return new(memory, limits);
+        return limits;
     }
 }

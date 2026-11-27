@@ -2,6 +2,16 @@
 
 use super::*;
 
+/// A dispatch whose books [`Cell::end_dispatch_books`] closed.
+struct EndedDispatch {
+    /// The dispatch, when it was still active.
+    dispatch: Option<ActiveDispatch>,
+    /// How many dispatches remain on the instance.
+    remaining: usize,
+    /// Whether the dispatch left guest work behind.
+    abandoned_guest_work: bool,
+}
+
 impl Cell {
     pub(super) fn run_dispatch(self: &Arc<Self>, job: DispatchJob) {
         let owner = job.completion.clone();
@@ -834,7 +844,7 @@ impl Cell {
             .unwrap_or(false);
         if unanswered {
             let result = match head {
-                Some((status, headers)) => {
+                Some(crate::response_transport::StartedHead { status, headers }) => {
                     owner.result(slot.id, status, headers, vec![], Completion::Done, None)
                 }
                 None => {
@@ -1055,19 +1065,16 @@ impl Cell {
 
     /// Ends one dispatch's books without releasing the instance: its
     /// response transport, completion event, host state and futures.
-    /// Returns the ended dispatch, how many remain on the instance, and
-    /// whether the dispatch left guest work behind.
-    fn end_dispatch_books(
-        &self,
-        slot: &Arc<Slot>,
-        did: u64,
-    ) -> (Option<ActiveDispatch>, usize, bool) {
+    fn end_dispatch_books(&self, slot: &Arc<Slot>, did: u64) -> EndedDispatch {
         let _settlement = slot
             .ctx
             .dispatch(did)
             .and_then(|dispatch| dispatch.transport.lock().take())
             .map(|stream| stream.settlement());
-        let (req, remaining) = self.remove_active(slot.id, did);
+        let RemovedDispatch {
+            dispatch: req,
+            remaining,
+        } = self.remove_active(slot.id, did);
         let _completion = req.as_ref().map(|owner| owner.completion.settlement());
         slot.ctx.end_dispatch(did);
         let mut abandoned_guest_work = false;
@@ -1096,7 +1103,11 @@ impl Cell {
                 }
             }
         }
-        (req, remaining, abandoned_guest_work)
+        EndedDispatch {
+            dispatch: req,
+            remaining,
+            abandoned_guest_work,
+        }
     }
 
     /// Ends a dispatch and, once none remain on the instance, releases the
@@ -1110,7 +1121,11 @@ impl Cell {
         did: u64,
         d: crate::disposition::Disposition,
     ) -> bool {
-        let (_req, remaining, abandoned_guest_work) = self.end_dispatch_books(slot, did);
+        let EndedDispatch {
+            dispatch: _ended,
+            remaining,
+            abandoned_guest_work,
+        } = self.end_dispatch_books(slot, did);
         let d = if abandoned_guest_work || (remaining == 0 && slot.is_retiring()) {
             evict()
         } else {

@@ -21,15 +21,15 @@ internal sealed class GuestSession(Action? ended = null, Action? packageChanged 
     private readonly object gate = new();
     private Task closing = Task.CompletedTask;
 
-    /// <summary>Connects to the local session at <paramref name="endpoint"/>. Returns where its guests' debugger agents are reached and the application package they run.</summary>
-    internal async Task<(IPEndPoint Guests, string Package)> ConnectAsync(IPEndPoint endpoint)
+    /// <summary>Connects to the local session at <paramref name="endpoint"/>. Returns what the session announced: where its guests' debugger agents are reached, the application package they run and the project it was built from.</summary>
+    internal async Task<DebugSessionProtocol.SessionEndpoint> ConnectAsync(IPEndPoint endpoint)
     {
         await client.ConnectAsync(endpoint, lifetime.Token);
         reader = new DebugSessionProtocol.Reader(client.GetStream());
         var target = await reader.ReadEndpointAsync(lifetime.Token);
         Project = target.Project;
         monitoring = MonitorAsync(reader);
-        return (target.Guests, target.Package);
+        return target;
     }
 
     private async Task MonitorAsync(DebugSessionProtocol.Reader control)

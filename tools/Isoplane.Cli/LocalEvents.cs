@@ -1,5 +1,5 @@
 using System.Text.Json;
-using System.Text.Json.Nodes;
+using Isoplane.Native;
 
 namespace Isoplane.Cli;
 
@@ -7,31 +7,57 @@ internal static class LocalEvents
 {
     private static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
-    internal static void Write(JsonObject message, bool json, Action<string>? destination = null)
+    /// <summary>
+    /// Writes one event of a session: as JSON when <paramref name="json"/> is set, and otherwise as a line for a
+    /// person. Logs and failures go to standard error, the rest to standard output, or all of it to
+    /// <paramref name="destination"/>.
+    /// </summary>
+    internal static void Write(SessionEvent message, bool json, Action<string>? destination = null)
     {
         var output = destination ?? Console.WriteLine;
         var errors = destination ?? Console.Error.WriteLine;
-        var kind = message["event"]!.GetValue<string>();
-        if (kind == "diagnostic")
+        if (json)
         {
-            if (json) errors(message.ToJsonString());
-            else if (message["target"]!.GetValue<string>() == "isoplane_host::bindings::observability")
-                ApplicationLog(message["fields"]!.AsObject(), errors);
+            (message is SessionEvent.ApplicationLog or SessionEvent.Diagnostic ? errors : output)(message.ToJson().ToJsonString());
             return;
         }
-        if (json) output(message.ToJsonString());
-        else if (kind == "debugger_detached") output($"  debugger detached; {message["app"]} continues at {message["url"]}. Press Ctrl+C to stop.");
-        else if (kind == "reload_pending") output("  rebuilt application; changes apply after the current request completes.");
-        else if (kind == "reload_failed") errors($"isoplane: reload failed; keeping the last working app: {message["detail"]}");
-        else if (kind == "build_failed") errors($"isoplane: rebuild failed; keeping the last working application. Edit the source to retry.\n{message["detail"]}");
-        else output($"  {kind} {message["app"]} at {message["url"]} (local guest execution)");
+        switch (message)
+        {
+            case SessionEvent.ApplicationLog log:
+                ApplicationLog(log.Level, log.Fields, errors);
+                break;
+            case SessionEvent.Diagnostic:
+                break;
+            case SessionEvent.Ready ready:
+                output($"  ready {ready.App} at {ready.Url} (local guest execution)");
+                break;
+            case SessionEvent.Reloaded reloaded:
+                output($"  reloaded {reloaded.App} at {reloaded.Url} (local guest execution)");
+                break;
+            case SessionEvent.DebuggerDetached detached:
+                output($"  debugger detached; {detached.App} continues at {detached.Url}. Press Ctrl+C to stop.");
+                break;
+            case SessionEvent.ReloadPending:
+                output("  rebuilt application; changes apply after the current request completes.");
+                break;
+            case SessionEvent.ReloadFailed failed:
+                errors($"isoplane: reload failed; keeping the last working app: {failed.Detail}");
+                break;
+            case SessionEvent.BuildFailed failed:
+                errors($"isoplane: rebuild failed; keeping the last working application. Edit the source to retry.\n{failed.Detail}");
+                break;
+            case SessionEvent.DebuggerReady debugger:
+                output($"Debugger target: {debugger.Endpoint}. Connect your editor through isoplane debug-adapter; the connection remains available across HTTP requests.");
+                break;
+            case SessionEvent.DebuggerDetachPrepared or SessionEvent.DebuggerDetachFailed:
+                throw new ArgumentException($"{message.GetType().Name} is consumed by the session that requested the detachment and has no rendering.", nameof(message));
+            default:
+                throw new System.Diagnostics.UnreachableException($"{message.GetType().Name} has no rendering.");
+        }
     }
 
-    private static void ApplicationLog(JsonObject fields, Action<string> output)
+    private static void ApplicationLog(ulong level, string text, Action<string> output)
     {
-        if (fields["level"] is not { } levelNode || fields["fields"] is not { } data) return;
-        var level = levelNode.GetValue<int>();
-        var text = data.GetValue<string>();
         StructuredLog? structured = null;
         try { structured = JsonSerializer.Deserialize<StructuredLog>(text, Json); }
         catch (JsonException) { /* Guest output that does not match the log shape is displayed as plain text. */ }

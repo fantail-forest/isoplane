@@ -378,7 +378,7 @@ mod tests {
         );
         futures.complete(id, ResultRecord::Ok(b"completed while asleep".to_vec()));
         assert!(
-            matches!(futures.take_ready(slot.id).map(crate::futures::Ready::into_pair), Some((ready, ResultRecord::Ok(bytes))) if ready == id && bytes == b"completed while asleep"),
+            matches!(futures.take_ready(slot.id), Some(crate::futures::Ready { future, result: ResultRecord::Ok(bytes), .. }) if future == id && bytes == b"completed while asleep"),
             "the original operation must deliver its result after local capture"
         );
     }
@@ -402,7 +402,7 @@ mod tests {
         )
         .expect("a host-resident result must not prevent local capture");
         assert!(
-            matches!(futures.take_ready(slot.id).map(crate::futures::Ready::into_pair), Some((ready, ResultRecord::Ok(bytes))) if ready == id && bytes == vec![42; 32]),
+            matches!(futures.take_ready(slot.id), Some(crate::futures::Ready { future, result: ResultRecord::Ok(bytes), .. }) if future == id && bytes == vec![42; 32]),
             "capture must preserve the exact result"
         );
     }
@@ -537,7 +537,7 @@ mod tests {
         )
         .expect("EOF with a ready result permits local capture");
         assert!(
-            matches!(futures.take_ready(slot.id).map(crate::futures::Ready::into_pair), Some((ready_id, ResultRecord::Ok(bytes))) if ready_id == id && bytes.is_empty()),
+            matches!(futures.take_ready(slot.id), Some(crate::futures::Ready { future, result: ResultRecord::Ok(bytes), .. }) if future == id && bytes.is_empty()),
             "local capture retains the original ready EOF result"
         );
     }

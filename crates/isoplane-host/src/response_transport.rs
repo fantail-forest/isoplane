@@ -11,9 +11,16 @@ use isoplane_abi::result::FutureError;
 use parking_lot::Mutex;
 use tokio::sync::Notify;
 
+/// The status and headers a response started with.
+#[derive(Clone)]
+pub(crate) struct StartedHead {
+    pub(crate) status: u16,
+    pub(crate) headers: Vec<(String, String)>,
+}
+
 #[derive(Default)]
 struct State {
-    head: Option<(u16, Vec<(String, String)>)>,
+    head: Option<StartedHead>,
     chunks: VecDeque<Vec<u8>>,
     queued_bytes: usize,
     remaining_bytes: Option<u64>,
@@ -80,7 +87,7 @@ impl ResponseTransport {
             && (state.cancelled || state.failure.is_some() || state.disposition.is_some())
     }
 
-    pub(crate) fn no_body_head(&self) -> Option<(u16, Vec<(String, String)>)> {
+    pub(crate) fn no_body_head(&self) -> Option<StartedHead> {
         let state = self.state.lock();
         state.disposition.and_then(|_| state.head.clone())
     }
@@ -147,7 +154,10 @@ impl ResponseTransport {
         if state.head.is_some() || state.finished {
             return Err(FutureError::Denied("a response has already started".into()));
         }
-        state.head = Some((head.status, head.headers.clone()));
+        state.head = Some(StartedHead {
+            status: head.status,
+            headers: head.headers.clone(),
+        });
         state.remaining_bytes = (!head.streaming).then_some(head.body.len() as u64);
         drop(state);
         self.readable.notify_waiters();
@@ -234,7 +244,7 @@ impl ResponseTransport {
             changed.as_mut().enable();
             {
                 let state = self.state.lock();
-                if let Some((status, headers)) = &state.head {
+                if let Some(StartedHead { status, headers }) = &state.head {
                     return Ok(HttpExchange {
                         status: *status,
                         headers: headers.clone(),

@@ -385,8 +385,13 @@ fn word(template: &Template, offset: usize) -> u32 {
     u32::from_le_bytes(memory[offset..offset + 4].try_into().expect("four bytes"))
 }
 
+struct Layered {
+    base: Template,
+    layer: Template,
+}
+
 /// Prepares `wasm`'s baseline and its application layer over it, loaded.
-async fn baseline_and_layer(wasm: &[u8]) -> (Template, Template) {
+async fn baseline_and_layer(wasm: &[u8]) -> Layered {
     let request = request(wasm);
     let runtime = baseline(&request)
         .await
@@ -411,13 +416,13 @@ async fn baseline_and_layer(wasm: &[u8]) -> (Template, Template) {
         request.identity().expect("the application's identity"),
         Some(&base),
     );
-    (base, layer)
+    Layered { base, layer }
 }
 
 #[tokio::test]
 async fn each_initializer_stage_collects_the_guests_garbage_before_its_capture() {
     let wasm = collecting_guest(true, COUNT_COLLECTION);
-    let (base, layer) = baseline_and_layer(&wasm).await;
+    let Layered { base, layer } = baseline_and_layer(&wasm).await;
     assert_eq!(
         (word(&base, 300), word(&layer, 308), word(&layer, 300)),
         (1, 1, 2),

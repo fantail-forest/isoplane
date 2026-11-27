@@ -38,6 +38,12 @@ struct FutureSlot {
     result: Option<ResultRecord>,
 }
 
+/// A buffer `isoplane_alloc` handed to the host, with the layout that frees it.
+struct HostBuffer {
+    ptr: usize,
+    layout: Layout,
+}
+
 pub(crate) struct Runtime {
     tasks: Vec<Option<Task>>,
     free_slots: Vec<u32>,
@@ -52,7 +58,7 @@ pub(crate) struct Runtime {
     trap: Option<TrapCode>,
     /// Buffers handed to the host by `isoplane_alloc`, freed once the host has
     /// handed them back in a `isoplane_handle` / `isoplane_wake` call.
-    host_bufs: Vec<(usize, usize, usize)>,
+    host_bufs: Vec<HostBuffer>,
     /// Instrumentation. `polls` is the assertion that backs "parking is a
     /// return, not a spin".
     pub(crate) polls: u64,
@@ -349,7 +355,12 @@ pub fn export_alloc(size: usize, align: usize) -> usize {
     if p.is_null() {
         return 0;
     }
-    with(|rt| rt.host_bufs.push((p as usize, size, align)));
+    with(|rt| {
+        rt.host_bufs.push(HostBuffer {
+            ptr: p as usize,
+            layout,
+        })
+    });
     p as usize
 }
 
@@ -357,11 +368,14 @@ fn free_host_buf(ptr: usize) {
     let found = with(|rt| {
         rt.host_bufs
             .iter()
-            .position(|&(p, _, _)| p == ptr)
+            .position(|buffer| buffer.ptr == ptr)
             .map(|i| rt.host_bufs.swap_remove(i))
     });
-    if let Some((p, size, align)) = found {
-        unsafe { raw_dealloc(p as *mut u8, Layout::from_size_align_unchecked(size, align)) };
+    if let Some(HostBuffer { ptr, layout }) = found {
+        // SAFETY: `export_alloc` recorded this pointer with the layout its allocation
+        // succeeded with, and `swap_remove` took the entry out above, so a second
+        // handoff of the same pointer finds no entry and frees nothing.
+        unsafe { raw_dealloc(ptr as *mut u8, layout) };
     }
 }
 

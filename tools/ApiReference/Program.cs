@@ -98,8 +98,8 @@ internal static class Reference
         output.Add("error-codes.md", ErrorCodes());
         output.Add("project-templates.md", ProjectTemplates.Replace("{templates}", Templates()));
         output.Add("launch-settings.md", LaunchSettings
-            .Replace("{profile}", Keys("launch-settings#profile", LaunchProfileKeys.Profile.Select(key => (key.Name, key.Description))))
-            .Replace("{limits}", Keys("launch-settings#limits", LaunchProfileKeys.LimitOverrides.Select(key => (key.Name, key.Description)))));
+            .Replace("{profile}", Keys("launch-settings#profile", LaunchProfileKeys.Profile))
+            .Replace("{limits}", Keys("launch-settings#limits", LaunchProfileKeys.LimitOverrides.Select(key => new LaunchProfileKey(key.Name, key.Description)))));
         output.Add("telemetry.md", Telemetry
             .Replace("{variables}", "| Variable | Description |\n| --- | --- |\n" + string.Join("\n", TelemetryVariables.All.Select(variable => $"| `{variable.Name}`{Since.Mark("telemetry#variable#" + variable.Name)} | {variable.Description} |")))
             .Replace("{fields}", EventFields("command-event.schema.json"))
@@ -201,7 +201,7 @@ internal static class Reference
 
     private static string Names(IEnumerable<string> names) => string.Join(", ", names.Select(name => $"`{name}`"));
 
-    private static string Keys(string item, IEnumerable<(string Name, string Description)> keys) =>
+    private static string Keys(string item, IEnumerable<LaunchProfileKey> keys) =>
         "| Key | Description |\n| --- | --- |\n" + string.Join("\n", keys.Select(key => $"| `{key.Name}`{Since.Mark($"{item}#{key.Name}")} | {key.Description} |"));
 
     /// <summary>The attributes the debugger extension's manifest declares for one kind of debug configuration.</summary>

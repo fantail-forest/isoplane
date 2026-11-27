@@ -173,7 +173,10 @@ async fn a_partial_cache_entry_is_recompiled_before_use() {
         .expect("partial entry repair");
     assert_eq!(
         product.initialized.pal_calls,
-        vec![("entropy_fill".to_owned(), 1)],
+        vec![isoplane_engine::PalCallCount {
+            import: "entropy_fill".into(),
+            calls: 1,
+        }],
         "a repaired entry must initialize successfully"
     );
     assert!(

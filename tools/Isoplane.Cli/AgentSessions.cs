@@ -1,16 +1,20 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text.Json.Nodes;
+using Isoplane.Native;
 using Microsoft.Extensions.Hosting;
 
 namespace Isoplane.Cli;
 
-/// <summary>A session's events in order, numbered from one, kept for a reader that polls.</summary>
+/// <summary>
+/// A session's events in order, numbered from one, kept for a reader that polls. It holds each event as the
+/// JSON <c>isoplane dev --json</c> writes it.
+/// </summary>
 internal sealed class EventLog
 {
     private const int Capacity = 2000;
     private readonly object access = new();
-    private readonly LinkedList<(long Number, JsonObject Event)> events = new();
+    private readonly LinkedList<NumberedEvent> events = new();
     private long next = 1;
     private TaskCompletionSource arrived = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -18,7 +22,7 @@ internal sealed class EventLog
     {
         lock (access)
         {
-            events.AddLast((next++, @event));
+            events.AddLast(new NumberedEvent(next++, @event));
             if (events.Count > Capacity) events.RemoveFirst();
             arrived.TrySetResult();
             arrived = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -26,7 +30,7 @@ internal sealed class EventLog
     }
 
     /// <summary>The events numbered above <paramref name="after"/>, waiting up to <paramref name="wait"/> for one when there are none.</summary>
-    internal async Task<(long Number, JsonObject Event)[]> ReadAsync(long after, TimeSpan wait, CancellationToken cancellation)
+    internal async Task<NumberedEvent[]> ReadAsync(long after, TimeSpan wait, CancellationToken cancellation)
     {
         var deadline = wait > TimeSpan.Zero ? Task.Delay(wait, cancellation) : Task.CompletedTask;
         while (true)
@@ -90,11 +94,11 @@ internal sealed class AgentSessions(CommandTelemetry telemetry) : IHostedService
     private static async Task<AgentSession> StartSessionAsync(DevelopmentOptions options, CommandTelemetry run, CancellationToken cancellation)
     {
         var events = new EventLog();
-        var ready = new TaskCompletionSource<JsonObject>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var ready = new TaskCompletionSource<SessionEvent.Ready>(TaskCreationOptions.RunContinuationsAsynchronously);
         var session = await DevelopmentSession.StartAsync(options, message =>
         {
-            events.Append(message);
-            if (message["event"]?.GetValue<string>() == "ready") ready.TrySetResult(message);
+            events.Append(message.ToJson());
+            if (message is SessionEvent.Ready announced) ready.TrySetResult(announced);
         }, cancellation);
         try
         {
@@ -105,7 +109,7 @@ internal sealed class AgentSessions(CommandTelemetry telemetry) : IHostedService
             }
             var announced = await ready.Task;
             return new AgentSession(RandomNumberGenerator.GetHexString(8, lowercase: true), options.Directory,
-                announced["app"]?.GetValue<string>() ?? "", announced["url"]?.GetValue<string>() ?? "", session, events, run, EndedAsync(session.Completion, run));
+                announced.App, announced.Url, session, events, run, EndedAsync(session.Completion, run));
         }
         catch
         {

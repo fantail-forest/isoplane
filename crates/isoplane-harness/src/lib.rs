@@ -29,7 +29,7 @@ use isoplane_host::bindings::{
     CellBindings, CellRuntime, InstanceCtx, Services, Tenancy, WakeSink,
 };
 use isoplane_host::egress::HostEgressPolicy;
-use isoplane_host::futures::FutureTable;
+use isoplane_host::futures::{FutureTable, Ready};
 use isoplane_host::meters::Meters;
 use isoplane_host::metrics::Metrics;
 use isoplane_host::response::Response;
@@ -422,7 +422,7 @@ impl ReturnedGuest {
         outcome
     }
 
-    async fn await_completion(&self, reactor: &Reactor) -> (u64, ResultRecord) {
+    async fn await_completion(&self, reactor: &Reactor) -> Ready {
         tokio::time::timeout(
             WAKE_DEADLINE,
             next_completion(&reactor.futures, self.context.instance, &reactor.wake.0),
@@ -439,8 +439,8 @@ impl ReturnedGuest {
     /// Waits for the reactor to signal readiness, then delivers the ready
     /// completion to the guest restored on another thread.
     pub async fn wake(&mut self, reactor: &Reactor) -> DispatchOutcome {
-        let (future, result) = self.await_completion(reactor).await;
-        self.restore_and_wake(future, &result)
+        let ready = self.await_completion(reactor).await;
+        self.restore_and_wake(ready.future, &ready.result)
     }
 
     /// Polls the saved guest without delivering a host completion.
@@ -451,8 +451,9 @@ impl ReturnedGuest {
     /// Saves the parked guest in a local snapshot reservation and restores it
     /// on another worker before waking. Host resources stay in the same context.
     pub async fn wake_through_delta(&mut self, reactor: &Reactor) -> DispatchOutcome {
-        let (future, result) = self.await_completion(reactor).await;
-        self.restore_delta_and_wake(future, &result).await
+        let ready = self.await_completion(reactor).await;
+        self.restore_delta_and_wake(ready.future, &ready.result)
+            .await
     }
 
     /// Restores the parked guest from a local snapshot and polls its ready
@@ -729,13 +730,10 @@ async fn next_completion(
     futures: &FutureTable,
     owner: InstanceId,
     wake: &tokio::sync::Notify,
-) -> (u64, ResultRecord) {
+) -> Ready {
     loop {
-        if let Some(completion) = futures
-            .take_ready(owner)
-            .map(isoplane_host::futures::Ready::into_pair)
-        {
-            return completion;
+        if let Some(ready) = futures.take_ready(owner) {
+            return ready;
         }
         // Notifications coalesce and can outlive a cancelled completion.
         // The table, not a wake permit, determines whether work is ready.
@@ -769,16 +767,16 @@ mod completion_tests {
             reactor
                 .futures
                 .take_ready(owner)
-                .expect("retained result")
-                .into_pair(),
+                .map(|ready| (ready.future, ready.result))
+                .expect("retained result"),
             (retained, ResultRecord::Ok(vec![0; limit]))
         );
         assert_eq!(
             reactor
                 .futures
                 .take_ready(owner)
-                .expect("rejected result")
-                .into_pair(),
+                .map(|ready| (ready.future, ready.result))
+                .expect("rejected result"),
             (
                 shed,
                 ResultRecord::Err(isoplane_abi::result::FutureError::BufferLimit)
@@ -819,7 +817,10 @@ mod completion_tests {
         for id in [first, second] {
             let mut waiter = std::pin::pin!(next_completion(&table, owner, &wake));
             assert_eq!(
-                waiter.as_mut().poll(&mut context),
+                waiter
+                    .as_mut()
+                    .poll(&mut context)
+                    .map(|ready| (ready.future, ready.result)),
                 Poll::Ready((id, ResultRecord::Ok(vec![7]))),
                 "each ready completion must be delivered even when wake permits coalesce"
             );
@@ -842,14 +843,20 @@ mod completion_tests {
         let mut waiter = std::pin::pin!(next_completion(&table, owner, &wake));
         let mut context = Context::from_waker(Waker::noop());
         assert_eq!(
-            waiter.as_mut().poll(&mut context),
+            waiter
+                .as_mut()
+                .poll(&mut context)
+                .map(|ready| (ready.future, ready.result)),
             Poll::Pending,
             "a stale notification must wait for a real completion"
         );
         complete(&table, owner, pending);
         wake.notify_one();
         assert_eq!(
-            waiter.as_mut().poll(&mut context),
+            waiter
+                .as_mut()
+                .poll(&mut context)
+                .map(|ready| (ready.future, ready.result)),
             Poll::Ready((pending, ResultRecord::Ok(vec![7]))),
             "the replacement completion must still wake its guest"
         );

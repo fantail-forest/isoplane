@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using Isoplane.Native;
 
 namespace Isoplane.Cli;
@@ -18,7 +17,7 @@ internal sealed class DevelopmentSession : IAsyncDisposable
     private readonly CancellationTokenRegistration stopping;
     private readonly Task watching;
 
-    private DevelopmentSession(CancellationTokenSource lifetime, LocalSession host, SourceChanges? changes, PackageBuild build, DevelopmentSettings settings, Action<JsonObject> events)
+    private DevelopmentSession(CancellationTokenSource lifetime, LocalSession host, SourceChanges? changes, PackageBuild build, DevelopmentSettings settings, Action<SessionEvent> events)
     {
         this.lifetime = lifetime;
         this.host = host;
@@ -33,7 +32,7 @@ internal sealed class DevelopmentSession : IAsyncDisposable
             }
             catch (InvalidOperationException error)
             {
-                events(new JsonObject { ["event"] = "build_failed", ["detail"] = error.Message });
+                events(new SessionEvent.BuildFailed(error.Message));
             }
         }, lifetime.Token);
     }
@@ -45,7 +44,7 @@ internal sealed class DevelopmentSession : IAsyncDisposable
     /// Builds the project and starts it. A build that fails throws <see cref="InvalidOperationException"/>
     /// with the build's own message, and nothing is left running.
     /// </summary>
-    internal static async Task<DevelopmentSession> StartAsync(DevelopmentOptions options, Action<JsonObject> events, CancellationToken cancellation)
+    internal static async Task<DevelopmentSession> StartAsync(DevelopmentOptions options, Action<SessionEvent> events, CancellationToken cancellation)
     {
         var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         SourceChanges? changes = null;
@@ -106,6 +105,6 @@ internal sealed class DevelopmentSession : IAsyncDisposable
         internal Task<byte[]> ModuleAsync(CancellationToken cancellation) =>
             File.ReadAllBytesAsync(runtime ?? throw new InvalidOperationException("The package has not been built."), cancellation);
 
-        internal byte[] SessionOptions(DevelopmentSettings settings) => new LocalProject(options.Directory).SessionOptions(settings);
+        internal LocalSessionOptions SessionOptions(DevelopmentSettings settings) => new LocalProject(options.Directory).SessionOptions(settings);
     }
 }

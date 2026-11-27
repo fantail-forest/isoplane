@@ -73,7 +73,7 @@ internal static class HotReloadAcceptance
         using var cancelTransport = deadline.Token.Register(socket.Dispose);
         using var http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
         await using var owner = new GuestSession();
-        var (transport, package) = await owner.ConnectAsync(IPEndPoint.Parse(endpoint)).WaitAsync(deadline.Token);
+        var (transport, package, _) = await owner.ConnectAsync(IPEndPoint.Parse(endpoint)).WaitAsync(deadline.Token);
         Console.WriteLine("The debug session allocated its guest transport.");
         var connecting = Task.Run(() => VirtualMachineManager.ConnectInternalAsync(socket, null, transport, null), deadline.Token);
         var response = http.GetStringAsync(url, deadline.Token);

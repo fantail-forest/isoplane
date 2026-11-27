@@ -18,7 +18,5 @@ tasks:
     env:
       CARGO_TARGET_DIR: '{{.NATIVE_TARGET}}'
       CARGO_BUILD_BUILD_DIR: '{{.NATIVE_TARGET}}'
-      # The build writes the C# declarations of the library it builds.
-      ISOPLANE_GENERATE_BINDINGS: '1'
     cmds:
       - '{{.DEVELOPMENT_COMMAND}}cargo build --locked --release -p isoplane-native'

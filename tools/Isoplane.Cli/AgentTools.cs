@@ -71,8 +71,7 @@ internal sealed class AgentTools(AgentSessions sessions, CommandTelemetry teleme
     {
         var session = sessions.Find(sessionId) ?? throw new McpException($"No running session has the id '{sessionId}'. list_sessions shows the running ones.");
         var events = await session.Events.ReadAsync(after, TimeSpan.FromSeconds(Math.Clamp(waitSeconds, 0, 60)), cancellation);
-        return new SessionEvents(events.Select(entry => new NumberedEvent(entry.Number, entry.Event)).ToArray(),
-            events.Length > 0 ? events[^1].Number : after, session.Running);
+        return new SessionEvents(events, events.Length > 0 ? events[^1].Number : after, session.Running);
     }
 
     [McpServerTool(Name = AgentToolCatalogue.StopSession, Title = "Stop an application", OpenWorld = false)]
@@ -90,7 +89,7 @@ internal sealed class AgentTools(AgentSessions sessions, CommandTelemetry teleme
 /// <summary>A running session: its id, the application's name, its address and its project.</summary>
 internal sealed record SessionStarted(string SessionId, string Application, string Url, string ProjectDirectory);
 
-/// <summary>One event a session reported, with its number.</summary>
+/// <summary>One event a session reported, as the JSON <c>isoplane dev --json</c> writes it, with its number.</summary>
 internal sealed record NumberedEvent(long Number, JsonObject Event);
 
 /// <summary>The events read, the number to pass as `after` next time, and whether the session still runs.</summary>

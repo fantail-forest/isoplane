@@ -25,13 +25,13 @@ impl IsoplaneEngine {
                 .inner
                 .mut_globals
                 .iter()
-                .map(|(name, _)| name.clone())
+                .map(|global| global.name.clone())
                 .collect(),
             source
                 .inner
                 .tables
                 .iter()
-                .map(|(name, _)| name.clone())
+                .map(|table| table.name.clone())
                 .collect(),
         )
     }
@@ -137,8 +137,8 @@ impl IsoplaneEngine {
         state.memory_pages = captured.memory_pages;
         state.prepared_resources = resources;
         state.has_initialize = capture == Capture::RuntimeBaseline;
-        for ((_, value), captured_value) in state.mut_globals.iter_mut().zip(captured.globals) {
-            *value = captured_value;
+        for (global, captured_value) in state.mut_globals.iter_mut().zip(captured.globals) {
+            global.value = captured_value;
         }
         let image = match capture {
             Capture::Over => crate::MemoryImage::from_overlay(

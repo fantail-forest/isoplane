@@ -390,17 +390,22 @@ mod tests {
         }
     }
 
+    struct SocketBufferBytes {
+        receive: usize,
+        send: usize,
+    }
+
     /// The receive and send sizes this host OS reports for a socket given
     /// `bytes` for each, which Linux, unlike other systems, doubles.
-    fn as_the_kernel_reports(bytes: usize) -> (usize, usize) {
+    fn as_the_kernel_reports(bytes: usize) -> SocketBufferBytes {
         let reference = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None)
             .expect("a reference socket must open");
         reference.set_recv_buffer_size(bytes).unwrap();
         reference.set_send_buffer_size(bytes).unwrap();
-        (
-            reference.recv_buffer_size().unwrap(),
-            reference.send_buffer_size().unwrap(),
-        )
+        SocketBufferBytes {
+            receive: reference.recv_buffer_size().unwrap(),
+            send: reference.send_buffer_size().unwrap(),
+        }
     }
 
     #[tokio::test]
@@ -427,7 +432,7 @@ mod tests {
             Ok(ByteCount(4_096)),
             "the guest must read back a one-byte receive buffer raised to the floor"
         );
-        let (floor_receive_bytes, _) = as_the_kernel_reports(4_096);
+        let floor_receive_bytes = as_the_kernel_reports(4_096).receive;
         assert_eq!(host.recv_buffer_size().unwrap(), floor_receive_bytes);
         assert_eq!(
             host.send_buffer_size().unwrap(),
@@ -446,7 +451,7 @@ mod tests {
             Ok(ByteCount(212_992)),
             "the guest must read back a 1 GiB send buffer cut to the ceiling"
         );
-        let (_, ceiling_send_bytes) = as_the_kernel_reports(212_992);
+        let ceiling_send_bytes = as_the_kernel_reports(212_992).send;
         assert_eq!(host.send_buffer_size().unwrap(), ceiling_send_bytes);
 
         assert!(
