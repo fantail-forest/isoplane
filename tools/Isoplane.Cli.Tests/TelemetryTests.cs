@@ -329,12 +329,28 @@ public sealed class TelemetryTests : IDisposable
     }
 
     [Fact]
-    public void A_full_queue_stops_recording()
+    public async Task A_queue_records_until_it_is_full_and_then_stops()
     {
         Seen();
-        for (var index = 0; index < TelemetryOutbox.Capacity; index++) Queue(Guid.NewGuid());
-        CommandTelemetry.Begin(["dev"], Host()).Ended(0);
-        Assert.Equal(TelemetryOutbox.Capacity, Pending().Length);
+        var pending = Directory.CreateDirectory(Path.Combine(home.Path, "pending")).FullName;
+        for (var index = 0; index < TelemetryOutbox.Capacity - 1; index++)
+        {
+            var id = Guid.NewGuid();
+            File.WriteAllText(Path.Combine(pending, id + ".json"), Event(id));
+        }
+        Assert.Equal(TelemetryOutbox.Capacity - 1, Pending().Length);
+
+        var filling = CommandTelemetry.Begin(["dev"], Host());
+        // The service is unavailable, so the upload takes nothing out of the queue.
+        await filling.Upload;
+        filling.Ended(0);
+        var queued = Pending().Order().ToArray();
+        Assert.Equal(TelemetryOutbox.Capacity, queued.Length);
+
+        var refused = CommandTelemetry.Begin(["dev"], Host());
+        await refused.Upload;
+        refused.Ended(0);
+        Assert.Equal(queued, Pending().Order());
     }
 
     [Theory]
@@ -426,10 +442,13 @@ public sealed class TelemetryTests : IDisposable
 
     private string Queue(Guid id)
     {
-        Host().Outbox.Add(id, new CommandEvent(id, CommandEvent.Timestamp(DateTimeOffset.UtcNow), null, false, null, CodingAgent.None, CommandInterface.Cli, TelemetryCommand.Dev,
-            CommandMode.Run, CommandOutcome.Succeeded, 0, null, 1, "0.1.0", "linux-x64", "x64", "6.8", null, null, "10.0.0", null).ToJson());
+        Host().Outbox.Add(id, Event(id));
         return Path.Combine(home.Path, "pending", id + ".json");
     }
+
+    private static string Event(Guid id) =>
+        new CommandEvent(id, CommandEvent.Timestamp(DateTimeOffset.UtcNow), null, false, null, CodingAgent.None, CommandInterface.Cli, TelemetryCommand.Dev,
+            CommandMode.Run, CommandOutcome.Succeeded, 0, null, 1, "0.1.0", "linux-x64", "x64", "6.8", null, null, "10.0.0", null).ToJson();
 
     private string[] Pending() => Directory.Exists(Path.Combine(home.Path, "pending"))
         ? Directory.GetFiles(Path.Combine(home.Path, "pending")).Select(path => Path.GetFileName(path)).ToArray() : [];

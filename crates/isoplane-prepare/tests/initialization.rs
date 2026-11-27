@@ -2,6 +2,7 @@ mod common;
 use common::{engine, guest, request};
 use isoplane_abi::config::InitSandbox;
 use isoplane_prepare::{initialize, PrepareError};
+use std::collections::BTreeMap;
 
 #[test]
 fn application_units_receive_fresh_entropy_and_a_stable_hash_seed_within_each_attempt() {
@@ -475,20 +476,35 @@ fn preparation_captures_its_settings_and_changes_identity_when_they_change() {
 }
 
 #[test]
-fn invalid_preparation_settings_are_refused_without_exposing_values() {
-    let wasm = guest("", "");
-    for settings in [
-        b"private-value".to_vec(),
-        vec![b' '; isoplane_abi::imports::MAX_RUNTIME_CONFIGURATION_BYTES + 1],
-    ] {
-        let mut inputs = request();
-        inputs.runtime_config = settings;
-        assert!(
-            matches!(
-                initialize(&engine(), &wasm, &inputs),
-                Err(PrepareError::InvalidRequest(_))
-            ),
-            "invalid or oversized settings must fail before guest execution"
-        );
-    }
+fn malformed_preparation_settings_are_refused_without_exposing_values() {
+    assert_refused_without_exposing_private_value(b"private-value".to_vec());
+}
+
+#[test]
+fn oversized_preparation_settings_are_refused_without_exposing_values() {
+    let mut settings = br#"{"token":"private-value"}"#.to_vec();
+    settings.resize(
+        isoplane_abi::imports::MAX_RUNTIME_CONFIGURATION_BYTES + 1,
+        b' ',
+    );
+    serde_json::from_slice::<BTreeMap<String, String>>(&settings)
+        .expect("only the size of these settings is invalid");
+    assert_refused_without_exposing_private_value(settings);
+}
+
+fn assert_refused_without_exposing_private_value(settings: Vec<u8>) {
+    let mut inputs = request();
+    inputs.runtime_config = settings;
+    let Err(error) = initialize(&engine(), &guest("", ""), &inputs) else {
+        panic!("the settings must be refused before guest execution");
+    };
+    assert!(
+        matches!(error, PrepareError::InvalidRequest(_)),
+        "refused settings are an invalid request: {error:?}"
+    );
+    let reported = format!("{error} {error:?}");
+    assert!(
+        !reported.contains("private-value"),
+        "the refusal must not repeat the settings: {reported}"
+    );
 }

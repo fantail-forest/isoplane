@@ -11,13 +11,6 @@ using System.Threading.Tasks;
 
 namespace Acceptance;
 
-/// <summary>
-/// TLS over the delegated sockets with the guest's own OpenSSL: an
-/// <see cref="SslStream"/> handshake parks on socket readiness like any
-/// other read, bytes flow through it both ways, the server certificate is
-/// validated against a root the guest trusts, and an untrusted one fails
-/// the ordinary way.
-/// </summary>
 internal sealed class Tls
 {
     public async Task<string> RunAsync(string[] path)
@@ -305,7 +298,7 @@ internal sealed class Tls
         OfflineLeaf,
         /// <summary>Online check of the end certificate with a brief retrieval timeout.</summary>
         OnlineLeafBrief,
-        /// <summary>No revocation check; a download limit of one kilobyte.</summary>
+        /// <summary>No revocation check; a download limit below the size of the material's intermediates.</summary>
         Limit,
     }
 
@@ -348,8 +341,8 @@ internal sealed class Tls
                 policy.UrlRetrievalTimeout = TimeSpan.FromMilliseconds(500);
                 break;
             case ChainVariant.Limit:
-                // Read once, at the download client's first use.
-                AppContext.SetData("System.Security.Cryptography.AiaDownloadLimit", 1024L);
+                // Read once, at the download client's first use. Smaller than the fixtures' intermediates.
+                AppContext.SetData("System.Security.Cryptography.AiaDownloadLimit", 512L);
                 break;
             case ChainVariant.Default:
                 break;
