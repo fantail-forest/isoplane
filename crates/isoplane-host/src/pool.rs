@@ -27,11 +27,6 @@ pub trait Activator: Send + Sync + 'static {
     fn abi_rev(&self) -> u32;
     /// Maximum encoded local snapshot bytes under the effective memory limit.
     fn snapshot_size_bound(&self, max_memory_bytes: u64) -> anyhow::Result<u64>;
-    /// Whether the compiled guest declares a capability; scripted activators default to legacy delivery.
-    fn imports(&self, _module: &str, _name: &str) -> bool {
-        false
-    }
-
     /// The baseline hibernation diffs against.
     fn template_image(&self) -> Arc<isoplane_engine::MemoryImage>;
     /// Brings the template's working set into the page cache, so instances

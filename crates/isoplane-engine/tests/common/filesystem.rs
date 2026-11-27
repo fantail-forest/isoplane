@@ -97,7 +97,6 @@ pub fn dispatch() -> DispatchRecord {
             path: "/".into(),
             query: vec![],
             headers: vec![],
-            body: vec![],
         }),
         cancel_future: 0,
         occupancy_budget_ms: 30_000,

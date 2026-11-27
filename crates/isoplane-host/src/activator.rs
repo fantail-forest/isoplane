@@ -100,9 +100,6 @@ impl Activator for EngineActivator {
     fn module_hash(&self) -> ModuleHash {
         self.template.read().hash
     }
-    fn imports(&self, module: &str, name: &str) -> bool {
-        self.template.read().imports(module, name)
-    }
     fn abi_rev(&self) -> u32 {
         self.template.read().abi_rev
     }

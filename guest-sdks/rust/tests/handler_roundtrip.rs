@@ -45,7 +45,6 @@ fn record(path: &str) -> DispatchRecord {
             path: path.into(),
             query: vec![],
             headers: vec![],
-            body: vec![],
         }),
         cancel_future: 999,
         occupancy_budget_ms: 30_000,

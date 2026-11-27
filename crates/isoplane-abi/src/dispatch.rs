@@ -34,8 +34,6 @@ pub struct HttpRequest {
     pub path: String,
     pub query: Vec<(String, String)>,
     pub headers: Vec<(String, String)>,
-    #[serde(with = "serde_bytes")]
-    pub body: Vec<u8>,
 }
 
 /// The response head a guest hands back via `resp_new`.

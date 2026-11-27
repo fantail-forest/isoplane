@@ -12,9 +12,8 @@ internal static class RequestDispatch
         await Template.EnterAsync();
         await Instance.EnterAsync();
         if (record.Kind != DispatchKind.Http) return await router.Route(record);
-        bool hostCanHaveBody = H.ReqBodyCanHaveBody() != 0;
-        bool canHaveBody = hostCanHaveBody || record.Body.Length != 0;
-        using var body = new RequestStream(record.Body, hostCanHaveBody);
+        bool canHaveBody = H.ReqBodyCanHaveBody() != 0;
+        using var body = new RequestStream(canHaveBody);
         if (router is IStreamingHttpRouter streaming && streaming.StreamsRequest(new RequestHead(record)))
             return await streaming.RouteStreamingAsync(new StreamingRequest(record, body, canHaveBody));
         using (var buffered = new System.IO.MemoryStream())

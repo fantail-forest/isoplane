@@ -200,7 +200,6 @@ pub(super) fn first_dispatch(path: &str) -> (DispatchRecord, OccupancyBudget) {
                 path: path.into(),
                 query: vec![],
                 headers: vec![],
-                body: vec![],
             }),
             cancel_future: 0,
             occupancy_budget_ms: 180_000,

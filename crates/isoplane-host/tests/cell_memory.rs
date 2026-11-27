@@ -79,7 +79,6 @@ fn dispatch_growth(
             path: "/".into(),
             query: vec![],
             headers: vec![],
-            body: vec![],
         };
         let result = cell
             .dispatch_blocking(
@@ -209,7 +208,6 @@ fn a_dispatch_does_not_join_an_instance_at_its_memory_limit() {
             path: "/".into(),
             query: vec![],
             headers: vec![],
-            body: vec![],
         };
         cell.submit(
             &module,

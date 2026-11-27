@@ -26,7 +26,6 @@ fn request_body_reads_reject_zero_and_negative_sizes_through_the_real_import() {
                 path: "/".into(),
                 query: vec![],
                 headers: vec![],
-                body: vec![],
             },
         );
         // The wake for the refused read must carry the canonical Denied
@@ -71,10 +70,6 @@ fn request_body_reads_reject_zero_and_negative_sizes_through_the_real_import() {
                 .load_template(&wasm)
                 .map(|template| EngineActivator::new(engine, template, module.clone()))
                 .expect("optional request import must link"),
-        );
-        assert!(
-            activator.template().imports("isoplane", "req_body_read"),
-            "the compiled import must advertise upload delivery capability"
         );
         cell.register_module("owner", activator, common::manifest("read-size"))
             .expect("register hostile read guest");
@@ -155,10 +150,7 @@ fn response_cell(imports: &str, before_response: &str) -> Arc<isoplane_host::Cel
 #[tokio::test]
 async fn an_early_response_releases_the_unread_upload_at_dispatch_settlement() {
     use isoplane_abi::host::{CodeTier, Dispatcher, HttpUpload, RouteTarget};
-    let cell = response_cell(
-        r#"(import "isoplane" "req_body_read" (func $read (param i32) (result i64)))"#,
-        "",
-    );
+    let cell = response_cell("", "");
     let (dropped, disposal) = tokio::sync::oneshot::channel();
     let mut response = cell
         .dispatch_http_upload(
@@ -175,7 +167,6 @@ async fn an_early_response_releases_the_unread_upload_at_dispatch_settlement() {
                     path: "/".into(),
                     query: vec![],
                     headers: vec![],
-                    body: vec![],
                 },
                 body: Box::new(UnreadUpload(Some(dropped))),
                 can_have_body: true,
@@ -224,62 +215,6 @@ impl isoplane_abi::host::HttpBody for UploadChunks {
 }
 
 #[tokio::test]
-async fn a_guest_without_upload_imports_receives_the_complete_inline_body() {
-    use isoplane_abi::host::{CodeTier, Dispatcher, HttpUpload, RouteTarget};
-    let cell = response_cell(
-        "",
-        r#"
-        (block $found
-          (loop $scan
-            (if (i32.lt_u (local.get $len) (i32.const 5)) (then unreachable))
-            (br_if $found (i32.and
-              (i32.eq (i32.load8_u (local.get $ptr)) (i32.const 88))
-              (i32.eq (i32.load offset=1 (local.get $ptr)) (i32.const 1145258561))))
-            (local.set $ptr (i32.add (local.get $ptr) (i32.const 1)))
-            (local.set $len (i32.sub (local.get $len) (i32.const 1)))
-            (br $scan)))
-    "#,
-    );
-    let mut response = cell
-        .dispatch_http_upload(
-            &RouteTarget {
-                app: "early-upload".into(),
-                version: "v1".into(),
-                tenant: "owner".into(),
-                tier: CodeTier::Fast,
-            },
-            HttpUpload {
-                request: HttpRequest {
-                    method: "POST".into(),
-                    url: "http://upload.test/".into(),
-                    path: "/".into(),
-                    query: vec![],
-                    headers: vec![],
-                    body: b"X".to_vec(),
-                },
-                body: Box::new(UploadChunks([b"AB".to_vec(), b"CD".to_vec()].into())),
-                can_have_body: true,
-            },
-        )
-        .await
-        .expect("legacy guest must receive prefix plus every upload chunk");
-    assert_eq!(
-        response.status, 204,
-        "a legacy guest must find XABCD in the original inline request record"
-    );
-    assert!(
-        response
-            .body
-            .read()
-            .await
-            .expect("legacy response completes")
-            .is_none(),
-        "the legacy response remains bodyless"
-    );
-    cell.shutdown();
-}
-
-#[tokio::test]
 async fn a_metadata_only_guest_distinguishes_unknown_length_empty_uploads_from_bodyless_requests() {
     use isoplane_abi::host::{CodeTier, Dispatcher, HttpUpload, RouteTarget};
     for can_have_body in [true, false] {
@@ -305,14 +240,13 @@ async fn a_metadata_only_guest_distinguishes_unknown_length_empty_uploads_from_b
                         path: "/".into(),
                         query: vec![],
                         headers: vec![],
-                        body: vec![],
                     },
                     body: Box::new(UploadChunks(Default::default())),
                     can_have_body,
                 },
             )
             .await
-            .expect("metadata-only import must preserve original request framing after buffering");
+            .expect("a guest that only asks about framing must be answered");
         assert_eq!(
             response.status, 204,
             "the guest must distinguish empty unknown-length content from a bodyless request"

@@ -68,7 +68,6 @@ fn dispatch(handle: &str, wake: &str) -> DispatchResult {
             path: "/".into(),
             query: vec![],
             headers: vec![],
-            body: vec![],
         },
     );
     let result = cell

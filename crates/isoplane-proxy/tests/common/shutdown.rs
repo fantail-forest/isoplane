@@ -41,9 +41,8 @@ impl Dispatcher for BlockedResponse {
     async fn dispatch_http_upload(
         &self,
         _: &RouteTarget,
-        upload: HttpUpload,
+        _: HttpUpload,
     ) -> anyhow::Result<HttpExchange> {
-        upload.collect().await?;
         Ok(HttpExchange {
             status: 200,
             headers: vec![],

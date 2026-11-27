@@ -123,6 +123,16 @@ impl Fixture {
     }
 }
 
+/// The guest's oldest unanswered `req_body_read` and the bytes that answer
+/// it, which are empty at the end of the upload.
+fn next_upload_read(recorder: &Recorder) -> Option<(u64, Vec<u8>)> {
+    let mut upload = recorder.upload.lock();
+    let (future, max_bytes) = upload.reads.pop_front()?;
+    let remaining = upload.remaining.get_or_insert_with(Default::default);
+    let length = max_bytes.min(remaining.len());
+    Some((future, remaining.drain(..length).collect()))
+}
+
 /// A generous budget: these tests prove behaviour, not limits.
 pub fn budget() -> OccupancyBudget {
     OccupancyBudget {
@@ -184,7 +194,6 @@ impl Request {
                 path: self.path.clone(),
                 query: self.query.clone(),
                 headers: vec![],
-                body: self.body.clone(),
             }),
             cancel_future: 0,
             occupancy_budget_ms: budget().occupancy_ms,
@@ -199,15 +208,33 @@ impl Request {
     }
 
     /// Dispatches a request the probe must answer with 200 without waiting on
-    /// a host operation, running the slices it asks for, and returns the body
-    /// it wrote. A probe asks for a slice when it yields.
+    /// a host operation other than reads of its upload, running the slices it
+    /// asks for, and returns the body it wrote. A probe asks for a slice when
+    /// it yields.
     pub fn answer(&self, instance: &mut Instance, recorder: &Recorder) -> Vec<u8> {
         let record = self.record();
+        *recorder.upload.lock() = super::bindings::Upload {
+            remaining: (!self.body.is_empty()).then(|| self.body.iter().copied().collect()),
+            reads: Default::default(),
+        };
         let mut outcome = instance.dispatch(&record, budget());
-        for _ in 0..8 {
-            if outcome.completion != Completion::Parked {
-                break;
+        // Only a wake that delivers upload bytes is free: the body bounds those, and nothing
+        // bounds a probe that keeps reading at the end of the upload or keeps yielding.
+        let mut wakes_without_upload_bytes = 0;
+        while outcome.completion == Completion::Parked && wakes_without_upload_bytes < 8 {
+            if let Some((future, chunk)) = next_upload_read(recorder) {
+                if chunk.is_empty() {
+                    wakes_without_upload_bytes += 1;
+                }
+                outcome = instance.wake(
+                    record.dispatch_id,
+                    future,
+                    &isoplane_abi::result::ResultRecord::Ok(chunk),
+                    budget(),
+                );
+                continue;
             }
+            wakes_without_upload_bytes += 1;
             let requested = {
                 let mut slices = recorder.ready_slices.lock();
                 slices

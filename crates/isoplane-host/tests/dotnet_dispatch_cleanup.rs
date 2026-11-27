@@ -102,7 +102,6 @@ fn dispatch_request(
         path: path.clone(),
         query: vec![],
         headers: vec![],
-        body: vec![],
     };
     let result = cell
         .dispatch_blocking(
@@ -251,7 +250,6 @@ async fn a_guest_cancelled_request_fails_without_discarding_its_instance() {
         path: "/cleanup/cancel".into(),
         query: vec![],
         headers: vec![],
-        body: vec![],
     };
     let cancelled = cell
         .dispatch(
@@ -293,7 +291,6 @@ async fn managed_request_failures_leave_other_requests_and_instance_state_intact
                 path: path.into(),
                 query: vec![],
                 headers: vec![],
-                body: vec![],
             };
             let waiting_cell = cell.clone();
             let waiting_module = module.clone();
@@ -399,7 +396,6 @@ async fn a_fatal_exception_inside_an_aggregate_discards_the_instance() {
         path: "/cleanup/fatal-aggregate".into(),
         query: vec![],
         headers: vec![],
-        body: vec![],
     };
     let failed = cell
         .dispatch(
@@ -493,7 +489,6 @@ async fn check_guest_timer_after_clock_advances(runtime: GuestRuntime) {
             path: "/cleanup/drive-timer".into(),
             query: vec![],
             headers: vec![],
-            body: vec![],
         };
         requester.dispatch_blocking(
             &request_module,
@@ -791,7 +786,6 @@ async fn upload(
         path: path.into(),
         query: vec![],
         headers: vec![],
-        body: vec![],
     };
     let mut response = cell
         .dispatch_http_upload(

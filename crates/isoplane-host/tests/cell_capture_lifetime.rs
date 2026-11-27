@@ -61,7 +61,6 @@ fn request() -> HttpRequest {
         path: "/".into(),
         query: vec![],
         headers: vec![],
-        body: vec![],
     }
 }
 

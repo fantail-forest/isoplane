@@ -99,7 +99,6 @@ fn a_hibernated_guest_restores_its_delta_into_the_same_mapping() {
             path: "/".into(),
             query: vec![],
             headers: vec![],
-            body: vec![],
         };
         let result = cell
             .dispatch_blocking(

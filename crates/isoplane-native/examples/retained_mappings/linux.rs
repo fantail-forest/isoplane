@@ -135,7 +135,7 @@ fn run(
             let barrier = &barrier;
             scope.spawn(move || -> Result<Vec<serde_json::Value>> {
                 let record = DispatchRecord { dispatch_id: 1, kind: DispatchKind::Http(HttpRequest {
-                    method: "GET".into(), url: "https://mapping.test/".into(), path: "/".into(), query: vec![], headers: vec![], body: vec![],
+                    method: "GET".into(), url: "https://mapping.test/".into(), path: "/".into(), query: vec![], headers: vec![],
                 }), cancel_future: 0, occupancy_budget_ms: request_budget().occupancy_ms, pending_futures_limit: 64, now_ms: 0 };
                 barrier.wait();
                 let mut rows = Vec::new();

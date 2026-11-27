@@ -179,7 +179,6 @@ mod tests {
             path: "/".into(),
             query: vec![],
             headers: vec![],
-            body: vec![],
         };
         cell.dispatch_blocking(
             module,
