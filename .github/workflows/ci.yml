@@ -169,7 +169,7 @@ jobs:
     needs: [changes, runtime]
     uses: ./.github/workflows/integration.yml
     with:
-      suites: ${{ (needs.changes.outputs.managed == 'true' || needs.changes.outputs.editor == 'true' || needs.changes.outputs.journeys == 'true' || github.event_name == 'workflow_dispatch') && '["host", "sdk"]' || '["host"]' }}
+      suites: ${{ (needs.changes.outputs.managed == 'true' || needs.changes.outputs.editor == 'true' || needs.changes.outputs.journeys == 'true' || github.event_name == 'workflow_dispatch') && '["sdk"]' || '[]' }}
 
   pins:
     name: Fork pins have landed

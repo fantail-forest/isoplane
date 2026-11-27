@@ -46,10 +46,18 @@ tasks:
         vars: {CLI_ARGS: '--locked', SHIPPED: isoplane-native}
 
   integration:host:
-    desc: Run host and runtime acceptance tests with managed fixtures
+    desc: Run host and runtime acceptance tests against the application archives task fixtures:shared wrote
     cmds:
-      - task: ':test:rust'
+      - task: ':runtime'
+      - task: ':test:rust:prepared'
         vars: {CLI_ARGS: '--locked --workspace --exclude isoplane-native'}
+
+  integration:runtime:
+    desc: Run the shared runtime's acceptance tests on the current operating system, against archives task fixtures:shared wrote
+    cmds:
+      - task: ':fixtures:compiled-runtime'
+      - '{{.DEVELOPMENT_COMMAND}}cargo test --locked -p isoplane-runtime-acceptance'
+      - '{{.DEVELOPMENT_COMMAND}}cargo test --locked -p isoplane-control --test dotnet_preinit --test dotnet_trust_rotation'
 
   integration:sdk:
     desc: Exercise managed, installed SDK, editor and PostgreSQL journeys on Linux

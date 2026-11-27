@@ -3,7 +3,7 @@ on:
   workflow_call:
     inputs:
       suites:
-        description: 'JSON array of the suites to run: host, sdk, release'
+        description: 'JSON array of the suites to run besides the host suite: sdk, release'
         required: true
         type: string
 permissions:
@@ -15,6 +15,7 @@ jobs:
   # The caller runs runtime.yml first; its artifact is shared by every job of the run.
   suite:
     name: ${{ matrix.suite }}
+    if: inputs.suites != '[]'
     strategy:
       fail-fast: false
       matrix:
@@ -42,9 +43,6 @@ jobs:
           git submodule update --init --depth 1 tools/debugger-libs
           sudo apt-get update
           sudo apt-get install -y xvfb libnss3 libatk-bridge2.0-0 libgbm1 libasound2t64 rsync
-      - name: Prepare runtime source drift inputs
-        if: matrix.suite == 'host'
-        run: git submodule update --init --depth 1 vendor/dotnet-runtime
       - name: Prepare release notices sources
         if: matrix.suite == 'release'
         run: git submodule update --init --depth 1 vendor/dotnet-runtime vendor/openssl vendor/icu
@@ -65,3 +63,95 @@ jobs:
             tools/vscode-isoplane/out/*.vsix
           if-no-files-found: ignore
           retention-days: 3
+
+  # Application archives are the same on every platform; only Linux builds them.
+  fixtures:
+    name: shared fixtures
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      ISOPLANE_TEST_RUNTIME_FEED: ${{ github.workspace }}/.build/wasm32/runtime/feed
+      ISOPLANE_TEST_RUNTIME_MODULES: ${{ github.workspace }}/.build/wasm32/runtime-modules
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with: {persist-credentials: false}
+      - uses: ./.github/actions/toolchain
+        with: {dotnet: 'true', wasm: 'true', nuget-cache: integration-fixtures}
+      - uses: Swatinem/rust-cache@e9d7b9f1e587218970671bac74e5511ed9506e6a # v2
+        with:
+          workspaces: '. -> .build/linux-x64/native'
+          shared-key: push-linux
+          save-if: 'false'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with: {name: runtime}
+      - run: tar -xzf runtime.tar.gz && rm runtime.tar.gz
+      - name: Prepare source dependencies
+        run: git submodule update --init --depth 1 tools/debugger-libs
+      - run: task fixtures:shared
+      - run: tar -czf fixtures.tar.gz .build/clr-anycpu/probes .build/clr-anycpu/package-fixtures
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: fixtures
+          path: fixtures.tar.gz
+          retention-days: 1
+          compression-level: 0
+
+  host:
+    needs: fixtures
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    env:
+      ISOPLANE_TEST_RUNTIME_FEED: ${{ github.workspace }}/.build/wasm32/runtime/feed
+      ISOPLANE_TEST_RUNTIME_MODULES: ${{ github.workspace }}/.build/wasm32/runtime-modules
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with: {persist-credentials: false}
+      - uses: ./.github/actions/toolchain
+        with: {wasm: 'true'}
+      - uses: Swatinem/rust-cache@e9d7b9f1e587218970671bac74e5511ed9506e6a # v2
+        with:
+          workspaces: '. -> .build/linux-x64/native'
+          shared-key: push-linux
+          save-if: 'false'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with: {name: runtime}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with: {name: fixtures}
+      - run: for archive in runtime.tar.gz fixtures.tar.gz; do tar -xzf "$archive" && rm "$archive"; done
+      - name: Prepare runtime source drift inputs
+        run: git submodule update --init --depth 1 vendor/dotnet-runtime
+      - run: task ci:integration:host
+      - name: Record disk consumption
+        if: always()
+        run: df -h .; du -sh .build || true
+
+  # A developer runs applications on the shared runtime on these platforms too.
+  runtime:
+    name: runtime (${{ matrix.platform }})
+    needs: fixtures
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: windows-2022, platform: win-x64}
+          - {os: macos-15, platform: osx-arm64}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    env:
+      ISOPLANE_TEST_RUNTIME_FEED: ${{ github.workspace }}/.build/wasm32/runtime/feed
+      ISOPLANE_TEST_RUNTIME_MODULES: ${{ github.workspace }}/.build/wasm32/runtime-modules
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with: {persist-credentials: false}
+      - uses: ./.github/actions/toolchain
+      - uses: Swatinem/rust-cache@e9d7b9f1e587218970671bac74e5511ed9506e6a # v2
+        with:
+          workspaces: '. -> .build/${{ matrix.platform }}/native'
+          shared-key: push-${{ matrix.platform }}
+          save-if: 'false'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with: {name: runtime}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with: {name: fixtures}
+      - run: for archive in runtime.tar.gz fixtures.tar.gz; do tar -xzf "$archive" && rm "$archive"; done
+      - run: task ci:integration:runtime

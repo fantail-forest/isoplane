@@ -104,7 +104,9 @@ The workflow aggregates its results in **CI passed**.
 
 A change to the engine, the SDK, the runtime build or a pinned dependency also
 runs the host suite, which is the Rust test suite with .NET guests running in
-the sandbox. A change to the SDK, its tools, the runtime build, a pinned
+the sandbox. On Windows and macOS it runs the shared runtime's acceptance tests
+against the runtime modules and application archives built on Linux. A change
+to the SDK, its tools, the runtime build, a pinned
 dependency or the scenario tests adds the SDK suite of managed, installed-tool,
 debugging, VS Code and PostgreSQL journeys.
 
