@@ -524,14 +524,14 @@ mod tests {
     #[test]
     fn oversized_replacements_preserve_readable_selections_and_collection() {
         fn sized(mut receipt: PreparedReceipt, bytes: usize) -> PreparedReceipt {
-            receipt.manifest.init_visible_vars = vec![("padding".into(), String::new())];
+            receipt.manifest.bindings.fetch_allowlist = Some(vec![String::new()]);
             let overhead = serde_json::to_vec(&Selection {
                 owner: "owner".into(),
                 receipt: receipt.clone(),
             })
             .unwrap()
             .len();
-            receipt.manifest.init_visible_vars[0].1 = "x".repeat(bytes - overhead);
+            receipt.manifest.bindings.fetch_allowlist = Some(vec!["x".repeat(bytes - overhead)]);
             receipt
         }
 

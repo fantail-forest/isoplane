@@ -354,7 +354,6 @@ mod queue_tests {
                 validation_limits: Default::default(),
                 name: "queue-test".into(),
                 bindings: Default::default(),
-                init_visible_vars: vec![],
             },
             pool: InstancePool::new(activator.clone(), 1),
             activator,

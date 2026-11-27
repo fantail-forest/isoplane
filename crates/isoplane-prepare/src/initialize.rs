@@ -15,9 +15,6 @@ use crate::{bake, PrepareError};
 pub struct Initialization {
     /// Explicit outbound authority; absent contexts cannot create host I/O.
     pub network: Option<crate::InitializationNetwork>,
-    /// Serialized deployment configuration, which `init_config_get` returns.
-    #[cfg(feature = "rust-guests")]
-    pub config: Vec<u8>,
     /// Deployment-bound JSON settings, including secrets; never include in diagnostics.
     pub runtime_config: Vec<u8>,
     /// Total initialization occupancy budget.
@@ -30,13 +27,10 @@ pub struct Initialization {
 
 impl Initialization {
     /// An initialization with the deployment's settings, no outbound
-    /// authority, no `init_config_get` configuration and the local default
-    /// budgets. Set a field to change one.
+    /// authority and the local default budgets. Set a field to change one.
     pub fn new(runtime_config: Vec<u8>) -> Self {
         Self {
             network: None,
-            #[cfg(feature = "rust-guests")]
-            config: Vec::new(),
             runtime_config,
             occupancy_ms: crate::preinit::DEFAULT_INITIALIZATION_OCCUPANCY_MS,
             wall_ms: crate::preinit::DEFAULT_INITIALIZATION_WALL_MS,
@@ -47,18 +41,10 @@ impl Initialization {
     /// Identifies source, configuration and capability inputs for captured-state reuse.
     /// Fresh random draws and execution budgets are excluded from this input identity.
     pub fn digest(&self, input_hash: [u8; 32]) -> Result<[u8; 32], postcard::Error> {
-        // A host not built for Rust guests binds no such configuration. It
-        // hashes an empty one, which is the identity the same input has on a
-        // host built for them.
-        #[cfg(feature = "rust-guests")]
-        let config: &[u8] = &self.config;
-        #[cfg(not(feature = "rust-guests"))]
-        let config: &[u8] = &[];
         let mut hash = blake3::Hasher::new();
-        hash.update(b"isoplane.initialization-input.v3\0");
+        hash.update(b"isoplane.initialization-input.v4\0");
         hash.update(&postcard::to_allocvec(&(
             input_hash,
-            config,
             &self.runtime_config,
             &self.network,
         ))?);
@@ -73,8 +59,6 @@ pub struct Initialized {
     pub preparation_occupancy_ns: u64,
     /// Runtime capabilities initialization was answered.
     pub pal_calls: Vec<(String, u32)>,
-    /// Seed reads during initialization.
-    pub seed_reads: u32,
     /// Bounded log output from initialization.
     pub logs: Vec<String>,
     /// Whether preparation compiled the submitted module rather than reusing the supplied cache's compilation.
@@ -343,7 +327,7 @@ pub(crate) fn initialize_with_cache(
         initialization_budget(request, usage.occupancy_ns, initialization_start.elapsed())?;
         if outcome.completion != Completion::Done {
             if matches!(capture, CaptureMode::RuntimeBaseline { .. })
-                && (instance.last_capability_violation().is_some() || state.lock().seed_reads > 0)
+                && instance.last_capability_violation().is_some()
             {
                 return Err(PrepareError::Baseline("reached a forbidden capability"));
             }
@@ -393,7 +377,6 @@ pub(crate) fn initialize_with_cache(
                 pal_calls: instance
                     .initialization_pal_calls()
                     .map_err(PrepareError::State)?,
-                seed_reads: state.lock().seed_reads,
                 logs: Vec::new(),
                 // Without an initializer the original module is compiled for the template.
                 compiled: true,
@@ -418,12 +401,6 @@ pub(crate) fn initialize_with_cache(
     let prepared_resources = isoplane_abi::native_io::PreparedResources {
         ..prepared_resources
     };
-    if matches!(capture, CaptureMode::RuntimeBaseline { .. }) {
-        let state = state.lock();
-        if state.seed_reads > 0 || state.draws > 0 {
-            return Err(PrepareError::Baseline("read initialization entropy"));
-        }
-    }
     // Reinstantiation verifies captured state without invoking the initializer again.
     let (restored_template, captured, representation) = match capture {
         CaptureMode::Portable { .. } => {
@@ -565,7 +542,6 @@ pub(crate) fn initialize_with_cache(
                 .saturating_sub(occupancy_start_ns)
                 .saturating_sub(usage.unoccupied_ns),
             pal_calls,
-            seed_reads: state.seed_reads,
             logs,
             compiled,
         },
@@ -690,29 +666,17 @@ fn with_guest_logs<'a>(
 }
 
 struct Sandbox {
-    #[cfg(feature = "rust-guests")]
-    seed: Option<[u8; 16]>,
-    #[cfg(feature = "rust-guests")]
-    config: Vec<u8>,
     runtime_config: Vec<u8>,
-    draws: u64,
     logs: Vec<GuestLog>,
     remaining_log_bytes: usize,
-    seed_reads: u32,
 }
 
 impl Sandbox {
     fn new(request: &Initialization) -> Self {
         Self {
-            #[cfg(feature = "rust-guests")]
-            seed: None,
-            #[cfg(feature = "rust-guests")]
-            config: request.config.clone(),
             runtime_config: request.runtime_config.clone(),
-            draws: 0,
             logs: Vec::new(),
             remaining_log_bytes: request.log_bytes,
-            seed_reads: 0,
         }
     }
 }
@@ -787,53 +751,17 @@ impl isoplane_engine::bindings::InitializationBindings for Bindings {
         call: ImportCall<'_>,
         output: &mut [u8],
     ) -> Result<i64, isoplane_engine::bindings::BindingError> {
-        let mut state = self.state.lock();
+        let state = self.state.lock();
         match call.import {
-            #[cfg(feature = "rust-guests")]
-            "init_hash_seed" => {
-                if output.len() != 16 {
-                    return Err(isoplane_engine::bindings::BindingError::InvalidRequest(
-                        "seed buffer must be exactly 16 bytes",
-                    ));
-                }
-                state.seed_reads += 1;
-                if !self.permits_entropy {
-                    return Err(isoplane_engine::bindings::BindingError::Unsupported(
-                        "entropy in shared runtime baseline",
-                    ));
-                }
-                let seed = match state.seed {
-                    Some(seed) => seed,
-                    None => {
-                        let mut seed = [0; 16];
-                        isoplane_host::entropy::fill(&mut seed).map_err(|error| {
-                            isoplane_engine::bindings::BindingError::Entropy(std::io::Error::other(
-                                error,
-                            ))
-                        })?;
-                        state.seed = Some(seed);
-                        seed
-                    }
-                };
-                output.copy_from_slice(&seed);
-                Ok(output.len() as i64)
-            }
             "runtime_config_get" => {
                 let length = output.len().min(state.runtime_config.len());
                 output[..length].copy_from_slice(&state.runtime_config[..length]);
                 Ok(state.runtime_config.len() as i64)
             }
-            #[cfg(feature = "rust-guests")]
-            "init_config_get" => {
-                let length = output.len().min(state.config.len());
-                output[..length].copy_from_slice(&state.config[..length]);
-                Ok(state.config.len() as i64)
-            }
             "entropy_fill" if self.permits_entropy => {
                 isoplane_host::entropy::fill(output).map_err(|error| {
                     isoplane_engine::bindings::BindingError::Entropy(std::io::Error::other(error))
                 })?;
-                state.draws += 1;
                 Ok(output.len() as i64)
             }
             _ => Err(isoplane_engine::bindings::BindingError::Unsupported(
@@ -877,7 +805,6 @@ mod budget_tests {
     fn request() -> Initialization {
         Initialization {
             network: None,
-            config: Vec::new(),
             runtime_config: b"{}".to_vec(),
             occupancy_ms: 50,
             wall_ms: 100,

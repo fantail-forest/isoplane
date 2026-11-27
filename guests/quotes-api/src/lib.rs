@@ -12,7 +12,7 @@ const DEFAULT_FX_URL: &str = "https://rates.internal/nzd";
 pub struct ApiConfig {
     pub fx_url: String,
     pub region: String,
-    /// How many vars the deploy actually supplied.
+    /// How many settings the deployment supplied.
     pub var_count: usize,
 }
 
@@ -23,15 +23,14 @@ isoplane_guest::lazy_init! {
     /// Reads the serving clock when this instance first needs it.
     static BOOT_MS: u64 = { Clock::now_ms() };
 
-
-    /// Parses supplied configuration into initialized guest state.
+    /// Parses the deployment's settings into initialized guest state.
     static CONFIG: ApiConfig = {
-        let vars = isoplane_guest::init::config_vars();
-        let get = |k: &str| vars.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
+        let settings = isoplane_guest::init::runtime_settings();
+        let get = |name: &str| settings.get(name).cloned();
         ApiConfig {
             fx_url: get("FX_URL").unwrap_or_else(|| DEFAULT_FX_URL.to_string()),
             region: get("REGION").unwrap_or_else(|| "unknown".to_string()),
-            var_count: vars.len(),
+            var_count: settings.len(),
         }
     };
 }

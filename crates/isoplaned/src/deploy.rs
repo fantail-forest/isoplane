@@ -300,15 +300,10 @@ impl Deployer {
             .write_json(&mut runtime_config)?;
         let initialization = isoplane_prepare::Initialization {
             network: Some(context.network.clone()),
+            runtime_config,
             occupancy_ms: context.occupancy_ms,
             wall_ms: context.wall_ms,
             log_bytes: context.log_bytes,
-            ..isoplane_prepare::Initialization::new(runtime_config)
-        };
-        #[cfg(feature = "rust-guests")]
-        let initialization = isoplane_prepare::Initialization {
-            config: serde_json::to_vec(&manifest.init_visible_vars)?,
-            ..initialization
         };
         let request = isoplane_prepare::BuildRequest {
             guest_memory_bytes: manifest.guest_memory_bytes,

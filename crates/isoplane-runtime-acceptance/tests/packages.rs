@@ -1040,7 +1040,6 @@ fn prepared_cell(
             validation_limits: Default::default(),
             name: module.app.clone(),
             bindings: Default::default(),
-            init_visible_vars: vec![],
         },
     )
     .expect("the module must register");

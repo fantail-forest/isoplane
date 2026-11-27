@@ -36,7 +36,7 @@ pub fn local_debug_header() -> String {
 }
 
 /// The version of the guest host-interface contract.
-pub const ABI_REV: u32 = 9;
+pub const ABI_REV: u32 = 10;
 
 /// The unit of copy-on-write sharing and of the hibernation page diff.
 pub const PAGE_SIZE: usize = 4096;

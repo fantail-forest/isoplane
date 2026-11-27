@@ -62,11 +62,7 @@ pub fn prepare_configured(
         input_hash: *blake3::hash(&wasm).as_bytes(),
         initialization: Initialization {
             network,
-            config: Vec::new(),
-            runtime_config: runtime_config.to_vec(),
-            occupancy_ms: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_OCCUPANCY_MS,
-            wall_ms: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_WALL_MS,
-            log_bytes: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_LOG_BYTES,
+            ..Initialization::new(runtime_config.to_vec())
         },
     };
     let preparation =

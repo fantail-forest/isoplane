@@ -28,8 +28,6 @@ impl BuildRequest {
             validation_limits: self.validation_limits,
             initialization: Initialization {
                 network: None,
-                #[cfg(feature = "rust-guests")]
-                config: Vec::new(),
                 runtime_config: b"{}".to_vec(),
                 occupancy_ms: initialization.occupancy_ms,
                 wall_ms: initialization.wall_ms,

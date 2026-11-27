@@ -29,8 +29,7 @@ pub struct TestBindings {
     /// When false, `call_fill` denies, which is the default `HostBindings`
     /// behaviour.
     pub allow_fill: bool,
-    /// What `call_fill` reports as the value's full length, which for
-    /// `init_config_get` may exceed the capacity the guest offered.
+    /// What `call_fill` reports in place of the length of the buffer it filled.
     pub full_length: Option<i64>,
 }
 

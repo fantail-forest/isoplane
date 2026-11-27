@@ -215,7 +215,6 @@ pub(super) mod cell_tests {
             validation_limits: Default::default(),
             name: name.into(),
             bindings: Bindings::default(),
-            init_visible_vars: vec![],
         }
     }
 

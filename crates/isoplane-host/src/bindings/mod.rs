@@ -394,11 +394,6 @@ impl HostBindings for CellBindings {
                     .unwrap_or_default();
                 Ok(configuration.fill(out))
             }
-            #[cfg(feature = "rust-guests")]
-            "init_hash_seed" | "init_config_get" => {
-                self.ctx.latch_trap(TrapCode::CapabilityViolation);
-                Err(BindingError::Unsupported(call.import))
-            }
             other => {
                 tracing::error!(import = other, "fill import with no route");
                 self.ctx.latch_trap(TrapCode::Protocol);
@@ -476,17 +471,15 @@ mod tests {
 
     #[test]
     fn every_out_buffer_import_is_routed_through_call_fill() {
-        let c = ctx();
-        let mut b = CellBindings::new(c.clone());
+        let mut b = CellBindings::new(ctx());
         let mut out = [0u8; 64];
         for def in IMPORTS
             .iter()
             .filter(|d| matches!(d.buf, imports::BufSpec::Out(_)))
         {
             let result = b.call_fill(call(def.name, &[], [0; 3]), &mut out);
-            let _ = c.take_trap();
             assert!(
-                result.is_ok() || matches!(def.name, "init_hash_seed" | "init_config_get"),
+                result.is_ok(),
                 "{} has an out buffer but call_fill refuses it",
                 def.name
             );
@@ -591,27 +584,6 @@ mod tests {
         bz.call_fill(call("entropy_fill", &[], [0; 3]), &mut y)
             .expect("second draw");
         assert_ne!(x, y, "independent host draws returned the same bytes");
-    }
-
-    #[test]
-    fn the_deploy_hash_seed_is_not_reachable_at_runtime() {
-        let c = ctx();
-        let mut b = CellBindings::new(c.clone());
-        let mut seed = [0u8; 16];
-        assert!(
-            b.call_fill(call("init_hash_seed", &[], [0; 3]), &mut seed)
-                .is_err(),
-            "the init seed is refused at runtime"
-        );
-        assert_eq!(
-            c.take_trap(),
-            Some(TrapCode::CapabilityViolation),
-            "and is a capability violation"
-        );
-        assert_eq!(
-            seed, [0u8; 16],
-            "the seed was written into guest memory at runtime"
-        );
     }
 
     #[test]

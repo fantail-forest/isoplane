@@ -15,8 +15,6 @@ pub fn request() -> Initialization {
     Initialization {
         network: None,
         runtime_config: b"{}".to_vec(),
-
-        config: b"{}".to_vec(),
         occupancy_ms: 1000,
         wall_ms: 5000,
         log_bytes: 1024,

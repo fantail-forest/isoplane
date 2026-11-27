@@ -79,10 +79,6 @@ async fn preserves_application_state(provider: &dyn Preparation) {
         .prepare(&wasm, &request, &CancellationToken::new())
         .await
         .expect("the selected provider must satisfy the shared preparation contract");
-    assert_eq!(
-        product.initialized.seed_reads, 0,
-        "this representation comparison uses no random inputs"
-    );
     let identity = request.identity().expect("input identity");
     // SAFETY: this contract receives output only from the local trusted producer below.
     let prepared = unsafe { engine.decode_builder_output(product.prepared_bytes(), identity) }
@@ -102,14 +98,7 @@ async fn preserves_application_state(provider: &dyn Preparation) {
         .with_engine_config(request.engine.clone())
         .with_memory_limit(isoplane_abi::config::GuestMemoryBytes::new(4 << 20).unwrap())
         .with_platform_files(request.application_files.clone())
-        .run(
-            &wasm,
-            &isoplane_prepare::PreInitRequest {
-                module_hash: isoplane_engine::ModuleHash::of(&wasm),
-
-                init_blob: request.initialization.config.clone(),
-            },
-        )
+        .run(&wasm)
         .expect("the SDK's portable preparation path");
     let portable = engine.load_template(&portable.wasm).unwrap();
     assert_eq!(

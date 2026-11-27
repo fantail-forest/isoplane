@@ -157,10 +157,7 @@ async fn two_portable_apps_redeploy_on_restart_and_failed_preparation_preserves_
     occupied_listeners_preserve_removed_applications(&config, "ledger");
     let mut incompatible = config.clone();
     incompatible.apps.pop();
-    incompatible.apps[0]
-        .manifest
-        .init_visible_vars
-        .push(("changed".into(), "policy".into()));
+    incompatible.apps[0].manifest.bindings.fetch_allowlist = Some(Vec::new());
     let failed = tokio::task::spawn_blocking(move || Node::build(incompatible))
         .await
         .unwrap()
@@ -232,10 +229,8 @@ async fn two_portable_apps_redeploy_on_restart_and_failed_preparation_preserves_
     );
     isoplane_control::private_files::write_new(&source, br#"{"key":"captured-second"}"#).unwrap();
     let mut oversized = config.clone();
-    oversized.apps[0]
-        .manifest
-        .init_visible_vars
-        .push(("large".into(), "x".repeat(1024 * 1024)));
+    oversized.apps[0].manifest.bindings.fetch_allowlist =
+        Some(vec!["large.example:443".into(); 64 * 1024]);
     let error = isoplaned::node::deploy::deploy(
         oversized,
         "quotes",

@@ -115,8 +115,6 @@ const fn delegate(
 
 const COMMON_PAL_IMPORTS: &[PalDef] = &[
     // ---- delegated ----------------------------------------------------------
-    // Not wired to `init_config_get`: that would hand deploy-time
-    // configuration to the guest through a door the manifest does not name.
     delegate(
         CLI_ENV,
         "get-environment",

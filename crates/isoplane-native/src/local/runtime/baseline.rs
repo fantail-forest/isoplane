@@ -218,15 +218,6 @@ fn request(
     settings: &[u8],
 ) -> anyhow::Result<isoplane_prepare::BuildRequest> {
     let manifest = &project.manifest;
-    let initialization = isoplane_prepare::Initialization {
-        network: Some(super::initialization_network(project)),
-        ..isoplane_prepare::Initialization::new(settings.to_vec())
-    };
-    #[cfg(feature = "rust-guests")]
-    let initialization = isoplane_prepare::Initialization {
-        config: serde_json::to_vec(&manifest.init_visible_vars)?,
-        ..initialization
-    };
     Ok(isoplane_prepare::BuildRequest {
         engine: super::engine_configuration(project),
         application_files: project.application_files.clone(),
@@ -234,7 +225,10 @@ fn request(
         memory_limit: manifest.memory_limit(),
         guest_memory_bytes: manifest.guest_memory_bytes,
         validation_limits: manifest.validation_limits,
-        initialization,
+        initialization: isoplane_prepare::Initialization {
+            network: Some(super::initialization_network(project)),
+            ..isoplane_prepare::Initialization::new(settings.to_vec())
+        },
         input_hash: *blake3::hash(wasm).as_bytes(),
     })
 }

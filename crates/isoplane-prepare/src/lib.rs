@@ -85,4 +85,4 @@ pub use baseline::PublishedBaseline;
 pub use baseline::{BaselineRequest, PreparedApplication, PreparedBaseline, RuntimeBaseline};
 
 pub mod preinit;
-pub use preinit::{PreInitError, PreInitRequest, PreInitializer};
+pub use preinit::{PreInitError, PreInitializer};

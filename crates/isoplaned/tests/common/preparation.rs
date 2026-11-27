@@ -65,6 +65,11 @@ impl From<&Guest> for Guest {
 }
 
 pub(crate) trait LocalDeployment {
+    /// Deploys with no deployment settings.
+    #[allow(
+        dead_code,
+        reason = "one integration binary deploys only with settings"
+    )]
     async fn deploy_locally(
         &self,
         app: &str,
@@ -72,6 +77,19 @@ pub(crate) trait LocalDeployment {
         tenant: &str,
         manifest: AppManifest,
         guest: impl Into<Guest>,
+    ) -> anyhow::Result<Deployed> {
+        self.deploy_locally_with_settings(app, version, tenant, manifest, guest, Default::default())
+            .await
+    }
+
+    async fn deploy_locally_with_settings(
+        &self,
+        app: &str,
+        version: &str,
+        tenant: &str,
+        manifest: AppManifest,
+        guest: impl Into<Guest>,
+        settings: isoplane_host::bindings::RuntimeConfiguration,
     ) -> anyhow::Result<Deployed>;
 }
 
@@ -109,13 +127,14 @@ pub fn route(node: &Node, app: &str, version: &str) {
 }
 
 impl LocalDeployment for Node {
-    async fn deploy_locally(
+    async fn deploy_locally_with_settings(
         &self,
         app: &str,
         version: &str,
         tenant: &str,
         mut manifest: AppManifest,
         guest: impl Into<Guest>,
+        settings: isoplane_host::bindings::RuntimeConfiguration,
     ) -> anyhow::Result<Deployed> {
         let guest = guest.into();
         let provider = provider(&self.cfg);
@@ -123,7 +142,7 @@ impl LocalDeployment for Node {
         let cancellation = tokio_util::sync::CancellationToken::new();
         let context = isoplaned::deploy::PreparationContext {
             network: network(tenant, &manifest),
-            runtime_configuration: Default::default(),
+            runtime_configuration: settings,
             application_files: guest.files.clone(),
             engine,
             provider: &provider,

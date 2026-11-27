@@ -214,7 +214,6 @@ impl Rig {
                 resource_limits: Default::default(),
                 validation_limits: Default::default(),
                 bindings: Bindings::default(),
-                init_visible_vars: vec![],
             },
             module,
             counts,

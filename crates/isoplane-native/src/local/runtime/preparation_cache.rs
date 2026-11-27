@@ -361,15 +361,12 @@ mod tests {
             "changed module bytes",
         );
         let mut project = fixture.project.clone();
-        project
-            .manifest
-            .init_visible_vars
-            .push(("name".into(), "value".into()));
+        project.manifest.bindings.fetch_allowlist = Some(vec!["rates.example:443".into()]);
         assert_miss(
             &project,
             &fixture.wasm,
             &fixture.executable,
-            "changed initialization variables",
+            "a changed egress allowlist",
         );
         project = fixture.project.clone();
         project.state_directory = project.state_directory.join("another-project");
