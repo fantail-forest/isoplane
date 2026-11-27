@@ -10,13 +10,12 @@ using Isoplane.Cli;
 using Microsoft.CodeAnalysis.Diagnostics;
 using XmlDocMarkdown.Core;
 
-var directory = new Argument<DirectoryInfo>("reference-directory") { Description = "The docs/reference directory the pages are written to, or compared against." };
+var directory = new Argument<DirectoryInfo>("reference-directory") { Description = "The docs/reference directory the pages are written to." };
 var record = new Option<FileInfo>("--since") { Description = "The JSON record of the release that added each documented item.", Required = true };
-var check = new Option<bool>("--check") { Description = "Compare the generated pages with the directory instead of writing them." };
 var stamp = new Option<string?>("--stamp") { Description = "The release being snapshotted. Items the record does not list are recorded as added in it." };
 var line = new Option<string?>("--line") { Description = "The release line of --stamp, such as 0.1. A release on a new line becomes its first." };
-var root = new RootCommand("Generates and checks the customer reference pages.") { directory, record, check, stamp, line };
-root.SetAction(parsed => Run(parsed.GetValue(directory)!, parsed.GetValue(record)!, parsed.GetValue(check), parsed.GetValue(stamp), parsed.GetValue(line)));
+var root = new RootCommand("Generates the customer reference pages.") { directory, record, stamp, line };
+root.SetAction(parsed => Run(parsed.GetValue(directory)!, parsed.GetValue(record)!, parsed.GetValue(stamp), parsed.GetValue(line)));
 var docs = new Option<DirectoryInfo>("--docs") { Description = "The docs directory of the customer site, holding the current reference pages.", Required = true };
 var skill = new Option<DirectoryInfo>("--skill") { Description = "The directory holding the skill's SKILL.md and the sections/ of its parts.", Required = true };
 var output = new Option<DirectoryInfo>("--out") { Description = "The directory to lay the skill out in, as the SDK packages carry it. Replaced.", Required = true };
@@ -25,11 +24,11 @@ references.SetAction(parsed => SkillReferences.Export(parsed.GetValue(docs)!, pa
 root.Add(references);
 return root.Parse(args).Invoke();
 
-static int Run(DirectoryInfo destination, FileInfo recordFile, bool check, string? stamp, string? line)
+static int Run(DirectoryInfo destination, FileInfo recordFile, string? stamp, string? line)
 {
-    if (stamp is null != line is null || (check && stamp is not null))
+    if (stamp is null != line is null)
     {
-        Console.Error.WriteLine("--stamp and --line go together, and not with --check.");
+        Console.Error.WriteLine("--stamp and --line go together.");
         return 2;
     }
     var since = Since.Load(recordFile);
@@ -47,16 +46,6 @@ static int Run(DirectoryInfo destination, FileInfo recordFile, bool check, strin
             ? Directory.EnumerateFiles(destination.FullName, "*.md", SearchOption.AllDirectories)
                 .Select(path => Path.GetRelativePath(destination.FullName, path)).ToHashSet(StringComparer.Ordinal)
             : [];
-        var differences = generated.Keys.Union(existing).Where(path =>
-            !generated.TryGetValue(path, out var content) || !File.Exists(Path.Combine(destination.FullName, path)) ||
-            File.ReadAllText(Path.Combine(destination.FullName, path)) != content).Order(StringComparer.Ordinal).ToArray();
-        if (check)
-        {
-            if (differences.Length == 0) return 0;
-            Console.Error.WriteLine("SDK reference is stale. Run pnpm run generate:reference in docs/userdocs.");
-            foreach (var path in differences) Console.Error.WriteLine(path);
-            return 1;
-        }
         foreach (var path in existing.Except(generated.Keys)) File.Delete(Path.Combine(destination.FullName, path));
         foreach (var (path, content) in generated)
         {

@@ -142,10 +142,6 @@ jobs:
         with: {persist-credentials: false}
       - uses: ./.github/actions/toolchain
         with: {dotnet: 'true', nuget-cache: docs}
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
-        with: {node-version: '24'}
-      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6
-        with: {package_json_file: docs/userdocs/package.json}
       - run: pnpm --dir docs/userdocs install --frozen-lockfile
       - run: pnpm --dir docs/userdocs test
       - run: pnpm --dir docs/userdocs build
@@ -159,7 +155,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with: {persist-credentials: false}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
-        with: {node-version: '24'}
+        with: {node-version-file: .node-version}
       - run: node --test tools/vscode-isoplane/test/*.test.js
       - run: npm --prefix tools/vscode-isoplane ci
       - run: npm --prefix tools/vscode-isoplane run package

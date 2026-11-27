@@ -1,6 +1,9 @@
+const COMMITTED_BINDINGS: &str = "../../tools/Isoplane.Native/NativeMethods.g.cs";
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=src/lib.rs");
     println!("cargo:rerun-if-env-changed=ISOPLANE_GENERATE_BINDINGS");
+    println!("cargo:rerun-if-changed={COMMITTED_BINDINGS}");
     let output = std::path::PathBuf::from(std::env::var("OUT_DIR")?).join("NativeMethods.g.cs");
     csbindgen::Builder::default()
         .input_extern_file("src/lib.rs")
@@ -9,7 +12,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .csharp_generate_const_filter(|name| name == "ABI_VERSION")
         .generate_csharp_file(&output)?;
     if std::env::var_os("ISOPLANE_GENERATE_BINDINGS").is_some() {
-        std::fs::copy(output, "../../tools/Isoplane.Native/NativeMethods.g.cs")?;
+        let generated = std::fs::read(output)?;
+        // Rewriting an unchanged copy would make Cargo rerun this script on every build.
+        if std::fs::read(COMMITTED_BINDINGS).ok().as_ref() != Some(&generated) {
+            std::fs::write(COMMITTED_BINDINGS, generated)?;
+        }
     }
     Ok(())
 }

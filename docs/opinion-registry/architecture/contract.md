@@ -2,19 +2,19 @@
 
 ## Keep one definition of the boundary, in the ABI crate
 
-Give every type, constant, and capability that crosses the sandbox boundary one definition, in `isoplane-abi`. How the validator, the linker, and the guest SDKs consume it is their business, and it may change to serve developer experience; what does not change is that anything describing the boundary elsewhere must be generated from that definition or drift-tested against it. Documentation of a contract that is neither is a second contract waiting to drift.
+Give every type, constant, and capability that crosses the sandbox boundary one definition, in `isoplane-abi`. How the validator, the linker, and the guest SDKs consume it is their business, and it may change to serve developer experience; what does not change is that anything describing the boundary elsewhere must be generated from that definition. A description that is not generated is a second contract waiting to drift.
 
 **Not this:** A WIT file whose own header says nothing reads it, alongside the Rust table that is the real list.
 
 **Exception:** None.
 
-## Generate mirrors, or drift-test them
+## Generate mirrors
 
-When a language boundary forces a copy of a table (C# import declarations, a documentation page listing capabilities, an MSBuild property holding a limit), produce the copy with a generator from the ABI crate, or keep a test that compares the two and fails on any difference. A hand-maintained copy with a "keep in sync" comment is a bug scheduled for later.
+When a language boundary forces a copy of a table (C# import declarations, a documentation page listing capabilities, an MSBuild property holding a limit), produce the copy with a generator from the ABI crate. The generated copy may be committed. [Regenerating it before each commit](../workflow/tooling.md#regenerate-generated-files-instead-of-testing-them) keeps it current, so no test compares it with its source. Retain real-boundary tests for capability enforcement.
 
-Compare the declarations or values that form the contract. Do not freeze incidental source spelling or treat the presence of an expression in a patch as proof of runtime behavior. Group related drift checks when they share the same inputs; retain real-boundary tests for capability enforcement.
+The host interface is always generated. For any other table, a hand-kept copy with a comparing test is the last resort, for a copy that cannot be generated; say beside the copy why. Such a test compares the declarations or values that form the contract, not incidental source spelling.
 
-**Not this:** A C# extern list declaring roughly half of the imports by hand, guarded by argument-order comments, with no test that reads both tables.
+**Not this:** A C# extern list declaring roughly half of the imports by hand, guarded by argument-order comments, with no generator producing them.
 
 **Exception:** None.
 
@@ -22,9 +22,9 @@ Compare the declarations or values that form the contract. Do not freeze inciden
 
 Follow the [configuration guidance](../../../AGENTS.md#environment--configuration): expose a value when there is an operational need to vary it, and keep fixed policy or protocol facts as constants. Give each shared concept one definition in its owning crate. Equal literals do not by themselves establish a shared concept; unrelated policies may need to change independently.
 
-**Not this:** A contract memory ceiling repeated across languages without a drift check, a new configuration knob with no operational use, or coupling unrelated timeouts because their defaults currently match.
+**Not this:** A contract memory ceiling repeated by hand across languages, a new configuration knob with no operational use, or coupling unrelated timeouts because their defaults currently match.
 
-**Exception:** A guest-side build property that cannot import Rust may hold the value, provided a test compares it against the ABI crate.
+**Exception:** A guest-side build property that cannot import Rust takes the value from a file generated from the ABI crate.
 
 ## A variant needs a producer
 
