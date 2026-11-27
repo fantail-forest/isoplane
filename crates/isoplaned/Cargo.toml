@@ -65,9 +65,18 @@ isoplane-runtime = { workspace = true }
 [features]
 # Entry points the test suites install guests through. No shipped build enables it.
 test-util = []
+# Experimental: Rust guests are not a supported guest language yet.
+rust-guests = [
+    "isoplane-abi/rust-guests",
+    "isoplane-engine/rust-guests",
+    "isoplane-host/rust-guests",
+    "isoplane-prepare/rust-guests",
+    "isoplane-control/rust-guests",
+    "isoplane-runtime/rust-guests",
+]
 
 [dev-dependencies]
-isoplaned = { path = ".", features = ["test-util"] }
+isoplaned = { path = ".", features = ["test-util", "rust-guests"] }
 isoplane-host = { workspace = true, features = ["test-util"] }
 isoplane-engine = { workspace = true, features = ["test-util"] }
 postcard = { workspace = true }

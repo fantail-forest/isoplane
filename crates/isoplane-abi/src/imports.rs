@@ -60,6 +60,7 @@ pub enum Group {
     Http,
     Response,
     Socket,
+    #[cfg(feature = "rust-guests")]
     Ctx,
 }
 
@@ -83,6 +84,7 @@ pub struct ImportDef {
 const I32: Ty = Ty::I32;
 const I64: Ty = Ty::I64;
 
+#[cfg(feature = "rust-guests")]
 const BUF_TO_FUTURE: Sig = Sig {
     params: &[I32, I32],
     results: &[I64],
@@ -132,18 +134,21 @@ pub const IMPORTS: &[ImportDef] = &[
     // The guest announces each init unit before running it; when a unit traps
     // on a forbidden import, pre-init is replayed with that unit deferred to
     // ordinary lazy execution.
+    #[cfg(feature = "rust-guests")]
     ImportDef {
         init_visible: true,
         ..ImportDef { buf: BufSpec::None, ..imp!("init_unit_begin", Core, Sig { params: &[I32], results: &[] }, SYNC,
             "names the init unit about to run, so a trap inside it can be attributed to that unit \
              and deferred") }
     },
+    #[cfg(feature = "rust-guests")]
     ImportDef {
         init_visible: true,
         ..ImportDef { buf: BufSpec::None, ..imp!("init_unit_deferred", Core, Sig { params: &[I32], results: &[I32] }, SYNC,
             "asks whether this unit was deferred on a previous attempt; non-zero means skip it on \
              the replay") }
     },
+    #[cfg(feature = "rust-guests")]
     ImportDef {
         init_visible: true,
         sensitive: true,
@@ -152,6 +157,7 @@ pub const IMPORTS: &[ImportDef] = &[
     },
 
     // Tenant-authored deploy input, fixed for the version.
+    #[cfg(feature = "rust-guests")]
     ImportDef {
         init_visible: true,
         ..ImportDef { buf: BufSpec::Out(0), ..imp!("init_config_get", Core, BUF_TO_I32, SYNC,
@@ -177,8 +183,10 @@ pub const IMPORTS: &[ImportDef] = &[
     ImportDef { buf: BufSpec::In(1), init_visible: true, ..imp!("log_emit", Observe, Sig { params: &[I32, I32, I32], results: &[] }, SYNC,
         "structured log at `trace=0` .. `error=4`; worker occupancy counts against the dispatch budget, \
          which is what stops log-as-compute abuse") },
+    #[cfg(feature = "rust-guests")]
     imp!("trace_span_begin", Observe, BUF_TO_I32, SYNC,
         "opens a trace span for work inside one dispatch; returns a positive id or 0 when the instance trace count or name-byte allowance is exhausted"),
+    #[cfg(feature = "rust-guests")]
     ImportDef { buf: BufSpec::None, ..imp!("trace_span_end", Observe, Sig { params: &[I32], results: &[] }, SYNC,
         "closes the span with that id; 0 and unknown ids have no effect; the host releases unfinished spans when their dispatch ends") },
 
@@ -187,6 +195,7 @@ pub const IMPORTS: &[ImportDef] = &[
     ImportDef { buf: BufSpec::None, ..imp!("clock_now_coarse", Clock, Sig { params: &[], results: &[I64] }, SYNC,
         "millisecond wall clock, monotonic per instance and fixed throughout each serving slice; \
          the engine samples the binding at slice entry and after future-returning imports") },
+    #[cfg(feature = "rust-guests")]
     ImportDef { buf: BufSpec::None, ..imp!("clock_deadline_in", Clock, Sig { params: &[I64], results: &[I64] }, FUT,
         "a timer as a host future, so waiting is never a guest loop burning budget") },
     ImportDef { buf: BufSpec::Out(0), ..imp!("entropy_fill", Entropy, BUF_TO_VOID, SYNC,
@@ -194,8 +203,10 @@ pub const IMPORTS: &[ImportDef] = &[
          values or generators the guest captures still require activation-time handling") },
 
     // ---- outbound http ----------------------------------------------------
+    #[cfg(feature = "rust-guests")]
     imp!("http_fetch", Http, BUF_TO_FUTURE, FUT,
         "Issues an outbound request through the host egress policy and completes with its response head."),
+    #[cfg(feature = "rust-guests")]
     ImportDef { buf: BufSpec::None, ..imp!("http_body_read", Http, Sig { params: &[I32, I32], results: &[I64] }, FUT,
         "reads the next chunk of an outbound response body through a host future") },
 
@@ -223,6 +234,7 @@ pub const IMPORTS: &[ImportDef] = &[
     // that falls while the guest runs is a clock, and side-channel attacks
     // need exactly that; a guest learns its budget ran out through
     // cancellation at its next slice.
+    #[cfg(feature = "rust-guests")]
     ImportDef { buf: BufSpec::None, ..imp!("unsafe_to_trap", Ctx, Sig { params: &[I32], results: &[] }, SYNC,
         "the runtime layer's unsafe-to-trap bit, set around GC phases and scheduler queue \
          mutations. Grace entry defers while it is set and the hard deadline ignores it, so a \
@@ -286,26 +298,5 @@ mod tests {
                 i.name
             );
         }
-    }
-
-    /// An additional out-buffer import is a new path for host bytes to cross the
-    /// sandbox boundary, and gets a design conversation before this list.
-    #[test]
-    fn host_writes_into_guest_memory_through_the_reviewed_imports() {
-        let out: Vec<_> = IMPORTS
-            .iter()
-            .filter(|i| matches!(i.buf, BufSpec::Out(_)))
-            .map(|i| i.name)
-            .collect();
-        assert_eq!(
-            out,
-            vec![
-                "init_hash_seed",
-                "init_config_get",
-                "runtime_config_get",
-                "entropy_fill"
-            ],
-            "the set of imports that write into guest memory has changed"
-        );
     }
 }

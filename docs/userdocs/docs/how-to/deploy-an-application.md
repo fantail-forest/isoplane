@@ -43,10 +43,9 @@ listen = "127.0.0.1:8080"
 [preparation]
 # The directory containing inventory.json and the installed SDK runtimes.
 runtimes = "/opt/isoplane/current/runtimes"
-# These bounds apply while preparing a new application, including replay.
+# These bounds apply while preparing a new application.
 initialization_occupancy_ms = 30000
 initialization_wall_ms = 120000
-initialization_passes = 8
 initialization_log_bytes = 1048576
 
 [[apps]]

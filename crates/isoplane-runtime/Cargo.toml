@@ -13,6 +13,10 @@ serde = { workspace = true }
 isoplane-abi = { workspace = true, features = ["host"] }
 wasmparser = { workspace = true }
 
+[features]
+# Experimental: Rust guests are not a supported guest language yet.
+rust-guests = ["isoplane-abi/rust-guests"]
+
 [dev-dependencies]
 tempfile = { workspace = true }
 tokio = { workspace = true }

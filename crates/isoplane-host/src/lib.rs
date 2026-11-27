@@ -39,6 +39,7 @@ extern crate self as isoplane_host;
 #[cfg(test)]
 #[path = "../../isoplane-harness/src/fakes.rs"]
 pub mod fakes;
+#[cfg(feature = "rust-guests")]
 pub mod fetcher;
 pub mod futures;
 pub mod hibernate_capture;
@@ -60,6 +61,7 @@ pub use breaker::HangBreaker;
 pub use cell::{Cell, CellConfig, DispatchResult, Services, Target};
 pub use disposition::Disposition;
 pub use egress::{DenyReason, HostEgressPolicy, Resolver};
+#[cfg(feature = "rust-guests")]
 pub use fetcher::PinnedHttpFetcher;
 pub use futures::{FutureTable, PendingCapError};
 pub use meters::Meters;

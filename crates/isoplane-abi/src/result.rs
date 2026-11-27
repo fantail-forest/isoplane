@@ -26,18 +26,35 @@ pub enum FutureError {
     Cancelled,
     /// Capability policy refused the call, such as an egress target outside the allowlist.
     Denied(String),
-    NotFound,
     Io(String),
     /// The instance cannot retain this result within its buffered-result byte limit.
     BufferLimit,
+    /// The outbound response body the guest named is not open. Last, so the
+    /// other variants encode the same with and without the feature.
+    #[cfg(feature = "rust-guests")]
+    NotFound,
 }
 
 impl ResultRecord {
     pub fn ok<T: Serialize>(v: &T) -> Result<Self, postcard::Error> {
         Ok(ResultRecord::Ok(postcard::to_allocvec(v)?))
     }
+
+    /// The heap bytes this record holds: its payload's, or its error message's.
+    pub fn heap_bytes(&self) -> usize {
+        match self {
+            ResultRecord::Ok(bytes) => bytes.capacity(),
+            ResultRecord::Err(FutureError::Denied(message) | FutureError::Io(message)) => {
+                message.capacity()
+            }
+            ResultRecord::Err(FutureError::Cancelled | FutureError::BufferLimit) => 0,
+            #[cfg(feature = "rust-guests")]
+            ResultRecord::Err(FutureError::NotFound) => 0,
+        }
+    }
 }
 
+#[cfg(feature = "rust-guests")]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FetchResponse {
     pub status: u16,
@@ -50,6 +67,7 @@ pub struct FetchResponse {
     pub body_inline: Option<Vec<u8>>,
 }
 
+#[cfg(feature = "rust-guests")]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BodyChunk {
     #[serde(with = "serde_bytes")]

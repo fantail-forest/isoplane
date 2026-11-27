@@ -28,7 +28,6 @@ use isoplane_host::bindings::{
     CellBindings, CellRuntime, InstanceCtx, Services, Tenancy, WakeSink,
 };
 use isoplane_host::egress::HostEgressPolicy;
-use isoplane_host::fetcher::PinnedHttpFetcher;
 use isoplane_host::futures::FutureTable;
 use isoplane_host::meters::Meters;
 use isoplane_host::metrics::Metrics;
@@ -141,19 +140,13 @@ impl Reactor {
     pub fn with_platform_files(owner: InstanceId, network: Network, files: PlatformFiles) -> Self {
         logging::LogCapture::global();
         let egress = Arc::new(network.0);
-        let fetcher = PinnedHttpFetcher::new(
-            isoplane_runtime::network::NetworkLimits::default().inline_response_bytes,
-        );
         let futures = Arc::new(FutureTable::new(
             isoplane_host::CellConfig::default().buffered_future_bytes,
         ));
         let wake = Arc::new(Wake(tokio::sync::Notify::new()));
         let runtime = Arc::new(CellRuntime {
             runtime_configuration: Default::default(),
-            services: Arc::new(Services {
-                egress,
-                fetcher: Arc::new(fetcher),
-            }),
+            services: Arc::new(Services::new(egress)),
             futures: futures.clone(),
             metrics: Arc::new(Metrics::new()),
             wake: wake.clone(),

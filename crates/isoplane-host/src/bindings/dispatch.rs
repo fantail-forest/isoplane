@@ -15,6 +15,7 @@ pub(crate) struct DispatchState {
     id: u64,
     /// Bounds log volume independently of its occupied-worker cost.
     pub(super) log_bytes: AtomicU32,
+    #[cfg(feature = "rust-guests")]
     pub(super) trace_dropped: AtomicU64,
     cancellation: Cancellation,
     /// The dispatch's implicit cancellation future; the host cancels by
@@ -32,6 +33,7 @@ impl DispatchState {
         Arc::new(Self {
             id,
             log_bytes: AtomicU32::new(0),
+            #[cfg(feature = "rust-guests")]
             trace_dropped: AtomicU64::new(0),
             cancellation: Cancellation::default(),
             cancel_future: AtomicU64::new(0),

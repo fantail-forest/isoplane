@@ -35,8 +35,10 @@ a separate question, and the one that decides how this crate is built.
 It wants that workspace because that is where the guest-shaped settings are:
 the size-tuned release profile (`opt-level = "z"`, LTO, `panic = "abort"`,
 strip) that the guests linking this crate are built with, and `isoplane-abi` pinned
-with `default-features = false`. The root workspace builds host crates for the
-native target and has neither.
+with `default-features = false` and its `rust-guests` feature, which declares
+the imports only a Rust guest calls. That feature is experimental: Rust is not
+a supported guest language, and a release host is built without it. The root
+workspace builds host crates for the native target and has neither.
 
 `Cargo.toml` names that root explicitly with `workspace = "../../guests"`,
 because Cargo finds a root by walking up and would otherwise reach the repo

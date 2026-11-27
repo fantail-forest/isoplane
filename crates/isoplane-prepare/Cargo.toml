@@ -32,9 +32,16 @@ hex.workspace = true
 [features]
 # What the tool that precompiles the test runtime calls. No shipped build enables it.
 test-util = []
+# Experimental: Rust guests are not a supported guest language yet.
+rust-guests = [
+    "isoplane-abi/rust-guests",
+    "isoplane-engine/rust-guests",
+    "isoplane-host/rust-guests",
+    "isoplane-runtime/rust-guests",
+]
 
 [dev-dependencies]
-isoplane-prepare = { workspace = true, features = ["test-util"] }
+isoplane-prepare = { workspace = true, features = ["test-util", "rust-guests"] }
 isoplane-engine = { workspace = true, features = ["test-util"] }
 tempfile.workspace = true
 isoplane-fixtures.workspace = true

@@ -5,6 +5,10 @@ use serde::{Deserialize, Serialize};
 /// Default maximum outbound connections held by one instance.
 pub const DEFAULT_INSTANCE_OPEN_CONNECTIONS: u64 = 32;
 
+/// Default largest response body a host HTTP fetch returns inline.
+#[cfg(feature = "rust-guests")]
+pub const DEFAULT_INLINE_RESPONSE_BYTES: usize = 1 << 20;
+
 /// Effective per-application resource budgets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {

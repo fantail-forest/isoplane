@@ -50,6 +50,7 @@ pub struct PreparationContext<'a> {
     /// Total initialization wall backstop, including waits and replay passes.
     pub wall_ms: u32,
     /// Maximum replay passes.
+    #[cfg(feature = "rust-guests")]
     pub max_passes: u32,
     /// Retained successful-pass guest log bytes.
     pub log_bytes: usize,
@@ -302,13 +303,16 @@ impl Deployer {
             .write_json(&mut runtime_config)?;
         let initialization = isoplane_prepare::Initialization {
             network: Some(context.network.clone()),
-            runtime_config,
-            config: serde_json::to_vec(&manifest.init_visible_vars)?,
-            sandbox: opts.init_sandbox,
             occupancy_ms: context.occupancy_ms,
             wall_ms: context.wall_ms,
-            max_passes: context.max_passes,
             log_bytes: context.log_bytes,
+            ..isoplane_prepare::Initialization::new(opts.init_sandbox, runtime_config)
+        };
+        #[cfg(feature = "rust-guests")]
+        let initialization = isoplane_prepare::Initialization {
+            config: serde_json::to_vec(&manifest.init_visible_vars)?,
+            max_passes: context.max_passes,
+            ..initialization
         };
         let request = isoplane_prepare::BuildRequest {
             guest_memory_bytes: manifest.guest_memory_bytes,

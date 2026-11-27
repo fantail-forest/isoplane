@@ -127,7 +127,7 @@ fn req(wasm: &[u8]) -> PreInitRequest {
 #[test]
 fn pure_module_pre_inits_in_one_pass() {
     let wasm = wat::parse_str(guest_wat(false)).unwrap();
-    let out = PreInitializer::new()
+    let out = PreInitializer::new(InitSandbox::Sealed)
         .run(&wasm, &req(&wasm))
         .expect("pre-init must succeed");
 
@@ -160,7 +160,7 @@ fn pure_module_pre_inits_in_one_pass() {
 #[test]
 fn impure_units_are_deferred_and_pre_init_converges() {
     let wasm = wat::parse_str(guest_wat(true)).unwrap();
-    let out = PreInitializer::new()
+    let out = PreInitializer::new(InitSandbox::Sealed)
         .run(&wasm, &req(&wasm))
         .expect("pre-init must converge");
 
@@ -212,7 +212,9 @@ fn impure_units_are_deferred_and_pre_init_converges() {
 #[test]
 fn template_carries_post_init_memory_into_the_runtime_engine() {
     let wasm = wat::parse_str(guest_wat(false)).unwrap();
-    let out = PreInitializer::new().run(&wasm, &req(&wasm)).unwrap();
+    let out = PreInitializer::new(InitSandbox::Sealed)
+        .run(&wasm, &req(&wasm))
+        .unwrap();
     let mut t = Template::load(&out.wasm);
 
     let seed_lo = t.probe(0);
@@ -241,8 +243,12 @@ fn template_carries_post_init_memory_into_the_runtime_engine() {
 #[test]
 fn fresh_initializations_of_the_same_input_draw_fresh_seeds() {
     let wasm = wat::parse_str(guest_wat(true)).unwrap();
-    let a = PreInitializer::new().run(&wasm, &req(&wasm)).unwrap();
-    let b = PreInitializer::new().run(&wasm, &req(&wasm)).unwrap();
+    let a = PreInitializer::new(InitSandbox::Sealed)
+        .run(&wasm, &req(&wasm))
+        .unwrap();
+    let b = PreInitializer::new(InitSandbox::Sealed)
+        .run(&wasm, &req(&wasm))
+        .unwrap();
     assert_ne!(a.wasm, b.wasm, "new initialization must draw fresh entropy");
     assert_eq!(a.initialized.deferred, b.initialized.deferred);
 }
@@ -264,7 +270,7 @@ fn unattributable_traps_fail_the_deploy() {
   (func (export "isoplane_wake") (param i64 i32 i32) (result i64) (i64.const 1))
 )"#;
     let wasm = wat::parse_str(wat).unwrap();
-    let err = PreInitializer::new()
+    let err = PreInitializer::new(InitSandbox::Sealed)
         .run(&wasm, &req(&wasm))
         .err()
         .expect("initialization must be refused");
@@ -303,7 +309,7 @@ fn sealed_imports_trap_rather_than_returning_zero() {
   (func (export "isoplane_wake") (param i64 i32 i32) (result i64) (i64.const 1))
 )"#;
     let wasm = wat::parse_str(wat).unwrap();
-    let err = PreInitializer::new()
+    let err = PreInitializer::new(InitSandbox::Sealed)
         .run(&wasm, &req(&wasm))
         .err()
         .expect("initialization must be refused");
@@ -317,7 +323,9 @@ fn sealed_imports_trap_rather_than_returning_zero() {
 #[test]
 fn a_template_cannot_re_read_the_hash_seed_at_runtime() {
     let wasm = wat::parse_str(guest_wat(false)).unwrap();
-    let out = PreInitializer::new().run(&wasm, &req(&wasm)).unwrap();
+    let out = PreInitializer::new(InitSandbox::Sealed)
+        .run(&wasm, &req(&wasm))
+        .unwrap();
     let mut t = Template::load(&out.wasm);
 
     let captured = t.probe(0);
@@ -347,8 +355,7 @@ fn a_template_cannot_re_read_the_hash_seed_at_runtime() {
 #[test]
 fn runtime_bringup_keeps_clock_deferral_while_entropy_is_available_in_application_units() {
     let wasm = wat::parse_str(guest_wat(true)).unwrap();
-    let out = PreInitializer::new()
-        .with_pal(InitSandbox::RuntimeBringUp)
+    let out = PreInitializer::new(InitSandbox::RuntimeBringUp)
         .run(&wasm, &req(&wasm))
         .unwrap();
     assert_eq!(out.initialized.deferred, vec![2]);
@@ -383,7 +390,7 @@ fn the_runtime_pal_lets_a_runtime_come_up_outside_any_init_unit() {
 )"#;
     let wasm = wat::parse_str(wat).unwrap();
 
-    let err = PreInitializer::new()
+    let err = PreInitializer::new(InitSandbox::Sealed)
         .run(&wasm, &req(&wasm))
         .err()
         .expect("initialization must be refused");
@@ -393,8 +400,7 @@ fn the_runtime_pal_lets_a_runtime_come_up_outside_any_init_unit() {
     );
 
     // The clock policy remains frozen; each entropy request uses the live host source.
-    let out = PreInitializer::new()
-        .with_pal(InitSandbox::RuntimeBringUp)
+    let out = PreInitializer::new(InitSandbox::RuntimeBringUp)
         .run(&wasm, &req(&wasm))
         .expect("a runtime must be able to come up");
     println!("PAL calls: {:?}", out.initialized.pal_calls);
@@ -416,8 +422,7 @@ fn the_runtime_pal_lets_a_runtime_come_up_outside_any_init_unit() {
     let entropy = t.probe(0);
     assert_ne!(entropy, 0, "entropy must be real bytes, not zeros");
 
-    let again = PreInitializer::new()
-        .with_pal(InitSandbox::RuntimeBringUp)
+    let again = PreInitializer::new(InitSandbox::RuntimeBringUp)
         .run(&wasm, &req(&wasm))
         .unwrap();
     assert_ne!(out.wasm, again.wasm);
@@ -444,7 +449,9 @@ fn a_runtime_timer_defers_its_active_initialization_unit() {
   (func (export "get_g") (result i64) (global.get $g))
 )"#;
     let wasm = wat::parse_str(wat).unwrap();
-    let out = PreInitializer::new().run(&wasm, &req(&wasm)).unwrap();
+    let out = PreInitializer::new(InitSandbox::Sealed)
+        .run(&wasm, &req(&wasm))
+        .unwrap();
     assert_eq!(out.initialized.deferred, vec![9]);
     assert_eq!(
         out.initialized.deferred_reasons,
@@ -462,7 +469,7 @@ fn init_memory_limit_is_enforced() {
              (func (export "isoplane_initialize") (result i64) i64.const 0))"#,
     )
     .unwrap();
-    let err = PreInitializer::new()
+    let err = PreInitializer::new(InitSandbox::Sealed)
         .run(&big, &req(&big))
         .err()
         .expect("initialization must be refused");
@@ -479,7 +486,7 @@ fn a_module_without_an_init_func_is_not_pre_initialized() {
              (func (export "isoplane_alloc") (param i32 i32) (result i32) (i32.const 0)))"#,
     )
     .unwrap();
-    let err = PreInitializer::new()
+    let err = PreInitializer::new(InitSandbox::Sealed)
         .run(&wasm, &req(&wasm))
         .err()
         .expect("initialization must be refused");
@@ -623,7 +630,7 @@ fn the_sealed_initializer_preserves_both_filesystem_adapter_routes() {
         isoplane_abi::filesystem::Operation::Stat as u32
     ))
     .expect("filesystem initialization fixture must compile");
-    let initialized = PreInitializer::new()
+    let initialized = PreInitializer::new(InitSandbox::Sealed)
         .run(&wasm, &req(&wasm))
         .expect("deterministic filesystem probes must be admitted by sealed initialization");
     let mut template = Template::load(&initialized.wasm);
@@ -639,7 +646,7 @@ fn the_sealed_initializer_preserves_both_filesystem_adapter_routes() {
             "the initializer must preserve the synthetic directory type"
         );
     }
-    let repeated = PreInitializer::new()
+    let repeated = PreInitializer::new(InitSandbox::Sealed)
         .run(&wasm, &req(&wasm))
         .expect("repeat filesystem initialization");
     assert_eq!(
@@ -669,7 +676,7 @@ fn sealed_initialization_receives_an_empty_launch_argument_list() {
       (call $pal_probe (i32.const 64))
       (if (i64.ne (i64.load (i32.const 64)) (i64.const 0)) (then unreachable))"#,
     );
-    let output = PreInitializer::new()
+    let output = PreInitializer::new(InitSandbox::Sealed)
         .run(&wasm, &req(&wasm))
         .expect("argument absence must also be supported during sealed initialization");
     assert_eq!(
@@ -691,7 +698,9 @@ fn initialization_rejects_an_invalid_argument_return_pointer() {
         "(call $pal_probe (i32.const -1))",
     );
     assert!(
-        PreInitializer::new().run(&wasm, &req(&wasm)).is_err(),
+        PreInitializer::new(InitSandbox::Sealed)
+            .run(&wasm, &req(&wasm))
+            .is_err(),
         "the init adapter must reject a return record outside guest memory"
     );
 }
@@ -703,7 +712,7 @@ fn initialization_cannot_query_a_denied_wall_clock_resolution() {
         "resolution",
         "(call $pal_probe (i32.const 64))",
     );
-    let error = PreInitializer::new()
+    let error = PreInitializer::new(InitSandbox::Sealed)
         .run(&wasm, &req(&wasm))
         .err()
         .expect("wall-clock resolution must remain denied during initialization");

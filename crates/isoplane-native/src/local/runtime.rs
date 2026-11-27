@@ -225,7 +225,13 @@ fn local_compilation(
 
 fn preinitialize(project: &Project, wasm: &[u8], configuration: &[u8]) -> anyhow::Result<Vec<u8>> {
     let files = project.served_files()?;
-    Ok(isoplane_prepare::PreInitializer::new()
+    let request = isoplane_prepare::PreInitRequest::new(isoplane_engine::ModuleHash::of(wasm));
+    #[cfg(feature = "rust-guests")]
+    let request = isoplane_prepare::PreInitRequest {
+        init_blob: serde_json::to_vec(&project.manifest.init_visible_vars)?,
+        ..request
+    };
+    Ok(isoplane_prepare::PreInitializer::new(project.init_sandbox)
         .with_runtime_profile(project.runtime_profile.clone())
         .with_memory_limit(isoplane_abi::config::GuestMemoryBytes::new(
             project.manifest.memory_max_bytes(),
@@ -235,16 +241,9 @@ fn preinitialize(project: &Project, wasm: &[u8], configuration: &[u8]) -> anyhow
             ..engine_configuration(project)
         })
         .with_network(initialization_network(project))
-        .with_pal(project.init_sandbox)
         .with_runtime_configuration(configuration.to_vec())
         .with_platform_files(files)
-        .run(
-            wasm,
-            &isoplane_prepare::PreInitRequest {
-                module_hash: isoplane_engine::ModuleHash::of(wasm),
-                init_blob: serde_json::to_vec(&project.manifest.init_visible_vars)?,
-            },
-        )
+        .run(wasm, &request)
         .map_err(|e| {
             anyhow::anyhow!(
                 "pre-initializing {} with {}: {e}; ",
@@ -387,12 +386,7 @@ impl LocalApp {
         let scratch = tempfile::tempdir_in(data)?;
         let metrics = Arc::new(isoplane_proxy::ProxyMetrics::new());
         let cfg = isoplane_proxy::ShedConfig::default();
-        let services = Arc::new(isoplane_host::cell::Services {
-            egress: egress.clone(),
-            fetcher: Arc::new(isoplane_host::PinnedHttpFetcher::new(
-                network.inline_response_bytes,
-            )),
-        });
+        let services = Arc::new(isoplane_host::cell::Services::new(egress.clone()));
         let mut config = CellConfig {
             name: prepared.manifest.name.clone(),
             ..CellConfig::local()

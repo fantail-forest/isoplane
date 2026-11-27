@@ -8,6 +8,8 @@ mod memory;
 mod node;
 
 pub use lifecycle::LifecycleTier;
+#[cfg(feature = "rust-guests")]
+pub use limits::DEFAULT_INLINE_RESPONSE_BYTES;
 pub use limits::{Limits, ResourceLimitOverrides, DEFAULT_INSTANCE_OPEN_CONNECTIONS};
 pub use manifest::{AppManifest, Bindings, InitSandbox};
 pub use memory::{

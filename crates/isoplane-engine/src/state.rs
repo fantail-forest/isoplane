@@ -163,6 +163,7 @@ pub(crate) struct StoreState {
     pub grace_at_ns: Option<u64>,
     /// The runtime layer's unsafe-to-trap bit. Grace entry defers while it is
     /// set; the hard deadline ignores it.
+    #[cfg(feature = "rust-guests")]
     pub unsafe_to_trap: bool,
     /// The import that violated capability policy.
     pub violation: Option<&'static str>,
@@ -208,6 +209,7 @@ impl StoreState {
             meter: Meter::default(),
             kill: None,
             grace_at_ns: None,
+            #[cfg(feature = "rust-guests")]
             unsafe_to_trap: false,
             violation: None,
             abort_msg: None,
@@ -229,7 +231,9 @@ impl StoreState {
         }
         let grace_is_due =
             occupancy_ns >= self.meter.occupancy_budget_ns && self.grace_at_ns.is_none();
-        if grace_is_due && !self.unsafe_to_trap {
+        #[cfg(feature = "rust-guests")]
+        let grace_is_due = grace_is_due && !self.unsafe_to_trap;
+        if grace_is_due {
             if let Some(bindings) = self.bindings.as_mut() {
                 bindings.enter_grace();
                 self.grace_at_ns = Some(occupancy_ns);
@@ -245,7 +249,10 @@ impl StoreState {
         self.grace_at_ns = None;
         // The bit describes the runtime layer's current critical section; a
         // slice that ended inside one ended by trapping.
-        self.unsafe_to_trap = false;
+        #[cfg(feature = "rust-guests")]
+        {
+            self.unsafe_to_trap = false;
+        }
         self.violation = None;
         self.abort_msg = None;
         self.limits.oom = false;

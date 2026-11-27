@@ -21,4 +21,4 @@ tasks:
       # The build writes the C# declarations of the library it builds.
       ISOPLANE_GENERATE_BINDINGS: '1'
     cmds:
-      - '{{.REFUSE_TEST_FEATURES}}cargo build --locked --release -p isoplane-native --message-format=json-render-diagnostics'
+      - '{{.DEVELOPMENT_COMMAND}}cargo build --locked --release -p isoplane-native'

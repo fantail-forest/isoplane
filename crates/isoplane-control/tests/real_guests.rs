@@ -106,7 +106,7 @@ fn the_impure_cctor_guest_defers_and_converges() {
 
         init_blob: Vec::new(),
     };
-    let out = PreInitializer::new()
+    let out = PreInitializer::new(isoplane_abi::config::InitSandbox::Sealed)
         .run(&wasm, &req)
         .expect("pre-init must converge");
 

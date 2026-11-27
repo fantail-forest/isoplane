@@ -16,7 +16,8 @@ use crate::{bake, PrepareError};
 pub struct Initialization {
     /// Explicit outbound authority; absent contexts cannot create host I/O.
     pub network: Option<crate::InitializationNetwork>,
-    /// Serialized deployment configuration.
+    /// Serialized deployment configuration, which `init_config_get` returns.
+    #[cfg(feature = "rust-guests")]
     pub config: Vec<u8>,
     /// Deployment-bound JSON settings, including secrets; never include in diagnostics.
     pub runtime_config: Vec<u8>,
@@ -27,20 +28,46 @@ pub struct Initialization {
     /// Total initialization wall backstop, including asynchronous waits and replay passes.
     pub wall_ms: u32,
     /// Maximum replay passes before refusal.
+    #[cfg(feature = "rust-guests")]
     pub max_passes: u32,
     /// Maximum retained guest log bytes across a successful pass.
     pub log_bytes: usize,
 }
 
 impl Initialization {
+    /// An initialization under `sandbox` with the deployment's settings, no
+    /// outbound authority, no `init_config_get` configuration and the local
+    /// default budgets. Set a field to change one.
+    pub fn new(sandbox: InitSandbox, runtime_config: Vec<u8>) -> Self {
+        Self {
+            network: None,
+            #[cfg(feature = "rust-guests")]
+            config: Vec::new(),
+            runtime_config,
+            sandbox,
+            occupancy_ms: crate::preinit::DEFAULT_INITIALIZATION_OCCUPANCY_MS,
+            wall_ms: crate::preinit::DEFAULT_INITIALIZATION_WALL_MS,
+            #[cfg(feature = "rust-guests")]
+            max_passes: crate::preinit::DEFAULT_INITIALIZATION_PASSES,
+            log_bytes: crate::preinit::DEFAULT_INITIALIZATION_LOG_BYTES,
+        }
+    }
+
     /// Identifies source, configuration and capability inputs for captured-state reuse.
     /// Fresh random draws and execution budgets are excluded from this input identity.
     pub fn digest(&self, input_hash: [u8; 32]) -> Result<[u8; 32], postcard::Error> {
+        // A host not built for Rust guests binds no such configuration. It
+        // hashes an empty one, which is the identity the same input has on a
+        // host built for them.
+        #[cfg(feature = "rust-guests")]
+        let config: &[u8] = &self.config;
+        #[cfg(not(feature = "rust-guests"))]
+        let config: &[u8] = &[];
         let mut hash = blake3::Hasher::new();
-        hash.update(b"isoplane.initialization-input.v2\0");
+        hash.update(b"isoplane.initialization-input.v3\0");
         hash.update(&postcard::to_allocvec(&(
             input_hash,
-            &self.config,
+            config,
             &self.runtime_config,
             self.sandbox,
             &self.network,
@@ -264,14 +291,18 @@ pub(crate) fn initialize_with_cache(
             "deployment settings must be a bounded JSON object of strings",
         ));
     }
-    if request.occupancy_ms == 0 || request.wall_ms == 0 || request.max_passes == 0 {
+    if request.occupancy_ms == 0 || request.wall_ms == 0 {
+        return Err(PrepareError::InvalidRequest(
+            "initialization limits must be positive",
+        ));
+    }
+    #[cfg(feature = "rust-guests")]
+    if request.max_passes == 0 {
         return Err(PrepareError::InvalidRequest(
             "initialization limits must be positive",
         ));
     }
     let occupancy_start_ns = preparation_occupancy()?;
-    let mut deferred_reasons = Vec::new();
-    let mut capability_refusals = 0;
     let (template, instrumented, compiled) = load(engine, cache, application_files, &capture)?;
     let reactor = request
         .network
@@ -284,10 +315,9 @@ pub(crate) fn initialize_with_cache(
         .transpose()
         .map_err(PrepareError::Io)?;
     let initialization_start = Instant::now();
-    let mut deferred = BTreeSet::new();
     let mut usage = InitializationUsage::default();
     let permits_entropy = !matches!(capture, CaptureMode::RuntimeBaseline { .. });
-    for pass in 1..=request.max_passes {
+    let mut run_pass = |pass: u32, replay: &mut Replay| -> Result<Pass, PrepareError> {
         let io = match (&request.network, &reactor) {
             (Some(network), Some(reactor)) => {
                 let _entered = reactor.enter();
@@ -295,7 +325,11 @@ pub(crate) fn initialize_with_cache(
             }
             _ => None,
         };
-        let state = Arc::new(Mutex::new(Sandbox::new(request, deferred.clone())));
+        let state = Arc::new(Mutex::new(Sandbox::new(
+            request,
+            #[cfg(feature = "rust-guests")]
+            replay.deferred.clone(),
+        )));
         let mut instance = engine
             .activate_initialization(
                 &template,
@@ -344,20 +378,23 @@ pub(crate) fn initialize_with_cache(
                     return Err(PrepareError::Baseline("reached a forbidden capability"));
                 }
                 if let Some(import) = instance.last_capability_violation() {
-                    capability_refusals += 1;
-                    let unit = {
-                        let state = state.lock();
-                        state.unit.or(state.last_deferred)
-                    };
-                    if let Some(unit) = unit {
-                        if !deferred.insert(unit) {
-                            return Err(PrepareError::DeferralIgnored {
-                                unit,
-                                import: import.into(),
-                            });
+                    #[cfg(feature = "rust-guests")]
+                    {
+                        replay.capability_refusals += 1;
+                        let unit = {
+                            let state = state.lock();
+                            state.unit.or(state.last_deferred)
+                        };
+                        if let Some(unit) = unit {
+                            if !replay.deferred.insert(unit) {
+                                return Err(PrepareError::DeferralIgnored {
+                                    unit,
+                                    import: import.into(),
+                                });
+                            }
+                            replay.reasons.push((unit, import.to_string()));
+                            return Ok(Pass::Deferred);
                         }
-                        deferred_reasons.push((unit, import.to_string()));
-                        continue;
                     }
                     return Err(PrepareError::Unattributable {
                         completion: outcome.completion,
@@ -394,7 +431,7 @@ pub(crate) fn initialize_with_cache(
                     ))
                 }
             };
-            return Ok(InitializationOutput {
+            return Ok(Pass::Captured(Box::new(InitializationOutput {
                 captured,
                 restored: None,
                 initialized: Initialized {
@@ -402,8 +439,8 @@ pub(crate) fn initialize_with_cache(
                     preparation_occupancy_ns: preparation_occupancy()?
                         .saturating_sub(occupancy_start_ns)
                         .saturating_sub(usage.unoccupied_ns),
-                    deferred_reasons,
-                    capability_refusals,
+                    deferred_reasons: replay.reasons.clone(),
+                    capability_refusals: replay.capability_refusals,
                     pal_calls: instance
                         .initialization_pal_calls()
                         .map_err(PrepareError::State)?,
@@ -413,7 +450,7 @@ pub(crate) fn initialize_with_cache(
                     // Without an initializer the original module is compiled for the template.
                     compiled: true,
                 },
-            });
+            })));
         }
         let prepared_resources = io
             .as_ref()
@@ -433,7 +470,7 @@ pub(crate) fn initialize_with_cache(
         let prepared_resources = isoplane_abi::native_io::PreparedResources {
             ..prepared_resources
         };
-        let deferred: Vec<_> = deferred.into_iter().collect();
+        let deferred: Vec<_> = replay.deferred.iter().copied().collect();
         if matches!(capture, CaptureMode::RuntimeBaseline { .. }) {
             let state = state.lock();
             if state.seed_reads > 0 || state.draws > 0 {
@@ -573,7 +610,7 @@ pub(crate) fn initialize_with_cache(
             .map_err(PrepareError::State)?;
         let state = state.lock();
         let logs = state.logs.iter().map(|log| log.line.clone()).collect();
-        return Ok(InitializationOutput {
+        Ok(Pass::Captured(Box::new(InitializationOutput {
             captured: representation,
             restored: Some(restored_template),
             initialized: Initialized {
@@ -581,17 +618,51 @@ pub(crate) fn initialize_with_cache(
                 preparation_occupancy_ns: preparation_occupancy()?
                     .saturating_sub(occupancy_start_ns)
                     .saturating_sub(usage.unoccupied_ns),
-                deferred_reasons,
-                capability_refusals,
+                deferred_reasons: replay.reasons.clone(),
+                capability_refusals: replay.capability_refusals,
                 pal_calls,
                 seed_reads: state.seed_reads,
                 passes: pass,
                 logs,
                 compiled,
             },
-        });
+        })))
+    };
+    let mut replay = Replay::default();
+    #[cfg(feature = "rust-guests")]
+    {
+        for pass in 1..=request.max_passes {
+            match run_pass(pass, &mut replay)? {
+                Pass::Captured(output) => return Ok(*output),
+                Pass::Deferred => {}
+            }
+        }
+        Err(PrepareError::NoConvergence(request.max_passes))
     }
-    Err(PrepareError::NoConvergence(request.max_passes))
+    #[cfg(not(feature = "rust-guests"))]
+    {
+        let Pass::Captured(output) = run_pass(1, &mut replay)?;
+        Ok(*output)
+    }
+}
+
+/// How one run of the initializer from the template ended.
+enum Pass {
+    /// Its state was captured and verified against a restored instance.
+    Captured(Box<InitializationOutput>),
+    /// An init unit reached a forbidden capability and is now deferred, so
+    /// the initializer runs again without it.
+    #[cfg(feature = "rust-guests")]
+    Deferred,
+}
+
+/// What the passes so far deferred. Only a Rust guest's init units defer, so
+/// a host not built for them leaves this empty.
+#[derive(Default)]
+struct Replay {
+    deferred: BTreeSet<u32>,
+    reasons: Vec<(u32, String)>,
+    capability_refusals: u32,
 }
 
 /// The template initialization runs on, with the application's files bound;
@@ -712,11 +783,16 @@ fn with_guest_logs<'a>(
 }
 
 struct Sandbox {
+    #[cfg(feature = "rust-guests")]
     seed: Option<[u8; 16]>,
+    #[cfg(feature = "rust-guests")]
     config: Vec<u8>,
     runtime_config: Vec<u8>,
+    #[cfg(feature = "rust-guests")]
     deferred: BTreeSet<u32>,
+    #[cfg(feature = "rust-guests")]
     unit: Option<u32>,
+    #[cfg(feature = "rust-guests")]
     last_deferred: Option<u32>,
     bringup: bool,
     draws: u64,
@@ -726,13 +802,21 @@ struct Sandbox {
 }
 
 impl Sandbox {
-    fn new(request: &Initialization, deferred: BTreeSet<u32>) -> Self {
+    fn new(
+        request: &Initialization,
+        #[cfg(feature = "rust-guests")] deferred: BTreeSet<u32>,
+    ) -> Self {
         Self {
+            #[cfg(feature = "rust-guests")]
             seed: None,
+            #[cfg(feature = "rust-guests")]
             config: request.config.clone(),
             runtime_config: request.runtime_config.clone(),
+            #[cfg(feature = "rust-guests")]
             deferred,
+            #[cfg(feature = "rust-guests")]
             unit: None,
+            #[cfg(feature = "rust-guests")]
             last_deferred: None,
             bringup: request.sandbox == InitSandbox::RuntimeBringUp,
             draws: 0,
@@ -788,7 +872,11 @@ impl isoplane_engine::bindings::InitializationBindings for Bindings {
 
     fn runtime_bringup(&self) -> bool {
         let state = self.state.lock();
-        state.bringup && state.unit.is_none() && state.last_deferred.is_none()
+        #[cfg(feature = "rust-guests")]
+        if state.unit.is_some() || state.last_deferred.is_some() {
+            return false;
+        }
+        state.bringup
     }
     fn call_sync(
         &mut self,
@@ -796,12 +884,14 @@ impl isoplane_engine::bindings::InitializationBindings for Bindings {
     ) -> Result<i64, isoplane_engine::bindings::BindingError> {
         let mut state = self.state.lock();
         match call.import {
+            #[cfg(feature = "rust-guests")]
             "init_unit_begin" => {
                 let unit = call.scalars[0] as u32;
                 state.unit = (!matches!(unit, 0 | u32::MAX)).then_some(unit);
                 state.last_deferred = None;
                 Ok(0)
             }
+            #[cfg(feature = "rust-guests")]
             "init_unit_deferred" => {
                 let unit = call.scalars[0] as u32;
                 let deferred = state.deferred.contains(&unit);
@@ -834,6 +924,7 @@ impl isoplane_engine::bindings::InitializationBindings for Bindings {
     ) -> Result<i64, isoplane_engine::bindings::BindingError> {
         let mut state = self.state.lock();
         match call.import {
+            #[cfg(feature = "rust-guests")]
             "init_hash_seed" => {
                 if output.len() != 16 {
                     return Err(isoplane_engine::bindings::BindingError::InvalidRequest(
@@ -867,6 +958,7 @@ impl isoplane_engine::bindings::InitializationBindings for Bindings {
                 output[..length].copy_from_slice(&state.runtime_config[..length]);
                 Ok(state.runtime_config.len() as i64)
             }
+            #[cfg(feature = "rust-guests")]
             "init_config_get" => {
                 let length = output.len().min(state.config.len());
                 output[..length].copy_from_slice(&state.config[..length]);

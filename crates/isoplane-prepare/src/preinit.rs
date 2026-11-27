@@ -12,12 +12,12 @@ pub const DEFAULT_INITIALIZATION_OCCUPANCY_MS: u32 = 30_000;
 /// Default local initialization wall backstop, including waits and replay passes.
 pub const DEFAULT_INITIALIZATION_WALL_MS: u32 = 60_000;
 /// Default local initialization replay limit.
+#[cfg(feature = "rust-guests")]
 pub const DEFAULT_INITIALIZATION_PASSES: u32 = 16;
 /// Default retained initialization log bytes.
 pub const DEFAULT_INITIALIZATION_LOG_BYTES: usize = 64 * 1024;
 
 /// Configures portable initialization for local SDK consumers.
-#[derive(Default)]
 pub struct PreInitializer {
     pal: InitSandbox,
     runtime: RuntimeProfile,
@@ -33,8 +33,20 @@ pub struct PreInitializer {
 pub struct PreInitRequest {
     /// Digest of the exact source module.
     pub module_hash: ModuleHash,
-    /// Serialized configuration available to initialization.
+    /// Serialized configuration a Rust guest's initializer reads with `init_config_get`.
+    #[cfg(feature = "rust-guests")]
     pub init_blob: Vec<u8>,
+}
+
+impl PreInitRequest {
+    /// A build of the module with this digest, with no `init_config_get` configuration.
+    pub fn new(module_hash: ModuleHash) -> Self {
+        Self {
+            module_hash,
+            #[cfg(feature = "rust-guests")]
+            init_blob: Vec::new(),
+        }
+    }
 }
 
 /// Refusals from local preparation.
@@ -46,22 +58,35 @@ pub enum PreInitError {
     /// The source has no initialization function.
     #[error("module does not export `{0}`; nothing to pre-initialize")]
     NoInitFunc(&'static str),
-    /// Nothing to defer: deferring a guess would change program behaviour.
-    #[error(
-        "pre-init trapped outside any init unit (`{import}`); wrap initialization that may \
-         touch host capabilities in an init unit: {cause}"
+    /// Initialization called an import it may not, outside any unit a host
+    /// built for Rust guests could defer.
+    #[cfg_attr(
+        feature = "rust-guests",
+        error(
+            "pre-init trapped outside any init unit (`{import}`); wrap initialization that may \
+             touch host capabilities in an init unit: {cause}"
+        )
+    )]
+    #[cfg_attr(
+        not(feature = "rust-guests"),
+        error(
+            "initialization called `{import}`, which an application may not call while it \
+             initializes; move that operation out of initialization: {cause}"
+        )
     )]
     Unattributable {
         import: String,
         cause: anyhow::Error,
     },
     /// A deferred unit ignored the replay decision.
+    #[cfg(feature = "rust-guests")]
     #[error(
         "init unit {unit} trapped on `{import}` again after being deferred; the guest is \
          ignoring `init_unit_deferred`"
     )]
     DeferralIgnored { unit: u32, import: String },
     /// Initialization exceeded its replay limit.
+    #[cfg(feature = "rust-guests")]
     #[error("pre-init did not converge in {0} passes")]
     NoConvergence(u32),
     /// The declared memory exceeds the selected initialization capacity.
@@ -74,9 +99,17 @@ pub enum PreInitError {
 }
 
 impl PreInitializer {
-    /// Select sealed initialization with no platform files.
-    pub fn new() -> Self {
-        Self::default()
+    /// Select the caller's initialization capability policy, with no platform files.
+    pub fn new(pal: InitSandbox) -> Self {
+        Self {
+            pal,
+            runtime: RuntimeProfile::default(),
+            platform_files: PlatformFiles::default(),
+            memory_limit: None,
+            engine: EngineConfig::default(),
+            runtime_config: None,
+            network: None,
+        }
     }
     /// Use the consuming engine's allocation and compiler settings.
     pub fn with_engine_config(mut self, engine: EngineConfig) -> Self {
@@ -91,11 +124,6 @@ impl PreInitializer {
     /// Match initialization to the consuming engine's linear-memory capacity.
     pub fn with_memory_limit(mut self, memory_limit: GuestMemoryBytes) -> Self {
         self.memory_limit = Some(memory_limit);
-        self
-    }
-    /// Select the caller's initialization capability policy.
-    pub fn with_pal(mut self, pal: InitSandbox) -> Self {
-        self.pal = pal;
         self
     }
     /// Serve the same read-only platform files supplied during execution.
@@ -160,16 +188,14 @@ impl PreInitializer {
                 IsoplaneEngine::new(configuration.clone()).map_err(PreInitError::Trapped)?;
             let request = Initialization {
                 network: self.network.clone(),
+                #[cfg(feature = "rust-guests")]
                 config: req.init_blob.clone(),
-                runtime_config: self
-                    .runtime_config
-                    .clone()
-                    .unwrap_or_else(|| b"{}".to_vec()),
-                sandbox: self.pal,
-                occupancy_ms: DEFAULT_INITIALIZATION_OCCUPANCY_MS,
-                wall_ms: DEFAULT_INITIALIZATION_WALL_MS,
-                max_passes: DEFAULT_INITIALIZATION_PASSES,
-                log_bytes: DEFAULT_INITIALIZATION_LOG_BYTES,
+                ..Initialization::new(
+                    self.pal,
+                    self.runtime_config
+                        .clone()
+                        .unwrap_or_else(|| b"{}".to_vec()),
+                )
             };
             crate::initialize(&engine, wasm, &request).map_err(map_error)
         })
@@ -182,9 +208,11 @@ fn map_error(error: PrepareError) -> PreInitError {
             import,
             cause: anyhow::anyhow!(detail),
         },
+        #[cfg(feature = "rust-guests")]
         PrepareError::DeferralIgnored { unit, import } => {
             PreInitError::DeferralIgnored { unit, import }
         }
+        #[cfg(feature = "rust-guests")]
         PrepareError::NoConvergence(passes) => PreInitError::NoConvergence(passes),
         // Other preparation failures have no more specific local replay classification.
         error => PreInitError::Trapped(error.into()),
@@ -248,12 +276,12 @@ mod tests {
         let wasm = memory_module("1 16384", "");
         assert!(
             matches!(
-                PreInitializer::new().run(&wasm, &request(&wasm)),
+                PreInitializer::new(InitSandbox::Sealed).run(&wasm, &request(&wasm)),
                 Err(PreInitError::MemoryLimit { .. })
             ),
             "the existing default must retain its initialization memory ceiling"
         );
-        let output = PreInitializer::new()
+        let output = PreInitializer::new(InitSandbox::Sealed)
             .with_memory_limit(GuestMemoryBytes::new(1 << 30).unwrap())
             .run(&wasm, &request(&wasm))
             .unwrap();
@@ -269,7 +297,7 @@ mod tests {
             "1 65536",
             "(if (i32.ne (memory.grow (i32.const 1)) (i32.const -1)) (then unreachable))",
         );
-        let output = PreInitializer::new()
+        let output = PreInitializer::new(InitSandbox::Sealed)
             .with_runtime_profile(RuntimeProfile::SharedRuntime {
                 sdk_version: "test".into(),
             })
@@ -293,7 +321,9 @@ mod tests {
             init_blob: vec![],
         };
         assert!(
-            PreInitializer::new().run(&wasm, &request).is_err(),
+            PreInitializer::new(InitSandbox::Sealed)
+                .run(&wasm, &request)
+                .is_err(),
             "a template request must identify its exact source"
         );
     }

@@ -16,9 +16,11 @@ use isoplane_abi::dispatch::{DispatchKind, DispatchRecord};
 use isoplane_abi::status::{PollStatus, TrapCode};
 use isoplane_engine::{Completion, DispatchOutcome, OccupancyBudget};
 
+#[cfg(feature = "rust-guests")]
+pub use crate::bindings::Fetcher;
+pub use crate::bindings::Services;
 use crate::bindings::Tenancy;
 use crate::bindings::{CellRuntime, InstanceCtx, WakeSink};
-pub use crate::bindings::{Fetcher, Services};
 use crate::breaker::{BreakerConfig, BreakerKey, HangBreaker};
 use crate::disposition::{decide, evict, warm, DispatchEnd};
 use crate::futures::FutureTable;
