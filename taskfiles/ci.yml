@@ -15,7 +15,7 @@ tasks:
       - '{{.DEVELOPMENT_COMMAND}}cargo test --locked -p isoplane-engine --test engine_validation --test engine_init_sandbox --test engine_budget --test engine_memory_limit'
 
   abi:
-    desc: Check SDK and runtime-fork bindings against the host interface
+    desc: Check the SDK's wire-format mirrors against the host interface
     deps: [':initialize']
     cmds:
       - '{{.DEVELOPMENT_COMMAND}}cargo test --locked -p isoplane-abi --test dotnet_sdk_drift'

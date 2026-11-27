@@ -4,12 +4,8 @@ using System.Runtime.InteropServices;
 namespace Isoplane.Abi;
 
 /// <summary>
-/// The host imports the SDK reaches, module <c>"isoplane"</c>. Every entry is
-/// held to <c>isoplane-abi::imports::IMPORTS</c> by
-/// <c>crates/isoplane-abi/tests/dotnet_sdk_drift.rs</c>, and each has a wrapper
-/// in <c>Sdk/</c>; an import with no wrapper is a capability the SDK does not
-/// offer. <c>[WasmImportLinkage]</c> is what makes the emitted wasm import
-/// from module <c>isoplane</c> rather than through a PInvoke stub.
+/// The managed declarations of the host imports the runtime module takes from
+/// wasm module <c>"isoplane"</c>.
 /// </summary>
 internal static unsafe partial class H
 {
