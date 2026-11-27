@@ -8,6 +8,7 @@ use isoplane_hibernate::snapshot::{
     SnapshotBytes, SnapshotError, SnapshotReservation, SnapshotStorage,
 };
 use std::collections::VecDeque;
+use std::sync::atomic::AtomicUsize;
 use std::sync::mpsc::{Receiver, TryRecvError};
 
 #[derive(Default)]
@@ -73,7 +74,7 @@ impl SnapshotReservation for Reservation {
         self.capacity
     }
     fn save(&mut self, parts: &[std::io::IoSlice<'_>]) -> Result<(), SnapshotError> {
-        if self.state.fail_save.load(Ordering::Relaxed) {
+        if self.state.fail_save.swap(false, Ordering::Relaxed) {
             return Err(SnapshotError::Io {
                 operation: "save",
                 path: "test-storage".into(),
@@ -145,7 +146,7 @@ fn test_cell(storage: Arc<Storage>, handler_after_ms: u64) -> Arc<Cell> {
                 handler_after_ms,
                 ..Default::default()
             },
-            ..CellConfig::for_test("reclamation")
+            ..crate::fakes::cell_config("reclamation")
         },
         services(),
         storage,
@@ -197,7 +198,7 @@ fn idle(cell: &Arc<Cell>, name: &str, last_used_ms: u64) -> Arc<Slot> {
     let mut request = http(2);
     request.now_ms = last_used_ms;
     slot.record_dispatch(&request);
-    slot.park(last_used_ms);
+    slot.park();
     slot
 }
 
@@ -227,7 +228,7 @@ fn active(
     let mut request = http(2);
     request.now_ms = last_used_ms;
     slot.record_dispatch(&request);
-    slot.park(last_used_ms);
+    slot.park();
     (slot, response)
 }
 
@@ -283,7 +284,7 @@ fn activity_in_the_millisecond_a_candidate_was_listed_still_invalidates_it() {
     let cell = test_cell(Storage::new(1), 0);
     let slot = idle(&cell, "same-millisecond", 10);
     let stale = candidate(&cell, slot.id);
-    slot.park(10);
+    slot.park();
     assert!(
         !cell
             .reclaim_candidate(stale)
@@ -298,7 +299,7 @@ fn a_candidate_observed_before_recent_activity_cannot_reclaim_the_slot() {
     let cell = test_cell(Storage::new(1), 0);
     let slot = idle(&cell, "recent", 10);
     let stale = candidate(&cell, slot.id);
-    slot.park(20);
+    slot.park();
     assert!(
         !cell
             .reclaim_candidate(stale)
@@ -382,11 +383,6 @@ fn a_corrupt_snapshot_is_replaced_with_a_fresh_instance_and_host_context() {
         second.body, first.body,
         "a corrupt snapshot must not leave its pages in the instance"
     );
-    assert_eq!(
-        cell.metrics().delta_fallbacks,
-        1,
-        "the fallback to the template must be counted"
-    );
 }
 
 #[test]
@@ -426,11 +422,6 @@ fn an_unavailable_memory_sample_leaves_resident_memory_owned() {
         LifecycleTier::Parked,
         "sampling failure must not invent memory pressure"
     );
-    assert_eq!(
-        cell.metrics().captures,
-        0,
-        "an unavailable sample must not count a capture"
-    );
 }
 
 #[test]
@@ -439,20 +430,18 @@ fn a_snapshot_write_failure_keeps_the_source_guest_resident() {
     let cell = test_cell(storage.clone(), 0);
     let slot = idle(&cell, "write-failure", 1);
     storage.state.fail_save.store(true, Ordering::Relaxed);
+    cell.reclaim_candidate(candidate(&cell, slot.id))
+        .expect_err("a storage write failure must refuse capture");
     assert!(
-        cell.reclaim_candidate(candidate(&cell, slot.id)).is_err(),
-        "a storage write failure must refuse capture"
+        !storage.state.fail_save.load(Ordering::Relaxed),
+        "the refusal must come from the write the storage failed"
     );
     assert_eq!(
         slot.state(),
         LifecycleTier::Parked,
         "failed persistence must leave the only guest copy resident"
     );
-    assert_eq!(
-        cell.metrics().capture_write_failures,
-        1,
-        "capture write failure must remain observable"
-    );
+
     assert_eq!(
         storage.state.reservations.load(Ordering::Relaxed),
         1,
@@ -709,7 +698,7 @@ fn background_boundaries_invalidate_capture_without_refreshing_request_recency()
     timer.kind = DispatchKind::Background;
     timer.now_ms = 105;
     slot.record_dispatch(&timer);
-    slot.park(105);
+    slot.park();
     assert_eq!(slot.last_used_ms(), 10);
     assert!(!cell
         .reclaim_candidate(stale)
@@ -742,7 +731,7 @@ fn a_temporary_snapshot_read_failure_preserves_the_original_instance_for_retry()
         Some(LifecycleTier::Hibernated)
     );
     assert_eq!(storage.state.reservations.load(Ordering::Relaxed), 1);
-    assert_eq!(cell.metrics().delta_fallbacks, 0);
+
     storage.state.fail_read.store(false, Ordering::Relaxed);
     let restored = completed(&cell, &module, 3);
     assert_eq!(restored.status, 200);

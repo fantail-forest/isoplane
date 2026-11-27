@@ -10,7 +10,6 @@ description = "HTTP proxy with route resolution, admission control and request d
 [dependencies]
 anyhow = { workspace = true }
 thiserror = { workspace = true }
-serde = { workspace = true }
 tracing = { workspace = true }
 isoplane-abi = { workspace = true, features = ["host"] }
 tokio = { workspace = true }

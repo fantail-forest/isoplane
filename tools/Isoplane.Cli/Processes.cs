@@ -41,25 +41,5 @@ internal static class Processes
         }
     }
 
-    internal static async Task CheckAsync(string executable, IEnumerable<string> arguments, string directory, CancellationToken cancellation)
-    {
-        using var process = Start(executable, arguments, directory, captureOutput: true, captureErrors: true);
-        var output = process.StandardOutput.ReadToEndAsync(cancellation);
-        var errors = process.StandardError.ReadToEndAsync(cancellation);
-        try
-        {
-            await process.WaitForExitAsync(cancellation);
-            var details = string.Join(Environment.NewLine, new[] { await output, await errors }
-                .Where(value => !string.IsNullOrWhiteSpace(value)).Select(value => value.Trim()));
-            if (process.ExitCode != 0)
-                throw new InvalidOperationException($"{Path.GetFileName(executable)} cannot run (exit {process.ExitCode}); check its reported native dependencies.{Environment.NewLine}{details}");
-        }
-        finally
-        {
-            await StopAsync(process);
-            await Task.WhenAll(output, errors);
-        }
-    }
-
     internal static Task StopAsync(OwnedProcess process) => process.StopAsync(TimeSpan.FromSeconds(10));
 }

@@ -90,7 +90,15 @@ async fn exercise_collector(case: &str) {
     let capture = LogCapture::default();
     let writer = capture.clone().and(std::io::stderr);
     let logging = tokio::task::spawn_blocking(move || {
-        isoplaned::logs::init(true, writer, "diagnostic-test", Some(&endpoint), None).unwrap()
+        isoplaned::logs::init_with_limits(
+            true,
+            writer,
+            "diagnostic-test",
+            Some(&endpoint),
+            None,
+            Default::default(),
+        )
+        .unwrap()
     })
     .await
     .unwrap();
@@ -188,7 +196,15 @@ async fn exercise_trace_collector(partial: bool) {
     let capture = LogCapture::default();
     let writer = capture.clone().and(std::io::stderr);
     let logging = tokio::task::spawn_blocking(move || {
-        isoplaned::logs::init(true, writer, "trace-diagnostic-test", None, Some(&endpoint)).unwrap()
+        isoplaned::logs::init_with_limits(
+            true,
+            writer,
+            "trace-diagnostic-test",
+            None,
+            Some(&endpoint),
+            Default::default(),
+        )
+        .unwrap()
     })
     .await
     .unwrap();

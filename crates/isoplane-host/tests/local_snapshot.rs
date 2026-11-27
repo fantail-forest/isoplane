@@ -135,6 +135,8 @@ impl ConnectionFactory for ConnectGate {
 struct Rig {
     cell: Arc<Cell>,
     module: ModuleId,
+    activator: Arc<EngineActivator>,
+    manifest: AppManifest,
     counts: Arc<StorageCounts>,
     _directory: tempfile::TempDir,
 }
@@ -190,7 +192,7 @@ impl Rig {
                     handler_after_ms: 0,
                     ..Default::default()
                 },
-                ..CellConfig::for_test("local-snapshot")
+                ..isoplane_harness::fakes::cell_config("local-snapshot")
             },
             Arc::new(Services {
                 egress,
@@ -201,11 +203,10 @@ impl Rig {
         .expect("cell must start with real snapshots");
         cell.set_node_coordinated_reclamation();
         let module = ModuleId::new("snapshot-probe", "v1");
-        let activator = Arc::new(EngineActivator::new(engine, template, module.clone()));
-        cell.register_module(
-            "snapshot-test",
-            activator,
-            AppManifest {
+        let rig = Self {
+            cell,
+            activator: Arc::new(EngineActivator::new(engine, template, module.clone())),
+            manifest: AppManifest {
                 name: "snapshot-probe".into(),
                 guest_memory_bytes: Some(
                     GuestMemoryBytes::new(max_memory_bytes).expect("guest ceiling must be valid"),
@@ -215,14 +216,33 @@ impl Rig {
                 bindings: Bindings::default(),
                 init_visible_vars: vec![],
             },
-        )
-        .expect("guest must register");
-        Self {
-            cell,
             module,
             counts,
             _directory: directory,
-        }
+        };
+        rig.register();
+        rig
+    }
+
+    /// Registers the probe. Registering it again replaces the registration,
+    /// which discards the idle instances of the one it replaces.
+    fn register(&self) {
+        self.cell
+            .register_module(
+                "snapshot-test",
+                self.activator.clone(),
+                self.manifest.clone(),
+            )
+            .expect("guest must register");
+    }
+
+    /// Replaces the registration once the completed guest is idle in its pool.
+    fn discard_idle_guest(&self) {
+        wait_until(
+            || self.cell.idle_instances(&self.module) == Some(1),
+            "completed guest must return to its pool",
+        );
+        self.register();
     }
 
     fn submit(&self, path: &str) -> mpsc::Receiver<DispatchResult> {
@@ -297,7 +317,7 @@ fn growing_to_the_memory_ceiling_preserves_the_final_page_through_local_reclamat
         2 * isoplane_abi::WASM_PAGE_SIZE as u64,
         Arc::new(HostEgressPolicy::new(
             Box::new(NoDns),
-            isoplane_host::egress::ConnectionLimits::uniform(1).expect("connection limits"),
+            isoplane_harness::uniform_connection_limits(1),
         )),
     );
     let first = rig
@@ -341,10 +361,7 @@ fn growing_to_the_memory_ceiling_preserves_the_final_page_through_local_reclamat
         rig.counts.reserved_bytes.load(Ordering::SeqCst) > 2 * isoplane_abi::WASM_PAGE_SIZE as u64,
         "admission must reserve maximum memory plus snapshot metadata"
     );
-    wait_until(
-        || rig.cell.discard_instance(first.instance).is_ok(),
-        "completed guest must reach its disposable boundary",
-    );
+    rig.discard_idle_guest();
     assert_eq!(
         rig.counts.live.load(Ordering::SeqCst),
         0,
@@ -384,7 +401,7 @@ fn managed_stream_snapshot(runtime: GuestRuntime) {
     let policy = Arc::new(
         HostEgressPolicy::new(
             Box::new(NoDns),
-            isoplane_host::egress::ConnectionLimits::uniform(1).expect("connection limits"),
+            isoplane_harness::uniform_connection_limits(1),
         )
         .with_connections(connections.clone())
         .with_destinations(Arc::new(ExactPeer(peer))),
@@ -508,10 +525,7 @@ fn managed_stream_snapshot(runtime: GuestRuntime) {
         1,
         "read completion must restore the saved guest"
     );
-    wait_until(
-        || rig.cell.discard_instance(instance).is_ok(),
-        "completed guest must release its cached snapshot",
-    );
+    rig.discard_idle_guest();
     assert_eq!(
         rig.counts.live.load(Ordering::SeqCst),
         0,

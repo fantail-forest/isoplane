@@ -83,7 +83,7 @@ async fn http_uses_the_injected_connection_provider_with_dispatch_identity() {
     let policy = Arc::new(
         HostEgressPolicy::new(
             Box::new(NoDns),
-            isoplane_host::egress::ConnectionLimits::uniform(1).expect("connection limits"),
+            isoplane_harness::uniform_connection_limits(1),
         )
         .with_destinations(Arc::new(ExactPeer(address)))
         .with_connections(connections.clone()),
@@ -128,7 +128,7 @@ async fn http_refuses_a_connection_provider_that_returns_a_different_peer() {
     let policy = Arc::new(
         HostEgressPolicy::new(
             Box::new(NoDns),
-            isoplane_host::egress::ConnectionLimits::uniform(1).expect("connection limits"),
+            isoplane_harness::uniform_connection_limits(1),
         )
         .with_connections(connections),
     );
@@ -163,7 +163,7 @@ async fn http_denies_a_private_destination_before_invoking_the_connection_provid
     let policy = Arc::new(
         HostEgressPolicy::new(
             Box::new(NoDns),
-            isoplane_host::egress::ConnectionLimits::uniform(1).expect("connection limits"),
+            isoplane_harness::uniform_connection_limits(1),
         )
         .with_connections(connections.clone()),
     );
@@ -226,7 +226,7 @@ async fn streamed_response(
     let policy = Arc::new(
         HostEgressPolicy::new(
             Box::new(NoDns),
-            isoplane_host::egress::ConnectionLimits::uniform(1).expect("connection limits"),
+            isoplane_harness::uniform_connection_limits(1),
         )
         .with_destinations(Arc::new(ExactPeer(address))),
     );

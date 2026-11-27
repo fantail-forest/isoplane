@@ -194,7 +194,7 @@ mod tests {
                 }])
                 .unwrap(),
                 application_files: PlatformFiles::default(),
-                runtime_profile: isoplane_prepare::RuntimeProfile::raw_wasm(),
+                runtime_profile: isoplane_prepare::RuntimeProfile::RawWasm,
             };
             let executable = directory.path().join("runtime");
             std::fs::write(&executable, b"runtime version one").unwrap();
@@ -558,9 +558,13 @@ mod tests {
             (func (export "isoplane_wake") (param i64 i32 i32) (result i64) (i64.const 1)))"#,
         )
         .unwrap();
-        let violations =
-            isoplane_runtime::validate(&hostile, fixture.project.manifest.memory_limit())
-                .unwrap_err();
+        let violations = isoplane_runtime::validate_with_limits(
+            &hostile,
+            fixture.project.manifest.memory_limit(),
+            None,
+            &Default::default(),
+        )
+        .unwrap_err();
         assert_eq!(
             violations.len(),
             1,

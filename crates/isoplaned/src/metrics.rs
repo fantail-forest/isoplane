@@ -267,8 +267,18 @@ mod tests {
         NodeSnapshot {
             dispatches_total: 12,
             occupancy_ms_total: 4.25,
-            activation: Latency::from_samples(vec![300, 700, 900, 4000]),
-            wake: Latency::from_samples(vec![8000, 9000, 40000]),
+            activation: Latency {
+                p50_us: 700,
+                p99_us: 4000,
+                count: 4,
+                sum_us: 5900.0,
+            },
+            wake: Latency {
+                p50_us: 9000,
+                p99_us: 40000,
+                count: 3,
+                sum_us: 57000.0,
+            },
             instances_hot: 1,
             instances_parked: 3,
             instances_hibernated: 7,
@@ -347,16 +357,19 @@ mod tests {
     }
 
     #[test]
-    fn quantiles_come_out_of_the_samples() {
+    fn latency_quantiles_are_published_as_the_snapshot_gives_them() {
         let out = render("n1", &ProxyMetrics::new(), snap());
-        assert!(
-            out.contains("isoplane_activation_us{node=\"n1\",quantile=\"0.5\"} 700"),
-            "{out}"
-        );
-        assert!(
-            out.contains("isoplane_wake_us{node=\"n1\",quantile=\"0.5\"} 9000"),
-            "{out}"
-        );
+        for sample in [
+            "isoplane_activation_us{node=\"n1\",quantile=\"0.5\"} 700",
+            "isoplane_activation_us{node=\"n1\",quantile=\"0.99\"} 4000",
+            "isoplane_wake_us{node=\"n1\",quantile=\"0.5\"} 9000",
+            "isoplane_wake_us{node=\"n1\",quantile=\"0.99\"} 40000",
+        ] {
+            assert!(
+                out.lines().any(|line| line == sample),
+                "missing {sample}: {out}"
+            );
+        }
     }
 
     #[test]

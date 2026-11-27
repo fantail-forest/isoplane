@@ -8,8 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 
-use isoplane_abi::dispatch::HttpRequest;
-use isoplane_abi::host::{Dispatcher, HttpReply};
+use isoplane_abi::host::Dispatcher;
 use isoplane_host::cell::Services;
 use isoplane_host::ModuleId;
 use isoplane_host::{Cell, CellConfig, EngineActivator};
@@ -58,9 +57,6 @@ pub struct RealCells {
     preparation: Option<crate::preparation::PreparationConfig>,
     /// The shared runtimes application packages are prepared on.
     runtimes: Option<crate::runtimes::Runtimes>,
-    /// Compiled template artifacts, mapped rather than read, so a restart
-    /// does not recompile.
-    artifacts: std::path::PathBuf,
     cells: Vec<Arc<Cell>>,
     /// Applications admitted by the operator configuration.
     configured_applications: HashSet<String>,
@@ -96,28 +92,6 @@ impl RealPaths {
 }
 
 impl RealCells {
-    /// Returns the deployment currently registered for this owner's application.
-    pub fn registered_deployment(&self, app: &str, owner: &str) -> Option<String> {
-        if self.tenants.read().get(app).map(String::as_str) != Some(owner) {
-            return None;
-        }
-        self.modules
-            .read()
-            .iter()
-            .find(|module| module.app == app)
-            .map(|module| module.version.clone())
-    }
-
-    /// Builds one shared execution pool with per-application sandbox and resource bounds.
-    pub fn build(cfg: &crate::config::NodeConfig, paths: &RealPaths) -> anyhow::Result<Arc<Self>> {
-        Self::build_with_destinations(
-            cfg,
-            paths,
-            Arc::new(isoplane_host::egress::PublicDestinations),
-            &cfg.trust_bundle()?,
-        )
-    }
-
     /// Builds cells sharing the address policy used by their outbound
     /// transports, serving `trust` to every guest as its root store.
     pub fn build_with_destinations(
@@ -194,7 +168,6 @@ impl RealCells {
             engine,
             preparation: cfg.preparation.clone(),
             runtimes,
-            artifacts: paths.artifacts.clone(),
             cells,
             configured_applications,
             modules: RwLock::new(HashSet::new()),
@@ -252,18 +225,6 @@ impl RealCells {
         self.install_application(tenant, installed).await
     }
 
-    /// Local preparation using this node's existing compiler-owned artifact cache.
-    pub fn local_preparation(&self) -> anyhow::Result<isoplane_prepare::LocalPreparation> {
-        // SAFETY: the node owns this cache and uses only the atomic, content-addressed
-        // compiler writer required by the mapped loader.
-        let cache = unsafe {
-            isoplane_engine::CompilationCache::from_trusted_directory(self.artifacts.clone())
-        }?;
-        Ok(isoplane_prepare::LocalPreparation::with_cache(Arc::new(
-            cache,
-        ))?)
-    }
-
     /// Loads a newly prepared publication, retaining its backing lease in the activator.
     pub async fn install_application(
         &self,
@@ -278,8 +239,8 @@ impl RealCells {
             owner,
             receipt.manifest.clone(),
             template,
-            Some(receipt.clone()),
-            Some(lease),
+            receipt,
+            lease,
         )
         .await
     }
@@ -290,8 +251,8 @@ impl RealCells {
         tenant: &str,
         manifest: isoplane_abi::config::AppManifest,
         template: isoplane_engine::Template,
-        receipt: Option<crate::deploy::PreparedReceipt>,
-        lease: Option<Arc<isoplane_prepare::PreparationOwner>>,
+        receipt: crate::deploy::PreparedReceipt,
+        lease: Arc<isoplane_prepare::PreparationOwner>,
     ) -> anyhow::Result<ModuleId> {
         let _registration = self.registration.lock().await;
         anyhow::ensure!(
@@ -318,32 +279,22 @@ impl RealCells {
             .cells
             .first()
             .ok_or_else(|| anyhow::anyhow!("host execution pool is absent"))?;
-        let settings = match receipt.as_ref() {
-            Some(receipt) => {
-                anyhow::ensure!(
-                    receipt.manifest.name == module.app && receipt.version == module.version,
-                    "prepared settings receipt does not match the registered application version"
-                );
-                self.deployer.runtime_settings(tenant, receipt).await?
-            }
-            None => crate::settings::RuntimeSettings::default(),
-        };
-        let activator = match receipt {
-            Some(receipt) => {
-                let deployer = self.deployer.clone();
-                let engine = self.engine.clone();
-                EngineActivator::reloading(
-                    self.engine.clone(),
-                    template,
-                    module.clone(),
-                    Box::new(move || {
-                        let _held = &lease;
-                        deployer.restore_prepared(&engine, &receipt)
-                    }),
-                )
-            }
-            None => EngineActivator::new(self.engine.clone(), template, module.clone()),
-        };
+        anyhow::ensure!(
+            receipt.manifest.name == module.app && receipt.version == module.version,
+            "prepared settings receipt does not match the registered application version"
+        );
+        let settings = self.deployer.runtime_settings(tenant, &receipt).await?;
+        let deployer = self.deployer.clone();
+        let engine = self.engine.clone();
+        let activator = EngineActivator::reloading(
+            self.engine.clone(),
+            template,
+            module.clone(),
+            Box::new(move || {
+                let _held = &lease;
+                deployer.restore_prepared(&engine, &receipt)
+            }),
+        );
         cell.register_module_with_exceptions(
             tenant,
             Arc::new(activator),
@@ -359,7 +310,9 @@ impl RealCells {
         Ok(module)
     }
 
-    /// The exact execution engine used to admit and activate this node's prepared templates.
+    #[cfg(any(test, feature = "test-util"))]
+    /// The engine this node's templates are admitted and activated on. A template
+    /// prepared in memory can only be installed here when it was built on this engine.
     pub fn engine(&self) -> &isoplane_engine::IsoplaneEngine {
         &self.engine
     }
@@ -368,25 +321,6 @@ impl RealCells {
 /// Exact registered deployment dispatch through the shared execution pool.
 #[async_trait::async_trait]
 impl Dispatcher for RealCells {
-    async fn dispatch_http(
-        &self,
-        target: &isoplane_abi::host::RouteTarget,
-        req: HttpRequest,
-    ) -> anyhow::Result<HttpReply> {
-        self.cell_for(&target.app, &target.version)?
-            .dispatch_http(target, req)
-            .await
-    }
-
-    async fn dispatch_http_stream(
-        &self,
-        target: &isoplane_abi::host::RouteTarget,
-        req: HttpRequest,
-    ) -> anyhow::Result<isoplane_abi::host::HttpExchange> {
-        self.cell_for(&target.app, &target.version)?
-            .dispatch_http_stream(target, req)
-            .await
-    }
     async fn dispatch_http_upload(
         &self,
         target: &isoplane_abi::host::RouteTarget,

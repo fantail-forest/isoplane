@@ -41,15 +41,13 @@ pub use budget::{
     DispatchOutcome, ExecutionLimit, GraceEnd, OccupancyBudget, OccupancyMeasurement, TrapInfo,
     TrapKind,
 };
-pub use compiler::COMPILER_STACK_BYTES;
 pub use image::{MemoryImage, PAGE};
 pub use instance::{Completion, Instance, InstanceOps};
 pub use mapped::DormantInstance;
-pub use meter::clock_read_failures;
 pub use meter::try_occupancy_nanos;
 pub use pal::platform_files::{PlatformFile, PlatformFiles, PlatformFilesError};
 pub use snapshot::InstanceImage;
-pub use template::{ModuleHash, Template, TemplateStorageFailed, DEFERRED_INIT_SECTION};
+pub use template::{ModuleHash, Template, TemplateStorageFailed};
 
 use state::StoreState;
 
@@ -81,13 +79,7 @@ pub struct EngineConfig {
     pub compiler_stack_bytes: usize,
     /// Maximum native stack bytes consumed by one slice.
     pub max_wasm_stack_bytes: usize,
-    /// Period of the epoch watchdog. Grace is delivered by epoch ticks, so
-    /// [`IsoplaneEngine::new`] refuses a tick too coarse to fit
-    /// [`budget::MIN_GRACE_TICKS`] inside [`budget::GRACE_FLOOR_NS`].
-    pub epoch_tick_us: u64,
     pub pooling: bool,
-    /// Cranelift bounds-check masking and pointer sanitisation on loads.
-    pub spectre_mitigations: bool,
     /// `PROT_NONE` space after each slot's linear memory, never mapped, so
     /// Cranelift can drop the bounds check on any access whose static offset
     /// lands inside it. It does not enlarge what a guest may address. The
@@ -117,9 +109,7 @@ impl Default for EngineConfig {
             max_tables_per_module: isoplane_abi::config::DEFAULT_TABLES_PER_MODULE,
             compiler_stack_bytes: isoplane_abi::config::DEFAULT_COMPILER_STACK_BYTES,
             max_wasm_stack_bytes: isoplane_abi::config::DEFAULT_WASM_STACK_BYTES,
-            epoch_tick_us: 200,
             pooling: true,
-            spectre_mitigations: true,
             guard_size_bytes: isoplane_abi::config::DEFAULT_MEMORY_GUARD_BYTES,
             platform_files: PlatformFiles::default(),
         }
@@ -149,18 +139,16 @@ impl IsoplaneEngine {
         self.inner.cfg.clone()
     }
 
-    /// Fails on a configuration wasmtime rejects, on an epoch tick too coarse
-    /// to deliver the grace window, and on an engine that turns out to accept
-    /// threads or shared memory.
+    /// Fails on a configuration wasmtime rejects and on an engine that turns
+    /// out to accept threads or shared memory.
     pub fn new(cfg: EngineConfig) -> Result<Self> {
-        budget::check_grace_deliverable(cfg.epoch_tick_us)?;
         // Before wasmtime installs its own handler, so wasmtime passes on the faults it does not claim.
         #[cfg(target_os = "linux")]
         storage_fault::install()?;
         let wasmtime = wtconfig::build_engine(&cfg)?;
         wtconfig::assert_feature_set(&wasmtime)?;
         let linker = linker::build_linker(&wasmtime).map_err(anyhow::Error::from)?;
-        let watchdog = watchdog::Watchdog::start(wasmtime.clone(), cfg.epoch_tick_us)?;
+        let watchdog = watchdog::Watchdog::start(wasmtime.clone())?;
         let fingerprint = wtconfig::engine_fingerprint(&wasmtime, &cfg);
         Ok(Self {
             inner: Arc::new(EngineInner {

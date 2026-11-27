@@ -17,11 +17,6 @@ pub enum RuntimeProfile {
 }
 
 impl RuntimeProfile {
-    /// Profile for explicitly raw WASM, without invented managed provenance.
-    pub fn raw_wasm() -> Self {
-        Self::RawWasm
-    }
-
     /// The memory maximum a module of this profile may declare, given its
     /// application's limit: that limit, except for a shared runtime, which
     /// can declare the complete wasm32 address range to serve applications

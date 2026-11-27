@@ -69,6 +69,7 @@ pub struct PreparedInstallation {
 }
 
 impl PreparedInstallation {
+    #[cfg(any(test, feature = "test-util"))]
     /// Transfers artifact ownership and returns the producer observations separately.
     pub fn into_application(
         self,
@@ -181,7 +182,7 @@ impl Deployer {
     ) -> anyhow::Result<PreparedInstallation> {
         let (report, request, identity) =
             self.admit_request(manifest, wasm, options, context).await?;
-        let (product, artifact, baseline) = match &context.runtime {
+        let (product, artifact, baseline): (_, _, Option<String>) = match &context.runtime {
             #[cfg(target_os = "linux")]
             isoplane_prepare::RuntimeProfile::SharedRuntime { .. } => {
                 anyhow::ensure!(

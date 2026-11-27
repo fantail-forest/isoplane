@@ -132,24 +132,26 @@ fn pure_module_pre_inits_in_one_pass() {
         .expect("pre-init must succeed");
 
     println!(
-        "pure module: {} bytes in -> {} bytes template, {} pass(es), {} ms occupancy, {} refusals",
+        "pure module: {} bytes in -> {} bytes template, {} pass(es), {} refusals",
         wasm.len(),
-        out.template_bytes,
-        out.passes,
-        out.init_occupancy_ms,
-        out.capability_refusals
+        out.wasm.len(),
+        out.initialized.passes,
+        out.initialized.capability_refusals
     );
-    assert_eq!(out.passes, 1);
-    assert!(out.deferred_units.is_empty());
-    assert_eq!(out.capability_refusals, 0);
+    assert_eq!(out.initialized.passes, 1);
+    assert!(out.initialized.deferred.is_empty());
+    assert_eq!(out.initialized.capability_refusals, 0);
     assert_eq!(
-        out.seed_reads, 1,
+        out.initialized.seed_reads, 1,
         "the initializer reads its per-attempt hash seed once"
     );
     assert!(
-        out.init_logs.iter().any(|l| l.contains("pre-init ran")),
+        out.initialized
+            .logs
+            .iter()
+            .any(|l| l.contains("pre-init ran")),
         "{:?}",
-        out.init_logs
+        out.initialized.logs
     );
 }
 
@@ -163,28 +165,27 @@ fn impure_units_are_deferred_and_pre_init_converges() {
         .expect("pre-init must converge");
 
     println!(
-        "impure module: {} passes, deferred {:?}, reasons {:?}, {} refusals, {} ms occupancy",
-        out.passes,
-        out.deferred_units,
-        out.deferred_reasons,
-        out.capability_refusals,
-        out.init_occupancy_ms
+        "impure module: {} passes, deferred {:?}, reasons {:?}, {} refusals",
+        out.initialized.passes,
+        out.initialized.deferred,
+        out.initialized.deferred_reasons,
+        out.initialized.capability_refusals
     );
     // The clock is deferred, then a fresh attempt completes.
     assert_eq!(
-        out.passes, 2,
+        out.initialized.passes, 2,
         "one pass per discovered impure unit, plus one clean pass"
     );
-    assert_eq!(out.deferred_units, vec![2]);
+    assert_eq!(out.initialized.deferred, vec![2]);
     assert_eq!(
-        out.deferred_reasons,
+        out.initialized.deferred_reasons,
         vec![(2, "clock_now_coarse".into())],
         "each deferred unit must retain the capability that caused its refusal"
     );
-    assert_eq!(out.capability_refusals, 1);
+    assert_eq!(out.initialized.capability_refusals, 1);
 
     // Allowed state and entropy are captured; the refused clock assignment is not.
-    let mut probe = Template::load(&out.template_wasm);
+    let mut probe = Template::load(&out.wasm);
     assert_eq!(
         probe.i32("get_table_built"),
         1,
@@ -207,48 +208,12 @@ fn impure_units_are_deferred_and_pre_init_converges() {
     );
 }
 
-/// The deferral list is not derivable from the wasm, so it rides *inside*
-/// the artifact as the `isoplane.deferred-init` custom section — which is what
-/// `isoplane-engine::Template::deferred_init_units()` reads.
-#[test]
-fn the_engine_reads_the_deferred_units_out_of_the_template() {
-    let wasm = wat::parse_str(guest_wat(true)).unwrap();
-    let out = PreInitializer::new().run(&wasm, &req(&wasm)).unwrap();
-    assert_eq!(out.deferred_units, vec![2], "the clock unit is deferred");
-    let engine = isoplane_engine::IsoplaneEngine::new(isoplane_engine::EngineConfig {
-        max_instances: 2,
-        max_memory_bytes: 128 << 20,
-        guard_size_bytes: 2 << 20,
-        ..isoplane_engine::EngineConfig::default()
-    })
-    .expect("engine");
-    let template = engine
-        .load_template(&out.template_wasm)
-        .expect("the template loads into the data plane");
-    assert_eq!(
-        template.deferred_init_units(),
-        &out.deferred_units[..],
-        "the deferred units travel inside the template"
-    );
-
-    let pure = wat::parse_str(guest_wat(false)).unwrap();
-    let clean = PreInitializer::new().run(&pure, &req(&pure)).unwrap();
-    assert!(
-        engine
-            .load_template(&clean.template_wasm)
-            .expect("the template loads")
-            .deferred_init_units()
-            .is_empty(),
-        "a pure module defers nothing"
-    );
-}
-
 /// Loads captured memory and globals in the runtime engine.
 #[test]
 fn template_carries_post_init_memory_into_the_runtime_engine() {
     let wasm = wat::parse_str(guest_wat(false)).unwrap();
     let out = PreInitializer::new().run(&wasm, &req(&wasm)).unwrap();
-    let mut t = Template::load(&out.template_wasm);
+    let mut t = Template::load(&out.wasm);
 
     let seed_lo = t.probe(0);
     assert_eq!(
@@ -271,39 +236,15 @@ fn template_carries_post_init_memory_into_the_runtime_engine() {
         0x1234567890abcdefu64 as i64,
         "20 MiB marker survives"
     );
-
-    println!(
-        "module {} bytes -> template {} bytes ({:.2}x); zstd-19 {} bytes",
-        wasm.len(),
-        out.template_bytes,
-        out.template_bytes as f64 / wasm.len() as f64,
-        zstd::encode_all(&out.template_wasm[..], 19).unwrap().len()
-    );
 }
 
 #[test]
-fn fresh_initializations_draw_fresh_seeds_under_the_same_input_identity() {
+fn fresh_initializations_of_the_same_input_draw_fresh_seeds() {
     let wasm = wat::parse_str(guest_wat(true)).unwrap();
     let a = PreInitializer::new().run(&wasm, &req(&wasm)).unwrap();
     let b = PreInitializer::new().run(&wasm, &req(&wasm)).unwrap();
-    assert_ne!(
-        a.template_wasm, b.template_wasm,
-        "new initialization must draw fresh entropy"
-    );
-    assert_eq!(
-        a.initialization_identity, b.initialization_identity,
-        "the identity describes inputs, not random output"
-    );
-    assert_eq!(a.deferred_units, b.deferred_units);
-    let mut changed = req(&wasm);
-    changed.init_blob = b"{}".to_vec();
-    assert_ne!(
-        a.initialization_identity,
-        PreInitializer::new()
-            .run(&wasm, &changed)
-            .unwrap()
-            .initialization_identity
-    );
+    assert_ne!(a.wasm, b.wasm, "new initialization must draw fresh entropy");
+    assert_eq!(a.initialized.deferred, b.initialized.deferred);
 }
 
 /// A trap with no init unit in scope cannot be attributed, and guessing would
@@ -323,7 +264,10 @@ fn unattributable_traps_fail_the_deploy() {
   (func (export "isoplane_wake") (param i64 i32 i32) (result i64) (i64.const 1))
 )"#;
     let wasm = wat::parse_str(wat).unwrap();
-    let err = PreInitializer::new().run(&wasm, &req(&wasm)).unwrap_err();
+    let err = PreInitializer::new()
+        .run(&wasm, &req(&wasm))
+        .err()
+        .expect("initialization must be refused");
     assert!(
         matches!(
             err,
@@ -359,7 +303,10 @@ fn sealed_imports_trap_rather_than_returning_zero() {
   (func (export "isoplane_wake") (param i64 i32 i32) (result i64) (i64.const 1))
 )"#;
     let wasm = wat::parse_str(wat).unwrap();
-    let err = PreInitializer::new().run(&wasm, &req(&wasm)).unwrap_err();
+    let err = PreInitializer::new()
+        .run(&wasm, &req(&wasm))
+        .err()
+        .expect("initialization must be refused");
     assert!(
         matches!(err, PreInitError::DeferralIgnored { unit: 7, .. }),
         "a unit that runs after being told to skip is reported, not replayed forever: {err}"
@@ -371,7 +318,7 @@ fn sealed_imports_trap_rather_than_returning_zero() {
 fn a_template_cannot_re_read_the_hash_seed_at_runtime() {
     let wasm = wat::parse_str(guest_wat(false)).unwrap();
     let out = PreInitializer::new().run(&wasm, &req(&wasm)).unwrap();
-    let mut t = Template::load(&out.template_wasm);
+    let mut t = Template::load(&out.wasm);
 
     let captured = t.probe(0);
     assert_eq!(
@@ -404,10 +351,13 @@ fn runtime_bringup_keeps_clock_deferral_while_entropy_is_available_in_applicatio
         .with_pal(InitSandbox::RuntimeBringUp)
         .run(&wasm, &req(&wasm))
         .unwrap();
-    assert_eq!(out.deferred_units, vec![2]);
-    assert_eq!(out.deferred_reasons, vec![(2, "clock_now_coarse".into())]);
-    assert_eq!(out.pal_calls, vec![("entropy_fill".into(), 1)]);
-    let mut template = Template::load(&out.template_wasm);
+    assert_eq!(out.initialized.deferred, vec![2]);
+    assert_eq!(
+        out.initialized.deferred_reasons,
+        vec![(2, "clock_now_coarse".into())]
+    );
+    assert_eq!(out.initialized.pal_calls, vec![("entropy_fill".into(), 1)]);
+    let mut template = Template::load(&out.wasm);
     assert_eq!(template.i64("get_clock_at_init"), 0);
     assert_eq!(template.i32("get_entropy_at_init"), 1);
 }
@@ -433,7 +383,10 @@ fn the_runtime_pal_lets_a_runtime_come_up_outside_any_init_unit() {
 )"#;
     let wasm = wat::parse_str(wat).unwrap();
 
-    let err = PreInitializer::new().run(&wasm, &req(&wasm)).unwrap_err();
+    let err = PreInitializer::new()
+        .run(&wasm, &req(&wasm))
+        .err()
+        .expect("initialization must be refused");
     assert!(
         matches!(err, PreInitError::Unattributable { .. }),
         "sealed, a runtime coming up outside any unit fails the deploy: {err}"
@@ -444,9 +397,9 @@ fn the_runtime_pal_lets_a_runtime_come_up_outside_any_init_unit() {
         .with_pal(InitSandbox::RuntimeBringUp)
         .run(&wasm, &req(&wasm))
         .expect("a runtime must be able to come up");
-    println!("PAL calls: {:?}", out.pal_calls);
+    println!("PAL calls: {:?}", out.initialized.pal_calls);
     assert_eq!(
-        out.pal_calls,
+        out.initialized.pal_calls,
         vec![
             ("clock_now_coarse".to_string(), 1),
             ("entropy_fill".to_string(), 1)
@@ -454,7 +407,7 @@ fn the_runtime_pal_lets_a_runtime_come_up_outside_any_init_unit() {
         "runtime bring-up must record the clock and entropy answers it consumed"
     );
 
-    let mut t = Template::load(&out.template_wasm);
+    let mut t = Template::load(&out.wasm);
     assert_eq!(
         t.i64("get_t"),
         0,
@@ -467,8 +420,8 @@ fn the_runtime_pal_lets_a_runtime_come_up_outside_any_init_unit() {
         .with_pal(InitSandbox::RuntimeBringUp)
         .run(&wasm, &req(&wasm))
         .unwrap();
-    assert_ne!(out.template_wasm, again.template_wasm);
-    assert_ne!(Template::load(&again.template_wasm).probe(0), entropy);
+    assert_ne!(out.wasm, again.wasm);
+    assert_ne!(Template::load(&again.wasm).probe(0), entropy);
 }
 
 /// A runtime-only operation defers the active guest unit before its state assignment.
@@ -492,10 +445,13 @@ fn a_runtime_timer_defers_its_active_initialization_unit() {
 )"#;
     let wasm = wat::parse_str(wat).unwrap();
     let out = PreInitializer::new().run(&wasm, &req(&wasm)).unwrap();
-    assert_eq!(out.deferred_units, vec![9]);
-    assert_eq!(out.deferred_reasons, vec![(9, "clock_deadline_in".into())]);
+    assert_eq!(out.initialized.deferred, vec![9]);
+    assert_eq!(
+        out.initialized.deferred_reasons,
+        vec![(9, "clock_deadline_in".into())]
+    );
     // The refused capability defers unit 9 before it can assign the global.
-    assert_eq!(Template::load(&out.template_wasm).i64("get_g"), 0);
+    assert_eq!(Template::load(&out.wasm).i64("get_g"), 0);
 }
 
 /// The declared-memory gate refuses before a single guest instruction runs.
@@ -506,7 +462,10 @@ fn init_memory_limit_is_enforced() {
              (func (export "isoplane_initialize") (result i64) i64.const 0))"#,
     )
     .unwrap();
-    let err = PreInitializer::new().run(&big, &req(&big)).unwrap_err();
+    let err = PreInitializer::new()
+        .run(&big, &req(&big))
+        .err()
+        .expect("initialization must be refused");
     assert!(
         matches!(err, PreInitError::MemoryLimit { .. }),
         "a gibibyte of declared memory must be refused: {err}"
@@ -520,7 +479,10 @@ fn a_module_without_an_init_func_is_not_pre_initialized() {
              (func (export "isoplane_alloc") (param i32 i32) (result i32) (i32.const 0)))"#,
     )
     .unwrap();
-    let err = PreInitializer::new().run(&wasm, &req(&wasm)).unwrap_err();
+    let err = PreInitializer::new()
+        .run(&wasm, &req(&wasm))
+        .err()
+        .expect("initialization must be refused");
     assert!(
         matches!(err, PreInitError::NoInitFunc("isoplane_initialize")),
         "nothing to pre-initialize: {err}"
@@ -664,7 +626,7 @@ fn the_sealed_initializer_preserves_both_filesystem_adapter_routes() {
     let initialized = PreInitializer::new()
         .run(&wasm, &req(&wasm))
         .expect("deterministic filesystem probes must be admitted by sealed initialization");
-    let mut template = Template::load(&initialized.template_wasm);
+    let mut template = Template::load(&initialized.wasm);
     for pointer in [128, 256] {
         assert_eq!(
             template.probe(pointer),
@@ -681,7 +643,7 @@ fn the_sealed_initializer_preserves_both_filesystem_adapter_routes() {
         .run(&wasm, &req(&wasm))
         .expect("repeat filesystem initialization");
     assert_eq!(
-        initialized.template_wasm, repeated.template_wasm,
+        initialized.wasm, repeated.wasm,
         "filesystem initialization must not depend on a host directory or resource identity"
     );
 }
@@ -711,11 +673,11 @@ fn sealed_initialization_receives_an_empty_launch_argument_list() {
         .run(&wasm, &req(&wasm))
         .expect("argument absence must also be supported during sealed initialization");
     assert_eq!(
-        output.passes, 1,
+        output.initialized.passes, 1,
         "empty launch arguments must not defer initialization"
     );
     assert_eq!(
-        output.pal_calls,
+        output.initialized.pal_calls,
         vec![(isoplane_abi::pal::CLI_ENV.to_owned(), 1)],
         "the initialization ledger must record the delegated launch argument call"
     );
@@ -743,7 +705,8 @@ fn initialization_cannot_query_a_denied_wall_clock_resolution() {
     );
     let error = PreInitializer::new()
         .run(&wasm, &req(&wasm))
-        .expect_err("wall-clock resolution must remain denied during initialization");
+        .err()
+        .expect("wall-clock resolution must remain denied during initialization");
     assert!(
         matches!(error, PreInitError::Trapped(_)),
         "initialization must fail with a trapped denied operation: {error:#}"

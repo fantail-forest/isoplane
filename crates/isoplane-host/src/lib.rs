@@ -56,7 +56,7 @@ pub mod slot;
 pub mod threads;
 pub use activator::{EngineActivator, ReloadedTemplateDiffers, TemplateReload};
 pub use bindings::{CellBindings, InstanceCtx};
-pub use breaker::{BreakerState, HangBreaker};
+pub use breaker::HangBreaker;
 pub use cell::{Cell, CellConfig, DispatchResult, Services, Target};
 pub use disposition::Disposition;
 pub use egress::{DenyReason, HostEgressPolicy, Resolver};
@@ -123,15 +123,12 @@ pub fn now_ms() -> u64 {
 }
 
 /// Native monotonic nanoseconds, with no per-process origin subtracted.
-/// `None` is a failed read, counted in [`meters::clock_read_failures`]; every
+/// `None` is a failed read; every
 /// consumer subtracts on unsigned times, so a read flattened to zero would
 /// produce a duration near 2^64 rather than a missing one.
 pub fn mono_ns() -> Option<u64> {
     meters::try_read_mono_ns()
 }
-
-/// Monotonic timestamp for measuring active worker intervals.
-pub use meters::read_occupancy_ns as occupancy_ns;
 
 /// Maximum simultaneous request dispatches sharing one instance.
 pub(crate) const DISPATCHES_PER_INSTANCE: usize = 8;

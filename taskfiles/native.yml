@@ -19,4 +19,4 @@ tasks:
       CARGO_TARGET_DIR: '{{.NATIVE_TARGET}}'
       CARGO_BUILD_BUILD_DIR: '{{.NATIVE_TARGET}}'
     cmds:
-      - '{{.DEVELOPMENT_COMMAND}}cargo build --locked --release -p isoplane-native'
+      - '{{.REFUSE_TEST_FEATURES}}cargo build --locked --release -p isoplane-native --message-format=json-render-diagnostics'

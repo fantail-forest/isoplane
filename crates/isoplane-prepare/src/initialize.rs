@@ -54,8 +54,6 @@ impl Initialization {
 pub struct Initialized {
     /// Units deferred because they requested forbidden capabilities.
     pub deferred: Vec<u32>,
-    /// Execution and reactor occupancy across all passes.
-    pub occupancy_ns: u64,
     /// Preparation occupancy across compilation, replay and verification, excluding idle I/O waits.
     pub preparation_occupancy_ns: u64,
     /// The capability each deferred unit attempted.
@@ -401,7 +399,6 @@ pub(crate) fn initialize_with_cache(
                 restored: None,
                 initialized: Initialized {
                     deferred: Vec::new(),
-                    occupancy_ns: usage.occupancy_ns,
                     preparation_occupancy_ns: preparation_occupancy()?
                         .saturating_sub(occupancy_start_ns)
                         .saturating_sub(usage.unoccupied_ns),
@@ -456,7 +453,6 @@ pub(crate) fn initialize_with_cache(
                     instrumented,
                     instance.memory(),
                     &captured.globals,
-                    &deferred,
                     &prepared_resources,
                 )?;
                 let template = engine
@@ -473,7 +469,6 @@ pub(crate) fn initialize_with_cache(
                         &mut instance,
                         identity,
                         prepared_resources.clone(),
-                        deferred.clone(),
                     )
                     .map_err(|error| PrepareError::State(error.into()))?;
                 let captured = instance
@@ -500,7 +495,6 @@ pub(crate) fn initialize_with_cache(
                         &mut instance,
                         identity,
                         prepared_resources.clone(),
-                        deferred.clone(),
                     )
                     .map_err(|error| PrepareError::State(error.into()))?;
                 let captured = instance
@@ -531,7 +525,6 @@ pub(crate) fn initialize_with_cache(
                         &mut instance,
                         identity,
                         prepared_resources.clone(),
-                        deferred.clone(),
                     )
                     .map_err(|error| PrepareError::State(error.into()))?;
                 let captured = instance
@@ -585,7 +578,6 @@ pub(crate) fn initialize_with_cache(
             restored: Some(restored_template),
             initialized: Initialized {
                 deferred,
-                occupancy_ns: usage.occupancy_ns,
                 preparation_occupancy_ns: preparation_occupancy()?
                     .saturating_sub(occupancy_start_ns)
                     .saturating_sub(usage.unoccupied_ns),
@@ -644,18 +636,17 @@ fn load(
     Ok((template, Some(instrumented), compiled))
 }
 
-/// The instrumented module with the initialized memory, globals and deferred
-/// units baked in, and the resources the host holds for it.
+/// The instrumented module with the initialized memory and globals baked in,
+/// and the resources the host holds for it.
 fn portable_module(
     instrumented: &bake::Instrumented,
     memory: &[u8],
     globals: &[isoplane_engine::snapshot::GlobalValue],
-    deferred: &[u32],
     resources: &isoplane_abi::native_io::PreparedResources,
 ) -> Result<Vec<u8>, PrepareError> {
     let globals = captured_globals(instrumented, globals)?;
     let mut module =
-        bake::bake(&instrumented.wasm, memory, &globals, deferred).map_err(PrepareError::State)?;
+        bake::bake(&instrumented.wasm, memory, &globals).map_err(PrepareError::State)?;
     let resources = postcard::to_allocvec(resources).map_err(PrepareError::Encoding)?;
     wasm_encoder::Section::append_to(
         &wasm_encoder::CustomSection {

@@ -8,7 +8,7 @@ use isoplane_test_support::wait_for;
 
 #[test]
 fn terminal_dispatches_release_the_breaker_probe_before_their_last_reference() {
-    let cell = cell(CellConfig::for_test("probe-completion"));
+    let cell = cell(crate::fakes::cell_config("probe-completion"));
     let module = app(&cell, "probe-completion", FakeBehaviour::done());
     let key = crate::breaker::BreakerKey {
         module: module.clone(),
@@ -204,7 +204,7 @@ pub(in crate::cell) fn panic_activator(module: ModuleId) -> Arc<dyn Activator> {
 fn completion_events_keep_queue_and_park_wall_separate_from_hot_occupancy() {
     let cell = cell(CellConfig {
         exec_threads: 0,
-        ..CellConfig::for_test("completion-clock")
+        ..crate::fakes::cell_config("completion-clock")
     });
     let now = Arc::new(AtomicU64::new(100));
     let clock = now.clone();
@@ -259,11 +259,6 @@ fn completion_events_keep_queue_and_park_wall_separate_from_hot_occupancy() {
         .expect("completed response");
     let records = events.completed(1);
     assert_eq!(
-        cell.metrics().tenants["acme"].dispatches,
-        1,
-        "three slices complete one tenant dispatch"
-    );
-    assert_eq!(
         records.len(),
         1,
         "all hot slices must produce one terminal event"
@@ -295,25 +290,27 @@ fn completion_events_keep_queue_and_park_wall_separate_from_hot_occupancy() {
 }
 
 #[test]
-fn tenant_diagnostics_count_terminal_dispatches_and_promoted_traps() {
-    for (terminal, latched, traps) in [
-        (Step::Terminal(PollStatus::Failed), false, 0),
-        (Step::Terminal(PollStatus::Cancelled), false, 0),
-        (Step::BudgetExit { overage_ns: 1 }, false, 0),
-        (Step::HardKill, false, 0),
-        (Step::Trap(TrapCode::Panic), false, 1),
+fn a_parked_dispatch_completes_once_as_a_guest_trap_only_when_it_trapped() {
+    for (terminal, latched, trapped) in [
+        (Step::Terminal(PollStatus::Failed), false, false),
+        (Step::Terminal(PollStatus::Cancelled), false, false),
+        (Step::BudgetExit { overage_ns: 1 }, false, false),
+        (Step::HardKill, false, false),
+        (Step::Trap(TrapCode::Panic), false, true),
         (
             Step::Done {
                 status: 200,
                 body: vec![],
             },
             true,
-            1,
+            true,
         ),
     ] {
+        let events = Events::default();
+        let _subscriber = events.install();
         let cell = cell(CellConfig {
             exec_threads: 0,
-            ..CellConfig::for_test("tenant-completion")
+            ..crate::fakes::cell_config("tenant-completion")
         });
         let module = app(
             &cell,
@@ -342,21 +339,15 @@ fn tenant_diagnostics_count_terminal_dispatches_and_promoted_traps() {
         let result = response
             .recv_timeout(Duration::from_secs(10))
             .expect("final response");
-        let json: serde_json::Value =
-            serde_json::from_str(&cell.metrics_json()).expect("diagnostics");
+        let outcomes: Vec<_> = events
+            .completed(1)
+            .iter()
+            .map(|record| record["outcome"] == "guest_trap")
+            .collect();
         assert_eq!(
-            json["tenants"]["acme"]["traps"], traps,
-            "final trap classification: {result:?}"
-        );
-        assert_eq!(
-            json["tenants"]["acme"]["dispatches"], 1,
-            "one parked dispatch: {result:?}"
-        );
-        let text = cell.metrics_text();
-        assert!(
-            text.lines()
-                .any(|line| line == format!("isoplane_tenant_traps{{tenant=\"acme\"}} {traps}")),
-            "{text}"
+            outcomes,
+            [trapped],
+            "one completion with the dispatch's final trap classification: {result:?}"
         );
         cell.shutdown();
     }
@@ -366,7 +357,7 @@ fn tenant_diagnostics_count_terminal_dispatches_and_promoted_traps() {
 fn unavailable_admission_clock_is_reported_as_missing_total_wall() {
     let cell = cell(CellConfig {
         exec_threads: 1,
-        ..CellConfig::for_test("completion-no-clock")
+        ..crate::fakes::cell_config("completion-no-clock")
     });
     *cell.completion_clock.write() = Arc::new(|| None);
     let module = app(&cell, "completion-no-clock", FakeBehaviour::done());
@@ -400,7 +391,7 @@ fn unavailable_admission_clock_is_reported_as_missing_total_wall() {
 
 #[test]
 fn registration_refuses_missing_tenant_identity_before_guest_execution() {
-    let cell = cell(CellConfig::for_test("completion-no-identity"));
+    let cell = cell(crate::fakes::cell_config("completion-no-identity"));
     let result = cell.register_module(
         " ",
         Arc::new(FakeActivator::new(FakeBehaviour::done())),
@@ -425,7 +416,7 @@ fn recorded_fault(
 ) {
     let cell = cell(CellConfig {
         exec_threads: 1,
-        ..CellConfig::for_test("recorded-fault")
+        ..crate::fakes::cell_config("recorded-fault")
     });
     let module = ModuleId::new("recorded-fault", "v1");
     cell.register_module(
@@ -460,15 +451,6 @@ fn recorded_fault(
         cell.futures().live_guest_future_ids().is_empty(),
         "terminal fault cleanup must release owned futures before shutdown"
     );
-    if matches!(fault, FaultPoint::EndClock) {
-        assert_eq!(
-            cell.meters(&module)
-                .expect("registered module meters")
-                .incomplete_intervals(),
-            1,
-            "an incomplete engine interval must be counted rather than reported as a complete zero"
-        );
-    }
     cell.shutdown();
     (result, events.completed(1))
 }
@@ -566,12 +548,15 @@ fn real_completion_cell(wasm: Vec<u8>, slice_wall_ms_cap: u32) -> (Arc<Cell>, Mo
     );
     let module = ModuleId::new("real-completion", "v1");
     let activator = Arc::new(
-        crate::EngineActivator::load(engine, module.clone(), &wasm).expect("real completion guest"),
+        engine
+            .load_template(&wasm)
+            .map(|template| crate::EngineActivator::new(engine, template, module.clone()))
+            .expect("real completion guest"),
     );
     let cell = cell(CellConfig {
         exec_threads: 1,
         slice_wall_ms_cap,
-        ..CellConfig::for_test("real-completion")
+        ..crate::fakes::cell_config("real-completion")
     });
     cell.register_module("acme", activator, manifest("real-completion"))
         .expect("register real engine");
@@ -696,7 +681,7 @@ fn real_zero_wall_backstop_reports_execution_wall_limit() {
 }
 
 async fn ended_real_guest_response(transport_failure: bool) {
-    let head = isoplane_abi::encode(&isoplane_abi::dispatch::ResponseHead {
+    let head = postcard::to_allocvec(&isoplane_abi::dispatch::ResponseHead {
         status: 200,
         headers: vec![],
         body: b"open".to_vec(),
@@ -861,7 +846,7 @@ fn a_panicking_capture_hint_marks_its_usage_incomplete_and_releases_the_dispatch
     let _trace = events.install();
     let cell = cell(CellConfig {
         exec_threads: 1,
-        ..CellConfig::for_test("hint-panic")
+        ..crate::fakes::cell_config("hint-panic")
     });
     let module = ModuleId::new("hint-panic", "v1");
     cell.register_module(
@@ -928,7 +913,7 @@ fn shutdown_completes_accepted_queued_work_without_inventing_an_instance() {
     let cell = cell(CellConfig {
         exec_threads: 0,
         queue_depth_per_worker: 1,
-        ..CellConfig::for_test("queued-stop")
+        ..crate::fakes::cell_config("queued-stop")
     });
     let module = app(&cell, "queued-stop", FakeBehaviour::done());
     let events = Events::default();
@@ -936,9 +921,14 @@ fn shutdown_completes_accepted_queued_work_without_inventing_an_instance() {
     let response = cell
         .submit(&module, Target::Handler { route: "/".into() }, http(301))
         .expect("the first dispatch is accepted");
-    assert!(
+    assert_eq!(
         cell.submit(&module, Target::Handler { route: "/".into() }, http(302))
-            .is_none(),
+            .expect("the second dispatch is submitted")
+            .try_recv()
+            .expect("a shed dispatch is answered at admission")
+            .trap
+            .as_deref(),
+        Some("shed"),
         "the second dispatch must exercise rejected admission"
     );
     assert!(
@@ -978,7 +968,7 @@ fn shutdown_completes_accepted_queued_work_without_inventing_an_instance() {
 fn rejecting_a_requeued_dispatch_emits_one_completion() {
     let cell = cell(CellConfig {
         exec_threads: 0,
-        ..CellConfig::for_test("requeue-refused")
+        ..crate::fakes::cell_config("requeue-refused")
     });
     let module = app(&cell, "requeue-refused", FakeBehaviour::done());
     let events = Events::default();
@@ -1007,7 +997,7 @@ fn shutdown_ends_parked_owners_and_late_futures_cannot_complete_them_again() {
     let _trace = events.install();
     let cell = cell(CellConfig {
         exec_threads: 0,
-        ..CellConfig::for_test("parked-stop")
+        ..crate::fakes::cell_config("parked-stop")
     });
     let module = app(
         &cell,
@@ -1056,7 +1046,7 @@ fn a_worker_that_loses_its_cell_still_finalizes_accepted_queued_owners() {
     let _trace = events.install();
     let cell = cell(CellConfig {
         exec_threads: 0,
-        ..CellConfig::for_test("lost-cell")
+        ..crate::fakes::cell_config("lost-cell")
     });
     let module = app(&cell, "lost-cell", FakeBehaviour::done());
     let response = cell
@@ -1140,7 +1130,7 @@ fn a_discarded_wake_ends_its_owned_dispatch() {
     let _trace = events.install();
     let cell = cell(CellConfig {
         exec_threads: 0,
-        ..CellConfig::for_test("refused-wake")
+        ..crate::fakes::cell_config("refused-wake")
     });
     let module = app(
         &cell,
@@ -1238,7 +1228,7 @@ fn completion_waits_for_the_active_poll_but_not_transferred_operations_or_childr
     use std::task::{Context, Poll, Waker};
     let cell = cell(CellConfig {
         exec_threads: 0,
-        ..CellConfig::for_test("final-reactor-poll")
+        ..crate::fakes::cell_config("final-reactor-poll")
     });
     let module = app(&cell, "final-reactor-poll", FakeBehaviour::done());
     let events = Events::default();
@@ -1278,7 +1268,7 @@ fn completion_waits_for_the_active_poll_but_not_transferred_operations_or_childr
     assert_eq!(records[0]["slice_occupancy_ns"], 0);
     assert_eq!(meters.occupancy_ns(), 50);
     assert_eq!(
-        cell.metrics().tenants["acme"].occupancy_ns,
+        cell.metrics().tenant_occupancy_ns["acme"],
         50,
         "tenant aggregates include the final reactor poll"
     );
@@ -1304,7 +1294,7 @@ fn completion_waits_for_the_active_poll_but_not_transferred_operations_or_childr
         "later polls remain charged to the application"
     );
     assert_eq!(
-        cell.metrics().tenants["acme"].occupancy_ns,
+        cell.metrics().tenant_occupancy_ns["acme"],
         100,
         "polls after dispatch completion remain visible in tenant aggregates"
     );

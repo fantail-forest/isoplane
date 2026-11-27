@@ -509,7 +509,7 @@ async fn an_aspnet_request_that_calls_out_through_a_factory_client_leaves_its_in
         &product,
         &request,
         &module,
-        isoplane_host::CellConfig::for_test("http-pooling"),
+        isoplane_harness::fakes::cell_config("http-pooling"),
         services.clone(),
     );
     let mut instance = None;
@@ -1001,7 +1001,7 @@ fn serving_cell(
         fetcher: Arc::new(isoplane_harness::fakes::FakeFetcher::default()),
         egress: Arc::new(isoplane_host::egress::HostEgressPolicy::new(
             Box::new(fixed_dns::FixedDns(vec![])),
-            isoplane_host::egress::ConnectionLimits::uniform(8).expect("connection limits"),
+            isoplane_harness::uniform_connection_limits(8),
         )),
     });
     prepared_cell(
@@ -1010,7 +1010,7 @@ fn serving_cell(
         module,
         isoplane_host::CellConfig {
             background_idle_limit_ms,
-            ..isoplane_host::CellConfig::for_test("timer-wakes")
+            ..isoplane_harness::fakes::cell_config("timer-wakes")
         },
         services,
     )
@@ -1029,7 +1029,7 @@ fn prepared_cell(
             .expect("the serving engine must initialize"),
     );
     let template = engine
-        .load_prepared_product(&decode(product, request))
+        .load_prepared_product_in(&decode(product, request), &std::env::temp_dir())
         .expect("the prepared template must load");
     let cell = isoplane_host::cell::Cell::new(config, services).expect("the cell must start");
     cell.register_module(
@@ -1129,8 +1129,7 @@ async fn a_request_that_unblocks_another_on_its_instance_leaves_it_to_resume_in_
                 .first()
                 .and_then(|id| cell.slot(*id))
                 .is_some_and(|slot| {
-                    slot.state() == isoplane_host::LifecycleTier::Parked
-                        && cell.metrics().served_activated == 1
+                    slot.state() == isoplane_host::LifecycleTier::Parked && slot.parks() > 0
                 })
         },
     )
@@ -1146,12 +1145,8 @@ async fn a_request_that_unblocks_another_on_its_instance_leaves_it_to_resume_in_
         .await
         .expect("step 2: the opening request must be answered");
     assert_eq!(
-        (
-            opened.status,
-            opened.body.as_slice(),
-            cell.metrics().served_shared
-        ),
-        (200, b"opened".as_slice(), 1),
+        (opened.status, opened.body.as_slice(), opened.acquired),
+        (200, b"opened".as_slice(), "shared"),
         "step 2: the opening request must join the waiting request's instance: {opened:?}"
     );
 
@@ -1563,7 +1558,7 @@ mod over_the_runtime_baseline {
         }
         .expect("the baseline must decode");
         let loaded = engine
-            .load_prepared_product(&base)
+            .load_prepared_product_in(&base, &std::env::temp_dir())
             .expect("the baseline must load");
         let identity = request.identity().expect("the layer's identity");
         // SAFETY: LocalPreparation in this process produced these bytes.
@@ -1671,7 +1666,7 @@ async fn initialization_crypto_draws_are_fresh_while_activations_copy_captured_v
         let engine = IsoplaneEngine::new(request.engine.clone()).expect("captured-state engine");
         let prepared = decode(&product, &request);
         let captured_memory = engine
-            .load_prepared_product(&prepared)
+            .load_prepared_product_in(&prepared, &std::env::temp_dir())
             .expect("restore the captured application without initialization")
             .memory_image_arc()
             .to_dense();

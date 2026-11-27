@@ -10,7 +10,6 @@ mod scan;
 
 use wasmparser::{Validator, WasmFeatures};
 
-pub use checks::limits;
 pub use report::{ValidationReport, Violation, ViolationCode};
 
 use checks::{check_bombs, check_exports, check_globals, check_imports, check_memory};
@@ -71,45 +70,10 @@ pub const ENGINE_FEATURES: WasmFeatures = {
     )
 };
 
-/// Every violation, not the first: a tenant learns everything wrong with an
+/// Validates with operator-selected structural limits, a fallback memory
+/// allowance and an optional explicit declaration ceiling. Reports every
+/// violation, not the first: a tenant learns everything wrong with an
 /// artifact in one round trip.
-pub fn validate(
-    wasm: &[u8],
-    memory_limit: isoplane_abi::config::GuestMemoryBytes,
-) -> std::result::Result<ValidationReport, Vec<Violation>> {
-    validate_with_memory_limit(wasm, memory_limit, None)
-}
-
-/// Validates an explicitly marked local debugger artifact with all sandbox checks retained.
-pub fn validate_local_debug(
-    wasm: &[u8],
-    memory_limit: isoplane_abi::config::GuestMemoryBytes,
-    memory: Option<isoplane_abi::config::GuestMemoryBytes>,
-) -> std::result::Result<ValidationReport, Vec<Violation>> {
-    validate_for_execution(
-        wasm,
-        memory_limit,
-        memory,
-        true,
-        &isoplane_abi::config::ValidationLimits::default(),
-    )
-}
-
-/// Validate with a fallback memory allowance and an optional explicit declaration ceiling.
-pub fn validate_with_memory_limit(
-    wasm: &[u8],
-    memory_limit: isoplane_abi::config::GuestMemoryBytes,
-    memory: Option<isoplane_abi::config::GuestMemoryBytes>,
-) -> std::result::Result<ValidationReport, Vec<Violation>> {
-    validate_with_limits(
-        wasm,
-        memory_limit,
-        memory,
-        &isoplane_abi::config::ValidationLimits::default(),
-    )
-}
-
-/// Validates with operator-selected structural and memory limits.
 pub fn validate_with_limits(
     wasm: &[u8],
     memory_limit: isoplane_abi::config::GuestMemoryBytes,
@@ -137,10 +101,7 @@ fn validate_for_execution(
     limits: &isoplane_abi::config::ValidationLimits,
 ) -> std::result::Result<ValidationReport, Vec<Violation>> {
     let mut v = Vec::new();
-    let mut report = ValidationReport {
-        module_bytes: wasm.len() as u64,
-        ..Default::default()
-    };
+    let mut report = ValidationReport::default();
 
     // The header says component or module, and the rejection can say which.
     if is_component(wasm) {
@@ -163,7 +124,7 @@ fn validate_for_execution(
                     }));
             }
 
-            check_imports(&scan, &mut report, &mut v, limits);
+            check_imports(&scan, &mut v, limits);
             check_exports(&scan, &mut report, &mut v, limits);
             check_globals(&scan, &mut v);
             check_memory(
@@ -173,10 +134,9 @@ fn validate_for_execution(
                     isoplane_abi::config::GuestMemoryBytes::get,
                 ),
                 memory.is_some(),
-                &mut report,
                 &mut v,
             );
-            check_bombs(&scan, &mut report, &mut v, limits);
+            check_bombs(&scan, &mut v, limits);
         }
         Err(e) => {
             v.push(Violation::new(

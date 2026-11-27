@@ -9,10 +9,22 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use isoplane_abi::dispatch::{HttpRequest, ResponseHead};
-use isoplane_abi::host::{CodeTier, Dispatcher, HttpExchange, ResponseDisposition, RouteTarget};
+use isoplane_abi::host::{
+    CodeTier, Dispatcher, HttpExchange, HttpUpload, ResponseDisposition, RouteTarget,
+};
 use isoplane_engine::{EngineConfig, IsoplaneEngine};
 use isoplane_host::cell::{Cell, CellConfig};
 use isoplane_host::{EngineActivator, ModuleId};
+
+/// A request without content.
+struct NoUpload;
+
+#[async_trait::async_trait]
+impl isoplane_abi::host::HttpBody for NoUpload {
+    async fn read(&mut self) -> anyhow::Result<Option<Vec<u8>>> {
+        Ok(None)
+    }
+}
 
 async fn response(after_finish: &str) -> (Arc<Cell>, HttpExchange) {
     response_program(
@@ -25,7 +37,12 @@ async fn response(after_finish: &str) -> (Arc<Cell>, HttpExchange) {
 }
 
 async fn response_program(handle: &str, wake: &str) -> (Arc<Cell>, HttpExchange) {
-    response_program_with(CellConfig::for_test("response-boundary"), handle, wake).await
+    response_program_with(
+        isoplane_harness::fakes::cell_config("response-boundary"),
+        handle,
+        wake,
+    )
+    .await
 }
 
 async fn response_program_with(
@@ -65,8 +82,12 @@ async fn response_program_with(
         .expect("real engine"),
     );
     let module = ModuleId::new("response", "v1");
-    let activator =
-        Arc::new(EngineActivator::load(engine, module, &wasm).expect("real response guest"));
+    let activator = Arc::new(
+        engine
+            .load_template(&wasm)
+            .map(|template| EngineActivator::new(engine, template, module))
+            .expect("real response guest"),
+    );
     let (cell, _) = common::rig_resolving(config, "93.184.216.34:80");
     cell.register_module("owner", activator, common::manifest("response"))
         .expect("register response guest");
@@ -77,15 +98,19 @@ async fn response_program_with(
         tier: CodeTier::Fast,
     };
     let exchange = cell
-        .dispatch_http_stream(
+        .dispatch_http_upload(
             &target,
-            HttpRequest {
-                method: "GET".into(),
-                url: "http://app.example/".into(),
-                path: "/".into(),
-                query: vec![],
-                headers: vec![],
-                body: vec![],
+            HttpUpload {
+                request: HttpRequest {
+                    method: "GET".into(),
+                    url: "http://app.example/".into(),
+                    path: "/".into(),
+                    query: vec![],
+                    headers: vec![],
+                    body: vec![],
+                },
+                body: Box::new(NoUpload),
+                can_have_body: false,
             },
         )
         .await
@@ -188,7 +213,7 @@ async fn a_nonreturning_background_callback_is_killed_after_its_request_complete
     tokio::time::timeout(Duration::from_secs(10), async {
         let config = CellConfig {
             slice_wall_ms_cap: 50,
-            ..CellConfig::for_test("background-hard-stop")
+            ..isoplane_harness::fakes::cell_config("background-hard-stop")
         };
         let (cell, mut response) = response_program_with(config,
             "(call $finish (call $start (i32.const 1024) (i32.const {head_len}))) (drop (call $timer (i64.const 0))) (i64.const 1)",

@@ -154,24 +154,18 @@ impl Cell {
                 (0, isoplane_abi::result::ResultRecord::Ok(Vec::new())),
                 |ready| (ready.future, ready.result),
             );
-            let hot = super::completion::HotSlice::new(&self.hot);
             owner.begin_slice();
             let outcome = guard
                 .instance()
                 .wake(INSTANCE_WORK, future, &result, budget);
-            drop(hot);
             owner.add_slice(&outcome);
             entry.meters.record_occupancy(&outcome);
-            self.metrics.slice_us.record(outcome.wall_ns / 1_000);
-            self.metrics
-                .grace_deferrals
-                .fetch_add(outcome.grace_deferrals, Ordering::Relaxed);
+            #[cfg(any(test, feature = "test-util"))]
             if outcome.completion == Completion::BudgetExit {
                 entry
                     .meters
-                    .record_grace_end(GraceEnd::Exited, outcome.overage_ns);
+                    .record_grace_end(isoplane_engine::GraceEnd::Exited, outcome.overage_ns);
                 self.metrics.budget_exits.fetch_add(1, Ordering::Relaxed);
-                self.metrics.grace_entries.fetch_add(1, Ordering::Relaxed);
                 self.metrics
                     .overage_ns
                     .fetch_add(outcome.overage_ns, Ordering::Relaxed);
@@ -182,15 +176,16 @@ impl Cell {
             if ends_the_instance(&outcome, slot) || slot.ctx.has_trap() {
                 guard.destroy();
                 let reason = if outcome.completion == Completion::BudgetKill {
-                    entry
-                        .meters
-                        .record_grace_end(GraceEnd::Killed, outcome.overage_ns);
-                    self.metrics.budget_kills.fetch_add(1, Ordering::Relaxed);
-                    self.metrics
-                        .overage_ns
-                        .fetch_add(outcome.overage_ns, Ordering::Relaxed);
-                    if outcome.grace_end.is_some() {
-                        self.metrics.grace_entries.fetch_add(1, Ordering::Relaxed);
+                    #[cfg(any(test, feature = "test-util"))]
+                    {
+                        entry.meters.record_grace_end(
+                            isoplane_engine::GraceEnd::Killed,
+                            outcome.overage_ns,
+                        );
+                        self.metrics.budget_kills.fetch_add(1, Ordering::Relaxed);
+                        self.metrics
+                            .overage_ns
+                            .fetch_add(outcome.overage_ns, Ordering::Relaxed);
                     }
                     match outcome.execution_limit {
                         Some(isoplane_engine::ExecutionLimit::Wall) => TerminalReason::WallLimit,
@@ -199,7 +194,6 @@ impl Cell {
                         }
                     }
                 } else {
-                    entry.meters.record_trap();
                     self.metrics.traps.fetch_add(1, Ordering::Relaxed);
                     TerminalReason::GuestTrap
                 };
@@ -243,7 +237,7 @@ mod tests {
             let _trace = events.install();
             let cell = cell(CellConfig {
                 exec_threads: 0,
-                ..CellConfig::for_test("background-outcome")
+                ..crate::fakes::cell_config("background-outcome")
             });
             let module = app(
                 &cell,
@@ -275,15 +269,6 @@ mod tests {
             assert_eq!(records[1]["dispatch_kind"], "background");
             assert_eq!(records[1]["outcome"], reason);
             assert_eq!(records[1]["status"], status);
-            let tenant = cell.metrics().tenants["acme"];
-            assert_eq!(
-                tenant.dispatches, 2,
-                "one request and one background dispatch"
-            );
-            assert_eq!(
-                tenant.traps, 0,
-                "background failure and cancellation are not guest traps"
-            );
             assert_eq!(slot.state(), LifecycleTier::Parked);
             drop(_execution);
             cell.shutdown();

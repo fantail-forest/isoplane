@@ -64,21 +64,13 @@ pub trait Preparation: Send + Sync {
 /// Guest initialization remains subject to supplied capability and resource limits.
 pub struct LocalPreparation {
     pool: Arc<rayon::ThreadPool>,
-    cache: Option<Arc<isoplane_engine::CompilationCache>>,
+    cache: Arc<isoplane_engine::CompilationCache>,
 }
 
 impl LocalPreparation {
-    /// Create one compilation thread so the preparation CPU report covers its work.
-    pub fn new() -> Result<Self, PrepareError> {
-        Self::build(None)
-    }
-
-    /// Reuse compiler-owned, uninitialized input across deployment configurations.
+    /// Create one compilation thread so the preparation CPU report covers its work,
+    /// reusing compiler-owned, uninitialized input across deployment configurations.
     pub fn with_cache(cache: Arc<isoplane_engine::CompilationCache>) -> Result<Self, PrepareError> {
-        Self::build(Some(cache))
-    }
-
-    fn build(cache: Option<Arc<isoplane_engine::CompilationCache>>) -> Result<Self, PrepareError> {
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(1)
             .build()
@@ -94,7 +86,7 @@ impl LocalPreparation {
     pub(crate) async fn run<T: Send + 'static>(
         &self,
         cancellation: &CancellationToken,
-        job: impl FnOnce(Option<&isoplane_engine::CompilationCache>) -> Result<T, WorkerFailure>
+        job: impl FnOnce(&isoplane_engine::CompilationCache) -> Result<T, WorkerFailure>
             + Send
             + 'static,
     ) -> Result<T, PrepareError> {
@@ -103,7 +95,7 @@ impl LocalPreparation {
         }
         let pool = self.pool.clone();
         let cache = self.cache.clone();
-        let result = tokio::task::spawn_blocking(move || pool.install(|| job(cache.as_deref())))
+        let result = tokio::task::spawn_blocking(move || pool.install(|| job(&cache)))
             .await
             .map_err(|error| PrepareError::State(error.into()))?
             .map_err(PrepareError::Rejected)?;
@@ -124,8 +116,10 @@ impl Preparation for LocalPreparation {
     ) -> Result<BuildProduct, PrepareError> {
         let wasm = wasm.to_vec();
         let request = request.clone();
-        self.run(cancellation, move |cache| prepare(&wasm, &request, cache))
-            .await
+        self.run(cancellation, move |cache| {
+            prepare(&wasm, &request, Some(cache))
+        })
+        .await
     }
 
     #[cfg(target_os = "linux")]
@@ -138,7 +132,7 @@ impl Preparation for LocalPreparation {
         let wasm = wasm.to_vec();
         let request = request.clone();
         self.run(cancellation, move |cache| {
-            Ok(crate::RuntimeBaseline::prepare(&wasm, &request, cache)?.product)
+            Ok(crate::RuntimeBaseline::prepare(&wasm, &request, Some(cache))?.product)
         })
         .await
     }

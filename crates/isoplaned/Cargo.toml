@@ -60,9 +60,17 @@ isoplane-prepare   = { workspace = true }
 tempfile       = { workspace = true }
 isoplane-engine    = { workspace = true }
 
-isoplane-runtime = { workspace = true, features = ["local"] }
+isoplane-runtime = { workspace = true }
+
+[features]
+# Entry points the test suites install guests through. No shipped build enables it.
+test-util = []
 
 [dev-dependencies]
+isoplaned = { path = ".", features = ["test-util"] }
+isoplane-host = { workspace = true, features = ["test-util"] }
+isoplane-engine = { workspace = true, features = ["test-util"] }
+postcard = { workspace = true }
 isoplane-harness = { workspace = true }
 base64 = { workspace = true }
 reqwest = { workspace = true }

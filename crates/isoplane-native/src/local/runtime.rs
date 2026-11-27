@@ -252,7 +252,7 @@ fn preinitialize(project: &Project, wasm: &[u8], configuration: &[u8]) -> anyhow
                 project.init_sandbox.as_str()
             )
         })?
-        .template_wasm)
+        .wasm)
 }
 
 fn initialization_network(project: &Project) -> isoplane_prepare::InitializationNetwork {
@@ -386,7 +386,7 @@ impl LocalApp {
         std::fs::create_dir_all(data)?;
         let scratch = tempfile::tempdir_in(data)?;
         let metrics = Arc::new(isoplane_proxy::ProxyMetrics::new());
-        let cfg = isoplane_proxy::ProxyConfig::default();
+        let cfg = isoplane_proxy::ShedConfig::default();
         let services = Arc::new(isoplane_host::cell::Services {
             egress: egress.clone(),
             fetcher: Arc::new(isoplane_host::PinnedHttpFetcher::new(
@@ -466,7 +466,7 @@ mod storage_tests {
             init_sandbox: isoplane_abi::config::InitSandbox::Sealed,
             platform_files: Default::default(),
             application_files: Default::default(),
-            runtime_profile: isoplane_prepare::RuntimeProfile::raw_wasm(),
+            runtime_profile: isoplane_prepare::RuntimeProfile::RawWasm,
         };
         (directory, project)
     }
@@ -552,7 +552,7 @@ mod storage_tests {
             let outcome = instance.run_initialize(OccupancyBudget::default());
             assert_eq!(outcome.completion, Completion::Done, "{outcome:?}");
             assert_eq!(instance.memory().len(), 2049 * isoplane_abi::WASM_PAGE_SIZE);
-            project.runtime_profile = isoplane_prepare::RuntimeProfile::raw_wasm();
+            project.runtime_profile = isoplane_prepare::RuntimeProfile::RawWasm;
             assert!(
                 validate(&project, &wasm, false).is_err(),
                 "raw modules cannot claim the shared runtime's declaration ceiling"

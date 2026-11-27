@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use isoplane_abi::dispatch::HttpRequest;
 use isoplane_engine::{Completion, IsoplaneEngine};
-use isoplane_host::cell::{Cell, CellConfig, DispatchResult, Target};
+use isoplane_host::cell::{Cell, DispatchResult, Target};
 use isoplane_host::slot::LifecycleTier;
 use isoplane_host::{EngineActivator, InstanceId, ModuleId};
 use isoplane_test_support::wait_for;
@@ -21,13 +21,14 @@ fn rig() -> (Arc<Cell>, ModuleId) {
     let engine =
         Arc::new(IsoplaneEngine::new(isoplane_fixtures::engine_config(16)).expect("engine"));
     let module = ModuleId::new("quotes-api", "v1");
-    let activator = EngineActivator::load(
-        engine,
-        module.clone(),
-        &isoplane_fixtures::rust("quotes-api"),
-    )
-    .expect("quotes-api.wasm must compile");
-    let (cell, _) = common::rig_resolving(CellConfig::for_test("interleaving"), "93.184.216.34:80");
+    let activator = engine
+        .load_template(&isoplane_fixtures::rust("quotes-api"))
+        .map(|template| EngineActivator::new(engine, template, module.clone()))
+        .expect("quotes-api.wasm must compile");
+    let (cell, _) = common::rig_resolving(
+        isoplane_harness::fakes::cell_config("interleaving"),
+        "93.184.216.34:80",
+    );
     cell.register_module("acme", Arc::new(activator), common::manifest("quotes-api"))
         .expect("register quotes-api");
     (cell, module)

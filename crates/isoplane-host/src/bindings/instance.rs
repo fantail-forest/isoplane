@@ -87,7 +87,7 @@ pub struct InstanceCtx {
     /// Current outside any dispatch: during initialization and host-initiated
     /// slices such as the pre-capture GC hint.
     no_dispatch: Arc<DispatchState>,
-    pub(super) entropy_calls: AtomicU64,
+
     /// A trap the vtable owes the guest but cannot raise from an import call
     /// that returns an `i64`; the cell converts it after the slice returns.
     pub(super) trap_latch: Mutex<Option<TrapCode>>,
@@ -217,7 +217,7 @@ impl InstanceCtx {
             dispatches: Mutex::new(HashMap::new()),
             current: Mutex::new(no_dispatch.clone()),
             no_dispatch,
-            entropy_calls: AtomicU64::new(0),
+
             trap_latch: Mutex::new(None),
             dispatch_generation: AtomicU64::new(0),
             responses: Mutex::new(ResponseTable::new(
@@ -230,21 +230,6 @@ impl InstanceCtx {
                 super::native_io::ResourceLimits::default(),
             )),
         }
-    }
-
-    /// A context with no cell behind it, for tests of the slot machinery.
-    pub fn for_test(instance: InstanceId, limits: Limits) -> Self {
-        Self::new(
-            instance,
-            Tenancy {
-                module: ModuleId::new("test", "v1"),
-                tenant: "t".into(),
-                limits,
-                allowlist: None,
-            },
-            Arc::new(Meters::new()),
-            None,
-        )
     }
 
     /// Freezes the coarse clock for one slice of `dispatch`, which the slice's
@@ -274,6 +259,7 @@ impl InstanceCtx {
     }
 
     /// Starts a new dispatch and makes it current.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn begin_dispatch(&self, now_ms: u64, dispatch: u64) {
         self.start_dispatch(now_ms, dispatch);
     }
@@ -360,9 +346,7 @@ impl InstanceCtx {
             self.limits.pending_futures_per_dispatch
         }
     }
-    pub fn entropy_calls(&self) -> u64 {
-        self.entropy_calls.load(Ordering::Relaxed)
-    }
+
     pub fn take_trap(&self) -> Option<TrapCode> {
         self.trap_latch.lock().take()
     }

@@ -50,10 +50,14 @@ fn measure() -> anyhow::Result<()> {
     // No initializer runs: the portable module contains the complete initial state measured here.
     let identity = PreparedIdentity {
         input_hash,
-        runtime_profile: isoplane_prepare::RuntimeProfile::raw_wasm().digest()?,
+        runtime_profile: isoplane_prepare::RuntimeProfile::RawWasm.digest()?,
         initialization_hash: input_hash,
     };
-    let product = compiler.prepare_template(&wasm, identity)?;
+    let product = compiler.prepare_template_with_files(
+        &wasm,
+        identity,
+        isoplane_engine::PlatformFiles::default(),
+    )?;
     drop(compiler);
     let engine = isoplane_engine::IsoplaneEngine::new(input.engine)?;
     let storage = tempfile::tempdir()?;

@@ -122,9 +122,6 @@ internal static class FutureTable
     /// <summary>The operations the host holds for a dispatch.</summary>
     internal static int Owned(ulong dispatch) => Lanes.TryGetValue(dispatch, out var lane) ? lane.Pending : 0;
 
-    /// <summary>The operations waiting for a dispatch to have room.</summary>
-    internal static int Waiting(ulong dispatch) => Lanes.TryGetValue(dispatch, out var lane) ? lane.Waiting.Count : 0;
-
     private static Lane LaneOf(ulong id)
     {
         if (Lanes.TryGetValue(id, out var lane)) return lane;

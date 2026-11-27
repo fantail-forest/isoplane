@@ -1,6 +1,5 @@
 //! The platform-managed public TLS root bundle: the bytes every guest reads
-//! at [`GUEST_PATH`], checked against the manifest ingested with them, and
-//! the facts the node reports about them.
+//! at [`GUEST_PATH`], checked against the manifest ingested with them.
 //!
 //! The bundle is embedded at build time from `trust/`, so rotating it is a
 //! node release and a node cannot start without one. An operator may serve a
@@ -9,7 +8,7 @@
 #![forbid(unsafe_code)]
 
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
 use rustls_pki_types::pem::PemObject;
 use rustls_pki_types::CertificateDer;
@@ -28,62 +27,32 @@ pub const MODIFIED_EPOCH_UNIX_SECS: u64 = 946_684_800;
 /// The span the content-derived offset is folded into: fifty years of 365 days.
 pub const MODIFIED_SPAN_SECS: u64 = 50 * 365 * 86_400;
 
-const SECS_PER_DAY: u64 = 86_400;
-
-fn default_warn_after_days() -> u32 {
-    30
-}
-
 /// The `[trust]` section of `isoplaned.toml`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TrustConfig {
     /// A PEM bundle served instead of the one shipped with the build.
     /// `sha256` is required with it. A manifest written by
     /// `trust/ingest-bundle.sh` beside it, named `<stem>.manifest.json`,
-    /// supplies the bundle's date, generation and last-check age; without
-    /// one the node cannot say how old the bundle is.
+    /// supplies the time guests see on the file.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bundle: Option<PathBuf>,
     /// Hex SHA-256 the operator bundle must hash to. Ignored for the
     /// shipped bundle, whose manifest carries its hash.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sha256: Option<String>,
-    /// Days since the last successful upstream check after which startup
-    /// warns. Serving continues either way.
-    #[serde(default = "default_warn_after_days")]
-    pub warn_after_days: u32,
 }
 
-impl Default for TrustConfig {
-    fn default() -> Self {
-        TrustConfig {
-            bundle: None,
-            sha256: None,
-            warn_after_days: default_warn_after_days(),
-        }
-    }
-}
-
-/// What `trust/ingest-bundle.sh` records about a bundle.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+/// The fields the node reads from a manifest `trust/ingest-bundle.sh`
+/// writes. The provenance fields the script also records are not read.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[cfg_attr(test, derive(Serialize))]
 pub struct Manifest {
-    /// Goes up by one on every change to the bundle bytes, rollbacks included.
-    pub generation: u64,
-    /// The date in curl's file name.
-    pub bundle_date: String,
-    pub source_url: String,
     /// SHA-256 of the bundle as fetched.
     pub bundle_sha256: String,
-    /// The hash of Mozilla's `certdata.txt` named in the bundle header.
-    pub certdata_sha256: String,
-    pub mk_ca_bundle_version: String,
     pub certificate_count: u32,
     /// The header's Mozilla timestamp, verbatim.
     pub mozilla_as_of: String,
-    /// The last successful upstream check, `YYYY-MM-DDTHH:MM:SSZ`.
-    pub ingested_at: String,
 }
 
 /// Which bundle a node serves.
@@ -153,81 +122,10 @@ pub enum TrustError {
     #[error("trust bundle {bundle} contains no certificates")]
     NoCertificates { bundle: TrustSource },
     #[error(
-        "trust manifest {path} has ingested_at `{value}`, which is not a UTC timestamp of the \
-         form YYYY-MM-DDTHH:MM:SSZ"
-    )]
-    IngestedAtMalformed { path: String, value: String },
-    #[error(
         "trust manifest {path} has mozilla_as_of `{value}`, which is not a timestamp of the form \
          `Thu Aug 13 03:12:01 2026 GMT`"
     )]
     MozillaAsOfMalformed { path: String, value: String },
-}
-
-/// The facts a node reports about the bundle it serves.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TrustFacts {
-    /// `shipped`, or the operator's path.
-    pub source: String,
-    pub bundle_date: Option<String>,
-    pub generation: Option<u64>,
-    /// Full hex SHA-256 of the served bytes.
-    pub sha256: String,
-    pub certificate_count: usize,
-    /// The last successful upstream check, when a manifest records one.
-    pub ingested_at: Option<String>,
-}
-
-impl TrustFacts {
-    /// Enough of the hash to tell two bundles apart in a log line.
-    pub fn sha256_prefix(&self) -> &str {
-        &self.sha256[..12]
-    }
-}
-
-/// How long since the bundle was last checked against upstream.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Staleness {
-    Fresh {
-        age_days: u64,
-    },
-    /// Past `warn_after_days`: a warning, never a refusal.
-    Stale {
-        age_days: u64,
-        warn_after_days: u32,
-        last_check: String,
-        bundle_date: String,
-    },
-    /// No manifest records a check: an operator bundle without one.
-    Unknown,
-}
-
-impl std::fmt::Display for Staleness {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Staleness::Fresh { age_days } => {
-                write!(f, "last upstream check {age_days} days ago")
-            }
-            Staleness::Stale {
-                age_days,
-                warn_after_days,
-                last_check,
-                bundle_date,
-            } => write!(
-                f,
-                "the trust bundle's last successful upstream check was {last_check}, {age_days} \
-                 days ago, past trust.warn_after_days = {warn_after_days}; the bundle itself is \
-                 dated {bundle_date}, which is its publication date, not the check. Re-run \
-                 trust/ingest-bundle.sh and release, or point trust.bundle at a newer bundle. \
-                 Serving continues"
-            ),
-            Staleness::Unknown => write!(
-                f,
-                "no manifest records when this trust bundle was last checked against upstream, \
-                 so its age cannot be judged; serving continues"
-            ),
-        }
-    }
 }
 
 /// A verified bundle and what is known about it.
@@ -235,21 +133,16 @@ impl std::fmt::Display for Staleness {
 pub struct TrustBundle {
     pem: Vec<u8>,
     sha256: [u8; 32],
-    certificate_count: usize,
-    source: TrustSource,
-    manifest: Option<Manifest>,
-    last_check_unix_secs: Option<u64>,
     /// The manifest's `mozilla_as_of`.
     published_unix_secs: Option<u64>,
-    warn_after_days: u32,
 }
 
 impl TrustBundle {
     /// Read, hash and check the bundle `cfg` names, or the shipped one.
     pub fn load(cfg: &TrustConfig) -> Result<Self, TrustError> {
         match (&cfg.bundle, &cfg.sha256) {
-            (None, None) => Self::shipped(cfg.warn_after_days),
-            (Some(path), Some(sha)) => Self::operator(path, sha, cfg.warn_after_days),
+            (None, None) => Self::shipped(),
+            (Some(path), Some(sha)) => Self::operator(path, sha),
             (Some(path), None) => Err(TrustError::Sha256Missing { path: path.clone() }),
             (None, Some(_)) => Err(TrustError::BundleMissing),
         }
@@ -268,28 +161,21 @@ impl TrustBundle {
             pem.push(b'\n');
         }
         pem.extend_from_slice(SHIPPED_PEM);
-        let mut certificate_count = 0;
         for (index, certificate) in CertificateDer::pem_slice_iter(&pem).enumerate() {
             certificate.map_err(|error| TrustError::InvalidCertificate {
                 bundle: source.clone(),
                 entry: index + 1,
                 error: error.to_string(),
             })?;
-            certificate_count += 1;
         }
         Ok(TrustBundle {
             sha256: Sha256::digest(&pem).into(),
             pem,
-            certificate_count,
-            source,
-            manifest: None,
-            last_check_unix_secs: None,
             published_unix_secs: None,
-            warn_after_days: default_warn_after_days(),
         })
     }
 
-    fn shipped(warn_after_days: u32) -> Result<Self, TrustError> {
+    fn shipped() -> Result<Self, TrustError> {
         let manifest = parse_manifest(SHIPPED_MANIFEST_NAME, SHIPPED_MANIFEST)?;
         let expected = manifest.bundle_sha256.clone();
         Self::checked(
@@ -298,11 +184,10 @@ impl TrustBundle {
             &expected,
             SHIPPED_MANIFEST_NAME,
             Some((SHIPPED_MANIFEST_NAME.to_string(), manifest)),
-            warn_after_days,
         )
     }
 
-    fn operator(path: &Path, sha: &str, warn_after_days: u32) -> Result<Self, TrustError> {
+    fn operator(path: &Path, sha: &str) -> Result<Self, TrustError> {
         if sha.len() != 64 || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err(TrustError::Sha256Malformed {
                 value: sha.to_string(),
@@ -332,7 +217,6 @@ impl TrustBundle {
             sha,
             "trust.sha256",
             manifest,
-            warn_after_days,
         )
     }
 
@@ -342,7 +226,6 @@ impl TrustBundle {
         expected_sha256: &str,
         recorded_by: &str,
         manifest: Option<(String, Manifest)>,
-        warn_after_days: u32,
     ) -> Result<Self, TrustError> {
         let sha256: [u8; 32] = Sha256::digest(&pem).into();
         let actual = hex::encode(sha256);
@@ -358,69 +241,40 @@ impl TrustBundle {
         if certificate_count == 0 {
             return Err(TrustError::NoCertificates { bundle: source });
         }
-        let mut last_check_unix_secs = None;
         let mut published_unix_secs = None;
-        let manifest = match manifest {
-            Some((path, manifest)) => {
-                if !manifest.bundle_sha256.eq_ignore_ascii_case(&actual) {
-                    return Err(TrustError::Sha256Mismatch {
-                        bundle: source,
-                        expected: manifest.bundle_sha256.to_ascii_lowercase(),
-                        actual,
-                        recorded_by: path,
-                    });
-                }
-                if manifest.certificate_count as usize != certificate_count {
-                    return Err(TrustError::CountMismatch {
-                        path,
-                        manifest: manifest.certificate_count,
-                        bundle: certificate_count,
-                    });
-                }
-                published_unix_secs =
-                    Some(parse_header_time(&manifest.mozilla_as_of).ok_or_else(|| {
-                        TrustError::MozillaAsOfMalformed {
-                            path: path.clone(),
-                            value: manifest.mozilla_as_of.clone(),
-                        }
-                    })?);
-                last_check_unix_secs = Some(parse_utc(&manifest.ingested_at).ok_or_else(|| {
-                    TrustError::IngestedAtMalformed {
-                        path,
-                        value: manifest.ingested_at.clone(),
-                    }
-                })?);
-                Some(manifest)
+        if let Some((path, manifest)) = manifest {
+            if !manifest.bundle_sha256.eq_ignore_ascii_case(&actual) {
+                return Err(TrustError::Sha256Mismatch {
+                    bundle: source,
+                    expected: manifest.bundle_sha256.to_ascii_lowercase(),
+                    actual,
+                    recorded_by: path,
+                });
             }
-            None => None,
-        };
+            if manifest.certificate_count as usize != certificate_count {
+                return Err(TrustError::CountMismatch {
+                    path,
+                    manifest: manifest.certificate_count,
+                    bundle: certificate_count,
+                });
+            }
+            published_unix_secs = Some(parse_header_time(&manifest.mozilla_as_of).ok_or(
+                TrustError::MozillaAsOfMalformed {
+                    path,
+                    value: manifest.mozilla_as_of,
+                },
+            )?);
+        }
         Ok(TrustBundle {
             pem,
             sha256,
-            certificate_count,
-            source,
-            manifest,
-            last_check_unix_secs,
             published_unix_secs,
-            warn_after_days,
         })
     }
 
     /// The bytes a guest reads.
     pub fn pem(&self) -> &[u8] {
         &self.pem
-    }
-
-    pub fn sha256(&self) -> &[u8; 32] {
-        &self.sha256
-    }
-
-    pub fn source(&self) -> &TrustSource {
-        &self.source
-    }
-
-    pub fn manifest(&self) -> Option<&Manifest> {
-        self.manifest.as_ref()
     }
 
     /// The modification time guests see on the file, in nanoseconds since
@@ -440,44 +294,6 @@ impl TrustBundle {
         match self.published_unix_secs {
             Some(secs) => secs * 1_000_000_000,
             None => content_modified_ns(&self.sha256),
-        }
-    }
-
-    pub fn facts(&self) -> TrustFacts {
-        TrustFacts {
-            source: match &self.source {
-                TrustSource::Shipped => "shipped".to_string(),
-                TrustSource::Operator(path) => path.display().to_string(),
-                TrustSource::LocalDevelopment => "local development".to_string(),
-            },
-            bundle_date: self.manifest.as_ref().map(|m| m.bundle_date.clone()),
-            generation: self.manifest.as_ref().map(|m| m.generation),
-            sha256: hex::encode(self.sha256),
-            certificate_count: self.certificate_count,
-            ingested_at: self.manifest.as_ref().map(|m| m.ingested_at.clone()),
-        }
-    }
-
-    /// How old the last upstream check is at `now`. A check in the future
-    /// counts as zero days old.
-    pub fn staleness(&self, now: SystemTime) -> Staleness {
-        let (Some(last), Some(manifest)) = (self.last_check_unix_secs, &self.manifest) else {
-            return Staleness::Unknown;
-        };
-        let now_secs = now
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        let age_days = now_secs.saturating_sub(last) / SECS_PER_DAY;
-        if age_days > u64::from(self.warn_after_days) {
-            Staleness::Stale {
-                age_days,
-                warn_after_days: self.warn_after_days,
-                last_check: manifest.ingested_at.clone(),
-                bundle_date: manifest.bundle_date.clone(),
-            }
-        } else {
-            Staleness::Fresh { age_days }
         }
     }
 }
@@ -523,23 +339,12 @@ fn parse_header_time(text: &str) -> Option<u64> {
     Some(time.duration_since(UNIX_EPOCH).ok()?.as_secs())
 }
 
-/// `YYYY-MM-DDTHH:MM:SSZ` to seconds since the Unix epoch.
-fn parse_utc(text: &str) -> Option<u64> {
-    let format =
-        time::macros::format_description!("[year]-[month]-[day]T[hour]:[minute]:[second]Z");
-    let timestamp = time::PrimitiveDateTime::parse(text, &format).ok()?;
-    u64::try_from(timestamp.assume_utc().unix_timestamp()).ok()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
 
-    const INGESTED_AT_2026_09_11: u64 = 1_789_105_175;
-
-    fn at(unix_secs: u64) -> SystemTime {
-        UNIX_EPOCH + Duration::from_secs(unix_secs)
+    fn certificate_count(bundle: &TrustBundle) -> usize {
+        CertificateDer::pem_slice_iter(bundle.pem()).count()
     }
 
     fn shipped_manifest() -> Manifest {
@@ -564,7 +369,6 @@ mod tests {
         TrustConfig {
             bundle: Some(path.to_path_buf()),
             sha256: Some(sha256.to_string()),
-            warn_after_days: 30,
         }
     }
 
@@ -578,18 +382,13 @@ mod tests {
             + b"-----END CERTIFICATE-----".len();
         let machine = &SHIPPED_PEM[..first];
         let bundle = TrustBundle::local_development(machine).expect("a machine export loads");
-        assert_eq!(
-            bundle.source(),
-            &TrustSource::LocalDevelopment,
-            "the bundle must say where its roots came from"
-        );
         assert!(
             bundle.pem().starts_with(machine) && bundle.pem().ends_with(SHIPPED_PEM),
             "the machine's roots and every shipped root must both be served"
         );
         assert_eq!(
-            bundle.facts().certificate_count,
-            shipped.facts().certificate_count + 1,
+            certificate_count(&bundle),
+            certificate_count(&shipped) + 1,
             "each served certificate is counted, including one both sources hold"
         );
         assert_ne!(
@@ -616,31 +415,7 @@ mod tests {
     }
 
     #[test]
-    fn the_shipped_bundle_matches_its_manifest() {
-        let bundle = TrustBundle::load(&TrustConfig::default()).expect("the shipped bundle loads");
-        let manifest = shipped_manifest();
-        let facts = bundle.facts();
-        assert_eq!(
-            facts.sha256, manifest.bundle_sha256,
-            "the embedded bytes must be the ones the manifest was written for"
-        );
-        assert_eq!(
-            facts.certificate_count, manifest.certificate_count as usize,
-            "the manifest's count must describe the embedded bundle"
-        );
-        assert_eq!(
-            facts.generation,
-            Some(manifest.generation),
-            "the facts carry the manifest's generation"
-        );
-        assert_eq!(
-            facts.source, "shipped",
-            "a node without trust.bundle serves the shipped bundle"
-        );
-    }
-
-    #[test]
-    fn the_manifest_parser_reads_every_field_the_ingest_script_writes() {
+    fn the_manifest_parser_reads_its_fields_from_what_the_ingest_script_writes() {
         let manifest = parse_manifest(
             "m",
             r#"{"generation": 3, "bundle_date": "2026-08-13",
@@ -651,24 +426,13 @@ mod tests {
                 "ingested_at": "2026-09-11T05:39:35Z"}"#,
         )
         .expect("a complete manifest parses");
-        assert_eq!(manifest.generation, 3, "generation is read as an integer");
         assert_eq!(
-            manifest.certificate_count, 121,
-            "the certificate count is read as an integer"
-        );
-        assert_eq!(
-            manifest.ingested_at, "2026-09-11T05:39:35Z",
-            "ingested_at is read verbatim"
-        );
-    }
-
-    #[test]
-    fn a_manifest_with_a_field_the_daemon_does_not_read_is_refused() {
-        let err = parse_manifest("m", r#"{"generation": 1, "extra": true}"#)
-            .expect_err("an unknown field must not load silently");
-        assert!(
-            matches!(&err, TrustError::ManifestMalformed { path, error } if path == "m" && error.contains("extra")),
-            "the refusal must name the field: {err}"
+            manifest,
+            Manifest {
+                bundle_sha256: "f66d".into(),
+                certificate_count: 121,
+                mozilla_as_of: "Thu Aug 13 03:12:01 2026 GMT".into(),
+            }
         );
     }
 
@@ -696,7 +460,6 @@ mod tests {
         let cfg = TrustConfig {
             bundle: Some(path.clone()),
             sha256: None,
-            warn_after_days: 30,
         };
         assert_eq!(
             TrustBundle::load(&cfg).expect_err("no hash, no bundle"),
@@ -710,7 +473,6 @@ mod tests {
         let cfg = TrustConfig {
             bundle: None,
             sha256: Some("0".repeat(64)),
-            warn_after_days: 30,
         };
         assert_eq!(
             TrustBundle::load(&cfg).expect_err("a hash with nothing to check"),
@@ -724,7 +486,6 @@ mod tests {
         let cfg = TrustConfig {
             bundle: Some(PathBuf::from("/nonexistent/roots.pem")),
             sha256: Some("abc".into()),
-            warn_after_days: 30,
         };
         assert_eq!(
             TrustBundle::load(&cfg).expect_err("three hex digits are not a sha256"),
@@ -742,14 +503,9 @@ mod tests {
         let bundle = TrustBundle::load(&operator_config(&path, &manifest.bundle_sha256))
             .expect("a matching operator bundle loads");
         assert_eq!(
-            bundle.facts().generation,
-            Some(manifest.generation),
-            "the sibling manifest supplies the generation"
-        );
-        assert_eq!(
-            bundle.source(),
-            &TrustSource::Operator(path),
-            "the facts say whose bundle this is"
+            bundle.pem(),
+            SHIPPED_PEM,
+            "the operator's bytes are the ones served"
         );
     }
 
@@ -845,96 +601,11 @@ mod tests {
         let cfg = TrustConfig {
             bundle: Some(PathBuf::from("/nonexistent/roots.pem")),
             sha256: Some("0".repeat(64)),
-            warn_after_days: 30,
         };
         let err = TrustBundle::load(&cfg).expect_err("a missing file cannot be served");
         assert!(
             matches!(&err, TrustError::Unreadable { path, .. } if path == Path::new("/nonexistent/roots.pem")),
             "the refusal names the file: {err}"
-        );
-    }
-
-    #[test]
-    fn a_manifest_with_an_unparseable_check_time_is_refused() {
-        let mut manifest = shipped_manifest();
-        manifest.ingested_at = "2026-11-31T00:00:00Z".into();
-        let (_dir, path) = operator_dir(SHIPPED_PEM, Some(&manifest));
-        let err = TrustBundle::load(&operator_config(&path, &manifest.bundle_sha256))
-            .expect_err("an age that cannot be computed must not pass as fresh");
-        assert!(
-            matches!(&err, TrustError::IngestedAtMalformed { value, .. } if value == "2026-11-31T00:00:00Z"),
-            "the refusal quotes the value: {err}"
-        );
-    }
-
-    fn bundle_checked_at(ingested_at: &str, warn_after_days: u32) -> TrustBundle {
-        let mut manifest = shipped_manifest();
-        manifest.ingested_at = ingested_at.into();
-        let (dir, path) = operator_dir(SHIPPED_PEM, Some(&manifest));
-        let mut cfg = operator_config(&path, &manifest.bundle_sha256);
-        cfg.warn_after_days = warn_after_days;
-        let bundle = TrustBundle::load(&cfg).expect("a dated operator bundle loads");
-        drop(dir);
-        bundle
-    }
-
-    #[test]
-    fn a_check_within_the_window_is_fresh() {
-        let bundle = bundle_checked_at("2026-09-11T05:39:35Z", 30);
-        let now = at(INGESTED_AT_2026_09_11 + 30 * SECS_PER_DAY);
-        assert_eq!(
-            bundle.staleness(now),
-            Staleness::Fresh { age_days: 30 },
-            "exactly warn_after_days old is still inside the window"
-        );
-    }
-
-    #[test]
-    fn a_check_older_than_the_window_warns_with_both_dates() {
-        let bundle = bundle_checked_at("2026-09-11T05:39:35Z", 30);
-        let now = at(INGESTED_AT_2026_09_11 + 31 * SECS_PER_DAY);
-        let staleness = bundle.staleness(now);
-        assert_eq!(
-            staleness,
-            Staleness::Stale {
-                age_days: 31,
-                warn_after_days: 30,
-                last_check: "2026-09-11T05:39:35Z".into(),
-                bundle_date: shipped_manifest().bundle_date,
-            },
-            "one day past the window is stale"
-        );
-        let message = staleness.to_string();
-        assert!(
-            message.contains("2026-09-11T05:39:35Z") && message.contains("publication date"),
-            "the warning distinguishes the check date from the bundle's date: {message}"
-        );
-    }
-
-    #[test]
-    fn a_check_in_the_future_is_not_stale() {
-        let bundle = bundle_checked_at("2026-09-11T05:39:35Z", 30);
-        assert_eq!(
-            bundle.staleness(at(INGESTED_AT_2026_09_11 - SECS_PER_DAY)),
-            Staleness::Fresh { age_days: 0 },
-            "a clock behind the ingest must not warn"
-        );
-    }
-
-    #[test]
-    fn an_operator_bundle_without_a_manifest_has_unknown_age() {
-        let (_dir, path) = operator_dir(SHIPPED_PEM, None);
-        let bundle = TrustBundle::load(&operator_config(&path, &shipped_manifest().bundle_sha256))
-            .expect("an operator bundle without a manifest loads");
-        assert_eq!(
-            bundle.staleness(at(INGESTED_AT_2026_09_11)),
-            Staleness::Unknown,
-            "with no check on record the node says so rather than guessing"
-        );
-        assert_eq!(
-            bundle.facts().ingested_at,
-            None,
-            "the facts carry no check date either"
         );
     }
 
@@ -946,17 +617,6 @@ mod tests {
         let bundle = TrustBundle::load(&operator_config(&path, &manifest.bundle_sha256))
             .expect("an operator bundle with a manifest loads");
         assert_eq!(bundle.modified_ns(), 1_735_787_045 * 1_000_000_000);
-    }
-
-    #[test]
-    fn the_shipped_manifest_records_a_time_the_bundle_can_report() {
-        let shipped = TrustBundle::load(&TrustConfig::default()).expect("the shipped bundle loads");
-        let day = parse_utc(&format!("{}T00:00:00Z", shipped_manifest().bundle_date))
-            .expect("the shipped bundle_date is a date");
-        assert!(
-            (day..day + SECS_PER_DAY).contains(&(shipped.modified_ns() / 1_000_000_000)),
-            "the data was taken on the day curl published the bundle"
-        );
     }
 
     #[test]
@@ -1002,44 +662,5 @@ mod tests {
             bundle.modified_ns(),
             content_modified_ns(&Sha256::digest(SHIPPED_PEM).into())
         );
-    }
-
-    #[test]
-    fn utc_timestamps_parse_to_unix_seconds() {
-        assert_eq!(
-            parse_utc("2026-09-11T05:39:35Z"),
-            Some(INGESTED_AT_2026_09_11),
-            "a date after a leap year and a century boundary"
-        );
-        assert_eq!(
-            parse_utc("2000-01-01T00:00:00Z"),
-            Some(MODIFIED_EPOCH_UNIX_SECS),
-            "the guest timestamp epoch"
-        );
-        assert_eq!(parse_utc("2000-02-29T00:00:00Z"), Some(951_782_400));
-        assert_eq!(parse_utc("2024-02-29T00:00:00Z"), Some(1_709_164_800));
-        assert_eq!(parse_utc("1970-01-01T00:00:00Z"), Some(0), "the Unix epoch");
-        for bad in [
-            "2026-09-11T05:39:35",
-            "2026-09-11 05:39:35Z",
-            "2026-13-01T00:00:00Z",
-            "2026-11-34T00:00:00Z",
-            "2026-11-31T00:00:00Z",
-            "2026-02-30T00:00:00Z",
-            "2025-02-29T00:00:00Z",
-            "2100-02-29T00:00:00Z",
-            "2026-00-01T00:00:00Z",
-            "2026-01-00T00:00:00Z",
-            "2026-1-01T00:00:00Z",
-            "2026-09-11T05:60:00Z",
-            "2026-09-11T05:39:60Z",
-            "2026-09-11T05:39:35+00:00",
-            "2026-09-11T05:39:35.1Z",
-            "2026-09-11T05:39:35Zextra",
-            "2026-09-11T24:00:00Z",
-            "1969-12-31T23:59:59Z",
-        ] {
-            assert_eq!(parse_utc(bad), None, "`{bad}` is not accepted");
-        }
     }
 }

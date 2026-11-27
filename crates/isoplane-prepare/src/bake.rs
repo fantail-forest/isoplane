@@ -129,7 +129,6 @@ pub(crate) fn bake(
     wasm: &[u8],
     memory: &[u8],
     globals: &BTreeMap<u32, GlobalValue>,
-    deferred: &[u32],
 ) -> anyhow::Result<Vec<u8>> {
     let data = baked_data(wasm, memory)?;
     let mut output = Module::new();
@@ -192,8 +191,6 @@ pub(crate) fn bake(
             Payload::DataCountSection { .. } => {
                 output.section(&wasm_encoder::DataCountSection { count: data.len() });
             }
-            Payload::CustomSection(section)
-                if section.name() == isoplane_engine::DEFERRED_INIT_SECTION => {}
             other => {
                 if let Some((id, range)) = other.as_section() {
                     output.section(&RawSection {
@@ -205,15 +202,6 @@ pub(crate) fn bake(
         }
     }
     output.section(&data);
-    let mut ids = Vec::new();
-    ids.extend_from_slice(&u32::try_from(deferred.len())?.to_le_bytes());
-    for id in deferred {
-        ids.extend_from_slice(&id.to_le_bytes());
-    }
-    output.section(&wasm_encoder::CustomSection {
-        name: isoplane_engine::DEFERRED_INIT_SECTION.into(),
-        data: ids.into(),
-    });
     Ok(output.finish())
 }
 

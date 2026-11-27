@@ -31,7 +31,12 @@ libc = { workspace = true }
 [target.'cfg(windows)'.dependencies]
 windows-sys.workspace = true
 
+[features]
+# Inspection the test suites use. No shipped build enables it.
+test-util = []
+
 [dev-dependencies]
+isoplane-engine = { workspace = true, features = ["test-util"] }
 isoplane-cache.workspace = true
 # Hand-written .wat fixtures, so a guest-SDK bug is never mistaken for an
 # engine bug.

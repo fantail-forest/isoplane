@@ -238,7 +238,7 @@ async fn completing_a_cell_dispatch_preserves_its_body_until_instance_discard() 
                 },
             ]),
         ));
-        let (cell, response) = common::cell(svc.clone(), activator);
+        let (cell, response) = common::cell(svc.clone(), activator.clone());
         let exchange = server
             .requests
             .recv()
@@ -258,12 +258,15 @@ async fn completing_a_cell_dispatch_preserves_its_body_until_instance_discard() 
             Err(isoplane_host::hibernate_policy::CaptureRefused::OutboundHttp)
         );
         assert_eq!(svc.egress.instance_connections(result.instance), 1);
-        cell.discard_instance(result.instance)
-            .expect("discard idle owner");
+        let module = isoplane_host::Activator::module(&*activator).clone();
+        while cell.idle_instances(&module) != Some(1) {
+            tokio::task::yield_now().await;
+        }
+        common::register(&cell, activator);
         assert_eq!(
             svc.egress.instance_connections(result.instance),
             0,
-            "instance discard must release the retained response's permit"
+            "discarding the instance with its replaced registration must release the retained response's permit"
         );
         cell.shutdown();
     })
@@ -352,12 +355,15 @@ async fn capture_refuses_pending_fetches_retained_bodies_and_inflight_reads() {
             Err(isoplane_host::hibernate_policy::CaptureRefused::OutboundHttp),
             "a partially read body remains instance-owned after request completion"
         );
-        cell.discard_instance(instance)
-            .expect("discard idle HTTP owner");
+        let module = isoplane_host::Activator::module(&*activator).clone();
+        while cell.idle_instances(&module) != Some(1) {
+            tokio::task::yield_now().await;
+        }
+        common::register(&cell, activator);
         assert_eq!(
             svc.egress.instance_connections(instance),
             0,
-            "completed ownership must release admission"
+            "discarding the instance with its replaced registration must release admission"
         );
         cell.shutdown();
     })
@@ -381,7 +387,7 @@ async fn a_gc_hint_cannot_hide_a_new_fetch_from_capture() {
             (func (export "isoplane_wake") (param i64 i32 i32) (result i64) (i64.const 0))
             (func (export "isoplane_gc_hint") (param i32) (drop (call $fetch (i32.const 1024) (i32.const {})))))"#, payload.len())).expect("the GC fixture must compile");
         let engine = std::sync::Arc::new(isoplane_engine::IsoplaneEngine::new(isoplane_engine::EngineConfig { max_instances: 4, max_memory_bytes: 2 << 20, guard_size_bytes: 64 << 20, ..Default::default() }).expect("the real engine must start"));
-        let activator = isoplane_host::activator::EngineActivator::load(engine, isoplane_host::ModuleId::new("gc-fetch", "v1"), &wasm).expect("the GC fixture must load");
+        let activator = engine.load_template(&wasm).map(|template| isoplane_host::activator::EngineActivator::new(engine, template, isoplane_host::ModuleId::new("gc-fetch", "v1"))).expect("the GC fixture must load");
         let (cell, _response) = common::cell(svc, std::sync::Arc::new(activator));
         let instance = loop {
             if let Some(instance) = cell.resident_ids().first().copied() {

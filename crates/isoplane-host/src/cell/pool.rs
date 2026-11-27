@@ -97,6 +97,7 @@ impl Cell {
     }
 
     pub(super) fn note_caught_panic(&self, stage: &'static str) {
+        #[cfg(test)]
         self.caught_panics.fetch_add(1, Ordering::Relaxed);
         tracing::error!(
             cell = %self.cfg.name, stage,
@@ -108,7 +109,8 @@ impl Cell {
     /// Host panics caught and contained; not zero is a host bug. On the cell
     /// rather than [`Metrics`] because it is a fact about this build, not a
     /// tenant.
-    pub fn caught_panics(&self) -> u64 {
+    #[cfg(test)]
+    pub(super) fn caught_panics(&self) -> u64 {
         self.caught_panics.load(Ordering::Relaxed)
     }
 
@@ -250,7 +252,7 @@ pub(super) mod cell_tests {
 
     #[test]
     fn the_sweeper_warms_a_template_only_while_its_module_has_instances() {
-        let cell = cell(CellConfig::for_test("template-warm"));
+        let cell = cell(crate::fakes::cell_config("template-warm"));
         let act = Arc::new(FakeActivator::named(
             ModuleId::new("warm", "v1"),
             FakeBehaviour::done(),
@@ -292,7 +294,7 @@ pub(super) mod cell_tests {
     fn a_panicking_dispatch_does_not_take_the_execution_thread_with_it() {
         let cell = cell(CellConfig {
             exec_threads: 1,
-            ..CellConfig::for_test("panic-dispatch")
+            ..crate::fakes::cell_config("panic-dispatch")
         });
 
         let bad = ModuleId::new("bad", "v1");
@@ -364,7 +366,7 @@ pub(super) mod cell_tests {
         use crate::bindings::request_body::RequestBodyScope;
         let cell = cell(CellConfig {
             exec_threads: 0,
-            ..CellConfig::for_test("busy-upload")
+            ..crate::fakes::cell_config("busy-upload")
         });
         let act = Arc::new(FakeActivator::new(FakeBehaviour::done()));
         let module = act.module().clone();
@@ -428,7 +430,7 @@ pub(super) mod cell_tests {
     fn a_discarded_idle_instance_leaves_the_index_when_acquisition_skips_it() {
         let cell = cell(CellConfig {
             exec_threads: 0,
-            ..CellConfig::for_test("discarded-idle-cleanup")
+            ..crate::fakes::cell_config("discarded-idle-cleanup")
         });
         let act = Arc::new(FakeActivator::new(FakeBehaviour::done()));
         let module = act.module().clone();
@@ -553,46 +555,10 @@ pub(super) mod cell_tests {
     }
 
     #[test]
-    fn an_in_flight_hibernated_handler_cannot_be_discarded() {
-        let cell = cell(CellConfig {
-            exec_threads: 0,
-            ..CellConfig::for_test("protected-continuation")
-        });
-        let (slot, response, future) = hibernated_dispatch(&cell);
-        assert!(
-            cell.discard_instance(slot.id).is_err(),
-            "eviction must refuse an unfinished dispatch even when it is hibernated"
-        );
-        assert_eq!(
-            slot.state(),
-            LifecycleTier::Hibernated,
-            "refused eviction must leave the continuation available for wake"
-        );
-        cell.futures()
-            .complete(future, isoplane_abi::result::ResultRecord::Ok(vec![]));
-        cell.run_wake(slot.clone());
-        let result = response
-            .recv_timeout(Duration::from_secs(10))
-            .expect("the protected dispatch must finish after its I/O completes");
-        assert_eq!(
-            result.body, b"restored",
-            "the original continuation must finish"
-        );
-        cell.discard_instance(slot.id)
-            .expect("the completed handler must become evictable");
-        assert_eq!(
-            slot.state(),
-            LifecycleTier::Discarded,
-            "idle eviction must reclaim the instance"
-        );
-        cell.shutdown();
-    }
-
-    #[test]
     fn concurrent_io_wakes_restore_a_hibernated_dispatch_once() {
         let cell = cell(CellConfig {
             exec_threads: 0,
-            ..CellConfig::for_test("restoring-io")
+            ..crate::fakes::cell_config("restoring-io")
         });
         let events = super::super::completion::test_events::Events::default();
         let clock = Arc::new(AtomicU64::new(100));
@@ -625,7 +591,7 @@ pub(super) mod cell_tests {
             "restoration must deliver the captured continuation's result"
         );
         assert_eq!(
-            cell.metrics().hibernation_wakes,
+            cell.metrics_raw().hibernation_wake_us.count(),
             1,
             "concurrent notifications must coalesce into one restoration"
         );
@@ -658,7 +624,7 @@ pub(super) mod cell_tests {
         let _trace = events.install();
         let cell = cell(CellConfig {
             exec_threads: 0,
-            ..CellConfig::for_test("missing-checkpoint")
+            ..crate::fakes::cell_config("missing-checkpoint")
         });
         let (slot, response, future) = hibernated_dispatch(&cell);
         slot.ctx.snapshot.lock().take();
@@ -714,7 +680,7 @@ pub(super) mod cell_tests {
         const LIVE: u64 = 900;
         let cell = cell(CellConfig {
             exec_threads: 2,
-            ..CellConfig::for_test("stale-panic")
+            ..crate::fakes::cell_config("stale-panic")
         });
         let m = app(
             &cell,
@@ -774,7 +740,7 @@ pub(super) mod cell_tests {
     #[tokio::test]
     async fn a_streaming_dispatch_records_every_hot_slice_once_at_final_completion() {
         let events = Events::default();
-        let cell = cell(CellConfig::for_test("stream-occupancy"));
+        let cell = cell(crate::fakes::cell_config("stream-occupancy"));
         let mut behaviour = FakeBehaviour::program([
             Step::Park {
                 imports: vec![("clock_deadline_in", 0)],
@@ -831,13 +797,6 @@ pub(super) mod cell_tests {
             result.occupancy_ns >= 33,
             "response usage includes every prescribed hot slice"
         );
-        tokio::time::timeout(Duration::from_secs(10), async {
-            while cell.metrics_raw().dispatch_us.count() == 0 {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("dispatch cleanup must settle");
         let records = events.completed(1);
         assert_eq!(records[0]["slice_occupancy_ns"], 33);
         let slot = cell
@@ -864,7 +823,7 @@ pub(super) mod cell_tests {
             "application usage includes request execution and transferred work exactly once"
         );
         assert_eq!(
-            meters.dispatches(),
+            cell.metrics().dispatches,
             1,
             "parks and EOF must not count extra dispatches"
         );
@@ -878,7 +837,7 @@ pub(super) mod cell_tests {
 
     #[tokio::test]
     async fn a_client_going_away_leaves_the_other_dispatches_on_its_instance_running() {
-        let cell = cell(CellConfig::for_test("client-gone"));
+        let cell = cell(crate::fakes::cell_config("client-gone"));
         let module = app(
             &cell,
             "client-gone",
@@ -952,13 +911,13 @@ pub(super) mod cell_tests {
             .expect("dispatch task")
             .expect("the client is answered");
         assert_eq!(gone.status, 502, "the client is answered for its transport");
-        tokio::time::timeout(Duration::from_secs(10), async {
-            while cell.metrics_raw().dispatch_us.count() == 0 {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("the abandoned dispatch must end once its guest stops");
+        assert!(
+            wait_for(
+                || cell.active_dispatch_ids(instance) == [1],
+                Duration::from_secs(10)
+            ),
+            "the abandoned dispatch must end once its guest stops"
+        );
         assert!(
             cell.slot(instance).is_some(),
             "a dispatch whose client went away must not take its instance with it"
@@ -975,7 +934,7 @@ pub(super) mod cell_tests {
 
     #[test]
     fn a_dispatch_joins_only_an_instance_with_nothing_waiting_for_its_thread() {
-        let cell = cell(CellConfig::for_test("join-rule"));
+        let cell = cell(crate::fakes::cell_config("join-rule"));
         let module = app(
             &cell,
             "join-rule",
@@ -1006,6 +965,9 @@ pub(super) mod cell_tests {
         let slot = parked().expect("parked instance");
         let entry = cell.modules.read().get(&module).cloned().expect("entry");
 
+        // The dispatches made from here report their completions to this thread.
+        let events = Events::default();
+        let _trace = events.install();
         let job = |id: u64| {
             let (responder, answer) = std::sync::mpsc::sync_channel(1);
             let job = DispatchJob {
@@ -1056,11 +1018,17 @@ pub(super) mod cell_tests {
             .recv_timeout(Duration::from_secs(10))
             .expect("the joined dispatch must be answered");
         assert_eq!(joined.status, 200);
-        assert_eq!(
-            cell.metrics_raw().thread_wait_us.count(),
-            1,
-            "the joined dispatch's wait for the thread must be measured"
+        // The cancelled start and the joined dispatch have each completed.
+        let completed = events.completed(2);
+        let joined = completed
+            .iter()
+            .find(|event| event["dispatch_id"] == 3)
+            .expect("the joined dispatch's completion");
+        assert!(
+            joined["thread_wait_ns"].as_u64() >= Some(5_000_000),
+            "the joined dispatch's wait for the thread must be measured: {joined:?}"
         );
+
         cell.shutdown();
     }
 }

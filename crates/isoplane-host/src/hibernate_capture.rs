@@ -56,30 +56,22 @@ pub struct CaptureEnv<'a> {
     pub activator: &'a Arc<dyn Activator>,
 }
 
-/// What an in-process capture saved.
-pub struct LocalCapture {
-    pub saved: isoplane_hibernate::local::Saved,
-    pub capture_us: u64,
-    pub gc_hint_us: u64,
-}
-
 /// Captures into the slot's own reservation while its original context keeps
 /// every live future, so the snapshot is usable only with that context.
 pub(crate) fn capture_in_context(
     slot: &Arc<Slot>,
     env: CaptureEnv<'_>,
-) -> Result<LocalCapture, CaptureRefused> {
+) -> Result<isoplane_hibernate::local::Saved, CaptureRefused> {
     let template = env.activator.template_image();
     let binding =
         isoplane_hibernate::Binding::new(env.activator.module_hash(), env.activator.abi_rev());
-    let (captured, gc_hint_us) = capture_with(slot, &env, &template, |instance, image| {
-        let started = std::time::Instant::now();
+    capture_with(slot, &env, &template, |instance, image| {
         let changed = instance.changed_ranges();
         let mut reservation = slot.ctx.snapshot.lock();
         let reservation = reservation
             .as_mut()
             .ok_or_else(|| CaptureRefused::Failed("instance has no snapshot reservation".into()))?;
-        let saved = isoplane_hibernate::local::save(
+        isoplane_hibernate::local::save(
             reservation.as_mut(),
             binding,
             image,
@@ -87,13 +79,7 @@ pub(crate) fn capture_in_context(
             &template,
             changed.as_deref(),
         )
-        .map_err(|e| CaptureRefused::SnapshotWrite(format!("{e:#}")))?;
-        Ok((saved, started.elapsed().as_micros() as u64))
-    })?;
-    Ok(LocalCapture {
-        saved: captured.0,
-        capture_us: captured.1,
-        gc_hint_us,
+        .map_err(|e| CaptureRefused::SnapshotWrite(format!("{e:#}")))
     })
 }
 
@@ -108,7 +94,7 @@ fn capture_with<T>(
         &mut (dyn isoplane_engine::InstanceOps + Send),
         isoplane_engine::InstanceImage,
     ) -> Result<T, CaptureRefused>,
-) -> Result<(T, u64), CaptureRefused> {
+) -> Result<T, CaptureRefused> {
     if slot.ctx.has_active_request_body() {
         return Err(CaptureRefused::OpenRequest);
     }
@@ -124,8 +110,7 @@ fn capture_with<T>(
         return Err(CaptureRefused::NotParked);
     }
 
-    let gc_hint_us = if env.dispatch_active {
-        let t_gc = std::time::Instant::now();
+    if env.dispatch_active {
         if let Some(observer) = &env.observer {
             observer.begin_hint();
         }
@@ -134,7 +119,6 @@ fn capture_with<T>(
         if let Some(observer) = &env.observer {
             observer.end_hint(&hint);
         }
-        let elapsed_us = t_gc.elapsed().as_micros() as u64;
         if hint.completion != Completion::Done {
             // A trap or kill inside the hint has discarded the engine's
             // instance; the slot follows, so the sweep stops selecting it and
@@ -145,11 +129,7 @@ fn capture_with<T>(
             }
             return Err(CaptureRefused::GcHintDidNotComplete(hint.completion));
         }
-        elapsed_us
-    } else {
-        // A completed guest may be captured, but cannot execute maintenance callbacks.
-        0
-    };
+    }
     // Eligibility rather than parked: an instance that returned `done` and
     // went idle has an empty stack too.
     if !guard.instance().is_capture_eligible() {
@@ -175,7 +155,7 @@ fn capture_with<T>(
         guard.destroy();
         return Err(CaptureRefused::StorageFailed);
     }
-    Ok((finished, gc_hint_us))
+    Ok(finished)
 }
 
 #[cfg(test)]
@@ -213,7 +193,6 @@ mod tests {
                 trap: None,
                 grace_end: None,
                 overage_ns: 0,
-                grace_deferrals: 0,
             }
         }
     }
@@ -344,7 +323,7 @@ mod tests {
         let pool = InstancePool::new(act.clone(), 4);
         let (slot, _) = pool
             .acquire(|id| {
-                Arc::new(crate::bindings::InstanceCtx::for_test(
+                Arc::new(crate::fakes::instance_ctx(
                     id,
                     isoplane_abi::config::Limits::default(),
                 ))
@@ -359,7 +338,7 @@ mod tests {
             ))
             .expect("reserve the fixture's snapshot");
         *slot.ctx.snapshot.lock() = Some(reservation);
-        slot.park(0);
+        slot.park();
         assert!(
             slot.is_capture_eligible(),
             "the fixture must start capturable"
@@ -370,7 +349,7 @@ mod tests {
     fn try_capture(
         slot: &Arc<Slot>,
         act: &Arc<dyn Activator>,
-    ) -> Result<LocalCapture, CaptureRefused> {
+    ) -> Result<isoplane_hibernate::local::Saved, CaptureRefused> {
         capture_in_context(
             slot,
             CaptureEnv {
@@ -440,9 +419,7 @@ mod tests {
         for how in [Completion::Trapped, Completion::BudgetKill] {
             let (slot, act) = parked_slot(how);
 
-            let refused = try_capture(&slot, &act)
-                .err()
-                .expect("a trap is not a capture");
+            let refused = try_capture(&slot, &act).expect_err("a trap is not a capture");
             assert_eq!(
                 refused,
                 CaptureRefused::GcHintDidNotComplete(how),
@@ -488,7 +465,7 @@ mod tests {
                 storage_failed: true,
             }),
         ));
-        slot.park(0);
+        slot.park();
         assert_eq!(
             try_capture(&slot, &act).err(),
             Some(CaptureRefused::StorageFailed),
@@ -591,7 +568,7 @@ mod tests {
                 storage_failed: false,
             }),
         ));
-        slot.park(0);
+        slot.park();
         assert_eq!(
             try_capture(&slot, &act).err(),
             Some(CaptureRefused::OpenRequest),

@@ -14,7 +14,7 @@ use isoplane_engine::{Completion, EngineConfig, IsoplaneEngine};
 
 use isoplane_harness::fakes::*;
 use isoplane_host::activator::EngineActivator;
-use isoplane_host::cell::{Cell, CellConfig, DispatchResult, Services, Target};
+use isoplane_host::cell::{Cell, DispatchResult, Services, Target};
 use isoplane_host::egress::HostEgressPolicy;
 use isoplane_host::{ModuleId, Resolver};
 use isoplane_test_support::wait_for;
@@ -43,7 +43,7 @@ fn services() -> Arc<Services> {
     Arc::new(Services {
         egress: Arc::new(HostEgressPolicy::new(
             Box::new(NoDns),
-            isoplane_host::egress::ConnectionLimits::uniform(1024).expect("connection limits"),
+            isoplane_harness::uniform_connection_limits(1024),
         )),
         fetcher: Arc::new(FakeFetcher::default()),
     })
@@ -71,7 +71,9 @@ fn rig() -> (Arc<Cell>, ModuleId) {
         .expect("engine"),
     );
     let module = ModuleId::new("misbehaver", "v1");
-    let act = EngineActivator::load(engine, module.clone(), &misbehaver_wasm())
+    let act = engine
+        .load_template(&misbehaver_wasm())
+        .map(|template| EngineActivator::new(engine, template, module.clone()))
         .expect("misbehaver.wasm must compile: it is the subject of these tests");
     cell_with(Arc::new(act))
 }
@@ -79,7 +81,11 @@ fn rig() -> (Arc<Cell>, ModuleId) {
 fn cell_with(act: Arc<dyn isoplane_host::Activator>) -> (Arc<Cell>, ModuleId) {
     isoplane_harness::logging::LogCapture::global();
     let module = act.module().clone();
-    let cell = Cell::new(CellConfig::for_test("isoplane-kill"), services()).expect("a cell starts");
+    let cell = Cell::new(
+        isoplane_harness::fakes::cell_config("isoplane-kill"),
+        services(),
+    )
+    .expect("a cell starts");
     cell.register_module("acme", act, manifest("misbehaver"))
         .expect("register");
     (cell, module)
@@ -234,7 +240,6 @@ fn negative_control_an_uncooperative_guest_cannot_exit() {
     let m = cell.metrics();
     assert_eq!(m.budget_kills, 2, "both routes were killed");
     assert_eq!(m.budget_exits, 0, "no exit");
-    assert_eq!(m.exit_kill_ratio, 0.0, "the ratio reads unhealthy");
 
     cell.shutdown();
 }
@@ -249,13 +254,13 @@ fn the_hang_breaker_counts_only_budget_kills() {
             ModuleId::new("misbehaver", "v1"),
             FakeBehaviour::program(vec![step; 6]),
         )));
-        for _ in 0..6 {
-            get(&cell, &module, "/budget");
-        }
-        let metrics = cell.metrics();
-        assert_eq!(metrics.budget_exits, exits);
-        assert_eq!(metrics.budget_kills, kills);
-        assert_eq!(metrics.breaker_rejections, rejected);
+        let completions: Vec<_> = (0..6)
+            .map(|_| get(&cell, &module, "/budget").completion)
+            .collect();
+        let count = |completion| completions.iter().filter(|c| **c == completion).count();
+        assert_eq!(count(Completion::BudgetExit), exits);
+        assert_eq!(count(Completion::BudgetKill), kills);
+        assert_eq!(cell.metrics().breaker_rejections, rejected);
         cell.shutdown();
     }
 }

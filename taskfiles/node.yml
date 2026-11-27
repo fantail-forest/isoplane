@@ -6,6 +6,16 @@ vars:
   NOTICES: '{{.ROOT_DIR}}/.build/clr-anycpu/notices'
 
 tasks:
+  binary:
+    desc: Build the optimized isoplaned a node package ships
+    deps: [':initialize']
+    # The directory node:package is given as BINARIES, whatever the caller's environment selects.
+    env:
+      CARGO_TARGET_DIR: '{{.NATIVE_TARGET}}'
+      CARGO_BUILD_BUILD_DIR: '{{.NATIVE_TARGET}}'
+    cmds:
+      - '{{.REFUSE_TEST_FEATURES}}cargo build --locked --release -p isoplaned --message-format=json-render-diagnostics'
+
   package:
     desc: Package qualified node binaries and runtime directories without copying their payloads
     platforms: [linux]

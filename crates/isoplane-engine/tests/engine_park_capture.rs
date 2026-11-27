@@ -131,7 +131,6 @@ fn gc_hint_reaches_the_guest_and_leaves_a_parked_instance_parked() {
         DONE,
     );
     let t = e.load_template(&wasm).expect("template");
-    assert!(t.has_gc_hint(), "the fixture exports the hint");
 
     let mut i = activate(&e, &t);
     i.dispatch(&http_dispatch(1), OccupancyBudget::default());
@@ -163,7 +162,6 @@ fn gc_hint_is_optional() {
     let t = e
         .load_template(&guest(4, "", "", PENDING, DONE))
         .expect("template");
-    assert!(!t.has_gc_hint(), "the fixture exports no hint");
     let mut i = activate(&e, &t);
     i.dispatch(&http_dispatch(1), OccupancyBudget::default());
     assert_eq!(

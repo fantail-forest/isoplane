@@ -15,7 +15,7 @@ use crate::{IsoplaneEngine, Template};
 
 pub use files::{PreparedPayload, ReadAhead};
 
-const FORMAT: u32 = 8;
+const FORMAT: u32 = 10;
 const MAGIC: [u8; 8] = *b"ISOPPREP";
 const NATIVE: &str = "template.cwasm";
 const BASELINE: &str = "baseline.bin";
@@ -131,17 +131,8 @@ mod byte_payloads {
 }
 
 impl IsoplaneEngine {
-    /// Compiles already initialized portable WASM and captures its complete baseline once.
-    /// Called by local preparation before activation.
-    pub fn prepare_template(
-        &self,
-        template_wasm: &[u8],
-        identity: PreparedIdentity,
-    ) -> Result<PreparedTemplate> {
-        self.prepare_template_with_files(template_wasm, identity, crate::PlatformFiles::default())
-    }
-
-    /// Prepare native state with immutable application files recorded in the artifact.
+    /// Compiles already initialized portable WASM and captures its complete baseline once,
+    /// with immutable application files recorded in the artifact.
     pub fn prepare_template_with_files(
         &self,
         template_wasm: &[u8],
@@ -246,11 +237,6 @@ impl IsoplaneEngine {
         state.validate(&image, self.inner.cfg.max_memory_bytes)?;
         state.filesystem(&self.inner.cfg.platform_files)?;
         Ok(PreparedTemplate { data: prepared })
-    }
-
-    /// Loads captured preparation output without compilation.
-    pub fn load_prepared_product(&self, product: &PreparedTemplate) -> Result<Template> {
-        self.load_prepared_product_in(product, &std::env::temp_dir())
     }
 
     /// Restore preparation output, using temporary backing files within
@@ -398,18 +384,6 @@ impl IsoplaneEngine {
         self.check_prepared(&manifest, expected)?;
         // SAFETY: the caller upholds this function's contract, which is the mapping's.
         unsafe { self.map_prepared(directory, manifest, &[], None) }
-    }
-
-    /// Checks a selection receipt without reading native code or baseline payloads.
-    pub fn check_prepared_receipt(
-        &self,
-        directory: &Path,
-        manifest_sha256: [u8; 32],
-        runtime_profile: [u8; 32],
-    ) -> Result<PreparedIdentity> {
-        Ok(self
-            .catalog_manifest(directory, manifest_sha256, runtime_profile)?
-            .identity)
     }
 
     fn catalog_manifest(
@@ -615,16 +589,6 @@ impl PreparedTemplateData {
 }
 
 impl PreparedTemplate {
-    /// Exact engine compatibility identity attached by the producer.
-    pub fn engine_fingerprint(&self) -> &str {
-        &self.data.manifest.engine
-    }
-
-    /// Native compilation bytes for registration under this artifact's engine identity.
-    pub fn native_bytes(&self) -> &[u8] {
-        &self.data.payloads[PreparedPayload::Native.index()]
-    }
-
     /// Encodes complete preparation output for the host.
     pub fn encode_builder_output(&self) -> Result<Vec<u8>> {
         Ok(postcard::to_allocvec(self)?)
@@ -674,7 +638,9 @@ mod tests {
             runtime_profile: [2; 32],
             initialization_hash: [3; 32],
         };
-        let prepared = engine.prepare_template(&wasm, identity).expect("prepare");
+        let prepared = engine
+            .prepare_template_with_files(&wasm, identity, crate::PlatformFiles::default())
+            .expect("prepare");
         (engine, prepared, identity)
     }
 

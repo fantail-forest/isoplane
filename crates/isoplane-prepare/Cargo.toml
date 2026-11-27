@@ -24,14 +24,19 @@ isoplane-host.workspace = true
 isoplane-runtime.workspace = true
 wasmparser.workspace = true
 wasm-encoder.workspace = true
-tempfile.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tar.workspace = true
 hex.workspace = true
 
+[features]
+# What the tool that precompiles the test runtime calls. No shipped build enables it.
+test-util = []
+
 [dev-dependencies]
+isoplane-prepare = { workspace = true, features = ["test-util"] }
+isoplane-engine = { workspace = true, features = ["test-util"] }
+tempfile.workspace = true
 isoplane-fixtures.workspace = true
-isoplane-test-support.workspace = true
 wasmtime.workspace = true
 wat.workspace = true

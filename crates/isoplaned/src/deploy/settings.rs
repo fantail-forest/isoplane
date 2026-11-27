@@ -139,7 +139,7 @@ mod tests {
             artifact_key: "artifact-first".to_string().try_into().unwrap(),
             manifest_sha256: "a".repeat(64),
             settings_digest: String::new(),
-            runtime_profile: isoplane_prepare::RuntimeProfile::raw_wasm(),
+            runtime_profile: isoplane_prepare::RuntimeProfile::RawWasm,
             manifest: serde_json::from_value(serde_json::json!({"name":"app"})).unwrap(),
         };
         receipt.settings_digest = deployer

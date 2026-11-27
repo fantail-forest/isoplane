@@ -21,19 +21,6 @@ impl ModuleHash {
     }
 }
 
-impl std::fmt::Display for ModuleHash {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", &self.hex()[..16])
-    }
-}
-
-/// Custom section pre-initialisation writes into the template wasm naming
-/// the init units it left un-run. It travels in the artifact because the
-/// deferred set is a property of one pre-initialisation, not of the module.
-/// Layout: a little-endian `u32` count, then that many little-endian `u32`
-/// unit ids. Absent means nothing deferred.
-pub const DEFERRED_INIT_SECTION: &str = "isoplane.deferred-init";
-
 /// A compiled, pre-initialised module ready to be mapped into slots. Clones
 /// share one compiled module and memory image.
 #[derive(Clone)]
@@ -58,12 +45,10 @@ pub(crate) struct TemplateInner {
     /// module imports only `isoplane`. Per template because a trap stub is typed
     /// from the module's own declaration, and every instance shares it.
     pub pal_linker: Option<wasmtime::Linker<crate::state::StoreState>>,
-    pub pal_composed: Vec<&'static isoplane_abi::pal::PalDef>,
     /// The post-init linear memory, the baseline for the hibernation page
     /// diff. Its own `Arc` so the cell's activator holds it by refcount.
     pub image: Arc<crate::image::MemoryImage>,
     pub memory_pages: u32,
-    pub deferred: Vec<u32>,
     pub prepared_resources: isoplane_abi::native_io::PreparedResources,
     /// Exported mutable globals in module index order, with their template
     /// values, so capture and restore agree on an ordering without names in
@@ -74,7 +59,6 @@ pub(crate) struct TemplateInner {
     /// Per exported table, whether each slot held a non-null reference, so
     /// capture can detect a table mutation.
     pub table_nullness: Vec<Vec<bool>>,
-    pub has_gc_hint: bool,
     pub has_initialize: bool,
     /// Set when an instance's call read this template's mapped storage after it failed.
     pub failed_storage: std::sync::atomic::AtomicBool,
@@ -111,15 +95,12 @@ impl TemplateInner {
             filesystem_files: self.filesystem_files.clone(),
             native: Arc::clone(&self.native),
             pal_linker: self.pal_linker.clone(),
-            pal_composed: self.pal_composed.clone(),
             image: Arc::clone(&self.image),
             memory_pages: self.memory_pages,
-            deferred: self.deferred.clone(),
             prepared_resources: self.prepared_resources.clone(),
             mut_globals: self.mut_globals.clone(),
             tables: self.tables.clone(),
             table_nullness: self.table_nullness.clone(),
-            has_gc_hint: self.has_gc_hint,
             has_initialize: self.has_initialize,
             failed_storage: std::sync::atomic::AtomicBool::new(self.storage_failed()),
             prepared_hash: self.prepared_hash,
@@ -215,72 +196,14 @@ impl Template {
         self.inner.mut_globals.len()
     }
 
+    #[cfg(any(test, feature = "test-util"))]
     pub fn memory_pages(&self) -> u32 {
         self.inner.memory_pages
-    }
-
-    /// Init units left un-run because they touched a forbidden import in the
-    /// init sandbox.
-    pub fn deferred_init_units(&self) -> &[u32] {
-        &self.inner.deferred
-    }
-
-    pub fn has_gc_hint(&self) -> bool {
-        self.inner.has_gc_hint
     }
 
     pub fn has_initialize(&self) -> bool {
         self.inner.has_initialize
     }
-
-    /// The `wasi:*` imports the PAL adapter composed for this template, so a
-    /// capability that entered through a WASI door can be named afterwards.
-    pub fn pal_composed(&self) -> &[&'static isoplane_abi::pal::PalDef] {
-        &self.inner.pal_composed
-    }
-
-    pub fn uses_pal(&self) -> bool {
-        self.inner.pal_linker.is_some()
-    }
-}
-
-impl std::fmt::Debug for Template {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Template")
-            .field("hash", &self.hash)
-            .field("abi_rev", &self.abi_rev)
-            .field("memory_pages", &self.inner.memory_pages)
-            .field("deferred_init_units", &self.inner.deferred)
-            .field("mutable_globals", &self.inner.mut_globals.len())
-            .finish()
-    }
-}
-
-pub(crate) fn read_deferred_units(wasm: &[u8]) -> Result<Vec<u32>> {
-    for payload in wasmparser::Parser::new(0).parse_all(wasm) {
-        if let wasmparser::Payload::CustomSection(c) = payload? {
-            if c.name() == DEFERRED_INIT_SECTION {
-                let d = c.data();
-                let Some(count) = d.get(0..4) else {
-                    bail!("`{DEFERRED_INIT_SECTION}` section is truncated");
-                };
-                let n = u32::from_le_bytes(count.try_into().expect("a 4-byte slice")) as usize;
-                let Some(ids) = d.get(4..4 + n * 4) else {
-                    bail!(
-                        "`{DEFERRED_INIT_SECTION}` declares {n} units but is {} bytes",
-                        d.len()
-                    );
-                };
-                return Ok(ids
-                    .as_chunks::<4>()
-                    .0
-                    .iter()
-                    .map(|c| u32::from_le_bytes(*c))
-                    .collect());
-            }
-        }
-    }
-    Ok(Vec::new())
 }
 
 /// Names of exported mutable globals, ordered by module global index. Only
@@ -394,15 +317,13 @@ pub(crate) struct ArtifactMeta {
     pub engine_fingerprint: String,
     /// blake3 of the `.cwasm`, checked before the file is mapped.
     pub cwasm_hash: [u8; 32],
-    pub memory_pages: u32,
-    pub deferred: Vec<u32>,
     pub prepared_resources: isoplane_abi::native_io::PreparedResources,
     pub mut_global_names: Vec<String>,
     pub table_names: Vec<String>,
 }
 
 pub(crate) const ARTIFACT_MAGIC: [u8; 8] = *b"ISOPTMPL";
-pub(crate) const ARTIFACT_FORMAT: u32 = 4;
+pub(crate) const ARTIFACT_FORMAT: u32 = 6;
 
 pub(crate) fn read_prepared_resources(
     wasm: &[u8],

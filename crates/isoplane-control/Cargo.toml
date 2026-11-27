@@ -18,9 +18,8 @@ tempfile.workspace = true
 zstd = { workspace = true }
 
 [dev-dependencies]
-isoplane-engine.workspace = true
+isoplane-engine = { workspace = true, features = ["test-util"] }
 blake3.workspace = true
-anyhow.workspace = true
 isoplane-prepare.workspace = true
 tokio-util.workspace = true
 wasmtime.workspace = true
@@ -33,4 +32,4 @@ sha1 = { workspace = true }
 isoplane-fixtures = { workspace = true }
 isoplane-test-support = { workspace = true }
 isoplane-harness = { workspace = true }
-isoplane-host = { workspace = true }
+isoplane-host = { workspace = true, features = ["test-util"] }

@@ -29,10 +29,7 @@ internal sealed record ManagedIdentity(string Name, Version Version, string Cult
 
 internal sealed record NativeImport(string Member, string Library, string EntryPoint);
 internal sealed record ReferencedMethod(string Type, string Name);
-internal sealed record ConformanceDiagnostic(string Code, string Message)
-{
-    public override string ToString() => $"warning {Code}: {Message}";
-}
+internal sealed record ConformanceDiagnostic(string Code, string Message);
 internal sealed record InspectedAssembly(string Origin, ManagedIdentity Identity, ManagedIdentity[] References, bool HasManagedIl,
     NativeImport[] NativeImports, ReferencedMethod[] Methods);
 

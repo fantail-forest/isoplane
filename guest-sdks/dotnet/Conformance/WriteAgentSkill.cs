@@ -38,9 +38,6 @@ public sealed class WriteAgentSkill : Microsoft.Build.Utilities.Task
     /// <summary>Where the names of the parts this project wrote last time are kept, so a part whose package left the project is removed.</summary>
     [Required] public string ManifestFile { get; set; } = "";
 
-    /// <summary>The directory the skill was written to.</summary>
-    [Output] public string SkillDirectory { get; set; } = "";
-
     /// <inheritdoc />
     public override bool Execute()
     {
@@ -84,7 +81,6 @@ public sealed class WriteAgentSkill : Microsoft.Build.Utilities.Task
         File.WriteAllLines(ManifestFile, parts.Select(part => part.Name));
         foreach (var directory in directories.Skip(1))
             changed |= Link(Path.Combine(root, directory), skill);
-        SkillDirectory = skill;
         Log.LogMessage(changed ? MessageImportance.Normal : MessageImportance.Low, "isoplane: agent skill {0} at {1}", changed ? "written" : "unchanged", skill);
         return true;
     }

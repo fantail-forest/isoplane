@@ -1,6 +1,6 @@
 //! The activator contract and the per-module pool of Handler instances that draws from it.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use isoplane_engine::{InstanceOps, ModuleHash};
@@ -72,12 +72,10 @@ impl AcquireSource {
 
 /// A per-module pool of Handler instances.
 pub struct InstancePool {
-    pub module: ModuleId,
     activator: Arc<dyn Activator>,
     warm: Mutex<IdleList>,
     max_idle: usize,
     mapped: Mutex<Option<Box<dyn isoplane_engine::DormantInstance>>>,
-    live: AtomicU64,
     /// Set once the module is retired; instances released afterwards are
     /// discarded instead of pooled.
     retired: std::sync::atomic::AtomicBool,
@@ -92,10 +90,9 @@ struct IdleList {
 
 /// Exclusive ownership of one idle pool entry during reclamation.
 /// Returning the claim preserves its list and lifecycle state; a discarded
-/// entry, or one claimed before a pool drain, leaves live accounting instead.
+/// entry, or one claimed before a pool drain, is discarded instead.
 pub(crate) struct IdleClaim<'a> {
     list: &'a Mutex<IdleList>,
-    live: &'a AtomicU64,
     slot: Arc<Slot>,
     generation: Arc<()>,
     retry_last: bool,
@@ -118,7 +115,6 @@ impl Drop for IdleClaim<'_> {
         {
             drop(list);
             self.slot.discard();
-            self.live.fetch_sub(1, Ordering::Relaxed);
         } else if self.retry_last {
             list.slots.insert(0, self.slot.clone());
         } else {
@@ -130,12 +126,10 @@ impl Drop for IdleClaim<'_> {
 impl InstancePool {
     pub fn new(activator: Arc<dyn Activator>, max_idle: usize) -> Self {
         Self {
-            module: activator.module().clone(),
             activator,
             warm: Mutex::new(IdleList::default()),
             max_idle,
             mapped: Mutex::new(None),
-            live: AtomicU64::new(0),
             retired: std::sync::atomic::AtomicBool::new(false),
         }
     }
@@ -169,10 +163,6 @@ impl InstancePool {
         self.drain_idle()
     }
 
-    pub fn live(&self) -> u64 {
-        self.live.load(Ordering::Relaxed)
-    }
-
     /// Warm instances waiting for a dispatch.
     pub fn idle(&self) -> usize {
         self.warm.lock().slots.len()
@@ -187,7 +177,6 @@ impl InstancePool {
         entries.claimed += 1;
         Some(IdleClaim {
             list,
-            live: &self.live,
             slot,
             generation: entries.generation.clone(),
             retry_last: false,
@@ -210,7 +199,8 @@ impl InstancePool {
     }
 
     /// Reuse a warm instance or activate.
-    pub fn acquire<F>(&self, make_ctx: F) -> anyhow::Result<(Arc<Slot>, AcquireSource)>
+    #[cfg(test)]
+    pub(crate) fn acquire<F>(&self, make_ctx: F) -> anyhow::Result<(Arc<Slot>, AcquireSource)>
     where
         F: FnOnce(InstanceId) -> Arc<InstanceCtx>,
     {
@@ -219,7 +209,8 @@ impl InstancePool {
 
     /// Calls `discard` synchronously for failed candidates so their owner can
     /// remove registry entries before replacement activation, including when it fails.
-    pub(crate) fn acquire_with_cleanup<F, D>(
+    #[cfg(test)]
+    fn acquire_with_cleanup<F, D>(
         &self,
         make_ctx: F,
         mut discard: D,
@@ -256,7 +247,6 @@ impl InstancePool {
                 let _execution = slot.lock_execution();
                 match slot.state() {
                     crate::LifecycleTier::Discarded => {
-                        self.live.fetch_sub(1, Ordering::Relaxed);
                         discard(&slot);
                         continue;
                     }
@@ -266,7 +256,6 @@ impl InstancePool {
                                 tracing::warn!(instance = %slot.id, tenant = %slot.ctx.tenant,
                                     %error, "snapshot unusable; discarding instance before replacement");
                                 slot.discard();
-                                self.live.fetch_sub(1, Ordering::Relaxed);
                                 discard(&slot);
                                 continue;
                             }
@@ -274,13 +263,11 @@ impl InstancePool {
                             if self.retired.load(Ordering::Acquire) {
                                 drop(warm);
                                 slot.discard();
-                                self.live.fetch_sub(1, Ordering::Relaxed);
                                 discard(&slot);
                             } else {
                                 warm.claimed += 1;
                                 unavailable.push(IdleClaim {
                                     list: &self.warm,
-                                    live: &self.live,
                                     slot: slot.clone(),
                                     generation: warm.generation.clone(),
                                     retry_last: true,
@@ -306,7 +293,6 @@ impl InstancePool {
         };
         let bindings = crate::bindings::CellBindings::boxed(ctx.clone());
         let inst = self.activate(bindings)?;
-        self.live.fetch_add(1, Ordering::Relaxed);
         Ok((Arc::new(Slot::new(id, ctx, inst)), AcquireSource::Activated))
     }
 
@@ -314,7 +300,7 @@ impl InstancePool {
     pub fn release(&self, slot: Arc<Slot>, d: Disposition) {
         match d.kind() {
             DispositionKind::Warm => {
-                slot.park(crate::now_ms());
+                slot.park();
                 let mut w = self.warm.lock();
                 if !self.retired.load(Ordering::Acquire)
                     && w.slots.len() + w.claimed < self.max_idle
@@ -323,12 +309,10 @@ impl InstancePool {
                 } else {
                     drop(w);
                     slot.discard();
-                    self.live.fetch_sub(1, Ordering::Relaxed);
                 }
             }
             DispositionKind::Discard => {
                 slot.discard();
-                self.live.fetch_sub(1, Ordering::Relaxed);
             }
         }
     }
@@ -343,7 +327,6 @@ impl InstancePool {
         };
         for slot in &slots {
             slot.discard();
-            self.live.fetch_sub(1, Ordering::Relaxed);
         }
         slots.len()
     }
@@ -361,7 +344,7 @@ mod tests {
     use isoplane_engine::Completion;
 
     fn ctx_for(id: InstanceId) -> Arc<InstanceCtx> {
-        Arc::new(InstanceCtx::for_test(
+        Arc::new(crate::fakes::instance_ctx(
             id,
             isoplane_abi::config::Limits::default(),
         ))
@@ -420,6 +403,5 @@ mod tests {
         };
         p.release(a, d);
         assert_eq!(p.idle(), 0, "a killed instance is not pooled");
-        assert_eq!(p.live(), 0, "and it is no longer live");
     }
 }

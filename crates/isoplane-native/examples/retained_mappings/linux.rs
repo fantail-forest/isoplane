@@ -91,13 +91,8 @@ fn templates(engine: &IsoplaneEngine, count: usize, storage: &Path) -> Result<Ve
             == Completion::Done,
         "baseline initialization failed"
     );
-    let product = engine.prepare_runtime_baseline(
-        &source,
-        &mut initial,
-        identity(0),
-        Default::default(),
-        vec![],
-    )?;
+    let product =
+        engine.prepare_runtime_baseline(&source, &mut initial, identity(0), Default::default())?;
     drop(initial);
     let base = engine.load_prepared_product_in(&product, storage)?;
     let mut guests = Vec::with_capacity(count);
@@ -116,7 +111,6 @@ fn templates(engine: &IsoplaneEngine, count: usize, storage: &Path) -> Result<Ve
             &mut instance,
             identity(id),
             Default::default(),
-            vec![],
         )?;
         drop(instance);
         let template = engine.load_prepared_product_over_in(&base, &product, storage)?;

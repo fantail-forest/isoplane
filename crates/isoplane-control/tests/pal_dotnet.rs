@@ -9,41 +9,32 @@ fn engine() -> IsoplaneEngine {
 }
 
 #[test]
-fn the_mono_module_links_exactly_the_platform_imports_admitted_by_the_validator() {
+fn the_mono_module_the_validator_admits_links_through_the_platform_adapter() {
     let wasm = isoplane_fixtures::mono_runtime();
-    let report = validator::validate_with_memory_limit(
+    validator::validate_with_limits(
         &wasm,
         isoplane_abi::config::GuestMemoryBytes::default(),
         Some(GuestMemoryBytes::WASM32_MAX),
+        &Default::default(),
     )
     .expect("the Mono fixture must satisfy admission");
-    let template = isoplane_fixtures::load_compiled_runtime(&engine());
-    let mut admitted: Vec<_> = report.pal.iter().map(|import| import.full_name()).collect();
-    let mut linked: Vec<_> = template
-        .pal_composed()
-        .iter()
-        .map(|import| import.full_name())
-        .collect();
-    admitted.sort();
-    linked.sort();
     assert!(
-        !admitted.is_empty(),
+        !platform_imports(&wasm).is_empty(),
         "Mono must exercise the platform adapter"
     );
-    assert_eq!(
-        linked, admitted,
-        "execution must compose every admitted platform import"
-    );
+    // Loading panics unless execution composes every platform import the module declares.
+    isoplane_fixtures::load_compiled_runtime(&engine());
 }
 
 #[test]
 fn an_undeclared_mono_platform_interface_is_refused_by_admission_and_execution() {
     let wasm = isoplane_fixtures::mono_runtime();
     let mutated = rename_import(&wasm, "wasi:io/poll@0.2.0", "wasi:io/poll@0.9.0");
-    let violations = validator::validate_with_memory_limit(
+    let violations = validator::validate_with_limits(
         &mutated,
         isoplane_abi::config::GuestMemoryBytes::default(),
         Some(GuestMemoryBytes::WASM32_MAX),
+        &Default::default(),
     )
     .expect_err("an unknown platform interface must fail admission");
     assert!(
@@ -56,6 +47,25 @@ fn an_undeclared_mono_platform_interface_is_refused_by_admission_and_execution()
         engine().load_template(&mutated).is_err(),
         "execution must also refuse the undeclared platform interface"
     );
+}
+
+/// The imports of an admitted module that the platform table declares.
+fn platform_imports(wasm: &[u8]) -> Vec<String> {
+    let mut names = Vec::new();
+    for payload in wasmparser::Parser::new(0).parse_all(wasm) {
+        let wasmparser::Payload::ImportSection(section) =
+            payload.expect("an admitted module is well formed")
+        else {
+            continue;
+        };
+        for import in section.into_imports() {
+            let import = import.expect("an admitted module's imports decode");
+            if let Some(definition) = isoplane_abi::pal::lookup(import.module, import.name) {
+                names.push(definition.full_name());
+            }
+        }
+    }
+    names
 }
 
 fn rename_import(wasm: &[u8], from: &str, to: &str) -> Vec<u8> {

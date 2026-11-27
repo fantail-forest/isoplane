@@ -14,7 +14,7 @@ use isoplane_host::egress::DestinationPolicy;
 use super::{common, config, get, manifest, serve, InitSandbox, Node, Rig};
 
 fn fetching_guest(destination: SocketAddr) -> Vec<u8> {
-    let request = isoplane_abi::encode(&FetchRequest {
+    let request = postcard::to_allocvec(&FetchRequest {
         method: "GET".into(),
         url: format!("http://{destination}/owned"),
         headers: vec![],
@@ -22,7 +22,7 @@ fn fetching_guest(destination: SocketAddr) -> Vec<u8> {
     })
     .expect("the fetch request must encode");
     let response = |status| {
-        isoplane_abi::encode(&ResponseHead {
+        postcard::to_allocvec(&ResponseHead {
             status,
             headers: vec![],
             body: vec![],
@@ -33,7 +33,7 @@ fn fetching_guest(destination: SocketAddr) -> Vec<u8> {
     let success = response(200);
     let failure = response(502);
     let ok_tag =
-        isoplane_abi::encode(&ResultRecord::Ok(vec![])).expect("result tag must encode")[0];
+        postcard::to_allocvec(&ResultRecord::Ok(vec![])).expect("result tag must encode")[0];
     let pending = isoplane_abi::status::PollStatus::Pending.encode();
     wat::parse_str(format!(
         r#"(module
@@ -79,18 +79,16 @@ async fn node_for(destination: SocketAddr, policy: Option<Arc<dyn DestinationPol
         None => Node::build(configuration),
     }
     .expect("the real node must assemble");
-    node.real
-        .as_ref()
-        .deploy_locally(
-            "quotes",
-            "v1",
-            "acme",
-            manifest("quotes"),
-            &fetching_guest(destination),
-            InitSandbox::default(),
-        )
-        .await
-        .expect("the guest must deploy through the real pipeline");
+    node.deploy_locally(
+        "quotes",
+        "v1",
+        "acme",
+        manifest("quotes"),
+        &fetching_guest(destination),
+        InitSandbox::default(),
+    )
+    .await
+    .expect("the guest must deploy through the real pipeline");
     serve(node, directory).await
 }
 
@@ -181,18 +179,16 @@ async fn a_managed_network_stream_exchanges_partial_payloads_through_a_real_node
     let node =
         Node::build_with_destinations(config(directory.path()), Arc::new(OwnedEndpoint(address)))
             .expect("the real native stream node must assemble");
-    node.real
-        .as_ref()
-        .deploy_locally(
-            "quotes",
-            "v1",
-            "acme",
-            manifest("quotes"),
-            &common::preparation::Guest::from("isoplane_guest_dotnet_native_io"),
-            InitSandbox::RuntimeBringUp,
-        )
-        .await
-        .expect("the ordinary NetworkStream fixture must deploy");
+    node.deploy_locally(
+        "quotes",
+        "v1",
+        "acme",
+        manifest("quotes"),
+        &common::preparation::Guest::from("isoplane_guest_dotnet_native_io"),
+        InitSandbox::RuntimeBringUp,
+    )
+    .await
+    .expect("the ordinary NetworkStream fixture must deploy");
     let rig = serve(node, directory).await;
     let cell = rig.node.real.as_ref().cells()[0].clone();
     let proxy = rig.proxy;

@@ -50,7 +50,7 @@ const PARK_MS: u64 = 600_000;
 fn a_budget_killed_spinner_does_not_block_another_tenants_wake() {
     let r = rig(CellConfig {
         exec_threads: 1,
-        ..CellConfig::for_test("c7")
+        ..isoplane_harness::fakes::cell_config("c7")
     });
 
     let spinner = Arc::new(FakeActivator::named(
@@ -120,10 +120,9 @@ fn a_budget_killed_spinner_does_not_block_another_tenants_wake() {
     wake_once(&r, &victim_mod);
 
     let m = r.cell.metrics();
-    assert_eq!(m.tenants["quiet"].traps, 0, "the victim tenant was harmed");
     assert_eq!(
-        m.tenants["noisy"].traps, 0,
-        "budget kills remain distinct from guest traps for the offender"
+        m.traps, 0,
+        "budget kills are not guest traps, and the victim never trapped"
     );
     assert_eq!(m.budget_kills, 2, "both spinners were killed at budget");
     r.cell.shutdown();
@@ -177,7 +176,7 @@ fn wake_once(r: &Rig, module: &ModuleId) {
 fn the_breaker_fails_a_repeat_offender_fast_without_entering_the_guest() {
     let r = rig(CellConfig {
         exec_threads: 2,
-        ..CellConfig::for_test("breaker")
+        ..isoplane_harness::fakes::cell_config("breaker")
     });
     let act = Arc::new(FakeActivator::named(
         ModuleId::new("hangs", "v1"),
@@ -257,7 +256,7 @@ fn many_dispatches_share_one_channel_and_stay_matchable() {
     let r = rig(CellConfig {
         exec_threads: 4,
         queue_depth_per_worker: 64,
-        ..CellConfig::for_test("share")
+        ..isoplane_harness::fakes::cell_config("share")
     });
 
     let slow = Arc::new(FakeActivator::named(
@@ -295,26 +294,30 @@ fn many_dispatches_share_one_channel_and_stay_matchable() {
 
     let mut rec = http(&r.cell, &slow_mod, "/slow");
     rec.dispatch_id = SLOW_ID;
-    assert!(r.cell.submit_with(
-        &slow_mod,
-        Target::Handler {
-            route: "/slow".into()
-        },
-        rec,
-        tx.clone()
-    ));
+    r.cell
+        .submit_with(
+            &slow_mod,
+            Target::Handler {
+                route: "/slow".into(),
+            },
+            rec,
+            tx.clone(),
+        )
+        .expect("the slow dispatch is submitted");
 
     for i in 0..FAST {
         let mut rec = http(&r.cell, &fast_mod, "/fast");
         rec.dispatch_id = i;
-        assert!(r.cell.submit_with(
-            &fast_mod,
-            Target::Handler {
-                route: "/fast".into()
-            },
-            rec,
-            tx.clone()
-        ));
+        r.cell
+            .submit_with(
+                &fast_mod,
+                Target::Handler {
+                    route: "/fast".into(),
+                },
+                rec,
+                tx.clone(),
+            )
+            .expect("a fast dispatch is submitted");
     }
     drop(tx);
 
@@ -360,7 +363,7 @@ fn a_shed_submission_says_so_rather_than_going_quiet() {
     let r = rig(CellConfig {
         exec_threads: 1,
         queue_depth_per_worker: 1,
-        ..CellConfig::for_test("shed")
+        ..isoplane_harness::fakes::cell_config("shed")
     });
     let (entered, observed) = std::sync::mpsc::channel();
     let (release, released) = std::sync::mpsc::channel();
@@ -380,63 +383,80 @@ fn a_shed_submission_says_so_rather_than_going_quiet() {
     let mut rec = http(&r.cell, &module, "/spin");
     rec.dispatch_id = 0;
     rec.occupancy_budget_ms = 50;
-    assert!(r.cell.submit_with(
-        &module,
-        Target::Handler {
-            route: "/spin".into()
-        },
-        rec,
-        tx.clone()
-    ));
-    observed
-        .recv_timeout(Duration::from_secs(10))
-        .expect("worker reached the explicit hold");
-
-    let mut shed = 0;
-    let mut accepted = 1;
-    for i in 1..64u64 {
-        let mut rec = http(&r.cell, &module, "/spin");
-        rec.dispatch_id = i;
-        rec.occupancy_budget_ms = 50;
-        if r.cell.submit_with(
+    r.cell
+        .submit_with(
             &module,
             Target::Handler {
                 route: "/spin".into(),
             },
             rec,
             tx.clone(),
-        ) {
-            accepted += 1;
-        } else {
-            shed += 1;
-        }
+        )
+        .expect("the held dispatch is submitted");
+    observed
+        .recv_timeout(Duration::from_secs(10))
+        .expect("worker reached the explicit hold");
+
+    const QUEUED: u64 = 1;
+    for i in 1..64u64 {
+        let mut rec = http(&r.cell, &module, "/spin");
+        rec.dispatch_id = i;
+        rec.occupancy_budget_ms = 50;
+        r.cell
+            .submit_with(
+                &module,
+                Target::Handler {
+                    route: "/spin".into(),
+                },
+                rec,
+                tx.clone(),
+            )
+            .expect("the dispatch is submitted");
     }
     drop(tx);
+    let shed: Vec<_> = rx.try_iter().collect();
     assert_eq!(
-        accepted, 2,
-        "one Hot and one queued; everything else must shed at admission"
+        shed.iter()
+            .map(|result| result.dispatch_id)
+            .collect::<Vec<_>>(),
+        (QUEUED + 1..64).collect::<Vec<_>>(),
+        "one Hot and one queued; everything else must be answered at admission"
     );
-    assert_eq!(shed, 62, "the rest were shed");
+    for result in &shed {
+        assert_eq!(result.status, 503, "dispatch {}", result.dispatch_id);
+        assert_eq!(
+            result.trap.as_deref(),
+            Some("shed"),
+            "dispatch {}",
+            result.dispatch_id
+        );
+    }
     assert!(
         r.cell.metrics().shed >= 62,
         "the cell must count what it shed"
     );
 
     drop(release);
-    let mut got = 0;
-    while rx.recv_timeout(Duration::from_secs(2)).is_ok() {
-        got += 1;
-    }
+    let mut accepted: Vec<_> = (0..=QUEUED)
+        .map(|_| {
+            let result = rx
+                .recv_timeout(Duration::from_secs(10))
+                .expect("accepted work is answered once released");
+            (result.dispatch_id, result.status)
+        })
+        .collect();
+    accepted.sort_unstable();
     assert_eq!(
-        got, accepted,
-        "results on the channel must equal accepted submissions"
+        accepted,
+        [(0, 200), (QUEUED, 200)],
+        "the held and the queued dispatch must each run"
     );
     r.cell.shutdown();
 }
 
 #[test]
 fn async_dispatch_completes_while_the_blocking_pool_is_occupied() {
-    let r = rig(CellConfig::for_test("async-dispatch"));
+    let r = rig(isoplane_harness::fakes::cell_config("async-dispatch"));
     let guest = Arc::new(FakeActivator::named(
         ModuleId::new("async-dispatch", "v1"),
         FakeBehaviour::program([

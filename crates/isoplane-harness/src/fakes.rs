@@ -25,6 +25,35 @@ use isoplane_host::meters::OccupancyInterval;
 use isoplane_host::pool::Activator;
 use isoplane_host::ModuleId;
 
+/// A small cell configuration for tests: few threads and a short sweep.
+pub fn cell_config(name: &str) -> isoplane_host::cell::CellConfig {
+    isoplane_host::cell::CellConfig {
+        name: name.into(),
+        exec_threads: 4,
+        reactor_threads: 2,
+        sweep_interval_ms: 25,
+        ..Default::default()
+    }
+}
+
+/// An instance context with no cell behind it, for tests of the slot machinery.
+pub fn instance_ctx(
+    instance: isoplane_host::InstanceId,
+    limits: isoplane_abi::config::Limits,
+) -> isoplane_host::bindings::InstanceCtx {
+    isoplane_host::bindings::InstanceCtx::new(
+        instance,
+        isoplane_host::bindings::Tenancy {
+            module: ModuleId::new("test", "v1"),
+            tenant: "t".into(),
+            limits,
+            allowlist: None,
+        },
+        Arc::new(isoplane_host::meters::Meters::new()),
+        None,
+    )
+}
+
 /// What the scripted guest does for one call into it.
 #[derive(Debug, Clone)]
 pub enum Step {
@@ -346,7 +375,6 @@ impl FakeInstance {
                         trap: None,
                         grace_end: Some(isoplane_engine::GraceEnd::Exited),
                         overage_ns,
-                        grace_deferrals: 0,
                     };
                 }
                 self.survived_last_call = false;
@@ -367,7 +395,6 @@ impl FakeInstance {
                     }),
                     grace_end: Some(isoplane_engine::GraceEnd::Killed),
                     overage_ns,
-                    grace_deferrals: 0,
                 };
             }
         };
@@ -381,10 +408,10 @@ impl FakeInstance {
             completion,
             occupancy_measurement: isoplane_engine::OccupancyMeasurement::Complete,
             execution_limit: None,
-            occupancy_ns: self
-                .behaviour
-                .slice_occupancy
-                .map_or_else(|| interval.elapsed_ns(), |value| value.as_nanos() as u64),
+            occupancy_ns: self.behaviour.slice_occupancy.map_or_else(
+                || interval.try_elapsed_ns().unwrap_or(0),
+                |value| value.as_nanos() as u64,
+            ),
             wall_ns: wall.elapsed().as_nanos() as u64,
             trap: match status {
                 PollStatus::Trapped { .. } => Some(TrapInfo {
@@ -395,7 +422,6 @@ impl FakeInstance {
             },
             grace_end: None,
             overage_ns: 0,
-            grace_deferrals: 0,
         }
     }
 
@@ -465,7 +491,6 @@ impl InstanceOps for FakeInstance {
             trap: None,
             grace_end: None,
             overage_ns: 0,
-            grace_deferrals: 0,
         }
     }
     fn is_parked(&self) -> bool {
@@ -486,7 +511,6 @@ impl InstanceOps for FakeInstance {
     fn capture_mutable_state(&mut self) -> anyhow::Result<InstanceImage> {
         Ok(InstanceImage {
             globals: self.image.globals.clone(),
-            table_mutations: self.image.table_mutations.clone(),
             memory_pages: (self.memory.len() / isoplane_abi::WASM_PAGE_SIZE) as u32,
         })
     }

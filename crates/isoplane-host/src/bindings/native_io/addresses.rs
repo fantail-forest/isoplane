@@ -66,6 +66,7 @@ impl Addresses {
                 .await
                 .map_err(|error| match error {
                     crate::egress::EgressError::Denied(reason) => {
+                        #[cfg(any(test, feature = "test-util"))]
                         completion
                             .metrics
                             .egress_denials

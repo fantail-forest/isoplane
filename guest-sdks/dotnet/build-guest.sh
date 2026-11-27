@@ -1,27 +1,19 @@
 #!/usr/bin/env bash
 # Build a C# Isoplane guest to a core wasm module.
 #
-# Usage: build-guest.sh <project.csproj|guest-dir> [dotnet publish args...]
+# Usage: build-guest.sh <project.csproj> [dotnet publish args...]
 set -euo pipefail
 
 if [ $# -lt 1 ]; then
-  echo "usage: build-guest.sh <project.csproj|guest-dir> [dotnet publish args...]" >&2
+  echo "usage: build-guest.sh <project.csproj> [dotnet publish args...]" >&2
   exit 2
 fi
 shopt -s nullglob
 if [ -f "$1" ] && [[ "$1" == *.csproj ]]; then
   HERE="$(cd "$(dirname "$1")" && pwd)"
   CSPROJ="$HERE/$(basename "$1")"
-elif [ -d "$1" ]; then
-  HERE="$(cd "$1" && pwd)"
-  projects=("$HERE/src/"*.csproj)
-  if [ "${#projects[@]}" != 1 ]; then
-    echo "FAIL: expected exactly one .csproj in $HERE/src" >&2
-    exit 1
-  fi
-  CSPROJ="${projects[0]}"
 else
-  echo "FAIL: expected a .csproj file or guest directory: $1" >&2
+  echo "FAIL: expected a .csproj file: $1" >&2
   exit 1
 fi
 shift

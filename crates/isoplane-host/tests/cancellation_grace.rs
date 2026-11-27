@@ -28,7 +28,7 @@ fn rig_with_grace(program: Vec<Step>, grace_ms: u64) -> (Arc<Cell>, ModuleId) {
     let (cell, _) = common::rig_resolving(
         CellConfig {
             cancellation_grace_ms: grace_ms,
-            ..CellConfig::for_test("cancellation-grace")
+            ..isoplane_harness::fakes::cell_config("cancellation-grace")
         },
         "93.184.216.34:80",
     );

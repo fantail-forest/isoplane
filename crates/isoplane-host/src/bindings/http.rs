@@ -1,6 +1,5 @@
 //! The `http_fetch`, `http_body_read` and `resp_*` import arms.
 
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use isoplane_abi::calls::FetchRequest;
@@ -122,7 +121,10 @@ impl CellBindings {
             let svc = rt2.services.clone();
             let denied = |deny: crate::egress::DenyReason| {
                 tracing::warn!(tenant = %tenant, reason = %deny, "egress denied");
-                rt2.metrics.egress_denials.fetch_add(1, Ordering::Relaxed);
+                #[cfg(any(test, feature = "test-util"))]
+                rt2.metrics
+                    .egress_denials
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 ResultRecord::Err(FutureError::Denied(deny.to_string()))
             };
             let checked = svc

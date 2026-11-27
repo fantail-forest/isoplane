@@ -36,19 +36,21 @@ async fn an_actual_http_guest_completion_crosses_the_otlp_boundary() {
         .parse::<isoplaned::logs::OtlpEndpoint>()
         .unwrap();
     let logging = tokio::task::spawn_blocking(move || {
-        isoplaned::logs::init(
+        isoplaned::logs::init_with_limits(
             true,
             std::io::sink,
             "real-export-node",
             Some(&endpoint),
             Some(&trace_endpoint),
+            Default::default(),
         )
         .unwrap()
     })
     .await
     .unwrap();
     let directory = private_files::directory().unwrap();
-    let mut cfg = isoplaned::config::NodeConfig::new("acme");
+    let mut cfg = isoplaned::config::NodeConfig::from_toml(r#"owner = "acme""#)
+        .expect("a configuration naming only its owner");
     cfg.data_dir = directory.path().to_owned();
     cfg.engine.max_instances = 4;
     cfg.engine.memory_limit_mib = 128;
@@ -73,7 +75,7 @@ async fn an_actual_http_guest_completion_crosses_the_otlp_boundary() {
             &["quotes.isoplane.dev".into()],
         )
         .unwrap();
-    let head = isoplane_abi::encode(&ResponseHead {
+    let head = postcard::to_allocvec(&ResponseHead {
         status: 204,
         headers: vec![],
         body: vec![],
@@ -93,25 +95,22 @@ async fn an_actual_http_guest_completion_crosses_the_otlp_boundary() {
             (i64.shl (i64.extend_i32_u (call $response (i32.const 1024) (i32.const {}))) (i64.const 32)))
         )"#, head.len())).unwrap();
     let manifest: AppManifest = toml::from_str("name = 'quotes'").unwrap();
-    node.real
-        .as_ref()
-        .deploy_locally(
-            "quotes",
-            "v1",
-            "acme",
-            manifest,
-            &guest,
-            InitSandbox::Sealed,
-        )
-        .await
-        .unwrap();
+    node.deploy_locally(
+        "quotes",
+        "v1",
+        "acme",
+        manifest,
+        &guest,
+        InitSandbox::Sealed,
+    )
+    .await
+    .unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let proxy = node.proxy.clone();
     let server = tokio::spawn(async move {
-        let (stream, peer) = listener.accept().await.unwrap();
-        let service =
-            hyper::service::service_fn(move |request| proxy.clone().handle(request, peer));
+        let (stream, _) = listener.accept().await.unwrap();
+        let service = hyper::service::service_fn(move |request| proxy.clone().handle(request));
         hyper::server::conn::http1::Builder::new()
             .serve_connection(TokioIo::new(stream), service)
             .await

@@ -11,7 +11,7 @@ use isoplane_abi::dispatch::ResponseHead;
 use super::common;
 
 fn guest(status: u16, after_headers: &str) -> Vec<u8> {
-    let head = isoplane_abi::encode(&ResponseHead {
+    let head = postcard::to_allocvec(&ResponseHead {
         status,
         headers: vec![],
         body: b"not a wire body".to_vec(),
@@ -94,14 +94,19 @@ async fn a_same_slice_trap_cannot_be_hidden_by_no_body_response_headers() {
         );
         let cell = &rig.node.real.as_ref().cells()[0];
         assert_eq!(
-            cell.metrics_raw().dispatch_us.count(),
-            1,
-            "a failed no-body response must also wait for dispatch settlement"
-        );
-        assert_eq!(
             cell.metrics().traps,
             1,
             "the original same-slice trap must remain visible to the host"
+        );
+        // The host answers before the dispatch's books close, so its
+        // settlement is awaited rather than expected with the 502.
+        while cell.metrics_raw().dispatch_us.count() == 0 {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(
+            (cell.metrics_raw().dispatch_us.count(), cell.metrics().traps),
+            (1, 1),
+            "the dispatch behind a failed no-body response settles once, as the trap it was"
         );
     })
     .await

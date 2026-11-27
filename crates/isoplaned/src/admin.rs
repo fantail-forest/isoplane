@@ -18,26 +18,6 @@ pub struct Latency {
     pub sum_us: f64,
 }
 
-impl Latency {
-    /// Nearest-rank quantiles over a sample vector.
-    pub fn from_samples(mut s: Vec<u64>) -> Self {
-        if s.is_empty() {
-            return Latency::default();
-        }
-        s.sort_unstable();
-        let at = |q: f64| {
-            let rank = (q * s.len() as f64).ceil().max(1.0) as usize;
-            s[(rank - 1).min(s.len() - 1)]
-        };
-        Latency {
-            p50_us: at(0.50),
-            p99_us: at(0.99),
-            count: s.len() as u64,
-            sum_us: s.iter().map(|value| u128::from(*value)).sum::<u128>() as f64,
-        }
-    }
-}
-
 /// Measured size distribution across completed snapshot captures.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct SnapshotSizes {

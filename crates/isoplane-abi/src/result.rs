@@ -32,33 +32,9 @@ pub enum FutureError {
     BufferLimit,
 }
 
-impl std::fmt::Display for FutureError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            FutureError::Cancelled => write!(f, "dispatch cancelled"),
-            FutureError::Denied(why) => write!(f, "capability denied: {why}"),
-            FutureError::NotFound => write!(f, "not found"),
-            FutureError::Io(e) => write!(f, "io error: {e}"),
-            FutureError::BufferLimit => write!(f, "instance buffered-result byte limit exceeded"),
-        }
-    }
-}
-
-impl std::error::Error for FutureError {}
-
-impl FutureError {
-    /// True for refusals that mean stop, as opposed to retry.
-    pub fn is_terminal(&self) -> bool {
-        matches!(self, FutureError::Cancelled)
-    }
-}
-
 impl ResultRecord {
     pub fn ok<T: Serialize>(v: &T) -> Result<Self, postcard::Error> {
         Ok(ResultRecord::Ok(postcard::to_allocvec(v)?))
-    }
-    pub fn is_err(&self) -> bool {
-        matches!(self, ResultRecord::Err(_))
     }
 }
 

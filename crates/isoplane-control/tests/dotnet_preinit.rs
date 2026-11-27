@@ -10,10 +10,11 @@ mod managed;
 #[tokio::test]
 async fn the_dotnet_template_activates_without_running_the_runtime_start_up() {
     let wasm = isoplane_fixtures::mono_runtime();
-    validator::validate_with_memory_limit(
+    validator::validate_with_limits(
         &wasm,
         isoplane_abi::config::GuestMemoryBytes::default(),
         Some(GuestMemoryBytes::WASM32_MAX),
+        &Default::default(),
     )
     .expect(".NET guest must validate");
 
@@ -28,7 +29,7 @@ async fn the_dotnet_template_activates_without_running_the_runtime_start_up() {
     let artifact = out.artifact();
     let engine = isoplane_engine::IsoplaneEngine::new(isoplane_fixtures::engine_config(2)).unwrap();
     let template = engine
-        .load_prepared_product(&artifact)
+        .load_prepared_product_in(&artifact, &std::env::temp_dir())
         .expect("prepared template");
     assert!(
         !template.has_initialize(),

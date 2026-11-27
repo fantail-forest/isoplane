@@ -54,15 +54,19 @@ fn prepared_state_matches_portable_state_and_survives_source_removal() {
     );
     let expected = engine.load_template(&wasm).expect("portable template");
     let prepared = engine
-        .prepare_template(&wasm, identity(&wasm))
+        .prepare_template_with_files(
+            &wasm,
+            identity(&wasm),
+            isoplane_engine::PlatformFiles::default(),
+        )
         .expect("prepare");
     let directory = published_files::tempdir().expect("directory");
     let path = directory.path().join("version");
     prepared.publish(&path).expect("publish");
     let loaded = load(&engine, &path, identity(&wasm)).expect("load");
     assert_eq!(
-        loaded.memory_image_arc(),
-        expected.memory_image_arc(),
+        loaded.memory_image_arc().to_dense(),
+        expected.memory_image_arc().to_dense(),
         "prepared sparse state must preserve all initial memory"
     );
     std::fs::remove_dir_all(&path).expect("remove source files");
@@ -90,7 +94,11 @@ fn changed_payloads_are_rejected_when_the_manifest_is_unchanged() {
     let wasm = guest(4, "", "", DONE, DONE);
     let directory = published_files::tempdir().expect("directory");
     let prepared = engine
-        .prepare_template(&wasm, identity(&wasm))
+        .prepare_template_with_files(
+            &wasm,
+            identity(&wasm),
+            isoplane_engine::PlatformFiles::default(),
+        )
         .expect("prepare");
     for (index, name) in ["template.cwasm", "baseline.bin", "state.bin"]
         .iter()
@@ -116,7 +124,11 @@ fn an_unexpected_runtime_profile_is_rejected() {
     let directory = published_files::tempdir().expect("directory");
     let path = directory.path().join("version");
     engine
-        .prepare_template(&wasm, identity(&wasm))
+        .prepare_template_with_files(
+            &wasm,
+            identity(&wasm),
+            isoplane_engine::PlatformFiles::default(),
+        )
         .expect("prepare")
         .publish(&path)
         .expect("publish");
@@ -138,7 +150,11 @@ fn another_initialization_context_cannot_substitute_a_prepared_template() {
     let directory = published_files::tempdir().expect("directory");
     let path = directory.path().join("version");
     engine
-        .prepare_template(&wasm, identity(&wasm))
+        .prepare_template_with_files(
+            &wasm,
+            identity(&wasm),
+            isoplane_engine::PlatformFiles::default(),
+        )
         .expect("prepare")
         .publish(&path)
         .expect("publish");
@@ -161,7 +177,11 @@ fn prepared_portable_input_cannot_rerun_a_start_function_on_activation() {
             .expect("wasm");
     assert!(
         matches!(
-            engine.prepare_template(&wasm, identity(&wasm)),
+            engine.prepare_template_with_files(
+                &wasm,
+                identity(&wasm),
+                isoplane_engine::PlatformFiles::default()
+            ),
             Err(PreparedError::Invalid(_))
         ),
         "preparation must bake and remove the start function before native serialization"
@@ -178,7 +198,7 @@ fn compiled_artifact() -> (
     let expected = identity(&wasm);
     let directory = published_files::tempdir().expect("compiled artifact");
     engine
-        .prepare_template(&wasm, expected)
+        .prepare_template_with_files(&wasm, expected, isoplane_engine::PlatformFiles::default())
         .expect("prepare")
         .publish(&directory.path().join("version"))
         .expect("publish");
@@ -209,7 +229,8 @@ fn receipt_restoration_rejects_a_different_manifest_digest() {
         [0; 32],
         expected.runtime_profile,
     )
-    .expect_err("an artifact selected by a different receipt must not execute");
+    .err()
+    .expect("an artifact selected by a different receipt must not execute");
     assert!(
         matches!(error, PreparedError::Incompatible(_)),
         "expected an incompatible manifest, received {error:?}"
@@ -222,7 +243,8 @@ fn receipt_restoration_rejects_a_different_runtime_profile() {
     let path = directory.path().join("version");
     let digest = engine.prepared_manifest_sha256(&path).expect("receipt");
     let error = restore(&engine, &path, digest, [0; 32])
-        .expect_err("the selected runtime must match the compiled prepared state");
+        .err()
+        .expect("the selected runtime must match the compiled prepared state");
     assert!(
         matches!(error, PreparedError::Incompatible(_)),
         "expected an incompatible runtime, received {error:?}"
@@ -260,7 +282,11 @@ fn a_receipt_digest_refuses_a_substituted_manifest() {
     let digest = engine.prepared_manifest_sha256(&path).expect("receipt");
     let other = directory.path().join("other");
     engine
-        .prepare_template(&guest(5, "", "", DONE, DONE), expected)
+        .prepare_template_with_files(
+            &guest(5, "", "", DONE, DONE),
+            expected,
+            isoplane_engine::PlatformFiles::default(),
+        )
         .expect("prepare")
         .publish(&other)
         .expect("publish");
@@ -268,7 +294,8 @@ fn a_receipt_digest_refuses_a_substituted_manifest() {
     std::fs::remove_file(&manifest).expect("remove the read-only manifest");
     std::fs::copy(other.join("manifest.bin"), &manifest).expect("substitute the manifest");
     let error = restore_by_digest(&engine, &path, digest, expected)
-        .expect_err("a manifest other than the selected receipt must not load");
+        .err()
+        .expect("a manifest other than the selected receipt must not load");
     assert!(
         matches!(error, PreparedError::Incompatible(_)),
         "expected an incompatible manifest, received {error:?}"
@@ -320,14 +347,14 @@ fn builder_output_cannot_replace_host_platform_files() {
 }
 
 #[test]
-fn receipt_checks_do_not_read_native_or_baseline_payloads() {
+fn receipt_restoration_refuses_a_publication_missing_its_payloads() {
     let engine = test_engine();
     let wasm = guest(4, "", "", DONE, DONE);
     let identity = identity(&wasm);
     let directory = published_files::tempdir().expect("directory");
     let path = directory.path().join("prepared");
     engine
-        .prepare_template(&wasm, identity)
+        .prepare_template_with_files(&wasm, identity, isoplane_engine::PlatformFiles::default())
         .expect("prepare")
         .publish(&path)
         .expect("publish");
@@ -335,13 +362,6 @@ fn receipt_checks_do_not_read_native_or_baseline_payloads() {
     for name in ["template.cwasm", "baseline.bin", "state.bin"] {
         std::fs::remove_file(path.join(name)).expect("remove payload");
     }
-    assert_eq!(
-        engine
-            .check_prepared_receipt(&path, digest, identity.runtime_profile)
-            .expect("manifest-only receipt check"),
-        identity,
-        "receipt checks must not materialize native code or baseline pages"
-    );
     assert!(
         restore(&engine, &path, digest, identity.runtime_profile).is_err(),
         "a manifest receipt alone must not qualify missing executable payloads"
@@ -375,7 +395,7 @@ fn profiling_an_existing_template_emits_native_symbols_without_rebuilding_it() {
     let directory = published_files::tempdir().expect("prepared artifact");
     let path = directory.path().join("version");
     engine
-        .prepare_template(&wasm, expected)
+        .prepare_template_with_files(&wasm, expected, isoplane_engine::PlatformFiles::default())
         .expect("prepare without profiling")
         .publish(&path)
         .expect("publish");
@@ -431,7 +451,7 @@ fn publish_mapped(
     path: &std::path::Path,
 ) {
     engine
-        .prepare_template(wasm, identity)
+        .prepare_template_with_files(wasm, identity, isoplane_engine::PlatformFiles::default())
         .expect("prepare")
         .publish(path)
         .expect("publish");

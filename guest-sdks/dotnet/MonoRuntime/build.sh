@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Publish the production and debug Mono runtime modules and their provenance.
-# Usage: build.sh --output DIRECTORY [--source-revision REVISION]
+# Usage: build.sh --output DIRECTORY
 # Task prepares both managed projects before publishing.
 # ISOPLANE_SQLITE_DIRECTORY names the output of sqlite/build.sh.
 set -euo pipefail
@@ -9,11 +9,9 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
 
 OUTPUT=""
-REVISION=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --output) OUTPUT="${2:?--output needs a directory}"; shift 2 ;;
-    --source-revision) REVISION="${2:?--source-revision needs a revision}"; shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -37,4 +35,4 @@ done
 # The native functions the runtime provides to application packages, for the
 # SDK's native-import diagnostic.
 cp "${SQLITE}native-imports.txt" "$OUTPUT/native-imports.txt"
-python3 "$HERE/manifest.py" "$OUTPUT" "$ROOT" ${REVISION:+"$REVISION"}
+python3 "$HERE/manifest.py" "$OUTPUT" "$ROOT"

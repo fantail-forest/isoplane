@@ -169,9 +169,6 @@ impl HostBindings for DebugBindings {
     fn end_slice(&mut self) {
         self.0.end_slice();
     }
-    fn is_init_sandbox(&self) -> bool {
-        self.0.is_init_sandbox()
-    }
     fn enter_grace(&mut self) {
         self.0.enter_grace();
     }
@@ -196,9 +193,6 @@ impl DebugInstance {
         );
         result.occupancy_ns = result.occupancy_ns.saturating_add(initialize.occupancy_ns);
         result.wall_ns = result.wall_ns.saturating_add(initialize.wall_ns);
-        result.grace_deferrals = result
-            .grace_deferrals
-            .saturating_add(initialize.grace_deferrals);
         result.occupancy_measurement = match (
             initialize.occupancy_measurement,
             result.occupancy_measurement,
@@ -291,14 +285,13 @@ fn unsupported(message: &'static str) -> DispatchOutcome {
         }),
         grace_end: None,
         overage_ns: 0,
-        grace_deferrals: 0,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CellBindings, InstanceCtx, InstanceId};
+    use crate::{CellBindings, InstanceId};
 
     use isoplane_abi::dispatch::{DispatchKind, HttpRequest, TraceContext};
 
@@ -346,7 +339,7 @@ mod tests {
     }
 
     fn activate(activator: DebugActivator) -> Box<dyn InstanceOps + Send> {
-        let ctx = Arc::new(InstanceCtx::for_test(
+        let ctx = Arc::new(crate::fakes::instance_ctx(
             InstanceId(1),
             isoplane_abi::config::Limits::default(),
         ));
@@ -544,7 +537,7 @@ mod tests {
 
     #[test]
     fn debug_bindings_preserve_the_application_memory_ceiling() {
-        let context = Arc::new(crate::bindings::InstanceCtx::for_test(
+        let context = Arc::new(crate::fakes::instance_ctx(
             crate::InstanceId(1),
             isoplane_abi::config::Limits::default(),
         ));

@@ -1,4 +1,5 @@
-//! The metrics scrape decomposes the lifecycle, logging is recorded to its dispatch, and the metrics endpoint serves over HTTP.
+//! What a cell counts for the dispatches it serves: activations, and each
+//! application's occupied time.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -40,20 +41,23 @@ fn http(cell: &Cell, module: &ModuleId, path: &str) -> DispatchRecord {
 const T: Duration = Duration::from_secs(10);
 
 #[test]
-fn the_metrics_endpoint_decomposes_the_lifecycle() {
-    let r = rig(CellConfig::for_test("metrics"));
+fn sequential_dispatches_are_counted_and_pay_for_one_activation() {
+    let r = rig(isoplane_harness::fakes::cell_config("metrics"));
     let act = Arc::new(FakeActivator::named(
         ModuleId::new("m", "v1"),
         FakeBehaviour::done(),
     ));
     let module = act.module().clone();
     r.cell.register_module("acme", act, manifest("m")).unwrap();
+    let mut acquired = Vec::new();
     for i in 0..5 {
         let mut rec = http(&r.cell, &module, "/");
         rec.dispatch_id = i;
-        r.cell
+        let result = r
+            .cell
             .dispatch_blocking(&module, Target::Handler { route: "/".into() }, rec, T)
             .unwrap();
+        acquired.push(result.acquired);
         // The response leaves before the instance is pooled, so a client that
         // fires the next request at once can race the release and pay for a
         // second activation; waiting for the pool measures the steady state.
@@ -65,91 +69,57 @@ fn the_metrics_endpoint_decomposes_the_lifecycle() {
             "the instance never returned to the pool after dispatch {i}"
         );
     }
-    let text = r.cell.metrics_text();
-    for needle in [
-        "isoplane_cell_dispatches 5",
-        "isoplane_cell_instances_live",
-        "isoplane_cell_instances_parked",
-        "isoplane_cell_instances_hibernated",
-        "isoplane_cell_activation_p50_us",
-        "isoplane_cell_wake_p50_us",
-        "isoplane_cell_dirty_pages_p50",
-        "isoplane_cell_delta_bytes",
-        "isoplane_cell_trap_rate",
-        "isoplane_tenant_dispatches{tenant=\"acme\"}",
-    ] {
-        assert!(
-            text.contains(needle),
-            "the scrape is missing `{needle}`:\n{text}"
-        );
-    }
-    let json: serde_json::Value = serde_json::from_str(&r.cell.metrics_json()).unwrap();
     assert_eq!(
-        json["dispatches"], 5,
-        "the json scrape carries the counters"
-    );
-    assert_eq!(
-        json["served_activated"], 1,
+        acquired,
+        ["activated", "warm", "warm", "warm", "warm"],
         "only the first request paid for an activation"
     );
-    assert_eq!(json["served_warm"], 4, "the rest were served warm");
+    assert_eq!(
+        (
+            r.cell.metrics().dispatches,
+            r.cell.metrics_raw().activation_us.count()
+        ),
+        (5, 1),
+        "the cell counts every dispatch and the one activation"
+    );
     r.cell.shutdown();
 }
 
 #[test]
-fn logging_is_charged_to_the_dispatch_that_logs() {
-    let r = rig(CellConfig::for_test("log-occupancy"));
+fn each_application_is_charged_for_its_own_dispatches() {
+    let r = rig(isoplane_harness::fakes::cell_config("occupancy"));
+    let app = |name: &str, slice_occupancy_ns: u64| {
+        let mut behaviour = FakeBehaviour::done();
+        behaviour.slice_occupancy = Some(Duration::from_nanos(slice_occupancy_ns));
+        let activator = Arc::new(FakeActivator::named(ModuleId::new(name, "v1"), behaviour));
+        let module = activator.module().clone();
+        r.cell
+            .register_module("acme", activator, manifest(name))
+            .unwrap();
+        module
+    };
+    let (brief, long) = (app("brief", 7), app("long", 13));
 
-    let quiet = Arc::new(FakeActivator::named(
-        ModuleId::new("quiet-logger", "v1"),
-        FakeBehaviour::program([Step::Log {
-            bytes: 64,
-            times: 1,
-        }]),
-    ));
-    let loud = Arc::new(FakeActivator::named(
-        ModuleId::new("loud-logger", "v1"),
-        FakeBehaviour::program([Step::Log {
-            bytes: 64,
-            times: 2_000,
-        }]),
-    ));
-    let qm = quiet.module().clone();
-    let lm = loud.module().clone();
-    r.cell
-        .register_module("acme", quiet, manifest("quiet-logger"))
-        .unwrap();
-    r.cell
-        .register_module("acme", loud, manifest("loud-logger"))
-        .unwrap();
-
-    let q = r
-        .cell
-        .dispatch_blocking(
-            &qm,
-            Target::Handler { route: "/l".into() },
-            http(&r.cell, &qm, "/l"),
-            T,
-        )
-        .unwrap();
-    let l = r
-        .cell
-        .dispatch_blocking(
-            &lm,
-            Target::Handler { route: "/l".into() },
-            http(&r.cell, &lm, "/l"),
-            T,
-        )
-        .unwrap();
-
-    for (module, result) in [(&qm, &q), (&lm, &l)] {
-        assert_eq!(result.status, 204);
-        let meters = r.cell.meters(module).expect("tenant meters");
-        assert_eq!(meters.occupancy_ns(), result.occupancy_ns);
-        assert!(
-            meters.log_occupancy_ns() <= meters.occupancy_ns(),
-            "logging is a subset of slice occupancy"
-        );
+    for (module, dispatches) in [(&brief, 2), (&long, 3)] {
+        for _ in 0..dispatches {
+            let result = r
+                .cell
+                .dispatch_blocking(
+                    module,
+                    Target::Handler { route: "/".into() },
+                    http(&r.cell, module, "/"),
+                    T,
+                )
+                .unwrap();
+            assert_eq!(result.status, 200);
+        }
     }
+
+    let occupancy_ns = |module| r.cell.meters(module).expect("module meters").occupancy_ns();
+    assert_eq!(
+        (occupancy_ns(&brief), occupancy_ns(&long)),
+        (2 * 7, 3 * 13),
+        "each application's meter holds the occupancy of its own slices"
+    );
     r.cell.shutdown();
 }

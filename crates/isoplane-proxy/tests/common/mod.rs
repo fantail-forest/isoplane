@@ -13,7 +13,7 @@ use isoplane_abi::host::{CodeTier, Dispatcher, RouteTarget};
 pub mod fake;
 
 use fake::FakeCell;
-use isoplane_proxy::{LocalRouteTable, Proxy, ProxyConfig, ProxyMetrics};
+use isoplane_proxy::{LocalRouteTable, Proxy, ProxyMetrics, ShedConfig};
 use tokio::net::TcpStream;
 
 pub struct Rig {
@@ -25,14 +25,14 @@ pub struct Rig {
     server: Option<tokio::task::JoinHandle<anyhow::Result<()>>>,
 }
 
-pub async fn start(cell: Arc<FakeCell>, routes: Arc<LocalRouteTable>, cfg: ProxyConfig) -> Rig {
+pub async fn start(cell: Arc<FakeCell>, routes: Arc<LocalRouteTable>, cfg: ShedConfig) -> Rig {
     start_with_dispatcher(cell.clone(), routes, cfg, cell).await
 }
 
 pub async fn start_with_dispatcher(
     cell: Arc<FakeCell>,
     routes: Arc<LocalRouteTable>,
-    cfg: ProxyConfig,
+    cfg: ShedConfig,
     dispatcher: Arc<dyn Dispatcher>,
 ) -> Rig {
     let metrics = Arc::new(ProxyMetrics::new());

@@ -11,6 +11,7 @@ use super::native_io::{Context, ResourceCount, ResourceLimits, Resources, Runtim
 use super::WakeSink;
 use crate::egress::{ConnectionOwner, HostEgressPolicy};
 use crate::futures::FutureTable;
+#[cfg(any(test, feature = "test-util"))]
 use crate::metrics::Metrics;
 use crate::InstanceId;
 
@@ -53,6 +54,7 @@ impl PreparationIo {
         let runtime = Runtime {
             egress: config.egress.clone(),
             futures: Arc::new(FutureTable::new(config.buffered_bytes)),
+            #[cfg(any(test, feature = "test-util"))]
             metrics: Arc::new(Metrics::default()),
             wake: wake.clone(),
             reactor,
@@ -132,13 +134,6 @@ impl PreparationIo {
         }
         Ok(prepared)
     }
-
-    /// Restore captured handle identities before issuing native operations.
-    pub fn restore_resources(&self, prepared: &PreparedResources) -> Result<(), Error> {
-        self.resources
-            .lock()
-            .restore_prepared(prepared, super::native_io::reactor_now(&self.runtime))
-    }
 }
 
 impl Context for PreparationIo {
@@ -187,7 +182,10 @@ impl Drop for PreparationIo {
 mod tests {
     use super::*;
     use isoplane_abi::native_io::{AddressFamily, DurationNanos, ResourceHandle, ResourceKind};
+    use isoplane_engine::HostBindings;
     use tokio::io::AsyncReadExt;
+
+    use crate::bindings::CellBindings;
 
     fn preparation(policy: HostEgressPolicy) -> PreparationIo {
         PreparationIo::new(
@@ -214,15 +212,67 @@ mod tests {
         io.call(Request::Drop { handle, kind }).unwrap();
     }
 
+    fn system_policy() -> HostEgressPolicy {
+        HostEgressPolicy::system(
+            crate::egress::ConnectionLimits::uniform(4).expect("connection limits"),
+        )
+        .unwrap()
+    }
+
+    /// The bindings of an instance a cell has just activated, which is where a
+    /// template's captured resources are restored.
+    fn activated(native_handles: usize) -> (CellBindings, Arc<FutureTable>) {
+        let futures = Arc::new(FutureTable::new(1024));
+        let mut context =
+            crate::fakes::instance_ctx(InstanceId(2), isoplane_abi::config::Limits::default());
+        context.rt = Some(Arc::new(crate::bindings::CellRuntime {
+            runtime_configuration: Default::default(),
+            services: Arc::new(crate::bindings::Services {
+                egress: Arc::new(system_policy()),
+                fetcher: Arc::new(crate::fakes::FakeFetcher::default()),
+            }),
+            futures: futures.clone(),
+            metrics: Arc::new(crate::metrics::Metrics::new()),
+            wake: Arc::new(PreparationWake(Notify::new())),
+            reactor: tokio::runtime::Handle::current(),
+        }));
+        context.configure_resources(crate::bindings::GuestResourceLimits {
+            native_handles,
+            ..Default::default()
+        });
+        (CellBindings::new(Arc::new(context)), futures)
+    }
+
+    fn instance_handle(bindings: &mut CellBindings, request: Request) -> ResourceHandle {
+        match bindings.native_io(request).unwrap() {
+            Response::Handle(handle) => handle,
+            other => panic!("native resource allocation returned {other:?}"),
+        }
+    }
+
+    /// Restores `baseline` into an instance whose restoration was just
+    /// refused. A table that holds anything refuses to be restored, so this
+    /// succeeds only when the refusal installed nothing.
+    #[track_caller]
+    fn assert_refusal_installed_nothing(instance: &mut CellBindings, baseline: &PreparedResources) {
+        instance
+            .restore_prepared_resources(baseline)
+            .expect("a refused restoration must leave no partially installed resources");
+    }
+
+    /// A template that captured its network handle and nothing else.
+    fn network_only() -> PreparedResources {
+        PreparedResources {
+            next_handle: 2,
+            network: Some(ResourceHandle(1)),
+            ready_pollables: Vec::new(),
+            pending_timers: Vec::new(),
+        }
+    }
+
     #[tokio::test(start_paused = true)]
     async fn a_pending_initialization_timer_is_captured_and_counts_from_activation() {
-        let policy = || {
-            HostEgressPolicy::system(
-                crate::egress::ConnectionLimits::uniform(4).expect("connection limits"),
-            )
-            .unwrap()
-        };
-        let io = preparation(policy());
+        let io = preparation(system_policy());
         let timer = handle(&io, Request::Timer(DurationNanos(1_000_000_000)));
         tokio::time::advance(std::time::Duration::from_millis(400)).await;
         let prepared = io
@@ -238,41 +288,29 @@ mod tests {
         );
 
         tokio::time::advance(std::time::Duration::from_secs(10)).await;
-        let restored = preparation(policy());
-        restored.restore_resources(&prepared).unwrap();
+        let (mut restored, _) = activated(16);
+        restored.restore_prepared_resources(&prepared).unwrap();
         // Each check is a new slice, as a guest re-entered after time passed.
-        let ready = |io: &PreparationIo| {
-            io.begin_slice();
-            io.call(Request::Ready(timer))
-        };
-        let ready = |io: &PreparationIo| match ready(io) {
-            Ok(Response::Ready(ready)) => ready,
-            other => panic!("a readiness check returned {other:?}"),
+        let mut ready = || {
+            restored.begin_slice();
+            match restored.native_io(Request::Ready(timer)) {
+                Ok(Response::Ready(ready)) => ready,
+                other => panic!("a readiness check returned {other:?}"),
+            }
         };
         assert!(
-            !ready(&restored),
+            !ready(),
             "step 2: time before activation must not count toward the timer"
         );
         tokio::time::advance(std::time::Duration::from_millis(599)).await;
-        assert!(
-            !ready(&restored),
-            "step 3: the timer is not due before 600 ms"
-        );
+        assert!(!ready(), "step 3: the timer is not due before 600 ms");
         tokio::time::advance(std::time::Duration::from_millis(1)).await;
-        assert!(
-            ready(&restored),
-            "step 3: the timer is due 600 ms after activation"
-        );
+        assert!(ready(), "step 3: the timer is due 600 ms after activation");
     }
 
     #[tokio::test]
     async fn immediately_ready_pollables_survive_capture_without_creating_host_work() {
-        let io = preparation(
-            HostEgressPolicy::system(
-                crate::egress::ConnectionLimits::uniform(4).expect("connection limits"),
-            )
-            .unwrap(),
-        );
+        let io = preparation(system_policy());
         let sentinel = handle(&io, Request::Timer(DurationNanos(0)));
         let prepared = io
             .finish()
@@ -282,32 +320,32 @@ mod tests {
             vec![sentinel],
             "capture must record every guest-cached ready pollable identity"
         );
-        let restored = preparation(
-            HostEgressPolicy::system(
-                crate::egress::ConnectionLimits::uniform(4).expect("connection limits"),
-            )
-            .unwrap(),
-        );
-        restored.restore_resources(&prepared).unwrap();
+        let (mut restored, futures) = activated(16);
+        restored.restore_prepared_resources(&prepared).unwrap();
         assert!(
             matches!(
-                restored.call(Request::Ready(sentinel)),
+                restored.native_io(Request::Ready(sentinel)),
                 Ok(Response::Ready(true))
             ),
             "the captured sentinel must remain immediately ready after activation"
         );
         assert_eq!(
-            restored.pending_count(),
+            futures.pending_total(InstanceId(2)),
             0,
             "restoring an inert pollable must not create a timer or wake source"
         );
         assert!(
-            matches!(restored.call(Request::Poll(vec![sentinel])), Ok(Response::ReadyIndexes(indexes)) if indexes == vec![0]),
+            matches!(restored.native_io(Request::Poll(vec![sentinel])), Ok(Response::ReadyIndexes(indexes)) if indexes == vec![0]),
             "the restored sentinel must satisfy the canonical poll operation"
         );
-        dispose(&restored, sentinel, ResourceKind::Pollable);
+        restored
+            .native_io(Request::Drop {
+                handle: sentinel,
+                kind: ResourceKind::Pollable,
+            })
+            .unwrap();
         assert_eq!(
-            handle(&restored, Request::Timer(DurationNanos(0))).0,
+            instance_handle(&mut restored, Request::Timer(DurationNanos(0))).0,
             prepared.next_handle,
             "disposing a captured sentinel must not permit its handle to be reused"
         );
@@ -321,81 +359,64 @@ mod tests {
             vec![ResourceHandle(1)],
             vec![ResourceHandle(2), ResourceHandle(2)],
         ] {
-            let io = preparation(
-                HostEgressPolicy::system(
-                    crate::egress::ConnectionLimits::uniform(4).expect("connection limits"),
-                )
-                .unwrap(),
-            );
+            let (mut instance, _) = activated(16);
             let prepared = PreparedResources {
                 next_handle: 3,
                 network: Some(ResourceHandle(1)),
                 ready_pollables,
                 pending_timers: Vec::new(),
             };
-            assert!(io.restore_resources(&prepared).is_err(), "ready pollable metadata must contain only distinct in-range handles separate from network authority");
+            assert!(
+                instance.restore_prepared_resources(&prepared).is_err(),
+                "ready pollable metadata must contain only distinct in-range handles separate from network authority"
+            );
+            assert_refusal_installed_nothing(&mut instance, &network_only());
         }
     }
 
     #[tokio::test]
     async fn captured_ready_pollables_consume_the_activation_handle_budget() {
-        let mut io = preparation(
-            HostEgressPolicy::system(
-                crate::egress::ConnectionLimits::uniform(4).expect("connection limits"),
-            )
-            .unwrap(),
-        );
-        io.resources = Mutex::new(Resources::new(ResourceLimits {
-            handles: ResourceCount(1),
-        }));
         let prepared = PreparedResources {
             next_handle: 3,
             network: Some(ResourceHandle(1)),
             ready_pollables: vec![ResourceHandle(2)],
             pending_timers: Vec::new(),
         };
+        let (mut roomy, _) = activated(2);
         assert!(
-            matches!(io.restore_resources(&prepared), Err(Error::ResourceLimit)),
+            roomy.restore_prepared_resources(&prepared).is_ok(),
+            "two handle slots hold the network and the ready pollable"
+        );
+        let (mut instance, _) = activated(1);
+        assert!(
+            instance.restore_prepared_resources(&prepared).is_err(),
             "network and captured ready pollables must each consume an activation handle slot"
         );
-        assert!(
-            io.finish().is_ok(),
-            "a refused restoration must leave no partially installed resources"
-        );
+        assert_refusal_installed_nothing(&mut instance, &network_only());
     }
 
     #[tokio::test]
     async fn prepared_network_identity_and_retired_handles_survive_restoration() {
-        let io = preparation(
-            HostEgressPolicy::system(
-                crate::egress::ConnectionLimits::uniform(4).expect("connection limits"),
-            )
-            .unwrap(),
-        );
+        let io = preparation(system_policy());
         let retired = handle(&io, Request::Timer(DurationNanos(0)));
         dispose(&io, retired, ResourceKind::Pollable);
         let network = handle(&io, Request::Network);
         let prepared = io.finish().unwrap();
-        let restored = preparation(
-            HostEgressPolicy::system(
-                crate::egress::ConnectionLimits::uniform(4).expect("connection limits"),
-            )
-            .unwrap(),
-        );
-        restored.restore_resources(&prepared).unwrap();
+        let (mut restored, _) = activated(16);
+        restored.restore_prepared_resources(&prepared).unwrap();
         assert_eq!(
-            handle(&restored, Request::Network),
+            instance_handle(&mut restored, Request::Network),
             network,
             "restored guest network IDs must retain their identity"
         );
-        let timer = handle(&restored, Request::Timer(DurationNanos(0)));
+        let timer = instance_handle(&mut restored, Request::Timer(DurationNanos(0)));
         assert_eq!(
             timer.0, prepared.next_handle,
             "activation must continue the captured handle sequence"
         );
         assert!(
             matches!(
-                restored.call(Request::Ready(retired)),
+                restored.native_io(Request::Ready(retired)),
                 Err(Error::InvalidHandle(_))
             ),
             "a retired preparation handle must never resolve after activation"
@@ -404,12 +425,7 @@ mod tests {
 
     #[tokio::test]
     async fn preparation_refuses_capture_with_an_undelivered_completion() {
-        let io = preparation(
-            HostEgressPolicy::system(
-                crate::egress::ConnectionLimits::uniform(4).expect("connection limits"),
-            )
-            .unwrap(),
-        );
+        let io = preparation(system_policy());
         let future = io
             .alloc(isoplane_abi::native_io::canonical::POLL_IMPORT)
             .unwrap();
@@ -431,12 +447,7 @@ mod tests {
 
     #[tokio::test]
     async fn preparation_enforces_the_supplied_pending_future_budget() {
-        let mut io = preparation(
-            HostEgressPolicy::system(
-                crate::egress::ConnectionLimits::uniform(4).expect("connection limits"),
-            )
-            .unwrap(),
-        );
+        let mut io = preparation(system_policy());
         io.config.pending_futures = 1;
         for _ in 0..2 {
             assert!(
@@ -479,76 +490,76 @@ mod tests {
                 network: Some(ResourceHandle(2)),
             },
         ] {
-            let io = preparation(
-                HostEgressPolicy::system(
-                    crate::egress::ConnectionLimits::uniform(4).expect("connection limits"),
-                )
-                .unwrap(),
-            );
+            let (mut instance, _) = activated(16);
             assert!(
-                io.restore_resources(&prepared).is_err(),
+                instance.restore_prepared_resources(&prepared).is_err(),
                 "invalid prepared handles must not gain authority"
             );
+            assert_refusal_installed_nothing(&mut instance, &network_only());
         }
-        let io = preparation(
-            HostEgressPolicy::system(
-                crate::egress::ConnectionLimits::uniform(4).expect("connection limits"),
-            )
-            .unwrap(),
-        );
-        let retired = handle(&io, Request::Timer(DurationNanos(0)));
-        dispose(&io, retired, ResourceKind::Pollable);
+        let (mut instance, _) = activated(16);
+        let retired = instance_handle(&mut instance, Request::Timer(DurationNanos(0)));
+        instance
+            .native_io(Request::Drop {
+                handle: retired,
+                kind: ResourceKind::Pollable,
+            })
+            .unwrap();
         assert!(
-            io.restore_resources(&PreparedResources::default()).is_err(),
+            instance
+                .restore_prepared_resources(&PreparedResources::default())
+                .is_err(),
             "restoring over a used table must not reset retired handle identities"
         );
     }
 
     #[tokio::test]
     async fn retained_native_resources_refuse_a_different_template_baseline() {
-        let io = preparation(
-            HostEgressPolicy::system(
-                crate::egress::ConnectionLimits::uniform(4).expect("connection limits"),
-            )
-            .unwrap(),
-        );
-        io.restore_resources(&PreparedResources {
-            ready_pollables: Vec::new(),
-            pending_timers: Vec::new(),
+        let (mut instance, _) = activated(16);
+        instance
+            .restore_prepared_resources(&PreparedResources {
+                ready_pollables: Vec::new(),
+                pending_timers: Vec::new(),
 
-            next_handle: 2,
-            network: Some(ResourceHandle(1)),
-        })
-        .unwrap();
+                next_handle: 2,
+                network: Some(ResourceHandle(1)),
+            })
+            .unwrap();
         assert!(
-            io.restore_resources(&PreparedResources::default()).is_err(),
+            instance
+                .restore_prepared_resources(&PreparedResources::default())
+                .is_err(),
             "a retained resource table must not accept a different template's authority"
         );
     }
 
     #[tokio::test]
     async fn restored_network_handles_consume_the_native_handle_budget() {
-        let mut io = preparation(
-            HostEgressPolicy::system(
-                crate::egress::ConnectionLimits::uniform(4).expect("connection limits"),
-            )
-            .unwrap(),
-        );
-        io.resources = Mutex::new(Resources::new(ResourceLimits {
-            handles: ResourceCount(0),
-        }));
-        assert!(
-            matches!(
-                io.restore_resources(&PreparedResources {
-                    ready_pollables: Vec::new(),
-                    pending_timers: Vec::new(),
+        let prepared = PreparedResources {
+            ready_pollables: Vec::new(),
+            pending_timers: Vec::new(),
 
-                    next_handle: 2,
-                    network: Some(ResourceHandle(1))
-                }),
-                Err(Error::ResourceLimit)
-            ),
+            next_handle: 2,
+            network: Some(ResourceHandle(1)),
+        };
+        let (mut roomy, _) = activated(1);
+        assert!(
+            roomy.restore_prepared_resources(&prepared).is_ok(),
+            "one handle slot holds the network"
+        );
+        let (mut instance, _) = activated(0);
+        assert!(
+            instance.restore_prepared_resources(&prepared).is_err(),
             "restoring network authority must enforce the activation resource budget"
+        );
+        assert_refusal_installed_nothing(
+            &mut instance,
+            &PreparedResources {
+                next_handle: 1,
+                network: None,
+                ready_pollables: Vec::new(),
+                pending_timers: Vec::new(),
+            },
         );
     }
 
@@ -652,12 +663,7 @@ mod tests {
 
     #[tokio::test]
     async fn dropping_preparation_cancels_its_pending_reactor_work() {
-        let io = preparation(
-            HostEgressPolicy::system(
-                crate::egress::ConnectionLimits::uniform(4).expect("connection limits"),
-            )
-            .unwrap(),
-        );
+        let io = preparation(system_policy());
         handle(&io, Request::Timer(DurationNanos(u64::MAX)));
         let futures = io.runtime.futures.clone();
         drop(io);

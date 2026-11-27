@@ -41,7 +41,10 @@ fn http(cell: &Cell, module: &ModuleId, path: &str) -> DispatchRecord {
 
 #[test]
 fn a_guest_cannot_fetch_a_private_address() {
-    let r = rig_resolving(CellConfig::for_test("ssrf"), "169.254.169.254:80");
+    let r = rig_resolving(
+        isoplane_harness::fakes::cell_config("ssrf"),
+        "169.254.169.254:80",
+    );
     let act = Arc::new(FakeActivator::named(
         ModuleId::new("prober", "v1"),
         FakeBehaviour::program([Step::Fetch {
@@ -85,7 +88,10 @@ fn a_guest_cannot_fetch_a_private_address() {
 
 #[test]
 fn an_endpoint_exception_lets_only_its_own_application_reach_a_private_peer() {
-    let r = rig_resolving(CellConfig::for_test("exceptions"), "10.0.0.5:80");
+    let r = rig_resolving(
+        isoplane_harness::fakes::cell_config("exceptions"),
+        "10.0.0.5:80",
+    );
     let fetching = |name: &str| {
         Arc::new(FakeActivator::named(
             ModuleId::new(name, "v1"),

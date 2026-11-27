@@ -5,10 +5,6 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
-/// Native stack reserved for each Cranelift worker, including pre-initialisation.
-/// This is compiler workspace; it does not enlarge a guest's execution stack.
-pub const COMPILER_STACK_BYTES: usize = isoplane_abi::config::DEFAULT_COMPILER_STACK_BYTES;
-
 static POOLS: Mutex<BTreeMap<usize, Arc<rayon::ThreadPool>>> = Mutex::new(BTreeMap::new());
 
 #[derive(Debug, thiserror::Error)]
@@ -55,6 +51,8 @@ fn workers(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const COMPILER_STACK_BYTES: usize = isoplane_abi::config::DEFAULT_COMPILER_STACK_BYTES;
 
     #[test]
     fn different_stack_budgets_use_different_worker_pools() {

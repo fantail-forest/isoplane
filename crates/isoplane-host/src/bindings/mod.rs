@@ -54,9 +54,6 @@ impl CellBindings {
     pub fn boxed(ctx: Arc<InstanceCtx>) -> Box<dyn HostBindings> {
         Box::new(Self::new(ctx))
     }
-    pub fn ctx(&self) -> &Arc<InstanceCtx> {
-        &self.ctx
-    }
 
     pub(super) fn rt(&self) -> Option<&Arc<CellRuntime>> {
         self.ctx.rt.as_ref()
@@ -105,6 +102,7 @@ impl CellBindings {
         if let Some(id) = self.alloc(import, false) {
             return id;
         }
+        #[cfg(any(test, feature = "test-util"))]
         if let Some(rt) = self.rt() {
             rt.metrics
                 .pending_cap_rejections
@@ -387,7 +385,7 @@ impl HostBindings for CellBindings {
                 }
                 crate::entropy::fill(out)
                     .map_err(|error| BindingError::Entropy(std::io::Error::other(error)))?;
-                self.ctx.entropy_calls.fetch_add(1, Ordering::Relaxed);
+
                 Ok(out.len() as i64)
             }
             "runtime_config_get" => {
@@ -461,7 +459,7 @@ mod tests {
     use isoplane_abi::imports::IMPORTS;
 
     pub(super) fn ctx() -> Arc<InstanceCtx> {
-        Arc::new(InstanceCtx::for_test(
+        Arc::new(crate::fakes::instance_ctx(
             InstanceId(1),
             isoplane_abi::config::Limits::default(),
         ))
@@ -547,7 +545,6 @@ mod tests {
                 "entropy repeated: it was cached somewhere"
             );
         }
-        assert_eq!(c.entropy_calls(), 64, "every draw is counted");
     }
 
     #[test]
@@ -561,7 +558,6 @@ mod tests {
             "a fill past the out-buffer cap is refused"
         );
         assert!(big.iter().all(|x| *x == 0), "and nothing was written");
-        assert_eq!(c.entropy_calls(), 0, "and no draw was counted");
     }
 
     #[test]
@@ -582,11 +578,11 @@ mod tests {
 
     #[test]
     fn independent_contexts_receive_distinct_live_entropy_draws() {
-        let a = Arc::new(InstanceCtx::for_test(
+        let a = Arc::new(crate::fakes::instance_ctx(
             InstanceId(1),
             isoplane_abi::config::Limits::default(),
         ));
-        let z = Arc::new(InstanceCtx::for_test(
+        let z = Arc::new(crate::fakes::instance_ctx(
             InstanceId(2),
             isoplane_abi::config::Limits::default(),
         ));

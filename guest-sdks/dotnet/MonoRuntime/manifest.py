@@ -39,14 +39,14 @@ def provenance(receipt):
     }
 
 
-def main(directory, root, revision=None):
+def main(directory, root):
     directory, root = Path(directory), Path(root)
     packs = {(directory / f"{name}.runtime").read_text().strip() for name in MODULES}
     if len(packs) != 1:
         sys.exit(f"runtime manifest: the runtime modules linked different Mono packs: {sorted(packs)}")
     receipt = {
         "sdkVersion": release_version(root),
-        "sourceRevision": revision or source_revision(root),
+        "sourceRevision": source_revision(root),
         "monoPack": packs.pop(),
         "modules": {name: hashlib.sha256((directory / name).read_bytes()).hexdigest() for name in MODULES},
     }

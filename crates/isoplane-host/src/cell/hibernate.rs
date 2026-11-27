@@ -114,9 +114,6 @@ impl Cell {
         let res = match capture {
             Ok(r) => r,
             Err(hibernate_policy::CaptureRefused::SnapshotWrite(e)) => {
-                self.metrics
-                    .capture_write_failures
-                    .fetch_add(1, Ordering::Relaxed);
                 tracing::warn!(
                     tenant = %entry.tenant, instance = %slot.id, error = %e,
                     "hibernation snapshot write failed; the instance stays Parked and no capture is \
@@ -144,18 +141,12 @@ impl Cell {
             }
         };
 
-        let bytes = res.saved.bytes;
+        let bytes = res.bytes;
         slot.hibernate()
             .map_err(|e| hibernate_policy::CaptureRefused::Failed(format!("{e:?}")))?;
 
-        entry.meters.record_capture(bytes);
-        self.metrics.captures.fetch_add(1, Ordering::Relaxed);
         self.metrics.delta_bytes.fetch_add(bytes, Ordering::Relaxed);
-        self.metrics.capture_us.record(res.capture_us);
-        self.metrics.gc_hint_us.record(res.gc_hint_us);
-        self.metrics
-            .dirty_pages
-            .record(res.saved.changed_pages as u64);
+        self.metrics.dirty_pages.record(res.changed_pages as u64);
         tracing::info!(target: "isoplane_host::cell::transition",
             event = "instance_transition", tenant = %entry.tenant,
             app = %entry.activator.module().app, version = %entry.activator.module().version,
@@ -239,6 +230,7 @@ impl Cell {
     /// Captures now, bypassing the idle trajectory's timing and none of its
     /// eligibility rules. Blocks on the cell's reactor for the delta write,
     /// so it is called from a blocking task, never a reactor thread.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn force_hibernate(
         self: &Arc<Self>,
         id: InstanceId,
@@ -260,8 +252,9 @@ impl Cell {
         self.hibernate_now(&slot, &entry)
     }
 
-    /// Wakes from a delta and queues any results that came due while asleep.
-    /// Blocks on the reactor like [`Cell::force_hibernate`].
+    /// Restores a hibernated instance as its next slice would. Blocks on the
+    /// reactor like [`Cell::force_hibernate`].
+    #[cfg(any(test, feature = "test-util"))]
     pub fn force_wake(self: &Arc<Self>, id: InstanceId) -> crate::Result<()> {
         let (slot, module) = {
             let g = self.residents.lock();
@@ -277,43 +270,10 @@ impl Cell {
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("no such module"))?;
         let _execution = slot.lock_execution();
-        if slot.state() != LifecycleTier::Hibernated {
-            return Ok(());
-        }
-        let t0 = Instant::now();
-        self.wake(&slot, &entry)?;
-        self.metrics
-            .hibernation_wake_us
-            .record(t0.elapsed().as_micros() as u64);
-        self.metrics
-            .hibernation_wakes
-            .fetch_add(1, Ordering::Relaxed);
-        entry.meters.record_hibernation_wake();
-        if self.has_runnable(&slot) {
-            self.queue_wake(slot.clone());
-        }
-        Ok(())
-    }
-
-    /// Discards an idle instance without saving a delta.
-    pub fn discard_instance(self: &Arc<Self>, id: InstanceId) -> crate::Result<()> {
-        let slot = self
-            .slot(id)
-            .ok_or_else(|| anyhow::anyhow!("no such instance {id}"))?;
-        let _execution = slot.try_lock_execution().ok_or_else(|| {
-            anyhow::anyhow!("instance {id} is executing; eviction requires an idle boundary")
-        })?;
-        if self.active.contains_key(&id) {
-            anyhow::bail!(
-                "instance {id} owns an unfinished dispatch; eviction would lose its continuation"
-            );
-        }
-        if slot.state() == LifecycleTier::Hot {
-            anyhow::bail!("instance {id} is Hot; eviction is from Parked, not from a live stack");
-        }
-        self.rt.futures.release_instance(id);
-        self.forget(&slot);
-        slot.discard();
+        anyhow::ensure!(
+            slot.state() != LifecycleTier::Hibernated || self.restore_for_wake(&slot, &entry),
+            "instance {id} could not be restored"
+        );
         Ok(())
     }
 }

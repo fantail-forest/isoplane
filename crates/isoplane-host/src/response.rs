@@ -7,7 +7,6 @@ use std::collections::HashMap;
 use std::mem::size_of;
 
 use isoplane_abi::dispatch::ResponseHead;
-use parking_lot::Mutex;
 use serde::de::{DeserializeSeed, Error, SeqAccess, Visitor};
 
 /// A response retained until its dispatch completes or its requester takes it.
@@ -244,19 +243,11 @@ impl ResponseTable {
     }
 
     /// Whether a streaming response can still receive writes.
+    #[cfg(test)]
     pub fn is_streaming(&self, handle: u32) -> bool {
         self.open
             .get(&handle)
             .is_some_and(|response| response.head.streaming && !response.finished)
-    }
-}
-
-impl Default for ResponseTable {
-    fn default() -> Self {
-        Self::new(
-            crate::bindings::GuestResourceLimits::default().response_handles,
-            isoplane_abi::config::Limits::default().instance_memory_max,
-        )
     }
 }
 
@@ -400,11 +391,18 @@ impl<'de> Visitor<'de> for HeaderAllocationSeed<'_> {
     }
 }
 
-pub type SharedResponses = Mutex<ResponseTable>;
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    impl Default for ResponseTable {
+        fn default() -> Self {
+            Self::new(
+                crate::bindings::GuestResourceLimits::default().response_handles,
+                isoplane_abi::config::Limits::default().instance_memory_max,
+            )
+        }
+    }
 
     fn head(streaming: bool) -> ResponseHead {
         ResponseHead {

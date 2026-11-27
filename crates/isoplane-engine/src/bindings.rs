@@ -81,11 +81,6 @@ pub trait HostBindings: Send + 'static {
     /// here, so it reaches the guest no sooner than its next slice.
     fn end_slice(&mut self);
 
-    /// Whether these bindings serve guest initialization.
-    fn is_init_sandbox(&self) -> bool {
-        false
-    }
-
     /// The dispatch crossed B. Called from the epoch deadline callback on the
     /// execution-pool thread with the guest suspended at a back-edge, once per
     /// slice. The host completes the dispatch's cancellation future and
@@ -180,10 +175,7 @@ impl Bindings {
     }
 
     pub fn is_init_sandbox(&self) -> bool {
-        match self {
-            Self::Runtime(bindings) => bindings.is_init_sandbox(),
-            Self::Initialization(_) => true,
-        }
+        matches!(self, Self::Initialization(_))
     }
     pub fn init_runtime_bringup(&self) -> bool {
         match self {

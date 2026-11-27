@@ -10,7 +10,7 @@ mod common;
 
 use isoplane_abi::dispatch::HttpRequest;
 use isoplane_engine::{Completion, EngineConfig, IsoplaneEngine};
-use isoplane_host::cell::{CellConfig, DispatchResult, Target};
+use isoplane_host::cell::{DispatchResult, Target};
 use isoplane_host::{EngineActivator, ModuleId};
 use std::sync::Arc;
 use std::time::Duration;
@@ -49,11 +49,13 @@ fn dispatch(handle: &str, wake: &str) -> DispatchResult {
     );
     let module = ModuleId::new("timer-side-channels", "v1");
     let activator = Arc::new(
-        EngineActivator::load(engine, module.clone(), &wasm)
+        engine
+            .load_template(&wasm)
+            .map(|template| EngineActivator::new(engine, template, module.clone()))
             .expect("a module importing poll_call must link"),
     );
     let (cell, _) = common::rig_resolving(
-        CellConfig::for_test("timer-side-channels"),
+        isoplane_harness::fakes::cell_config("timer-side-channels"),
         "93.184.216.34:80",
     );
     cell.register_module("owner", activator, common::manifest("timer-side-channels"))
@@ -176,7 +178,14 @@ fn no_import_exposes_the_remaining_budget() {
         .expect("real engine"),
     );
     assert!(
-        EngineActivator::load(engine, ModuleId::new("budget-reader", "v1"), &wasm).is_err(),
+        engine
+            .load_template(&wasm)
+            .map(|template| EngineActivator::new(
+                engine,
+                template,
+                ModuleId::new("budget-reader", "v1")
+            ))
+            .is_err(),
         "a module importing budget_remaining_ns must be refused"
     );
 }

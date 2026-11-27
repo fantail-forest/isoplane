@@ -1,7 +1,6 @@
-//! Violation codes and the tenant-facing capability manifest report.
+//! Violation codes and what admission learned about an accepted module.
 
-use isoplane_abi::imports::{self, ImportDef};
-use isoplane_abi::pal::PalDef;
+use isoplane_abi::imports;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ViolationCode {
@@ -65,123 +64,14 @@ impl std::fmt::Display for Violation {
     }
 }
 
-impl Violation {
-    pub fn parts(&self) -> (ViolationCode, Option<&str>, &str) {
-        (self.code, self.subject.as_deref(), &self.detail)
-    }
-}
-
 #[derive(Debug, Clone, Default)]
 pub struct ValidationReport {
-    /// Every capability the module requested, in table order, including
-    /// those reached through a delegated WASI import.
-    pub capabilities: Vec<&'static str>,
-    pub memory_pages_max: Option<u32>,
-    pub function_count: u32,
-    pub module_bytes: u64,
-    /// Declared initial size of the linear memory, in 64 KiB pages.
-    pub memory_pages_initial: Option<u32>,
-    pub custom_section_bytes: u64,
     pub optional_exports: Vec<&'static str>,
-    /// Every `wasi:*` import the PAL adapter composes for this module, in
-    /// table order. Separate from `capabilities` so the door a capability
-    /// arrived through stays visible.
-    pub pal: Vec<&'static PalDef>,
 }
 
 impl ValidationReport {
     pub fn has_initialize(&self) -> bool {
         self.optional_exports
             .contains(&imports::exports::INITIALIZE)
-    }
-
-    /// The capability manifest as a tenant reads it: powers granted by
-    /// group, what was not requested, and what arrived through the PAL.
-    pub fn manifest(&self) -> String {
-        let mut lines: Vec<String> = Vec::new();
-        lines.push(format!(
-            "capability manifest ({} imports declared):",
-            self.capabilities.len()
-        ));
-        let mut groups: Vec<(&'static str, Vec<&'static ImportDef>)> = Vec::new();
-        for def in self.capabilities.iter().filter_map(|n| imports::lookup(n)) {
-            let g = group_label(def);
-            match groups.iter_mut().find(|(l, _)| *l == g) {
-                Some((_, v)) => v.push(def),
-                None => groups.push((g, vec![def])),
-            }
-        }
-        for (label, defs) in &groups {
-            let names: Vec<&str> = defs.iter().map(|d| d.name).collect();
-            lines.push(format!("  {label:<14} {}", names.join(", ")));
-        }
-        let denied: Vec<&str> = imports::IMPORTS
-            .iter()
-            .filter(|d| !self.capabilities.contains(&d.name))
-            .map(|d| d.name)
-            .collect();
-        lines.push(format!(
-            "  {:<14} {} imports NOT requested and therefore unreachable",
-            "denied",
-            denied.len()
-        ));
-        if !self.pal.is_empty() {
-            let delegated: Vec<&&PalDef> = self
-                .pal
-                .iter()
-                .filter(|p| p.disposition.is_delegated())
-                .collect();
-            let trapped = self.pal.len() - delegated.len();
-            lines.push(format!(
-                "  {:<14} {} wasi:* imports composed at deploy (PAL adapter):",
-                "wasi-pal",
-                self.pal.len()
-            ));
-            for p in &delegated {
-                let to = match p.disposition.capability() {
-                    Some(cap) => format!("delegates to `{cap}`"),
-                    None => "answers empty; no such capability exists".to_string(),
-                };
-                lines.push(format!("  {:<14}   {} -> {to}", "", p.full_name()));
-            }
-            let mut ifaces: Vec<&str> = self
-                .pal
-                .iter()
-                .filter(|p| !p.disposition.is_delegated())
-                .map(|p| p.module)
-                .collect();
-            ifaces.sort_unstable();
-            ifaces.dedup();
-            lines.push(format!(
-                "  {:<14}   {trapped} trap-on-call across {} interface(s): {}",
-                "",
-                ifaces.len(),
-                ifaces.join(", ")
-            ));
-        }
-        if let Some(max) = self.memory_pages_max {
-            lines.push(format!(
-                "  {:<14} 1 linear memory, {} .. {} pages ({} MiB max)",
-                "memory",
-                self.memory_pages_initial.unwrap_or(0),
-                max,
-                (max as u64 * 65_536) >> 20
-            ));
-        }
-        lines.join("\n") + "\n"
-    }
-}
-
-fn group_label(d: &ImportDef) -> &'static str {
-    use isoplane_abi::imports::Group::*;
-    match d.group {
-        Core => "core",
-        Observe => "observability",
-        Clock => "clock",
-        Entropy => "entropy",
-        Http => "egress:http",
-        Response => "response",
-        Socket => "sockets",
-        Ctx => "ctx",
     }
 }

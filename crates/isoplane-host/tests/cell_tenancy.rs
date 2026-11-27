@@ -21,7 +21,7 @@ fn rig(cfg: CellConfig) -> Rig {
 #[test]
 fn runtime_configuration_requires_the_registered_module_owner() {
     use isoplane_host::bindings::{RuntimeConfiguration, RuntimeConfigurationError};
-    let rig = rig(CellConfig::for_test("configuration"));
+    let rig = rig(isoplane_harness::fakes::cell_config("configuration"));
     let module = ModuleId::new("app", "v1");
     assert!(
         matches!(

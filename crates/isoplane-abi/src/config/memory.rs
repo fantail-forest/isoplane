@@ -67,12 +67,6 @@ impl From<GuestMemoryBytes> for u64 {
         value.get()
     }
 }
-impl std::str::FromStr for GuestMemoryBytes {
-    type Err = InvalidGuestMemory;
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        Self::new(value.parse().map_err(|_| InvalidGuestMemory)?)
-    }
-}
 
 #[cfg(test)]
 mod tests {

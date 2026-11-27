@@ -120,7 +120,7 @@ public sealed class AssemblyClosureTests : IDisposable
         var inputs = AssemblyClosure.Application([AssemblyClosure.InspectFile(application), AssemblyClosure.InspectFile(dependency)]);
         AssemblyClosure.Validate(inputs, Platform);
         Assert.True(!AssemblyClosure.Diagnostics(inputs.Values).Any(), "Native declarations must be silent by default.");
-        var diagnostics = AssemblyClosure.Diagnostics(inputs.Values, warnOnNativeImports: true).Select(item => item.ToString()).ToArray();
+        var diagnostics = AssemblyClosure.Diagnostics(inputs.Values, warnOnNativeImports: true).Select(item => $"{item.Code}: {item.Message}").ToArray();
         Assert.True(diagnostics.Length == 1 && diagnostics[0].Contains("ISOPLANE1001", StringComparison.Ordinal)
             && diagnostics[0].Contains("PortableDependency", StringComparison.Ordinal)
             && diagnostics[0].Contains("Portable.Library.Native.Read", StringComparison.Ordinal)

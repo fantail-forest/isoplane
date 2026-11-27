@@ -193,9 +193,6 @@ public static unsafe class Exports<TRouter>
             warm.Str("isoplane");
             GC.KeepAlive(warm.Span.Length);
             _initialization ??= Isoplane.Template.EnterAsync();
-#if ISOPLANE_ENTROPY_PROBE
-            Isoplane.App.EntropyProbe.WarmLikePreInit();
-#endif
             return SettleInitialization();
         }
         catch (Exception error)

@@ -26,11 +26,10 @@ fn manifest(name: &str) -> AppManifest {
 }
 
 #[test]
-fn admission_records_capabilities_and_the_initialization_entry() {
+fn admission_records_the_initialization_entry() {
     let wasm = wat::parse_str(app_wat()).unwrap();
     let report = admit(&manifest("shop"), &wasm).unwrap();
     assert!(report.has_initialize());
-    assert!(report.capabilities.contains(&"http_fetch"));
 }
 
 #[test]
@@ -62,7 +61,6 @@ fn a_module_without_an_initializer_is_admitted_without_inventing_one() {
     .unwrap();
     let report = admit(&manifest("tiny"), &wasm).unwrap();
     assert!(!report.has_initialize());
-    assert!(report.capabilities.is_empty());
 }
 
 #[test]
