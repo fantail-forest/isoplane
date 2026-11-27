@@ -22,18 +22,15 @@ impl Cell {
         let entry = job.completion.entry.clone();
 
         let t0 = Instant::now();
-        let mut held = false;
-        if matches!(job.target, Delivery::Handler { .. }) {
-            match self.join_shared(&entry, false) {
-                registry::Join::Unavailable { held: h } => held = h,
-                registry::Join::Joined(slot) => {
-                    self.start_shared(&slot, &entry, job);
-                    return;
-                }
+        let (idle, held) = match self.place(&entry) {
+            registry::Placement::Acquire { idle, held } => (idle, held),
+            registry::Placement::Joined(slot) => {
+                self.start_shared(&slot, &entry, job);
+                return;
             }
-        }
+        };
         let acquired = tracing::info_span!("acquire").in_scope(|| match &job.target {
-            Delivery::Handler { .. } => self.acquire_handler(&entry),
+            Delivery::Handler { .. } => self.acquire_handler(&entry, idle),
         });
         let (slot, src) = match acquired {
             Ok(v) => v,
@@ -111,11 +108,14 @@ impl Cell {
             return;
         }
         if joined && !slot.has_memory_for_join() {
+            let shared = entry.shared.lock();
             if self.release_reservation(slot.id) == 0 {
                 if slot.is_retiring() {
+                    drop(shared);
                     self.evict_instance(slot);
                 } else {
                     self.release_to_pool(entry, slot);
+                    drop(shared);
                     if slot.state() != LifecycleTier::Discarded {
                         self.watch_idle_timers(slot, entry);
                     }
@@ -1119,6 +1119,7 @@ impl Cell {
         did: u64,
         d: crate::disposition::Disposition,
     ) -> bool {
+        let shared = entry.shared.lock();
         let EndedDispatch {
             dispatch: _ended,
             remaining,
@@ -1130,6 +1131,19 @@ impl Cell {
             d
         };
         let keeps_instance = d.is_warm();
+        if remaining == 0 && keeps_instance {
+            self.rt.futures.release_idle(slot.id);
+            self.release_to_pool(entry, slot);
+            drop(shared);
+            if slot.state() == LifecycleTier::Discarded {
+                self.forget(slot);
+            } else {
+                self.watch_idle_timers(slot, entry);
+                self.schedule_remaining(slot);
+            }
+            return true;
+        }
+        drop(shared);
         if remaining > 0 {
             if keeps_instance {
                 return self.park_after_slice(slot, entry);
@@ -1146,18 +1160,7 @@ impl Cell {
             }
         }
 
-        if !keeps_instance {
-            self.evict_instance(slot);
-            return true;
-        }
-        self.rt.futures.release_idle(slot.id);
-        self.release_to_pool(entry, slot);
-        if slot.state() == LifecycleTier::Discarded {
-            self.forget(slot);
-        } else {
-            self.watch_idle_timers(slot, entry);
-            self.schedule_remaining(slot);
-        }
+        self.evict_instance(slot);
         true
     }
 }
@@ -1168,6 +1171,7 @@ mod tests {
     use crate::cell::pool::cell_tests::{app, cell, http};
     use crate::fakes::{FakeBehaviour, Step};
     use isoplane_test_support::wait_for;
+    use std::collections::BTreeMap;
 
     type Answer = std::sync::mpsc::Receiver<DispatchResult>;
 
@@ -1217,9 +1221,6 @@ mod tests {
 
     #[test]
     fn a_trap_in_the_slice_that_stops_for_a_departed_requester_discards_the_instance_once() {
-        use crate::cell::completion::test_events::Events;
-        let events = Events::default();
-        let _trace = events.install();
         let cell = cell(CellConfig {
             exec_threads: 0,
             ..crate::fakes::cell_config("departed-requester-trap")
@@ -1268,19 +1269,15 @@ mod tests {
             "nothing tried to park the discarded instance"
         );
         cell.shutdown();
-        let records = events.records();
-        assert_eq!(records.len(), 1, "one completion for the one dispatch");
         assert_eq!(
-            records[0]["outcome"], "request_cancelled",
-            "the requester's departure ended the dispatch before the trap"
+            *cell.metrics_raw().dispatch_outcomes.lock(),
+            BTreeMap::from([(("request_cancelled", 499), 1)]),
+            "the requester's departure ended the one dispatch before the trap"
         );
     }
 
     #[test]
     fn a_guest_that_answers_a_departed_requester_keeps_its_instance() {
-        use crate::cell::completion::test_events::Events;
-        let events = Events::default();
-        let _trace = events.install();
         let cell = cell(CellConfig {
             exec_threads: 0,
             ..crate::fakes::cell_config("departed-requester-answer")
@@ -1322,9 +1319,11 @@ mod tests {
         assert_eq!(cell.metrics().traps, 0, "no trap is counted");
         assert_eq!(cell.futures().live_futures(), 0);
         cell.shutdown();
-        let records = events.records();
-        assert_eq!(records.len(), 1, "one completion for the one dispatch");
-        assert_eq!(records[0]["outcome"], "request_cancelled");
+        assert_eq!(
+            *cell.metrics_raw().dispatch_outcomes.lock(),
+            BTreeMap::from([(("request_cancelled", 499), 1)]),
+            "one completion for the one dispatch"
+        );
     }
 
     /// Runs a dispatch on its own thread up to the slice `entered` reports,
@@ -1410,17 +1409,15 @@ mod tests {
 
     #[test]
     fn joins_queued_behind_the_last_slice_of_a_discarded_instance_are_all_refused() {
-        use crate::cell::completion::test_events::Events;
         use crate::cell::pool::cell_tests::manifest;
         use crate::fakes::FakeActivator;
-        let events = Events::default();
-        let _trace = events.install();
+        let events = crate::test_events::Events::new("discarded-with-joins");
         let cell = cell(CellConfig {
             exec_threads: 0,
             ..crate::fakes::cell_config("discarded-with-joins")
         });
         let (step, entered, release) = hold();
-        let module = ModuleId::new("discarded-with-joins", "v1");
+        let module = ModuleId::new(events.app(), "v1");
         // One instance at most, so the second join queues behind the first
         // rather than activating an instance of its own.
         let mut manifest = manifest("discarded-with-joins");
@@ -1548,9 +1545,6 @@ mod tests {
 
     #[test]
     fn an_instance_discarded_during_its_last_slice_is_not_pooled() {
-        use crate::cell::completion::test_events::Events;
-        let events = Events::default();
-        let _trace = events.install();
         let cell = cell(CellConfig {
             exec_threads: 0,
             ..crate::fakes::cell_config("discarded-mid-slice")
@@ -1581,16 +1575,15 @@ mod tests {
         );
         assert_eq!(cell.futures().live_futures(), 0);
         cell.shutdown();
-        let records = events.records();
-        assert_eq!(records.len(), 1, "one completion for the one dispatch");
-        assert_eq!(records[0]["outcome"], "success");
+        assert_eq!(
+            *cell.metrics_raw().dispatch_outcomes.lock(),
+            BTreeMap::from([(("success", 200), 1)]),
+            "one completion for the one dispatch"
+        );
     }
 
     #[test]
     fn a_refused_park_fails_the_dispatches_still_on_the_instance() {
-        use crate::cell::completion::test_events::Events;
-        let events = Events::default();
-        let _trace = events.install();
         let cell = cell(CellConfig {
             exec_threads: 0,
             ..crate::fakes::cell_config("refused-park")
@@ -1639,15 +1632,9 @@ mod tests {
         );
         assert_eq!(cell.futures().live_futures(), 0);
         cell.shutdown();
-        let mut outcomes: Vec<_> = events
-            .records()
-            .iter()
-            .map(|record| record["outcome"].as_str().expect("outcome").to_owned())
-            .collect();
-        outcomes.sort();
         assert_eq!(
-            outcomes,
-            ["instance_discarded", "success"],
+            *cell.metrics_raw().dispatch_outcomes.lock(),
+            BTreeMap::from([(("instance_discarded", 503), 1), (("success", 200), 1)]),
             "each dispatch completes exactly once"
         );
     }

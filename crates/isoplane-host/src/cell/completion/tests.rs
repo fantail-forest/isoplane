@@ -1,8 +1,28 @@
-use super::test_events::Events;
 use super::*;
 use crate::cell::pool::cell_tests::{app, cell, http, manifest};
 use crate::fakes::*;
+use crate::test_events::Events;
 use isoplane_test_support::wait_for;
+
+#[test]
+fn exhausted_dispatch_tokens_cannot_alias_an_earlier_owner() {
+    let counter = AtomicU64::new(u64::MAX - 1);
+    let last = DispatchToken::next(&counter).expect("last available token");
+    assert_eq!(
+        last.0,
+        u64::MAX - 1,
+        "the final allocatable token must retain its value"
+    );
+    assert!(
+        DispatchToken::next(&counter).is_err(),
+        "token allocation must refuse wrapping into an earlier owner"
+    );
+    assert_eq!(
+        counter.load(Ordering::Relaxed),
+        u64::MAX,
+        "refusal cannot reset the identity sequence"
+    );
+}
 
 #[test]
 fn terminal_dispatches_release_the_breaker_probe_before_their_last_reference() {
@@ -202,8 +222,20 @@ pub(in crate::cell) fn panic_activator(module: ModuleId) -> Arc<dyn Activator> {
 fn completion_events_keep_queue_and_park_wall_separate_from_hot_occupancy() {
     let cell = cell(CellConfig {
         exec_threads: 0,
+        reactor_threads: 1,
         ..crate::fakes::cell_config("completion-clock")
     });
+    let (release_reactor, released) = std::sync::mpsc::channel::<()>();
+    let (holding, reactor_held) = std::sync::mpsc::sync_channel(0);
+    cell.rt.reactor.spawn(async move {
+        holding.send(()).expect("the test waits for the hold");
+        released
+            .recv()
+            .expect_err("the hold ends when the test drops its sender");
+    });
+    reactor_held
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the reactor's one thread is held");
     let now = Arc::new(AtomicU64::new(100));
     let clock = now.clone();
     *cell.completion_clock.write() = Arc::new(move || Some(clock.load(Ordering::SeqCst)));
@@ -220,10 +252,10 @@ fn completion_events_keep_queue_and_park_wall_separate_from_hot_occupancy() {
         },
     ]);
     behaviour.slice_occupancy = Some(Duration::from_nanos(11));
-    let module = app(&cell, "completion-clock", behaviour);
-    let events = Events::default();
-    let rx = events
-        .scope(|| cell.submit(&module, Target::Handler { route: "/".into() }, http(42)))
+    let events = Events::new("completion-clock");
+    let module = app(&cell, events.app(), behaviour);
+    let rx = cell
+        .submit(&module, Target::Handler { route: "/".into() }, http(42))
         .expect("admitted");
     now.store(200, Ordering::SeqCst);
     let Job::Dispatch(job) = cell.queue.pop(0).expect("queued dispatch") else {
@@ -284,6 +316,7 @@ fn completion_events_keep_queue_and_park_wall_separate_from_hot_occupancy() {
             .expect("total occupancy"),
         "canonical reporting must not double-count slices"
     );
+    drop(release_reactor);
     cell.shutdown();
 }
 
@@ -304,15 +337,14 @@ fn a_parked_dispatch_completes_once_as_a_guest_trap_only_when_it_trapped() {
             true,
         ),
     ] {
-        let events = Events::default();
-        let _subscriber = events.install();
+        let events = Events::new("tenant-completion");
         let cell = cell(CellConfig {
             exec_threads: 0,
             ..crate::fakes::cell_config("tenant-completion")
         });
         let module = app(
             &cell,
-            "tenant-completion",
+            events.app(),
             FakeBehaviour::program([
                 Step::Park {
                     imports: vec![("clock_deadline_in", 600_000)],
@@ -358,18 +390,15 @@ fn unavailable_admission_clock_is_reported_as_missing_total_wall() {
         ..crate::fakes::cell_config("completion-no-clock")
     });
     *cell.completion_clock.write() = Arc::new(|| None);
-    let module = app(&cell, "completion-no-clock", FakeBehaviour::done());
-    let events = Events::default();
-    events
-        .scope(|| {
-            cell.dispatch_blocking(
-                &module,
-                Target::Handler { route: "/".into() },
-                http(1),
-                Duration::from_secs(10),
-            )
-        })
-        .expect("completed");
+    let events = Events::new("completion-no-clock");
+    let module = app(&cell, events.app(), FakeBehaviour::done());
+    cell.dispatch_blocking(
+        &module,
+        Target::Handler { route: "/".into() },
+        http(1),
+        Duration::from_secs(10),
+    )
+    .expect("completed");
     cell.shutdown();
     let records = events.completed(1);
     assert_eq!(
@@ -416,7 +445,8 @@ fn recorded_fault(
         exec_threads: 1,
         ..crate::fakes::cell_config("recorded-fault")
     });
-    let module = ModuleId::new("recorded-fault", "v1");
+    let events = Events::new("recorded-fault");
+    let module = ModuleId::new(events.app(), "v1");
     cell.register_module(
         "acme",
         Arc::new(PanicActivator {
@@ -427,16 +457,13 @@ fn recorded_fault(
         manifest("recorded-fault"),
     )
     .expect("register fault fixture");
-    let events = Events::default();
-    let result = events
-        .scope(|| {
-            cell.dispatch_blocking(
-                &module,
-                Target::Handler { route: "/".into() },
-                http(7),
-                Duration::from_secs(10),
-            )
-        })
+    let result = cell
+        .dispatch_blocking(
+            &module,
+            Target::Handler { route: "/".into() },
+            http(7),
+            Duration::from_secs(10),
+        )
         .expect("every handled fault must answer its caller");
     assert!(
         wait_for(
@@ -535,7 +562,11 @@ fn a_wake_panic_preserves_prior_slice_occupancy_and_marks_the_interrupted_slice_
     );
 }
 
-fn real_completion_cell(wasm: Vec<u8>, slice_wall_ms_cap: u32) -> (Arc<Cell>, ModuleId) {
+fn real_completion_cell(
+    events: &Events,
+    wasm: Vec<u8>,
+    slice_wall_ms_cap: u32,
+) -> (Arc<Cell>, ModuleId) {
     let engine = Arc::new(
         isoplane_engine::IsoplaneEngine::new(isoplane_engine::EngineConfig {
             pooling: false,
@@ -544,7 +575,7 @@ fn real_completion_cell(wasm: Vec<u8>, slice_wall_ms_cap: u32) -> (Arc<Cell>, Mo
         })
         .expect("real completion engine"),
     );
-    let module = ModuleId::new("real-completion", "v1");
+    let module = ModuleId::new(events.app(), "v1");
     let activator = Arc::new(
         engine
             .load_template(&wasm)
@@ -576,23 +607,23 @@ fn real_completion_outcome(
     occupancy_ms: u32,
     slice_wall_ms_cap: u32,
 ) -> serde_json::Map<String, serde_json::Value> {
-    let (cell, module) =
-        real_completion_cell(real_completion_wasm("", "", body), slice_wall_ms_cap);
-    let events = Events::default();
+    let events = Events::new("real-completion");
+    let (cell, module) = real_completion_cell(
+        &events,
+        real_completion_wasm("", "", body),
+        slice_wall_ms_cap,
+    );
     let record = DispatchRecord {
         occupancy_budget_ms: occupancy_ms,
         ..http(123)
     };
-    events
-        .scope(|| {
-            cell.dispatch_blocking(
-                &module,
-                Target::Handler { route: "/".into() },
-                record,
-                Duration::from_secs(10),
-            )
-        })
-        .expect("real engine dispatch must end");
+    cell.dispatch_blocking(
+        &module,
+        Target::Handler { route: "/".into() },
+        record,
+        Duration::from_secs(10),
+    )
+    .expect("real engine dispatch must end");
     cell.shutdown();
     let records = events.completed(1);
     assert_eq!(
@@ -692,24 +723,22 @@ async fn ended_real_guest_response(transport_failure: bool) {
             (import "isoplane" "clock_deadline_in" (func $timer (param i64) (result i64)))"#,
             &format!(r#"(data (i32.const 1024) "{encoded}")"#),
             &format!("(drop (call $response (i32.const 1024) (i32.const {}))) (drop (call $timer (i64.const 600000))) i64.const 1", head.len()));
-    let (cell, module) = real_completion_cell(wasm, CellConfig::default().slice_wall_ms_cap);
+    let events = Events::new("real-response");
+    let (cell, module) =
+        real_completion_cell(&events, wasm, CellConfig::default().slice_wall_ms_cap);
     let stream = crate::response_transport::ResponseTransport::new(1);
-    let events = Events::default();
     let task = {
         let cell = cell.clone();
         let module = module.clone();
         let stream = stream.clone();
-        let events = events.clone();
         tokio::task::spawn_blocking(move || {
-            events.scope(|| {
-                cell.dispatch_with_stream(
-                    &module,
-                    Target::Handler { route: "/".into() },
-                    http(19),
-                    Duration::from_secs(10),
-                    Some(stream),
-                )
-            })
+            cell.dispatch_with_stream(
+                &module,
+                Target::Handler { route: "/".into() },
+                http(19),
+                Duration::from_secs(10),
+                Some(stream),
+            )
         })
     };
     let exchange = stream.exchange().await.expect("real response headers");
@@ -768,14 +797,14 @@ async fn ended_real_guest_response(transport_failure: bool) {
 
 #[test]
 fn a_real_trapping_capture_hint_completes_its_active_dispatch() {
-    let events = Events::default();
-    let _trace = events.install();
+    let events = Events::new("real-capture-hint");
     let wasm = real_completion_wasm(
         r#"(import "isoplane" "clock_deadline_in" (func $timer (param i64) (result i64)))"#,
         r#"(func (export "isoplane_gc_hint") (param i32) unreachable)"#,
         "(drop (call $timer (i64.const 600000))) i64.const 1",
     );
-    let (cell, module) = real_completion_cell(wasm, CellConfig::default().slice_wall_ms_cap);
+    let (cell, module) =
+        real_completion_cell(&events, wasm, CellConfig::default().slice_wall_ms_cap);
     let response = cell
         .submit(&module, Target::Handler { route: "/".into() }, http(201))
         .expect("accepted dispatch");
@@ -840,13 +869,12 @@ fn a_real_trapping_capture_hint_completes_its_active_dispatch() {
 
 #[test]
 fn a_panicking_capture_hint_marks_its_usage_incomplete_and_releases_the_dispatch() {
-    let events = Events::default();
-    let _trace = events.install();
+    let events = Events::new("hint-panic");
     let cell = cell(CellConfig {
         exec_threads: 1,
         ..crate::fakes::cell_config("hint-panic")
     });
-    let module = ModuleId::new("hint-panic", "v1");
+    let module = ModuleId::new(events.app(), "v1");
     cell.register_module(
         "acme",
         Arc::new(PanicActivator {
@@ -913,9 +941,8 @@ fn shutdown_completes_accepted_queued_work_without_inventing_an_instance() {
         queue_depth_per_worker: 1,
         ..crate::fakes::cell_config("queued-stop")
     });
-    let module = app(&cell, "queued-stop", FakeBehaviour::done());
-    let events = Events::default();
-    let _trace = events.install();
+    let events = Events::new("queued-stop");
+    let module = app(&cell, events.app(), FakeBehaviour::done());
     let response = cell
         .submit(&module, Target::Handler { route: "/".into() }, http(301))
         .expect("the first dispatch is accepted");
@@ -968,9 +995,8 @@ fn rejecting_a_requeued_dispatch_emits_one_completion() {
         exec_threads: 0,
         ..crate::fakes::cell_config("requeue-refused")
     });
-    let module = app(&cell, "requeue-refused", FakeBehaviour::done());
-    let events = Events::default();
-    let _trace = events.install();
+    let events = Events::new("requeue-refused");
+    let module = app(&cell, events.app(), FakeBehaviour::done());
     let response = cell
         .submit(&module, Target::Handler { route: "/".into() }, http(301))
         .expect("initial admission");
@@ -991,15 +1017,14 @@ fn rejecting_a_requeued_dispatch_emits_one_completion() {
 
 #[test]
 fn shutdown_ends_parked_owners_and_late_futures_cannot_complete_them_again() {
-    let events = Events::default();
-    let _trace = events.install();
+    let events = Events::new("parked-stop");
     let cell = cell(CellConfig {
         exec_threads: 0,
         ..crate::fakes::cell_config("parked-stop")
     });
     let module = app(
         &cell,
-        "parked-stop",
+        events.app(),
         FakeBehaviour::program([Step::Park {
             imports: vec![("clock_deadline_in", 600_000)],
         }]),
@@ -1040,13 +1065,12 @@ fn shutdown_ends_parked_owners_and_late_futures_cannot_complete_them_again() {
 
 #[test]
 fn a_worker_that_loses_its_cell_still_finalizes_accepted_queued_owners() {
-    let events = Events::default();
-    let _trace = events.install();
+    let events = Events::new("lost-cell");
     let cell = cell(CellConfig {
         exec_threads: 0,
         ..crate::fakes::cell_config("lost-cell")
     });
-    let module = app(&cell, "lost-cell", FakeBehaviour::done());
+    let module = app(&cell, events.app(), FakeBehaviour::done());
     let response = cell
         .submit(&module, Target::Handler { route: "/".into() }, http(304))
         .expect("accepted");
@@ -1124,15 +1148,14 @@ fn activation_io_errors_keep_safe_typed_context_without_raw_error_text() {
 
 #[test]
 fn a_discarded_wake_ends_its_owned_dispatch() {
-    let events = Events::default();
-    let _trace = events.install();
+    let events = Events::new("refused-wake");
     let cell = cell(CellConfig {
         exec_threads: 0,
         ..crate::fakes::cell_config("refused-wake")
     });
     let module = app(
         &cell,
-        "refused-wake",
+        events.app(),
         FakeBehaviour::program([Step::Park {
             imports: vec![("clock_deadline_in", 600_000)],
         }]),
@@ -1228,10 +1251,10 @@ fn completion_waits_for_the_active_poll_but_not_transferred_operations_or_childr
         exec_threads: 0,
         ..crate::fakes::cell_config("final-reactor-poll")
     });
-    let module = app(&cell, "final-reactor-poll", FakeBehaviour::done());
-    let events = Events::default();
-    let owner = events
-        .scope(|| cell.completion_owner(&module, &http(1)))
+    let events = Events::new("final-reactor-poll");
+    let module = app(&cell, events.app(), FakeBehaviour::done());
+    let owner = cell
+        .completion_owner(&module, &http(1))
         .expect("completion owner");
     let meters = cell.meters(&module).expect("tenant meters");
     let attribution = crate::reactor_accounting::Attribution::default();

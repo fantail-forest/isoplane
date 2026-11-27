@@ -359,6 +359,14 @@ impl PendingWrite {
         let transport = self.transport.clone();
         transport.write(self).await
     }
+
+    /// Sends the body a response began with. Nothing reads the result: a
+    /// write that ends unacknowledged fails the response as it is dropped,
+    /// unless the requester left, which is already how the response ended.
+    pub(crate) async fn send_initial(self) {
+        let transport = self.transport.clone();
+        drop(transport.write(self).await);
+    }
 }
 impl Drop for PendingWrite {
     fn drop(&mut self) {
@@ -800,6 +808,24 @@ mod tests {
             stream.state.lock().queued_bytes,
             0,
             "body drop must release queued payload ownership"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_initial_body_first_sent_after_the_requester_left_does_not_fail_the_response() {
+        let stream = stream(1);
+        let response = stream.exchange().await.expect("response headers");
+        let initial = stream.prepare(b"AB".to_vec()).send_initial();
+        drop(response);
+        initial.await;
+        assert!(
+            stream.is_cancelled(),
+            "dropping the response is the requester leaving"
+        );
+        assert_eq!(
+            stream.failure(),
+            None,
+            "the requester leaving must stay the response's outcome"
         );
     }
 

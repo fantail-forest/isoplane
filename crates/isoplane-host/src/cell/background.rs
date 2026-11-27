@@ -1,6 +1,16 @@
 use super::*;
 use crate::futures::INSTANCE_WORK;
 
+/// How [`Cell::enter_background`] ended.
+enum BackgroundEntry {
+    Began(Arc<DispatchCompletion>),
+    /// The instance was idle past its limit and is discarded.
+    Stopped,
+    /// The instance left the pool for something else, or the work's
+    /// accounting could not begin.
+    Unavailable,
+}
+
 impl Cell {
     fn background_ready(&self, slot: &Slot) -> bool {
         slot.ctx.background.requested.load(Ordering::Acquire)
@@ -60,24 +70,6 @@ impl Cell {
         let Some(entry) = entry else {
             return false;
         };
-        if !self.active.contains_key(&slot.id) {
-            if entry
-                .pool
-                .take_idle(slot.id, |slot| slot.state() == LifecycleTier::Parked)
-                .is_none()
-            {
-                return false;
-            }
-            if slot
-                .ctx
-                .background
-                .idle_stop_at()
-                .is_some_and(|at| at <= slot.ctx.background.now())
-            {
-                self.stop_idle(&entry, slot.clone());
-                return true;
-            }
-        }
         let budget_ms = allowance.as_nanos().div_ceil(1_000_000) as u32;
         let budget = OccupancyBudget {
             occupancy_ms: budget_ms,
@@ -92,37 +84,14 @@ impl Cell {
             pending_futures_limit: slot.ctx.pending_futures_limit(INSTANCE_WORK),
             now_ms: crate::now_ms(),
         };
-        let owner = match DispatchCompletion::new(
-            entry.clone(),
-            &record,
-            budget,
-            self.completion_clock.read().clone(),
-        ) {
-            Ok(owner) => owner,
-            Err(error) => {
-                tracing::error!(instance = %slot.id, %error, "background execution could not acquire accounting");
-                if !self.active.contains_key(&slot.id) {
-                    self.release_to_pool(&entry, slot);
-                }
-                return false;
-            }
+        let owner = match self.enter_background(slot, &entry, &record, budget) {
+            BackgroundEntry::Began(owner) => owner,
+            BackgroundEntry::Stopped => return true,
+            BackgroundEntry::Unavailable => return false,
         };
         owner.acquired(slot.id, "background");
         self.waited_for_thread(&owner, slot.ctx.background.take_thread_wait());
         self.metrics.dispatches.fetch_add(1, Ordering::Relaxed);
-        self.insert_active(
-            slot.id,
-            ActiveDispatch {
-                dispatch_id: INSTANCE_WORK,
-                module: slot.ctx.module.clone(),
-                route: String::new(),
-                grace_deadline: None,
-                responder: None,
-                completion: owner.clone(),
-            },
-            false,
-        );
-        self.share(&entry, slot);
         slot.ctx
             .background
             .requested
@@ -213,15 +182,113 @@ impl Cell {
         });
         true
     }
+
+    /// Takes an idle instance from the pool for background work and lists it
+    /// as running in the same step, so a dispatch arriving meanwhile joins it
+    /// instead of activating another.
+    fn enter_background(
+        &self,
+        slot: &Arc<Slot>,
+        entry: &Arc<ModuleEntry>,
+        record: &DispatchRecord,
+        budget: OccupancyBudget,
+    ) -> BackgroundEntry {
+        let mut shared = entry.shared.lock();
+        let idle = !self.active.contains_key(&slot.id);
+        if idle {
+            if entry
+                .pool
+                .take_idle(slot.id, |slot| slot.state() == LifecycleTier::Parked)
+                .is_none()
+            {
+                return BackgroundEntry::Unavailable;
+            }
+            if slot
+                .ctx
+                .background
+                .idle_stop_at()
+                .is_some_and(|at| at <= slot.ctx.background.now())
+            {
+                drop(shared);
+                self.stop_idle(entry, slot.clone());
+                return BackgroundEntry::Stopped;
+            }
+        }
+        let owner = match DispatchCompletion::new(
+            entry.clone(),
+            record,
+            budget,
+            self.completion_clock.read().clone(),
+        ) {
+            Ok(owner) => owner,
+            Err(error) => {
+                tracing::error!(instance = %slot.id, %error, "background execution could not acquire accounting");
+                if idle {
+                    self.release_to_pool(entry, slot);
+                }
+                return BackgroundEntry::Unavailable;
+            }
+        };
+        self.insert_active(
+            slot.id,
+            ActiveDispatch {
+                dispatch_id: INSTANCE_WORK,
+                module: slot.ctx.module.clone(),
+                route: String::new(),
+                grace_deadline: None,
+                responder: None,
+                completion: owner.clone(),
+            },
+            false,
+        );
+        Self::list_shared(&mut shared, slot);
+        BackgroundEntry::Began(owner)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cell::completion::test_events::Events;
     use crate::cell::pool::cell_tests::{app, cell, http};
     use crate::fakes::{FakeBehaviour, Step};
     use isoplane_abi::status::PollStatus;
+
+    #[test]
+    fn a_request_arriving_as_its_idle_instance_starts_background_work_is_served_there() {
+        use isoplane_test_support::wait_for;
+        let cell = cell(crate::fakes::cell_config("background-placement"));
+        let module = app(&cell, "background-placement", FakeBehaviour::done());
+        let request = |id| {
+            cell.dispatch_blocking(
+                &module,
+                Target::Handler { route: "/".into() },
+                http(id),
+                Duration::from_secs(10),
+            )
+            .expect("the request completes")
+        };
+        let first = request(1);
+        let slot = cell.slot(first.instance).expect("warm instance");
+        for id in 2..=200 {
+            assert!(
+                wait_for(
+                    || cell.idle_instances(&module) == Some(1)
+                        && !slot.ctx.background.requested.load(Ordering::Acquire),
+                    Duration::from_secs(10)
+                ),
+                "the instance must be idle before request {id}"
+            );
+            slot.ctx.background.requested.store(true, Ordering::Release);
+            cell.schedule_remaining(&slot);
+            let result = request(id);
+            assert_eq!(
+                result.instance, first.instance,
+                "request {id} must be served by the idle instance, not one acquired as {}",
+                result.acquired
+            );
+        }
+        cell.shutdown();
+    }
 
     #[test]
     fn background_failures_are_reported_without_discarding_the_instance() {
@@ -229,8 +296,6 @@ mod tests {
             (PollStatus::Failed, "background_failed", 500),
             (PollStatus::Cancelled, "background_cancelled", 499),
         ] {
-            let events = Events::default();
-            let _trace = events.install();
             let cell = cell(CellConfig {
                 exec_threads: 0,
                 ..crate::fakes::cell_config("background-outcome")
@@ -260,11 +325,11 @@ mod tests {
             slot.ctx.background.requested.store(true, Ordering::Release);
             let _execution = slot.lock_execution();
             assert!(cell.run_background(&slot));
-            let records = events.records();
-            assert_eq!(records.len(), 2);
-            assert_eq!(records[1]["dispatch_kind"], "background");
-            assert_eq!(records[1]["outcome"], reason);
-            assert_eq!(records[1]["status"], status);
+            assert_eq!(
+                *cell.metrics_raw().dispatch_outcomes.lock(),
+                std::collections::BTreeMap::from([(("success", 200), 1), ((reason, status), 1)]),
+                "the request and the background work each end once, the work with its failure"
+            );
             assert_eq!(slot.state(), LifecycleTier::Parked);
             drop(_execution);
             cell.shutdown();

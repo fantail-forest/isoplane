@@ -148,13 +148,8 @@ impl CellBindings {
                         if !body.is_empty() {
                             let write = stream.prepare(body);
                             if let Some(rt) = self.rt() {
-                                let owner = stream.clone();
-                                let task = self.ctx.spawn(&rt.reactor, async move {
-                                    if let Err(error) = write.send().await {
-                                        stream.fail(format!("initial response body: {error:?}"));
-                                    }
-                                });
-                                owner.own_initial_write(task.abort_handle());
+                                let task = self.ctx.spawn(&rt.reactor, write.send_initial());
+                                stream.own_initial_write(task.abort_handle());
                             }
                         }
                     }

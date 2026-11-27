@@ -50,18 +50,40 @@ impl CellBindings {
 
 #[cfg(test)]
 mod tests {
-    use super::super::tests::{call, ctx};
+    use super::super::tests::call;
     use super::*;
+    use crate::bindings::{InstanceCtx, Tenancy};
+    use crate::test_events::Events;
     use isoplane_engine::HostBindings;
-    use isoplane_harness::logging::LogCapture;
     use std::sync::Arc;
+
+    fn ctx(events: &Events) -> Arc<InstanceCtx> {
+        Arc::new(InstanceCtx::new(
+            crate::InstanceId::alloc(),
+            Tenancy {
+                module: crate::ModuleId::new(events.app(), "v1"),
+                tenant: "t".into(),
+                limits: Default::default(),
+                allowlist: None,
+            },
+            Arc::new(crate::meters::Meters::new()),
+            None,
+        ))
+    }
+
+    fn logs(events: &Events) -> Vec<serde_json::Map<String, serde_json::Value>> {
+        events
+            .recorded()
+            .into_iter()
+            .filter(|event| event.target == GUEST_LOG_TARGET)
+            .map(|event| event.fields)
+            .collect()
+    }
 
     #[test]
     fn the_largest_configured_log_budget_cannot_wrap() {
-        let capture = LogCapture::default();
-        let dispatch = capture.dispatch();
-        let _subscriber = tracing::dispatcher::set_default(&dispatch);
-        let mut context = ctx();
+        let events = Events::new("guest-log");
+        let mut context = ctx(&events);
         Arc::get_mut(&mut context)
             .expect("new context has no other owner")
             .configure_resources(super::super::GuestResourceLimits {
@@ -76,7 +98,7 @@ mod tests {
         bindings.call_sync(call("log_emit", b"a", [2, 0, 0]));
         bindings.call_sync(call("log_emit", b"b", [2, 0, 0]));
         assert_eq!(
-            capture.records().len(),
+            logs(&events).len(),
             1,
             "the largest configured allowance must reject bytes beyond its boundary"
         );
@@ -85,10 +107,8 @@ mod tests {
     #[test]
     fn configured_log_limits_bound_emitted_bytes() {
         for (bytes, expected) in [(3, 1), (100, 2), (0, 0)] {
-            let capture = LogCapture::default();
-            let dispatch = capture.dispatch();
-            let _subscriber = tracing::dispatcher::set_default(&dispatch);
-            let mut context = ctx();
+            let events = Events::new("guest-log");
+            let mut context = ctx(&events);
             Arc::get_mut(&mut context)
                 .expect("new context has no other owner")
                 .configure_resources(super::super::GuestResourceLimits {
@@ -100,7 +120,7 @@ mod tests {
             bindings.call_sync(call("log_emit", b"abc", [2, 0, 0]));
             bindings.call_sync(call("log_emit", b"d", [2, 0, 0]));
             assert_eq!(
-                capture.records().len(),
+                logs(&events).len(),
                 expected,
                 "configured log allowances must be enforced"
             );
@@ -110,10 +130,8 @@ mod tests {
     #[test]
     fn log_levels_outside_the_canonical_range_latch_a_protocol_trap() {
         for level in [5, 256, u64::MAX] {
-            let capture = LogCapture::default();
-            let dispatch = capture.dispatch();
-            let _subscriber = tracing::dispatcher::set_default(&dispatch);
-            let context = ctx();
+            let events = Events::new("guest-log");
+            let context = ctx(&events);
             context.begin_dispatch(1, 1);
             let mut bindings = CellBindings::new(context.clone());
             bindings.call_sync(call("log_emit", b"invalid severity", [level, 0, 0]));
@@ -123,7 +141,7 @@ mod tests {
                 "an invalid log severity cannot wrap into a supported level"
             );
             assert!(
-                capture.records().is_empty(),
+                logs(&events).is_empty(),
                 "malformed log calls cannot publish customer records"
             );
         }
@@ -131,10 +149,8 @@ mod tests {
 
     #[test]
     fn log_volume_accepts_the_boundary_and_cannot_wrap_back_into_a_fresh_allowance() {
-        let capture = LogCapture::default();
-        let dispatch = capture.dispatch();
-        let _subscriber = tracing::dispatcher::set_default(&dispatch);
-        let context = ctx();
+        let events = Events::new("guest-log");
+        let context = ctx(&events);
         context.begin_dispatch(1, 1);
         let mut bindings = CellBindings::new(context.clone());
         bindings.call_sync(call(
@@ -144,7 +160,7 @@ mod tests {
         ));
         bindings.call_sync(call("log_emit", b"one byte over", [2, 0, 0]));
         assert_eq!(
-            capture.records().len(),
+            logs(&events).len(),
             1,
             "the exact log-byte boundary is accepted and subsequent bytes are refused"
         );
@@ -154,14 +170,14 @@ mod tests {
             .store(u32::MAX, Ordering::Relaxed);
         bindings.call_sync(call("log_emit", b"cannot wrap", [2, 0, 0]));
         assert_eq!(
-            capture.records().len(),
+            logs(&events).len(),
             1,
             "overflow cannot reset a dispatch's exhausted log allowance"
         );
         context.begin_dispatch(2, 2);
         bindings.call_sync(call("log_emit", b"new dispatch", [2, 0, 0]));
         assert_eq!(
-            capture.records().len(),
+            logs(&events).len(),
             2,
             "a new dispatch obtains its own log allowance"
         );
@@ -169,28 +185,26 @@ mod tests {
 
     #[test]
     fn logs_are_structured_charged_and_bounded() {
-        let capture = LogCapture::default();
-        let dispatch = capture.dispatch();
-        let _subscriber = tracing::dispatcher::set_default(&dispatch);
-        let c = ctx();
+        let events = Events::new("guest-log");
+        let c = ctx(&events);
         c.begin_dispatch(10, 1);
         let mut b = CellBindings::new(c.clone());
         b.call_sync(call("log_emit", b"{\"msg\":\"hello\"}", [2, 0, 0]));
-        assert_eq!(capture.records().len(), 1, "the line is emitted");
-        assert_eq!(capture.records()[0].level, 2, "with its level");
+        assert_eq!(logs(&events).len(), 1, "the line is emitted");
+        assert_eq!(logs(&events)[0]["level"], 2, "with its level");
 
         let big = vec![b'x'; 64 * 1024];
         for _ in 0..8 {
             b.call_sync(call("log_emit", &big, [2, 0, 0]));
         }
         assert!(
-            capture.records().len() < 9,
+            logs(&events).len() < 9,
             "the per-dispatch log byte cap did not bite"
         );
         c.begin_dispatch(11, 2);
         b.call_sync(call("log_emit", b"after", [2, 0, 0]));
         assert!(
-            capture.records().iter().any(|l| l.fields == "after"),
+            logs(&events).iter().any(|l| l["fields"] == "after"),
             "a new dispatch gets a fresh allowance"
         );
     }
