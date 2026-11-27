@@ -5,9 +5,6 @@
   <UsingTask TaskName="IsoplaneDebugManifest" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
     <Task><Code Type="Class" Language="cs" Source="$(MSBuildThisFileDirectory)DebugManifest.cs" /></Task>
   </UsingTask>
-  <ItemGroup>
-    <LinkerArg Include="-Wl,--wrap=printf,--wrap=fprintf,--wrap=vprintf,--wrap=vfprintf,--wrap=puts,--wrap=fputs" />
-  </ItemGroup>
   <Target Name="IsoplaneMonoDebugNative" AfterTargets="IsoplaneMonoNativeEntry">
     <ItemGroup>
       <_IsoplaneDebugSymbols Include="@(ResolvedFileToPublish)" Condition="'%(Filename)%(Extension)' == '$(AssemblyName).pdb'" />
@@ -17,7 +14,7 @@
     <IsoplaneMonoDebugSymbols Symbols="@(_IsoplaneDebugSymbols)" DependencySymbols="@(_IsoplaneDependencyDebugSymbols)" Output="$(_IsoplaneMonoDir)mono_debug.h" />
     <WriteLinesToFile File="$(_IsoplaneMonoDir)mono_assembly.h" Lines="#define ISOPLANE_LOCAL_DEBUG 1" Overwrite="false" />
     <ItemGroup>
-      <NativeFileReference Include="$(_IsoplaneSdkDirectory)native/isoplane_debug_pal.c;$(_IsoplaneSdkDirectory)native/mono_debug_log.c" />
+      <NativeFileReference Include="$(_IsoplaneSdkDirectory)native/isoplane_debug_pal.c" />
       <FileWrites Include="$(_IsoplaneMonoDir)mono_debug.h" />
     </ItemGroup>
   </Target>

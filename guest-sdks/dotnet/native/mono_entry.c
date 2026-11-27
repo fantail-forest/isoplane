@@ -42,9 +42,8 @@ static int32_t log_level(const char *level)
     return 2;
 }
 
-static void emit(int32_t level, const char *text)
+void mono_runtime_log(int32_t level, const char *text, size_t length)
 {
-    size_t length = strlen(text);
     while (length > 0 && text[length - 1] == '\n') length--;
     if (length > 0) host_log(level, text, (int32_t)length);
 }
@@ -56,7 +55,7 @@ static void on_log(const char *domain, const char *level, const char *message, i
     (void)domain;
     (void)user_data;
     if (fatal) fail(message);
-    emit(log_level(level), message);
+    mono_runtime_log(log_level(level), message, strlen(message));
 }
 
 // The WASI driver passes the runtime's log here from the start of start-up; a
@@ -68,7 +67,7 @@ void mono_wasi_embedding_log(const char *domain, const char *level, const char *
 
 static void on_print(const char *text, int32_t is_stdout)
 {
-    emit(is_stdout ? 2 : 3, text);
+    mono_runtime_log(is_stdout ? 2 : 3, text, strlen(text));
 }
 
 #ifdef ISOPLANE_LOCAL_DEBUG
