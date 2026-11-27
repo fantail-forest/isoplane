@@ -163,13 +163,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
+      # A pull request's checkout merges it into its base, which is the merge's first parent.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with: {persist-credentials: false}
+        with: {persist-credentials: false, fetch-depth: 2}
       - uses: ./.github/actions/toolchain
         with: {rust: 'false'}
       - env:
           GH_TOKEN: ${{ github.token }}
-        run: task ci:pins
+        run: task ci:pins ${{ github.event_name == 'pull_request' && '-- --base HEAD^1' || '' }}
 
   required:
     name: CI passed

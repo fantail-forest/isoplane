@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Move each fork pin that was the head of a merged fork pull request to the
 # commit that pull request landed as: scripts/move-fork-pins [--commit] [--since COMMIT]
-# With --since, a pin that differs from COMMIT's and is behind its fork's
-# trunk also moves, to the trunk's head; COMMIT is where the branch started.
+# With --since, where COMMIT is where the branch started, a pin the same as
+# COMMIT's is its base's to move and stays, and a pin that differs and is
+# behind its fork's trunk also moves, to the trunk's head.
 # Run it in the Isoplane checkout to change. It stages the moved pins, and
 # --commit commits them. Needs a signed-in GitHub CLI.
 set -euo pipefail
@@ -15,7 +16,7 @@ while [ "$#" -gt 0 ]; do
   case "$1:$#" in
     --commit:*) commit=true; shift ;;
     --since:1) echo "--since needs a commit." >&2; exit 2 ;;
-    --since:*) since=$2; shift 2 ;;
+    --since:*) since=$(git rev-parse --verify "$2^{commit}"); shift 2 ;;
     *)
       echo "Usage: $0 [--commit] [--since COMMIT]" >&2
       exit 2 ;;
@@ -67,6 +68,11 @@ if [ -n "$since" ]; then
 fi
 moves=()
 while read -r fork location revision; do
+  # In a stack, the pull request that changed the pin moves it, and those above take the move from their base.
+  if [ -n "$since" ] && grep --quiet --fixed-strings --line-regexp "$fork $location $revision" <<<"$started_with"; then
+    echo "$fork: $revision is the pin this branch started with, so it is its base's to move."
+    continue
+  fi
   if ! status=$(trunk_status "$fork" "$revision"); then
     echo "$fork: could not compare $revision with $trunk; the fork may not have that commit." >&2
     exit 1
@@ -76,8 +82,7 @@ while read -r fork location revision; do
       echo "$fork: $revision is the head of $trunk; nothing to move."
       continue ;;
     behind)
-      # A pin this branch did not move is its base's to move.
-      if [ -z "$since" ] || grep --quiet --fixed-strings --line-regexp "$fork $location $revision" <<<"$started_with"; then
+      if [ -z "$since" ]; then
         echo "$fork: $revision is on $trunk; nothing to move."
         continue
       fi

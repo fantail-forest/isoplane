@@ -157,6 +157,18 @@ be carried onto a fork commit that needs Isoplane changes it lacks; its checks
 show that. A pin the pull request did not move stays. An OpenSSL move also needs the runtime fork to record the new commit
 as its `OPENSSL_REVISION`, which the script reports and does not do.
 
+In a stack of pull requests, only the pull request that changed a pin gets
+the move. Those above it take the pin from their base branch, and their
+**Fork pins have landed** check says that the pin comes from the base. They
+pick up the move when the stack is rebased, with `gh stack rebase` and
+`gh stack push`, or by GitHub after the pull request below merges. A rebase
+replaces each commit, so the original signatures do not carry over.
+`gh stack rebase` signs the new commits as the Git configuration of whoever
+runs it says. With signing off they are unsigned, and with it on they carry
+that contributor's key, also on another author's commits. GitHub's
+**Rebase stack** button also works, but the commits it creates are not signed
+with their author's key.
+
 Publication needs more than a workflow artifact. `task release:publication`
 fails unless the pinned runtime and OpenSSL fork commits each have a release
 holding their build outputs. Each fork's **Isoplane build release** workflow
