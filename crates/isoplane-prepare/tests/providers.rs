@@ -67,10 +67,10 @@ async fn preserves_application_state(provider: &dyn Preparation) {
         runtime: RuntimeProfile::RawWasm,
         memory_limit: isoplane_abi::config::GuestMemoryBytes::default(),
         initialization: common::request(),
-        input_hash: *blake3::hash(&wasm).as_bytes(),
+        module: isoplane_prepare::Module::new(&wasm),
     };
     let product = provider
-        .prepare(&wasm, &request, &CancellationToken::new())
+        .prepare(&request, &CancellationToken::new())
         .await
         .expect("the selected provider must satisfy the shared preparation contract");
     let identity = request.identity().expect("input identity");
@@ -142,10 +142,10 @@ async fn layered_preparation_accepts_a_guest_without_an_initializer() {
         runtime: RuntimeProfile::RawWasm,
         memory_limit: isoplane_abi::config::GuestMemoryBytes::default(),
         initialization: common::request(),
-        input_hash: *blake3::hash(&wasm).as_bytes(),
+        module: isoplane_prepare::Module::new(&wasm),
     };
     let product = crate::provider::local_preparation()
-        .prepare(&wasm, &request, &CancellationToken::new())
+        .prepare(&request, &CancellationToken::new())
         .await
         .expect("a guest without an initializer needs no initialized capture boundary");
     let identity = request.identity().expect("identity");

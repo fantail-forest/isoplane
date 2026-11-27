@@ -31,7 +31,6 @@ impl Deployer {
     /// published first when this node has none.
     pub(super) async fn baseline(
         &self,
-        wasm: &[u8],
         request: &BuildRequest,
         context: &PreparationContext<'_>,
     ) -> anyhow::Result<HeldBaseline> {
@@ -50,7 +49,7 @@ impl Deployer {
             if !prepared.exists() {
                 let product = context
                     .provider
-                    .prepare_runtime_baseline(wasm, &wanted, context.cancellation)
+                    .prepare_runtime_baseline(&wanted, context.cancellation)
                     .await?;
                 // SAFETY: only the host-selected trusted Preparation provider supplies these bytes.
                 let artifact = unsafe {

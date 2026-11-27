@@ -24,9 +24,17 @@ pub enum PrepareError {
     /// A configured initialization backstop was exceeded.
     #[error("preparation limit: {0}")]
     Limit(&'static str),
-    /// Preparation returned a structured refusal.
-    #[error("preparation rejected: {0}")]
-    Rejected(WorkerFailure),
+    /// The module or the request was refused before anything ran.
+    // The cause is part of each of these messages and not also a source: a
+    // report that prints an error with its sources would otherwise repeat it.
+    #[error("reading inputs failed: {0:#}")]
+    Input(anyhow::Error),
+    /// The engine the request describes could not be constructed.
+    #[error("constructing the engine failed: {0:#}")]
+    Engine(anyhow::Error),
+    /// The prepared artifact could not be encoded.
+    #[error("encoding the prepared artifact failed: {0:#}")]
+    Artifact(anyhow::Error),
     /// Local preparation files could not be accessed.
     #[error("preparation I/O: {0}")]
     Io(#[source] std::io::Error),
@@ -34,8 +42,6 @@ pub enum PrepareError {
     #[error("invalid preparation request: {0}")]
     InvalidRequest(&'static str),
     /// The input or captured state could not be represented safely.
-    // The cause is part of the message and not also a source: a report that
-    // prints an error with its sources would otherwise repeat it.
     #[error("preparation state: {0:#}")]
     State(anyhow::Error),
     /// Initialization did not return a successful empty-stack boundary.
@@ -65,10 +71,7 @@ pub enum PrepareError {
 mod profile;
 pub use profile::RuntimeProfile;
 mod request;
-pub use request::BuildRequest;
-
-mod failure;
-pub use failure::{BuildStage, WorkerFailure};
+pub use request::{BuildRequest, Module};
 
 mod product;
 pub use product::{BuildProduct, LocalPreparation, Preparation};

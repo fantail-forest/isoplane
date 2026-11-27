@@ -109,11 +109,11 @@ async fn layered_preparation_captures_the_completed_async_initializer() {
         runtime: isoplane_prepare::RuntimeProfile::RawWasm,
         memory_limit: isoplane_abi::config::GuestMemoryBytes::default(),
         initialization: request(),
-        input_hash: *blake3::hash(&wasm).as_bytes(),
+        module: isoplane_prepare::Module::new(&wasm),
     };
     use isoplane_prepare::Preparation;
     let product = crate::provider::local_preparation()
-        .prepare(&wasm, &build, &tokio_util::sync::CancellationToken::new()).await.expect(
+        .prepare(&build, &tokio_util::sync::CancellationToken::new()).await.expect(
         "layered capture and fresh-instance state verification must succeed after the timer wake",
     );
     // SAFETY: the local preparation provider above produced this native code.

@@ -1,6 +1,6 @@
 use isoplane_engine::{EngineConfig, PlatformFile, PlatformFiles};
 use isoplane_prepare::Preparation as _;
-use isoplane_prepare::{BuildProduct, BuildRequest, Initialization, RuntimeProfile, WorkerFailure};
+use isoplane_prepare::{BuildProduct, BuildRequest, Initialization, PrepareError, RuntimeProfile};
 
 pub fn files(name: &str) -> PlatformFiles {
     PlatformFiles::new(
@@ -31,7 +31,7 @@ impl Prepared {
     }
 }
 
-pub fn prepare(name: &str, platform_files: PlatformFiles) -> Result<Prepared, WorkerFailure> {
+pub fn prepare(name: &str, platform_files: PlatformFiles) -> Result<Prepared, PrepareError> {
     prepare_configured(name, platform_files, b"{}", None)
 }
 
@@ -42,7 +42,7 @@ pub fn prepare_configured(
     platform_files: PlatformFiles,
     runtime_config: &[u8],
     network: Option<isoplane_prepare::InitializationNetwork>,
-) -> Result<Prepared, WorkerFailure> {
+) -> Result<Prepared, PrepareError> {
     let wasm = isoplane_fixtures::mono_runtime();
     let request = BuildRequest {
         engine: EngineConfig {
@@ -59,7 +59,7 @@ pub fn prepare_configured(
         .expect("the fixture engine memory limit"),
         guest_memory_bytes: None,
         validation_limits: Default::default(),
-        input_hash: *blake3::hash(&wasm).as_bytes(),
+        module: isoplane_prepare::Module::new(&wasm),
         initialization: Initialization {
             network,
             ..Initialization::new(runtime_config.to_vec())
@@ -76,22 +76,16 @@ pub fn prepare_configured(
                     .enable_all()
                     .build()
                     .expect("preparation runtime")
-                    .block_on(preparation.prepare(
-                        &wasm,
-                        &request,
-                        &tokio_util::sync::CancellationToken::new(),
-                    ))
+                    .block_on(
+                        preparation.prepare(&request, &tokio_util::sync::CancellationToken::new()),
+                    )
             })
             .join()
             .expect("preparation does not panic")
     });
-    match prepared {
-        Ok(product) => Ok(Prepared {
-            product,
-            configuration: request.engine.clone(),
-            identity: request.identity().unwrap(),
-        }),
-        Err(isoplane_prepare::PrepareError::Rejected(failure)) => Err(failure),
-        Err(error) => panic!("preparation must run to an outcome: {error}"),
-    }
+    prepared.map(|product| Prepared {
+        product,
+        configuration: request.engine.clone(),
+        identity: request.identity().unwrap(),
+    })
 }

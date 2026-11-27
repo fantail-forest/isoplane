@@ -7,7 +7,7 @@ use isoplane_engine::prepared::PreparedIdentity;
 use isoplane_engine::{IsoplaneEngine, Template};
 
 use crate::product::{produce, validate};
-use crate::{BuildProduct, BuildRequest, BuildStage, Initialization, PrepareError, WorkerFailure};
+use crate::{BuildProduct, BuildRequest, Initialization, PrepareError};
 
 /// What a runtime's own initialization sees: an application's request
 /// without its files, deployment configuration, network or entropy, so every
@@ -33,7 +33,7 @@ impl BuildRequest {
                 wall_ms: initialization.wall_ms,
                 log_bytes: initialization.log_bytes,
             },
-            input_hash: self.input_hash,
+            module: self.module.clone(),
         })
     }
 }
@@ -69,25 +69,21 @@ impl PublishedBaseline {
     }
 
     /// Loads the baseline for preparing `request`'s application over it.
-    /// Fails unless its manifest has the recorded digest and names the
-    /// baseline `request` derives, for this engine.
-    pub fn load(&self, request: &BuildRequest) -> anyhow::Result<RuntimeBaseline> {
+    /// Fails with [`PrepareError::Engine`] if `request`'s engine cannot be
+    /// constructed, and with [`PrepareError::Input`] unless the manifest has
+    /// the recorded digest and names the baseline `request` derives, for
+    /// that engine.
+    pub fn load(&self, request: &BuildRequest) -> Result<RuntimeBaseline, PrepareError> {
         let baseline = request.baseline();
-        let engine = IsoplaneEngine::new(request.engine.clone())?;
+        let engine = IsoplaneEngine::new(request.engine.clone()).map_err(PrepareError::Engine)?;
+        let identity = baseline.identity().map_err(PrepareError::Encoding)?;
         // SAFETY: `PublishedBaseline::new`'s caller keeps the directory's
         // files unchanged while any preparation or template uses them.
         let template = unsafe {
-            engine.restore_prepared_by_digest(
-                &self.directory,
-                self.manifest_sha256,
-                baseline.identity()?,
-            )
-        }?;
-        Ok(RuntimeBaseline::loaded(
-            Arc::new(engine),
-            template,
-            &baseline,
-        )?)
+            engine.restore_prepared_by_digest(&self.directory, self.manifest_sha256, identity)
+        }
+        .map_err(|error| PrepareError::Input(error.into()))?;
+        RuntimeBaseline::loaded(Arc::new(engine), template, &baseline)
     }
 }
 
@@ -121,28 +117,24 @@ pub struct PreparedApplication {
 }
 
 impl RuntimeBaseline {
-    /// Initialize only `wasm`'s runtime, through its `isoplane_initialize_runtime`
-    /// export, in the caller's thread, compiling through `cache` when given.
-    /// Fails at [`BuildStage::Baseline`] if that initialization reads entropy
+    /// Initialize only the runtime of `request`'s module, through its
+    /// `isoplane_initialize_runtime` export, in the caller's thread, compiling
+    /// through `cache` when given.
+    /// Fails with [`PrepareError::Baseline`] if that initialization reads entropy
     /// or reaches a capability the sandbox refuses, since every application
     /// over the baseline would then share its result.
     pub fn prepare(
-        wasm: &[u8],
         request: &BaselineRequest,
         cache: Option<&isoplane_engine::CompilationCache>,
-    ) -> Result<PreparedBaseline, WorkerFailure> {
+    ) -> Result<PreparedBaseline, PrepareError> {
         let request = &request.0;
-        let identity = validate(wasm, request)
-            .map_err(|error| WorkerFailure::new(BuildStage::Input, error))?;
-        let engine = IsoplaneEngine::new(request.engine.clone())
-            .map_err(|error| WorkerFailure::new(BuildStage::Engine, error))?;
+        let identity = validate(request)?;
+        let wasm = request.module.wasm();
+        let engine = IsoplaneEngine::new(request.engine.clone()).map_err(PrepareError::Engine)?;
         let capture = crate::initialize::CaptureMode::RuntimeBaseline { wasm, identity };
         let (product, template) = produce(&engine, request, cache, identity, capture)?;
         let template = template.ok_or_else(|| {
-            WorkerFailure::new(
-                BuildStage::Initialization,
-                anyhow::anyhow!("a runtime baseline needs a module with an initializer"),
-            )
+            PrepareError::InvalidRequest("a runtime baseline needs a module with an initializer")
         })?;
         Ok(PreparedBaseline {
             baseline: Self(Arc::new(Loaded {
@@ -178,13 +170,13 @@ impl RuntimeBaseline {
 
     /// Initialize `request`'s application on this baseline in the caller's
     /// thread and capture only what it changed, as a layer over it. Runs no
-    /// compilation. Fails at [`BuildStage::Input`] unless this baseline was
+    /// compilation. Fails with [`PrepareError::Input`] unless this baseline was
     /// prepared from `request.baseline()`, or if the request asks for a
     /// portable module, which a layer does not have.
     pub fn prepare_application(
         &self,
         request: &BuildRequest,
-    ) -> Result<PreparedApplication, WorkerFailure> {
+    ) -> Result<PreparedApplication, PrepareError> {
         self.prepare_application_in(request, &std::env::temp_dir())
     }
 
@@ -194,9 +186,8 @@ impl RuntimeBaseline {
         &self,
         request: &BuildRequest,
         storage: &std::path::Path,
-    ) -> Result<PreparedApplication, WorkerFailure> {
-        let identity = layer_identity(self, request)
-            .map_err(|error| WorkerFailure::new(BuildStage::Input, error))?;
+    ) -> Result<PreparedApplication, PrepareError> {
+        let identity = layer_identity(self, request)?;
         let capture = crate::initialize::CaptureMode::Over {
             base: self.0.template.clone(),
             storage,
@@ -204,9 +195,8 @@ impl RuntimeBaseline {
         };
         let (product, template) = produce(&self.0.engine, request, None, identity, capture)?;
         let template = template.ok_or_else(|| {
-            WorkerFailure::new(
-                BuildStage::Initialization,
-                anyhow::anyhow!("an application over a runtime baseline needs its initializer"),
+            PrepareError::InvalidRequest(
+                "an application over a runtime baseline needs its initializer",
             )
         })?;
         Ok(PreparedApplication { product, template })
@@ -233,10 +223,15 @@ impl RuntimeBaseline {
 fn layer_identity(
     baseline: &RuntimeBaseline,
     request: &BuildRequest,
-) -> anyhow::Result<PreparedIdentity> {
-    anyhow::ensure!(
-        request.baseline().identity()? == baseline.0.identity,
-        "the runtime baseline was prepared for a different runtime, engine or limits"
-    );
-    Ok(request.identity()?)
+) -> Result<PreparedIdentity, PrepareError> {
+    let derived = request
+        .baseline()
+        .identity()
+        .map_err(PrepareError::Encoding)?;
+    if derived != baseline.0.identity {
+        return Err(PrepareError::Input(anyhow::anyhow!(
+            "the runtime baseline was prepared for a different runtime, engine or limits"
+        )));
+    }
+    request.identity().map_err(PrepareError::Encoding)
 }

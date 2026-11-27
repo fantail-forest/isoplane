@@ -77,17 +77,15 @@ fn a_forbidden_import_ends_initialization_with_the_guests_trap_and_is_named() {
         .err()
         .expect("a serving capability must fail initialization");
     assert!(
-        matches!(error, PrepareError::ForbiddenCapability { ref import, .. } if import == "future_cancel"),
-        "forbidden capabilities must terminate initialization"
-    );
-    let failure = isoplane_prepare::WorkerFailure::new(
-        isoplane_prepare::BuildStage::Initialization,
-        error.into(),
-    );
-    assert_eq!(
-        failure.completion,
-        Some(isoplane_engine::Completion::Trapped),
-        "capability refusals must retain the guest completion in the preparation failure"
+        matches!(
+            error,
+            PrepareError::ForbiddenCapability {
+                ref import,
+                completion: isoplane_engine::Completion::Trapped,
+                ..
+            } if import == "future_cancel"
+        ),
+        "a forbidden capability must end initialization with the guest's trap: {error}"
     );
 }
 
@@ -258,7 +256,7 @@ fn initialization_identity_changes_with_the_declared_trust_snapshot() {
         runtime: isoplane_prepare::RuntimeProfile::RawWasm,
         memory_limit: isoplane_abi::config::GuestMemoryBytes::default(),
         initialization: request(),
-        input_hash: *blake3::hash(&wasm).as_bytes(),
+        module: isoplane_prepare::Module::new(&wasm),
     };
     let old = request.identity().expect("initial identity");
     request.engine.platform_files =
@@ -290,7 +288,7 @@ fn initialization_identity_binds_application_content_independently_of_the_runtim
         runtime: isoplane_prepare::RuntimeProfile::RawWasm,
         memory_limit: isoplane_abi::config::GuestMemoryBytes::default(),
         initialization: request(),
-        input_hash: *blake3::hash(&wasm).as_bytes(),
+        module: isoplane_prepare::Module::new(&wasm),
     };
     let before = request.identity().expect("original identity");
     request.application_files =

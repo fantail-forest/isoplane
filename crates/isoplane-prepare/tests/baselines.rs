@@ -9,8 +9,8 @@ mod staged;
 use isoplane_engine::prepared::PreparedIdentity;
 use isoplane_engine::{IsoplaneEngine, Template};
 use isoplane_prepare::{
-    BuildProduct, BuildRequest, BuildStage, Preparation, PreparedBaseline, RuntimeBaseline,
-    RuntimeProfile, WorkerFailure,
+    BuildProduct, BuildRequest, Preparation, PrepareError, PreparedBaseline, RuntimeBaseline,
+    RuntimeProfile,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -32,18 +32,18 @@ fn request(wasm: &[u8]) -> BuildRequest {
         guest_memory_bytes: None,
         validation_limits: Default::default(),
         initialization: common::request(),
-        input_hash: *blake3::hash(wasm).as_bytes(),
+        module: isoplane_prepare::Module::new(wasm),
     }
 }
 
-async fn baseline(wasm: &[u8], request: &BuildRequest) -> Result<PreparedBaseline, WorkerFailure> {
-    RuntimeBaseline::prepare(wasm, &request.baseline(), None)
+async fn baseline(request: &BuildRequest) -> Result<PreparedBaseline, PrepareError> {
+    RuntimeBaseline::prepare(&request.baseline(), None)
 }
 
-fn stage_of(result: Result<PreparedBaseline, WorkerFailure>) -> BuildStage {
+fn refusal_of(result: Result<PreparedBaseline, PrepareError>) -> PrepareError {
     match result {
         Ok(_) => panic!("the runtime baseline must be refused"),
-        Err(failure) => failure.stage,
+        Err(error) => error,
     }
 }
 
@@ -85,10 +85,10 @@ async fn an_application_over_a_baseline_loads_to_the_memory_its_whole_initializa
     let request = request(&wasm);
     let preparation = crate::provider::local_preparation();
     let whole = preparation
-        .prepare(&wasm, &request, &CancellationToken::new())
+        .prepare(&request, &CancellationToken::new())
         .await
         .expect("the whole initialization must prepare");
-    let runtime = baseline(&wasm, &request)
+    let runtime = baseline(&request)
         .await
         .expect("the runtime stage must prepare as a baseline");
     let layer = runtime
@@ -134,7 +134,7 @@ async fn an_application_over_a_baseline_loads_to_the_memory_its_whole_initializa
 async fn a_module_without_a_runtime_stage_cannot_produce_a_baseline() {
     let wasm = common::guest(ENTROPY, "");
     assert!(
-        baseline(&wasm, &request(&wasm)).await.is_err(),
+        baseline(&request(&wasm)).await.is_err(),
         "an absent runtime stage must not produce an uninitialized baseline"
     );
 }
@@ -151,7 +151,7 @@ async fn a_module_without_an_application_initializer_cannot_produce_a_baseline()
     )
     .expect("runtime-only fixture");
     assert!(
-        baseline(&wasm, &request(&wasm)).await.is_err(),
+        baseline(&request(&wasm)).await.is_err(),
         "a runtime without an application initializer must not produce a deployable baseline"
     );
 }
@@ -159,17 +159,17 @@ async fn a_module_without_an_application_initializer_cannot_produce_a_baseline()
 #[tokio::test]
 async fn a_runtime_stage_that_draws_entropy_is_refused_as_a_baseline() {
     let wasm = staged::staged_guest(ENTROPY, "(call $entropy (i32.const 64) (i32.const 16))", "");
-    assert_eq!(
-        stage_of(baseline(&wasm, &request(&wasm)).await),
-        BuildStage::Baseline,
-        "entropy drawn into a baseline would be shared by every application on it"
+    let refusal = refusal_of(baseline(&request(&wasm)).await);
+    assert!(
+        matches!(refusal, PrepareError::Baseline(_)),
+        "entropy drawn into a baseline would be shared by every application on it: {refusal}"
     );
 }
 
-async fn layer_refusal(runtime: &RuntimeBaseline, request: &BuildRequest) -> BuildStage {
+async fn layer_refusal(runtime: &RuntimeBaseline, request: &BuildRequest) -> PrepareError {
     match runtime.prepare_application(request) {
         Ok(_) => panic!("the layer must be refused"),
-        Err(failure) => failure.stage,
+        Err(error) => error,
     }
 }
 
@@ -177,17 +177,17 @@ async fn layer_refusal(runtime: &RuntimeBaseline, request: &BuildRequest) -> Bui
 async fn an_application_is_refused_over_a_baseline_prepared_for_other_limits() {
     let wasm = staged::staged_guest(ENTROPY, RUNTIME, APPLICATION);
     let request = request(&wasm);
-    let runtime = baseline(&wasm, &request).await.expect("the baseline");
+    let runtime = baseline(&request).await.expect("the baseline");
     let other = BuildRequest {
         guest_memory_bytes: Some(
             isoplane_abi::config::GuestMemoryBytes::new(2 << 20).expect("a memory limit"),
         ),
         ..request
     };
-    assert_eq!(
-        layer_refusal(&runtime.baseline, &other).await,
-        BuildStage::Input,
-        "a layer must be prepared over the baseline its own runtime, engine and limits derive"
+    let refusal = layer_refusal(&runtime.baseline, &other).await;
+    assert!(
+        matches!(refusal, PrepareError::Input(_)),
+        "a layer must be prepared over the baseline its own runtime, engine and limits derive: {refusal}"
     );
 }
 
@@ -198,17 +198,16 @@ mod published {
 
     use super::*;
 
-    /// `wasm`'s runtime baseline, prepared through `preparation` and published as
+    /// `request`'s runtime baseline, prepared through `preparation` and published as
     /// a local baseline, with the digest of its published manifest.
     async fn published_baseline(
         preparation: &dyn Preparation,
         engine: &IsoplaneEngine,
-        wasm: &[u8],
         request: &BuildRequest,
         directory: &std::path::Path,
     ) -> (PublishedBaseline, Template) {
         let product = preparation
-            .prepare_runtime_baseline(wasm, &request.baseline(), &CancellationToken::new())
+            .prepare_runtime_baseline(&request.baseline(), &CancellationToken::new())
             .await
             .expect("the runtime stage must prepare as a baseline");
 
@@ -238,7 +237,6 @@ mod published {
         let (published, base) = published_baseline(
             &*preparation,
             &engine,
-            &wasm,
             &request,
             &directory.path().join("base"),
         )
@@ -248,7 +246,7 @@ mod published {
             .await
             .expect("the application must prepare over the published baseline");
         let whole = preparation
-            .prepare(&wasm, &request, &CancellationToken::new())
+            .prepare(&request, &CancellationToken::new())
             .await
             .expect("the whole initialization must prepare");
         let identity = request.identity().expect("the application's identity");
@@ -282,7 +280,6 @@ mod published {
         let (_published, _base) = published_baseline(
             &*preparation,
             &common::engine(),
-            &wasm,
             &request,
             &directory.path().join("base"),
         )
@@ -295,13 +292,49 @@ mod published {
             .await
         {
             Ok(_) => panic!("a baseline without its recorded digest must be refused"),
-            Err(PrepareError::Rejected(failure)) => assert_eq!(
-                failure.stage,
-                BuildStage::Input,
-                "a baseline with a different supplied manifest digest must be refused before its native code loads"
+            Err(error) => assert!(
+                matches!(error, PrepareError::Input(_)),
+                "a baseline with a different supplied manifest digest must be refused before its native code loads: {error}"
             ),
-            Err(error) => panic!("the refusal must be the preparation's structured one: {error}"),
         }
+    }
+
+    #[tokio::test]
+    async fn an_engine_that_cannot_be_constructed_is_reported_as_that_over_a_published_baseline() {
+        let wasm = staged::staged_guest(ENTROPY, RUNTIME, APPLICATION);
+        let request = request(&wasm);
+        let preparation = crate::provider::local_preparation();
+        let directory = tempfile::tempdir().expect("publication");
+        let (published, _base) = published_baseline(
+            &*preparation,
+            &common::engine(),
+            &request,
+            &directory.path().join("base"),
+        )
+        .await;
+        let mut unconstructible = request;
+        unconstructible.engine.max_wasm_stack_bytes = 0;
+
+        let Err(over) = preparation
+            .prepare_over(&published, &unconstructible, &CancellationToken::new())
+            .await
+        else {
+            panic!("an application must not prepare under an engine that cannot be constructed")
+        };
+        assert!(
+            matches!(over, PrepareError::Engine(_)),
+            "over a valid published baseline, an engine that cannot be constructed must not be reported as a bad baseline: {over:?}"
+        );
+        let Err(baseline) = preparation
+            .prepare_runtime_baseline(&unconstructible.baseline(), &CancellationToken::new())
+            .await
+        else {
+            panic!("a baseline must not prepare under an engine that cannot be constructed")
+        };
+        assert!(
+            matches!(baseline, PrepareError::Engine(_)),
+            "preparing the baseline must report the same cause: {baseline:?}"
+        );
     }
 }
 
@@ -343,7 +376,7 @@ fn word(template: &Template, offset: usize) -> u32 {
 /// Prepares `wasm`'s baseline and its application layer over it, loaded.
 async fn baseline_and_layer(wasm: &[u8], directory: &std::path::Path) -> (Template, Template) {
     let request = request(wasm);
-    let runtime = baseline(wasm, &request)
+    let runtime = baseline(&request)
         .await
         .expect("the runtime stage must prepare as a baseline");
     let layer = runtime
@@ -392,17 +425,18 @@ async fn each_initializer_stage_collects_the_guests_garbage_before_its_capture()
 #[tokio::test]
 async fn a_guest_that_traps_while_collecting_fails_its_preparation() {
     let wasm = collecting_guest(true, "unreachable");
-    let failure = match baseline(&wasm, &request(&wasm)).await {
+    let failure = match baseline(&request(&wasm)).await {
         Ok(_) => panic!("a guest that traps while collecting must not be captured"),
         Err(failure) => failure,
     };
-    assert_eq!(
-        (failure.stage, failure.completion),
-        (
-            BuildStage::Initialization,
-            Some(isoplane_engine::Completion::Trapped)
+    assert!(
+        matches!(
+            failure,
+            PrepareError::Initialization {
+                completion: isoplane_engine::Completion::Trapped,
+                ..
+            }
         ),
-        "a trap in the collection before capture must fail initialization: {}",
-        failure.detail
+        "a trap in the collection before capture must fail initialization with the guest's trap as its outcome: {failure}"
     );
 }

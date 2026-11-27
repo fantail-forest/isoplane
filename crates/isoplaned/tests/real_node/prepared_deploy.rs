@@ -3,7 +3,6 @@ struct Refusal;
 impl isoplane_prepare::Preparation for Refusal {
     async fn prepare(
         &self,
-        _wasm: &[u8],
         _request: &isoplane_prepare::BuildRequest,
         _cancellation: &tokio_util::sync::CancellationToken,
     ) -> Result<isoplane_prepare::BuildProduct, isoplane_prepare::PrepareError> {
@@ -12,7 +11,6 @@ impl isoplane_prepare::Preparation for Refusal {
 
     async fn prepare_runtime_baseline(
         &self,
-        _wasm: &[u8],
         _request: &isoplane_prepare::BaselineRequest,
         _cancellation: &tokio_util::sync::CancellationToken,
     ) -> Result<isoplane_prepare::BuildProduct, isoplane_prepare::PrepareError> {

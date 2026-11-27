@@ -34,7 +34,7 @@ impl Baselines {
         let (baseline, compiled) = match current.as_ref() {
             Some(held) if held.identity() == identity => (held.clone(), false),
             _ => {
-                let (baseline, compiled) = published(project, wasm, &wanted, admit)?;
+                let (baseline, compiled) = published(project, &wanted, admit)?;
                 *current = Some(baseline.clone());
                 (baseline, compiled)
             }
@@ -72,7 +72,7 @@ pub(super) fn prepare_runtime(
 ) -> anyhow::Result<bool> {
     // A baseline's identity leaves out the application's settings and version.
     let request = request(project, wasm, b"{}")?;
-    let (_, compiled) = published(project, wasm, &request.baseline(), admit)?;
+    let (_, compiled) = published(project, &request.baseline(), admit)?;
     Ok(compiled)
 }
 
@@ -107,9 +107,7 @@ fn application(
                 tracing::warn!(path = %directory.display(), %error, "preparing the application again");
                 std::fs::remove_dir_all(&directory)?;
             }
-            let application = baseline
-                .prepare_application_in(request, layers.directory())
-                .map_err(isoplane_prepare::PrepareError::Rejected)?;
+            let application = baseline.prepare_application_in(request, layers.directory())?;
             publish_application(
                 engine,
                 baseline.template(),
@@ -215,7 +213,7 @@ fn request(
             network: Some(super::initialization_network(project)),
             ..isoplane_prepare::Initialization::new(settings.to_vec())
         },
-        input_hash: *blake3::hash(wasm).as_bytes(),
+        module: isoplane_prepare::Module::new(wasm),
     })
 }
 
@@ -226,15 +224,14 @@ fn request(
 const COMPILATION: &str = "compilation";
 
 /// The published baseline for `wanted`, loaded from the runtime cache, or
-/// prepared from `wasm` after `admit` and published there first. Returns
+/// prepared after `admit` and published there first. Returns
 /// whether preparing it compiled the runtime.
 fn published(
     project: &Project,
-    wasm: &[u8],
     wanted: &isoplane_prepare::BaselineRequest,
     admit: impl FnOnce() -> anyhow::Result<()>,
 ) -> anyhow::Result<(isoplane_prepare::RuntimeBaseline, bool)> {
-    use isoplane_prepare::{PrepareError, RuntimeBaseline};
+    use isoplane_prepare::RuntimeBaseline;
     let identity = wanted.identity()?;
     let mut name = blake3::Hasher::new();
     for part in [
@@ -266,8 +263,7 @@ fn published(
     // SAFETY: only the compiler writes into this private, leased directory.
     let compiler =
         unsafe { isoplane_engine::CompilationCache::from_trusted_directory(compilation.clone()) }?;
-    let prepared =
-        RuntimeBaseline::prepare(wasm, wanted, Some(&compiler)).map_err(PrepareError::Rejected)?;
+    let prepared = RuntimeBaseline::prepare(wanted, Some(&compiler))?;
     let engine = std::sync::Arc::clone(prepared.baseline.engine());
     let compiled = prepared.product.initialized.compiled;
     // SAFETY: RuntimeBaseline::prepare produced these bytes in this process.
