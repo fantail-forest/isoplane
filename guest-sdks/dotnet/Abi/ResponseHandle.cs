@@ -14,15 +14,7 @@ internal sealed class ResponseHandle
     internal ResponseHandle(ushort status, IReadOnlyList<KeyValuePair<string, string>> headers, byte[] body, bool streaming)
     {
         var writer = new PostcardWriter(body.Length + 64);
-        writer.Varint(status);
-        writer.Varint((ulong)headers.Count);
-        foreach (var header in headers)
-        {
-            writer.Str(header.Key);
-            writer.Str(header.Value);
-        }
-        writer.Bytes(body);
-        writer.Bool(streaming);
+        ResponseHead.Encode(writer, status, headers, body, streaming);
         unsafe
         {
             fixed (byte* pointer = writer.Span)
@@ -45,8 +37,8 @@ internal sealed class ResponseHandle
         }).Completion.ConfigureAwait(true);
         // Cancelled: the requester has gone, so the bytes go nowhere and the write completes, as
         // ASP.NET Core's own servers complete a write to an aborted response.
-        if (result.IsOk || result.Error == FutureError.Cancelled) return;
-        throw new IOException($"The response body could not be sent: the host reported {result.Error}.");
+        if (result.Kind == ResultKind.Ok || result.Err == FutureError.Cancelled) return;
+        throw new IOException($"The response body could not be sent: the host reported {result.Err}.");
     }
 
     internal int Finish()

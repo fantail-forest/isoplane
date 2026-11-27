@@ -1,9 +1,7 @@
 #include <stdint.h>
 
-#define ISOPLANE_CLOCK_QUANTUM_NS 1000000LL
-
-__attribute__((import_module("isoplane"), import_name("clock_now_coarse")))
-extern int64_t isoplane_clock_now_coarse(void);
+#include "isoplane_clock_quantum.h"
+#include "isoplane_imports.h"
 
 /* ---- live: monotonic clock ---------------------------------------------- */
 

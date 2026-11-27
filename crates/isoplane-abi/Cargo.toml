@@ -11,6 +11,7 @@ description = "The isoplane:platform@1 contract: dispatch/result records, poll s
 serde = { workspace = true }
 serde_bytes = { workspace = true }
 postcard = { workspace = true }
+strum = { workspace = true }
 thiserror = { workspace = true }
 
 # Off by default so a guest SDK can depend on this crate from wasm32.
@@ -25,7 +26,8 @@ rust-guests = []
 
 [dev-dependencies]
 serde_json.workspace = true
-isoplane-test-support.workspace = true
+serde-reflection.workspace = true
+heck.workspace = true
 
 [build-dependencies]
 roxmltree.workspace = true

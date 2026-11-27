@@ -86,12 +86,12 @@ internal static class FutureTable
         operation.Cancelled = true;
         if (operation.Future == 0)
         {
-            operation.Settle(new ResultRecord { Error = FutureError.Cancelled });
+            operation.Settle(new ResultRecord { Kind = ResultKind.Err, Err = FutureError.Cancelled });
             return;
         }
         if (Pending.Remove((ulong)operation.Future))
         {
-            operation.Settle(new ResultRecord { Error = FutureError.Cancelled });
+            operation.Settle(new ResultRecord { Kind = ResultKind.Err, Err = FutureError.Cancelled });
             Release(operation.LaneId);
         }
         H.FutureCancel(operation.Future);

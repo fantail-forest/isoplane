@@ -39,7 +39,7 @@ public sealed class FutureTableTests
             for (int index = 0; index < operations.Count; index++)
             {
                 var result = await operations[index].Completion;
-                Assert.True(result.IsOk && result.Payload[0] == index + 1, $"operation {index + 1} must receive its own result");
+                Assert.True(result.Kind == ResultKind.Ok && result.Ok[0] == index + 1, $"operation {index + 1} must receive its own result");
             }
             Assert.True(FutureTable.Owned(7) == 0, "nothing is left pending");
         }
@@ -57,10 +57,10 @@ public sealed class FutureTableTests
             var second = FutureTable.Start(() => { startedSecond = true; return 202; });
             second.Cancel();
             var cancelled = await second.Completion;
-            Assert.True(!cancelled.IsOk && cancelled.Error == FutureError.Cancelled, "cancellation settles the wait");
+            Assert.True(cancelled.Kind == ResultKind.Err && cancelled.Err == FutureError.Cancelled, "cancellation settles the wait");
             Assert.True(FutureTable.Complete(201, Ok(1)), "the first operation completes");
             Assert.False(startedSecond, "a cancelled operation must not start when its slot frees");
-            Assert.True((await first.Completion).IsOk, "the first operation keeps its result");
+            Assert.True((await first.Completion).Kind == ResultKind.Ok, "the first operation keeps its result");
         }
         finally { dispatch.End(); }
     }
@@ -84,5 +84,5 @@ public sealed class FutureTableTests
         Assert.Equal(new[] { 301L, 302L, 303L }, started);
     }
 
-    private static ResultRecord Ok(byte value) => new() { IsOk = true, Payload = [value] };
+    private static ResultRecord Ok(byte value) => new() { Kind = ResultKind.Ok, Ok = [value] };
 }

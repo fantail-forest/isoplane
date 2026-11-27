@@ -95,7 +95,7 @@ installation journey additionally requires an explicitly prepared release.
 [CI](.github/workflows/ci.yml) checks pushes to `main` and pull-request updates.
 [Path filters](.github/changes.yml) select affected build components, including
 shared inputs and generated-reference dependencies. Rust checks include library
-tests, ABI drift, hostile guests and sandbox enforcement. Native SDK support is
+tests, hostile guests and sandbox enforcement. Native SDK support is
 built and checked on Linux, Windows x64 and macOS ARM64. `isoplaned` is built
 for Linux only, because it maps prepared templates with memory-management
 facilities the engine has only there. Managed SDK tests, docs

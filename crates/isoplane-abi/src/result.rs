@@ -12,18 +12,26 @@ pub struct WakeRecord {
 /// How a host future completes. The payload is opaque here; the guest SDK
 /// recorded which typed response the future expects when it issued the import
 /// call.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize, strum::EnumMessage, strum::IntoStaticStr,
+)]
 pub enum ResultRecord {
+    /// The future completed with this payload.
     Ok(#[serde(with = "serde_bytes")] Vec<u8>),
+    /// The future failed.
     Err(FutureError),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Why a host future failed.
+#[derive(
+    Debug, Clone, Serialize, Deserialize, PartialEq, Eq, strum::EnumMessage, strum::IntoStaticStr,
+)]
 pub enum FutureError {
     /// The dispatch's cancellation future completed.
     Cancelled,
     /// Capability policy refused the call, such as an egress target outside the allowlist.
     Denied(String),
+    /// The host operation failed; the message says how.
     Io(String),
     /// The instance cannot retain this result within its buffered-result byte limit.
     BufferLimit,

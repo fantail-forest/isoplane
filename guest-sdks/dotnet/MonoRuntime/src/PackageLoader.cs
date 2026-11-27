@@ -28,7 +28,7 @@ public static class PackageLoader
     /// Where the host serves the package's <c>application.json</c> and
     /// <c>assemblies/</c>, laid out as in the managed bundle.
     /// </summary>
-    public const string Root = "/.isoplane/package";
+    public const string Root = Isoplane.Abi.HostFiles.ApplicationPackageRoot;
 
     /// <summary>
     /// Resolves package assemblies on demand in the default context and returns the

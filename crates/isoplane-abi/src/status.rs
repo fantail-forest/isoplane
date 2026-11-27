@@ -17,7 +17,18 @@ pub enum PollStatus {
     Trapped { code: TrapCode },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Why a guest trapped, as the payload of [`PollStatus::Trapped`].
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    strum::EnumMessage,
+    strum::FromRepr,
+    strum::IntoStaticStr,
+    strum::VariantArray,
+)]
 #[repr(u32)]
 pub enum TrapCode {
     Unknown = 0,
@@ -31,46 +42,61 @@ pub enum TrapCode {
 }
 
 impl TrapCode {
+    /// The code a payload names. One no variant has reads as `Unknown`.
     pub fn from_u32(v: u32) -> Self {
-        match v {
-            1 => Self::Panic,
-            2 => Self::OutOfMemory,
-            3 => Self::CapabilityViolation,
-            4 => Self::Protocol,
-            _ => Self::Unknown,
-        }
+        Self::from_repr(v).unwrap_or(Self::Unknown)
     }
 }
 
-const TAG_DONE: u32 = 0;
-const TAG_PENDING: u32 = 1;
-const TAG_TRAPPED: u32 = 2;
-const TAG_CANCELLED: u32 = 3;
-const TAG_FAILED: u32 = 4;
+/// The bit of a packed [`PollStatus`] at which its payload starts. The bits
+/// below it hold the [`PollTag`].
+pub const PAYLOAD_SHIFT: u32 = 32;
+
+/// The bits of a packed [`PollStatus`] below [`PAYLOAD_SHIFT`], naming its
+/// variant.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    strum::EnumMessage,
+    strum::FromRepr,
+    strum::IntoStaticStr,
+    strum::VariantArray,
+)]
+#[repr(u32)]
+pub enum PollTag {
+    Done = 0,
+    Pending = 1,
+    Trapped = 2,
+    Cancelled = 3,
+    Failed = 4,
+}
 
 impl PollStatus {
     pub fn encode(self) -> u64 {
         let (tag, payload) = match self {
-            PollStatus::Done { response } => (TAG_DONE, response),
-            PollStatus::Pending => (TAG_PENDING, 0),
-            PollStatus::Cancelled => (TAG_CANCELLED, 0),
-            PollStatus::Failed => (TAG_FAILED, 0),
-            PollStatus::Trapped { code } => (TAG_TRAPPED, code as u32),
+            PollStatus::Done { response } => (PollTag::Done, response),
+            PollStatus::Pending => (PollTag::Pending, 0),
+            PollStatus::Cancelled => (PollTag::Cancelled, 0),
+            PollStatus::Failed => (PollTag::Failed, 0),
+            PollStatus::Trapped { code } => (PollTag::Trapped, code as u32),
         };
-        (tag as u64) | ((payload as u64) << 32)
+        (tag as u64) | ((payload as u64) << PAYLOAD_SHIFT)
     }
 
     /// Reads the word [`PollStatus::encode`] writes. An unknown tag decodes as
     /// `Trapped`.
     pub fn decode(v: u64) -> Self {
-        let tag = (v & 0xFFFF_FFFF) as u32;
-        let payload = (v >> 32) as u32;
-        match tag {
-            TAG_DONE => PollStatus::Done { response: payload },
-            TAG_PENDING => PollStatus::Pending,
-            TAG_CANCELLED => PollStatus::Cancelled,
-            TAG_FAILED => PollStatus::Failed,
-            _ => PollStatus::Trapped {
+        let tag = (v & ((1 << PAYLOAD_SHIFT) - 1)) as u32;
+        let payload = (v >> PAYLOAD_SHIFT) as u32;
+        match PollTag::from_repr(tag) {
+            Some(PollTag::Done) => PollStatus::Done { response: payload },
+            Some(PollTag::Pending) => PollStatus::Pending,
+            Some(PollTag::Cancelled) => PollStatus::Cancelled,
+            Some(PollTag::Failed) => PollStatus::Failed,
+            Some(PollTag::Trapped) | None => PollStatus::Trapped {
                 code: TrapCode::from_u32(payload),
             },
         }

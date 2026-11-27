@@ -115,6 +115,16 @@ internal sealed class PostcardWriter
 
     internal void Str(string s) => Bytes(Encoding.UTF8.GetBytes(s));
 
+    internal void StringPairs(IReadOnlyList<KeyValuePair<string, string>> pairs)
+    {
+        Varint((ulong)pairs.Count);
+        foreach (var pair in pairs)
+        {
+            Str(pair.Key);
+            Str(pair.Value);
+        }
+    }
+
     internal ReadOnlySpan<byte> Span => _buf.AsSpan(0, _len);
 }
 

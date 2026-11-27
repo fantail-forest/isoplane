@@ -73,6 +73,12 @@ pub struct ImportDef {
     /// Admitted by the unconditional initialization import set. Context policy
     /// separately permits application entropy and selected serving capabilities.
     pub init_visible: bool,
+    /// The managed SDK calls this import, so its `DllImport` declaration is
+    /// generated. Mono's P/Invoke table takes a reference to every declared
+    /// import, so marking one managed code does not call makes both shared
+    /// runtime modules import it; leaving one it calls unmarked fails the
+    /// SDK's build.
+    pub managed: bool,
     /// What the capability is for, for a tenant reading a manifest. Required
     /// by `imp!` so a capability cannot be added without saying.
     pub why: &'static str,
@@ -105,6 +111,7 @@ macro_rules! imp {
             buf: BufSpec::In(0),
             sensitive: false,
             init_visible: false,
+            managed: false,
             why: $why,
         }
     };
@@ -125,24 +132,25 @@ pub const IMPORTS: &[ImportDef] = &[
     ImportDef { init_visible: true, buf: BufSpec::None,
         ..imp!("memory_limit_bytes", Core, Sig { params: &[], results: &[I64] }, SYNC,
         "effective total linear-memory ceiling in bytes, including the module maximum; available before runtime initialization so guest collectors observe the enforced budget") },
-    ImportDef { init_visible: true, ..imp!("abort", Core, BUF_TO_VOID, SYNC,
+    ImportDef { init_visible: true, managed: true, ..imp!("abort", Core, BUF_TO_VOID, SYNC,
         "guest panic; available at init so a failed pre-initialization reports usefully rather than \
          trapping anonymously") },
     ImportDef {
         sensitive: true,
         init_visible: true,
+        managed: true,
         ..ImportDef { buf: BufSpec::Out(0), ..imp!("runtime_config_get", Core, BUF_TO_I32, SYNC,
             "deployment-bound JSON configuration from the application owner; returns the full \
              byte length for a zero-length sizing probe; available during preparation and activation") }
     },
 
-    ImportDef { buf: BufSpec::None, ..imp!("dispatch_ready", Core, Sig { params: &[I64], results: &[I64] }, FUT,
+    ImportDef { buf: BufSpec::None, managed: true, ..imp!("dispatch_ready", Core, Sig { params: &[I64], results: &[I64] }, FUT,
         "a host future owned by another dispatch in progress on the instance, completed once the current slice \
          ends, so a slice that made that dispatch's work ready can have it run in a slice of its own; 0 when no \
          such dispatch is in progress") },
 
     // ---- observability ----------------------------------------------------
-    ImportDef { buf: BufSpec::In(1), init_visible: true, ..imp!("log_emit", Observe, Sig { params: &[I32, I32, I32], results: &[] }, SYNC,
+    ImportDef { buf: BufSpec::In(1), init_visible: true, managed: true, ..imp!("log_emit", Observe, Sig { params: &[I32, I32, I32], results: &[] }, SYNC,
         "structured log at `trace=0` .. `error=4`; worker occupancy counts against the dispatch budget, \
          which is what stops log-as-compute abuse") },
     #[cfg(feature = "rust-guests")]
@@ -171,21 +179,21 @@ pub const IMPORTS: &[ImportDef] = &[
     ImportDef { buf: BufSpec::None, ..imp!("http_body_read", Http, Sig { params: &[I32, I32], results: &[I64] }, FUT,
         "reads the next chunk of an outbound response body through a host future") },
 
-    ImportDef { buf: BufSpec::None, ..imp!("future_cancel", Core, Sig { params: &[I64], results: &[] }, SYNC,
+    ImportDef { buf: BufSpec::None, managed: true, ..imp!("future_cancel", Core, Sig { params: &[I64], results: &[] }, SYNC,
         "releases this instance's future and aborts its host operation; unknown, completed, or foreign-instance ids have no effect") },
 
     // ---- inbound request --------------------------------------------------
-    ImportDef { buf: BufSpec::None, ..imp!("req_body_read", Http, Sig { params: &[I32], results: &[I64] }, FUT,
+    ImportDef { buf: BufSpec::None, managed: true, ..imp!("req_body_read", Http, Sig { params: &[I32], results: &[I64] }, FUT,
         "reads at most max bytes from this dispatch's upload; max is positive, empty bytes mean EOF") },
-    ImportDef { buf: BufSpec::None, ..imp!("req_body_can_have_body", Http, Sig { params: &[], results: &[I32] }, SYNC,
+    ImportDef { buf: BufSpec::None, managed: true, ..imp!("req_body_can_have_body", Http, Sig { params: &[], results: &[I32] }, SYNC,
         "whether HTTP framing permits content for this dispatch, including unknown-length uploads") },
 
     // ---- inbound response -------------------------------------------------
-    imp!("resp_new", Response, BUF_TO_I32, SYNC,
-        "opens a response from a `ResponseHead` and returns its handle"),
-    ImportDef { buf: BufSpec::In(1), ..imp!("resp_write", Response, Sig { params: &[I32, I32, I32], results: &[I64] }, FUT,
+    ImportDef { managed: true, ..imp!("resp_new", Response, BUF_TO_I32, SYNC,
+        "opens a response from a `ResponseHead` and returns its handle") },
+    ImportDef { buf: BufSpec::In(1), managed: true, ..imp!("resp_write", Response, Sig { params: &[I32, I32, I32], results: &[I64] }, FUT,
         "appends a streamed chunk to an open response") },
-    ImportDef { buf: BufSpec::None, ..imp!("resp_finish", Response, Sig { params: &[I32], results: &[] }, SYNC,
+    ImportDef { buf: BufSpec::None, managed: true, ..imp!("resp_finish", Response, Sig { params: &[I32], results: &[] }, SYNC,
         "ends the response, after which the handle is spent") },
 
     // ---- the kill-cooperation ABI ------------------------------------------
