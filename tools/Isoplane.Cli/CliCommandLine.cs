@@ -22,6 +22,7 @@ internal static class CliCommandLine
         Value(dev, "--port", "Local HTTP port (0–65535).");
         Value(dev, "--launch-profile", "Profile from Properties/launchSettings.json.");
         Value(dev, "--settings", "JSON object of application settings for the session, such as {\"Section:Key\":\"value\"}; overrides User Secrets and the launch profile. Isoplane.Testing uses it.");
+        dev.Add(new Option<string[]>("--content") { Description = "Directory of files added to the application's content for the session, each at its path beneath the directory; repeat for several. A later directory's file replaces an earlier one's and the project's at the same path. Isoplane.Testing uses it." });
         Value(dev, "--debug-launch-endpoint", "Debugger's IPv4 loopback endpoint.").Hidden = true;
         Flag(dev, "--no-launch-profile", "Do not load a launch profile.");
         Flag(dev, "--no-watch", "Do not watch for source changes.");

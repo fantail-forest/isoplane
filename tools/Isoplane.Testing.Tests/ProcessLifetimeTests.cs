@@ -28,6 +28,94 @@ public sealed class ProcessLifetimeTests
     }
 
     [Fact]
+    public async Task a_tests_content_reaches_the_cli_as_one_directory_per_source_in_order_and_copies_last_as_long_as_the_session()
+    {
+        using var fixture = new SessionFixture();
+        fixture.Configure("ready");
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var first = Directory.CreateDirectory(Path.Combine(fixture.Directory, "first"));
+        var second = Directory.CreateDirectory(Path.Combine(fixture.Directory, "second"));
+        byte[] replacement = [6];
+        File.WriteAllBytes(Path.Combine(fixture.Directory, "single.bin"), replacement);
+        var options = fixture.Options with
+        {
+            Content = [new ContentDirectory(first.FullName), new ContentFile("nested/single.bin", Path.Combine(fixture.Directory, "single.bin")), new ContentDirectory(second.FullName)]
+        };
+        var staged = "";
+        await fixture.WithApplicationAsync(app =>
+        {
+            var given = fixture.ContentDirectories();
+            Assert.Equal(3, given.Length);
+            Assert.Equal(first.FullName, given[0]);
+            Assert.Equal(second.FullName, given[2]);
+            staged = given[1];
+            Assert.Equal(new[] { "nested/single.bin" }, FilesIn(staged).Keys);
+            Assert.Equal(replacement, FilesIn(staged)["nested/single.bin"]);
+            return Task.CompletedTask;
+        }, deadline.Token, options: options);
+        Assert.False(Directory.Exists(staged), "The copy of the test's file must be removed with the session.");
+        Assert.True(Directory.Exists(first.FullName) && Directory.Exists(second.FullName), "The test's own directories must be left in place.");
+        Assert.Equal(replacement, File.ReadAllBytes(Path.Combine(fixture.Directory, "single.bin")));
+    }
+
+    [Fact]
+    public async Task a_read_only_file_is_supplied_as_a_copy_the_session_can_remove()
+    {
+        using var fixture = new SessionFixture();
+        fixture.Configure("ready");
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var readOnly = Path.Combine(fixture.Directory, "read-only.bin");
+        File.WriteAllBytes(readOnly, [1]);
+        File.SetAttributes(readOnly, FileAttributes.ReadOnly);
+        try
+        {
+            var options = fixture.Options with { Content = [new ContentFile("file.bin", readOnly)] };
+            var staged = "";
+            await fixture.WithApplicationAsync(app =>
+            {
+                staged = Assert.Single(fixture.ContentDirectories());
+                Assert.Equal(new byte[] { 1 }, FilesIn(staged)["file.bin"]);
+                return Task.CompletedTask;
+            }, deadline.Token, options: options);
+            Assert.False(Directory.Exists(staged), $"The session must remove its copy of a read-only file: {staged}");
+            Assert.Equal(FileAttributes.ReadOnly, File.GetAttributes(readOnly) & FileAttributes.ReadOnly);
+        }
+        finally
+        {
+            File.SetAttributes(readOnly, FileAttributes.Normal);
+        }
+    }
+
+    [Theory]
+    [InlineData("../outside.txt")]
+    [InlineData("content/../../outside.txt")]
+    [InlineData("/etc/passwd")]
+    [InlineData("C:/outside.txt")]
+    [InlineData("content\\file.txt")]
+    [InlineData("./file.txt")]
+    [InlineData("content//file.txt")]
+    [InlineData("")]
+    public void a_content_path_outside_the_content_root_is_refused(string path)
+    {
+        var refused = Assert.Throws<ContentPathException>(() => new ContentFile(path, "source.txt"));
+        Assert.Equal(path, refused.Path);
+        var inside = new ContentFile("content/file.txt", "source.txt");
+        Assert.Equal(path, Assert.Throws<ContentPathException>(() => inside with { Path = path }).Path);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task content_that_does_not_exist_is_refused_before_starting_processes(bool directory)
+    {
+        using var fixture = new SessionFixture();
+        var absent = Path.Combine(fixture.Directory, "absent");
+        ContentSource source = directory ? new ContentDirectory(absent) : new ContentFile("file.txt", absent);
+        await Assert.ThrowsAsync<ArgumentException>(() => IsoplaneApplication.StartAsync(fixture.Directory,
+            fixture.Options with { CliPath = Path.Combine(fixture.Directory, "absent-cli"), Content = [source] }));
+    }
+
+    [Fact]
     public async Task open_stdin_allows_readiness_and_eof_releases_the_owned_session()
     {
         using var fixture = new SessionFixture();
@@ -189,6 +277,11 @@ public sealed class ProcessLifetimeTests
         return query.ExitCode == 0 && !(await output).TrimStart().StartsWith("Z", StringComparison.Ordinal);
     }
 
+    /// <summary>The bytes of each file beneath <paramref name="directory"/>, by its path relative to it with <c>/</c> between directories.</summary>
+    private static SortedDictionary<string, byte[]> FilesIn(string directory) => new(
+        Directory.GetFiles(directory, "*", SearchOption.AllDirectories).ToDictionary(file => Path.GetRelativePath(directory, file).Replace('\\', '/'), File.ReadAllBytes),
+        StringComparer.Ordinal);
+
     private sealed class SessionFixture : IDisposable
     {
         private readonly TcpListener listener = new(IPAddress.Loopback, 0);
@@ -216,6 +309,13 @@ public sealed class ProcessLifetimeTests
                 scenario,
                 readiness = readiness ?? JsonSerializer.Serialize(new { @event = "ready", url = Address.ToString() })
             }));
+        }
+
+        /// <summary>The directories the application's command was given as <c>--content</c>, in order.</summary>
+        internal string[] ContentDirectories()
+        {
+            var arguments = JsonSerializer.Deserialize<string[]>(File.ReadAllText(Path.Combine(Directory, "arguments.json")))!;
+            return arguments.Index().Where(argument => argument.Index > 0 && arguments[argument.Index - 1] == "--content").Select(argument => argument.Item).ToArray();
         }
 
         internal async Task<Exception?> WithApplicationAsync(Func<IsoplaneApplication, Task> check, CancellationToken cancellation, Type? expectedCleanupFailure = null, ApplicationOptions? options = null)

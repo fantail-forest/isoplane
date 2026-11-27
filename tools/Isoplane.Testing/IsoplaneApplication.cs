@@ -49,6 +49,7 @@ public sealed class IsoplaneApplication : IAsyncDisposable
     private readonly OwnedProcess process;
     private readonly ApplicationOptions options;
     private readonly Diagnostics diagnostics;
+    private readonly StagedContent content;
     private readonly Task errors;
     private readonly CancellationTokenSource outputLifetime = new();
     private Task output = Task.CompletedTask;
@@ -56,10 +57,11 @@ public sealed class IsoplaneApplication : IAsyncDisposable
     private readonly object disposalGate = new();
     private Task? disposal;
 
-    private IsoplaneApplication(OwnedProcess process, ApplicationOptions options)
+    private IsoplaneApplication(OwnedProcess process, ApplicationOptions options, StagedContent content)
     {
         this.process = process;
         this.options = options;
+        this.content = content;
         diagnostics = new Diagnostics(options.DiagnosticLimitCharacters);
         errors = diagnostics.DrainAsync(process.StandardError, outputLifetime.Token);
         Client = new HttpClient();
@@ -104,7 +106,10 @@ public sealed class IsoplaneApplication : IAsyncDisposable
     /// The application listens on a free local port chosen as it starts, so several can run on one
     /// machine. When the method throws there is nothing to dispose: it stops what it started first.
     /// </remarks>
-    /// <exception cref="ArgumentException">The directory does not exist, or an option is not valid.</exception>
+    /// <exception cref="ArgumentException">
+    /// The directory does not exist, an option is not valid, or a directory or file named in
+    /// <see cref="ApplicationOptions.Content"/> does not exist.
+    /// </exception>
     /// <exception cref="InvalidOperationException">
     /// The application did not start: the <c>isoplane</c> command could not be run, the project did
     /// not build, or the application failed while starting. The message includes what the command
@@ -127,17 +132,20 @@ public sealed class IsoplaneApplication : IAsyncDisposable
         if (!Directory.Exists(directory))
             throw new ArgumentException($"Project directory does not exist: {directory}", nameof(projectDirectory));
         cancellationToken.ThrowIfCancellationRequested();
-        var start = StartInfo(directory, options);
+        var content = StagedContent.Create(options.Content);
         OwnedProcess process;
         try
         {
-            process = OwnedProcess.Start(start, options.ShutdownTimeout);
+            process = OwnedProcess.Start(StartInfo(directory, options, content.Directories), options.ShutdownTimeout);
         }
-        catch (IOException error)
+        catch (Exception error)
         {
-            throw new InvalidOperationException($"Could not start installed CLI '{options.CliPath}'; install Isoplane.Cli, or set ApplicationOptions.CliPath.", error);
+            content.Delete();
+            if (error is IOException)
+                throw new InvalidOperationException($"Could not start installed CLI '{options.CliPath}'; install Isoplane.Cli, or set ApplicationOptions.CliPath.", error);
+            throw;
         }
-        var application = new IsoplaneApplication(process, options);
+        var application = new IsoplaneApplication(process, options, content);
         try
         {
             application.output = application.ReadOutputAsync(application.outputLifetime.Token);
@@ -257,6 +265,8 @@ public sealed class IsoplaneApplication : IAsyncDisposable
                 failures.Add(new InvalidOperationException($"The CLI exited with code {process.ExitCode}.\n{DiagnosticOutput}"));
             process.Dispose();
             outputLifetime.Dispose();
+            try { content.Delete(); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { failures.Add(error); }
         }
         if (failures.Count == 1)
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(failures[0]);
@@ -264,7 +274,7 @@ public sealed class IsoplaneApplication : IAsyncDisposable
             throw new AggregateException("Owned CLI cleanup failed.", failures);
     }
 
-    internal static ProcessStartInfo StartInfo(string directory, ApplicationOptions options)
+    internal static ProcessStartInfo StartInfo(string directory, ApplicationOptions options, IReadOnlyList<string>? content = null)
     {
         var start = new ProcessStartInfo(options.CliPath)
         {
@@ -280,6 +290,11 @@ public sealed class IsoplaneApplication : IAsyncDisposable
         {
             start.ArgumentList.Add("--settings");
             start.ArgumentList.Add(System.Text.Json.JsonSerializer.Serialize(options.Settings));
+        }
+        foreach (var root in content ?? [])
+        {
+            start.ArgumentList.Add("--content");
+            start.ArgumentList.Add(root);
         }
         start.Environment[TelemetryVariables.TestRun.Name] = "1";
         return start;

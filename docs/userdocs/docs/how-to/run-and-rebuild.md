@@ -151,7 +151,12 @@ configuration with `--configuration`, which is Debug when omitted. `--port`,
 the [launch profile](local-settings.md#use-the-launch-profile), and `--no-watch`
 runs without watching. `--settings` takes a JSON object of settings that
 override User Secrets and the launch profile for that session, which is how a
-sandbox test passes its own.
+sandbox test passes its own. `--content` takes a directory whose files join the
+application's content for that session, each at its path beneath the directory
+and in place of the project's file at that path. Repeat it for several
+directories, and a later directory's file replaces an earlier one's at the same
+path. The session reads the directories each time it builds the application, and
+a change in them does not start a rebuild.
 
 Source watching follows the .NET SDK's evaluated watch list, including referenced
 projects and linked source files, and each project's `Directory.Build.props` and

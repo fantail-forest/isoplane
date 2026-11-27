@@ -6,7 +6,7 @@ mdx:
 
 # ApplicationOptions record
 
-Optional settings for [`StartAsync`](./IsoplaneApplication/StartAsync.md): which build of the application to run, what settings to give it, and how the `isoplane` command is found and stopped.
+Optional settings for [`StartAsync`](./IsoplaneApplication/StartAsync.md): which build of the application to run, what settings and content files to give it, and how the `isoplane` command is found and stopped.
 
 ```csharp
 public record ApplicationOptions
@@ -19,6 +19,7 @@ public record ApplicationOptions
 | [ApplicationOptions](ApplicationOptions/-ctor.md)() | The default constructor. |
 | [CliPath](ApplicationOptions/CliPath.md) { get; init; } | The `isoplane` command the test runs the application with. Defaults to `isoplane`, found on the `PATH`. |
 | [Configuration](ApplicationOptions/Configuration.md) { get; init; } | The build configuration of the application under test, `Debug` or `Release`. Defaults to `Debug`. |
+| [Content](ApplicationOptions/Content.md) { get; init; } :since[next] | Files to give the application for this run, such as the templates or data files a test's expectations are written against. Empty by default. |
 | [DiagnosticLimitCharacters](ApplicationOptions/DiagnosticLimitCharacters.md) { get; init; } | How many characters [`DiagnosticOutput`](./IsoplaneApplication/DiagnosticOutput.md) keeps. Defaults to 16,384. |
 | [Settings](ApplicationOptions/Settings.md) { get; init; } | Settings to give the application for this run, such as the connection string of a database the test started. Empty by default. |
 | [ShutdownTimeout](ApplicationOptions/ShutdownTimeout.md) { get; init; } | How long [`DisposeAsync`](./IsoplaneApplication/DisposeAsync.md) waits for the application to stop before stopping it by force. Defaults to 10 seconds. |

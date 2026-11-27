@@ -19,6 +19,7 @@ isoplane dev [options]
 | `--port <port>` | Local HTTP port (0–65535). |
 | `--launch-profile <launch-profile>` | Profile from Properties/launchSettings.json. |
 | `--settings <settings>` | JSON object of application settings for the session, such as {"Section:Key":"value"}; overrides User Secrets and the launch profile. Isoplane.Testing uses it. |
+| `--content <content>` :since[next] | Directory of files added to the application's content for the session, each at its path beneath the directory; repeat for several. A later directory's file replaces an earlier one's and the project's at the same path. Isoplane.Testing uses it. |
 | `--no-launch-profile` | Do not load a launch profile. |
 | `--no-watch` | Do not watch for source changes. |
 | `--no-build` | Use compiled assemblies; requires --no-watch. |

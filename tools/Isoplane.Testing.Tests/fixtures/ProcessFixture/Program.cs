@@ -39,6 +39,7 @@ internal static class Program
         if (args.Length == 0 || args[0] != "dev")
             throw new ArgumentException("Provide a process fixture scenario.");
 
+        await File.WriteAllTextAsync("arguments.json", JsonSerializer.Serialize(args));
         using var settings = JsonDocument.Parse(await File.ReadAllTextAsync("process-fixture.json"));
         var scenario = settings.RootElement.GetProperty("scenario").GetString();
         switch (scenario)

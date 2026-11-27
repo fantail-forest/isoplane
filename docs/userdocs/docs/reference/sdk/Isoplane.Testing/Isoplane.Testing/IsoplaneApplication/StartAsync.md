@@ -27,7 +27,7 @@ The running application. Dispose it to stop the application.
 
 | exception | condition |
 | --- | --- |
-| ArgumentException | The directory does not exist, or an option is not valid. |
+| ArgumentException | The directory does not exist, an option is not valid, or a directory or file named in [`Content`](../ApplicationOptions/Content.md) does not exist. |
 | InvalidOperationException | The application did not start: the `isoplane` command could not be run, the project did not build, or the application failed while starting. The message includes what the command printed. |
 | OperationCanceledException | The token was cancelled before the application was ready. |
 | PlatformNotSupportedException | The operating system is not one the package supports. |

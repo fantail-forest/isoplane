@@ -24,8 +24,13 @@ public static class Handler
         "/detach" => Response.Text(await DebugFixture.Application.Handle(detached: true)),
         "/library" => Response.Text(DebugFixture.Application.Library()),
         "/greeting" => Greeting(),
+        var path when path.StartsWith("/content/", StringComparison.Ordinal) => Content(path),
         _ => Response.Text("Hello from Isoplane!"),
     };
+
+    /// <summary>Answers with the bytes of the content file at <paramref name="path"/>, or 404 when the package has none.</summary>
+    private static Response Content(string path) =>
+        File.Exists(path) ? Response.Bytes(File.ReadAllBytes(path), "application/octet-stream") : Response.Text("no such content", 404);
 
     private static async Task<Response> Delayed()
     {
