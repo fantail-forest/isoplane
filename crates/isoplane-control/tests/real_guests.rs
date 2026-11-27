@@ -105,7 +105,7 @@ fn a_guest_built_with_the_rust_sdk_is_prepared_into_a_template_without_its_initi
 
         init_blob: Vec::new(),
     };
-    let out = PreInitializer::new(isoplane_abi::config::InitSandbox::Sealed)
+    let out = PreInitializer::new()
         .run(&wasm, &req)
         .expect("pre-init must succeed");
 

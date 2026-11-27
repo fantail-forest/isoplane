@@ -80,7 +80,6 @@ fn prepare_runtime(
         compilation_directory: options.runtime_cache_directory.clone(),
         runtime_library: options.runtime_library,
         runtime_cache_directory: options.runtime_cache_directory,
-        init_sandbox: crate::session::RUNTIME_SANDBOX,
         platform_files: isoplane_engine::PlatformFiles::new(vec![crate::session::trust_file(
             options.machine_roots.as_deref(),
         )?])?,

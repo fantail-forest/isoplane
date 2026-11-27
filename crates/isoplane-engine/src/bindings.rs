@@ -142,8 +142,6 @@ pub trait InitializationBindings: Send + 'static {
     fn call_sync(&mut self, call: ImportCall<'_>) -> Result<i64, BindingError>;
     /// Fill an init-visible output buffer, returning its full logical length.
     fn call_fill(&mut self, call: ImportCall<'_>, out: &mut [u8]) -> Result<i64, BindingError>;
-    /// Whether the additional runtime-initialization capability policy is enabled.
-    fn runtime_bringup(&self) -> bool;
 }
 
 pub(crate) enum Bindings {
@@ -176,12 +174,6 @@ impl Bindings {
 
     pub fn is_init_sandbox(&self) -> bool {
         matches!(self, Self::Initialization(_))
-    }
-    pub fn init_runtime_bringup(&self) -> bool {
-        match self {
-            Self::Runtime(_) => false,
-            Self::Initialization(bindings) => bindings.runtime_bringup(),
-        }
     }
     pub fn slice_clock_ms(&self) -> u64 {
         match self {

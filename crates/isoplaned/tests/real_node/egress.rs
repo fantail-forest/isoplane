@@ -11,7 +11,7 @@ use isoplane_abi::dispatch::ResponseHead;
 use isoplane_abi::result::ResultRecord;
 use isoplane_host::egress::DestinationPolicy;
 
-use super::{common, config, get, manifest, serve, InitSandbox, Node, Rig};
+use super::{common, config, get, manifest, serve, Node, Rig};
 
 fn fetching_guest(destination: SocketAddr) -> Vec<u8> {
     let request = postcard::to_allocvec(&FetchRequest {
@@ -85,7 +85,6 @@ async fn node_for(destination: SocketAddr, policy: Option<Arc<dyn DestinationPol
         "acme",
         manifest("quotes"),
         &fetching_guest(destination),
-        InitSandbox::default(),
     )
     .await
     .expect("the guest must deploy through the real pipeline");
@@ -185,7 +184,6 @@ async fn a_managed_network_stream_exchanges_partial_payloads_through_a_real_node
         "acme",
         manifest("quotes"),
         &common::preparation::Guest::from("isoplane_guest_dotnet_native_io"),
-        InitSandbox::RuntimeBringUp,
     )
     .await
     .expect("the ordinary NetworkStream fixture must deploy");

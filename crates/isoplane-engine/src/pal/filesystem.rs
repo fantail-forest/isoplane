@@ -32,7 +32,7 @@ const DESCRIPTOR_FLAG_WRITE: u32 = 2;
 const DESCRIPTOR_FLAG_MUTATE_DIRECTORY: u32 = 32;
 const NANOS_PER_SECOND: u64 = 1_000_000_000;
 
-/// Guest memory access for both the execution engine and the sealed initializer.
+/// Guest memory access for both the execution engine and the initializer.
 /// Allocation and deallocation invoke the guest's allocator, never a host resource table.
 pub trait Memory {
     /// Copy bytes from guest memory, rejecting out-of-bounds addresses.

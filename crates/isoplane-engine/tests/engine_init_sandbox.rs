@@ -35,7 +35,7 @@ fn the_init_sandbox_traps_on_a_forbidden_import_and_names_it() {
     let e = test_engine();
     let imports = format!(
         "{}\n{}",
-        import("clock_now_coarse", "", "(result i64)"),
+        import("future_cancel", "(param i64)", ""),
         import("log_emit", "(param i32 i32 i32)", ""),
     );
     let wasm = guest(
@@ -44,7 +44,7 @@ fn the_init_sandbox_traps_on_a_forbidden_import_and_names_it() {
         r#"
   (func (export "isoplane_initialize") (result i64)
     (call $log_emit (i32.const 1) (i32.const 0) (i32.const 0))
-    (i64.store (i32.const 0) (call $clock_now_coarse)) i64.const 0)"#,
+    (call $future_cancel (i64.const 1)) i64.const 0)"#,
         DONE,
         DONE,
     );
@@ -59,15 +59,15 @@ fn the_init_sandbox_traps_on_a_forbidden_import_and_names_it() {
     let trap = out
         .trap
         .as_ref()
-        .expect("an initializer that reads the clock must trap in the init sandbox");
+        .expect("an initializer that cancels a future must trap in the init sandbox");
     assert_eq!(
         trap.kind,
         TrapKind::CapabilityViolation,
-        "reading the clock at init is a capability violation: {trap:?}"
+        "cancelling a future at init is a capability violation: {trap:?}"
     );
     assert_eq!(
         i.last_capability_violation(),
-        Some("clock_now_coarse"),
+        Some("future_cancel"),
         "the violation is recorded for preparation to report"
     );
 
@@ -77,7 +77,7 @@ fn the_init_sandbox_traps_on_a_forbidden_import_and_names_it() {
         "the init-visible import ran: {calls:?}"
     );
     assert!(
-        !calls.iter().any(|c| c.starts_with("clock_now_coarse")),
+        !calls.iter().any(|c| c.starts_with("future_cancel")),
         "the forbidden import must trap before reaching a binding: {calls:?}"
     );
 }
@@ -149,10 +149,6 @@ fn the_init_sandbox_permits_exactly_the_init_visible_set() {
         visible.contains(&"init_hash_seed") && visible.contains(&"init_config_get"),
         "the sandbox admits what the table marks init-visible: {visible:?}"
     );
-    assert!(
-        !visible.contains(&"clock_now_coarse"),
-        "the clock is not init-visible: {visible:?}"
-    );
 }
 
 #[test]
@@ -211,7 +207,6 @@ fn runtime_configuration_reaches_the_preparation_binding() {
 }
 
 struct NativeInitialization {
-    bringup: bool,
     permits_io: bool,
     calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
@@ -223,9 +218,6 @@ impl isoplane_engine::bindings::InitializationBindings for NativeInitialization 
     }
     fn slice_clock_ms(&self) -> u64 {
         1_234
-    }
-    fn runtime_bringup(&self) -> bool {
-        self.bringup
     }
     fn native_io(
         &mut self,
@@ -256,7 +248,7 @@ impl isoplane_engine::bindings::InitializationBindings for NativeInitialization 
 }
 
 #[test]
-fn offline_runtime_bringup_reads_the_frozen_coarse_clock_through_wasi() {
+fn offline_initialization_reads_the_frozen_coarse_clock_through_wasi() {
     check_offline_clock(
         "now",
         r#"
@@ -270,7 +262,7 @@ fn offline_runtime_bringup_reads_the_frozen_coarse_clock_through_wasi() {
 }
 
 #[test]
-fn offline_runtime_bringup_reports_the_coarse_clock_resolution() {
+fn offline_initialization_reports_the_coarse_clock_resolution() {
     check_offline_clock(
         "resolution",
         "(i64.store (i32.const 8) (call $wasi_clock))",
@@ -295,7 +287,6 @@ fn check_offline_clock(function: &str, body: &str, expected: &[i64]) {
         .activate_initialization(
             &template,
             Box::new(NativeInitialization {
-                bringup: true,
                 permits_io: false,
                 calls: calls.clone(),
             }),
@@ -305,7 +296,7 @@ fn check_offline_clock(function: &str, body: &str, expected: &[i64]) {
     assert_eq!(
         outcome.completion,
         Completion::Done,
-        "offline runtime bring-up must admit WASI clock {function}: {:?}",
+        "offline initialization must admit WASI clock {function}: {:?}",
         outcome.trap
     );
     let actual: Vec<_> = instance.memory()[8..8 + expected.len() * 8]
@@ -326,7 +317,7 @@ fn check_offline_clock(function: &str, body: &str, expected: &[i64]) {
     );
 }
 
-fn check_raw_native_initialization(bringup: bool, permits_io: bool, permitted: bool) {
+fn check_raw_native_initialization(permits_io: bool, permitted: bool) {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     for (module, function, parameters, argument, capability) in [
@@ -368,7 +359,6 @@ fn check_raw_native_initialization(bringup: bool, permits_io: bool, permitted: b
             .activate_initialization(
                 &template,
                 Box::new(NativeInitialization {
-                    bringup,
                     permits_io,
                     calls: calls.clone(),
                 }),
@@ -408,16 +398,11 @@ fn check_raw_native_initialization(bringup: bool, permits_io: bool, permitted: b
 }
 
 #[test]
-fn sealed_initialization_refuses_raw_native_capabilities_even_with_network_authority() {
-    check_raw_native_initialization(false, true, false);
+fn initialization_with_network_authority_permits_raw_native_capabilities() {
+    check_raw_native_initialization(true, true);
 }
 
 #[test]
-fn authorized_runtime_bringup_permits_raw_native_capabilities() {
-    check_raw_native_initialization(true, true, true);
-}
-
-#[test]
-fn offline_runtime_bringup_refuses_network_and_timer_capabilities() {
-    check_raw_native_initialization(true, false, false);
+fn offline_initialization_refuses_network_and_timer_capabilities() {
+    check_raw_native_initialization(false, false);
 }

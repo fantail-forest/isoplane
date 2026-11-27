@@ -11,7 +11,7 @@ pub use lifecycle::LifecycleTier;
 #[cfg(feature = "rust-guests")]
 pub use limits::DEFAULT_INLINE_RESPONSE_BYTES;
 pub use limits::{Limits, ResourceLimitOverrides, DEFAULT_INSTANCE_OPEN_CONNECTIONS};
-pub use manifest::{AppManifest, Bindings, InitSandbox};
+pub use manifest::{AppManifest, Bindings};
 pub use memory::{
     memory_ceiling_bytes, GuestMemoryBytes, InvalidGuestMemory, WASM32_MEMORY_MAX_BYTES,
 };

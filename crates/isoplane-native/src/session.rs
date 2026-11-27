@@ -104,7 +104,6 @@ impl Options {
             runtime_library: self.runtime_library.clone(),
             compilation_directory: self.compilation_directory.clone(),
             runtime_cache_directory: self.runtime_cache_directory.clone(),
-            init_sandbox: RUNTIME_SANDBOX,
             platform_files,
             application_files: package.files,
             runtime_profile: isoplane_prepare::RuntimeProfile::SharedRuntime {
@@ -113,11 +112,6 @@ impl Options {
         })
     }
 }
-
-/// An application package runs on the shared managed runtime, which reads the
-/// clock and draws entropy while it comes up.
-pub(crate) const RUNTIME_SANDBOX: isoplane_abi::config::InitSandbox =
-    isoplane_abi::config::InitSandbox::RuntimeBringUp;
 
 /// The trusted roots a guest reads: the machine's exported roots joined to the
 /// shipped ones, or the shipped ones alone.

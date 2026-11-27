@@ -2,7 +2,6 @@
 
 pub mod common;
 
-use isoplane_abi::config::InitSandbox;
 use isoplane_harness::logging::LogCapture;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -26,7 +25,7 @@ async fn the_packaged_aspnet_provider_emits_attributed_customer_logs() {
         tokio::task::spawn_blocking(|| common::preparation::Guest::from("isoplane_guest_aspnet"))
             .await
             .expect("the ASP.NET logging fixture must build");
-    let rig = common::start_with(aspnet, InitSandbox::RuntimeBringUp).await;
+    let rig = common::start_with(aspnet).await;
     let response = common::get(rig.proxy, "quotes.isoplane.dev", "/logs").await;
     assert_eq!(
         response.body, "aspnet logged",

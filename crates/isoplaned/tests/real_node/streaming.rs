@@ -8,7 +8,6 @@ use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use hyper::{Request, Response, StatusCode};
-use isoplane_abi::config::InitSandbox;
 use isoplane_host::{InstanceId, LifecycleTier};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -27,7 +26,6 @@ async fn start() -> (common::Rig, TcpListener) {
     let endpoint = gate.local_addr().expect("the gate must have an address");
     let rig = common::start_with_policy(
         common::preparation::Guest::from("isoplane_guest_aspnet"),
-        InitSandbox::RuntimeBringUp,
         Some(Arc::new(crate::owned_endpoint::OwnedEndpoint(endpoint))),
         |cfg| {
             cfg.proxy.max_in_flight = 1;
@@ -338,10 +336,9 @@ async fn a_response_returned_after_its_requester_left_is_discarded() {
 }
 
 async fn start_plain() -> common::Rig {
-    common::start_with(
-        common::preparation::Guest::from("isoplane_guest_dotnet_node"),
-        InitSandbox::RuntimeBringUp,
-    )
+    common::start_with(common::preparation::Guest::from(
+        "isoplane_guest_dotnet_node",
+    ))
     .await
 }
 

@@ -1,5 +1,5 @@
 #![forbid(unsafe_code)]
-//! A declared platform file is visible inside the sealed init sandbox: a
+//! A declared platform file is visible inside the init sandbox: a
 //! static initialiser that reads it bakes its bytes into the template,
 //! through the same `wasi:filesystem` imports wasi-libc uses.
 
@@ -124,7 +124,7 @@ fn template_memory(template: &[u8]) -> Vec<u8> {
 #[test]
 fn a_declared_file_read_during_pre_init_is_baked_into_the_template() {
     let wasm = guest();
-    let outcome = PreInitializer::new(isoplane_abi::config::InitSandbox::Sealed)
+    let outcome = PreInitializer::new()
         .with_platform_files(declared())
         .run(&wasm, &request(&wasm))
         .expect("pre-init converges");
@@ -149,7 +149,7 @@ fn a_declared_file_read_during_pre_init_is_baked_into_the_template() {
 #[test]
 fn without_a_declared_set_the_same_path_is_no_entry_during_pre_init() {
     let wasm = guest();
-    let outcome = PreInitializer::new(isoplane_abi::config::InitSandbox::Sealed)
+    let outcome = PreInitializer::new()
         .run(&wasm, &request(&wasm))
         .expect("pre-init converges");
     let memory = template_memory(&outcome.wasm);

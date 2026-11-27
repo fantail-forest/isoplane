@@ -5,7 +5,6 @@ use std::time::Duration;
 use bytes::Bytes;
 use http_body_util::Full;
 use hyper::{Method, Request, StatusCode};
-use isoplane_abi::config::InitSandbox;
 use isoplane_abi::dispatch::ResponseHead;
 
 use super::common;
@@ -62,7 +61,6 @@ async fn no_body_framing_returns_the_wire_response_and_preserves_background_work
                 status,
                 "(drop (call $timer (i64.const 600000))) (i64.const 0)",
             ),
-            InitSandbox::Sealed,
             None,
             |cfg| cfg.response_queue_bytes = 1,
         )
@@ -84,7 +82,7 @@ async fn no_body_framing_returns_the_wire_response_and_preserves_background_work
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_same_slice_trap_cannot_be_hidden_by_no_body_response_headers() {
-    let rig = common::start_with(guest(204, "unreachable"), InitSandbox::Sealed).await;
+    let rig = common::start_with(guest(204, "unreachable")).await;
     tokio::time::timeout(Duration::from_secs(30), async {
         let response = request(&rig, Method::GET).await;
         assert_eq!(

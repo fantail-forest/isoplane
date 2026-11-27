@@ -1,6 +1,5 @@
 mod common;
 use common::{engine, guest, request};
-use isoplane_abi::config::InitSandbox;
 use isoplane_prepare::{initialize, PrepareError};
 use std::collections::BTreeMap;
 
@@ -79,16 +78,16 @@ fn baking_preserves_grown_memory_hidden_globals_and_static_tables() {
 }
 
 #[test]
-fn a_sealed_initializer_clock_attempt_fails_before_a_host_effect() {
+fn a_forbidden_import_ends_initialization_with_the_guests_trap_and_is_named() {
     let wasm = guest(
-        r#"(import "isoplane" "clock_now_coarse" (func $clock (result i64)))"#,
-        "(drop (call $clock))",
+        r#"(import "isoplane" "future_cancel" (func $cancel (param i64)))"#,
+        "(call $cancel (i64.const 1))",
     );
     let error = initialize(&engine(), &wasm, &request())
         .err()
-        .expect("sealed clock access must fail");
+        .expect("a serving capability must fail initialization");
     assert!(
-        matches!(error, PrepareError::ForbiddenCapability { ref import, .. } if import == "clock_now_coarse"),
+        matches!(error, PrepareError::ForbiddenCapability { ref import, .. } if import == "future_cancel"),
         "forbidden capabilities must terminate initialization"
     );
     let failure = isoplane_prepare::WorkerFailure::new(
@@ -103,18 +102,17 @@ fn a_sealed_initializer_clock_attempt_fails_before_a_host_effect() {
 }
 
 #[test]
-fn runtime_bringup_answers_and_counts_the_clock() {
+fn initialization_answers_and_counts_the_clock() {
     let wasm = guest(
         r#"(import "isoplane" "clock_now_coarse" (func $clock (result i64)))"#,
         "(i64.store (i32.const 64) (call $clock))",
     );
-    let mut request = request();
-    request.sandbox = InitSandbox::RuntimeBringUp;
-    let result = initialize(&engine(), &wasm, &request).expect("runtime clock admission");
+    let request = request();
+    let result = initialize(&engine(), &wasm, &request).expect("clock admission");
     assert_eq!(
         result.initialized.pal_calls,
         vec![("clock_now_coarse".to_string(), 1)],
-        "the report must count the admitted runtime clock exactly once"
+        "the report must count the admitted clock exactly once"
     );
 }
 
@@ -193,9 +191,6 @@ fn a_future_import_traps_before_calling_an_initialization_provider() {
         ) -> Result<i64, BindingError> {
             self.0.fetch_add(1, Ordering::Relaxed);
             Err(BindingError::Unsupported(call.import))
-        }
-        fn runtime_bringup(&self) -> bool {
-            false
         }
     }
     let wasm = guest(

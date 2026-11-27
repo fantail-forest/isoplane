@@ -223,7 +223,7 @@ pub const SDK_EXPORTS: &[SdkExport] = &[
             results: &[],
         },
     },
-    // Pre-init entrypoint, run once in the sealed init sandbox.
+    // Pre-init entrypoint, run once in the init sandbox.
     SdkExport {
         name: "isoplane_initialize",
         sig: Sig {

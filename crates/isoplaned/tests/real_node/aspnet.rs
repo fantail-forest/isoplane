@@ -5,15 +5,10 @@ use super::common;
 use bytes::Bytes;
 use http_body_util::Full;
 use hyper::Request;
-use isoplane_abi::config::InitSandbox;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn an_aspnet_route_receives_host_fields_and_returns_its_buffered_response() {
-    let rig = common::start_with(
-        common::preparation::Guest::from("isoplane_guest_aspnet"),
-        InitSandbox::RuntimeBringUp,
-    )
-    .await;
+    let rig = common::start_with(common::preparation::Guest::from("isoplane_guest_aspnet")).await;
     for _ in 0..2 {
         let request = Request::builder()
             .method("POST")
@@ -59,11 +54,7 @@ async fn an_aspnet_upload_is_read_and_echoed_before_the_client_finishes_sending(
     use std::convert::Infallible;
     use std::time::Duration;
 
-    let rig = common::start_with(
-        common::preparation::Guest::from("isoplane_guest_aspnet"),
-        InitSandbox::RuntimeBringUp,
-    )
-    .await;
+    let rig = common::start_with(common::preparation::Guest::from("isoplane_guest_aspnet")).await;
     let (send, receive) = tokio::sync::mpsc::channel::<Bytes>(1);
     let stream = futures::stream::unfold(receive, |mut receive| async move {
         receive

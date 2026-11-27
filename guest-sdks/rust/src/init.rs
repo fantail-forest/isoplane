@@ -155,7 +155,7 @@ pub fn config_blob() -> Vec<u8> {
     if full > 0 {
         let mut buf = vec![0u8; full as usize];
         let got = abi::read_sized_out(abi::init_config_get, &mut buf);
-        // The blob cannot change inside a sealed sandbox, but truncate rather
+        // The blob cannot change during initialization, but truncate rather
         // than trust the second answer.
         buf.truncate((got.max(0) as usize).min(full as usize));
         st.config = buf;

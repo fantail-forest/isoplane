@@ -22,7 +22,7 @@ use otlp::{field, Collector};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_actual_http_guest_completion_crosses_the_otlp_boundary() {
-    use isoplane_abi::config::{AppManifest, InitSandbox};
+    use isoplane_abi::config::AppManifest;
     use isoplane_abi::dispatch::ResponseHead;
 
     let mut collector = Collector::<ExportLogsServiceRequest>::start(StatusCode::OK).await;
@@ -95,16 +95,9 @@ async fn an_actual_http_guest_completion_crosses_the_otlp_boundary() {
             (i64.shl (i64.extend_i32_u (call $response (i32.const 1024) (i32.const {}))) (i64.const 32)))
         )"#, head.len())).unwrap();
     let manifest: AppManifest = toml::from_str("name = 'quotes'").unwrap();
-    node.deploy_locally(
-        "quotes",
-        "v1",
-        "acme",
-        manifest,
-        &guest,
-        InitSandbox::Sealed,
-    )
-    .await
-    .unwrap();
+    node.deploy_locally("quotes", "v1", "acme", manifest, &guest)
+        .await
+        .unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let proxy = node.proxy.clone();

@@ -2,7 +2,6 @@
 
 pub mod common;
 
-use isoplane_abi::config::InitSandbox;
 use isoplane_harness::logging::LogCapture;
 use isoplane_host::futures::INSTANCE_WORK;
 use std::time::Duration;
@@ -30,7 +29,7 @@ async fn managed_logs_keep_request_and_background_ownership_across_park_wake() {
         })
         .await
         .expect("the prepared managed logging fixture must load");
-        let rig = common::start_with(wasm, InitSandbox::RuntimeBringUp).await;
+        let rig = common::start_with(wasm).await;
         let left_over = common::get(rig.proxy, "quotes.isoplane.dev", "/logs/after-response").await;
         assert_eq!(left_over.status, 200);
         assert_eq!(left_over.body, "returned");

@@ -1,6 +1,6 @@
 //! Validate application modules and the trusted shared runtimes they use.
 
-use isoplane_abi::config::{AppManifest, GuestMemoryBytes, InitSandbox};
+use isoplane_abi::config::{AppManifest, GuestMemoryBytes};
 use serde::{Deserialize, Serialize};
 
 use crate::validator::{self, ValidationReport, Violation};
@@ -9,15 +9,13 @@ use crate::validator::{self, ValidationReport, Violation};
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct VersionId(pub String);
 
-/// Owner identity and initialization policy supplied by the local host.
+/// Owner identity supplied by the local host.
 #[derive(Debug, Clone)]
 pub struct DeployOptions {
     /// Opaque identity of this preparation, independent of application routing.
     pub version: VersionId,
     /// Established owner associated with application settings and network policy.
     pub tenant: String,
-    /// Capabilities available during initialization.
-    pub init_sandbox: InitSandbox,
 }
 
 /// Admission failed before initialization or native compilation.

@@ -4,7 +4,7 @@
 /// Core-wasm module name that every Isoplane import lives under.
 pub const HOST_MODULE: &str = "isoplane";
 
-/// Capabilities admitted during runtime bring-up.
+/// Serving capabilities initialization may also use.
 pub const RUNTIME_INIT_CAPABILITIES: &[&str] = &["clock_now_coarse"];
 
 pub use crate::exports;
@@ -74,7 +74,7 @@ pub struct ImportDef {
     /// Results may contain sensitive data, including copies retained in guest state.
     pub sensitive: bool,
     /// Admitted by the unconditional initialization import set. Context policy
-    /// separately permits application entropy and selected runtime bring-up capabilities.
+    /// separately permits application entropy and selected serving capabilities.
     pub init_visible: bool,
     /// What the capability is for, for a tenant reading a manifest. Required
     /// by `imp!` so a capability cannot be added without saying.
@@ -244,7 +244,7 @@ mod tests {
     }
 
     /// The static metadata does not grant runtime capability groups unconditionally.
-    /// The engine applies explicit application-entropy and runtime bring-up policy.
+    /// The engine applies explicit application-entropy and initialization capability policy.
     #[test]
     fn unconditional_initialization_imports_exclude_runtime_capability_groups() {
         let io = [Group::Http, Group::Socket, Group::Clock, Group::Entropy];

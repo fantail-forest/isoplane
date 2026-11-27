@@ -11,7 +11,7 @@ use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::{Request, StatusCode};
 use hyper_util::rt::TokioIo;
-use isoplane_abi::config::{AppManifest, InitSandbox};
+use isoplane_abi::config::AppManifest;
 use isoplane_host::egress::DestinationPolicy;
 use isoplaned::config::{AppConfig, NodeConfig};
 use isoplaned::node::Node;
@@ -98,15 +98,13 @@ impl Rig {
     }
 }
 
-/// A node serving `wasm` as `quotes@v1`, deployed through the real pipeline
-/// under `sandbox`.
-pub async fn start_with(wasm: impl Into<preparation::Guest>, sandbox: InitSandbox) -> Rig {
-    start_with_policy(wasm, sandbox, None, |_| {}).await
+/// A node serving `wasm` as `quotes@v1`, deployed through the real pipeline.
+pub async fn start_with(wasm: impl Into<preparation::Guest>) -> Rig {
+    start_with_policy(wasm, None, |_| {}).await
 }
 
 pub async fn start_with_policy(
     wasm: impl Into<preparation::Guest>,
-    sandbox: InitSandbox,
     destinations: Option<Arc<dyn DestinationPolicy>>,
     configure: impl FnOnce(&mut NodeConfig),
 ) -> Rig {
@@ -118,7 +116,7 @@ pub async fn start_with_policy(
         None => Node::build(cfg),
     }
     .expect("a real node must assemble");
-    node.deploy_locally("quotes", "v1", "acme", manifest("quotes"), wasm, sandbox)
+    node.deploy_locally("quotes", "v1", "acme", manifest("quotes"), wasm)
         .await
         .expect("deploying the module");
     serve(node, dir).await

@@ -303,7 +303,7 @@ impl Deployer {
             occupancy_ms: context.occupancy_ms,
             wall_ms: context.wall_ms,
             log_bytes: context.log_bytes,
-            ..isoplane_prepare::Initialization::new(opts.init_sandbox, runtime_config)
+            ..isoplane_prepare::Initialization::new(runtime_config)
         };
         #[cfg(feature = "rust-guests")]
         let initialization = isoplane_prepare::Initialization {

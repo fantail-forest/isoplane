@@ -61,7 +61,6 @@ pub async fn deploy(
             isoplane_control::DeployOptions {
                 tenant: owner.clone(),
                 version: isoplane_control::VersionId(version.clone()),
-                init_sandbox: isoplane_abi::config::InitSandbox::RuntimeBringUp,
             },
             cancellation,
         )

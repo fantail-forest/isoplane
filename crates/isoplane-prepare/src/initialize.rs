@@ -4,7 +4,6 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use isoplane_abi::config::InitSandbox;
 use isoplane_engine::{Completion, ImportCall, InstanceOps, IsoplaneEngine, OccupancyBudget};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -21,8 +20,6 @@ pub struct Initialization {
     pub config: Vec<u8>,
     /// Deployment-bound JSON settings, including secrets; never include in diagnostics.
     pub runtime_config: Vec<u8>,
-    /// Policy selected by the caller; it is never widened by preparation.
-    pub sandbox: InitSandbox,
     /// Total initialization occupancy budget.
     pub occupancy_ms: u32,
     /// Total initialization wall backstop, including asynchronous waits.
@@ -32,16 +29,15 @@ pub struct Initialization {
 }
 
 impl Initialization {
-    /// An initialization under `sandbox` with the deployment's settings, no
-    /// outbound authority, no `init_config_get` configuration and the local
-    /// default budgets. Set a field to change one.
-    pub fn new(sandbox: InitSandbox, runtime_config: Vec<u8>) -> Self {
+    /// An initialization with the deployment's settings, no outbound
+    /// authority, no `init_config_get` configuration and the local default
+    /// budgets. Set a field to change one.
+    pub fn new(runtime_config: Vec<u8>) -> Self {
         Self {
             network: None,
             #[cfg(feature = "rust-guests")]
             config: Vec::new(),
             runtime_config,
-            sandbox,
             occupancy_ms: crate::preinit::DEFAULT_INITIALIZATION_OCCUPANCY_MS,
             wall_ms: crate::preinit::DEFAULT_INITIALIZATION_WALL_MS,
             log_bytes: crate::preinit::DEFAULT_INITIALIZATION_LOG_BYTES,
@@ -64,7 +60,6 @@ impl Initialization {
             input_hash,
             config,
             &self.runtime_config,
-            self.sandbox,
             &self.network,
         ))?);
         Ok(*hash.finalize().as_bytes())
@@ -700,7 +695,6 @@ struct Sandbox {
     #[cfg(feature = "rust-guests")]
     config: Vec<u8>,
     runtime_config: Vec<u8>,
-    bringup: bool,
     draws: u64,
     logs: Vec<GuestLog>,
     remaining_log_bytes: usize,
@@ -715,7 +709,6 @@ impl Sandbox {
             #[cfg(feature = "rust-guests")]
             config: request.config.clone(),
             runtime_config: request.runtime_config.clone(),
-            bringup: request.sandbox == InitSandbox::RuntimeBringUp,
             draws: 0,
             logs: Vec::new(),
             remaining_log_bytes: request.log_bytes,
@@ -734,7 +727,7 @@ impl isoplane_engine::bindings::InitializationBindings for Bindings {
         self.permits_entropy
     }
     fn permits_io(&self) -> bool {
-        self.io.is_some() && self.runtime_bringup()
+        self.io.is_some()
     }
     fn native_io(
         &mut self,
@@ -767,9 +760,6 @@ impl isoplane_engine::bindings::InitializationBindings for Bindings {
         }
     }
 
-    fn runtime_bringup(&self) -> bool {
-        self.state.lock().bringup
-    }
     fn call_sync(
         &mut self,
         call: ImportCall<'_>,
@@ -889,7 +879,6 @@ mod budget_tests {
             network: None,
             config: Vec::new(),
             runtime_config: b"{}".to_vec(),
-            sandbox: InitSandbox::Sealed,
             occupancy_ms: 50,
             wall_ms: 100,
             log_bytes: 0,

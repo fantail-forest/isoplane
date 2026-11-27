@@ -99,14 +99,14 @@ impl PalSource for StoreState {
 }
 
 /// Host capabilities available to composed native runtime imports.
-/// Sealed initialization provides clock and entropy but refuses readiness resources.
+/// Initialization without network authority provides clock and entropy but refuses readiness resources.
 pub trait PalSource: Send + 'static {
     /// Record a delegated PAL module call in the initialization ledger, when active.
     fn record_initialization_call(&mut self, module: &'static str);
 
     /// Apply context-specific policy before a delegated clock or entropy call.
     fn check_capability(&mut self, import: &'static str) -> wasmtime::Result<()>;
-    /// Perform nonblocking native I/O; sealed initialization has no resource authority.
+    /// Perform nonblocking native I/O; initialization without network authority has no resource authority.
     fn native_io(
         &mut self,
         request: isoplane_abi::native_io::Request,

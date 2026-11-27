@@ -129,7 +129,7 @@ async fn a_real_guests_init_visible_config_is_consumed_at_preinit_not_at_runtime
     manifest.init_visible_vars = vec![("REGION".to_string(), "nz-akl".to_string())];
     let node = Node::build(cfg).expect("a real node must assemble");
     let rec = node
-        .deploy_locally("quotes", "v1", "acme", manifest, &wasm, Default::default())
+        .deploy_locally("quotes", "v1", "acme", manifest, &wasm)
         .await
         .expect("explicit local preparation");
     assert!(

@@ -23,33 +23,6 @@ pub struct AppManifest {
     pub init_visible_vars: Vec<(String, String)>,
 }
 
-/// Selects additional runtime initialization imports.
-/// Application entropy admission is independent of this selector.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "rust-guests", derive(Default))]
-#[serde(rename_all = "kebab-case")]
-pub enum InitSandbox {
-    /// Permits the clock and, where the deployment grants them, sockets and polling during initialization.
-    #[serde(rename = "runtime-bringup", alias = "runtime-bring-up")]
-    RuntimeBringUp,
-    /// Uses the default initialization capability policy, which is what a
-    /// guest without a managed runtime to bring up runs under. Last, so
-    /// `RuntimeBringUp` encodes the same with and without the feature.
-    #[cfg(feature = "rust-guests")]
-    #[default]
-    Sealed,
-}
-
-impl InitSandbox {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            InitSandbox::RuntimeBringUp => "runtime-bringup",
-            #[cfg(feature = "rust-guests")]
-            InitSandbox::Sealed => "sealed",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Bindings {
